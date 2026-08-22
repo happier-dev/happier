@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/protocol';
 
 import {
+  requireAccountSettingsMutationSuccess,
   updateAccountSettingsV2WithRetry,
   type AccountSettingsUpdateV2Deps,
 } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
@@ -19,33 +20,27 @@ export async function previewLegacyProfileMigrationWithRetry(params: Readonly<{
   credentials: Credentials;
   sourceProfileId: string;
   reviewedMapping: LegacyProfileReviewedMappingV1;
-  acquireRegistryLease: () => Promise<Readonly<{ registry: unknown; release: () => Promise<void> }>>;
   deps?: AccountSettingsUpdateV2Deps;
   maxAttempts?: number;
 }>): Promise<Readonly<{ version: number; sourceFingerprint: string }>> {
-  const lease = await params.acquireRegistryLease();
   let sourceFingerprint: string | null = null;
-  try {
-    const result = await updateAccountSettingsV2WithRetry({
-      credentials: params.credentials,
-      deps: params.deps,
-      maxAttempts: params.maxAttempts,
-      mutate: (settings) => {
-        sourceFingerprint = createLegacyProfileMigrationSourceFingerprintV1({
-          rawSettings: settings,
-          sourceProfileId: params.sourceProfileId,
-          reviewedMapping: params.reviewedMapping,
-        });
-        return settings;
-      },
-    });
-    if (sourceFingerprint === null) {
-      throw new ProviderSettingsMigrationError('legacy_profile_source_changed');
-    }
-    return { version: result.version, sourceFingerprint };
-  } finally {
-    await lease.release();
+  const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2WithRetry({
+    credentials: params.credentials,
+    deps: params.deps,
+    maxAttempts: params.maxAttempts,
+    mutate: (settings) => {
+      sourceFingerprint = createLegacyProfileMigrationSourceFingerprintV1({
+        rawSettings: settings,
+        sourceProfileId: params.sourceProfileId,
+        reviewedMapping: params.reviewedMapping,
+      });
+      return settings;
+    },
+  }));
+  if (sourceFingerprint === null) {
+    throw new ProviderSettingsMigrationError('legacy_profile_source_changed');
   }
+  return { version: result.version, sourceFingerprint };
 }
 
 export class ProviderSettingsMigrationError extends Error {
@@ -67,31 +62,26 @@ export async function confirmLegacyProfileMigrationWithRetry(params: Readonly<{
   expectedSourceFingerprint: string;
   reviewedMapping: LegacyProfileReviewedMappingV1;
   migratedAt: number;
-  acquireRegistryLease: () => Promise<Readonly<{ registry: unknown; release: () => Promise<void> }>>;
   deps?: AccountSettingsUpdateV2Deps;
   maxAttempts?: number;
-}>) {
-  const lease = await params.acquireRegistryLease();
-  try {
-    return await updateAccountSettingsV2WithRetry({
-      credentials: params.credentials,
-      deps: params.deps,
-      maxAttempts: params.maxAttempts,
-      mutate: (settings) => {
-        const migrated = confirmLegacyAiLaunchProfileMigrationV1({
-          rawSettings: settings,
-          sourceProfileId: params.sourceProfileId,
-          expectedSourceFingerprint: params.expectedSourceFingerprint,
-          reviewedMapping: params.reviewedMapping,
-          migratedAt: params.migratedAt,
-        });
-        if (!migrated.ok) throw new ProviderSettingsMigrationError(migrated.reason);
-        return migrated.settings;
-      },
-    });
-  } finally {
-    await lease.release();
-  }
+}>): Promise<Readonly<{ version: number; settings: AccountSettings }>> {
+  const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2WithRetry({
+    credentials: params.credentials,
+    deps: params.deps,
+    maxAttempts: params.maxAttempts,
+    mutate: (settings) => {
+      const migrated = confirmLegacyAiLaunchProfileMigrationV1({
+        rawSettings: settings,
+        sourceProfileId: params.sourceProfileId,
+        expectedSourceFingerprint: params.expectedSourceFingerprint,
+        reviewedMapping: params.reviewedMapping,
+        migratedAt: params.migratedAt,
+      });
+      if (!migrated.ok) throw new ProviderSettingsMigrationError(migrated.reason);
+      return migrated.settings;
+    },
+  }));
+  return { version: result.version, settings: result.settings };
 }
 
 export async function migrateProviderSettingsWithRetry(params: Readonly<{
@@ -114,7 +104,7 @@ export async function migrateProviderSettingsWithRetry(params: Readonly<{
   let outcomes: readonly ProviderSettingsMigrationSourceOutcomeV1[] = [];
   const lease = await params.acquireRegistryLease();
   try {
-    const result = await updateAccountSettingsV2WithRetry({
+    const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2WithRetry({
       credentials: params.credentials,
       deps: params.deps,
       maxAttempts: params.maxAttempts,
@@ -125,8 +115,8 @@ export async function migrateProviderSettingsWithRetry(params: Readonly<{
         outcomes = migrated.outcomes;
         return migrated.settings;
       },
-    });
-    return { ...result, outcomes };
+    }));
+    return { version: result.version, settings: result.settings, outcomes };
   } finally {
     await lease.release();
   }

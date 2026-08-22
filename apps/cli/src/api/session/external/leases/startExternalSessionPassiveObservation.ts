@@ -4,7 +4,7 @@ import {
     readLinkedExternalSessionV1FromMetadata,
 } from '@happier-dev/protocol';
 
-import { readCredentials as readStoredCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import {
     fetchSessionsPage,
     type RawSessionListRow,
@@ -32,6 +32,8 @@ import {
     subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 
 import type {
     ExternalSessionObservationDemand,
@@ -90,6 +92,7 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
     readCredentials?: () => Promise<Credentials | null>;
     fetchPage?: FetchPage;
     decryptOwnerMetadataView?: typeof tryDecryptSessionOwnerMetadataView;
+    getAccountEncryptionCurrentness?: () => Promise<AccountEncryptionCurrentnessResponse>;
     resolveLinkInput?: typeof resolveExternalSessionObservationLinkInput;
 }>): Promise<ExternalSessionPassivePolicy[]> {
     const readCredentials = params.readCredentials ?? readStoredCredentials;
@@ -101,6 +104,10 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
         ?? tryDecryptSessionOwnerMetadataView;
     const resolveLinkInput = params.resolveLinkInput
         ?? resolveExternalSessionObservationLinkInput;
+    const accountEncryptionCurrentness = await (
+        params.getAccountEncryptionCurrentness
+        ?? (async () => await fetchAccountEncryptionCurrentness({ token: credentials.token }))
+    )();
     const linked: Array<Readonly<{
         sessionId: string;
         linked: ExternalSessionObservationLinkedSession;
@@ -123,7 +130,11 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
             ) {
                 continue;
             }
-            const metadata = decryptOwnerMetadataView({ credentials, rawSession });
+            const metadata = decryptOwnerMetadataView({
+                credentials,
+                rawSession,
+                accountEncryptionMode: accountEncryptionCurrentness.mode,
+            });
             const persisted = readLinkedExternalSessionV1FromMetadata(metadata);
             if (!persisted || persisted.machineId !== params.machineId) continue;
             if (
@@ -223,6 +234,7 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
             demanded: boolean;
         }>): Promise<Readonly<{ state: string }>>;
         removeLink(input: ExternalSessionObservationLinkInput['link']): Promise<unknown>;
+        releaseLink(input: ExternalSessionObservationLinkInput['link']): Promise<unknown>;
     }>;
     listCurrentLinks?: (input: Readonly<{
         machineId: string;
@@ -303,6 +315,7 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                 loaded = await loadLinkedExternalSessionFromRaw({
                     credentials,
                     rawSession: persistedLoad.session.rawSession,
+                    accountEncryptionMode: persistedLoad.session.accountEncryptionMode,
                     machineId: input.machineId,
                 });
                 if (!loaded.ok || input.signal.aborted) {
@@ -328,6 +341,7 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
     let generation = 0;
     let disabledThroughGeneration = -1;
     let hardReleasedThroughGeneration = -1;
+    let localCustodyReleasedThroughGeneration = -1;
     let activeController: AbortController | null = null;
     let activeRestore: Promise<void> | null = null;
     let lifecycleTransition: Promise<void> = Promise.resolve();
@@ -464,7 +478,10 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
             await pauseFollowPolicy?.(sessionId).catch(() => undefined);
         }
         if (observation) {
-            await params.projection.removeLink(observation.link).catch(() => undefined);
+            await (disable
+                ? params.projection.removeLink(observation.link)
+                : params.projection.releaseLink(observation.link)
+            ).catch(() => undefined);
         }
     };
     const removeTrackedPassivePolicyStrict = async (
@@ -503,12 +520,36 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
         (releasedAtGenerationBySessionId.get(sessionId) ?? -1)
         >= restoreGeneration;
 
+    const releasesOnlyLocalCustody = (
+        sessionId: string,
+        restoreGeneration: number,
+    ): boolean =>
+        restoreGeneration <= localCustodyReleasedThroughGeneration
+        && restoreGeneration > hardReleasedThroughGeneration
+        && restoreGeneration > disabledThroughGeneration
+        && !wasReleasedForRestore(sessionId, restoreGeneration);
+
+    const releaseStaleProjection = async (
+        sessionId: string,
+        restoreGeneration: number,
+        observation: ExternalSessionObservationLinkInput,
+    ): Promise<void> => {
+        await (releasesOnlyLocalCustody(sessionId, restoreGeneration)
+            ? params.projection.releaseLink(observation.link)
+            : params.projection.removeLink(observation.link)
+        ).catch(() => undefined);
+    };
+
     const cleanupStaleRestore = async (
         sessionId: string,
         restoreGeneration: number,
     ): Promise<void> => {
         if (wasReleasedForRestore(sessionId, restoreGeneration)) {
             await pauseArchivedFollowSession(sessionId).catch(() => undefined);
+            return;
+        }
+        if (releasesOnlyLocalCustody(sessionId, restoreGeneration)) {
+            await releaseFollowSession?.(sessionId).catch(() => undefined);
             return;
         }
         if (restoreGeneration <= hardReleasedThroughGeneration) {
@@ -677,8 +718,11 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                     }
                     if (restoreIsStale()) {
                         if (policy.observation && observeBeforeFollow) {
-                            await params.projection.removeLink(policy.observation.link)
-                                .catch(() => undefined);
+                            await releaseStaleProjection(
+                                policy.sessionId,
+                                restoreGeneration,
+                                policy.observation,
+                            );
                         }
                         await cleanupStaleRestore(
                             policy.sessionId,
@@ -693,8 +737,11 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                         ).catch(() => false);
                     if (restoreIsStale()) {
                         if (policy.observation && observeBeforeFollow) {
-                            await params.projection.removeLink(policy.observation.link)
-                                .catch(() => undefined);
+                            await releaseStaleProjection(
+                                policy.sessionId,
+                                restoreGeneration,
+                                policy.observation,
+                            );
                         }
                         await cleanupStaleRestore(
                             policy.sessionId,
@@ -718,8 +765,11 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                     }
                     if (restoreIsStale()) {
                         if (policy.observation) {
-                            await params.projection.removeLink(policy.observation.link)
-                                .catch(() => undefined);
+                            await releaseStaleProjection(
+                                policy.sessionId,
+                                restoreGeneration,
+                                policy.observation,
+                            );
                         }
                         await cleanupStaleRestore(
                             policy.sessionId,
@@ -734,9 +784,11 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                         });
                         if (restoreIsStale()) {
                             if (policy.observation) {
-                                await params.projection.removeLink(
-                                    policy.observation.link,
-                                ).catch(() => undefined);
+                                await releaseStaleProjection(
+                                    policy.sessionId,
+                                    restoreGeneration,
+                                    policy.observation,
+                                );
                             }
                             await cleanupStaleRestore(
                                 policy.sessionId,
@@ -787,7 +839,22 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
         }));
     };
 
-    const hardReleaseTrackedPolicies = async (): Promise<void> => {
+    const releaseTrackedPoliciesForAccountScope = async (): Promise<void> => {
+        const tracked = [...trackedPolicies.entries()];
+        trackedPolicies.clear();
+        await Promise.all(tracked.map(async ([sessionId, observation]) => {
+            await releaseFollowSession?.(sessionId).catch(() => undefined);
+            if (observation) {
+                // An account-scope change releases only this daemon's current
+                // custody. It must not rewrite the previous Account's
+                // durable last-known observation as a new `unknown` fact.
+                await params.projection.releaseLink(observation.link)
+                    .catch(() => undefined);
+            }
+        }));
+    };
+
+    const retireTrackedPoliciesForCredentialLoss = async (): Promise<void> => {
         const tracked = [...trackedPolicies.entries()];
         trackedPolicies.clear();
         await Promise.all(tracked.map(async ([sessionId, observation]) => {
@@ -954,8 +1021,11 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                 }
                 if (controller.signal.aborted || isStale()) {
                     if (observeBeforeFollow) {
-                        await params.projection.removeLink(observation.link)
-                            .catch(() => undefined);
+                        await releaseStaleProjection(
+                            sessionId,
+                            reconcileGeneration,
+                            observation,
+                        );
                     }
                     await cleanupStaleRestore(
                         sessionId,
@@ -968,8 +1038,11 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                     await restoreFollowPolicy?.(sessionId, controller.signal);
                 if (controller.signal.aborted || isStale()) {
                     if (observeBeforeFollow) {
-                        await params.projection.removeLink(observation.link)
-                            .catch(() => undefined);
+                        await releaseStaleProjection(
+                            sessionId,
+                            reconcileGeneration,
+                            observation,
+                        );
                     }
                     await cleanupStaleRestore(
                         sessionId,
@@ -992,8 +1065,11 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                     });
                 }
                 if (controller.signal.aborted || isStale()) {
-                    await params.projection.removeLink(observation.link)
-                        .catch(() => undefined);
+                    await releaseStaleProjection(
+                        sessionId,
+                        reconcileGeneration,
+                        observation,
+                    );
                     await cleanupStaleRestore(
                         sessionId,
                         reconcileGeneration,
@@ -1006,8 +1082,11 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                     reason: 'session_archived',
                 });
                 if (controller.signal.aborted || isStale()) {
-                    await params.projection.removeLink(observation.link)
-                        .catch(() => undefined);
+                    await releaseStaleProjection(
+                        sessionId,
+                        reconcileGeneration,
+                        observation,
+                    );
                     await cleanupStaleRestore(
                         sessionId,
                         reconcileGeneration,
@@ -1045,6 +1124,10 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
         if (disposed || !online) return;
         online = false;
         generation += 1;
+        localCustodyReleasedThroughGeneration = Math.max(
+            localCustodyReleasedThroughGeneration,
+            generation,
+        );
         activeController?.abort();
         activeController = null;
         const tracked = [...trackedPolicies.entries()];
@@ -1086,13 +1169,13 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
             transitionGeneration,
             previousRestore,
         } = invalidateActiveRestore();
-        hardReleasedThroughGeneration = Math.max(
-            hardReleasedThroughGeneration,
+        localCustodyReleasedThroughGeneration = Math.max(
+            localCustodyReleasedThroughGeneration,
             transitionGeneration,
         );
         return enqueueLifecycleTransition(async () => {
             await previousRestore?.catch(() => undefined);
-            await hardReleaseTrackedPolicies();
+            await releaseTrackedPoliciesForAccountScope();
             if (
                 disposed
                 || !online
@@ -1119,7 +1202,7 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
         );
         return enqueueLifecycleTransition(async () => {
             await previousRestore?.catch(() => undefined);
-            await hardReleaseTrackedPolicies();
+            await retireTrackedPoliciesForCredentialLoss();
             await params.followLeaseManager
                 ?.releaseSessionsForCredentialInvalidation();
             if (

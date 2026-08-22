@@ -3,15 +3,18 @@
  * Provides endpoints for listing sessions, stopping sessions, and daemon shutdown
  */
 
-import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
+import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { createDaemonControlAuthGuard } from './controlAuth';
-import { Metadata } from '@/api/types';
+import { isUnattestedPublicV1RunnerRolloutMutation } from './plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
+import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 import {
   CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES,
   CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
@@ -25,7 +28,10 @@ import {
   type ConnectedServiceRunReleaseHandler,
   type ConnectedServiceRunGenerationCurrentHandler,
 } from './connectedServices/runs/materializeContract';
-import { TrackedSession } from './types';
+import type {
+  RunnerAgentInvocationContext,
+  TrackedSession,
+} from './types';
 import {
   StopSessionResultSchema,
   type StopSessionResult,
@@ -62,9 +68,14 @@ import {
   RestartAllSessionRunnersRequestV1Schema,
   RestartAllSessionRunnersResultV1Schema,
   RestartSessionRunnerRequestV1Schema,
+  RestartSessionRunnerRequestV2Schema,
   RestartSessionRunnerResultV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
   SessionRunnerRuntimeStateV1Schema,
+  SessionRunnerRuntimeStatusV2Schema,
+  SessionOrganizationPlacementV1Schema,
+  SessionCreationTerminalSpawnErrorDetailSchema,
+  isSessionCreationTerminalSpawnErrorDetail,
   SpawnSessionErrorCodeSchema,
   SessionUsageLimitRecoveryResumePromptModeV1Schema,
   SimulatorPreviewActionResultV1Schema,
@@ -81,9 +92,15 @@ import {
   type RestartAllSessionRunnersRequestV1,
   type RestartAllSessionRunnersResultV1,
   type RestartSessionRunnerRequestV1,
+  type RestartSessionRunnerRequestV2,
   type RestartSessionRunnerResultV1,
   type SessionRunnerStatusGetRequestV1,
   type SessionRunnerRuntimeStateV1,
+  type SessionRunnerRuntimeStatusV2,
+  type SessionCreationTerminalSpawnErrorDetail,
+  type SpawnSessionErrorCode,
+  type SpawnSessionErrorDetail,
+  type SessionMetadataPublisherPreconditionV1,
   type SessionUsageLimitRecoveryResumePromptModeV1,
 } from '@happier-dev/protocol';
 import {
@@ -95,6 +112,12 @@ import {
   ProviderAccountUsageAdoptionV1Schema,
   type ProviderAccountUsageAdoptionV1,
 } from './connectedServices/accountUsage/adoption';
+import {
+  ConnectedServiceTurnLifecycleRequestBodySchema,
+  ConnectedServiceTurnLifecycleResultSchema,
+  type ConnectedServiceTurnLifecycleRequestBody,
+  type ConnectedServiceTurnLifecycleResult,
+} from './connectedServices/connectedServiceTurnLifecycleContract';
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
 import { toSshTunnelErrorResponse, type SshTunnelSupervisor } from '@/daemon/ssh/tunnels';
 import type { LocalServiceInventoryRoutes } from './local/services/inventory/routes';
@@ -103,27 +126,33 @@ import type { LocalServiceManagedRoutes } from './local/services/managed/routes'
 import type { LocalServiceActionRoutes } from './local/services/actions/routes';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
 import type { LocalServicePublicPreviewRoutes } from './local/services/public/routes';
-import type { PluginLocalServicesBridgeControlRoutes } from './local/services/pluginBridgeRoutes';
 import {
-  PluginLocalServicesBridgeControlRequestV1Schema,
-  PluginLocalServicesBridgeControlResponseV1Schema,
-  type PluginLocalServicesBridgeControlRequestV1,
-} from './local/services/pluginBridgeProtocol';
-import { verifyPluginLocalServicesBridgeToken } from './local/services/pluginBridgeAuthorization';
+  readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker,
+  verifyAgentRuntimeSessionBridgeToken,
+  type AgentRuntimeDaemonServiceAuthorityDocumentV2,
+  type AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
+} from './agentRuntime/sessionBridgeAuthorization';
+import { constantTimeEqualUtf8 } from './privateBearerFile';
+import type {
+  PersistedTakeoverAdmissionPhase,
+  TakeoverAdmissionMode,
+} from './spawn/persistedTakeoverAdmission';
 import {
-  AGENT_RUNTIME_DAEMON_BRIDGE_PATH,
-  AgentRuntimeDaemonBridgeRequestV1Schema,
-  AgentRuntimeDaemonBridgeResponseV1Schema,
-  type AgentRuntimeDaemonBridgeRequestV1,
-} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
-import type { AgentRuntimeSessionBridgeRoutes } from './agentRuntime/sessionBridgeRoutes';
-import { verifyAgentRuntimeSessionBridgeToken } from './agentRuntime/sessionBridgeAuthorization';
+  AGENT_RUNTIME_DAEMON_SERVICES_PATH,
+  AgentRuntimeDaemonServiceRequestV1Schema,
+  AgentRuntimeDaemonServiceResponseV1Schema,
+  type AgentRuntimeDaemonServiceRequestV1,
+  type AgentRuntimeDaemonServiceResponseV1,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import type { ForegroundAgentRuntimeAdmissionOwner } from './agentRuntime/foregroundAdmission';
 import {
   FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
+  FOREGROUND_AGENT_RUNTIME_CLAIM_PATH,
   FOREGROUND_AGENT_RUNTIME_RELEASE_PATH,
   ForegroundAgentRuntimeAdmissionRequestV1Schema,
   ForegroundAgentRuntimeAdmissionResponseV1Schema,
+  ForegroundAgentRuntimeClaimRequestV1Schema,
+  ForegroundAgentRuntimeClaimResponseV1Schema,
   ForegroundAgentRuntimeReleaseRequestV1Schema,
   ForegroundAgentRuntimeReleaseResponseV1Schema,
 } from './agentRuntime/foregroundAdmissionContract';
@@ -134,10 +163,25 @@ import {
 } from './connectedServices/runtimeAuth/types';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 
-type AgentRuntimeSessionBridgeControlRoutes = Pick<
-  AgentRuntimeSessionBridgeRoutes,
-  'dispatch' | 'disposeSession' | 'dispose'
->;
+export type AgentRuntimeDaemonServiceRoutes = Readonly<{
+  dispatch(
+    request: AgentRuntimeDaemonServiceRequestV1,
+    context: Readonly<{
+      sessionId: string;
+      runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
+      retainedAgent: AgentSessionRunnerBindingV1;
+      invocationContext: RunnerAgentInvocationContext;
+      trackedSession?: TrackedSession;
+      signal?: AbortSignal;
+    }>,
+  ): Promise<AgentRuntimeDaemonServiceResponseV1>;
+}>;
+type AgentRuntimeDaemonServiceAdmission = Readonly<{
+  turnId: string;
+  inputId: string;
+  userMessageSeq: number | null;
+  userMessageSeqs: readonly number[];
+}>;
 import type {
   RuntimeAuthRecoveryScheduleResult,
   RuntimeAuthRecoverySchedulerLike,
@@ -150,7 +194,14 @@ import { sanitizeConnectedServiceDiagnosticString } from './connectedServices/ru
 import {
   isLocallyCompleteWithoutProof,
 } from './connectedServices/runtimeAuth/resolveRuntimeAuthRecoveryOutcome';
+import type {
+  AgentSessionRunnerBindingV1,
+} from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import {
+  authorizeTrackedRunnerAgentDaemonServiceOperation,
+} from './agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation';
 import { buildConnectedServiceRuntimeAuthSwitchAttemptLogContext } from './connectedServices/runtimeAuth/buildConnectedServiceRuntimeAuthSwitchAttemptLogContext';
+import { registerDaemonControlRequestTiming } from './diagnostics/registerDaemonControlRequestTiming';
 import {
   applyAuthorizedRuntimeAuthFailureSourceBinding,
   type RuntimeAuthFailureSourceAuthorization,
@@ -271,82 +322,127 @@ function isCanonicalSessionId(value: unknown): value is string {
   return !/^PID-\d+$/.test(normalized);
 }
 
-function isAgentRuntimeSessionBridgeRequestAuthorized(
-  request: AgentRuntimeDaemonBridgeRequestV1,
-  sessions: Iterable<TrackedSession>,
+type TrackedAgentRuntimeDaemonServiceAuthority = Readonly<{
+  tracked: TrackedSession;
+  authorityPath: string;
+  capabilityHash: string;
+  authority: AgentRuntimeDaemonServiceAuthorityDocumentV2;
+  runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
+  retainedAgent: AgentSessionRunnerBindingV1;
+  invocationContext: RunnerAgentInvocationContext;
+}>;
+
+async function resolveTrackedAgentRuntimeDaemonServiceAuthority(
+  tracked: TrackedSession,
+  sessionId: string,
+): Promise<TrackedAgentRuntimeDaemonServiceAuthority | null> {
+  const authorityPath =
+    typeof tracked.agentRuntimeDaemonServiceAuthorityFilePath === 'string'
+      ? tracked.agentRuntimeDaemonServiceAuthorityFilePath.trim()
+      : '';
+  const capabilityHash =
+    typeof tracked.agentRuntimeDaemonServiceCapabilityHash === 'string'
+      ? tracked.agentRuntimeDaemonServiceCapabilityHash
+      : '';
+  const runnerPid = tracked.sessionRunnerPid ?? tracked.pid;
+  const processStartTimeMs = tracked.processStartTimeMs;
+  const processCommandHash = tracked.processCommandHash;
+  const invocationContext = tracked.runnerAgentInvocationContext;
+  if (
+    tracked.agentRuntimeRunnerRestartDisposition
+      === 'runner_authority_unavailable'
+    || tracked.happySessionId !== sessionId
+    || !authorityPath
+    || !capabilityHash
+    || !Number.isSafeInteger(runnerPid)
+    || runnerPid < 1
+    || typeof processStartTimeMs !== 'number'
+    || !Number.isSafeInteger(processStartTimeMs)
+    || processStartTimeMs < 0
+    || typeof processCommandHash !== 'string'
+    || !invocationContext
+  ) {
+    return null;
+  }
+  const authority =
+    await readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker({
+      happyHomeDir: configuration.happyHomeDir,
+      publicReleaseRing: configuration.publicReleaseRing,
+      path: authorityPath,
+      sessionId,
+      runner: {
+        pid: runnerPid,
+        processStartTimeMs,
+        processCommandHash,
+      },
+    });
+  if (
+    !authority
+    || tracked.runnerAgentImmutableGenerationId
+      !== authority.retainedAgent.immutableGenerationId
+    || !verifyAgentRuntimeSessionBridgeToken({
+      providedToken: authority.capability,
+      expectedTokenHash: capabilityHash,
+    })
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    tracked,
+    authorityPath,
+    capabilityHash,
+    authority,
+    runner: authority.runner,
+    retainedAgent: authority.retainedAgent,
+    invocationContext,
+  });
+}
+
+function trackedAgentRuntimeDaemonServiceAuthorityMatches(
+  expected: TrackedAgentRuntimeDaemonServiceAuthority,
+  current: TrackedAgentRuntimeDaemonServiceAuthority | null,
 ): boolean {
-  const bindingOperation = request.operation.kind === 'factory.prepare'
-    || request.operation.kind === 'session.open'
-    ? request.operation
-    : null;
+  return Boolean(
+    current
+    && current.tracked === expected.tracked
+    && current.authorityPath === expected.authorityPath
+    && current.capabilityHash === expected.capabilityHash
+    && current.invocationContext === expected.invocationContext
+    && isDeepStrictEqual(current.authority, expected.authority),
+  );
+}
+
+function findAgentRuntimeDaemonServiceAuthorizedSession(
+  request: AgentRuntimeDaemonServiceRequestV1,
+  sessions: Iterable<TrackedSession>,
+  providedCapability: string,
+): TrackedSession | null {
   for (const tracked of sessions) {
     if (
-      tracked.reattachedFromDiskMarker === true
-      || tracked.happySessionId !== request.context.sessionId
-      || tracked.agentRuntimeBridgePluginId !== request.context.pluginId
-      || tracked.agentRuntimeBridgeAgentId !== request.context.agentId
-      || tracked.agentRuntimeBridgeGeneration !== request.context.generation
-      || tracked.agentRuntimeBridgeBackendId
-        !== (bindingOperation
-          ? bindingOperation.descriptor.backendId
-          : tracked.agentRuntimeBridgeBackendId)
-      || !tracked.agentRuntimeBridgeTokenHash
+      tracked.agentRuntimeRunnerRestartDisposition
+        === 'runner_authority_unavailable'
+      || tracked.happySessionId
+        !== request.context.sessionId
+      || !tracked
+        .agentRuntimeDaemonServiceCapabilityHash
     ) {
       continue;
     }
-    if (bindingOperation) {
-      if (
-        bindingOperation.request.sessionId !== request.context.sessionId
-        || bindingOperation.descriptor.pluginId !== request.context.pluginId
-        || bindingOperation.descriptor.agentId !== request.context.agentId
-        || bindingOperation.descriptor.generation !== request.context.generation
-      ) {
-        return false;
-      }
-    }
-    return verifyAgentRuntimeSessionBridgeToken({
-      providedToken: request.context.token,
-      expectedTokenHash: tracked.agentRuntimeBridgeTokenHash,
-    });
+    const authorized = (
+      verifyAgentRuntimeSessionBridgeToken({
+        providedToken: providedCapability,
+        expectedTokenHash:
+          tracked.agentRuntimeDaemonServiceCapabilityHash,
+      })
+      && verifyAgentRuntimeSessionBridgeToken({
+        providedToken: request.context.token,
+        expectedTokenHash:
+          tracked.agentRuntimeDaemonServiceCapabilityHash,
+      })
+    );
+    return authorized ? tracked : null;
   }
-  return false;
-}
-
-function isPluginLocalServicesBridgeRequestAuthorized(
-  request: PluginLocalServicesBridgeControlRequestV1,
-  sessions: Iterable<TrackedSession>,
-): boolean {
-  const requestedSessionId = request.context.sessionId.trim();
-  const requestedPluginId = request.context.pluginId.trim();
-  const requestedContributionId = request.context.contributionId.trim();
-  const providedToken = request.bridgeToken?.trim() ?? '';
-  if (!requestedSessionId || !requestedPluginId || !requestedContributionId || !providedToken) {
-    return false;
-  }
-
-  for (const session of sessions) {
-    if (session.startedBy !== 'daemon') continue;
-    const sessionId = typeof session.happySessionId === 'string' ? session.happySessionId.trim() : '';
-    if (sessionId !== requestedSessionId) continue;
-    const expectedTokenHash = typeof session.localServicesBridgeTokenHash === 'string'
-      ? session.localServicesBridgeTokenHash.trim()
-      : '';
-    if (!expectedTokenHash || !verifyPluginLocalServicesBridgeToken({
-      providedToken,
-      expectedTokenHash,
-    })) continue;
-    const expectedPluginId = typeof session.localServicesBridgePluginId === 'string'
-      ? session.localServicesBridgePluginId.trim()
-      : '';
-    if (expectedPluginId !== requestedPluginId) continue;
-    const expectedContributionId = typeof session.localServicesBridgeContributionId === 'string'
-      ? session.localServicesBridgeContributionId.trim()
-      : '';
-    if (expectedContributionId !== requestedContributionId) continue;
-    return true;
-  }
-
-  return false;
+  return null;
 }
 
 function resolveDaemonControlBodyLimitBytes(): number {
@@ -443,8 +539,12 @@ function readRuntimeAuthRecoveryAttemptId(recovery: unknown): string | null {
 }
 
 type SpawnNonceCorrelationRecord = Readonly<{
-  status: 'pending' | 'success';
+  status: 'pending' | 'success' | 'error';
   sessionId?: string;
+  sessionCreationOutcome?: SessionCreationOutcome;
+  errorCode?: SpawnSessionErrorCode;
+  errorMessage?: string;
+  errorDetail?: SpawnSessionErrorDetail;
   updatedAtMs: number;
   expiresAtMs: number;
 }>;
@@ -453,7 +553,43 @@ type SpawnNonceAdmissionResult =
   | { type: 'none' }
   | { type: 'claimed' }
   | { type: 'pending' }
-  | { type: 'success'; sessionId: string };
+  | { type: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; errorDetail?: SpawnSessionErrorDetail }
+  | { type: 'success'; sessionId: string; sessionCreationOutcome?: SessionCreationOutcome };
+
+const SessionCreationOutcomeSchema = z.object({
+  disposition: z.enum(['created', 'rejoined']),
+  organizationPlacement: SessionOrganizationPlacementV1Schema,
+}).strict();
+
+// Success remains shape-compatible with released runners; failure is a strict
+// terminal counterpart on the same authenticated callback and carries no
+// Session/metadata truth because no Session was created or rejoined.
+const SessionStartedSuccessReportSchema = z.object({
+  sessionId: z.string(),
+  metadata: z.any(), // Metadata type from API
+  sessionCreationOutcome: SessionCreationOutcomeSchema.optional(),
+  persistedTakeoverAdmission: z.object({
+    mode: z.enum(['persisted', 'external_linked']),
+    operationId: z.string().trim().min(1).max(256),
+    attemptId: z.string().trim().min(1).max(256),
+    phase: z.enum(['admit', 'runtime_bound']).optional(),
+    publisherPrecondition: z.object({
+      machineId: z.string().trim().min(1).max(256),
+      committedFenceMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }).strict(),
+  }).strict().optional(),
+}).strict();
+
+const SessionStartedFailureReportSchema = z.object({
+  result: z.literal('failure'),
+  spawnNonce: z.string().trim().min(1),
+  errorDetail: SessionCreationTerminalSpawnErrorDetailSchema,
+}).strict();
+
+const SessionStartedReportSchema = z.union([
+  SessionStartedSuccessReportSchema,
+  SessionStartedFailureReportSchema,
+]);
 
 export type ConnectedAccountRequestAuthControlRoutes = Readonly<{
   authenticate: (capability: unknown) => ConnectedAccountRequestAuthSubject | null;
@@ -473,6 +609,7 @@ export function createDaemonControlApp({
   beforeShutdown,
   isShuttingDown,
   onHappySessionWebhook,
+  onSessionStartupFailure,
   admitPersistedTakeover,
   controlToken,
   connectedAccountRequestAuth,
@@ -490,6 +627,7 @@ export function createDaemonControlApp({
   handleSessionRunnerRestart,
   handleSessionRunnerRestartAll,
   handleSessionRunnerStatusGet,
+  handleSessionRunnerStatusV2Get,
   handleConnectedServiceTurnLifecycle,
   handleConnectedServiceUsageLimitWaitResumeCancel,
   handleConnectedServiceQuotaRecoveryCreditConsume,
@@ -500,8 +638,9 @@ export function createDaemonControlApp({
   localServicesPreview,
   localServicesActions,
   localServicesPublicPreview,
-  localServicesPluginBridge,
-  agentRuntimeSessionBridge,
+  agentRuntimeDaemonServices,
+  recordAgentRuntimeDaemonServiceAdmission,
+  clearAgentRuntimeDaemonServiceAdmission,
   foregroundAgentRuntimeAdmission,
   simulatorPreview,
   requestSelfRestart,
@@ -515,18 +654,32 @@ export function createDaemonControlApp({
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
-  beforeShutdown?: (input: Readonly<{
-    managedLocalServicesDisposition: 'permanent' | 'transfer';
-  }>) => Promise<void>;
+  beforeShutdown?: () => Promise<void>;
   // True once daemon shutdown / control-server stop has begun. Recovery handlers early-return when
   // set so switch/restart work is never run into a tearing-down daemon (a deferral, not an attempt).
   isShuttingDown?: () => boolean;
-  onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void | Promise<void>;
+  onHappySessionWebhook: (
+    sessionId: string,
+    metadata: Metadata,
+    reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
+    sessionCreationOutcome?: SessionCreationOutcome,
+  ) => void | Promise<void>;
+  /**
+   * Settles the existing PID-correlated spawn waiter for a strict terminal
+   * creation failure. It is intentionally separate from ordinary Session
+   * reporting because failure has no Session truth to reconcile.
+   */
+  onSessionStartupFailure?: (input: Readonly<{
+    spawnNonce: string;
+    errorDetail: SessionCreationTerminalSpawnErrorDetail;
+  }>) => boolean | Promise<boolean>;
   admitPersistedTakeover?: (input: Readonly<{
     sessionId: string;
+    mode: TakeoverAdmissionMode;
     operationId: string;
     attemptId: string;
-    phase: 'admit' | 'runtime_bound';
+    phase: PersistedTakeoverAdmissionPhase;
+    publisherPrecondition: SessionMetadataPublisherPreconditionV1;
     signal: AbortSignal;
   }>) => Promise<void>;
   controlToken: string;
@@ -568,13 +721,9 @@ export function createDaemonControlApp({
     explicit?: SessionUsageLimitRecoveryResumePromptModeV1;
   }>) => Promise<SessionUsageLimitRecoveryResumePromptModeV1>;
   runtimeAuthRecoveryScheduler?: RuntimeAuthRecoverySchedulerLike | null;
-  handleConnectedServiceTurnLifecycle?: (input: Readonly<{
-    sessionId: string;
-    turnId?: string;
-    event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
-    terminalStatus?: 'completed' | 'failed';
-    connectedServiceSelectionsEnvRaw?: string;
-  }>) => Promise<unknown>;
+  handleConnectedServiceTurnLifecycle?: (
+    input: ConnectedServiceTurnLifecycleRequestBody,
+  ) => Promise<ConnectedServiceTurnLifecycleResult>;
   handleConnectedServiceUsageLimitWaitResumeCancel?: (input: Readonly<{
     sessionId: string;
     attemptId: string;
@@ -587,9 +736,10 @@ export function createDaemonControlApp({
     accountSettingsVersionHint?: number;
   }>) => Promise<unknown>;
   handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
-  handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1) => Promise<RestartSessionRunnerResultV1>;
+  handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2) => Promise<RestartSessionRunnerResultV1>;
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
   handleSessionRunnerStatusGet?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStateV1>;
+  handleSessionRunnerStatusV2Get?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStatusV2>;
   handleConnectedServiceQuotaRecoveryCreditConsume?: (
     input: ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
   ) => Promise<unknown>;
@@ -597,6 +747,7 @@ export function createDaemonControlApp({
     sessionId: string;
     snapshot: ProviderAccountUsageSnapshotV1;
     source?: ConnectedServiceUsageSourceV1;
+    deriveCredentialFingerprintFromSource?: true;
     credentialFingerprint?: string | null;
     policyDisposition?: 'evidence_only';
   }>) => Promise<unknown>;
@@ -610,8 +761,15 @@ export function createDaemonControlApp({
   localServicesPreview?: Pick<LocalServicePreviewRoutes, 'getSnapshot'>;
   localServicesActions?: LocalServiceActionRoutes;
   localServicesPublicPreview?: LocalServicePublicPreviewRoutes;
-  localServicesPluginBridge?: PluginLocalServicesBridgeControlRoutes;
-  agentRuntimeSessionBridge?: AgentRuntimeSessionBridgeControlRoutes;
+  agentRuntimeDaemonServices?: AgentRuntimeDaemonServiceRoutes;
+  recordAgentRuntimeDaemonServiceAdmission?: (
+    tracked: TrackedSession,
+    admission: AgentRuntimeDaemonServiceAdmission,
+  ) => Promise<boolean>;
+  clearAgentRuntimeDaemonServiceAdmission?: (
+    tracked: TrackedSession,
+    admission: AgentRuntimeDaemonServiceAdmission,
+  ) => Promise<boolean>;
   foregroundAgentRuntimeAdmission?: ForegroundAgentRuntimeAdmissionOwner;
   simulatorPreview?: SimulatorPreviewRoutes;
   requestSelfRestart?: (request?: DaemonSelfRestartRequest) => Promise<unknown>;
@@ -629,6 +787,9 @@ export function createDaemonControlApp({
   const app = fastify({
     logger: false, // We use our own logger
     bodyLimit: resolveDaemonControlBodyLimitBytes(),
+  });
+  registerDaemonControlRequestTiming(app, {
+    debug: (message, data) => logger.debug(message, data),
   });
 
   // Set up Zod type provider
@@ -735,7 +896,7 @@ export function createDaemonControlApp({
     const nowMs = Date.now();
     pruneSpawnNonceCorrelation(nowMs);
     const current = spawnNonceCorrelationByNonce.get(normalizedNonce);
-    if (current?.status === 'success' && current.expiresAtMs > nowMs) return;
+    if ((current?.status === 'success' || current?.status === 'error') && current.expiresAtMs > nowMs) return;
     spawnNonceCorrelationByNonce.set(normalizedNonce, {
       status: 'pending',
       updatedAtMs: nowMs,
@@ -743,15 +904,47 @@ export function createDaemonControlApp({
     });
   };
 
-  const markSpawnNonceSuccess = (spawnNonce: string, sessionId: string): void => {
+  const markSpawnNonceSuccess = (
+    spawnNonce: string,
+    sessionId: string,
+    sessionCreationOutcome?: SessionCreationOutcome,
+  ): void => {
     const normalizedNonce = spawnNonce.trim();
     const normalizedSessionId = sessionId.trim();
     if (!normalizedNonce || !isCanonicalSessionId(normalizedSessionId)) return;
     const nowMs = Date.now();
     pruneSpawnNonceCorrelation(nowMs);
+    const current = spawnNonceCorrelationByNonce.get(normalizedNonce);
+    if (current?.status === 'error' && current.expiresAtMs > nowMs) return;
     spawnNonceCorrelationByNonce.set(normalizedNonce, {
       status: 'success',
       sessionId: normalizedSessionId,
+      ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+      updatedAtMs: nowMs,
+      expiresAtMs: nowMs + spawnNonceSuccessTtlMs,
+    });
+  };
+
+  const markSpawnNonceError = (
+    spawnNonce: string,
+    error: Readonly<{
+      errorCode: SpawnSessionErrorCode;
+      errorMessage: string;
+      errorDetail?: SpawnSessionErrorDetail;
+    }>,
+  ): void => {
+    const normalizedNonce = spawnNonce.trim();
+    const errorMessage = error.errorMessage.trim();
+    if (!normalizedNonce || !errorMessage) return;
+    const nowMs = Date.now();
+    pruneSpawnNonceCorrelation(nowMs);
+    const current = spawnNonceCorrelationByNonce.get(normalizedNonce);
+    if ((current?.status === 'success' || current?.status === 'error') && current.expiresAtMs > nowMs) return;
+    spawnNonceCorrelationByNonce.set(normalizedNonce, {
+      status: 'error',
+      errorCode: error.errorCode,
+      errorMessage,
+      ...(error.errorDetail ? { errorDetail: error.errorDetail } : {}),
       updatedAtMs: nowMs,
       expiresAtMs: nowMs + spawnNonceSuccessTtlMs,
     });
@@ -778,7 +971,13 @@ export function createDaemonControlApp({
         ? child.happySessionId.trim()
         : '';
       if (isCanonicalSessionId(childSessionId)) {
-        return { type: 'success', sessionId: childSessionId };
+        return {
+          type: 'success',
+          sessionId: childSessionId,
+          ...(child.sessionCreationOutcome
+            ? { sessionCreationOutcome: child.sessionCreationOutcome }
+            : {}),
+        };
       }
       foundPending = true;
     }
@@ -793,14 +992,32 @@ export function createDaemonControlApp({
     pruneSpawnNonceCorrelation(nowMs);
     const current = spawnNonceCorrelationByNonce.get(normalizedNonce);
     if (current?.status === 'success' && isCanonicalSessionId(current.sessionId)) {
-      return { type: 'success', sessionId: current.sessionId.trim() };
+      return {
+        type: 'success',
+        sessionId: current.sessionId.trim(),
+        ...(current.sessionCreationOutcome
+          ? { sessionCreationOutcome: current.sessionCreationOutcome }
+          : {}),
+      };
     }
     if (current?.status === 'pending') {
       return { type: 'pending' };
     }
+    if (current?.status === 'error' && current.errorCode && current.errorMessage) {
+      return {
+        type: 'error',
+        errorCode: current.errorCode,
+        errorMessage: current.errorMessage,
+        ...(current.errorDetail ? { errorDetail: current.errorDetail } : {}),
+      };
+    }
     const tracked = readTrackedSpawnNonceAdmission(normalizedNonce);
     if (tracked?.type === 'success') {
-      markSpawnNonceSuccess(normalizedNonce, tracked.sessionId);
+      markSpawnNonceSuccess(
+        normalizedNonce,
+        tracked.sessionId,
+        tracked.sessionCreationOutcome,
+      );
       return tracked;
     }
     if (tracked?.type === 'pending') {
@@ -826,7 +1043,11 @@ export function createDaemonControlApp({
         ? child.happySessionId.trim()
         : '';
       if (!trackedNonce || trackedSessionId !== normalizedSessionId) continue;
-      markSpawnNonceSuccess(trackedNonce, trackedSessionId);
+      markSpawnNonceSuccess(
+        trackedNonce,
+        trackedSessionId,
+        child.sessionCreationOutcome,
+      );
     }
   };
 
@@ -899,6 +1120,38 @@ export function createDaemonControlApp({
     };
   };
 
+  const createConnectedAccountRequestAuthRequestLifetime = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Readonly<{
+    signal: AbortSignal;
+    dispose: () => void;
+  }> => {
+    const controller = new AbortController();
+    const abort = () => {
+      if (!controller.signal.aborted) {
+        controller.abort(new Error('Connected-account request-auth request ended'));
+      }
+    };
+    const abortIfResponseDidNotFinish = () => {
+      if (!reply.raw.writableEnded) {
+        abort();
+      }
+    };
+    request.raw.once('aborted', abort);
+    reply.raw.once('close', abortIfResponseDidNotFinish);
+    if (request.raw.aborted) {
+      abort();
+    }
+    return {
+      signal: controller.signal,
+      dispose: () => {
+        request.raw.removeListener('aborted', abort);
+        reply.raw.removeListener('close', abortIfResponseDidNotFinish);
+      },
+    };
+  };
+
 
   // Least-privilege gate for the execution-run connected-services bridge. Accepts only the scoped
   // run-materialize capability token via the injected verifier; the master control token is
@@ -966,10 +1219,12 @@ export function createDaemonControlApp({
       reply.code(401);
       return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
     }
+    const requestLifetime = createConnectedAccountRequestAuthRequestLifetime(request, reply);
     try {
       const value = await connectedAccountRequestAuth.lookupRequestAuth({
         subject: principal,
         purpose: request.body.purpose,
+        signal: requestLifetime.signal,
       });
       if (!principal.isCurrent()) {
         reply.code(409);
@@ -978,6 +1233,8 @@ export function createDaemonControlApp({
       return { ok: true as const, value };
     } catch (error) {
       return sendConnectedAccountRequestAuthFailure(reply, error);
+    } finally {
+      requestLifetime.dispose();
     }
   });
 
@@ -999,10 +1256,12 @@ export function createDaemonControlApp({
       reply.code(401);
       return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
     }
+    const requestLifetime = createConnectedAccountRequestAuthRequestLifetime(request, reply);
     try {
       const value = await connectedAccountRequestAuth.refreshAfterAuthFailure({
         subject: principal,
         request: request.body,
+        signal: requestLifetime.signal,
       });
       if (!principal.isCurrent()) {
         reply.code(409);
@@ -1011,6 +1270,8 @@ export function createDaemonControlApp({
       return { ok: true as const, value };
     } catch (error) {
       return sendConnectedAccountRequestAuthFailure(reply, error);
+    } finally {
+      requestLifetime.dispose();
     }
   });
 
@@ -1032,10 +1293,12 @@ export function createDaemonControlApp({
       reply.code(401);
       return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
     }
+    const requestLifetime = createConnectedAccountRequestAuthRequestLifetime(request, reply);
     try {
       const value = await connectedAccountRequestAuth.reportQuotaFailure({
         subject: principal,
         request: request.body,
+        signal: requestLifetime.signal,
       });
       if (!principal.isCurrent()) {
         reply.code(409);
@@ -1044,6 +1307,8 @@ export function createDaemonControlApp({
       return { ok: true as const, value };
     } catch (error) {
       return sendConnectedAccountRequestAuthFailure(reply, error);
+    } finally {
+      requestLifetime.dispose();
     }
   });
 
@@ -1194,6 +1459,47 @@ export function createDaemonControlApp({
         reasonCode: 'unsupported_daemon_version' as const,
       };
     }
+    if (isUnattestedPublicV1RunnerRolloutMutation(request.body)) {
+      return {
+        ok: false as const,
+        status: 'ineligible' as const,
+        sessionId: request.body.sessionId,
+        reasonCode: 'runner_generation_unattested' as const,
+      };
+    }
+    return await handleSessionRunnerRestart(request.body);
+  });
+
+  typed.post('/session-runners/restart-v2', {
+    schema: {
+      body: RestartSessionRunnerRequestV2Schema,
+      response: {
+        200: RestartSessionRunnerResultV1Schema,
+        401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+        501: z.object({
+          ok: z.literal(false),
+          status: z.literal('unsupported_daemon'),
+          sessionId: z.string(),
+          reasonCode: z.literal('unsupported_daemon_version'),
+        }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!handleSessionRunnerRestart) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        status: 'unsupported_daemon' as const,
+        sessionId: request.body.sessionId,
+        reasonCode: 'unsupported_daemon_version' as const,
+      };
+    }
     return await handleSessionRunnerRestart(request.body);
   });
 
@@ -1215,6 +1521,17 @@ export function createDaemonControlApp({
     }
     if (!handleSessionRunnerRestartAll) {
       reply.code(501);
+      return {
+        ok: false as const,
+        mode: request.body.mode,
+        requestedCount: 0,
+        restartedCount: 0,
+        skippedCount: 0,
+        failedCount: 0,
+        results: [],
+      };
+    }
+    if (isUnattestedPublicV1RunnerRolloutMutation(request.body)) {
       return {
         ok: false as const,
         mode: request.body.mode,
@@ -1256,18 +1573,34 @@ export function createDaemonControlApp({
     return await handleSessionRunnerStatusGet({ sessionId: request.body.sessionId });
   });
 
+  typed.post('/session-runners/status-v2', {
+    schema: {
+      body: SessionRunnerStatusGetRequestV1Schema,
+      response: {
+        200: SessionRunnerRuntimeStatusV2Schema,
+        401: authSchema401,
+        501: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('unsupported_daemon_version'),
+        }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!handleSessionRunnerStatusV2Get) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        errorCode: 'unsupported_daemon_version' as const,
+      };
+    }
+    return await handleSessionRunnerStatusV2Get({ sessionId: request.body.sessionId });
+  });
+
   // Session reports itself after creation
   typed.post('/session-started', {
     schema: {
-      body: z.object({
-        sessionId: z.string(),
-        metadata: z.any(), // Metadata type from API
-        persistedTakeoverAdmission: z.object({
-          operationId: z.string().trim().min(1).max(256),
-          attemptId: z.string().trim().min(1).max(256),
-          phase: z.enum(['admit', 'runtime_bound']).optional(),
-        }).strict().optional(),
-      }).strict(),
+      body: SessionStartedReportSchema,
       response: {
         200: z.object({
           status: z.literal('ok')
@@ -1277,6 +1610,7 @@ export function createDaemonControlApp({
           status: z.literal('error'),
           errorCode: z.enum([
             'session_startup_reconciliation_failed',
+            'session_startup_failure_unavailable',
             'persisted_takeover_admission_failed',
             'persisted_takeover_admission_upgrade_required',
           ]),
@@ -1285,7 +1619,29 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    const { sessionId, metadata, persistedTakeoverAdmission } = request.body;
+    if ('result' in request.body && request.body.result === 'failure') {
+      if (!onSessionStartupFailure) {
+        reply.code(503);
+        return {
+          status: 'error' as const,
+          errorCode: 'session_startup_failure_unavailable' as const,
+        };
+      }
+      logger.debug('[CONTROL SERVER] Session startup failure report received');
+      await onSessionStartupFailure({
+        spawnNonce: request.body.spawnNonce,
+        errorDetail: request.body.errorDetail,
+      });
+      return { status: 'ok' as const };
+    }
+
+    const successReport = SessionStartedSuccessReportSchema.parse(request.body);
+    const {
+      sessionId,
+      metadata,
+      sessionCreationOutcome,
+      persistedTakeoverAdmission,
+    } = successReport;
 
     if (persistedTakeoverAdmission) {
       // The host sends this strict, attempt-scoped request only after its ordinary startup
@@ -1318,14 +1674,16 @@ export function createDaemonControlApp({
       try {
         await admitPersistedTakeover({
           sessionId,
+          mode: persistedTakeoverAdmission.mode,
           operationId: persistedTakeoverAdmission.operationId,
           attemptId: persistedTakeoverAdmission.attemptId,
           phase: persistedTakeoverAdmission.phase,
+          publisherPrecondition: persistedTakeoverAdmission.publisherPrecondition,
           signal: requestLifetime.signal,
         });
         return { status: 'ok' as const };
       } catch (error) {
-        logger.debug('[CONTROL SERVER] Persisted takeover admission failed', error);
+        logger.debug('[CONTROL SERVER] Persisted takeover admission failed');
         reply.code(503);
         return {
           status: 'error' as const,
@@ -1337,17 +1695,26 @@ export function createDaemonControlApp({
       }
     }
 
-    logger.debug(`[CONTROL SERVER] Session started: ${sessionId}`);
+    logger.debug('[CONTROL SERVER] Session startup report received');
     let requiredReadiness: Promise<void>;
     try {
-      requiredReadiness = Promise.resolve(onHappySessionWebhook(sessionId, metadata));
+      requiredReadiness = Promise.resolve(
+        sessionCreationOutcome
+          ? onHappySessionWebhook(
+              sessionId,
+              metadata,
+              undefined,
+              sessionCreationOutcome,
+            )
+          : onHappySessionWebhook(sessionId, metadata),
+      );
     } catch (error) {
       requiredReadiness = Promise.reject(error);
     }
     try {
       await requiredReadiness;
     } catch (error) {
-      logger.debug('[CONTROL SERVER] Session startup reconciliation failed', error);
+      logger.debug('[CONTROL SERVER] Session startup reconciliation failed');
       reply.code(503);
       return {
         status: 'error' as const,
@@ -1469,7 +1836,19 @@ export function createDaemonControlApp({
       };
     }
     if (sourceAuthorization && sourceAuthorization.status !== 'authorized') {
-      return { ok: true as const, result: sourceAuthorization };
+      const result = await handleConnectedServiceRuntimeAuthFailure({
+        sessionId,
+        switchesThisTurn,
+        ...(request.body.reportId ? { interruptedOriginId: request.body.reportId } : {}),
+        resumePromptMode,
+        classification,
+        sourceAuthorization,
+      });
+      return {
+        ok: true as const,
+        result,
+        ...(resolveConnectedServiceRuntimeAuthResumePromptMode ? { resumePromptMode } : {}),
+      };
     }
     classification = applyAuthorizedRuntimeAuthFailureSourceBinding(classification, sourceAuthorization);
     const intake = await beginRuntimeAuthRecoveryIntake({
@@ -1640,17 +2019,11 @@ export function createDaemonControlApp({
 
   typed.post('/connected-service-turn-lifecycle', {
     schema: {
-      body: z.object({
-        sessionId: z.string().min(1),
-        turnId: z.string().trim().min(1).max(512).optional(),
-        event: z.enum(['prompt_or_steer', 'task_started', 'assistant_message_end', 'turn_cancelled']),
-        terminalStatus: z.enum(['completed', 'failed']).optional(),
-        connectedServiceSelectionsEnvRaw: z.string().min(1).max(64 * 1024).optional(),
-      }),
+      body: ConnectedServiceTurnLifecycleRequestBodySchema,
       response: {
         200: z.object({
           ok: z.literal(true),
-          result: z.unknown(),
+          result: ConnectedServiceTurnLifecycleResultSchema,
         }),
         401: authSchema401,
         503: daemonShuttingDownRouteResponseSchema,
@@ -1680,6 +2053,12 @@ export function createDaemonControlApp({
       ...(request.body.terminalStatus ? { terminalStatus: request.body.terminalStatus } : {}),
       ...(request.body.connectedServiceSelectionsEnvRaw
         ? { connectedServiceSelectionsEnvRaw: request.body.connectedServiceSelectionsEnvRaw }
+        : {}),
+      ...(request.body.requestedAction
+        ? { requestedAction: request.body.requestedAction }
+        : {}),
+      ...(request.body.activeTurnId !== undefined
+        ? { activeTurnId: request.body.activeTurnId }
         : {}),
     });
     return { ok: true as const, result };
@@ -1767,6 +2146,7 @@ export function createDaemonControlApp({
         sessionId: z.string().min(1),
         snapshot: ProviderAccountUsageSnapshotV1Schema,
         source: ConnectedServiceUsageSourceV1Schema.optional(),
+        deriveCredentialFingerprintFromSource: z.literal(true).optional(),
         credentialFingerprint: z.string().regex(/^sha256:[a-f0-9]{8}$/u).nullable().optional(),
         policyDisposition: z.literal('evidence_only').optional(),
       }),
@@ -1807,6 +2187,9 @@ export function createDaemonControlApp({
         sessionId: request.body.sessionId,
         snapshot: request.body.snapshot,
         ...(request.body.source ? { source: request.body.source } : {}),
+        ...(request.body.deriveCredentialFingerprintFromSource
+          ? { deriveCredentialFingerprintFromSource: true as const }
+          : {}),
         ...(request.body.credentialFingerprint !== undefined ? { credentialFingerprint: request.body.credentialFingerprint } : {}),
         ...(request.body.policyDisposition ? { policyDisposition: request.body.policyDisposition } : {}),
       });
@@ -2200,85 +2583,298 @@ export function createDaemonControlApp({
     return { ok: true as const, result: await localServicesActions.execute(request.body) };
   });
 
-  typed.post('/local-services/plugin/bridge', {
+  typed.post(AGENT_RUNTIME_DAEMON_SERVICES_PATH, {
     schema: {
-      body: PluginLocalServicesBridgeControlRequestV1Schema,
+      body: AgentRuntimeDaemonServiceRequestV1Schema,
       response: {
-        200: PluginLocalServicesBridgeControlResponseV1Schema,
+        200: AgentRuntimeDaemonServiceResponseV1Schema,
         401: authSchema401,
-        403: z.object({
-          ok: z.literal(false),
-          errorCode: z.literal('local_services_plugin_bridge_forbidden'),
-        }),
-        503: daemonShuttingDownRouteResponseSchema,
-        501: z.object({ ok: z.literal(false), errorCode: z.literal('local_services_plugin_bridge_unavailable') }),
+        403: AgentRuntimeDaemonServiceResponseV1Schema,
+        501: AgentRuntimeDaemonServiceResponseV1Schema,
+        503: z.union([
+          daemonShuttingDownRouteResponseSchema,
+          AgentRuntimeDaemonServiceResponseV1Schema,
+        ]),
       },
     },
-    preHandler: requireAuth,
   }, async (request, reply) => {
-    if (isDaemonQuiescing()) {
-      reply.code(503);
-      return daemonShuttingDownResponse();
+    const rawCapability =
+      request.headers['x-happier-daemon-token'];
+    const providedCapability =
+      typeof rawCapability === 'string'
+        ? rawCapability.trim()
+        : Array.isArray(rawCapability)
+          ? rawCapability[0]?.trim() ?? ''
+          : '';
+    if (!providedCapability) {
+      reply.code(401);
+      return { success: false as const, error: 'Unauthorized' };
     }
-    if (!localServicesPluginBridge) {
-      reply.code(501);
-      return { ok: false as const, errorCode: 'local_services_plugin_bridge_unavailable' as const };
-    }
-    if (!isPluginLocalServicesBridgeRequestAuthorized(request.body, getChildren())) {
+    const serviceSessions = getChildren();
+    const authorizedTracked = constantTimeEqualUtf8(
+      providedCapability,
+      request.body.context.token,
+    )
+      ? findAgentRuntimeDaemonServiceAuthorizedSession(
+        request.body,
+        serviceSessions,
+        providedCapability,
+      )
+      : null;
+    const trackedAuthority = authorizedTracked
+      ? await resolveTrackedAgentRuntimeDaemonServiceAuthority(
+        authorizedTracked,
+        request.body.context.sessionId,
+      )
+      : null;
+    const tracked = trackedAuthority?.tracked ?? null;
+    const canonicalTrackedSubjectExists =
+      serviceSessions.some((candidate) =>
+        candidate.happySessionId
+          === request.body.context.sessionId
+      );
+    const foregroundSubject = tracked
+      ? null
+      : canonicalTrackedSubjectExists
+        ? null
+        : foregroundAgentRuntimeAdmission
+          ?.authorizeDaemonServiceRequest({
+            request: request.body,
+            providedCapability,
+          }) ?? null;
+    if (!trackedAuthority && !foregroundSubject) {
       reply.code(403);
-      return { ok: false as const, errorCode: 'local_services_plugin_bridge_forbidden' as const };
-    }
-    const dispatchRequest: PluginLocalServicesBridgeControlRequestV1 = {
-      protocolVersion: request.body.protocolVersion,
-      context: request.body.context,
-      operation: request.body.operation,
-    };
-    return await localServicesPluginBridge.dispatch(dispatchRequest);
-  });
-
-  typed.post(AGENT_RUNTIME_DAEMON_BRIDGE_PATH, {
-    schema: {
-      body: AgentRuntimeDaemonBridgeRequestV1Schema,
-      response: {
-        200: AgentRuntimeDaemonBridgeResponseV1Schema,
-        401: authSchema401,
-        403: AgentRuntimeDaemonBridgeResponseV1Schema,
-        503: daemonShuttingDownRouteResponseSchema,
-        501: AgentRuntimeDaemonBridgeResponseV1Schema,
-      },
-    },
-    preHandler: requireAuth,
-  }, async (request, reply) => {
-    if (isDaemonQuiescing()) {
-      reply.code(503);
-      return daemonShuttingDownResponse();
-    }
-    if (!agentRuntimeSessionBridge) {
-      reply.code(501);
       return {
         ok: false as const,
         error: {
-          code: 'agent_runtime_daemon_bridge_unavailable',
-          message: 'Agent runtime daemon bridge is unavailable',
+          code:
+            'agent_runtime_daemon_service_forbidden',
+          message:
+            'Agent runtime daemon service request is forbidden',
         },
       };
     }
     if (
-      !isAgentRuntimeSessionBridgeRequestAuthorized(request.body, getChildren())
-      && !foregroundAgentRuntimeAdmission?.isBridgeRequestAuthorized(
-        request.body,
-      )
+      request.body.operation.kind === 'session.open.attest'
+      && !trackedAuthority
     ) {
       reply.code(403);
       return {
         ok: false as const,
         error: {
-          code: 'agent_runtime_daemon_bridge_forbidden',
-          message: 'Agent runtime daemon bridge request is forbidden',
+          code:
+            'agent_runtime_daemon_service_session_open_attestation_forbidden',
+          message:
+            'Runner Agent session-open attestation requires tracked marker custody',
         },
       };
     }
-    return await agentRuntimeSessionBridge.dispatch(request.body);
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!agentRuntimeDaemonServices) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        error: {
+          code:
+            'agent_runtime_daemon_service_unavailable',
+          message:
+            'Agent runtime daemon service is unavailable',
+        },
+      };
+    }
+    if (
+      request.body.operation.kind
+        === 'managed_server.endpoint.resolve'
+    ) {
+      const witness = request.body.operation.witness;
+      const foregroundAdmission =
+        foregroundSubject?.readAdmission() ?? null;
+      const trackedWitnessAuthorized = trackedAuthority
+        ? authorizeTrackedRunnerAgentDaemonServiceOperation({
+          tracked: trackedAuthority.tracked,
+          sessionId: request.body.context.sessionId,
+          runner: trackedAuthority.runner,
+          retainedAgent: trackedAuthority.retainedAgent,
+          witness,
+          allowIdleCurrentGeneration: false,
+        })
+        : false;
+      const foregroundWitnessAuthorized = Boolean(
+        foregroundAdmission
+        && foregroundAdmission.turnId
+          === witness.turnId
+        && foregroundAdmission.inputId
+          === witness.inputId
+        && foregroundAdmission.userMessageSeq
+          === witness.userMessageSeq
+        && foregroundAdmission.userMessageSeqs.length
+          === witness.userMessageSeqs.length
+        && foregroundAdmission.userMessageSeqs.every(
+          (sequence, index) =>
+            sequence
+              === witness.userMessageSeqs[index],
+        ),
+      );
+      if (
+        trackedAuthority
+          ? !trackedWitnessAuthorized
+          : !foregroundWitnessAuthorized
+      ) {
+        reply.code(403);
+        return {
+          ok: false as const,
+          error: {
+            code:
+              'agent_runtime_daemon_service_turn_forbidden',
+            message:
+              'Agent runtime daemon service turn witness is forbidden',
+          },
+        };
+      }
+    }
+    const trackedAuthorityAtDispatch = trackedAuthority;
+    const trackedAuthorityRemainsCurrent = async (): Promise<boolean> => {
+      if (!trackedAuthorityAtDispatch) return true;
+      const current = trackedAuthorityAtDispatch.tracked;
+      if (
+        current.agentRuntimeRunnerRestartDisposition
+          === 'runner_authority_unavailable'
+        || !getChildren().some(
+          (candidate) => candidate === current,
+        )
+      ) {
+        return false;
+      }
+      return trackedAgentRuntimeDaemonServiceAuthorityMatches(
+        trackedAuthorityAtDispatch,
+        await resolveTrackedAgentRuntimeDaemonServiceAuthority(
+          current,
+          request.body.context.sessionId,
+        ),
+      );
+    };
+    const admissionCustodyUnavailable = () => {
+      reply.code(503);
+      return {
+        ok: false as const,
+        error: {
+          code:
+            'agent_runtime_daemon_service_admission_custody_unavailable',
+          message:
+            'Agent runtime daemon service admission custody is unavailable',
+        },
+      };
+    };
+    const requestLifetime = new AbortController();
+    const onClientClose = () => requestLifetime.abort();
+    reply.raw.once('close', onClientClose);
+    let result: AgentRuntimeDaemonServiceResponseV1;
+    try {
+      result = await agentRuntimeDaemonServices.dispatch(
+        request.body,
+        trackedAuthority
+          ? {
+            sessionId: request.body.context.sessionId,
+            runner: trackedAuthority.runner,
+            retainedAgent: trackedAuthority.retainedAgent,
+            invocationContext: trackedAuthority.invocationContext,
+            trackedSession: trackedAuthority.tracked,
+            signal: requestLifetime.signal,
+          }
+          : {
+            sessionId: request.body.context.sessionId,
+            runner: foregroundSubject!.runner,
+            retainedAgent: foregroundSubject!.retainedAgent,
+            invocationContext: foregroundSubject!.invocationContext,
+            signal: requestLifetime.signal,
+          },
+      );
+    } finally {
+      reply.raw.removeListener('close', onClientClose);
+    }
+    if (
+      request.body.operation.kind
+        === 'turn.admission.authorize'
+      && result.ok
+      && result.result.kind === 'turn.admission'
+      && result.result.status === 'admitted'
+    ) {
+      if (!constantTimeEqualUtf8(
+          JSON.stringify(result.result.witness),
+          JSON.stringify(request.body.operation.witness),
+        )) {
+        reply.code(503);
+        return {
+          ok: false as const,
+          error: {
+            code:
+              'agent_runtime_daemon_service_admission_invalid',
+            message:
+              'Agent runtime daemon service admission result is invalid',
+          },
+        };
+      }
+      if (!await trackedAuthorityRemainsCurrent()) {
+        return admissionCustodyUnavailable();
+      }
+      const admission = {
+        turnId: result.result.witness.turnId,
+        inputId: result.result.witness.inputId,
+        userMessageSeq:
+          result.result.witness.userMessageSeq,
+        userMessageSeqs:
+          result.result.witness.userMessageSeqs,
+      } satisfies AgentRuntimeDaemonServiceAdmission;
+      const admissionRecorded = await (
+        tracked
+          ? recordAgentRuntimeDaemonServiceAdmission?.(
+            tracked,
+            admission,
+          ) ?? false
+          : foregroundSubject?.recordAdmission({
+            turnId: result.result.witness.turnId,
+            inputId: result.result.witness.inputId,
+            userMessageSeq:
+              result.result.witness.userMessageSeq,
+            userMessageSeqs:
+              result.result.witness.userMessageSeqs,
+          }) ?? false
+      );
+      if (!admissionRecorded) {
+        return admissionCustodyUnavailable();
+      }
+      if (tracked && !await trackedAuthorityRemainsCurrent()) {
+        try {
+          await clearAgentRuntimeDaemonServiceAdmission?.(
+            tracked,
+            admission,
+          );
+        } catch (error) {
+          logger.debug(
+            '[CONTROL SERVER] Failed to clear stale Runner Agent admission custody',
+            error,
+          );
+        }
+        return admissionCustodyUnavailable();
+      }
+      if (tracked) {
+        tracked.activeTurnId =
+          result.result.witness.turnId;
+        tracked.agentRuntimeDaemonServiceAdmittedTurnId =
+          result.result.witness.turnId;
+        tracked.agentRuntimeDaemonServiceAdmittedInputId =
+          result.result.witness.inputId;
+        tracked.agentRuntimeDaemonServiceAdmittedUserMessageSeq =
+          result.result.witness.userMessageSeq;
+        tracked.agentRuntimeDaemonServiceAdmittedUserMessageSeqs = [
+          ...result.result.witness.userMessageSeqs,
+        ];
+      }
+    }
+    return result;
   });
 
   typed.post(FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH, {
@@ -2309,6 +2905,51 @@ export function createDaemonControlApp({
       ...request.body,
       machineId,
     });
+  });
+
+  typed.post(FOREGROUND_AGENT_RUNTIME_CLAIM_PATH, {
+    schema: {
+      body: ForegroundAgentRuntimeClaimRequestV1Schema,
+      response: {
+        200: ForegroundAgentRuntimeClaimResponseV1Schema,
+        401: authSchema401,
+        403: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+      },
+    },
+  }, async (request, reply) => {
+    const rawCapability =
+      request.headers['x-happier-daemon-token'];
+    const providedCapability =
+      typeof rawCapability === 'string'
+        ? rawCapability.trim()
+        : Array.isArray(rawCapability)
+          ? rawCapability[0]?.trim() ?? ''
+          : '';
+    if (!providedCapability) {
+      reply.code(401);
+      return { success: false as const, error: 'Unauthorized' };
+    }
+    if (
+      !constantTimeEqualUtf8(
+        providedCapability,
+        request.body.capability,
+      )
+    ) {
+      reply.code(403);
+      return { success: false as const, error: 'Unauthorized' };
+    }
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!foregroundAgentRuntimeAdmission) {
+      reply.code(403);
+      return { success: false as const, error: 'Unauthorized' };
+    }
+    return await foregroundAgentRuntimeAdmission.claimEnvironment(
+      request.body,
+    );
   });
 
   typed.post(FOREGROUND_AGENT_RUNTIME_RELEASE_PATH, {
@@ -2523,6 +3164,7 @@ export function createDaemonControlApp({
         200: z.object({
           success: z.boolean(),
           sessionId: z.string().optional(),
+          sessionCreationOutcome: SessionCreationOutcomeSchema.optional(),
           approvedNewDirectoryCreation: z.boolean().optional()
         }),
         202: z.object({
@@ -2534,6 +3176,7 @@ export function createDaemonControlApp({
           success: z.boolean(),
           error: z.string(),
           errorCode: z.string().optional(),
+          errorDetail: SessionCreationTerminalSpawnErrorDetailSchema.optional(),
         }),
         401: authSchema401,
         409: z.object({
@@ -2551,6 +3194,7 @@ export function createDaemonControlApp({
           success: z.boolean(),
           error: z.string().optional(),
           errorCode: z.string().optional(),
+          errorDetail: SessionCreationTerminalSpawnErrorDetailSchema.optional(),
         })
       }
     },
@@ -2571,13 +3215,16 @@ export function createDaemonControlApp({
         }
 
         const requestBody = parsedRequest.data;
-        const { directory, sessionId, existingSessionId } = requestBody;
+        const { existingSessionId } = requestBody;
         const spawnNonce = typeof requestBody.spawnNonce === 'string' ? requestBody.spawnNonce.trim() : '';
         const nonceAdmission = claimSpawnNonceAdmission(spawnNonce);
         if (nonceAdmission.type === 'success') {
           return {
             success: true,
             sessionId: nonceAdmission.sessionId,
+            ...(nonceAdmission.sessionCreationOutcome
+              ? { sessionCreationOutcome: nonceAdmission.sessionCreationOutcome }
+              : {}),
             approvedNewDirectoryCreation: true,
           };
         }
@@ -2589,8 +3236,18 @@ export function createDaemonControlApp({
             errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
           };
         }
+        if (nonceAdmission.type === 'error') {
+          reply.code(500);
+          return {
+            success: false as const,
+            error: nonceAdmission.errorMessage,
+            errorCode: nonceAdmission.errorCode,
+            ...(isSessionCreationTerminalSpawnErrorDetail(nonceAdmission.errorDetail)
+              ? { errorDetail: nonceAdmission.errorDetail }
+              : {}),
+          };
+        }
 
-    logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
         let result: SpawnSessionResult;
         try {
           const normalizedExistingSessionId = typeof existingSessionId === 'string' && existingSessionId.trim().length > 0
@@ -2604,11 +3261,14 @@ export function createDaemonControlApp({
             ) as SpawnSessionOptions,
           );
         } catch (error) {
-          if (spawnNonce) {
-            clearSpawnNonceCorrelation(spawnNonce);
-          }
           const message = error instanceof Error ? error.message : String(error);
           const errorCode = resolveThrownSpawnSessionErrorCode(error);
+          if (spawnNonce) {
+            markSpawnNonceError(spawnNonce, {
+              errorCode: SpawnSessionErrorCodeSchema.parse(errorCode),
+              errorMessage: `Failed to spawn session: ${message}`,
+            });
+          }
           reply.code(500);
           return {
         success: false,
@@ -2631,11 +3291,18 @@ export function createDaemonControlApp({
           };
         }
         if (spawnNonce) {
-          markSpawnNonceSuccess(spawnNonce, result.sessionId);
+          markSpawnNonceSuccess(
+            spawnNonce,
+            result.sessionId,
+            result.sessionCreationOutcome,
+          );
         }
         return {
           success: true,
           sessionId: result.sessionId,
+          ...(result.sessionCreationOutcome
+            ? { sessionCreationOutcome: result.sessionCreationOutcome }
+            : {}),
           approvedNewDirectoryCreation: true
         };
       
@@ -2652,9 +3319,6 @@ export function createDaemonControlApp({
         };
       
       case 'error':
-        if (spawnNonce && result.errorCode !== SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT) {
-          clearSpawnNonceCorrelation(spawnNonce);
-        }
         if (spawnNonce && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT) {
           reply.code(202);
           return {
@@ -2663,11 +3327,21 @@ export function createDaemonControlApp({
             errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
           };
         }
+        if (spawnNonce) {
+          markSpawnNonceError(spawnNonce, {
+            errorCode: result.errorCode,
+            errorMessage: result.errorMessage,
+            ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
+          });
+        }
         reply.code(500);
         return { 
           success: false,
           error: result.errorMessage,
           errorCode: result.errorCode,
+          ...(isSessionCreationTerminalSpawnErrorDetail(
+            result.errorDetail,
+          ) ? { errorDetail: result.errorDetail } : {}),
         };
     }
   });
@@ -2680,8 +3354,12 @@ export function createDaemonControlApp({
       response: {
         200: z.object({
           success: z.literal(true),
-          status: z.enum(['success', 'pending', 'not_found']),
+          status: z.enum(['success', 'error', 'pending', 'not_found']),
           sessionId: z.string().optional(),
+          sessionCreationOutcome: SessionCreationOutcomeSchema.optional(),
+          errorCode: SpawnSessionErrorCodeSchema.optional(),
+          errorMessage: z.string().optional(),
+          errorDetail: z.unknown().optional(),
         }),
         401: authSchema401,
       },
@@ -2705,6 +3383,9 @@ export function createDaemonControlApp({
           success: true as const,
           status: 'success' as const,
           sessionId: record.sessionId,
+          ...(record.sessionCreationOutcome
+            ? { sessionCreationOutcome: record.sessionCreationOutcome }
+            : {}),
         };
       }
       if (record.status === 'pending') {
@@ -2713,16 +3394,32 @@ export function createDaemonControlApp({
           status: 'pending' as const,
         };
       }
+      if (record.status === 'error' && record.errorCode && record.errorMessage) {
+        return {
+          success: true as const,
+          status: 'error' as const,
+          errorCode: record.errorCode,
+          errorMessage: record.errorMessage,
+          ...(record.errorDetail ? { errorDetail: record.errorDetail } : {}),
+        };
+      }
     }
 
     const tracked = readTrackedSpawnNonceAdmission(normalizedNonce);
     if (tracked) {
       if (tracked.type === 'success') {
-        markSpawnNonceSuccess(normalizedNonce, tracked.sessionId);
+        markSpawnNonceSuccess(
+          normalizedNonce,
+          tracked.sessionId,
+          tracked.sessionCreationOutcome,
+        );
         return {
           success: true as const,
           status: 'success' as const,
           sessionId: tracked.sessionId,
+          ...(tracked.sessionCreationOutcome
+            ? { sessionCreationOutcome: tracked.sessionCreationOutcome }
+            : {}),
         };
       }
       markSpawnNoncePending(normalizedNonce);
@@ -2937,7 +3634,6 @@ export function createDaemonControlApp({
       body: z
         .object({
           stopSessions: z.boolean().optional(),
-          transferManagedLocalServices: z.boolean().optional(),
         })
         .strict()
         .nullish(),
@@ -2951,13 +3647,9 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async (request) => {
     const stopSessions = request.body?.stopSessions === true;
-    const managedLocalServicesDisposition = request.body?.transferManagedLocalServices === true
-      ? 'transfer' as const
-      : 'permanent' as const;
     daemonStopRequested = true;
     logger.debug('[CONTROL SERVER] Stop daemon request received', {
       stopSessions,
-      managedLocalServicesDisposition,
     });
 
     // Give time for response to arrive
@@ -2966,7 +3658,7 @@ export function createDaemonControlApp({
       const runBeforeShutdown = async (): Promise<void> => {
         if (!beforeShutdown) return;
         try {
-          await beforeShutdown({ managedLocalServicesDisposition });
+          await beforeShutdown();
         } catch (error) {
           logger.debug('[CONTROL SERVER] beforeShutdown hook failed (best-effort)', error);
         }
@@ -3025,6 +3717,7 @@ export function startDaemonControlServer({
   beforeShutdown,
   isShuttingDown,
   onHappySessionWebhook,
+  onSessionStartupFailure,
   admitPersistedTakeover,
   controlToken,
   connectedAccountRequestAuth,
@@ -3034,8 +3727,9 @@ export function startDaemonControlServer({
   localServicesPreview,
   localServicesActions,
   localServicesPublicPreview,
-  localServicesPluginBridge,
-  agentRuntimeSessionBridge,
+  agentRuntimeDaemonServices,
+  recordAgentRuntimeDaemonServiceAdmission,
+  clearAgentRuntimeDaemonServiceAdmission,
   foregroundAgentRuntimeAdmission,
   simulatorPreview,
   handleConnectedServiceRuntimeAuthFailure,
@@ -3047,6 +3741,7 @@ export function startDaemonControlServer({
   handleSessionRunnerRestart,
   handleSessionRunnerRestartAll,
   handleSessionRunnerStatusGet,
+  handleSessionRunnerStatusV2Get,
   handleConnectedServiceTurnLifecycle,
   handleConnectedServiceUsageLimitWaitResumeCancel,
   handleConnectedServiceQuotaRecoveryCreditConsume,
@@ -3067,18 +3762,27 @@ export function startDaemonControlServer({
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
-  beforeShutdown?: (input: Readonly<{
-    managedLocalServicesDisposition: 'permanent' | 'transfer';
-  }>) => Promise<void>;
+  beforeShutdown?: () => Promise<void>;
   // True once daemon shutdown / control-server stop has begun. Recovery handlers early-return when
   // set so switch/restart work is never run into a tearing-down daemon (a deferral, not an attempt).
   isShuttingDown?: () => boolean;
-  onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void | Promise<void>;
+  onHappySessionWebhook: (
+    sessionId: string,
+    metadata: Metadata,
+    reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
+    sessionCreationOutcome?: SessionCreationOutcome,
+  ) => void | Promise<void>;
+  onSessionStartupFailure?: (input: Readonly<{
+    spawnNonce: string;
+    errorDetail: SessionCreationTerminalSpawnErrorDetail;
+  }>) => boolean | Promise<boolean>;
   admitPersistedTakeover?: (input: Readonly<{
     sessionId: string;
+    mode: TakeoverAdmissionMode;
     operationId: string;
     attemptId: string;
-    phase: 'admit' | 'runtime_bound';
+    phase: PersistedTakeoverAdmissionPhase;
+    publisherPrecondition: SessionMetadataPublisherPreconditionV1;
     signal: AbortSignal;
   }>) => Promise<void>;
   controlToken: string;
@@ -3098,8 +3802,15 @@ export function startDaemonControlServer({
   localServicesPreview?: Pick<LocalServicePreviewRoutes, 'getSnapshot'>;
   localServicesActions?: LocalServiceActionRoutes;
   localServicesPublicPreview?: LocalServicePublicPreviewRoutes;
-  localServicesPluginBridge?: PluginLocalServicesBridgeControlRoutes;
-  agentRuntimeSessionBridge?: AgentRuntimeSessionBridgeControlRoutes;
+  agentRuntimeDaemonServices?: AgentRuntimeDaemonServiceRoutes;
+  recordAgentRuntimeDaemonServiceAdmission?: (
+    tracked: TrackedSession,
+    admission: AgentRuntimeDaemonServiceAdmission,
+  ) => Promise<boolean>;
+  clearAgentRuntimeDaemonServiceAdmission?: (
+    tracked: TrackedSession,
+    admission: AgentRuntimeDaemonServiceAdmission,
+  ) => Promise<boolean>;
   foregroundAgentRuntimeAdmission?: ForegroundAgentRuntimeAdmissionOwner;
   simulatorPreview?: SimulatorPreviewRoutes;
   handleConnectedServiceRuntimeAuthFailure?: (input: Readonly<{
@@ -3119,13 +3830,9 @@ export function startDaemonControlServer({
     explicit?: SessionUsageLimitRecoveryResumePromptModeV1;
   }>) => Promise<SessionUsageLimitRecoveryResumePromptModeV1>;
   runtimeAuthRecoveryScheduler?: RuntimeAuthRecoverySchedulerLike | null;
-  handleConnectedServiceTurnLifecycle?: (input: Readonly<{
-    sessionId: string;
-    turnId?: string;
-    event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
-    terminalStatus?: 'completed' | 'failed';
-    connectedServiceSelectionsEnvRaw?: string;
-  }>) => Promise<unknown>;
+  handleConnectedServiceTurnLifecycle?: (
+    input: ConnectedServiceTurnLifecycleRequestBody,
+  ) => Promise<ConnectedServiceTurnLifecycleResult>;
   handleConnectedServiceUsageLimitWaitResumeCancel?: (input: Readonly<{
     sessionId: string;
     attemptId: string;
@@ -3138,9 +3845,10 @@ export function startDaemonControlServer({
     accountSettingsVersionHint?: number;
   }>) => Promise<unknown>;
   handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
-  handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1) => Promise<RestartSessionRunnerResultV1>;
+  handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2) => Promise<RestartSessionRunnerResultV1>;
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
   handleSessionRunnerStatusGet?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStateV1>;
+  handleSessionRunnerStatusV2Get?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStatusV2>;
   handleConnectedServiceQuotaRecoveryCreditConsume?: (
     input: ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
   ) => Promise<unknown>;
@@ -3148,6 +3856,7 @@ export function startDaemonControlServer({
 	    sessionId: string;
 	    snapshot: ProviderAccountUsageSnapshotV1;
       source?: ConnectedServiceUsageSourceV1;
+	    deriveCredentialFingerprintFromSource?: true;
 	    credentialFingerprint?: string | null;
       policyDisposition?: 'evidence_only';
 	  }>) => Promise<unknown>;
@@ -3173,6 +3882,7 @@ export function startDaemonControlServer({
       beforeShutdown,
       isShuttingDown,
       onHappySessionWebhook,
+      onSessionStartupFailure,
       admitPersistedTakeover,
       controlToken,
       connectedAccountRequestAuth,
@@ -3186,8 +3896,9 @@ export function startDaemonControlServer({
       localServicesPreview,
       localServicesActions,
       localServicesPublicPreview,
-      localServicesPluginBridge,
-      agentRuntimeSessionBridge,
+      agentRuntimeDaemonServices,
+      recordAgentRuntimeDaemonServiceAdmission,
+      clearAgentRuntimeDaemonServiceAdmission,
       foregroundAgentRuntimeAdmission,
       simulatorPreview,
       handleConnectedServiceRuntimeAuthFailure,
@@ -3199,6 +3910,7 @@ export function startDaemonControlServer({
       handleSessionRunnerRestart,
       handleSessionRunnerRestartAll,
       handleSessionRunnerStatusGet,
+      handleSessionRunnerStatusV2Get,
 	      handleConnectedServiceTurnLifecycle,
 	      handleConnectedServiceUsageLimitWaitResumeCancel,
 	      handleConnectedServiceQuotaRecoveryCreditConsume,

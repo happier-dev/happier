@@ -1,19 +1,18 @@
 import type {
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
-  ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
-  ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
+import type { AgentAccountUsageSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export {
-  ConnectedServiceQuotaFetchError,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+  QuotaFetchError,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 export type {
-  ConnectedServiceQuotaFetchErrorCode,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+  QuotaFetchErrorCode,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 /**
- * Provider-issued error codes (`ConnectedServiceQuotaFetchError#providerCode`) that are
+ * Provider-issued error codes (`QuotaFetchError#providerCode`) that are
  * standard OAuth2 failure codes (RFC 6749 §5.2 plus the refresh-token-missing case Happier
  * itself synthesizes) and therefore genuinely cross-provider. Any provider's quota fetcher
  * error carrying one of these codes is treated as a terminal (reconnect-required) auth
@@ -29,10 +28,11 @@ export const STANDARD_OAUTH_TERMINAL_AUTH_PROVIDER_CODES: readonly string[] = Ob
   'missing_refresh_token',
 ]);
 
-export type ConnectedServiceQuotaRecoveryCreditConsumeOutcome = Exclude<
-  ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
-  'unknown_after_timeout'
->;
+export type ConnectedServiceQuotaRecoveryCreditConsumeOutcome =
+  | 'consumed'
+  | 'already_consumed'
+  | 'not_available'
+  | 'nothing_to_reset';
 
 export type ConnectedServiceQuotaFetcher = Readonly<{
   serviceId: ConnectedServiceId;
@@ -40,7 +40,7 @@ export type ConnectedServiceQuotaFetcher = Readonly<{
     record: ConnectedServiceCredentialRecordV1;
     now: number;
     signal: AbortSignal;
-  }>) => Promise<ConnectedServiceQuotaSnapshotV1 | null>;
+  }>) => Promise<AgentAccountUsageSnapshot | null>;
   consumeRecoveryCredit?: (params: Readonly<{
     record: ConnectedServiceCredentialRecordV1;
     now: number;
@@ -49,7 +49,7 @@ export type ConnectedServiceQuotaFetcher = Readonly<{
     signal: AbortSignal;
   }>) => Promise<ConnectedServiceQuotaRecoveryCreditConsumeOutcome>;
   /**
-   * Provider-specific `providerCode` values (see `ConnectedServiceQuotaFetchError`) that
+   * Provider-specific `providerCode` values (see `QuotaFetchError`) that
    * this provider's quota fetcher can produce and that should be classified as a terminal
    * (reconnect-required) auth failure. Scoped to this fetcher's `serviceId` only — the
    * coordinator never applies one provider's codes to another provider's errors. Carried

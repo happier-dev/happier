@@ -10,7 +10,6 @@ describe('probeSessionRunnerServiceability', () => {
       sessionId: 'sess_1', trackedSessions: [tracked],
       readProcessRunState: async () => 'servable',
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
-      getProcessCommandHash: async () => null,
       probeCapability: async () => ({ state: 'recoverable_unservable', reason: 'rpc_method_unavailable' }),
     })).resolves.toEqual({ state: 'runner_present', control: { state: 'recoverable_unservable', reason: 'rpc_method_unavailable' } });
   });
@@ -21,7 +20,6 @@ describe('probeSessionRunnerServiceability', () => {
       sessionId: 'sess_1', trackedSessions: [tracked],
       readProcessRunState: async () => 'stopped',
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
-      getProcessCommandHash: async () => null,
       probeCapability: async () => ({ state: 'servable' }),
     })).resolves.toEqual({ state: 'runner_unknown', reason: 'runner_presence_unproven' });
 
@@ -29,7 +27,6 @@ describe('probeSessionRunnerServiceability', () => {
       sessionId: 'sess_1', trackedSessions: [],
       readProcessRunState: async () => 'dead',
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'io_error', errorMessage: 'read failed' }),
-      getProcessCommandHash: async () => null,
       probeCapability: async () => ({ state: 'servable' }),
     })).resolves.toEqual({ state: 'runner_unknown', reason: 'runner_presence_unproven' });
   });
@@ -47,12 +44,11 @@ describe('isSessionRunnerActive', () => {
       trackedSessions: [],
       readProcessRunState: async () => 'servable',
       readSessionRunnerLockStatus: async () => ({ ok: true, lock: { sessionId: 'sess_1', pid: 123, acquiredAtMs: 1 } }),
-      getProcessCommandHash: async () => null,
     });
     expect(res).toBe(true);
   });
 
-  it('treats a live lock PID as inactive when command hash mismatch proves PID reuse', async () => {
+  it('does not treat command drift as PID reuse for a legacy live lock', async () => {
     const res = await isSessionRunnerActive({
       sessionId: 'sess_1',
       trackedSessions: [],
@@ -61,7 +57,18 @@ describe('isSessionRunnerActive', () => {
         ok: true,
         lock: { sessionId: 'sess_1', pid: 123, acquiredAtMs: 1, processCommandHash: 'a'.repeat(64) },
       }),
-      getProcessCommandHash: async () => 'b'.repeat(64),
+    });
+    expect(res).toBe(true);
+  });
+
+  it('treats a live lock PID as inactive when process generation proves PID reuse', async () => {
+    const res = await isSessionRunnerActive({
+      sessionId: 'sess_1', trackedSessions: [],
+      readProcessRunState: async () => 'servable',
+      readSessionRunnerLockStatus: async () => ({ ok: true, lock: {
+        sessionId: 'sess_1', pid: 123, acquiredAtMs: 1, processStartTimeMs: 1_000,
+      } }),
+      readProcessIdentityByPid: async (pid) => ({ pid, processStartTimeMs: 2_000, command: 'other' }),
     });
     expect(res).toBe(false);
   });
@@ -72,7 +79,6 @@ describe('isSessionRunnerActive', () => {
       trackedSessions: [],
       readProcessRunState: async () => 'dead',
       readSessionRunnerLockStatus: async () => ({ ok: true, lock: { sessionId: 'sess_1', pid: 123, acquiredAtMs: 1 } }),
-      getProcessCommandHash: async () => null,
     });
     expect(res).toBe(false);
   });
@@ -84,7 +90,6 @@ describe('isSessionRunnerActive', () => {
       trackedSessions: [],
       readProcessRunState: async () => 'stopped',
       readSessionRunnerLockStatus: async () => ({ ok: true, lock: { sessionId: 'sess_1', pid: 123, acquiredAtMs: 1 } }),
-      getProcessCommandHash: async () => null,
     });
     expect(res).toBe(false);
   });
@@ -95,7 +100,6 @@ describe('isSessionRunnerActive', () => {
       trackedSessions: [],
       readProcessRunState: async () => 'zombie',
       readSessionRunnerLockStatus: async () => ({ ok: true, lock: { sessionId: 'sess_1', pid: 123, acquiredAtMs: 1 } }),
-      getProcessCommandHash: async () => null,
     });
     expect(res).toBe(false);
   });
@@ -111,12 +115,11 @@ describe('isSessionRunnerActive', () => {
       trackedSessions: [tracked],
       readProcessRunState: async () => 'servable',
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
-      getProcessCommandHash: async () => null,
     });
     expect(res).toBe(true);
   });
 
-  it('treats a tracked session PID as inactive when command hash mismatch proves PID reuse', async () => {
+  it('does not treat command drift as PID reuse for a legacy tracked session', async () => {
     const tracked: TrackedSession = {
       startedBy: 'daemon',
       pid: 456,
@@ -128,7 +131,19 @@ describe('isSessionRunnerActive', () => {
       trackedSessions: [tracked],
       readProcessRunState: async () => 'servable',
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
-      getProcessCommandHash: async () => 'b'.repeat(64),
+    });
+    expect(res).toBe(true);
+  });
+
+  it('treats a tracked session PID as inactive when process generation proves PID reuse', async () => {
+    const tracked: TrackedSession = {
+      startedBy: 'daemon', pid: 456, happySessionId: 'sess_1', processStartTimeMs: 1_000,
+    };
+    const res = await isSessionRunnerActive({
+      sessionId: 'sess_1', trackedSessions: [tracked],
+      readProcessRunState: async () => 'servable',
+      readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
+      readProcessIdentityByPid: async (pid) => ({ pid, processStartTimeMs: 2_000, command: 'other' }),
     });
     expect(res).toBe(false);
   });
@@ -146,7 +161,6 @@ describe('isSessionRunnerActive', () => {
       trackedSessions: [tracked],
       readProcessRunState: async () => 'stopped',
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
-      getProcessCommandHash: async () => null,
     });
     expect(res).toBe(false);
   });

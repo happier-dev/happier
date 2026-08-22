@@ -31,6 +31,7 @@ export type ConnectedServiceResolvedSelection =
 export type ConnectedServicesMaterialization = Readonly<{
   env: Record<string, string>;
   targetMaterializedRoot?: string | null;
+  requestAuthMaterializedRoot?: string | null;
   cleanupOnFailure: (() => void) | null;
   cleanupOnExit: (() => void) | null;
   diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
@@ -75,6 +76,21 @@ export function collectBlockingConnectedServicesMaterializationDiagnostics(
   return (diagnostics ?? []).filter(isBlockingConnectedServicesMaterializationDiagnostic);
 }
 
+/**
+ * Private host authority for the compatibility materializer. Revisioned launches carry the
+ * complete manifest-derived qualified-purpose snapshot plus its request-auth subset. The sole raw
+ * credential exception is the exact-v0.2.1 bounded one-shot adapter.
+ */
+export type ConnectedServicesMaterializationAuthority =
+  | Readonly<{
+      kind: 'qualified';
+      purposeBindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+      requestAuthPurposeBindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+    }>
+  | Readonly<{
+      kind: 'legacy_unfenced_one_shot';
+    }>;
+
 export type ConnectedServicesMaterializer = (params: Readonly<{
   materializationKey: string;
   activeServerDir: string;
@@ -83,7 +99,7 @@ export type ConnectedServicesMaterializer = (params: Readonly<{
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
-  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>) => Promise<ConnectedServicesMaterialization | null>;

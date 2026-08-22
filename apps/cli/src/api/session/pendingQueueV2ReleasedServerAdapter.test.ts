@@ -35,6 +35,9 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     });
     const contractResult = {
         mode: 'released_server_v0_2_1' as const,
+        runtimeActivity: 'legacy' as const,
+        pendingInput: 'released_server_v0_2_1' as const,
+        publisherAuthority: 'indeterminate' as const,
         sessionConnectionEpoch: 4,
         socket,
     };
@@ -50,8 +53,11 @@ function createHarness(overrides: Record<string, unknown> = {}) {
         getSessionConnectionEpoch: () => 4,
         getSocket: () => socket,
         isRuntimeAuthorityCurrent: () => runtimeAuthorityCurrent,
-        encryptionKey: new Uint8Array(32),
-        encryptionVariant: 'legacy' as const,
+        mode: 'e2ee' as const,
+        ctx: {
+            encryptionKey: new Uint8Array(32),
+            encryptionVariant: 'legacy' as const,
+        },
         deliverMaterializedUserMessageToAgentQueue,
         ...overrides,
     };

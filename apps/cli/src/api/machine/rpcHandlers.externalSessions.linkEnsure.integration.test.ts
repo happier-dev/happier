@@ -1,16 +1,26 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createServer, type Server } from 'node:http';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
+import {
+  computeAccountEncryptionMigrateKeyFingerprintV1,
+  CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+  deriveBoxPublicKeyFromSeed,
+} from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { z } from 'zod';
 
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import type { Credentials } from '@/persistence';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 const { mockIo, readCredentialsMock } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -26,6 +36,7 @@ vi.mock('@/persistence', async (importOriginal) => {
   return {
     ...actual,
     readCredentials: readCredentialsMock,
+    readStoredCredentials: readCredentialsMock,
   };
 });
 
@@ -39,22 +50,64 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
+  let claudeConfigDir = '';
+  let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
 
   const sessionsByTag = new Map<string, any>();
   const sessionsById = new Map<string, any>();
+
+  beforeAll(async () => {
+    runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: async () =>
+        await resolveExecutablePluginRuntimeRegistry({
+          contributes: getResolvedContributionRegistry(),
+          pluginIds: [
+            'happier.agent.claude',
+            'happier.agent.codex',
+          ],
+        }),
+    });
+  });
+
+  afterAll(async () => {
+    await runtimeRegistryLease?.release();
+    runtimeRegistryLease = null;
+    await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+  });
 
   beforeEach(async () => {
     sessionsByTag.clear();
     sessionsById.clear();
     envScope = createEnvKeyScope(envKeys);
     happyHomeDir = await createTempDir('happier-externalSessions-linkEnsure-');
+    claudeConfigDir = join(happyHomeDir, 'claude');
+    for (const [projectId, remoteSessionId] of [
+      ['proj-a', 'remote_123'],
+      ['proj-b', 'remote_456'],
+      ['proj-c', 'remote_789'],
+    ] as const) {
+      const projectDir = join(claudeConfigDir, 'projects', projectId);
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(
+        join(projectDir, `${remoteSessionId}.jsonl`),
+        `${JSON.stringify({
+          type: 'user',
+          uuid: `${projectId}-user`,
+          timestamp: '2026-08-03T00:00:00.000Z',
+          cwd: `/tmp/${projectId}`,
+          message: { content: `Fixture for ${remoteSessionId}` },
+        })}\n`,
+        'utf8',
+      );
+    }
 
     const machineKeySeed = new Uint8Array(32).fill(7);
+    const dataKeyPublicKey = deriveBoxPublicKeyFromSeed(machineKeySeed);
     readCredentialsMock.mockResolvedValue({
       token: 'token_test',
       encryption: {
         type: 'dataKey',
-        publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+        publicKey: dataKeyPublicKey,
         machineKey: machineKeySeed,
       },
     });
@@ -63,8 +116,41 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
 
       if (req.method === 'GET' && url.pathname === `/v1/features`) {
-        res.statusCode = 404;
-        res.end();
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          features: {},
+          capabilities: {
+            accountStoredContentCompatibility: {
+              v: 1,
+              minimumProtocolVersion: 2,
+              currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+              declarationTransport: 'http-header-and-socket-auth-v1',
+            },
+            encryption: {
+              storagePolicy: 'required_e2ee',
+              allowAccountOptOut: false,
+              defaultAccountMode: 'e2ee',
+            },
+          },
+        }));
+        return;
+      }
+
+      if (
+        req.method === 'GET'
+        && url.pathname === '/v1/account/encryption/currentness'
+      ) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint:
+            computeAccountEncryptionMigrateKeyFingerprintV1(dataKeyPublicKey),
+          updatedAt: 1,
+        }));
         return;
       }
 
@@ -73,6 +159,78 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
         res.setHeader('content-type', 'application/json');
         const sessions = url.pathname === `/v2/sessions` ? Array.from(sessionsByTag.values()) : [];
         res.end(JSON.stringify({ sessions, nextCursor: null, hasNext: false }));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v2/sessions/lookup-by-tags') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+          tags?: unknown;
+        };
+        const tags = Array.isArray(body.tags)
+          ? body.tags.filter((tag): tag is string => typeof tag === 'string')
+          : [];
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          sessions: tags.flatMap((tag) => {
+            const session = sessionsByTag.get(tag);
+            return session ? [session] : [];
+          }),
+        }));
+        return;
+      }
+
+      if (req.method === 'PATCH' && url.pathname.startsWith('/v2/sessions/')) {
+        const sessionId = decodeURIComponent(url.pathname.slice('/v2/sessions/'.length));
+        const session = sessionsById.get(sessionId);
+        if (!session) {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+          sharedMetadata?: { ciphertext?: unknown; expectedVersion?: unknown };
+          ownerMetadata?: unknown;
+          agentState?: { ciphertext?: unknown; expectedVersion?: unknown };
+        };
+        const expectedMetadataVersion = Number(body.sharedMetadata?.expectedVersion);
+        const expectedAgentStateVersion = Number(body.agentState?.expectedVersion);
+        if (
+          typeof body.sharedMetadata?.ciphertext !== 'string'
+          || !Number.isSafeInteger(expectedMetadataVersion)
+          || expectedMetadataVersion !== session.metadataVersion
+          || !Number.isSafeInteger(expectedAgentStateVersion)
+          || expectedAgentStateVersion !== session.agentStateVersion
+        ) {
+          res.statusCode = 409;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({
+            code: 'session_metadata_version_conflict',
+            metadataLayoutVersion: 1,
+            sharedMetadata: { version: session.metadataVersion },
+            agentState: { version: session.agentStateVersion },
+          }));
+          return;
+        }
+
+        session.metadata = body.sharedMetadata.ciphertext;
+        session.metadataVersion += 1;
+        session.ownerMetadata = body.ownerMetadata;
+        session.agentState = body.agentState?.ciphertext ?? null;
+        session.agentStateVersion += 1;
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          success: true,
+          metadataLayoutVersion: 1,
+          sharedMetadata: { version: session.metadataVersion },
+          agentState: { version: session.agentStateVersion },
+        }));
         return;
       }
 
@@ -113,9 +271,11 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
           updatedAt: Date.now(),
           active: false,
           activeAt: 0,
-          metadata: body.metadata,
+          metadataLayoutVersion: body.metadataLayoutVersion,
+          metadata: body.sharedMetadata?.ciphertext ?? body.metadata,
           metadataVersion: 0,
-          agentState: null,
+          ownerMetadata: body.ownerMetadata ?? null,
+          agentState: body.agentState?.ciphertext ?? null,
           agentStateVersion: 0,
           pendingCount: 0,
           pendingVersion: 0,
@@ -146,7 +306,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
-    process.env.HAPPIER_CLAUDE_CONFIG_DIR = '/tmp';
+    process.env.HAPPIER_CLAUDE_CONFIG_DIR = claudeConfigDir;
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -217,7 +377,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       remoteSessionId: 'remote_123',
       titleHint: 'Linked Claude Session',
       directoryHint: '/tmp/project-a',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-a' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-a' },
     });
 
     expect(res.ok).toBe(true);
@@ -226,7 +386,11 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const createdSession = Array.from(sessionsByTag.values())[0];
     const creds = await readCredentialsMock();
-    const meta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: createdSession });
+    const meta = tryDecryptSessionOwnerMetadataView({
+      credentials: creds!,
+      accountEncryptionMode: 'e2ee',
+      rawSession: createdSession,
+    });
     const parsedMeta = z.object({
       tag: z.string().min(1),
       path: z.string(),
@@ -280,7 +444,11 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const createdSession = sessionsById.get(res.sessionId);
     const creds = await readCredentialsMock();
-    const meta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: createdSession });
+    const meta = tryDecryptSessionOwnerMetadataView({
+      credentials: creds!,
+      accountEncryptionMode: 'e2ee',
+      rawSession: createdSession,
+    });
     const parsedMeta = z.object({
       codexBackendMode: z.enum(['mcp', 'acp', 'appServer']),
       externalSessionV1: z.object({
@@ -317,7 +485,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       remoteSessionId: 'remote_123',
       titleHint: 'Linked Claude Session',
       directoryHint: '/tmp/project-a',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-a' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-a' },
     });
     const second = await handler!({
       machineId: 'machine_1',
@@ -325,7 +493,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       remoteSessionId: 'remote_123',
       titleHint: 'Linked Claude Session',
       directoryHint: '/tmp/project-a',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-a' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-a' },
     });
 
     expect(first.ok).toBe(true);
@@ -354,7 +522,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       machineId: 'machine_1',
       agentId: 'claude',
       remoteSessionId: 'remote_123',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-a' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-a' },
     });
     const second = await handler!({
       machineId: 'machine_1',
@@ -362,7 +530,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       remoteSessionId: 'remote_123',
       titleHint: 'Recovered Claude Session',
       directoryHint: '/tmp/project-a',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-a' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-a' },
     });
 
     expect(first.ok).toBe(true);
@@ -373,7 +541,11 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const updatedSession = sessionsById.get(first.sessionId);
     const creds = await readCredentialsMock();
-    const meta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: updatedSession });
+    const meta = tryDecryptSessionOwnerMetadataView({
+      credentials: creds!,
+      accountEncryptionMode: 'e2ee',
+      rawSession: updatedSession,
+    });
     const parsedMeta = z.object({
       path: z.string(),
       summary: z.object({
@@ -408,7 +580,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       agentId: 'claude',
       remoteSessionId: 'remote_456',
       titleHint: 'Original Claude Session',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-b' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-b' },
     });
     const second = await handler!({
       machineId: 'machine_1',
@@ -416,7 +588,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       remoteSessionId: 'remote_456',
       titleHint: 'Replacement Title Should Not Win',
       directoryHint: '/tmp/project-b',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-b' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-b' },
     });
 
     expect(first.ok).toBe(true);
@@ -426,7 +598,11 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const updatedSession = sessionsById.get(first.sessionId);
     const creds = await readCredentialsMock();
-    const meta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: updatedSession });
+    const meta = tryDecryptSessionOwnerMetadataView({
+      credentials: creds!,
+      accountEncryptionMode: 'e2ee',
+      rawSession: updatedSession,
+    });
     const parsedMeta = z.object({
       path: z.string(),
       summary: z.object({
@@ -461,7 +637,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       agentId: 'claude',
       remoteSessionId: 'remote_789',
       titleHint: 'remote_789',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-c' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-c' },
     });
 
     expect(first.ok).toBe(true);
@@ -469,7 +645,11 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const firstSession = sessionsById.get(first.sessionId);
     const creds = await readCredentialsMock();
-    const firstMeta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: firstSession });
+    const firstMeta = tryDecryptSessionOwnerMetadataView({
+      credentials: creds!,
+      accountEncryptionMode: 'e2ee',
+      rawSession: firstSession,
+    });
     const firstParsedMeta = z.object({
       summary: z.object({
         text: z.string(),
@@ -485,7 +665,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       agentId: 'claude',
       remoteSessionId: 'remote_789',
       titleHint: 'Recovered Claude Session',
-      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-c' },
+      source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-c' },
     });
 
     expect(second.ok).toBe(true);
@@ -493,7 +673,11 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     expect(second.created).toBe(false);
 
     const updatedSession = sessionsById.get(first.sessionId);
-    const updatedMeta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: updatedSession });
+    const updatedMeta = tryDecryptSessionOwnerMetadataView({
+      credentials: creds!,
+      accountEncryptionMode: 'e2ee',
+      rawSession: updatedSession,
+    });
     const updatedParsedMeta = z.object({
       summary: z.object({
         text: z.string(),

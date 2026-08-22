@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -35,6 +38,11 @@ export type VoiceDiagnosticCapture = Readonly<{
   attemptId: string;
   authorizationId?: string;
   signal?: AbortSignal;
+}>;
+
+/** A daemon-owned staged audio file copied atomically into diagnostic retention. */
+export type VoiceDiagnosticFileCapture = Omit<VoiceDiagnosticCapture, 'bytes'> & Readonly<{
+  filePath: string;
 }>;
 
 export type VoiceDiagnosticArtifact = Readonly<{
@@ -166,6 +174,37 @@ export function resolveVoiceDiagnosticWavDurationMs(bytes: Uint8Array): number |
   return Math.round((dataBytes / byteRate) * 1_000);
 }
 
+/**
+ * Reads only the canonical PCM WAV header written by daemon streaming capture. Other WAV
+ * layouts remain valid captures with an honest unknown duration rather than loading audio
+ * solely to calculate metadata.
+ */
+async function resolveCanonicalWavDurationMsFromFile(filePath: string, fileByteLength: number): Promise<number | null> {
+  if (fileByteLength < 44) return null;
+  const handle = await open(filePath, 'r');
+  try {
+    const header = Buffer.alloc(44);
+    const { bytesRead } = await handle.read(header, 0, header.byteLength, 0);
+    if (bytesRead !== header.byteLength) return null;
+    if (
+      readAscii(header, 0, 4) !== 'RIFF'
+      || readAscii(header, 8, 4) !== 'WAVE'
+      || readAscii(header, 12, 4) !== 'fmt '
+      || readUint32Le(header, 16) !== 16
+      || readUint16Le(header, 20) !== 1
+      || readAscii(header, 36, 4) !== 'data'
+    ) {
+      return null;
+    }
+    const byteRate = readUint32Le(header, 28);
+    const dataBytes = readUint32Le(header, 40);
+    if (byteRate <= 0 || dataBytes > fileByteLength - header.byteLength) return null;
+    return Math.round((dataBytes / byteRate) * 1_000);
+  } finally {
+    await handle.close();
+  }
+}
+
 export function resolveVoiceDiagnosticRoot(happyHomeDir: string): string {
   if (!happyHomeDir || happyHomeDir.trim() !== happyHomeDir || !isAbsolute(happyHomeDir)) {
     throw new TypeError('voice_diagnostics_home_invalid');
@@ -241,6 +280,7 @@ export function createVoiceDiagnosticStore(input: Readonly<{
   root: string;
   backupPolicy: VoiceSpeechDiagnosticsBackupPolicyV1;
   capture(capture: VoiceDiagnosticCapture): Promise<VoiceDiagnosticArtifact | null>;
+  captureFile(capture: VoiceDiagnosticFileCapture): Promise<VoiceDiagnosticArtifact | null>;
   list(): Promise<readonly VoiceDiagnosticArtifact[]>;
   inspect(): Promise<VoiceDiagnosticStoreInspection>;
   prune(): Promise<void>;
@@ -352,67 +392,114 @@ export function createVoiceDiagnosticStore(input: Readonly<{
       .map((entry) => removeOwnedFile(join(root, entry.name))));
   }
 
+  async function captureWithWriter(
+    capture: Omit<VoiceDiagnosticCapture, 'bytes'>,
+    source: Readonly<{
+      byteLength: number;
+      durationMs: number | null;
+      writeAudio: (audioTempPath: string) => Promise<void>;
+    }>,
+  ): Promise<VoiceDiagnosticArtifact | null> {
+    if (!input.policy.enabled || input.policy.consentVersion !== 1) return null;
+    if (capture.direction === 'stt_input' && input.policy.captureSttInput !== true) return null;
+    if (capture.direction === 'tts_output' && input.policy.captureTtsOutput !== true) return null;
+    throwIfAborted(capture.signal);
+    if (source.durationMs !== null && (!Number.isFinite(source.durationMs) || source.durationMs < 0 || source.durationMs > maxDurationMs)) {
+      throw new Error('voice_diagnostics_duration_exceeded');
+    }
+    if (!Number.isSafeInteger(source.byteLength) || source.byteLength < 0 || source.byteLength > maxBytes) {
+      throw new Error('voice_diagnostics_artifact_too_large');
+    }
+    await ensurePrivateDirectoryTree(input.happyHomeDir, root);
+    await pruneUnlocked();
+    const disk = await readStatfs(root);
+    const availableBytes = Number(disk.bavail) * Number(disk.bsize);
+    if (!Number.isFinite(availableBytes) || availableBytes < source.byteLength + minFreeBytes) {
+      throw new Error('voice_diagnostics_disk_headroom');
+    }
+
+    const createdAtMs = now();
+    const id = `${Math.max(0, Math.floor(createdAtMs)).toString(16)}-${randomUUID()}`;
+    const metadata: VoiceDiagnosticMetadataV1 = {
+      v: 1,
+      id,
+      createdAtMs,
+      direction: capture.direction,
+      format: capture.format,
+      durationMs: source.durationMs,
+      byteLength: source.byteLength,
+      sessionRef: opaqueRef(capture.sessionId),
+      providerRef: opaqueRef(capture.providerId),
+      attemptRef: opaqueRef(capture.attemptId),
+    };
+    const artifact = toArtifact(root, metadata);
+    const nonce = randomUUID();
+    const audioTempPath = `${artifact.audioPath}.tmp-${nonce}`;
+    const metadataTempPath = `${artifact.metadataPath}.tmp-${nonce}`;
+    try {
+      await source.writeAudio(audioTempPath);
+      const audioMetadata = await lstat(audioTempPath);
+      if (
+        !audioMetadata.isFile()
+        || audioMetadata.isSymbolicLink()
+        || audioMetadata.size !== source.byteLength
+      ) {
+        throw new Error('voice_diagnostics_staged_audio_invalid');
+      }
+      throwIfAborted(capture.signal);
+      await writeFile(metadataTempPath, `${JSON.stringify(metadata, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+      throwIfAborted(capture.signal);
+      await rename(audioTempPath, artifact.audioPath);
+      await rename(metadataTempPath, artifact.metadataPath);
+      if (process.platform !== 'win32') {
+        await Promise.all([chmod(artifact.audioPath, 0o600), chmod(artifact.metadataPath, 0o600)]);
+      }
+      await pruneUnlocked();
+      return (await listUnlocked()).find((candidate) => candidate.id === artifact.id) ?? null;
+    } catch (error) {
+      await Promise.all([
+        unlink(audioTempPath).catch(() => {}),
+        unlink(metadataTempPath).catch(() => {}),
+        unlink(artifact.audioPath).catch(() => {}),
+        unlink(artifact.metadataPath).catch(() => {}),
+      ]);
+      throw error;
+    }
+  }
+
   return {
     root,
     backupPolicy: BACKUP_POLICY,
-    capture: (capture) => enqueue(async () => {
-      if (!input.policy.enabled || input.policy.consentVersion !== 1) return null;
-      if (capture.direction === 'stt_input' && input.policy.captureSttInput !== true) return null;
-      if (capture.direction === 'tts_output' && input.policy.captureTtsOutput !== true) return null;
-      throwIfAborted(capture.signal);
-      const durationMs = capture.durationMs ?? (capture.format === 'wav' ? resolveVoiceDiagnosticWavDurationMs(capture.bytes) : null);
-      if (durationMs !== null && (!Number.isFinite(durationMs) || durationMs < 0 || durationMs > maxDurationMs)) {
-        throw new Error('voice_diagnostics_duration_exceeded');
-      }
-      if (capture.bytes.byteLength > maxBytes) throw new Error('voice_diagnostics_artifact_too_large');
-      await ensurePrivateDirectoryTree(input.happyHomeDir, root);
-      await pruneUnlocked();
-      const disk = await readStatfs(root);
-      const availableBytes = Number(disk.bavail) * Number(disk.bsize);
-      if (!Number.isFinite(availableBytes) || availableBytes < capture.bytes.byteLength + minFreeBytes) {
-        throw new Error('voice_diagnostics_disk_headroom');
-      }
-
-      const createdAtMs = now();
-      const id = `${Math.max(0, Math.floor(createdAtMs)).toString(16)}-${randomUUID()}`;
-      const metadata: VoiceDiagnosticMetadataV1 = {
-        v: 1,
-        id,
-        createdAtMs,
-        direction: capture.direction,
-        format: capture.format,
-        durationMs,
+    capture: (capture) => enqueue(async () => await captureWithWriter(
+      capture,
+      {
         byteLength: capture.bytes.byteLength,
-        sessionRef: opaqueRef(capture.sessionId),
-        providerRef: opaqueRef(capture.providerId),
-        attemptRef: opaqueRef(capture.attemptId),
-      };
-      const artifact = toArtifact(root, metadata);
-      const nonce = randomUUID();
-      const audioTempPath = `${artifact.audioPath}.tmp-${nonce}`;
-      const metadataTempPath = `${artifact.metadataPath}.tmp-${nonce}`;
-      try {
-        await writeFile(audioTempPath, capture.bytes, { flag: 'wx', mode: 0o600 });
-        throwIfAborted(capture.signal);
-        await writeFile(metadataTempPath, `${JSON.stringify(metadata, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
-        throwIfAborted(capture.signal);
-        await rename(audioTempPath, artifact.audioPath);
-        await rename(metadataTempPath, artifact.metadataPath);
-        if (process.platform !== 'win32') {
-          await Promise.all([chmod(artifact.audioPath, 0o600), chmod(artifact.metadataPath, 0o600)]);
-        }
-        await pruneUnlocked();
-        const retained = (await listUnlocked()).find((candidate) => candidate.id === artifact.id) ?? null;
-        return retained;
-      } catch (error) {
-        await Promise.all([
-          unlink(audioTempPath).catch(() => {}),
-          unlink(metadataTempPath).catch(() => {}),
-          unlink(artifact.audioPath).catch(() => {}),
-          unlink(artifact.metadataPath).catch(() => {}),
-        ]);
-        throw error;
+        durationMs: capture.durationMs ?? (capture.format === 'wav' ? resolveVoiceDiagnosticWavDurationMs(capture.bytes) : null),
+        writeAudio: async (audioTempPath) => {
+          await writeFile(audioTempPath, capture.bytes, { flag: 'wx', mode: 0o600 });
+        },
+      },
+    )),
+    captureFile: (capture) => enqueue(async () => {
+      const sourceMetadata = await lstat(capture.filePath);
+      if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink() || !Number.isSafeInteger(sourceMetadata.size)) {
+        throw new Error('voice_diagnostics_source_file_invalid');
       }
+      const durationMs = capture.durationMs ?? (
+        capture.format === 'wav'
+          ? await resolveCanonicalWavDurationMsFromFile(capture.filePath, sourceMetadata.size)
+          : null
+      );
+      return await captureWithWriter(
+        capture,
+        {
+          byteLength: sourceMetadata.size,
+          durationMs,
+          writeAudio: async (audioTempPath) => {
+            await copyFile(capture.filePath, audioTempPath, fsConstants.COPYFILE_EXCL);
+          },
+        },
+      );
     }),
     list: () => enqueue(listUnlocked),
     inspect: () => enqueue(inspectUnlocked),

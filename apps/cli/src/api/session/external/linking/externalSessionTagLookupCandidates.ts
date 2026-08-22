@@ -12,7 +12,7 @@ export type ExternalSessionTagLookupCandidate = Readonly<
       expectedSource: ExternalSessionsSource;
     }
   | {
-      kind: 'codex-connected-service-predecessor';
+      kind: 'connected-service-group-predecessor';
       tag: string;
       expectedSource: ExternalSessionsSource;
       expectedConnectedServiceGroupId: string;
@@ -39,7 +39,7 @@ function tagForSourceKey(
   }`;
 }
 
-function resolveCodexConnectedServicePredecessor(
+function resolveConnectedServiceGroupPredecessor(
   params: Readonly<{
     machineId: string;
     agentId: ExternalSessionsAgentId;
@@ -48,8 +48,7 @@ function resolveCodexConnectedServicePredecessor(
   }>,
 ): ExternalSessionTagLookupCandidate | null {
   if (
-    params.agentId !== 'codex'
-    || params.source.kind !== 'codexHome'
+    params.source.kind !== 'codexHome'
     || params.source.home !== 'connectedService'
   ) {
     return null;
@@ -67,7 +66,7 @@ function resolveCodexConnectedServicePredecessor(
     `codexHome:connectedService:${connectedServiceId}:`
     + `${connectedServiceProfileId}:${homePath}`;
   return {
-    kind: 'codex-connected-service-predecessor',
+    kind: 'connected-service-group-predecessor',
     tag: tagForSourceKey(params, sourceKey),
     expectedSource: params.source,
     expectedConnectedServiceGroupId,
@@ -107,7 +106,7 @@ export function resolveExternalSessionTagLookupCandidates(
     });
   }
 
-  const predecessor = resolveCodexConnectedServicePredecessor(params);
+  const predecessor = resolveConnectedServiceGroupPredecessor(params);
   if (
     predecessor
     && !candidates.some((candidate) => candidate.tag === predecessor.tag)

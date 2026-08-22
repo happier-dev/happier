@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 import type { FileBackedTranscriptSessionStore } from './fileBackedTranscripts/store';
 import {
   createSessionTranscriptFollowLeaseRegistry,
@@ -11,6 +12,20 @@ import {
 } from './transcriptQueries';
 
 type TestItem = Readonly<{ id: string; text?: string }>;
+
+function createDeferred<T>(): Readonly<{
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}> {
+  let resolve: (value: T) => void = () => undefined;
+  let reject: (error: unknown) => void = () => undefined;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
 
 function createStore(overrides?: Partial<FileBackedTranscriptSessionStore<TestItem>>): FileBackedTranscriptSessionStore<TestItem> {
   return {
@@ -119,6 +134,23 @@ describe('session transcript action query helpers', () => {
 
     expect(writeItems).toHaveBeenCalledWith([{ id: 'row-1' }]);
   });
+
+  it('returns the existing upgrade_required action result when the historical import route is unavailable', async () => {
+    const writeItems = vi.fn(async () => {
+      throw createHttpStatusError(404, 'Server upgrade required before transcript import.', 'upgrade_required');
+    });
+
+    await expect(importSessionTranscript({
+      input: { items: [{ id: 'row-1' }] },
+      writeItems,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'upgrade_required',
+      message: 'Server upgrade required before transcript import.',
+    });
+
+    expect(writeItems).toHaveBeenCalledOnce();
+  });
 });
 
 describe('session transcript follow leases', () => {
@@ -147,6 +179,69 @@ describe('session transcript follow leases', () => {
     await registry.release('lease-1');
     await registry.release('lease-1');
     expect(registry.activeCount()).toBe(0);
+  });
+
+  it('releases the retained lease when the initial transcript read fails', async () => {
+    const initialReadError = new Error('initial transcript read failed');
+    const unsubscribe = vi.fn();
+    const readAfter = vi.fn()
+      .mockRejectedValueOnce(initialReadError)
+      .mockResolvedValueOnce({ items: [], nextCursor: 'tail-2', truncated: false });
+    const store = createStore({
+      readAfter,
+      subscribe: () => unsubscribe,
+    });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 1, idleTtlMs: 1000 });
+
+    await expect(followSessionTranscript({
+      store,
+      registry,
+      input: { leaseId: 'failed-lease', cursor: 'tail' },
+    })).rejects.toBe(initialReadError);
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(registry.activeCount()).toBe(0);
+    await expect(followSessionTranscript({
+      store,
+      registry,
+      input: { leaseId: 'replacement-capacity', cursor: 'tail' },
+    })).resolves.toMatchObject({ ok: true, leaseId: 'replacement-capacity' });
+    expect(registry.activeCount()).toBe(1);
+  });
+
+  it('does not release a newer same-id replacement when an older initial read fails', async () => {
+    const staleReadError = new Error('stale initial transcript read failed');
+    const staleRead = createDeferred<never>();
+    const readAfter = vi.fn()
+      .mockImplementationOnce(async () => await staleRead.promise)
+      .mockResolvedValueOnce({ items: [], nextCursor: 'tail-current', truncated: false });
+    const staleUnsubscribe = vi.fn();
+    const currentUnsubscribe = vi.fn();
+    const store = createStore({
+      readAfter,
+      subscribe: vi.fn()
+        .mockReturnValueOnce(staleUnsubscribe)
+        .mockReturnValueOnce(currentUnsubscribe),
+    });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 1, idleTtlMs: 1000 });
+
+    const staleFollow = followSessionTranscript({
+      store,
+      registry,
+      input: { leaseId: 'shared-lease', cursor: 'tail-stale' },
+    });
+    await expect(followSessionTranscript({
+      store,
+      registry,
+      input: { leaseId: 'shared-lease', cursor: 'tail-current' },
+    })).resolves.toMatchObject({ ok: true, leaseId: 'shared-lease' });
+
+    staleRead.reject(staleReadError);
+    await expect(staleFollow).rejects.toBe(staleReadError);
+
+    expect(staleUnsubscribe).toHaveBeenCalledOnce();
+    expect(currentUnsubscribe).not.toHaveBeenCalled();
+    expect(registry.activeCount()).toBe(1);
   });
 
   it('expires idle follow leases with a host policy override', async () => {

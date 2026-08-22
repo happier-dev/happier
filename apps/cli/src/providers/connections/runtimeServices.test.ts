@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema } from '@happier-dev/protocol';
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -14,7 +13,6 @@ import {
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 function runtimeRegistry(
-  label: string,
   activateContributionsOnDemand: ResolvedExecutablePluginRuntimeRegistry['activateContributionsOnDemand'],
 ): ResolvedExecutablePluginRuntimeRegistry {
   return {
@@ -29,21 +27,16 @@ function runtimeRegistry(
       catalogEntriesById: Object.freeze({}),
       agentDefinitionsById: new Map(),
       pluginDiagnosticsByPluginId: Object.freeze({}),
-      generationId: `registry:${label}`,
     },
     hookHandlersByHookId: new Map(),
     agentRuntimesByAgentId: new Map(),
-    daemonAuthBridgesByServiceId: new Map(),
     scmHostingProvidersById: new Map(),
-    networkAllowedUrlOriginsByPluginId: new Map(),
-    processSpawnAllowedPathsByPluginId: new Map(),
     pluginDiagnosticsByPluginId: Object.freeze({}),
     activatedPluginIds: new Set(),
     activateContributionsOnDemand,
     resolvePromptAssetBlocks: async () => [],
     addRuntimeDisposable: (_pluginId, disposable) => disposable,
-    createAgentInvocationServices: () => createUnavailablePluginServices(),
-    readHookEventEnvelopeV1,
+    createAgentInvocationServices: async () => createUnavailablePluginServices(),
     retireConsumers: () => {},
     dispose: vi.fn(async () => {}),
   };
@@ -57,24 +50,25 @@ afterEach(() => {
 });
 
 describe('runtime Provider connection composition', () => {
-  it('describes connections without starting Agent activation and releases the active registry lease', async () => {
+  it('describes token-only account connections without starting Agent activation and releases the active registry lease', async () => {
     const neverSettles = new Promise<never>(() => {});
     const activateContributionsOnDemand = vi.fn(() => neverSettles);
-    const activeRegistry = runtimeRegistry('active', activateContributionsOnDemand);
-    const replacementRegistry = runtimeRegistry('replacement', async () => []);
+    const activeRegistry = runtimeRegistry(activateContributionsOnDemand);
+    const replacementRegistry = runtimeRegistry(async () => []);
     const controller = createPluginReloadController();
     await controller.adoptPreparedRuntimeRegistry({
       registry: activeRegistry,
       changedPluginIds: [],
       durableRevision: 1,
+      runningSessionDisposition: 'retainRunningSessions',
     });
     vi.doMock('@/plugins/runtime/reload/singleton', () => ({
       pluginReloadController: controller,
     }));
 
-    const credentials: Credentials = {
+    const credentials: StoredCredentials = {
       token: 'provider-runtime-services-test',
-      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+      encryption: null,
     };
     setActiveAccountSettingsSnapshot({
       source: 'network',
@@ -112,6 +106,7 @@ describe('runtime Provider connection composition', () => {
       registry: replacementRegistry,
       changedPluginIds: [],
       durableRevision: 2,
+      runningSessionDisposition: 'retainRunningSessions',
     });
     expect(activeRegistry.dispose).toHaveBeenCalledOnce();
     await controller.shutdown({ timeoutMs: 0 });

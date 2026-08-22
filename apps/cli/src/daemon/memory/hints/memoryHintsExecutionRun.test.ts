@@ -1,27 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
-import type { MemoryHintsExecutionRunBackendFactory } from './runMemoryHintsExecutionRun';
+import type { MemoryHintsExecutionRunTextPromptRunner } from './runMemoryHintsExecutionRun';
 
 describe('runMemoryHintsExecutionRun', () => {
-  it('runs a single-turn ephemeral memory_hints execution using the backend overlay', async () => {
+  it('uses the canonical text-prompt Action path for one bounded memory_hints run', async () => {
     const { runMemoryHintsExecutionRun } = await import('./runMemoryHintsExecutionRun');
 
-    const observed: Parameters<MemoryHintsExecutionRunBackendFactory>[0][] = [];
-
-    let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
-    runtime = createTestExecutionRunHostRuntime({
-      sessionId: 'vendor-sess-1',
-      onSendPrompt() {
-        // Emit fullText immediately for determinism.
-        runtime.emitMessage({ type: 'model-output', fullText: '{"ok":true}' });
-      },
-    });
-
-    const createBackend: MemoryHintsExecutionRunBackendFactory = (opts) => {
-      observed.push(opts);
-      return runtime;
-    };
+    const runTextPrompt: MemoryHintsExecutionRunTextPromptRunner = vi.fn(
+      async () => '{"ok":true}',
+    );
 
     const raw = await runMemoryHintsExecutionRun({
       cwd: '/tmp',
@@ -30,11 +17,21 @@ describe('runMemoryHintsExecutionRun', () => {
       modelId: 'default',
       permissionMode: 'no_tools',
       prompt: 'Return JSON',
-      createBackend,
+      runTextPrompt,
     });
 
     expect(raw).toContain('{"ok":true}');
-    expect(observed[0]?.start?.retentionPolicy).toBe('ephemeral');
-    expect(observed[0]?.start?.intent).toBe('memory_hints');
-  }, 1_000);
+    expect(runTextPrompt).toHaveBeenCalledWith({
+      cwd: '/tmp',
+      sessionId: 'sess-123',
+      runner: {
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'default',
+        permissionMode: 'no_tools',
+      },
+      intent: 'memory_hints',
+      prompt: 'Return JSON',
+      timeoutMs: undefined,
+    });
+  });
 });

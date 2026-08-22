@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger';
+import { clearActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 export type DaemonShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 
@@ -17,6 +18,11 @@ export function createDaemonShutdownController(): {
   const resolvesWhenShutdownRequested = new Promise<DaemonShutdownRequest>((resolve) => {
     requestShutdown = (source, errorMessage) => {
       logger.debug(`[DAEMON RUN] Requesting shutdown (source: ${source}, errorMessage: ${errorMessage})`);
+
+      // A stopped daemon must revoke its local Account incumbent before any
+      // asynchronous drain/cleanup work runs. The shutdown controller is the
+      // lifecycle owner shared by authenticated control stop and OS shutdown.
+      clearActiveAccountSettingsSnapshot();
 
       // Start graceful shutdown
       resolve({ source, errorMessage });

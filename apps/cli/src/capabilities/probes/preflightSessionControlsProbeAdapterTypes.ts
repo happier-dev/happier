@@ -19,6 +19,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
  * The probe functions return raw payloads (best-effort). Callers must normalize/validate.
  */
 export type PreflightSessionControlsProbeAdapter = Readonly<{
+  connectedServiceAuth?: 'materialized-env';
   failureCacheStrategy?: PreflightSessionControlsProbeFailureCacheStrategy;
   probeModelsRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown | null>;
   cliModelsCommandArgs?: ReadonlyArray<string>;

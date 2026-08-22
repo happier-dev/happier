@@ -106,8 +106,12 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
     expect(isConnectedServiceRestartSignalStaleProcessError(new Error('operation not permitted'))).toBe(false);
   });
 
-  it('records a uniform daemon restart diagnostic before signaling', async () => {
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+  it('records a uniform daemon restart diagnostic after signaling so the final gate stays last', async () => {
+    const events: string[] = [];
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      events.push('signal');
+      return true;
+    });
     const records: unknown[] = [];
 
     await expect(requestConnectedServiceSessionRestartSignal({
@@ -116,7 +120,10 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
       preferProcessGroup: true,
       onSignalFailure: () => {},
       nowMs: () => 10_000,
-      recordRestartDiagnostic: (record: unknown) => records.push(record),
+      recordRestartDiagnostic: (record: unknown) => {
+        events.push('diagnostic');
+        records.push(record);
+      },
       restartDiagnostic: {
         trigger: 'manual_switch',
         sessionId: 'session-1',
@@ -130,6 +137,7 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
     })).resolves.toEqual({ status: 'requested' });
 
     expect(kill).toHaveBeenCalledWith(-123, 'SIGTERM');
+    expect(events).toEqual(['signal', 'diagnostic']);
     expect(records).toEqual([{
       type: 'connected_service_daemon_restart',
       trigger: 'manual_switch',
@@ -220,6 +228,31 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
 
     expect(kill).toHaveBeenNthCalledWith(1, -123, 'SIGTERM');
     expect(kill).toHaveBeenNthCalledWith(2, 123, 'SIGTERM');
+  });
+
+  it('rechecks the exact signal witness after process-group failure before pid fallback', async () => {
+    let exactSignalWitnessIsCurrent = true;
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+      if (pid === -123) {
+        exactSignalWitnessIsCurrent = false;
+        throw new Error('group unavailable');
+      }
+      return true;
+    });
+    const shouldSignal = vi.fn(() => exactSignalWitnessIsCurrent);
+
+    await expect(requestConnectedServiceSessionRestartSignal({
+      pid: 123,
+      delayMs: 0,
+      preferProcessGroup: true,
+      shouldSignal,
+      onSignalFailure: () => {},
+    })).resolves.toEqual({ status: 'skipped_stale_owner' });
+
+    expect(shouldSignal).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledOnce();
+    expect(kill).toHaveBeenCalledWith(-123, 'SIGTERM');
+    expect(kill).not.toHaveBeenCalledWith(123, 'SIGTERM');
   });
 
   it('skips a delayed signal when the session no longer owns the pid', async () => {

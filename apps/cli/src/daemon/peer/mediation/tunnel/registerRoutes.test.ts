@@ -3,12 +3,9 @@ import {
     createDirectRouteGrantSigningInputV1,
     createSpeechTranscriptionApplicationAuthorityDigestV1,
     createPeerRouteNonceSigningInputV1,
-    decodeVoiceMediaAgentRealtimeFrameV1,
     decodePeerTcpTunnelBinaryFrameV2,
-    encodeVoiceMediaAgentRealtimeFrameV1,
     encodePeerTcpTunnelBinaryFrameV2,
     PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-    VOICE_MEDIA_AGENT_REALTIME_PCM_FORMAT_V1,
     type DirectRouteGrantPayloadV1,
     type PeerTcpTunnelOpenV1,
 } from '@happier-dev/protocol';
@@ -1142,121 +1139,6 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
         });
         await app.close();
         expect(voiceBinaryTerminalConsumer).toHaveBeenCalledOnce();
-    });
-
-    it('dispatches exact Agent realtime Voice frames and emits application output on the daemon carrier window', async () => {
-        const mod = await loadRegisterRoutesModule();
-        if (!mod) throw new Error('expected direct tunnel route module');
-        const app = createPeerMediationLoopbackApp(loopbackOptions);
-        const authority = {
-            v: 1 as const,
-            applicationKind: 'agent_realtime' as const,
-            applicationAttemptId: 'attempt-1',
-            applicationAuthorityDigest: `sha256:${'cd'.repeat(32)}`,
-        };
-        const dispatchFrame = vi.fn(async (input) => ({
-            v: 1 as const,
-            kind: 'input_accepted' as const,
-            applicationSequence: input.frame.applicationSequence,
-            acceptedBytes: input.frame.kind === 'input_audio'
-                ? input.frame.payload.byteLength
-                : 0,
-        }));
-        const agentConsumer: NonNullable<
-            Parameters<typeof mod.registerPeerTcpTunnelLoopbackRoutes>[1]['voiceMediaAgentRealtimeConsumer']
-        > = {
-            dispatchFrame,
-            close: vi.fn(async () => {}),
-        };
-        const voiceBinaryTerminalConsumer = vi.fn(async () => ({ ok: true as const }));
-        mod.registerPeerTcpTunnelLoopbackRoutes(app, {
-            nowMs: loopbackOptions.nowMs,
-            expected: {
-                accountId: 'account_1',
-                machineId: 'machine_1',
-                endpointFingerprint: 'endpoint_1',
-            },
-            trustRoots: [],
-            openTunnel: vi.fn(async () => ({
-                ok: true as const,
-                flowKind: 'voice_media' as const,
-                voiceMediaApplicationAuthority: authority,
-                response: {
-                    v: 1 as const,
-                    tunnelId: 'tun_agent_realtime',
-                    streamPath: '/peer-mediation/v1/tunnel/stream' as const,
-                    encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-                    initialWindowBytes: 1024 * 1024,
-                    maxFrameBytes: 64 * 1024,
-                },
-                receipt: 'peer.tunnel.opened' as const,
-                limits: testTunnelLimits,
-            })),
-            voiceMediaAgentRealtimeConsumer: agentConsumer,
-            voiceBinaryTerminalConsumer,
-        });
-        await app.inject({
-            method: 'POST',
-            url: '/peer-mediation/v1/tunnel/open',
-            payload: {
-                v: 1,
-                kind: 'open',
-                tunnelId: 'tun_agent_realtime',
-                targetMachineId: 'machine_1',
-                routeKind: 'loopback_direct',
-                destination: { host: '127.0.0.1', port: 3000 },
-                selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-            },
-        });
-        await app.ready();
-        const ws = await (app as unknown as {
-            injectWS: (path: string) => Promise<{
-                send: (payload: Uint8Array) => void;
-                terminate: () => void;
-                on: (event: 'message', handler: (payload: Buffer) => void) => void;
-                off: (event: 'message', handler: (payload: Buffer) => void) => void;
-            }>;
-        }).injectWS('/peer-mediation/v1/tunnel/stream');
-        const responseFrame = waitForBinaryFrameKind(ws, 'data');
-        const payload = encodeVoiceMediaAgentRealtimeFrameV1({
-            v: 1,
-            kind: 'input_audio',
-            applicationSequence: 7,
-            format: VOICE_MEDIA_AGENT_REALTIME_PCM_FORMAT_V1,
-            samplesPerChannel: 2,
-            payload: new Uint8Array([1, 2, 3, 4]),
-        });
-        ws.send(encodePeerTcpTunnelBinaryFrameV2({
-            header: {
-                version: 2,
-                kind: 'data',
-                tunnelId: 'tun_agent_realtime',
-                substreamId: 'agent.realtime.attempt-1',
-                direction: 'client_to_daemon',
-                sequence: 0,
-                payloadLength: payload.byteLength,
-            },
-            payload,
-        }));
-
-        await vi.waitFor(() => expect(dispatchFrame).toHaveBeenCalledOnce());
-        const decodedCarrier = decodePeerTcpTunnelBinaryFrameV2({
-            frame: await responseFrame,
-            maxHeaderBytes: 1024,
-            maxPayloadBytes: 1024,
-        });
-        expect(decodedCarrier.ok ? decodeVoiceMediaAgentRealtimeFrameV1(decodedCarrier.payload) : null)
-            .toEqual({
-                v: 1,
-                kind: 'input_accepted',
-                applicationSequence: 7,
-                acceptedBytes: 4,
-            });
-        expect(dispatchFrame).toHaveBeenCalledOnce();
-        ws.terminate();
-        await vi.waitFor(() => expect(agentConsumer.close).toHaveBeenCalledOnce());
-        expect(voiceBinaryTerminalConsumer).not.toHaveBeenCalled();
-        await app.close();
     });
 
     it('terminates a recoverably identified Voice substream when its direct binary payload is malformed', async () => {

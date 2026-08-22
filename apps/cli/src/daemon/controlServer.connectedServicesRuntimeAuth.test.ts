@@ -571,7 +571,10 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
             },
         }];
         const beginClassifiedFailure = vi.fn();
-        const handleConnectedServiceRuntimeAuthFailure = vi.fn();
+        const handleConnectedServiceRuntimeAuthFailure = vi.fn(async () => ({
+            status: 'recovery_superseded' as const,
+            reason: 'source_tuple_unavailable' as const,
+        }));
         const app = createDaemonControlApp({
             getChildren: () => children,
             machineId: 'machine',
@@ -631,7 +634,13 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
                 result: { status: 'recovery_superseded', reason: 'source_tuple_unavailable' },
             });
             expect(beginClassifiedFailure).not.toHaveBeenCalled();
-            expect(handleConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
+            expect(handleConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(expect.objectContaining({
+                sessionId: 'sess_exact_route',
+                sourceAuthorization: expect.objectContaining({
+                    status: 'recovery_superseded',
+                    reason: 'source_tuple_unavailable',
+                }),
+            }));
         } finally {
             await app.close();
         }
@@ -1965,7 +1974,13 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
   });
 
   it('dispatches session turn lifecycle events to the daemon handler', async () => {
-        const handleConnectedServiceTurnLifecycle = vi.fn(async () => ({ ok: true }));
+        const handleConnectedServiceTurnLifecycle = vi.fn(async () => ({
+            status: 'continue' as const,
+            turnCustody: {
+                status: 'recorded' as const,
+                activeTurnId: 'session-turn:exact-1',
+            },
+        }));
         const app = createDaemonControlApp({
             getChildren: () => [],
             machineId: 'machine',
@@ -1990,24 +2005,28 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
                 headers: { 'x-happier-daemon-token': 'token' },
                 payload: {
                     sessionId: 'sess_1',
-                    turnId: 'session-turn:exact-1',
-                    event: 'assistant_message_end',
-                    terminalStatus: 'failed',
-                    connectedServiceSelectionsEnvRaw: '[{"kind":"profile","serviceId":"gemini","profileId":"work"}]',
+                    event: 'prompt_or_steer',
+                    requestedAction: { v: 1, kind: 'steer_now' },
+                    activeTurnId: 'session-turn:exact-1',
                 },
             });
 
             expect(response.statusCode).toBe(200);
             expect(response.json()).toEqual({
                 ok: true,
-                result: { ok: true },
+                result: {
+                    status: 'continue',
+                    turnCustody: {
+                        status: 'recorded',
+                        activeTurnId: 'session-turn:exact-1',
+                    },
+                },
             });
             expect(handleConnectedServiceTurnLifecycle).toHaveBeenCalledWith({
                 sessionId: 'sess_1',
-                turnId: 'session-turn:exact-1',
-                event: 'assistant_message_end',
-                terminalStatus: 'failed',
-                connectedServiceSelectionsEnvRaw: '[{"kind":"profile","serviceId":"gemini","profileId":"work"}]',
+                event: 'prompt_or_steer',
+                requestedAction: { v: 1, kind: 'steer_now' },
+                activeTurnId: 'session-turn:exact-1',
             });
         } finally {
             await app.close();

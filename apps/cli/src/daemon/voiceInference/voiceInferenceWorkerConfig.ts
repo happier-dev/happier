@@ -1,6 +1,6 @@
 import {
-    VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS,
-    VOICE_RUNTIME_MEMORY_BUDGET_DEFAULTS,
+    VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS,
+    VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_DEFAULTS,
     VOICE_RUNTIME_PER_MODEL_CONCURRENCY_BOUNDS,
     VOICE_RUNTIME_STT_DEFAULTS,
     VOICE_RUNTIME_STT_MAX_UPLOAD_BYTES_BOUNDS,
@@ -35,14 +35,13 @@ export const DEFAULT_VOICE_INFERENCE_WORKER_CONFIG = {
  * owner rather than the cross-host protocol voice runtime config.
  *
  * - `requestTimeoutMs`: per-request deadline. A wedged-but-alive child must not hang the
- *   caller forever. Streaming requests reset this deadline on each chunk (activity-based
- *   liveness), so a long legitimate synthesis is never killed while it is making progress.
+ *   caller forever.
  * - `pingIntervalMs`: heartbeat cadence. The daemon periodically pings the idle channel.
  * - `missedPingThreshold`: consecutive unanswered pings before the child is declared hung
  *   and force-killed (which triggers the existing supervised restart path).
  * - `maxFrameBytes`: per-IPC-frame ceiling (M2). Lowered far below the historical 64 MiB so
- *   a single base64-inflated TTS frame cannot balloon daemon memory; large audio prefers the
- *   chunked-TTS `partial` path instead.
+ *   a single base64-inflated TTS frame cannot balloon daemon memory. Direct terminal output that
+ *   cannot fit this bound fails with `output_too_large`; there is no chunked-TTS IPC producer.
  */
 export const VOICE_INFERENCE_WORKER_HANG_DEFAULTS = {
     requestTimeoutMs: 30_000,
@@ -112,17 +111,17 @@ export function resolveVoiceInferenceSttMaxUploadBytes(): number {
 }
 
 /**
- * Resident-model memory budget in bytes. `0` disables the budget (no memory-driven LRU
- * eviction). Below-min overrides fall back to disabled; over-max overrides clamp to the
- * ceiling. Centralized here so the budget knob has a single owner.
+ * Declared loaded-artifact byte budget. `0` disables the LRU eviction budget. Below-min
+ * overrides fall back to disabled; over-max overrides clamp to the ceiling. This bounds
+ * manifest-declared model-pack bytes, not process memory.
  */
-export function resolveVoiceInferenceMaxResidentBytes(): number {
+export function resolveVoiceInferenceMaxLoadedArtifactBytes(): number {
     return parseBoundedInt(
-        process.env.HAPPIER_VOICE_INFERENCE_MAX_RESIDENT_BYTES,
-        VOICE_RUNTIME_MEMORY_BUDGET_DEFAULTS.maxResidentBytes,
+        process.env.HAPPIER_VOICE_INFERENCE_MAX_LOADED_ARTIFACT_BYTES,
+        VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_DEFAULTS.maxLoadedArtifactBytes,
         {
-            min: VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.min,
-            max: VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.max,
+            min: VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.min,
+            max: VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.max,
         },
     );
 }
@@ -175,21 +174,23 @@ export function readVoiceInferenceRuntimeModuleOverride(): string | null {
 /**
  * Process-isolation mode for the daemon-local voice inference engine.
  *
- * - `in_process` (default): the native sherpa engine is loaded in the daemon process.
- * - `forked`: the engine runs in a SEPARATE supervised child process behind the same
- *   `VoiceInferenceRuntime` interface, so a native crash/hang cannot take down the daemon.
+ * - `forked` (default): the engine runs in a SEPARATE supervised child process behind the
+ *   same `VoiceInferenceRuntime` interface, so a native crash/hang cannot take down the
+ *   daemon. Supervision (crash containment, restart, hang watchdog) is only actually in
+ *   force on this path, so it is what an unconfigured install gets.
+ * - `in_process`: the native sherpa engine is loaded in the daemon process. This is a
+ *   diagnostic/measurement escape hatch and must be requested EXPLICITLY; it has no crash
+ *   boundary.
  *
  * This is the single, centralized selection knob — callers must never branch on
- * in-process vs forked anywhere else. The in-process path stays the default so existing
- * behavior is unchanged unless an operator opts in.
+ * in-process vs forked anywhere else. Unrecognized values fall back to the supervised
+ * `forked` path (fail-safe): a typo must never silently drop the crash boundary.
  */
 export type VoiceInferenceRuntimeIsolationMode = 'in_process' | 'forked';
 
 export function resolveVoiceInferenceRuntimeIsolationMode(): VoiceInferenceRuntimeIsolationMode {
     const raw = String(process.env.HAPPIER_VOICE_INFERENCE_ISOLATION ?? '').trim().toLowerCase();
-    return raw === 'forked' || raw === 'worker' || raw === 'process'
-        ? 'forked'
-        : 'in_process';
+    return raw === 'in_process' ? 'in_process' : 'forked';
 }
 
 export function resolveVoiceInferenceAcceptedInputMimeTypes(): readonly string[] {

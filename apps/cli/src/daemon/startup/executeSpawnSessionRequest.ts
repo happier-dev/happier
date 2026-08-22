@@ -2,7 +2,6 @@ import { configuration } from '@/configuration';
 import {
     createProviderErrorV1,
     type ConnectedServiceBindingsV1,
-    type ConnectedServiceMaterializationIdentityV1,
 } from '@happier-dev/protocol';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 import { logger } from '@/ui/logger';
@@ -35,11 +34,16 @@ import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourc
 import type { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { createSpawnPluginRuntimeLease } from '../spawn/spawnPluginRuntimeLease';
 import { prepareDaemonProviderLaunch } from '../spawn/prepareDaemonProviderLaunch';
-import { prepareDaemonConnectedServices } from '../spawn/prepareDaemonConnectedServices';
+import {
+    prepareDaemonConnectedServices,
+    type MissingConnectedServiceMaterializationIdentityRepair,
+} from '../spawn/prepareDaemonConnectedServices';
 import { prepareDaemonSpawnChildEnvironment } from '../spawn/prepareDaemonSpawnChildEnvironment';
 import { prepareDaemonSpawnLifecycle } from '../spawn/prepareDaemonSpawnLifecycle';
+import {
+    prepareRunnerAgentSessionBootstrapForLease,
+} from '../spawn/prepareAgentRuntimeSessionBridge';
 import { buildProviderSpawnErrorResult } from '../spawn/buildProviderSpawnErrorResult';
-import { prepareDaemonManagedProviderBinding } from '../spawn/prepareDaemonManagedProviderBinding';
 import type {
     ConnectedAccountRequestAuthSubjectRegistry,
 } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
@@ -59,15 +63,7 @@ import {
     composeConnectedAccountSessionPurposeBindingSnapshot,
     scopeConnectedAccountSessionPurposeBindingLease,
 } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
-import {
-    clearSessionMarkerManagedLocalServiceRunAttachment,
-    managedLocalServiceRunAttachmentsEqual,
-    type ManagedLocalServiceRunAttachmentMarkerOwnership,
-    type ManagedLocalServiceRunAttachmentV1,
-} from '../sessionRegistry';
-import {
-    clearPromotedManagedLocalServiceMarkerAttachment,
-} from './clearPromotedManagedLocalServiceMarkerAttachment';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 type SpawnCredentials = NonNullable<Parameters<typeof resolveSpawnBackendIdentity>[0]['credentials']>;
 type SpawnApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
@@ -76,20 +72,10 @@ type SpawnAuthGroupSwitchCoordinator = Parameters<typeof resolveConnectedService
 type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 type LoadLocalHandoffMetadataByVendorResumeId =
     Parameters<typeof resolveSpawnBackendIdentity>[0]['loadLocalHandoffMetadataByVendorResumeId'];
-type ManagedProviderEndpointRuntime = Omit<
-    Parameters<typeof prepareDaemonManagedProviderBinding>[0],
-    'attempt'
-    | 'context'
-    | 'launchResourceScope'
-    | 'managedLocalServicesEnabled'
-    | 'requestAuthHttpPort'
-> & Readonly<{
-    resolveManagedLocalServicesEnabled: () => boolean | Promise<boolean>;
-}>;
-
 export type ExecuteSpawnSessionRequestParams = Readonly<{
     options: SpawnSessionOptions;
     credentials: SpawnCredentials;
+    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     api: SpawnApi;
     loadLocalHandoffMetadataByVendorResumeId: LoadLocalHandoffMetadataByVendorResumeId;
     connectedServicesMaterializationBaseDir: string;
@@ -104,7 +90,7 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
         agentId: CatalogAgentId;
         connectedServices: ConnectedServiceBindingsV1;
         vendorResumeId: string | null;
-    }>) => Promise<ConnectedServiceMaterializationIdentityV1 | null>;
+    }>) => Promise<MissingConnectedServiceMaterializationIdentityRepair | null>;
     pidToTrackedSession: Map<number, TrackedSession>;
     pidToAwaiter: Map<number, (session: TrackedSession) => void>;
     pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
@@ -116,7 +102,6 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     processEnv?: NodeJS.ProcessEnv;
     /** Canonical daemon/server feature decision. Missing or non-enabled fails provider spawns closed. */
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
-    managedProviderEndpointRuntime?: ManagedProviderEndpointRuntime;
     connectedAccountRequestAuthRegistry?: Pick<
         ConnectedAccountRequestAuthSubjectRegistry,
         'activate' | 'retire'
@@ -173,7 +158,6 @@ export async function executeSpawnSessionRequest(
             effectiveBackendTargetV2,
             sessionAttachPayload,
             catalogAgentId,
-            catalogAgentIdForConnectedServices,
             daemonSpawnHooks,
             environmentVariablesValidation,
             persistedProviderResumeState,
@@ -196,58 +180,6 @@ export async function executeSpawnSessionRequest(
         launchResourceScope.register(
             providerDiagnosticRedactionLease.close,
         );
-        type ManagedLocalServiceMarkerCustody = Readonly<{
-            pid: number;
-            ownership: ManagedLocalServiceRunAttachmentMarkerOwnership;
-            attachment: ManagedLocalServiceRunAttachmentV1;
-        }>;
-        let managedLocalServiceMarkerCustody:
-            ManagedLocalServiceMarkerCustody | null = null;
-        let managedLocalServiceMarkerCleanupClaim:
-            ManagedLocalServiceMarkerCustody | null = null;
-        let managedLocalServiceCanonicalSessionId: string | null = null;
-        let managedLocalServiceMarkerCleanupOwnedByRun = false;
-        const clearManagedLocalServiceMarkerCustody = async (): Promise<void> => {
-            const custody = managedLocalServiceMarkerCustody;
-            if (!custody) return;
-            managedLocalServiceMarkerCustody = null;
-            managedLocalServiceMarkerCleanupClaim = custody;
-            const canonicalSessionId =
-                managedLocalServiceCanonicalSessionId;
-            if (
-                canonicalSessionId
-                && await clearSessionMarkerManagedLocalServiceRunAttachment({
-                    ...custody,
-                    ownership: {
-                        ...custody.ownership,
-                        happySessionId: canonicalSessionId,
-                    },
-                }) !== 'mismatch'
-            ) {
-                return;
-            }
-            const cleared =
-                await clearSessionMarkerManagedLocalServiceRunAttachment(
-                    custody,
-                );
-            if (cleared === 'mismatch') {
-                throw new Error(
-                    'Managed local-service marker cleanup ownership mismatch',
-                );
-            }
-        };
-        launchResourceScope.register({
-            onFailure: async () => {
-                if (!managedLocalServiceMarkerCleanupOwnedByRun) {
-                    await clearManagedLocalServiceMarkerCustody();
-                }
-            },
-            onExit: async () => {
-                if (!managedLocalServiceMarkerCleanupOwnedByRun) {
-                    await clearManagedLocalServiceMarkerCustody();
-                }
-            },
-        });
         const pluginRuntimeLease = createSpawnPluginRuntimeLease(launchResourceScope);
         let launchRetirementOutcome:
             Promise<string | null> | null = null;
@@ -316,6 +248,16 @@ export async function executeSpawnSessionRequest(
                 ?? options.providerBindingMetadataV1
                 ?? null;
             const appliedPluginRuntimeLease = await pluginRuntimeLease.acquire();
+            const runnerAgentSessionBootstrap =
+                await prepareRunnerAgentSessionBootstrapForLease({
+                    target: effectiveBackendTargetV2,
+                    lease: appliedPluginRuntimeLease,
+                });
+            if (runnerAgentSessionBootstrap) {
+                launchResourceScope.register(
+                    runnerAgentSessionBootstrap.cleanupBootstrapFile,
+                );
+            }
             const daemonProviderLaunch = await prepareDaemonProviderLaunch({
                 options,
                 effectiveBackendTarget: effectiveBackendTargetV2,
@@ -342,7 +284,25 @@ export async function executeSpawnSessionRequest(
             const optionsWithProviderIsolation = daemonProviderLaunch.options;
             const providerBindingAttempt: ProviderSpawnAuthorizationAttempt | null = daemonProviderLaunch.attempt;
             const providerAgentTargetKey = daemonProviderLaunch.agentTargetKey;
-            const providerSessionId = daemonProviderLaunch.providerSessionId;
+            const managedProviderBindingAttempt = (
+                providerBindingAttempt
+                && 'materializeManagedEndpoint' in providerBindingAttempt
+            )
+                ? providerBindingAttempt
+                : null;
+            if (
+                managedProviderBindingAttempt
+                && !runnerAgentSessionBootstrap
+            ) {
+                return await refuseSpawn(buildProviderSpawnErrorResult(
+                    createProviderErrorV1('provider_endpoint_unavailable', {
+                        connectionId:
+                            managedProviderBindingAttempt.authorization.ticket.connectionId,
+                        machineId:
+                            managedProviderBindingAttempt.authorization.ticket.machineId,
+                    }),
+                ));
+            }
 
             const connectedServices = await prepareDaemonConnectedServices({
                 options: optionsWithProviderIsolation,
@@ -350,7 +310,6 @@ export async function executeSpawnSessionRequest(
                 requestedSessionId,
                 effectiveResume,
                 catalogAgentId,
-                catalogAgentIdForConnectedServices,
                 credentials: params.credentials,
                 api: params.api,
                 ...(params.providerAccountUsageStore
@@ -382,12 +341,6 @@ export async function executeSpawnSessionRequest(
                 connectedServices.qualifiedPurposeBindingSnapshot;
             const requestAuthPurposeBindings =
                 connectedServiceAuth?.requestAuthPurposeBindings ?? [];
-            const managedProviderBindingAttempt = (
-                providerBindingAttempt
-                && 'materializeManagedEndpoint' in providerBindingAttempt
-            )
-                ? providerBindingAttempt
-                : null;
             const managedPurposeBindings = managedProviderBindingAttempt
                 ? managedProviderBindingAttempt.authorization.deployment
                     .implementation.purposeBindings.bindings
@@ -395,18 +348,6 @@ export async function executeSpawnSessionRequest(
             const managedPurposes = managedPurposeBindings.map(
                 (binding) => binding.purpose,
             );
-            const managedRequestAuthUses = managedProviderBindingAttempt
-                ? managedProviderBindingAttempt.authorization.deployment
-                    .implementation.facet.requestAuthUses.map((use) =>
-                        Object.freeze({
-                            purpose: Object.freeze({
-                                consumer: managedProviderBindingAttempt.authorization.deployment
-                                    .implementation.implementationIdentity,
-                                purpose: use.purpose,
-                            }),
-                            materialization: use.materialization,
-                        }))
-                : [];
             let sessionPurposeBindingSnapshot:
                 ReturnType<
                     typeof composeConnectedAccountSessionPurposeBindingSnapshot
@@ -495,7 +436,9 @@ export async function executeSpawnSessionRequest(
                     return { ok: true, lease: activatedLease };
                 }
                 const materializedRootDir =
-                    connectedServiceAuth?.targetMaterializedRoot?.trim() ?? '';
+                    connectedServiceAuth
+                        ?.requestAuthMaterializedRoot
+                        ?.trim() ?? '';
                 const requestAuthRegistry =
                     params.connectedAccountRequestAuthRegistry;
                 const requestAuthHttpPort =
@@ -522,17 +465,21 @@ export async function executeSpawnSessionRequest(
                 }
                 try {
                     await activateConnectedAccountRequestAuthForSpawn({
-                        agentId: catalogAgentIdForConnectedServices,
                         materializationId: materializationKey,
                         materializedRootDir,
                         httpPort: requestAuthHttpPort,
                         subject:
                             scopeConnectedAccountSessionPurposeBindingLease({
                                 lease: activatedLease,
-                                subjectId:
-                                    `${activatedLease.subjectId}/agent:${catalogAgentIdForConnectedServices}`,
+                                subjectId: activatedLease.subjectId,
                                 uses:
                                     agentPurposeBindingSnapshot.requestAuthUses,
+                                ...(catalogAgentId
+                                    ? {
+                                        legacyServiceKeyedCompatibility:
+                                            true as const,
+                                    }
+                                    : {}),
                                 registerRedaction:
                                     providerDiagnosticRedactionLease.add,
                             }),
@@ -582,101 +529,6 @@ export async function executeSpawnSessionRequest(
                         'connected_account_request_auth_unavailable',
                 });
             }
-            const knownManagedRequestAuthSubject =
-                connectedServiceAuthSessionId
-                && sessionPurposeBindingLease
-                && managedPurposes.length > 0
-                    ? scopeConnectedAccountSessionPurposeBindingLease({
-                        lease: sessionPurposeBindingLease,
-                        subjectId:
-                            `${sessionPurposeBindingLease.subjectId}/managed-provider:${managedProviderBindingAttempt!.authorization.ticket.connectionId}`,
-                        uses: managedRequestAuthUses,
-                        registerRedaction:
-                            providerDiagnosticRedactionLease.add,
-                    })
-                    : null;
-            const materializeManagedProviderBinding = managedProviderBindingAttempt
-                ? async () => {
-                    const runtime = params.managedProviderEndpointRuntime;
-                    const requestAuthHttpPort =
-                        params.connectedAccountRequestAuthHttpPort;
-                    if (!runtime) {
-                        return {
-                            ok: false as const,
-                            error: createProviderErrorV1('provider_endpoint_unavailable', {
-                                connectionId:
-                                    managedProviderBindingAttempt.authorization.ticket.connectionId,
-                                machineId:
-                                    managedProviderBindingAttempt.authorization.ticket.machineId,
-                            }),
-                        };
-                    }
-                    if (
-                        typeof requestAuthHttpPort !== 'number'
-                        || !Number.isSafeInteger(requestAuthHttpPort)
-                        || requestAuthHttpPort < 1
-                        || requestAuthHttpPort > 65535
-                    ) {
-                        return {
-                            ok: false as const,
-                            error: createProviderErrorV1('provider_endpoint_unavailable', {
-                                connectionId:
-                                    managedProviderBindingAttempt.authorization.ticket.connectionId,
-                                machineId:
-                                    managedProviderBindingAttempt.authorization.ticket.machineId,
-                            }),
-                        };
-                    }
-                    let managedLocalServicesEnabled = false;
-                    try {
-                        managedLocalServicesEnabled =
-                            await runtime.resolveManagedLocalServicesEnabled() === true;
-                    } catch {
-                        managedLocalServicesEnabled = false;
-                    }
-                    const contribution =
-                        managedProviderBindingAttempt.authorization.deployment.contribution;
-                    const operationId = options.spawnNonce?.trim() ?? '';
-                    if (!providerSessionId && !operationId) {
-                        return {
-                            ok: false as const,
-                            error: createProviderErrorV1('provider_endpoint_unavailable', {
-                                connectionId:
-                                    managedProviderBindingAttempt.authorization.ticket.connectionId,
-                                machineId:
-                                    managedProviderBindingAttempt.authorization.ticket.machineId,
-                            }),
-                        };
-                    }
-                    return await prepareDaemonManagedProviderBinding({
-                        ...runtime,
-                        managedLocalServicesEnabled,
-                        requestAuthHttpPort,
-                        attempt: managedProviderBindingAttempt,
-                        ...(knownManagedRequestAuthSubject
-                            ? {
-                                requestAuthSubject:
-                                    knownManagedRequestAuthSubject,
-                            }
-                            : {}),
-                        context: providerSessionId
-                            ? {
-                                pluginId: contribution.identity.pluginId,
-                                contributionId: contribution.identity.localId,
-                                sessionId: providerSessionId,
-                                title: contribution.definition.name,
-                            }
-                            : {
-                                pluginId: contribution.identity.pluginId,
-                                contributionId: contribution.identity.localId,
-                                operationId,
-                                title: contribution.definition.name,
-                            },
-                        launchResourceScope,
-                    });
-                }
-                : undefined;
-
             const childEnvironment = await prepareDaemonSpawnChildEnvironment({
                 options: effectiveOptionsForSpawn,
                 effectiveModelSelection: modelSelection,
@@ -690,9 +542,6 @@ export async function executeSpawnSessionRequest(
                 providerBindingAttempt,
                 providerAgentTargetKey,
                 providerDiagnosticRedactionLease,
-                ...(materializeManagedProviderBinding
-                    ? { materializeManagedProviderBinding }
-                    : {}),
                 launchResourceScope,
             });
             if (!childEnvironment.ok) {
@@ -708,32 +557,6 @@ export async function executeSpawnSessionRequest(
                     );
                 if (!activation.ok) return activation.failure;
                 sessionPurposeBindingLease = activation.lease;
-                if (childEnvironment.activateManagedProviderRequestAuth) {
-                    try {
-                        await childEnvironment.activateManagedProviderRequestAuth(
-                            scopeConnectedAccountSessionPurposeBindingLease({
-                                lease: sessionPurposeBindingLease,
-                                subjectId:
-                                    `${sessionPurposeBindingLease.subjectId}/managed-provider:${managedProviderBindingAttempt!.authorization.ticket.connectionId}`,
-                                uses: managedRequestAuthUses,
-                                registerRedaction:
-                                    providerDiagnosticRedactionLease.add,
-                            }),
-                        );
-                    } catch {
-                        return {
-                            type: 'error',
-                            errorCode:
-                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                            errorMessage:
-                                'managed_provider_request_auth_activation_failed',
-                        };
-                    }
-                }
-                if (childEnvironment.managedLocalServiceRunAttachment) {
-                    managedLocalServiceCanonicalSessionId =
-                        canonicalSessionId;
-                }
                 return null;
             };
             let activateConnectedAccountSessionBindingOnCanonicalSession:
@@ -744,10 +567,7 @@ export async function executeSpawnSessionRequest(
                     activateConnectedAccountSessionBindingOnCanonicalSession =
                         activateConnectedAccountSessionBinding;
                 }
-            } else if (
-                requestAuthPurposeBindings.length > 0
-                || childEnvironment.activateManagedProviderRequestAuth
-            ) {
+            } else if (requestAuthPurposeBindings.length > 0) {
                 return await refuseSpawn({
                     type: 'error',
                     errorCode:
@@ -756,18 +576,10 @@ export async function executeSpawnSessionRequest(
                         'connected_account_request_auth_unavailable',
                 });
             }
-            if (
-                connectedServiceAuthSessionId
-                && childEnvironment.managedLocalServiceRunAttachment
-            ) {
-                managedLocalServiceCanonicalSessionId =
-                    connectedServiceAuthSessionId;
-            }
             const spawnLifecycle = await prepareDaemonSpawnLifecycle({
-                effectiveBackendTarget: effectiveBackendTargetV2,
-                pluginRuntimeLease,
-                launchResourceScope,
+                runnerAgentSessionBootstrap,
                 normalizedExistingSessionId,
+                spawnNonce: effectiveOptionsForSpawn.spawnNonce,
                 sessionAttachPayload: sessionAttachPayload ?? null,
                 extraEnv,
                 extraEnvForChild,
@@ -776,7 +588,7 @@ export async function executeSpawnSessionRequest(
                 processEnv: params.processEnv ?? process.env,
                 effectiveConnectedServicesBindings,
                 connectedServiceSelectionsEnv: connectedServiceAuth?.env,
-                catalogAgentId: catalogAgentIdForConnectedServices,
+                catalogAgentId,
                 connectedServiceAuthSessionId,
                 sessionDirectory: effectiveOptionsForSpawn.directory,
                 materializationKey,
@@ -805,94 +617,7 @@ export async function executeSpawnSessionRequest(
                     return spawnResourceCleanupOnExit;
                 },
                 onSpawnResourceCleanupArmed: () => undefined,
-                respawnDescriptorEncryptionMaterial: params.credentials.encryption,
-                ...(childEnvironment.managedLocalServiceRunAttachment
-                    ? {
-                        managedLocalServiceRunAttachment:
-                            childEnvironment.managedLocalServiceRunAttachment,
-                        onManagedLocalServiceRunAttachmentPersisted: async (custody) => {
-                            managedLocalServiceMarkerCustody = custody;
-                            const ownedRun =
-                                childEnvironment.managedLocalServiceOwnedRun;
-                            const localServices =
-                                params.managedProviderEndpointRuntime?.localServices;
-                            if (
-                                !ownedRun
-                                || !localServices
-                                || !localServices.registerOwnedCleanup(
-                                    ownedRun,
-                                    clearManagedLocalServiceMarkerCustody,
-                                )
-                            ) {
-                                await clearManagedLocalServiceMarkerCustody();
-                                throw new Error(
-                                    'Managed local-service marker cleanup custody transfer failed',
-                                );
-                            }
-                            managedLocalServiceMarkerCleanupOwnedByRun = true;
-                        },
-                        onManagedLocalServiceRunAttachmentPidPromoted: async ({
-                            fromPid,
-                            toPid,
-                            ownership,
-                        }) => {
-                            const custody =
-                                managedLocalServiceMarkerCustody;
-                            if (
-                                custody?.pid === toPid
-                                && custody.ownership.happySessionId
-                                    === ownership.happySessionId
-                                && custody.ownership.processCommandHash
-                                    === ownership.processCommandHash
-                                && custody.ownership.processStartTimeMs
-                                    === ownership.processStartTimeMs
-                                && managedLocalServiceRunAttachmentsEqual(
-                                    custody.attachment,
-                                    childEnvironment
-                                        .managedLocalServiceRunAttachment!,
-                                )
-                            ) {
-                                return true;
-                            }
-                            if (custody?.pid === fromPid) {
-                                managedLocalServiceMarkerCustody = {
-                                    pid: toPid,
-                                    ownership,
-                                    attachment: custody.attachment,
-                                };
-                                return true;
-                            }
-                            const cleanupClaim =
-                                managedLocalServiceMarkerCleanupClaim;
-                            if (
-                                !cleanupClaim
-                                || cleanupClaim.pid !== fromPid
-                            ) {
-                                return false;
-                            }
-                            const cleared =
-                                await clearPromotedManagedLocalServiceMarkerAttachment({
-                                    toPid,
-                                    ownership,
-                                    canonicalSessionId:
-                                        managedLocalServiceCanonicalSessionId,
-                                    attachment:
-                                        cleanupClaim.attachment,
-                                    clear:
-                                        clearSessionMarkerManagedLocalServiceRunAttachment,
-                                });
-                            if (!cleared) return false;
-                            if (
-                                managedLocalServiceMarkerCleanupClaim
-                                === cleanupClaim
-                            ) {
-                                managedLocalServiceMarkerCleanupClaim =
-                                    null;
-                            }
-                            return 'attachment_cleared';
-                        },
-                    }
-                    : {}),
+                deviceLocalSecretStorage: params.deviceLocalSecretStorage,
             });
             cleanupPendingSessionAttach = spawnLifecycle.cleanupPendingSessionAttach;
 
@@ -930,9 +655,9 @@ export async function executeSpawnSessionRequest(
                 directoryCreated,
                 extraEnvForChildWithMessage: spawnLifecycle.extraEnvForChildWithMessage,
                 unsetEnvKeys: spawnLifecycle.unsetEnvKeys,
-                localServicesBridgeAuthorization: spawnLifecycle.localServicesBridgeAuthorization,
-                agentRuntimeSessionBridgeAuthorization:
-                    spawnLifecycle.agentRuntimeSessionBridgeAuthorization,
+                runnerAgentSessionBootstrapAuthorization:
+                    spawnLifecycle
+                        .runnerAgentSessionBootstrapAuthorization,
                 processEnv: params.processEnv ?? process.env,
                 happyHomeDir: configuration.happyHomeDir,
                 pidToTrackedSession: params.pidToTrackedSession,
@@ -975,7 +700,9 @@ export async function executeSpawnSessionRequest(
                 incompleteRetirement =
                     await retireLaunchResources();
             }
-            logger.debug('[DAEMON RUN] Failed to spawn session', { error: errorMessage });
+            logger.debug('[DAEMON RUN] Session spawn failed after startup preparation', {
+                error: errorMessage,
+            });
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
@@ -992,7 +719,6 @@ export async function executeSpawnSessionRequest(
         }
     } catch (error) {
         logger.warn('[DAEMON RUN] Failed before spawn session work started', {
-            error,
             hasExistingSessionId: typeof options.existingSessionId === 'string' && options.existingSessionId.trim().length > 0,
             hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
             backendTargetKind: resolveConcreteBackendTargetRefV2(options.backendTarget)?.kind ?? null,

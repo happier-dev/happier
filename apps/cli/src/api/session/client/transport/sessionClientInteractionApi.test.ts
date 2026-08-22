@@ -77,6 +77,9 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     const socket = createSocketStub();
     const defaultContractResult = {
       mode: 'session_sync_v2_pending_input_v1' as const,
+      runtimeActivity: 'v2' as const,
+      pendingInput: 'v1' as const,
+      publisherAuthority: 'indeterminate' as const,
       sessionConnectionEpoch: 1,
       socket: overrides.getSocket?.() ?? socket,
     };
@@ -133,15 +136,46 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       applyPendingQueueState: vi.fn(() => false),
       observePendingMaterializeResult: vi.fn(() => false),
       onPendingQueueStateChanged: vi.fn(),
-      getEncryptionKey: () => new Uint8Array(32),
-      getEncryptionVariant: () => 'legacy' as const,
+      getStoredContentCryptoContext: () => ({
+        mode: 'e2ee' as const,
+        ctx: {
+          encryptionKey: new Uint8Array(32),
+          encryptionVariant: 'legacy' as const,
+        },
+      }),
       ...overrides,
     });
   }
 
+  it('reports planned server restart events to the connection supervisor', () => {
+    const socket = createSocketStub();
+    const reportProbeResult = vi.fn();
+    const api = createApi({
+      getSocket: () => socket as never,
+      getSessionConnectionSupervisor: () => ({ reportProbeResult }) as never,
+    });
+
+    api.installSessionSocketEventHandlers(socket as never);
+    socket.trigger('server:restarting', { retryAfterMs: 7_000 });
+
+    expect(reportProbeResult).toHaveBeenCalledWith({
+      status: 'retry_later',
+      retryAfterMs: 7_000,
+      reason: 'server_restarting',
+      errorMessage: 'Server restart in progress',
+    });
+  });
+
   it.each(['indeterminate', 'auth_failed'] as const)('delivers zero provider input for %s compatibility', async (mode) => {
     const socket = createSocketStub();
-    const contractResult = { mode, sessionConnectionEpoch: 1, socket };
+    const contractResult = {
+      mode,
+      runtimeActivity: 'indeterminate' as const,
+      pendingInput: 'indeterminate' as const,
+      publisherAuthority: 'indeterminate' as const,
+      sessionConnectionEpoch: 1,
+      socket,
+    };
     const deliver = vi.fn(() => true);
     const api = createApi({
       getSocket: () => socket as never,
@@ -164,7 +198,14 @@ describe('createSessionClientInteractionApi diagnostics', () => {
   it('does not let an old auth result poison a replacement connection epoch', async () => {
     const oldSocket = createSocketStub();
     const newSocket = createSocketStub();
-    const staleAuthResult = { mode: 'auth_failed' as const, sessionConnectionEpoch: 1, socket: oldSocket };
+    const staleAuthResult = {
+      mode: 'auth_failed' as const,
+      runtimeActivity: 'indeterminate' as const,
+      pendingInput: 'indeterminate' as const,
+      publisherAuthority: 'indeterminate' as const,
+      sessionConnectionEpoch: 1,
+      socket: oldSocket,
+    };
     const api = createApi({
       getSocket: () => newSocket as never,
       getSessionConnectionEpoch: () => 2,
@@ -179,9 +220,58 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(axiosPostMock).not.toHaveBeenCalled();
   });
 
+  it('requests one bounded frozen-claim rejoin after a current socket acknowledgement becomes ambiguous', async () => {
+    const socket = createSocketStub();
+    const contractResult = {
+      mode: 'session_sync_v2_pending_input_v1' as const,
+      runtimeActivity: 'v2' as const,
+      pendingInput: 'v1' as const,
+      publisherAuthority: 'indeterminate' as const,
+      sessionConnectionEpoch: 1,
+      socket,
+    };
+    const transportError = Object.assign(new Error('materialize acknowledgement timed out'), {
+      diagnosticCode: 'pending_queue_materialization_ack_timeout',
+      classification: 'ack_timeout',
+    });
+    socketAckMock.mockRejectedValueOnce(transportError);
+    const infoFileSpy = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const api = createApi({
+      getSocket: () => socket as never,
+      getSessionSyncPendingInputServerContractResult: () => contractResult,
+      getSessionConnectionSupervisor: () => ({ getState: () => ({ phase: 'online' }) }) as never,
+      getPendingQueueState: () => ({ known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 }),
+    });
+
+    await expect(api.materializeNextPendingMessageSafely()).resolves.toEqual({
+      type: 'retryable_transport',
+      retryAfterMs: 250,
+    });
+    expect(infoFileSpy).toHaveBeenCalledWith(
+      '[pendingQueue] materialize request failed',
+      expect.objectContaining({
+        sessionId: 's1',
+        error: expect.objectContaining({
+          diagnosticCode: 'pending_queue_materialization_ack_timeout',
+          classification: 'ack_timeout',
+          message: 'materialize acknowledgement timed out',
+        }),
+      }),
+    );
+    expect(infoFileSpy).toHaveBeenCalledTimes(1);
+    expect(axiosPostMock).not.toHaveBeenCalled();
+  });
+
   it('uses only the strict released-server adapter in old mode', async () => {
     const socket = createSocketStub();
-    const contractResult = { mode: 'released_server_v0_2_1' as const, sessionConnectionEpoch: 3, socket };
+    const contractResult = {
+      mode: 'released_server_v0_2_1' as const,
+      runtimeActivity: 'legacy' as const,
+      pendingInput: 'released_server_v0_2_1' as const,
+      publisherAuthority: 'indeterminate' as const,
+      sessionConnectionEpoch: 3,
+      socket,
+    };
     socketAckMock.mockResolvedValueOnce({
       ok: true,
       didMaterialize: true,
@@ -221,6 +311,9 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     const disconnectedSocket = { connected: false };
     const contractResult = {
       mode: 'session_sync_v2_pending_input_v1' as const,
+      runtimeActivity: 'v2' as const,
+      pendingInput: 'v1' as const,
+      publisherAuthority: 'indeterminate' as const,
       sessionConnectionEpoch: 1,
       socket: disconnectedSocket,
     };
@@ -357,8 +450,16 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(axiosPostMock).not.toHaveBeenCalled();
   });
 
-  it('materializes queued rows without sequence-based reconciliation', async () => {
+  it('materializes queued rows when Pending Input is supported independently of other session capabilities', async () => {
     const socket = createSocketStub();
+    const contractResult = {
+      mode: 'indeterminate' as const,
+      runtimeActivity: 'indeterminate' as const,
+      pendingInput: 'v1' as const,
+      publisherAuthority: 'indeterminate' as const,
+      sessionConnectionEpoch: 1,
+      socket,
+    };
     socketAckMock.mockResolvedValueOnce({
         ok: true,
         didMaterialize: true,
@@ -387,6 +488,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     });
     const api = createApi({
       getSocket: () => socket as never,
+      getSessionSyncPendingInputServerContractResult: () => contractResult,
       getSessionConnectionSupervisor: () => ({
         getState: () => ({ phase: 'online' }),
       } as never),
@@ -409,6 +511,279 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       foregroundState: 'ready',
     }));
     expect(axiosPostMock).not.toHaveBeenCalled();
+  });
+
+  it('settles protected input authority before projection or provider delivery', async () => {
+    const socket = createSocketStub();
+    const contractResult = {
+      mode: 'session_sync_v2_pending_input_v1' as const,
+      runtimeActivity: 'v2' as const,
+      pendingInput: 'v1' as const,
+      publisherAuthority: 'v1' as const,
+      sessionConnectionEpoch: 1,
+      socket,
+    };
+    const request = {
+      v: 1 as const,
+      producer: 'pluginSession' as const,
+      caller: { kind: 'plugin' as const, pluginId: 'example.plugin', contributionLocalId: 'send' },
+      permission: { requestedPermissionCeiling: 'read-only' as const },
+    };
+    const requestContent = {
+      t: 'plain' as const,
+      v: {
+        role: 'user',
+        content: { type: 'text', text: 'protected prompt' },
+        localId: 'protected-local',
+        meta: { happierInputRequestV1: request },
+      },
+    };
+    socketAckMock
+      .mockResolvedValueOnce({
+        ok: true,
+        didMaterialize: true,
+        localId: 'protected-local',
+        didWrite: false,
+        pendingCount: 1,
+        pendingVersion: 2,
+        message: {
+          id: null,
+          seq: null,
+          localId: 'protected-local',
+          messageRole: 'user',
+          content: requestContent,
+          inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' },
+          createdAt: 1_000,
+          updatedAt: 1_000,
+          providerAction: 'send',
+          deliveryState: { mode: 'provider', unresolved: true },
+        },
+      })
+      .mockResolvedValueOnce({
+        v: 1,
+        result: { status: 'accepted', localId: 'protected-local' },
+      });
+    const deliver = vi.fn(() => true);
+    const handleSessionScopedUpdate = vi.fn();
+    const markPendingQueueMaterializedLocalId = vi.fn();
+    const api = createApi({
+      getSocket: () => socket as never,
+      getSessionSyncPendingInputServerContractResult: () => contractResult,
+      getSessionConnectionSupervisor: () => ({ getState: () => ({ phase: 'online' }) }) as never,
+      getMetadata: () => createTestMetadata({ permissionMode: 'safe-yolo' }),
+      getStoredContentCryptoContext: () => ({ mode: 'plain' as const }),
+      getPendingQueueState: () => ({ known: true as const, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 }),
+      observePendingMaterializeResult: vi.fn(() => true),
+      deliverMaterializedUserMessageToAgentQueue: deliver,
+      handleSessionScopedUpdate,
+      markPendingQueueMaterializedLocalId,
+    } as any);
+
+    const outcome = await api.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' });
+
+    expect(socketAckMock).toHaveBeenNthCalledWith(2, 'session-pending-admission-settlement-v1', expect.objectContaining({
+      decision: expect.objectContaining({ kind: 'admit' }),
+    }));
+    expect(outcome).toMatchObject({
+      type: 'materialized',
+      localId: 'protected-local',
+      seq: null,
+    });
+
+    expect(socketAckMock).toHaveBeenNthCalledWith(2, 'session-pending-admission-settlement-v1', expect.objectContaining({
+      v: 1,
+      sessionId: 's1',
+      localId: 'protected-local',
+      decision: expect.objectContaining({
+        kind: 'admit',
+        finalContent: expect.objectContaining({
+          t: 'plain',
+          v: expect.objectContaining({
+            meta: expect.objectContaining({
+              happierInputAuthorityV1: expect.objectContaining({
+                permission: {
+                  requestedPermissionCeiling: 'read-only',
+                  admittedPermissionCeiling: 'read-only',
+                },
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+    expect(handleSessionScopedUpdate).toHaveBeenCalledTimes(1);
+    expect(handleSessionScopedUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({
+        message: expect.objectContaining({
+          content: expect.objectContaining({
+            v: expect.objectContaining({
+              meta: expect.not.objectContaining({ happierInputRequestV1: expect.anything() }),
+            }),
+          }),
+        }),
+      }),
+    }));
+    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({
+      meta: expect.objectContaining({
+        happierInputAuthorityV1: expect.objectContaining({
+          permission: expect.objectContaining({ admittedPermissionCeiling: 'read-only' }),
+        }),
+      }),
+    }), 'send');
+    expect(markPendingQueueMaterializedLocalId).toHaveBeenCalledWith('protected-local');
+  });
+
+  it('never projects or delivers a protected input rejected by target settlement', async () => {
+    const socket = createSocketStub();
+    const contractResult = {
+      mode: 'session_sync_v2_pending_input_v1' as const,
+      runtimeActivity: 'v2' as const,
+      pendingInput: 'v1' as const,
+      publisherAuthority: 'v1' as const,
+      sessionConnectionEpoch: 1,
+      socket,
+    };
+    socketAckMock
+      .mockResolvedValueOnce({
+        ok: true,
+        didMaterialize: true,
+        localId: 'rejected-local',
+        didWrite: false,
+        pendingCount: 1,
+        pendingVersion: 2,
+        message: {
+          id: null,
+          seq: null,
+          localId: 'rejected-local',
+          messageRole: 'user',
+          content: {
+            t: 'plain',
+            v: {
+              role: 'user',
+              content: { type: 'text', text: 'reject me' },
+              meta: {
+                happierInputRequestV1: {
+                  v: 1,
+                  producer: 'pluginSession',
+                  caller: { kind: 'plugin', pluginId: 'example.plugin', contributionLocalId: 'send' },
+                  permission: { requestedPermissionCeiling: 'yolo' },
+                },
+              },
+            },
+          },
+          inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' },
+          createdAt: 1_000,
+          updatedAt: 1_000,
+          providerAction: 'send',
+          deliveryState: { mode: 'provider', unresolved: true },
+        },
+      })
+      .mockResolvedValueOnce({
+        v: 1,
+        result: { status: 'rejected', code: 'session_input_permission_ceiling_rejected' },
+      });
+    const deliver = vi.fn(() => true);
+    const handleSessionScopedUpdate = vi.fn();
+    const api = createApi({
+      getSocket: () => socket as never,
+      getSessionSyncPendingInputServerContractResult: () => contractResult,
+      getSessionConnectionSupervisor: () => ({ getState: () => ({ phase: 'online' }) }) as never,
+      getMetadata: () => createTestMetadata({ permissionMode: 'read-only' }),
+      getStoredContentCryptoContext: () => ({ mode: 'plain' as const }),
+      getPendingQueueState: () => ({ known: true as const, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 }),
+      observePendingMaterializeResult: vi.fn(() => true),
+      deliverMaterializedUserMessageToAgentQueue: deliver,
+      handleSessionScopedUpdate,
+    } as any);
+
+    await expect(api.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).resolves.toEqual({
+      type: 'no_pending',
+    });
+
+    expect(handleSessionScopedUpdate).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('rejects an Account-admitted plugin assertion before projection or provider delivery', async () => {
+    const socket = createSocketStub();
+    const contractResult = {
+      mode: 'session_sync_v2_pending_input_v1' as const,
+      runtimeActivity: 'v2' as const,
+      pendingInput: 'v1' as const,
+      publisherAuthority: 'v1' as const,
+      sessionConnectionEpoch: 1,
+      socket,
+    };
+    socketAckMock
+      .mockResolvedValueOnce({
+        ok: true,
+        didMaterialize: true,
+        localId: 'forged-receipt-local',
+        didWrite: false,
+        pendingCount: 1,
+        pendingVersion: 2,
+        message: {
+          id: null,
+          seq: null,
+          localId: 'forged-receipt-local',
+          messageRole: 'user',
+          content: {
+            t: 'plain',
+            v: {
+              role: 'user',
+              content: { type: 'text', text: 'forged provenance' },
+              meta: {
+                happierInputRequestV1: {
+                  v: 1,
+                  producer: 'pluginSession',
+                  caller: { kind: 'plugin', pluginId: 'example.plugin', contributionLocalId: 'send' },
+                  permission: {},
+                },
+              },
+            },
+          },
+          inputAdmissionReceipt: {
+            v: 1,
+            issuer: 'authenticatedAccount',
+            actorAccountId: 'account-1',
+            sessionRelationship: 'owner',
+          },
+          createdAt: 1_000,
+          updatedAt: 1_000,
+          providerAction: 'send',
+          deliveryState: { mode: 'provider', unresolved: true },
+        },
+      })
+      .mockResolvedValueOnce({
+        v: 1,
+        result: { status: 'rejected', code: 'session_input_untrusted_assertion' },
+      });
+    const deliver = vi.fn(() => true);
+    const handleSessionScopedUpdate = vi.fn();
+    const api = createApi({
+      getSocket: () => socket as never,
+      getSessionSyncPendingInputServerContractResult: () => contractResult,
+      getSessionConnectionSupervisor: () => ({ getState: () => ({ phase: 'online' }) }) as never,
+      getMetadata: () => createTestMetadata({ permissionMode: 'default' }),
+      getStoredContentCryptoContext: () => ({ mode: 'plain' as const }),
+      getPendingQueueState: () => ({ known: true as const, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 }),
+      observePendingMaterializeResult: vi.fn(() => true),
+      deliverMaterializedUserMessageToAgentQueue: deliver,
+      handleSessionScopedUpdate,
+    } as any);
+
+    await expect(api.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).resolves.toEqual({
+      type: 'no_pending',
+    });
+
+    expect(socketAckMock).toHaveBeenNthCalledWith(2, 'session-pending-admission-settlement-v1', expect.objectContaining({
+      decision: expect.objectContaining({
+        kind: 'reject',
+        code: 'session_input_untrusted_assertion',
+      }),
+    }));
+    expect(handleSessionScopedUpdate).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
   });
 
   it('treats user-scoped socket connect as a best-effort snapshot wake boundary', async () => {

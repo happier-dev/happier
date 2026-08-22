@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     accountSettingsParse,
-    sealSessionOwnerMetadataV1,
+    createPlainSessionOwnerMetadataEnvelopeV1,
     SessionOwnerMetadataV1Schema,
     V2SessionListResponseSchema,
 } from '@happier-dev/protocol';
@@ -13,6 +13,7 @@ import {
 
 const defaultRestoreMocks = vi.hoisted(() => ({
     fetchSessionById: vi.fn(),
+    fetchAccountEncryptionCurrentness: vi.fn(),
     readCredentials: vi.fn(),
     loadLinkedExternalSession: vi.fn(),
     loadLinkedExternalSessionFromRaw: vi.fn(),
@@ -21,9 +22,14 @@ const defaultRestoreMocks = vi.hoisted(() => ({
     resolveGenerationBoundExternalSessionFollowSurface: vi.fn(),
 }));
 
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+    fetchAccountEncryptionCurrentness:
+        defaultRestoreMocks.fetchAccountEncryptionCurrentness,
+}));
+
 vi.mock('@/persistence', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/persistence')>(),
-    readCredentials: defaultRestoreMocks.readCredentials,
+    readStoredCredentials: defaultRestoreMocks.readCredentials,
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
@@ -133,6 +139,13 @@ describe('startExternalSessionPassiveObservation', () => {
         for (const mock of Object.values(defaultRestoreMocks)) {
             mock.mockReset();
         }
+        defaultRestoreMocks.fetchAccountEncryptionCurrentness.mockResolvedValue({
+            mode: 'plain',
+            version: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: null,
+            updatedAt: 1,
+        });
     });
 
     it('does not serialize passive-startup failure details into its log sink', async () => {
@@ -142,6 +155,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' })),
                 removeLink: vi.fn(async () => ({ removed: true })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => {
                 throw Object.assign(new Error(sentinel), {
@@ -309,11 +323,8 @@ describe('startExternalSessionPassiveObservation', () => {
             v: 1,
             nativeSession: { externalSessionV1 },
         });
-        const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
-            material: { type: 'legacy', secret },
-            ownerMetadata,
-            randomBytes: (length) => new Uint8Array(length).fill(3),
-        });
+        const ownerMetadataEnvelope =
+            createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
         const rawSessions = V2SessionListResponseSchema.parse({
             sessions: [{
                 id: 'session-layout-1',
@@ -329,7 +340,8 @@ describe('startExternalSessionPassiveObservation', () => {
                     v: 1,
                     agentPresentation: { agentId: 'opencode' },
                 }),
-                ownerMetadata: ownerMetadataCiphertext,
+                ownerMetadata: ownerMetadataEnvelope,
+                share: null,
                 agentState: null,
                 agentStateVersion: 1,
                 dataEncryptionKey: null,
@@ -411,6 +423,7 @@ describe('startExternalSessionPassiveObservation', () => {
         const restoreFollowPolicy = vi.fn(async () => {});
         const pauseFollowPolicy = vi.fn(async () => {});
         const removeLink = vi.fn(async () => ({ removed: true as const }));
+        const releaseLink = vi.fn(async () => ({ removed: true as const }));
         const listCurrentLinks = vi.fn(async () => [{
             sessionId: 'session-1',
             observation: fileBacked,
@@ -418,7 +431,7 @@ describe('startExternalSessionPassiveObservation', () => {
         const jitterDelay = vi.fn(async () => {});
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
-            projection: { reconcileLink, removeLink },
+            projection: { reconcileLink, removeLink, releaseLink },
             listCurrentLinks,
             restoreFollowPolicy,
             pauseFollowPolicy,
@@ -450,7 +463,8 @@ describe('startExternalSessionPassiveObservation', () => {
 
         await lifecycle.pause();
         expect(pauseFollowPolicy).toHaveBeenCalledWith('session-1');
-        expect(removeLink).toHaveBeenCalledWith(fileBacked.link);
+        expect(releaseLink).toHaveBeenCalledWith(fileBacked.link);
+        expect(removeLink).not.toHaveBeenCalled();
         await lifecycle.dispose();
 
         expect(reconcileCallOrder).toBeLessThan(restoreCallOrder);
@@ -547,6 +561,7 @@ describe('startExternalSessionPassiveObservation', () => {
                     };
                 }),
                 removeLink: vi.fn(async () => ({ removed: true })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             followLeaseManager,
             listCurrentLinks: async () => [{
@@ -580,7 +595,11 @@ describe('startExternalSessionPassiveObservation', () => {
         const removeLink = vi.fn(async () => ({ removed: true as const }));
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
-            projection: { reconcileLink, removeLink },
+            projection: {
+                reconcileLink,
+                removeLink,
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
+            },
             listCurrentLinks,
             restoreFollowPolicy,
             pauseFollowPolicy: vi.fn(async () => {}),
@@ -644,7 +663,7 @@ describe('startExternalSessionPassiveObservation', () => {
         resetActiveAccountSettingsSnapshotForTests();
     });
 
-    it('hard-releases prior-account manager state before a rejected new-account inventory', async () => {
+    it('hard-releases prior-account manager state without overwriting its durable observation', async () => {
         resetActiveAccountSettingsSnapshotForTests();
         setActiveAccountSettingsSnapshot({
             source: 'network',
@@ -684,9 +703,10 @@ describe('startExternalSessionPassiveObservation', () => {
         });
         const reconcileLink = vi.fn(async () => ({ state: 'observing' as const }));
         const removeLink = vi.fn(async () => ({ removed: true as const }));
+        const releaseLink = vi.fn(async () => ({ removed: true as const }));
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
-            projection: { reconcileLink, removeLink },
+            projection: { reconcileLink, removeLink, releaseLink },
             listCurrentLinks,
             restoreFollowPolicy,
             pauseFollowPolicy: vi.fn(async () => {}),
@@ -722,10 +742,11 @@ describe('startExternalSessionPassiveObservation', () => {
             expect(listCurrentLinks).toHaveBeenCalledTimes(2);
             expect(releaseAccountAFollow).toHaveBeenCalledOnce();
             expect(manager.isBackgroundFollowEnabled('session-account-a')).toBe(false);
-            expect(removeLink).toHaveBeenCalledWith(
+            expect(releaseLink).toHaveBeenCalledWith(
                 resolvedInput('session-account-a').link,
             );
         });
+        expect(removeLink).not.toHaveBeenCalled();
         rejectAccountBInventory?.(new Error('account B inventory unavailable'));
         await vi.waitFor(() => {
             expect(reconcileLink).toHaveBeenCalledTimes(1);
@@ -756,10 +777,11 @@ describe('startExternalSessionPassiveObservation', () => {
         const lateSessionId = 'session-late-credential-bound';
         const reconcileLink = vi.fn(async () => ({ state: 'observing' as const }));
         const removeLink = vi.fn(async () => ({ removed: true as const }));
+        const releaseLink = vi.fn(async () => ({ removed: true as const }));
         const reconcileSharedCredentialDemand = vi.fn(async () => {});
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
-            projection: { reconcileLink, removeLink },
+            projection: { reconcileLink, removeLink, releaseLink },
             followLeaseManager: manager,
             listCurrentLinks: async () => credentialAvailable
                 ? [
@@ -831,6 +853,7 @@ describe('startExternalSessionPassiveObservation', () => {
             expect(removeLink).toHaveBeenCalledOnce();
             expect(reconcileSharedCredentialDemand).toHaveBeenCalledOnce();
         });
+        expect(releaseLink).not.toHaveBeenCalled();
         expect(acquireFollowLease).toHaveBeenCalledOnce();
         expect(reconcileLink).toHaveBeenCalledOnce();
         expect(manager.isBackgroundFollowEnabled(sessionId)).toBe(false);
@@ -855,7 +878,7 @@ describe('startExternalSessionPassiveObservation', () => {
         await manager.dispose();
     });
 
-    it('awaits and hard-releases a late stale restore before starting the next account inventory', async () => {
+    it('awaits and locally releases a late stale restore before starting the next account inventory', async () => {
         resetActiveAccountSettingsSnapshotForTests();
         setActiveAccountSettingsSnapshot({
             source: 'network',
@@ -874,11 +897,24 @@ describe('startExternalSessionPassiveObservation', () => {
         const accountBInventoryStarted = vi.fn();
         const releaseFollowSession = vi.fn(async () => {});
         const reconcileLink = vi.fn(async () => ({ state: 'observing' as const }));
+        const removeLink = vi.fn(async () => ({ removed: true as const }));
+        const releaseLink = vi.fn(async () => ({ removed: true as const }));
+        const accountAObservation = {
+            ...resolvedInput('session-account-a-late'),
+            link: {
+                ...resolvedInput('session-account-a-late').link,
+                changeObservation: 'watch_file_changes' as const,
+                watchFileChanges: {
+                    files: ['/fixture/account-a.jsonl'],
+                },
+            },
+        };
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
             projection: {
                 reconcileLink,
-                removeLink: vi.fn(async () => ({ removed: true as const })),
+                removeLink,
+                releaseLink,
             },
             listCurrentLinks: async () => {
                 if (activeAccount === 'b') {
@@ -887,7 +923,7 @@ describe('startExternalSessionPassiveObservation', () => {
                 }
                 return [{
                     sessionId: 'session-account-a-late',
-                    observation: resolvedInput('session-account-a-late'),
+                    observation: accountAObservation,
                 }];
             },
             restoreFollowPolicy: async () => {
@@ -903,6 +939,7 @@ describe('startExternalSessionPassiveObservation', () => {
         const initialRestore = lifecycle.resume();
         await vi.waitFor(() => {
             expect(accountARestoreStarted).toHaveBeenCalledOnce();
+            expect(reconcileLink).toHaveBeenCalledOnce();
         });
         activeAccount = 'b';
         setActiveAccountSettingsSnapshot({
@@ -925,7 +962,8 @@ describe('startExternalSessionPassiveObservation', () => {
             );
             expect(accountBInventoryStarted).toHaveBeenCalledOnce();
         });
-        expect(reconcileLink).not.toHaveBeenCalled();
+        expect(releaseLink).toHaveBeenCalledWith(accountAObservation.link);
+        expect(removeLink).not.toHaveBeenCalled();
 
         await lifecycle.dispose();
         resetActiveAccountSettingsSnapshotForTests();
@@ -949,6 +987,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
                 removeLink: vi.fn(async () => ({ removed: true as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => {
                 inventoriedAccounts.push(activeAccount);
@@ -1008,6 +1047,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink,
                 removeLink: vi.fn(async () => ({ removed: false as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => (await inventory).map((observation) => ({
                 sessionId: observation.link.sessionId,
@@ -1046,6 +1086,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink,
                 removeLink: vi.fn(async () => ({ removed: false as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [{
                 sessionId: 'session-archived-during-restore',
@@ -1097,6 +1138,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
                 removeLink: vi.fn(async () => ({ removed: false as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             followLeaseManager: manager,
             restoreFollowPolicy: async (sessionId) => {
@@ -1195,6 +1237,7 @@ describe('startExternalSessionPassiveObservation', () => {
                 removeLink: vi.fn(async () => ({
                     removed: true as const,
                 })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             followLeaseManager: manager,
             listCurrentLinks: async () => [{
@@ -1259,6 +1302,7 @@ describe('startExternalSessionPassiveObservation', () => {
                 removeLink: vi.fn(async () => ({
                     removed: true as const,
                 })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             followLeaseManager: manager,
             listCurrentLinks: async () => [{
@@ -1313,6 +1357,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink,
                 removeLink: vi.fn(async () => ({ removed: false as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [{
                 sessionId: 'session-disabled-during-restore',
@@ -1361,6 +1406,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
                 removeLink: vi.fn(async () => ({ removed: false as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => Array.from({ length: 17 }, (_, index) => ({
                 sessionId: `session-${index}`,
@@ -1393,11 +1439,14 @@ describe('startExternalSessionPassiveObservation', () => {
             observation: resolvedInput('session-removed-offline'),
         }];
         const disableFollowPolicy = vi.fn(async () => {});
+        const removeLink = vi.fn(async () => ({ removed: true as const }));
+        const releaseLink = vi.fn(async () => ({ removed: true as const }));
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
-                removeLink: vi.fn(async () => ({ removed: true as const })),
+                removeLink,
+                releaseLink,
             },
             listCurrentLinks: async () => policies,
             restoreFollowPolicy: vi.fn(async () => {}),
@@ -1410,10 +1459,13 @@ describe('startExternalSessionPassiveObservation', () => {
 
         await lifecycle.resume();
         await lifecycle.pause();
+        expect(releaseLink).toHaveBeenCalledOnce();
+        expect(removeLink).not.toHaveBeenCalled();
         policies = [];
         await lifecycle.resume();
 
         expect(disableFollowPolicy).toHaveBeenCalledWith('session-removed-offline');
+        expect(removeLink).toHaveBeenCalledOnce();
         await lifecycle.dispose();
     });
 
@@ -1429,6 +1481,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
                 removeLink: vi.fn(async () => ({ removed: true as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [{
                 sessionId: 'session-connectivity',
@@ -1490,6 +1543,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
                 removeLink: vi.fn(async () => ({ removed: true as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [{
                 sessionId: 'session-takeover-restore',
@@ -1576,6 +1630,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink,
                 removeLink: vi.fn(async () => ({ removed: true as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks,
             restoreFollowPolicy: async (sessionId) => {
@@ -1688,6 +1743,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink,
                 removeLink,
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks,
             restoreFollowPolicy,
@@ -1770,6 +1826,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink,
                 removeLink: vi.fn(async () => ({ removed: true as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks,
             restoreFollowPolicy: async (sessionId) => {
@@ -1820,6 +1877,9 @@ describe('startExternalSessionPassiveObservation', () => {
 
     it('serializes a reload restore behind stale in-flight passive work', async () => {
         let pluginGeneration = 'plugin-generation-1';
+        const firstGenerationRetirement = new AbortController();
+        const secondGenerationRetirement = new AbortController();
+        let retirementSignal = firstGenerationRetirement.signal;
         let runtimeReloadListener: (() => void) | undefined;
         let finishFirstRestore: (() => void) | undefined;
         const firstRestoreBarrier = new Promise<void>((resolve) => {
@@ -1836,11 +1896,14 @@ describe('startExternalSessionPassiveObservation', () => {
             activeRestores -= 1;
         });
         const reconcileLink = vi.fn(async () => ({ state: 'observing' as const }));
+        const removeLink = vi.fn(async () => ({ removed: true as const }));
+        const releaseLink = vi.fn(async () => ({ removed: true as const }));
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
             projection: {
                 reconcileLink,
-                removeLink: vi.fn(async () => ({ removed: true as const })),
+                removeLink,
+                releaseLink,
             },
             listCurrentLinks: async () => [{
                 sessionId: 'session-reload-in-flight',
@@ -1849,6 +1912,11 @@ describe('startExternalSessionPassiveObservation', () => {
                     resource: {
                         ...resolvedInput('session-reload-in-flight').resource,
                         pluginGeneration,
+                        retirementSignal,
+                    },
+                    link: {
+                        ...resolvedInput('session-reload-in-flight').link,
+                        changeObservation: 'watch_file_changes',
                     },
                 },
             }],
@@ -1868,18 +1936,28 @@ describe('startExternalSessionPassiveObservation', () => {
             expect(restoreFollowPolicy).toHaveBeenCalledTimes(1);
         });
         pluginGeneration = 'plugin-generation-2';
+        retirementSignal = secondGenerationRetirement.signal;
+        firstGenerationRetirement.abort();
         runtimeReloadListener?.();
+        const paused = lifecycle.pause();
         await Promise.resolve();
         expect(restoreFollowPolicy).toHaveBeenCalledTimes(1);
 
         finishFirstRestore?.();
         await initialRestore;
+        await paused;
+        await vi.waitFor(() => {
+            expect(releaseLink).toHaveBeenCalledTimes(1);
+        });
+        expect(removeLink).not.toHaveBeenCalled();
+
+        await lifecycle.resume();
         await vi.waitFor(() => {
             expect(restoreFollowPolicy).toHaveBeenCalledTimes(2);
         });
 
         expect(peakActiveRestores).toBe(1);
-        expect(reconcileLink).toHaveBeenCalledTimes(1);
+        expect(reconcileLink).toHaveBeenCalledTimes(2);
         expect(reconcileLink).toHaveBeenCalledWith(expect.objectContaining({
             resource: expect.objectContaining({
                 pluginGeneration: 'plugin-generation-2',
@@ -1915,6 +1993,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink,
                 removeLink: vi.fn(async () => ({ removed: true as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [],
             restoreFollowPolicy,
@@ -1996,6 +2075,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
                 removeLink: vi.fn(async () => ({ removed: true as const })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             followLeaseManager: manager,
             listCurrentLinks: async () => [],
@@ -2086,6 +2166,7 @@ describe('startExternalSessionPassiveObservation', () => {
                 removeLink: vi.fn(async () => ({
                     removed: true as const,
                 })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [],
             startPaused: true,
@@ -2187,6 +2268,7 @@ describe('startExternalSessionPassiveObservation', () => {
                 removeLink: vi.fn(async () => ({
                     removed: true as const,
                 })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             followLeaseManager: manager,
             listCurrentLinks: async () => [],
@@ -2227,6 +2309,7 @@ describe('startExternalSessionPassiveObservation', () => {
                 removeLink: vi.fn(async () => ({
                     removed: true as const,
                 })),
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [],
             loadCurrentSessionPolicy,
@@ -2265,6 +2348,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
                 removeLink,
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [{
                 sessionId,
@@ -2331,6 +2415,7 @@ describe('startExternalSessionPassiveObservation', () => {
             projection: {
                 reconcileLink: vi.fn(async () => ({ state: 'observing' as const })),
                 removeLink,
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
             },
             listCurrentLinks: async () => [{
                 sessionId,
@@ -2373,18 +2458,34 @@ describe('startExternalSessionPassiveObservation', () => {
     it('fences an exact-session completion invalidated by account generation', async () => {
         const sessionId = 'session-stale-exact-reconcile';
         let credentialInvalidationListener: (() => void) | undefined;
-        let finishExactLoad!: () => void;
-        const exactLoadBarrier = new Promise<void>((resolve) => {
-            finishExactLoad = resolve;
+        let finishFollowRestore!: () => void;
+        const followRestoreBarrier = new Promise<void>((resolve) => {
+            finishFollowRestore = resolve;
         });
-        const exactLoadStarted = vi.fn();
-        const restoreFollowPolicy = vi.fn(async () => {});
+        const followRestoreStarted = vi.fn();
+        const restoreFollowPolicy = vi.fn(async () => {
+            followRestoreStarted();
+            await followRestoreBarrier;
+        });
         const reconcileLink = vi.fn(async () => ({ state: 'observing' as const }));
+        const removeLink = vi.fn(async () => ({ removed: true as const }));
+        const releaseLink = vi.fn(async () => ({ removed: true as const }));
+        const observation = {
+            ...resolvedInput(sessionId),
+            link: {
+                ...resolvedInput(sessionId).link,
+                changeObservation: 'watch_file_changes' as const,
+                watchFileChanges: {
+                    files: ['/fixture/credential-invalidated.jsonl'],
+                },
+            },
+        };
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
             projection: {
                 reconcileLink,
-                removeLink: vi.fn(async () => ({ removed: true as const })),
+                removeLink,
+                releaseLink,
             },
             listCurrentLinks: async () => [],
             restoreFollowPolicy,
@@ -2397,11 +2498,9 @@ describe('startExternalSessionPassiveObservation', () => {
             },
             ...({
                 loadCurrentSessionPolicy: async () => {
-                    exactLoadStarted();
-                    await exactLoadBarrier;
                     return {
                         state: 'active',
-                        observation: resolvedInput(sessionId),
+                        observation,
                     };
                 },
             } as object),
@@ -2415,32 +2514,49 @@ describe('startExternalSessionPassiveObservation', () => {
         }>;
         const reconcile = exactLifecycle.reconcileSession(sessionId);
         await vi.waitFor(() => {
-            expect(exactLoadStarted).toHaveBeenCalledOnce();
+            expect(followRestoreStarted).toHaveBeenCalledOnce();
+            expect(reconcileLink).toHaveBeenCalledOnce();
         });
         credentialInvalidationListener?.();
-        finishExactLoad();
+        finishFollowRestore();
         await reconcile;
 
-        expect(restoreFollowPolicy).not.toHaveBeenCalled();
-        expect(reconcileLink).not.toHaveBeenCalled();
+        expect(removeLink).toHaveBeenCalledWith(observation.link);
+        expect(releaseLink).not.toHaveBeenCalled();
 
         await lifecycle.dispose();
     });
 
     it('fences an in-flight exact-session completion when connectivity goes offline', async () => {
         const sessionId = 'session-exact-offline';
-        let finishExactLoad!: () => void;
-        const exactLoadBarrier = new Promise<void>((resolve) => {
-            finishExactLoad = resolve;
+        let finishFollowRestore!: () => void;
+        const followRestoreBarrier = new Promise<void>((resolve) => {
+            finishFollowRestore = resolve;
         });
-        const exactLoadStarted = vi.fn();
-        const restoreFollowPolicy = vi.fn(async () => {});
+        const followRestoreStarted = vi.fn();
+        const restoreFollowPolicy = vi.fn(async () => {
+            followRestoreStarted();
+            await followRestoreBarrier;
+        });
         const reconcileLink = vi.fn(async () => ({ state: 'observing' as const }));
+        const removeLink = vi.fn(async () => ({ removed: true as const }));
+        const releaseLink = vi.fn(async () => ({ removed: true as const }));
+        const observation = {
+            ...resolvedInput(sessionId),
+            link: {
+                ...resolvedInput(sessionId).link,
+                changeObservation: 'watch_file_changes' as const,
+                watchFileChanges: {
+                    files: ['/fixture/exact-offline.jsonl'],
+                },
+            },
+        };
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
             projection: {
                 reconcileLink,
-                removeLink: vi.fn(async () => ({ removed: true as const })),
+                removeLink,
+                releaseLink,
             },
             listCurrentLinks: async () => [],
             restoreFollowPolicy,
@@ -2449,11 +2565,9 @@ describe('startExternalSessionPassiveObservation', () => {
             isRestoreEnabled: () => true,
             ...({
                 loadCurrentSessionPolicy: async () => {
-                    exactLoadStarted();
-                    await exactLoadBarrier;
                     return {
                         state: 'active',
-                        observation: resolvedInput(sessionId),
+                        observation,
                     };
                 },
             } as object),
@@ -2462,14 +2576,15 @@ describe('startExternalSessionPassiveObservation', () => {
         await lifecycle.resume();
         const reconcile = lifecycle.reconcileSession(sessionId);
         await vi.waitFor(() => {
-            expect(exactLoadStarted).toHaveBeenCalledOnce();
+            expect(followRestoreStarted).toHaveBeenCalledOnce();
+            expect(reconcileLink).toHaveBeenCalledOnce();
         });
         const pause = lifecycle.pause();
-        finishExactLoad();
+        finishFollowRestore();
         await Promise.all([reconcile, pause]);
 
-        expect(restoreFollowPolicy).not.toHaveBeenCalled();
-        expect(reconcileLink).not.toHaveBeenCalled();
+        expect(releaseLink).toHaveBeenCalledWith(observation.link);
+        expect(removeLink).not.toHaveBeenCalled();
         await lifecycle.dispose();
     });
 
@@ -2485,7 +2600,11 @@ describe('startExternalSessionPassiveObservation', () => {
         const removeLink = vi.fn(async () => ({ removed: true as const }));
         const lifecycle = startExternalSessionPassiveObservation({
             machineId: 'machine-1',
-            projection: { reconcileLink, removeLink },
+            projection: {
+                reconcileLink,
+                removeLink,
+                releaseLink: vi.fn(async () => ({ removed: true as const })),
+            },
             listCurrentLinks: async () => [],
             restoreFollowPolicy,
             startPaused: true,

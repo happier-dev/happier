@@ -123,6 +123,79 @@ describe('browser recording daemon service', () => {
     expect(service.getRecordingStatus(started.recording.recordingId)?.mediaRef).toEqual(mediaRef);
   });
 
+  it('rejects a reused finalized recording id without replacing the retained recording', async () => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const captureAdapter = {
+      captureKind: 'streamFrameCapture' as const,
+      start: vi.fn(async () => ({ status: 'started' as const })),
+      stop: vi.fn(async () => ({
+        durationMs: 2_000,
+        byteSize: 800_000,
+        frameCount: 24,
+        fps: 12,
+        mimeType: 'video/webm',
+        source: recordingArtifactSource,
+      })),
+      discard: vi.fn(async () => {}),
+    };
+    const service = createBrowserRecordingDaemonService({
+      captureAdapters: [captureAdapter],
+      mediaWriter: {
+        persistRecording: vi.fn(async () => mediaRef),
+        discardRecording: vi.fn(async () => {}),
+      },
+      now: () => 10_000,
+    });
+    const startInput = {
+      browserRecordingEnabled: true,
+      recordingCapabilities,
+      browserSessionId: 'browser_session_1',
+      viewId: 'view_reused_recording_id',
+      profileId: 'profile_1',
+      targetKind: 'streamedBrowser' as const,
+      adapterKind: 'streamedBrowserSurface' as const,
+      renderEngineKind: 'streamedSurface' as const,
+      captureKind: 'streamFrameCapture' as const,
+      fidelity: 'streamFrame' as const,
+      navigationGeneration: 7,
+      mimeType: 'video/webm',
+      retentionClass: 'preSend' as const,
+      captureSource: streamCaptureSource,
+      recordingId: 'recording_reused',
+      startedAtMs: 10_000,
+    };
+
+    const first = await service.startRecording(startInput);
+    expect(first.status).toBe('started');
+    if (first.status !== 'started') return;
+    const finalized = await service.stopRecording({
+      recordingId: first.recording.recordingId,
+      stoppedAtMs: 12_000,
+      navigationGenerationEnd: 8,
+    });
+    expect(finalized.status).toBe('finalized');
+    if (finalized.status !== 'finalized') return;
+
+    const reused = await service.startRecording({
+      ...startInput,
+      navigationGeneration: 9,
+      startedAtMs: 20_000,
+    });
+
+    expect(reused).toMatchObject({
+      status: 'unavailable',
+      reason: { code: 'browser_recording_id_conflict' },
+    });
+    expect(captureAdapter.start).toHaveBeenCalledTimes(1);
+    expect(service.getRecordingStatus('recording_reused')).toMatchObject({
+      browserSessionId: 'browser_session_1',
+      viewId: 'view_reused_recording_id',
+      startedAtMs: 10_000,
+      status: 'finalized',
+      mediaRef,
+    });
+  });
+
   it('fails closed before capture when gates, capabilities, or adapters are unavailable', async () => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const service = createBrowserRecordingDaemonService({

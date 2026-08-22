@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeatureDecision } from '@happier-dev/protocol';
+import {
+    createFeatureDecision,
+    type DaemonReactNativeHostRuntimeIdentityV1,
+    DaemonPluginInvocationLogReadRequestV1Schema,
+    type PluginUiArtifactDigestV1,
+} from '@happier-dev/protocol';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
-import { configuration } from '@/configuration';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type {
     ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { registerSessionHandlers } from './registerSessionHandlers';
 
@@ -46,101 +49,53 @@ function createRuntimeRegistry(
         hookHandlersByHookId: new Map(),
         agentRuntimesByAgentId: new Map(),
         scmHostingProvidersById: new Map(),
-        networkAllowedUrlOriginsByPluginId: new Map(),
-        processSpawnAllowedPathsByPluginId: new Map(),
         pluginDiagnosticsByPluginId: {},
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: async () => [],
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
-        createAgentInvocationServices: () => createUnavailablePluginServices(),
-        readHookEventEnvelopeV1,
+        createAgentInvocationServices: async () => createUnavailablePluginServices(),
         retireConsumers: () => {},
         dispose: async () => {},
     };
 }
 
-const display = {
-    titleKey: 'title',
-    descriptionKey: 'description',
-    iconToken: 'browser',
-    tone: 'info',
-} as const;
-
-function createRegistry(params: Readonly<{
-    contributionDigest: string;
-    artifactDigest?: string;
-}>) {
-    const hostAppVersion = configuration.currentCliVersion;
-    const artifactDigest = params.artifactDigest ?? params.contributionDigest;
+function createRegistry(artifactDigest: PluginUiArtifactDigestV1) {
     return createResolvedContributionRegistry({
         agents: [],
-        reactNativeBundles: [{
+        uiRenderersV2: [{
             provenance: 'external',
             source: { kind: 'path' },
             pluginId: 'runtime.plugin',
+            identity: { pluginId: 'runtime.plugin', localId: 'native-panel' },
             manifestPath: '/plugins/runtime/plugin.json',
-            manifestDigest: 'sha256:runtime',
-            daemonEntryPath: '/plugins/runtime/daemon.mjs',
-            sourceSpec: {
-                kind: 'path',
-                locator: '/plugins/runtime',
-                trustPolicy: 'local_trusted',
-                installPolicy: 'link',
+            pluginRootPath: '/plugins/runtime',
+            generatedUiArtifactsManifest: {
+                version: 1,
+                entries: [{
+                    contributionId: 'native-panel',
+                    tier: 'reactNative',
+                    platform: 'ios',
+                    entry: 'react-native/native-panel/ios.bundle',
+                    files: [{
+                        relativePath: 'react-native/native-panel/ios.bundle',
+                        digest: artifactDigest,
+                        byteSize: 1024,
+                    }],
+                    digest: artifactDigest,
+                    builtWith: { bundler: 'repack', version: '5.2.5' },
+                    repack: {
+                        containerName: 'runtime_plugin_native',
+                        modulePath: './renderSurface',
+                        exportName: 'renderSurface',
+                    },
+                    hostUiApiVersion: '1.0.0',
+                    compat: { react: '19.2.0', reactNative: '0.83.4' },
+                }],
             },
             definition: {
                 id: 'native-panel',
-                bundle: {
-                    platform: 'ios',
-                    channel: 'internal',
-                    integrity: { digest: params.contributionDigest },
-                },
-                entry: { modulePath: './renderSurface', exportName: 'renderSurface' },
-                compatibility: {
-                    hostUiApiVersion: '1.0.0',
-                    reactVersion: '19.2.0',
-                    reactNativeVersion: '0.83.4',
-                    supportedPlatforms: ['ios'],
-                    supportedChannels: ['internal'],
-                    requiredNativeCapabilities: [],
-                },
-                hostApi: { minVersion: '1.0.0', methods: [] },
-                nativeCapabilities: [],
-                fallback: { kind: 'hostedWeb', contributionId: 'native-panel-web' },
-                display,
-            },
-        }],
-        uiArtifacts: [{
-            provenance: 'external',
-            source: { kind: 'path' },
-            pluginId: 'runtime.plugin',
-            manifestPath: '/plugins/runtime/plugin.json',
-            manifestDigest: 'sha256:runtime',
-            daemonEntryPath: '/plugins/runtime/daemon.mjs',
-            sourceSpec: {
-                kind: 'path',
-                locator: '/plugins/runtime',
-                trustPolicy: 'local_trusted',
-                installPolicy: 'link',
-            },
-            definition: {
-                id: 'native-panel-ios',
-                contributionId: 'native-panel',
-                contributionFamily: 'reactNativeBundles',
-                artifactKind: 'reactNativeBundle',
-                platform: 'ios',
-                channel: 'internal',
-                integrity: { digest: artifactDigest },
-                compatibility: {
-                    hostAppVersion,
-                    hostUiApiVersion: '1.0.0',
-                    reactVersion: '19.2.0',
-                    reactNativeVersion: '0.83.4',
-                    supportedChannels: ['internal'],
-                    nativeCapabilities: [],
-                },
-                byteSize: 1024,
-                contentType: 'application/javascript',
-                assetPath: 'react-native/native-panel/ios.bundle.js',
+                kind: 'reactNative',
+                artifact: 'native-panel',
             },
         }],
     });
@@ -149,17 +104,12 @@ function createRegistry(params: Readonly<{
 async function projectReactNativeRuntime(params?: Readonly<{
     installedReactNativeArtifactLoaderAvailable?: boolean;
     reactNativeScriptManagerRuntimeIntegrated?: boolean;
-    reactNativeHostRuntime?: Readonly<{ platform?: string; channel?: string }>;
-    contributionDigest?: string;
-    artifactDigest?: string;
+    reactNativeHostRuntime?: DaemonReactNativeHostRuntimeIdentityV1;
 }>) {
-    const digest = params?.contributionDigest ?? computePluginUiArtifactSha256DigestV1(
+    const artifactDigest = computePluginUiArtifactSha256DigestV1(
         new TextEncoder().encode('// native panel'),
     );
-    const registry = createRegistry({
-        contributionDigest: digest,
-        ...(params?.artifactDigest ? { artifactDigest: params.artifactDigest } : {}),
-    });
+    const registry = createRegistry(artifactDigest);
     const { handlers, registrar } = createRegistrar();
     registerSessionHandlers(registrar, process.cwd(), {
         daemonContributionRegistryProjection: {
@@ -171,7 +121,15 @@ async function projectReactNativeRuntime(params?: Readonly<{
             reactNativeScriptManagerRuntimeIntegrated:
                 params?.reactNativeScriptManagerRuntimeIntegrated ?? true,
             reactNativeHostRuntime:
-                params?.reactNativeHostRuntime ?? { platform: 'ios', channel: 'internal' },
+                params && Object.hasOwn(params, 'reactNativeHostRuntime')
+                    ? params.reactNativeHostRuntime
+                    : {
+                        platform: 'ios',
+                        channel: 'internal',
+                        reactVersion: '19.2.0',
+                        reactNativeVersion: '0.83.4',
+                        availableNativeCapabilities: [],
+                    },
         },
     });
 
@@ -232,27 +190,36 @@ describe('registerSessionHandlers daemon contribution registry projection wiring
         });
     });
 
-    it('keeps React Native artifacts fallback when host runtime identity is missing', async () => {
+    it('blocks React Native artifacts when host runtime identity is missing', async () => {
         await expect(projectReactNativeRuntime({
-            reactNativeHostRuntime: {},
+            reactNativeHostRuntime: undefined,
         })).resolves.toMatchObject({
-            state: 'fallback',
-            diagnostics: [
-                'repack_script_manager_unavailable',
-                'react_native_host_runtime_identity_unavailable',
-            ],
-            decision: { state: 'fallback' },
+            state: 'blocked',
+            diagnostics: ['generated_react_native_platform_unresolved'],
+            decision: { state: 'blocked' },
         });
     });
 
-    it('keeps digest-mismatched React Native artifacts unloadable even when readiness facts exist', async () => {
-        const digest = computePluginUiArtifactSha256DigestV1(new TextEncoder().encode('// native panel'));
-        await expect(projectReactNativeRuntime({
-            contributionDigest: digest,
-            artifactDigest: computePluginUiArtifactSha256DigestV1(new TextEncoder().encode('// stale panel')),
-        })).resolves.toMatchObject({
-            state: 'fallback',
-            decision: { state: 'fallback' },
+});
+
+describe('registerSessionHandlers plugin invocation log wiring', () => {
+    it('registers a fail-closed exact-machine log handler when no live target identity is available', async () => {
+        const { handlers, registrar } = createRegistrar();
+        registerSessionHandlers(registrar, process.cwd());
+
+        const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_INVOCATION_LOGS_READ);
+        expect(handler).toBeDefined();
+        await expect(handler!(DaemonPluginInvocationLogReadRequestV1Schema.parse({
+            version: 1,
+            target: {
+                serverIdentityId: 'srv_plugin_logs',
+                machineId: 'machine-logs',
+            },
+            query: { pluginId: 'acme.example' },
+        }))).resolves.toEqual({
+            version: 1,
+            kind: 'unavailable',
+            code: 'plugin_log_target_unavailable',
         });
     });
 });

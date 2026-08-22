@@ -5,6 +5,7 @@ export type ProbeServerVersionResult =
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
+import { isLoopbackHostname } from '@happier-dev/protocol';
 
 function resolveTimeoutMs(): number {
   const raw = Number(process.env.HAPPIER_SERVER_TEST_TIMEOUT_MS ?? '');
@@ -151,7 +152,7 @@ function readLoopbackHttpUrlTextViaNet(parsedUrl: URL, timeoutMs: number): Promi
 function readUrlText(parsedUrl: URL, timeoutMs: number): Promise<ReadUrlTextResult> {
   return new Promise((resolve, reject) => {
     const client = parsedUrl.protocol === 'https:' ? https : http;
-    const isLoopback = parsedUrl.hostname === '127.0.0.1' || parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '::1';
+    const isLoopback = isLoopbackHostname(parsedUrl.hostname);
     if (isLoopback && parsedUrl.protocol === 'http:') {
       readLoopbackHttpUrlTextViaNet(parsedUrl, timeoutMs).then(resolve).catch(reject);
       return;

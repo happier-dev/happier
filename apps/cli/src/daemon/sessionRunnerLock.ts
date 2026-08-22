@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 
 import { findHappyProcessByPid } from './doctor';
+import {
+  processGenerationMatches,
+  processGenerationProvesReuse,
+  readProcessIdentityByPid,
+} from './processIdentity';
 import { readProcessRunState as readProcessRunStateDefault, type ProcessRunState } from './processRunState';
 import { hashProcessCommand } from './sessionRegistry';
 
@@ -13,6 +18,7 @@ type LockPayload = Readonly<{
   pid: number;
   acquiredAtMs: number;
   processCommandHash?: string;
+  processStartTimeMs?: number;
 }>;
 
 function normalizeSessionId(raw: unknown): string {
@@ -70,10 +76,22 @@ function safeParseLockPayload(raw: string): LockPayload | null {
     const acquiredAtMs = Number(parsed?.acquiredAtMs);
     const processCommandHashRaw = typeof parsed?.processCommandHash === 'string' ? parsed.processCommandHash : '';
     const processCommandHash = /^[a-f0-9]{64}$/.test(processCommandHashRaw) ? processCommandHashRaw : undefined;
+    const processStartTimeMsRaw = parsed?.processStartTimeMs;
+    const processStartTimeMs = typeof processStartTimeMsRaw === 'number'
+      && Number.isInteger(processStartTimeMsRaw)
+      && processStartTimeMsRaw >= 0
+      ? processStartTimeMsRaw
+      : undefined;
     if (!sessionId) return null;
     if (!Number.isFinite(pid) || pid <= 0) return null;
     if (!Number.isFinite(acquiredAtMs) || acquiredAtMs <= 0) return null;
-    return { sessionId, pid: Math.floor(pid), acquiredAtMs: Math.floor(acquiredAtMs), ...(processCommandHash ? { processCommandHash } : {}) };
+    return {
+      sessionId,
+      pid: Math.floor(pid),
+      acquiredAtMs: Math.floor(acquiredAtMs),
+      ...(processCommandHash ? { processCommandHash } : {}),
+      ...(processStartTimeMs !== undefined ? { processStartTimeMs } : {}),
+    };
   } catch {
     return null;
   }
@@ -99,6 +117,7 @@ export async function acquireSessionRunnerLock(params: Readonly<{
   happyHomeDir?: string;
   readProcessRunState?: (pid: number) => Promise<ProcessRunState>;
   getCurrentProcessCommandHash?: (pid: number) => Promise<string | null>;
+  readProcessIdentityByPid?: typeof readProcessIdentityByPid;
   killWedgedPid?: (pid: number) => void;
 }>): Promise<AcquireSessionRunnerLockResult> {
   const sessionId = normalizeSessionId(params.sessionId);
@@ -121,12 +140,19 @@ export async function acquireSessionRunnerLock(params: Readonly<{
   const getCurrentProcessCommandHash = params.getCurrentProcessCommandHash ?? getCurrentProcessCommandHashDefault;
   const processCommandHashRaw = await getCurrentProcessCommandHash(pid).catch(() => null);
   const processCommandHash = typeof processCommandHashRaw === 'string' && /^[a-f0-9]{64}$/.test(processCommandHashRaw) ? processCommandHashRaw : null;
+  const readProcessIdentity = params.readProcessIdentityByPid ?? readProcessIdentityByPid;
+  const processIdentity = await readProcessIdentity(pid).catch(() => null);
+  const processStartTimeMs = Number.isInteger(processIdentity?.processStartTimeMs)
+    && (processIdentity?.processStartTimeMs ?? -1) >= 0
+    ? processIdentity!.processStartTimeMs
+    : undefined;
 
   const payload: LockPayload = {
     sessionId,
     pid,
     acquiredAtMs: nowMs,
     ...(processCommandHash ? { processCommandHash } : {}),
+    ...(processStartTimeMs !== undefined ? { processStartTimeMs } : {}),
   };
   const serialized = JSON.stringify(payload, null, 2) + '\n';
 
@@ -183,12 +209,32 @@ export async function acquireSessionRunnerLock(params: Readonly<{
     const holderState = await readHolderRunState(existing.pid);
     if (holderState === 'dead' || holderState === 'zombie') {
       // Dead or defunct: cannot serve, safe to break below (a zombie needs no kill).
+    } else if (existing.processStartTimeMs !== undefined) {
+      const observedIdentity = await readProcessIdentity(existing.pid).catch(() => null);
+      if (processGenerationProvesReuse(
+        existing.processStartTimeMs,
+        observedIdentity?.processStartTimeMs,
+      )) {
+        // Exact process generation changed: the OS reused the PID, so the lock is stale.
+      } else if (
+        holderState === 'stopped'
+        && processGenerationMatches(
+          existing.processStartTimeMs,
+          observedIdentity?.processStartTimeMs,
+        )
+      ) {
+        try {
+          killWedgedPid(existing.pid);
+        } catch {
+          return { ok: false, reason: 'already_running', heldByPid: existing.pid };
+        }
+      } else {
+        return { ok: false, reason: 'already_running', heldByPid: existing.pid };
+      }
     } else if (existing.processCommandHash) {
       const currentHash = await getCurrentProcessCommandHash(existing.pid).catch(() => null);
       const currentHashValid = typeof currentHash === 'string' && /^[a-f0-9]{64}$/.test(currentHash);
-      if (currentHashValid && currentHash !== existing.processCommandHash) {
-        // Provably a different process (PID reuse): treat the lock as stale and break it.
-      } else if (holderState === 'stopped' && currentHashValid && currentHash === existing.processCommandHash) {
+      if (holderState === 'stopped' && currentHashValid && currentHash === existing.processCommandHash) {
         // Proven same runner image but SIGSTOPped: it holds the lock and serves nothing
         // (incident 2026-06-12 "already running" refusal while wedged). Kill it so a
         // later SIGCONT cannot revive a duplicate, then break the lock.
@@ -200,11 +246,12 @@ export async function acquireSessionRunnerLock(params: Readonly<{
           return { ok: false, reason: 'already_running', heldByPid: existing.pid };
         }
       } else {
-        // Fail-closed: if the lock PID is alive and we cannot prove it's stale, deny.
+        // Legacy locks have no immutable process-generation witness. Command drift
+        // cannot prove PID reuse, so a live holder remains authoritative.
         return { ok: false, reason: 'already_running', heldByPid: existing.pid };
       }
     } else {
-      // Fail-closed: without a command hash, we can't safely distinguish PID reuse.
+      // Fail closed: this legacy lock has neither a generation nor command witness.
       return { ok: false, reason: 'already_running', heldByPid: existing.pid };
     }
   }

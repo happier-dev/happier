@@ -1,21 +1,43 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
     ExternalSessionFollowIssueV1,
     ExternalSessionFollowStatusV1,
 } from '@happier-dev/protocol';
 
 import { logger } from '@/utils/logger';
+import {
+    ExternalSessionFollowFailureError,
+} from '@/session/external/externalSessionFollowFailure';
 
-import { createExternalSessionViewerLeaseRegistry } from './externalSessionViewerLeaseRegistry';
+
+const MAX_ACTIVE_VIEWER_LEASES_PER_SESSION = 64;
+
+export class ExternalSessionViewerLeaseCapacityExceededError extends Error {
+    readonly name = 'ExternalSessionViewerLeaseCapacityExceededError';
+
+    constructor() {
+        super('External Session viewer lease capacity exceeded');
+    }
+}
 
 export type ExternalSessionFollowRefreshResult =
     | Readonly<{ outcome: 'already_current' | 'advanced' }>
     | Readonly<{
         outcome: 'gap_or_cursor_expired';
-        recover: () => Promise<void>;
+        /**
+         * Bounded authoritative resync. It resolves `{ outcome: 'resync_required' }`
+         * when the gapped interval cannot be FULLY reconciled from the one bounded
+         * read it is allowed — the accepted cursor is then retained untouched and the
+         * caller routes the existing `resync_required` state. Resolving `void` means
+         * the recovery committed a proven-continuous accepted cursor.
+         */
+        recover: () => Promise<Readonly<{ outcome: 'resync_required' }> | void>;
     }>
     | Readonly<{
         outcome: 'source_replaced' | 'source_unavailable' | 'read_failed';
-    }>;
+    }>
+    | Readonly<{ outcome: 'resync_required' }>;
 
 export type ExternalSessionFollowLease = Readonly<{
     release: () => Promise<void>;
@@ -40,8 +62,10 @@ type CursorRefreshRequester = (
 type ViewerLeaseRecord = {
     sessionId: string;
     leaseId: string;
+    expiresAtMs: number;
     acceptedTailCursor: string | null;
     requestTranscriptRefresh: CursorRefreshRequester | null;
+    onSourceReplaced: (() => Promise<void>) | null;
     refreshDelivery: 'session_invalidation' | 'scoped_listener';
     expiryTimer: ReturnType<typeof setTimeout> | null;
 };
@@ -56,6 +80,7 @@ type DesiredFollowSource = {
 
 type ActualFollowRecord = {
     key: string;
+    resource: ExternalSessionFollowResource | null;
     release: () => Promise<void>;
     readAcceptedCursor: (() => string | null) | null;
     requestTranscriptRefresh:
@@ -64,6 +89,14 @@ type ActualFollowRecord = {
 };
 
 type ActualReleaseResult = 'none' | 'released' | 'retained' | 'fenced';
+type RefreshStatusPublicationMode = 'inline' | 'session_exclusive';
+const TRANSCRIPT_REFRESH_RETRY_DELAYS_MS = [250, 1_000, 4_000] as const;
+
+type PendingFollowStatusPublication = Readonly<{
+    resource: ExternalSessionFollowResource | null;
+    followStatusV1: ExternalSessionFollowStatusV1;
+    lastFollowIssueV1?: ExternalSessionFollowIssueV1;
+}>;
 
 type SessionFollowState = {
     source: DesiredFollowSource | null;
@@ -74,7 +107,10 @@ type SessionFollowState = {
     refreshIssueCode: string | null;
     refreshInFlight: Promise<void> | null;
     refreshPending: boolean;
+    refreshRetryAttempt: number;
+    refreshRetryTimer: ReturnType<typeof setTimeout> | null;
     reacquisitionCursor: string | null;
+    pendingFollowStatus: PendingFollowStatusPublication | null;
 };
 
 type ExternalSessionFollowLeaseManagerParams = Readonly<{
@@ -84,6 +120,7 @@ type ExternalSessionFollowLeaseManagerParams = Readonly<{
     clearTimer?: typeof clearTimeout;
     writeFollowStatus?: (input: Readonly<{
         sessionId: string;
+        expectedLinkGeneration?: string;
         followStatusV1: ExternalSessionFollowStatusV1;
         lastFollowIssueV1?: ExternalSessionFollowIssueV1;
     }>) => Promise<void>;
@@ -103,19 +140,45 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
     const now = params?.now ?? Date.now;
     const setTimer = params?.setTimer ?? setTimeout;
     const clearTimer = params?.clearTimer ?? clearTimeout;
-    const viewerLeaseRegistry = createExternalSessionViewerLeaseRegistry({
-        now,
-        randomId: params?.randomId,
-    });
+    const randomId = params?.randomId ?? randomUUID;
+    /**
+     * The one owner of viewer-lease state, keyed by Session and lease identity. It
+     * holds the lease's expiry alongside its cursor/refresh custody, so demand,
+     * capacity, renewal and expiry are all decided from the same record.
+     */
     const viewerLeasesById = new Map<string, ViewerLeaseRecord>();
     const backgroundFollowEnabledBySessionId = new Map<string, boolean>();
     const statesBySessionId = new Map<string, SessionFollowState>();
     let disposed = false;
-    let operations = Promise.resolve();
+    let barrierOperations = Promise.resolve();
+    const operationsBySessionId = new Map<string, Promise<void>>();
 
-    const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
-        const result = operations.then(operation, operation);
-        operations = result.then(() => undefined, () => undefined);
+    const runSessionExclusive = <T>(
+        sessionId: string,
+        operation: () => Promise<T>,
+    ): Promise<T> => {
+        const priorSessionOperation = operationsBySessionId.get(sessionId)
+            ?? Promise.resolve();
+        const result = Promise.all([
+            barrierOperations,
+            priorSessionOperation,
+        ]).then(() => operation());
+        const settled = result.then(() => undefined, () => undefined);
+        operationsBySessionId.set(sessionId, settled);
+        void settled.then(() => {
+            if (operationsBySessionId.get(sessionId) === settled) {
+                operationsBySessionId.delete(sessionId);
+            }
+        });
+        return result;
+    };
+
+    const runBarrierExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
+        const result = Promise.all([
+            barrierOperations,
+            ...operationsBySessionId.values(),
+        ]).then(() => operation());
+        barrierOperations = result.then(() => undefined, () => undefined);
         return result;
     };
 
@@ -131,43 +194,76 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             refreshIssueCode: null,
             refreshInFlight: null,
             refreshPending: false,
+            refreshRetryAttempt: 0,
+            refreshRetryTimer: null,
             reacquisitionCursor: null,
+            pendingFollowStatus: null,
         };
         statesBySessionId.set(sessionId, created);
         return created;
     };
 
+    const retryPendingFollowStatus = async (
+        sessionId: string,
+        state: SessionFollowState,
+    ): Promise<void> => {
+        const pending = state.pendingFollowStatus;
+        if (!pending) return;
+        if (!params?.writeFollowStatus) {
+            if (state.pendingFollowStatus === pending) {
+                state.pendingFollowStatus = null;
+            }
+            return;
+        }
+        try {
+            await params.writeFollowStatus({
+                sessionId,
+                ...(pending.resource
+                    ? { expectedLinkGeneration: pending.resource.linkGeneration }
+                    : {}),
+                followStatusV1: pending.followStatusV1,
+                ...(pending.lastFollowIssueV1 === undefined
+                    ? {}
+                    : { lastFollowIssueV1: pending.lastFollowIssueV1 }),
+            });
+            if (state.pendingFollowStatus === pending) {
+                state.pendingFollowStatus = null;
+            }
+        } catch {
+            logger.debug('[externalSessions.follow] Follow-status metadata write failed (non-fatal)', {
+                sessionId,
+                status: pending.followStatusV1.status,
+                reason: pending.followStatusV1.reason,
+            });
+        }
+    };
+
     const publishFollowStatus = async (
         sessionId: string,
+        resource: ExternalSessionFollowResource | null,
         status: ExternalSessionFollowStatusV1['status'],
         reason: string,
         lastFollowIssueV1?: ExternalSessionFollowIssueV1,
         updatedAtMs = now(),
     ): Promise<void> => {
-        if (!params?.writeFollowStatus) return;
-        try {
-            await params.writeFollowStatus({
-                sessionId,
-                followStatusV1: { v: 1, status, reason, updatedAtMs },
-                ...(lastFollowIssueV1 === undefined ? {} : { lastFollowIssueV1 }),
-            });
-        } catch {
-            logger.debug('[externalSessions.follow] Follow-status metadata write failed (non-fatal)', {
-                sessionId,
-                status,
-                reason,
-            });
-        }
+        const state = stateFor(sessionId);
+        state.pendingFollowStatus = {
+            resource,
+            followStatusV1: { v: 1, status, reason, updatedAtMs },
+            ...(lastFollowIssueV1 === undefined ? {} : { lastFollowIssueV1 }),
+        };
+        await retryPendingFollowStatus(sessionId, state);
     };
 
     const publishFollowFailure = async (
         sessionId: string,
+        resource: ExternalSessionFollowResource | null,
         operation: 'acquire' | 'release',
         unavailable = false,
     ): Promise<void> => {
         const observedAtMs = now();
         const reason = unavailable ? 'lease_unavailable' : `lease_${operation}_failed`;
-        await publishFollowStatus(sessionId, 'error', reason, {
+        await publishFollowStatus(sessionId, resource, 'error', reason, {
             v: 1,
             code: unavailable ? 'follow_lease_unavailable' : `follow_lease_${operation}_failed`,
             retryable: true,
@@ -186,6 +282,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         const actual = state.actual;
         if (!actual) return 'none';
         state.refreshPending = false;
+        clearRefreshRetry(state);
         if (actual.released) return 'retained';
         actual.released = true;
         try {
@@ -201,16 +298,21 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             } else {
                 actual.released = false;
             }
-            await publishFollowFailure(sessionId, 'release');
+            await publishFollowFailure(sessionId, actual.resource, 'release');
             return fenced ? 'fenced' : 'retained';
         }
         if (state.actual === actual) state.actual = null;
-        await publishFollowStatus(sessionId, transition.status, transition.reason);
+        await publishFollowStatus(
+            sessionId,
+            actual.resource,
+            transition.status,
+            transition.reason,
+        );
         return 'released';
     };
 
     const hasDemand = (sessionId: string): boolean =>
-        viewerLeaseRegistry.countActiveLeases(sessionId) > 0
+        countActiveViewerLeases(sessionId) > 0
         || backgroundFollowEnabledBySessionId.get(sessionId) === true;
 
     const reconcile = async (
@@ -223,6 +325,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         const state = stateFor(sessionId);
         if (disposed || !hasDemand(sessionId)) {
             state.refreshPending = false;
+            clearRefreshRetry(state);
             state.reacquisitionCursor = null;
             const releaseResult = await releaseActual(sessionId, state, {
                 status: 'disabled',
@@ -237,6 +340,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         }
         const suspensionReason = state.suspensionReasons.values().next().value;
         if (suspensionReason) {
+            clearRefreshRetry(state);
             await releaseActual(sessionId, state, {
                 status: 'paused',
                 reason: suspensionReason,
@@ -259,7 +363,12 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             if (releaseResult === 'retained') {
                 return { acquired: false };
             }
-            await publishFollowStatus(sessionId, 'reacquiring', 'follow_source_generation_changed');
+            await publishFollowStatus(
+                sessionId,
+                source.resource,
+                'reacquiring',
+                'follow_source_generation_changed',
+            );
         }
 
         if (!source.acquireFollowLease) {
@@ -273,7 +382,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 ? await source.acquireFollowLease(state.reacquisitionCursor)
                 : await source.acquireFollowLease();
         } catch (error) {
-            await publishFollowFailure(sessionId, 'acquire');
+            await publishFollowFailure(sessionId, source.resource, 'acquire');
             if (options.propagateAcquisitionError) throw error;
             return { acquired: false };
         } finally {
@@ -282,7 +391,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             }
         }
         if (!followLease) {
-            await publishFollowFailure(sessionId, 'acquire', true);
+            await publishFollowFailure(sessionId, source.resource, 'acquire', true);
             return { acquired: false };
         }
 
@@ -292,12 +401,39 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             || state.source?.key !== source.key
             || source.resource?.retirementSignal?.aborted
         ) {
-            await followLease.release().catch(() => undefined);
+            const actual: ActualFollowRecord = {
+                key: source.key,
+                resource: source.resource,
+                release: followLease.release,
+                readAcceptedCursor: followLease.readAcceptedCursor ?? null,
+                requestTranscriptRefresh: followLease.requestTranscriptRefresh ?? null,
+                released: false,
+            };
+            // Acquisition completed after its owner had already transitioned
+            // away. Put this exact lease under the existing actual-lease owner
+            // so the queued terminal transition retains and retries it rather
+            // than losing a failed close acknowledgement.
+            state.actual = actual;
+            await releaseActual(sessionId, state, {
+                status: disposed
+                    ? 'paused'
+                    : !hasDemand(sessionId)
+                        ? 'disabled'
+                        : 'paused',
+                reason: disposed
+                    ? 'daemon_disconnected'
+                    : !hasDemand(sessionId)
+                        ? 'follow_demand_released'
+                        : source.resource?.retirementSignal?.aborted
+                            ? 'plugin_generation_retired'
+                            : 'follow_source_generation_changed',
+            });
             return { acquired: false };
         }
 
         const actual: ActualFollowRecord = {
             key: source.key,
+            resource: source.resource,
             release: followLease.release,
             readAcceptedCursor: followLease.readAcceptedCursor ?? null,
             requestTranscriptRefresh: followLease.requestTranscriptRefresh ?? null,
@@ -306,9 +442,14 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         state.actual = actual;
         state.reacquisitionCursor = null;
         state.refreshIssueCode = null;
-        await publishFollowStatus(sessionId, 'active', options.activeReason);
+        await publishFollowStatus(
+            sessionId,
+            actual.resource,
+            'active',
+            options.activeReason,
+        );
         if (state.refreshPending) {
-            await startTranscriptRefresh(sessionId, state);
+            await startTranscriptRefresh(sessionId, state, 'inline');
         }
         return { acquired: true, followLease };
     };
@@ -329,6 +470,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 if (record.sessionId === sessionId) record.acceptedTailCursor = null;
             }
             state.refreshPending = false;
+            clearRefreshRetry(state);
             state.reacquisitionCursor = null;
         }
         const source: DesiredFollowSource = {
@@ -345,11 +487,12 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         const retirementSignal = resource?.retirementSignal;
         if (retirementSignal) {
             const retire = () => {
-                void runExclusive(async () => {
+                void runSessionExclusive(sessionId, async () => {
                     const current = statesBySessionId.get(sessionId);
                     if (!current || current.source !== source) return;
                     current.source = null;
                     current.refreshPending = false;
+                    clearRefreshRetry(current);
                     current.reacquisitionCursor = null;
                     for (const record of viewerLeasesById.values()) {
                         if (record.sessionId === sessionId) {
@@ -363,6 +506,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                         kind: 'source_retired',
                         key: source.key,
                     });
+                    await retryPendingFollowStatus(sessionId, current);
                 });
             };
             retirementSignal.addEventListener('abort', retire, { once: true });
@@ -375,6 +519,76 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
 
     const clearViewerTimer = (record: ViewerLeaseRecord | undefined): void => {
         if (record?.expiryTimer) clearTimer(record.expiryTimer);
+    };
+
+    const forgetViewerLease = (recordKey: string): void => {
+        const record = viewerLeasesById.get(recordKey);
+        if (!record) return;
+        clearViewerTimer(record);
+        viewerLeasesById.delete(recordKey);
+    };
+
+    const pruneExpiredViewerLeases = (sessionId: string): void => {
+        const cutoff = now();
+        for (const [recordKey, record] of viewerLeasesById) {
+            if (record.sessionId !== sessionId) continue;
+            if (record.expiresAtMs > cutoff) continue;
+            forgetViewerLease(recordKey);
+        }
+    };
+
+    const countActiveViewerLeases = (sessionId: string): number => {
+        pruneExpiredViewerLeases(sessionId);
+        let active = 0;
+        for (const record of viewerLeasesById.values()) {
+            if (record.sessionId === sessionId) active += 1;
+        }
+        return active;
+    };
+
+    const detachViewerLease = (input: Readonly<{
+        sessionId: string;
+        leaseId: string;
+    }>): Readonly<{ detached: boolean }> => {
+        pruneExpiredViewerLeases(input.sessionId);
+        const recordKey = viewerLeaseKey(input.sessionId, input.leaseId);
+        const detached = viewerLeasesById.has(recordKey);
+        forgetViewerLease(recordKey);
+        return { detached } as const;
+    };
+
+    /**
+     * Resolves the identity and expiry a viewer lease is admitted with. The caller
+     * writes the record itself, because attaching also settles the source and the
+     * cursor custody that belong to the same record.
+     */
+    const admitViewerLease = (input: Readonly<{
+        sessionId: string;
+        leaseId?: string | null;
+        ttlMs: number;
+    }>): Readonly<{
+        leaseId: string;
+        expiresAtMs: number;
+        renewed: boolean;
+    }> => {
+        const active = countActiveViewerLeases(input.sessionId);
+        const requestedLeaseId =
+            typeof input.leaseId === 'string' && input.leaseId.trim().length > 0
+                ? input.leaseId.trim()
+                : null;
+        const existing = requestedLeaseId
+            ? viewerLeasesById.get(
+                viewerLeaseKey(input.sessionId, requestedLeaseId),
+            ) ?? null
+            : null;
+        if (!existing && active >= MAX_ACTIVE_VIEWER_LEASES_PER_SESSION) {
+            throw new ExternalSessionViewerLeaseCapacityExceededError();
+        }
+        return {
+            leaseId: existing?.leaseId ?? requestedLeaseId ?? randomId(),
+            expiresAtMs: now() + input.ttlMs,
+            renewed: existing !== null,
+        } as const;
     };
 
     const hasCurrentTranscriptDemand = (input: Readonly<{
@@ -406,23 +620,296 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         return hasCursorDemand || hasActualRefresh || isAcquiringCurrentSource;
     };
 
+    const clearRefreshRetry = (
+        state: SessionFollowState,
+        options: Readonly<{ resetAttempt?: boolean }> = {},
+    ): void => {
+        if (state.refreshRetryTimer !== null) {
+            clearTimer(state.refreshRetryTimer);
+            state.refreshRetryTimer = null;
+        }
+        if (options.resetAttempt !== false) {
+            state.refreshRetryAttempt = 0;
+        }
+    };
+
+    const scheduleRefreshRetry = (input: Readonly<{
+        sessionId: string;
+        state: SessionFollowState;
+        isCurrent: () => boolean;
+    }>): void => {
+        const source = input.state.source;
+        const resource = source?.resource;
+        if (
+            input.state.refreshRetryTimer !== null
+            || !source
+            || !resource
+            || !input.isCurrent()
+            || !hasCurrentTranscriptDemand({
+                sessionId: input.sessionId,
+                resource,
+            })
+        ) {
+            return;
+        }
+        const delayMs = TRANSCRIPT_REFRESH_RETRY_DELAYS_MS[
+            input.state.refreshRetryAttempt
+        ];
+        if (delayMs === undefined) return;
+        input.state.refreshRetryAttempt += 1;
+        const expectedAuthorityEpoch = input.state.authorityEpoch;
+        let retryTimer!: ReturnType<typeof setTimeout>;
+        retryTimer = setTimer(() => {
+            if (input.state.refreshRetryTimer !== retryTimer) return;
+            input.state.refreshRetryTimer = null;
+            void runSessionExclusive(input.sessionId, async () => {
+                if (
+                    disposed
+                    || input.state.source !== source
+                    || input.state.authorityEpoch !== expectedAuthorityEpoch
+                    || !input.isCurrent()
+                    || !hasCurrentTranscriptDemand({
+                        sessionId: input.sessionId,
+                        resource,
+                    })
+                ) {
+                    return;
+                }
+                input.state.refreshPending = true;
+                if (input.state.refreshInFlight) return;
+                await startTranscriptRefresh(
+                    input.sessionId,
+                    input.state,
+                    'inline',
+                );
+            }).catch(() => undefined);
+        }, delayMs);
+        input.state.refreshRetryTimer = retryTimer;
+        retryTimer.unref?.();
+    };
+
+    const settleScopedSourceReplacement = (
+        sessionId: string,
+    ): Array<() => Promise<void>> => {
+        const settlements: Array<() => Promise<void>> = [];
+        for (const [recordKey, record] of viewerLeasesById) {
+            if (
+                record.sessionId !== sessionId
+                || record.refreshDelivery !== 'scoped_listener'
+            ) {
+                continue;
+            }
+            forgetViewerLease(recordKey);
+            if (record.onSourceReplaced) {
+                settlements.push(record.onSourceReplaced);
+            }
+        }
+        return settlements;
+    };
+
     const handleRefreshResult = async (input: Readonly<{
         sessionId: string;
         state: SessionFollowState;
         result: ExternalSessionFollowRefreshResult | void;
         isCurrent: () => boolean;
+        statusPublicationMode: RefreshStatusPublicationMode;
     }>): Promise<void> => {
-        if (!input.result || !input.isCurrent()) return;
+        const refreshResult = input.result;
+        if (!refreshResult || !input.isCurrent()) return;
+        const applyStatusMutation = async (
+            operation: () => Promise<void>,
+        ): Promise<void> => input.statusPublicationMode === 'inline'
+            ? await operation()
+            : await runSessionExclusive(input.sessionId, operation);
         if (
-            input.result.outcome === 'source_replaced'
-            || input.result.outcome === 'source_unavailable'
-            || input.result.outcome === 'read_failed'
+            refreshResult.outcome === 'source_replaced'
+            || refreshResult.outcome === 'resync_required'
         ) {
-            const issueCode = `follow_refresh_${input.result.outcome}`;
-            input.state.refreshIssueCode = issueCode;
+            const issueCode = `follow_refresh_${refreshResult.outcome}`;
+            let sourceReplacementSettlements: Array<() => Promise<void>> = [];
+            await applyStatusMutation(async () => {
+                if (!input.isCurrent()) return;
+                const resource =
+                    input.state.actual?.resource
+                    ?? input.state.source?.resource
+                    ?? null;
+                input.state.authorityEpoch += 1;
+                input.state.refreshIssueCode = issueCode;
+                input.state.refreshPending = false;
+                clearRefreshRetry(input.state);
+                input.state.reacquisitionCursor = null;
+                input.state.source?.removeRetirementListener?.();
+                input.state.source = null;
+                for (const record of viewerLeasesById.values()) {
+                    if (record.sessionId === input.sessionId) {
+                        record.acceptedTailCursor = null;
+                    }
+                }
+                await releaseActual(
+                    input.sessionId,
+                    input.state,
+                    {
+                        status: 'paused',
+                        reason: issueCode,
+                    },
+                    { kind: 'manager_terminal' },
+                );
+                const observedAtMs = now();
+                await publishFollowStatus(
+                    input.sessionId,
+                    resource,
+                    'error',
+                    issueCode,
+                    {
+                        v: 1,
+                        code: issueCode,
+                        retryable: true,
+                        observedAtMs,
+                    },
+                    observedAtMs,
+                );
+                if (refreshResult.outcome === 'source_replaced') {
+                    sourceReplacementSettlements = settleScopedSourceReplacement(
+                        input.sessionId,
+                    );
+                }
+            });
+            await Promise.allSettled(sourceReplacementSettlements.map(async (settle) =>
+                await settle()));
+            return;
+        }
+        if (
+            refreshResult.outcome === 'source_unavailable'
+            || refreshResult.outcome === 'read_failed'
+        ) {
+            const issueCode = `follow_refresh_${refreshResult.outcome}`;
+            let retryableFailure = false;
+            await applyStatusMutation(async () => {
+                if (!input.isCurrent()) return;
+                input.state.refreshIssueCode = issueCode;
+                const observedAtMs = now();
+                await publishFollowStatus(
+                    input.sessionId,
+                    input.state.actual?.resource ?? input.state.source?.resource ?? null,
+                    'error',
+                    issueCode,
+                    {
+                        v: 1,
+                        code: issueCode,
+                        retryable: true,
+                        observedAtMs,
+                    },
+                    observedAtMs,
+                );
+                retryableFailure = true;
+            });
+            if (retryableFailure) {
+                scheduleRefreshRetry(input);
+            }
+            return;
+        }
+        if (refreshResult.outcome === 'gap_or_cursor_expired') {
+            const issueCode = 'follow_refresh_gap_or_cursor_expired';
+            let recoveryAdmitted = false;
+            await applyStatusMutation(async () => {
+                if (!input.isCurrent()) return;
+                recoveryAdmitted = true;
+                input.state.refreshIssueCode = issueCode;
+                const observedAtMs = now();
+                await publishFollowStatus(
+                    input.sessionId,
+                    input.state.actual?.resource ?? input.state.source?.resource ?? null,
+                    'reacquiring',
+                    issueCode,
+                    {
+                        v: 1,
+                        code: issueCode,
+                        retryable: true,
+                        observedAtMs,
+                    },
+                    observedAtMs,
+                );
+            });
+            if (!recoveryAdmitted) return;
+            const recovery = await refreshResult.recover();
+            if (recovery?.outcome === 'resync_required') {
+                // The one bounded read could not account for the whole gapped interval.
+                // Do NOT publish 'resynced' over a cursor that skipped history: route the
+                // EXISTING resync_required state (same branch as a replaced source), which
+                // retires this authority and forces a fresh acquisition.
+                await handleRefreshResult({ ...input, result: recovery });
+                return;
+            }
+            await applyStatusMutation(async () => {
+                if (!input.isCurrent()) return;
+                input.state.refreshIssueCode = null;
+                const recoveredAtMs = now();
+                await publishFollowStatus(
+                    input.sessionId,
+                    input.state.actual?.resource ?? input.state.source?.resource ?? null,
+                    'active',
+                    'follow_refresh_resynced',
+                    {
+                        v: 1,
+                        code: issueCode,
+                        retryable: false,
+                        observedAtMs: recoveredAtMs,
+                    },
+                    recoveredAtMs,
+                );
+            });
+            return;
+        }
+        if (
+            refreshResult.outcome === 'already_current'
+            || refreshResult.outcome === 'advanced'
+        ) {
+            clearRefreshRetry(input.state);
+        }
+        if (input.state.refreshIssueCode === 'follow_refresh_resync_required') {
+            return;
+        }
+        if (input.state.refreshIssueCode) {
+            await applyStatusMutation(async () => {
+                if (!input.isCurrent() || !input.state.refreshIssueCode) return;
+                const recoveredIssueCode = input.state.refreshIssueCode;
+                input.state.refreshIssueCode = null;
+                const recoveredAtMs = now();
+                await publishFollowStatus(
+                    input.sessionId,
+                    input.state.actual?.resource ?? input.state.source?.resource ?? null,
+                    'active',
+                    'follow_refresh_recovered',
+                    {
+                        v: 1,
+                        code: recoveredIssueCode,
+                        retryable: false,
+                        observedAtMs: recoveredAtMs,
+                    },
+                    recoveredAtMs,
+                );
+            });
+        }
+    };
+
+    const publishRefreshFailure = async (
+        sessionId: string,
+        state: SessionFollowState,
+        isCurrent: () => boolean,
+        statusPublicationMode: RefreshStatusPublicationMode,
+    ): Promise<void> => {
+        let retryableFailure = false;
+        const operation = async (): Promise<void> => {
+            if (!isCurrent()) return;
+            const issueCode = state.refreshIssueCode
+                === 'follow_refresh_gap_or_cursor_expired'
+                ? 'follow_refresh_resync_failed'
+                : 'follow_refresh_failed';
+            state.refreshIssueCode = issueCode;
             const observedAtMs = now();
             await publishFollowStatus(
-                input.sessionId,
+                sessionId,
+                state.actual?.resource ?? state.source?.resource ?? null,
                 'error',
                 issueCode,
                 {
@@ -433,88 +920,22 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 },
                 observedAtMs,
             );
-            return;
+            retryableFailure = true;
+        };
+        if (statusPublicationMode === 'inline') {
+            await operation();
+        } else {
+            await runSessionExclusive(sessionId, operation);
         }
-        if (input.result.outcome === 'gap_or_cursor_expired') {
-            const issueCode = 'follow_refresh_gap_or_cursor_expired';
-            input.state.refreshIssueCode = issueCode;
-            const observedAtMs = now();
-            await publishFollowStatus(
-                input.sessionId,
-                'reacquiring',
-                issueCode,
-                {
-                    v: 1,
-                    code: issueCode,
-                    retryable: true,
-                    observedAtMs,
-                },
-                observedAtMs,
-            );
-            await input.result.recover();
-            if (!input.isCurrent()) return;
-            input.state.refreshIssueCode = null;
-            const recoveredAtMs = now();
-            await publishFollowStatus(
-                input.sessionId,
-                'active',
-                'follow_refresh_resynced',
-                {
-                    v: 1,
-                    code: issueCode,
-                    retryable: false,
-                    observedAtMs: recoveredAtMs,
-                },
-                recoveredAtMs,
-            );
-            return;
+        if (retryableFailure) {
+            scheduleRefreshRetry({ sessionId, state, isCurrent });
         }
-        if (input.state.refreshIssueCode) {
-            const recoveredIssueCode = input.state.refreshIssueCode;
-            input.state.refreshIssueCode = null;
-            const recoveredAtMs = now();
-            await publishFollowStatus(
-                input.sessionId,
-                'active',
-                'follow_refresh_recovered',
-                {
-                    v: 1,
-                    code: recoveredIssueCode,
-                    retryable: false,
-                    observedAtMs: recoveredAtMs,
-                },
-                recoveredAtMs,
-            );
-        }
-    };
-
-    const publishRefreshFailure = async (
-        sessionId: string,
-        state: SessionFollowState,
-    ): Promise<void> => {
-        const issueCode = state.refreshIssueCode
-            === 'follow_refresh_gap_or_cursor_expired'
-            ? 'follow_refresh_resync_failed'
-            : 'follow_refresh_failed';
-        state.refreshIssueCode = issueCode;
-        const observedAtMs = now();
-        await publishFollowStatus(
-            sessionId,
-            'error',
-            issueCode,
-            {
-                v: 1,
-                code: issueCode,
-                retryable: true,
-                observedAtMs,
-            },
-            observedAtMs,
-        );
     };
 
     const startTranscriptRefresh = (
         sessionId: string,
         state: SessionFollowState,
+        statusPublicationMode: RefreshStatusPublicationMode,
     ): Promise<void> => {
         let pump: Promise<void>;
         let refreshSource: DesiredFollowSource | null = null;
@@ -598,10 +1019,16 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                                 state,
                                 result,
                                 isCurrent,
+                                statusPublicationMode,
                             });
                         } catch {
                             if (isCurrent()) {
-                                await publishRefreshFailure(sessionId, state);
+                                await publishRefreshFailure(
+                                    sessionId,
+                                    state,
+                                    isCurrent,
+                                    statusPublicationMode,
+                                );
                             }
                         }
                     }));
@@ -625,16 +1052,20 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                                 state.actual === actual
                                 && !actual.released
                                 && state.source === refreshSource,
+                            statusPublicationMode,
                         });
                     } catch {
-                        if (
-                            state.actual !== actual
-                            || actual.released
-                            || state.source !== refreshSource
-                        ) {
-                            continue;
-                        }
-                        await publishRefreshFailure(sessionId, state);
+                        const isCurrent = () =>
+                            state.actual === actual
+                            && !actual.released
+                            && state.source === refreshSource;
+                        if (!isCurrent()) continue;
+                        await publishRefreshFailure(
+                            sessionId,
+                            state,
+                            isCurrent,
+                            statusPublicationMode,
+                        );
                     }
                 }
             } while (
@@ -665,33 +1096,32 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 state.refreshPending = false;
                 return;
             }
-            return startTranscriptRefresh(sessionId, state);
+            return startTranscriptRefresh(
+                sessionId,
+                state,
+                statusPublicationMode,
+            );
         });
         state.refreshInFlight = pump;
         return pump;
     };
 
-    const scheduleExpiry = (
-        leaseId: string,
-        sessionId: string,
-        expiresAtMs: number,
-    ): void => {
+    const scheduleExpiry = (leaseId: string, sessionId: string): void => {
         const recordKey = viewerLeaseKey(sessionId, leaseId);
         const record = viewerLeasesById.get(recordKey);
         if (!record || record.sessionId !== sessionId) return;
         clearViewerTimer(record);
         record.expiryTimer = setTimer(() => {
-            void runExclusive(async () => {
+            void runSessionExclusive(sessionId, async () => {
                 const current = viewerLeasesById.get(recordKey);
                 if (current !== record) return;
-                viewerLeaseRegistry.detach({ sessionId, leaseId });
-                viewerLeasesById.delete(recordKey);
+                forgetViewerLease(recordKey);
                 await reconcile(sessionId, {
                     activeReason: 'background_follow',
                     propagateAcquisitionError: false,
                 });
             });
-        }, Math.max(0, expiresAtMs - now()));
+        }, Math.max(0, record.expiresAtMs - now()));
     };
 
     const releaseSessionNow = async (
@@ -707,17 +1137,11 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         const hadBackgroundPolicy =
             backgroundFollowEnabledBySessionId.get(sessionId) === true;
         for (const recordKey of attachedLeaseKeys) {
-            const lease = viewerLeasesById.get(recordKey);
-            if (!lease) continue;
-            viewerLeaseRegistry.detach({
-                sessionId,
-                leaseId: lease.leaseId,
-            });
-            clearViewerTimer(lease);
-            viewerLeasesById.delete(recordKey);
+            forgetViewerLease(recordKey);
         }
         backgroundFollowEnabledBySessionId.delete(sessionId);
         const state = statesBySessionId.get(sessionId);
+        if (state) clearRefreshRetry(state);
         const releaseResult = state
             ? await releaseActual(sessionId, state, {
                 status: 'paused',
@@ -726,6 +1150,9 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 kind: 'manager_terminal',
             })
             : 'none';
+        if (state) {
+            await retryPendingFollowStatus(sessionId, state);
+        }
         state?.source?.removeRetirementListener?.();
         statesBySessionId.delete(sessionId);
         return {
@@ -747,9 +1174,14 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             acquireFollowLease?: FollowLeaseAcquirer;
             requestTranscriptRefresh?: CursorRefreshRequester;
         }>) {
-            return await runExclusive(async () => {
-                if (disposed) throw new Error('External Session follow lease manager is disposed');
-                const attached = viewerLeaseRegistry.attach({
+            return await runSessionExclusive(input.sessionId, async () => {
+                if (disposed) {
+                    throw new ExternalSessionFollowFailureError(
+                        'daemon_unavailable',
+                        'External Session follow lease manager is disposed',
+                    );
+                }
+                const attached = admitViewerLease({
                     sessionId: input.sessionId,
                     leaseId: input.leaseId,
                     ttlMs: input.ttlMs,
@@ -766,6 +1198,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 viewerLeasesById.set(recordKey, {
                     sessionId: input.sessionId,
                     leaseId: attached.leaseId,
+                    expiresAtMs: attached.expiresAtMs,
                     acceptedTailCursor: input.requestTranscriptRefresh
                         && input.resource?.retirementSignal?.aborted !== true
                         && typeof input.acceptedTailCursor === 'string'
@@ -773,6 +1206,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                         ? input.acceptedTailCursor.trim()
                         : null,
                     requestTranscriptRefresh: input.requestTranscriptRefresh ?? null,
+                    onSourceReplaced: null,
                     refreshDelivery: 'session_invalidation',
                     expiryTimer: null,
                 });
@@ -782,18 +1216,10 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                         propagateAcquisitionError: true,
                     });
                 } catch (error) {
-                    viewerLeaseRegistry.detach({
-                        sessionId: input.sessionId,
-                        leaseId: attached.leaseId,
-                    });
-                    viewerLeasesById.delete(recordKey);
+                    forgetViewerLease(recordKey);
                     throw error;
                 }
-                scheduleExpiry(
-                    attached.leaseId,
-                    input.sessionId,
-                    attached.expiresAtMs,
-                );
+                scheduleExpiry(attached.leaseId, input.sessionId);
                 const acceptedTailCursor =
                     viewerLeasesById.get(recordKey)?.acceptedTailCursor ?? null;
                 return {
@@ -809,12 +1235,16 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             resource: ExternalSessionFollowResource;
             acquireFollowLease: FollowLeaseAcquirer;
             requestTranscriptRefresh: CursorRefreshRequester;
+            onSourceReplaced?: () => Promise<void>;
         }>) {
-            const attached = await runExclusive(async () => {
+            const attached = await runSessionExclusive(input.sessionId, async () => {
                 if (disposed) {
-                    throw new Error('External Session follow lease manager is disposed');
+                    throw new ExternalSessionFollowFailureError(
+                        'daemon_unavailable',
+                        'External Session follow lease manager is disposed',
+                    );
                 }
-                const viewer = viewerLeaseRegistry.attach({
+                const viewer = admitViewerLease({
                     sessionId: input.sessionId,
                     ttlMs: Number.MAX_SAFE_INTEGER - now(),
                 });
@@ -828,8 +1258,10 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 viewerLeasesById.set(recordKey, {
                     sessionId: input.sessionId,
                     leaseId: viewer.leaseId,
+                    expiresAtMs: viewer.expiresAtMs,
                     acceptedTailCursor: input.acceptedTailCursor,
                     requestTranscriptRefresh: input.requestTranscriptRefresh,
+                    onSourceReplaced: input.onSourceReplaced ?? null,
                     refreshDelivery: 'scoped_listener',
                     expiryTimer: null,
                 });
@@ -839,11 +1271,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                         propagateAcquisitionError: true,
                     });
                 } catch (error) {
-                    viewerLeaseRegistry.detach({
-                        sessionId: input.sessionId,
-                        leaseId: viewer.leaseId,
-                    });
-                    viewerLeasesById.delete(recordKey);
+                    forgetViewerLease(recordKey);
                     throw error;
                 }
                 return viewer;
@@ -854,12 +1282,8 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 release: async () => {
                     if (released) return;
                     released = true;
-                    await runExclusive(async () => {
-                        viewerLeaseRegistry.detach({
-                            sessionId: input.sessionId,
-                            leaseId: attached.leaseId,
-                        });
-                        viewerLeasesById.delete(
+                    await runSessionExclusive(input.sessionId, async () => {
+                        forgetViewerLease(
                             viewerLeaseKey(input.sessionId, attached.leaseId),
                         );
                         await reconcile(input.sessionId, {
@@ -872,13 +1296,9 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         },
 
         async detach(input: Readonly<{ sessionId: string; leaseId: string }>) {
-            return await runExclusive(async () => {
-                const detached = viewerLeaseRegistry.detach(input);
+            return await runSessionExclusive(input.sessionId, async () => {
+                const detached = detachViewerLease(input);
                 if (!detached.detached) return detached;
-                const recordKey = viewerLeaseKey(input.sessionId, input.leaseId);
-                const record = viewerLeasesById.get(recordKey);
-                clearViewerTimer(record);
-                viewerLeasesById.delete(recordKey);
                 await reconcile(input.sessionId, {
                     activeReason: 'background_follow',
                     propagateAcquisitionError: false,
@@ -893,8 +1313,13 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             resource?: ExternalSessionFollowResource;
             acquireFollowLease?: FollowLeaseAcquirer;
         }>) {
-            return await runExclusive(async () => {
-                if (disposed) throw new Error('External Session follow lease manager is disposed');
+            return await runSessionExclusive(input.sessionId, async () => {
+                if (disposed) {
+                    throw new ExternalSessionFollowFailureError(
+                        'daemon_unavailable',
+                        'External Session follow lease manager is disposed',
+                    );
+                }
                 backgroundFollowEnabledBySessionId.set(input.sessionId, input.enabled);
                 updateSource(
                     input.sessionId,
@@ -903,7 +1328,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     input.resource,
                 );
                 const result = await reconcile(input.sessionId, {
-                    activeReason: viewerLeaseRegistry.countActiveLeases(input.sessionId) > 0
+                    activeReason: countActiveViewerLeases(input.sessionId) > 0
                         ? 'viewer_attached'
                         : 'background_follow',
                     propagateAcquisitionError: input.enabled,
@@ -922,9 +1347,12 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             sessionId: string;
             preserveBackgroundFollow?: boolean;
         }>) {
-            return await runExclusive(async () => {
+            return await runSessionExclusive(input.sessionId, async () => {
                 if (disposed) {
-                    throw new Error('External Session follow lease manager is disposed');
+                    throw new ExternalSessionFollowFailureError(
+                        'daemon_unavailable',
+                        'External Session follow lease manager is disposed',
+                    );
                 }
                 if (input.preserveBackgroundFollow === true) {
                     backgroundFollowEnabledBySessionId.set(
@@ -936,14 +1364,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     .filter(([, record]) => record.sessionId === input.sessionId)
                     .map(([key]) => key);
                 for (const recordKey of attachedLeaseKeys) {
-                    const record = viewerLeasesById.get(recordKey);
-                    if (!record) continue;
-                    viewerLeaseRegistry.detach({
-                        sessionId: input.sessionId,
-                        leaseId: record.leaseId,
-                    });
-                    clearViewerTimer(record);
-                    viewerLeasesById.delete(recordKey);
+                    forgetViewerLease(recordKey);
                 }
 
                 const backgroundFollowEnabled =
@@ -963,6 +1384,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                         : null;
                 state.authorityEpoch += 1;
                 state.suspensionReasons.add('session_archived');
+                clearRefreshRetry(state);
                 const releaseResult = await releaseActual(
                     input.sessionId,
                     state,
@@ -978,6 +1400,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 if (releaseResult === 'none' && backgroundFollowEnabled) {
                     await publishFollowStatus(
                         input.sessionId,
+                        state.source?.resource ?? null,
                         'paused',
                         'session_archived',
                     );
@@ -993,7 +1416,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             sessionId: string;
             reason: string;
         }>) {
-            return await runExclusive(async () => {
+            return await runSessionExclusive(input.sessionId, async () => {
                 const state = stateFor(input.sessionId);
                 const hasViewerCatchUp = [...viewerLeasesById.values()].some((record) =>
                     record.sessionId === input.sessionId
@@ -1013,6 +1436,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     );
                 state.authorityEpoch += 1;
                 state.suspensionReasons.add(input.reason);
+                clearRefreshRetry(state);
                 const releaseResult = await releaseActual(input.sessionId, state, {
                     status: 'paused',
                     reason: input.reason,
@@ -1040,9 +1464,12 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             sessionId: string;
             reason: string;
         }>) {
-            return await runExclusive(async () => {
+            return await runSessionExclusive(input.sessionId, async () => {
                 if (disposed) {
-                    throw new Error('External Session follow lease manager is disposed');
+                    throw new ExternalSessionFollowFailureError(
+                        'daemon_unavailable',
+                        'External Session follow lease manager is disposed',
+                    );
                 }
                 const state = statesBySessionId.get(input.sessionId);
                 if (!state || !state.suspensionReasons.delete(input.reason)) {
@@ -1054,12 +1481,13 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 if (hasDemand(input.sessionId)) {
                     await publishFollowStatus(
                         input.sessionId,
+                        state.source?.resource ?? null,
                         'reacquiring',
                         'follow_suspension_released',
                     );
                 }
                 const result = await reconcile(input.sessionId, {
-                    activeReason: viewerLeaseRegistry.countActiveLeases(input.sessionId) > 0
+                    activeReason: countActiveViewerLeases(input.sessionId) > 0
                         ? 'viewer_attached'
                         : 'background_follow',
                     propagateAcquisitionError: false,
@@ -1072,12 +1500,12 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         },
 
         async releaseSession(input: Readonly<{ sessionId: string }>) {
-            return await runExclusive(async () =>
+            return await runSessionExclusive(input.sessionId, async () =>
                 await releaseSessionNow(input.sessionId, 'archived'));
         },
 
         async releaseSessionsForCredentialInvalidation() {
-            return await runExclusive(async () => {
+            return await runBarrierExclusive(async () => {
                 const sessionIds = new Set([
                     ...statesBySessionId.keys(),
                     ...backgroundFollowEnabledBySessionId.keys(),
@@ -1094,7 +1522,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         },
 
         async dispose() {
-            return await runExclusive(async () => {
+            return await runBarrierExclusive(async () => {
                 if (disposed) return;
                 disposed = true;
                 for (const record of viewerLeasesById.values()) clearViewerTimer(record);
@@ -1102,19 +1530,21 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 backgroundFollowEnabledBySessionId.clear();
                 for (const [sessionId, state] of statesBySessionId) {
                     state.source?.removeRetirementListener?.();
+                    clearRefreshRetry(state);
                     await releaseActual(sessionId, state, {
                         status: 'paused',
                         reason: 'daemon_disconnected',
                     }, {
                         kind: 'manager_terminal',
                     });
+                    await retryPendingFollowStatus(sessionId, state);
                 }
                 statesBySessionId.clear();
             });
         },
 
         countActiveLeases(sessionId: string): number {
-            return viewerLeaseRegistry.countActiveLeases(sessionId);
+            return countActiveViewerLeases(sessionId);
         },
 
         isBackgroundFollowEnabled(sessionId: string): boolean {
@@ -1177,11 +1607,19 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 state.refreshPending = true;
                 return { requested: true, coalesced: true } as const;
             }
+            if (state.refreshRetryTimer !== null) {
+                return { requested: true, coalesced: true } as const;
+            }
             if (state.refreshInFlight) {
                 state.refreshPending = true;
                 return { requested: true, coalesced: true } as const;
             }
-            await startTranscriptRefresh(input.sessionId, state);
+            clearRefreshRetry(state);
+            await startTranscriptRefresh(
+                input.sessionId,
+                state,
+                'session_exclusive',
+            );
             return { requested: true, coalesced: false } as const;
         },
     };

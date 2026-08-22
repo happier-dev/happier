@@ -3,7 +3,9 @@
  */
 
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type {
+    SocketRpcRequestPayload,
     SocketRpcTransportAcknowledgementV1,
 } from '@happier-dev/protocol/socketRpc';
 
@@ -12,7 +14,25 @@ import type {
  * @template TRequest - The request data type
  * @template TResponse - The response data type
  */
-export type RpcHandlerContext = Readonly<{ signal: AbortSignal }>;
+/**
+ * Host-private Action context for an in-process invocation. It never exists
+ * on a transported RPC request, so callers cannot supply causal authority in
+ * the public request payload.
+ */
+export type RpcLocalActionContext = Readonly<Pick<
+    ActionExecutorContext,
+    'surface' | 'callerPermissionMode' | 'causalPermissionAuthority'
+>>;
+
+export type RpcHandlerContext = Readonly<{
+    signal: AbortSignal;
+    /**
+     * Server-derived transport context. It is absent for local invocation so
+     * an in-process caller cannot synthesize authenticated account authority.
+     */
+    authorization?: SocketRpcAuthorizationContext;
+    localActionContext?: RpcLocalActionContext;
+}>;
 
 export type RpcHandler<TRequest = any, TResponse = any> = (
     data: TRequest,
@@ -27,7 +47,10 @@ export type RpcHandlerRegistrar = Readonly<{
 }>;
 
 export type RpcHandlerInvoker = Readonly<{
-    invokeLocal: (method: string, params: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
+    invokeLocal: (method: string, params: unknown, options?: Readonly<{
+        signal?: AbortSignal;
+        localActionContext?: RpcLocalActionContext;
+    }>) => Promise<unknown>;
 }>;
 
 export type RpcHandlerManagerLike = RpcHandlerRegistrar & RpcHandlerInvoker;
@@ -37,20 +60,16 @@ export type RpcHandlerManagerLike = RpcHandlerRegistrar & RpcHandlerInvoker;
  */
 export type RpcHandlerMap = Map<string, RpcHandler>;
 
-/**
- * RPC request data from server
- */
-export interface RpcRequest {
-    method: string;
-    params: unknown;
-    authorization?: SocketRpcAuthorizationContext;
-    timeoutMs?: number;
-    transportResponseEnvelopeVersion?: 1;
-}
+export type RpcRequest = SocketRpcRequestPayload;
 
 export type RpcAuthorizationResult =
     | Readonly<{ ok: true }>
     | Readonly<{ ok: false; error: string; errorCode?: string }>;
+
+export type RpcHandlerActiveExecution = Readonly<{
+    method: string;
+    activeForMs: number;
+}>;
 
 /**
  * RPC response callback
@@ -60,11 +79,8 @@ export type RpcResponseCallback = (response: unknown) => void;
 /**
  * Configuration for RPC handler manager
  */
-export interface RpcHandlerConfig {
+type RpcHandlerCommonConfig = {
     scopePrefix: string;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
-    encryptionMode?: 'e2ee' | 'plain';
     authorizeRequest?: (request: Readonly<{
         method: string;
         params: unknown;
@@ -79,7 +95,26 @@ export interface RpcHandlerConfig {
     }>) => SocketRpcTransportAcknowledgementV1 | null;
     logger?: (message: string, data?: any) => void;
     onRegistrationError?: (error: unknown) => void;
-}
+    onRegistrationAcknowledged?: (method: string) => void;
+    nowMs?: () => number;
+};
+
+export type RpcHandlerConfig = RpcHandlerCommonConfig & (
+    | Readonly<{
+        encryptionMode: 'plain';
+        /**
+         * Retained only so older internal callers can migrate without a flag-day.
+         * Plain transport never reads either value and keyless callers omit them.
+         */
+        encryptionKey?: Uint8Array;
+        encryptionVariant?: 'legacy' | 'dataKey';
+    }>
+    | Readonly<{
+        encryptionMode?: 'e2ee';
+        encryptionKey: Uint8Array;
+        encryptionVariant: 'legacy' | 'dataKey';
+    }>
+);
 
 /**
  * Result of RPC handler execution

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,6 +10,7 @@ import { TRANSFER_CHUNK_HARD_MAX_BYTES } from './transferChunkSizeLimit';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 
 let failNextUploadPromotionWithExdev = false;
 let failNextUploadSourceCleanup = false;
@@ -463,6 +465,124 @@ describe('direct transfer import session manager', () => {
     }
   });
 
+  it('stages Composer media via direct import only for its authorized target and owner', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-composer-media-'));
+    const executionTarget = { serverId: 'server-current', machineId: 'machine-current' };
+    const owner = { pluginId: 'com.example.media', localId: 'composer' };
+    const stageStore = createComposerMediaStageStore({
+      rootDirectory: join(workingDirectory, 'composer-media-stages'),
+      executionTarget,
+    });
+    const manager = createDirectTransferImportSessionManager({
+      ttlMs: 10_000,
+      composerMediaStage: {
+        executionTarget,
+        store: stageStore,
+      },
+    } as Parameters<typeof createDirectTransferImportSessionManager>[0]);
+    const content = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00]);
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    const request = {
+      workingDirectory,
+      t: 'composer_media_stage_upload_v1',
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'camera.png',
+      sizeBytes: content.byteLength,
+      sha256,
+    } as const;
+
+    try {
+      const hijackAuthorization = manager.issueImportOpenAuthorizationToken(
+        request as unknown as Parameters<typeof manager.issueImportOpenAuthorizationToken>[0],
+      );
+      await expect(manager.openImportSession({
+        ...request,
+        owner: { pluginId: 'com.example.media', localId: 'other-composer' },
+        authorizationToken: hijackAuthorization.authorizationToken,
+      } as unknown as Parameters<typeof manager.openImportSession>[0])).resolves.toEqual({
+        success: false,
+        error: 'Import session open authorization required',
+      });
+
+      const authorization = manager.issueImportOpenAuthorizationToken(
+        request as unknown as Parameters<typeof manager.issueImportOpenAuthorizationToken>[0],
+      );
+      const opened = await manager.openImportSession({
+        ...request,
+        authorizationToken: authorization.authorizationToken,
+      } as unknown as Parameters<typeof manager.openImportSession>[0]);
+      if (!opened.success) throw new Error(opened.error);
+      expect(opened).toMatchObject({
+        success: true,
+        response: {
+          destDisplayPath: 'Composer media stage',
+          recipientPublicKeyBase64: expect.any(String),
+        },
+      });
+      const outOfOrderChunk = createEncryptedTransferChunkEnvelope({
+        transferId: opened.response.uploadId,
+        sequence: 1,
+        payload: content.subarray(8),
+        recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
+      });
+      await expect(manager.writeImportTransferChunk({
+        uploadId: opened.response.uploadId,
+        index: 1,
+        payloadBase64: outOfOrderChunk.payloadBase64,
+        encryptedDataKeyEnvelopeBase64: outOfOrderChunk.encryptedDataKeyEnvelopeBase64,
+      })).resolves.toEqual({ success: false, error: 'Unexpected chunk index' });
+
+      const firstChunk = createEncryptedTransferChunkEnvelope({
+        transferId: opened.response.uploadId,
+        sequence: 0,
+        payload: content.subarray(0, 8),
+        recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
+      });
+      const secondChunk = createEncryptedTransferChunkEnvelope({
+        transferId: opened.response.uploadId,
+        sequence: 1,
+        payload: content.subarray(8),
+        recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
+      });
+      await expect(manager.writeImportTransferChunk({
+        uploadId: opened.response.uploadId,
+        index: 0,
+        payloadBase64: firstChunk.payloadBase64,
+        encryptedDataKeyEnvelopeBase64: firstChunk.encryptedDataKeyEnvelopeBase64,
+      })).resolves.toEqual({ success: true });
+      await expect(manager.writeImportTransferChunk({
+        uploadId: opened.response.uploadId,
+        index: 1,
+        payloadBase64: secondChunk.payloadBase64,
+        encryptedDataKeyEnvelopeBase64: secondChunk.encryptedDataKeyEnvelopeBase64,
+      })).resolves.toEqual({ success: true });
+
+      const finalized = await manager.finalizeImportTransferSession({ uploadId: opened.response.uploadId });
+      expect(finalized).toMatchObject({
+        success: true,
+        sha256,
+        finalized: {
+          success: true,
+          path: 'Composer media stage',
+          result: {
+            v: 1,
+            executionTarget,
+            owner,
+            name: 'camera.png',
+            sha256,
+          },
+        },
+      });
+      expect(JSON.stringify(finalized)).not.toContain(workingDirectory);
+    } finally {
+      await manager.close();
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('supports prompt asset uploads through the direct import session manager', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-prompt-assets-'));
 
@@ -613,10 +733,14 @@ describe('direct transfer import session manager', () => {
 
   it('cleans up active import sessions and invalidates their upload ids when the manager closes', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-close-'));
-    const previousTmpdir = process.env.TMPDIR;
+    const tempEnv = createEnvKeyScope(['TEMP', 'TMP', 'TMPDIR']);
 
     try {
-      process.env.TMPDIR = workingDirectory;
+      tempEnv.patch({
+        TEMP: workingDirectory,
+        TMP: workingDirectory,
+        TMPDIR: workingDirectory,
+      });
       const manager = createDirectTransferImportSessionManager({
         ttlMs: 10_000,
       });
@@ -669,11 +793,7 @@ describe('direct transfer import session manager', () => {
         overwrite: true,
       })).rejects.toThrow('Transfer session store is disposed');
     } finally {
-      if (previousTmpdir == null) {
-        delete process.env.TMPDIR;
-      } else {
-        process.env.TMPDIR = previousTmpdir;
-      }
+      tempEnv.restore();
       await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
     }
   });

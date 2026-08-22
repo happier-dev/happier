@@ -3,13 +3,11 @@ import type { AgentState, Metadata, Update } from '../types';
 import { tryParseJsonObject } from '@/utils/tryParseJsonRecord';
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
 import type { PendingQueueRuntimeActivityProjection } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 function tryDecodeSessionStateValue<T>(params: {
     rawValue: unknown;
-    sessionEncryptionMode: 'e2ee' | 'plain';
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
-}): { ok: true; value: T | null } | { ok: false } {
+} & SessionStoredContentCryptoContext): { ok: true; value: T | null } | { ok: false } {
     if (params.rawValue === null) {
         return { ok: true, value: null };
     }
@@ -18,13 +16,17 @@ function tryDecodeSessionStateValue<T>(params: {
         return { ok: false };
     }
 
-    if (params.sessionEncryptionMode === 'plain') {
+    if (params.mode === 'plain') {
         const parsed = tryParseJsonObject(params.rawValue);
         return parsed ? { ok: true, value: parsed as T } : { ok: false };
     }
 
     try {
-        const decrypted = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(params.rawValue));
+        const decrypted = decrypt(
+            params.ctx.encryptionKey,
+            params.ctx.encryptionVariant,
+            decodeBase64(params.rawValue),
+        );
         return decrypted !== null ? { ok: true, value: decrypted as T } : { ok: false };
     } catch {
         return { ok: false };
@@ -43,19 +45,16 @@ export function handleSessionStateUpdate(params: {
     updateSource: 'session-scoped' | 'user-scoped';
     sessionId: string;
     metadataLayoutVersion?: number;
-    sessionEncryptionMode: 'e2ee' | 'plain';
     metadata: Metadata | null;
     metadataVersion: number;
     agentState: AgentState | null;
     agentStateVersion: number;
     pendingWakeSeq: number;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
     onMetadataUpdated: () => void;
     onMetadataEnvelopeTupleInvalidated?: () => void;
     onPendingChangedDrainTrigger?: (state: KnownPendingQueueState) => void;
     onWarning: (message: string) => void;
-}): {
+} & SessionStoredContentCryptoContext): {
     handled: boolean;
     metadata: Metadata | null;
     metadataVersion: number;
@@ -148,9 +147,7 @@ export function handleSessionStateUpdate(params: {
         if (body.metadata && body.metadata.version > metadataVersion) {
             const decodedMetadata = tryDecodeSessionStateValue<Metadata>({
                 rawValue: body.metadata.value,
-                sessionEncryptionMode: params.sessionEncryptionMode,
-                encryptionKey: params.encryptionKey,
-                encryptionVariant: params.encryptionVariant,
+                ...params,
             });
             if (decodedMetadata.ok) {
                 metadata = decodedMetadata.value;
@@ -162,9 +159,7 @@ export function handleSessionStateUpdate(params: {
         if (body.agentState && body.agentState.version > agentStateVersion) {
             const decodedAgentState = tryDecodeSessionStateValue<AgentState>({
                 rawValue: body.agentState.value,
-                sessionEncryptionMode: params.sessionEncryptionMode,
-                encryptionKey: params.encryptionKey,
-                encryptionVariant: params.encryptionVariant,
+                ...params,
             });
             if (decodedAgentState.ok) {
                 agentState = decodedAgentState.value;

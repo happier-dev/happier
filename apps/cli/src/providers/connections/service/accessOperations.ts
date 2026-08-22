@@ -41,18 +41,18 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
       }) };
     }
     const snapshot = await deps.loadSnapshot();
-    const connection = readSettings(snapshot.accountSettings).connections.find((entry) => entry.id === input.connectionId);
+    const connection = readSettings(snapshot.rawAccountSettings).connections.find((entry) => entry.id === input.connectionId);
     if (!connection) return { status: 'error', error: createProviderErrorV1('provider_connection_not_found', { connectionId: input.connectionId, machineId: input.machineId }) };
     let scope = input.scope ?? null;
     let dnsEvidence: ProviderEndpointDnsEvidence = new Map();
     let previewResolution: Extract<ProviderConnectionResolution, { status: 'resolved' }> | null = null;
     if (input.enabled) {
       dnsEvidence = await deps.collectDnsEvidence({
-        accountSettings: snapshot.accountSettings, connectionId: input.connectionId,
+        accountSettings: snapshot.rawAccountSettings, connectionId: input.connectionId,
         machineId: input.machineId, registry: snapshot.registry,
       });
       const resolution = deps.resolveConnection({
-        accountSettings: snapshot.accountSettings, connectionId: input.connectionId,
+        accountSettings: snapshot.rawAccountSettings, connectionId: input.connectionId,
         machineId: input.machineId, registry: snapshot.registry, dnsEvidence,
       });
       if (resolution.status !== 'resolved') return { status: 'error', error: errorForProviderResolution(resolution, input.machineId) };

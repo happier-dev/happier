@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -67,13 +67,13 @@ type BaseStreamSession = {
   abortController: AbortController;
   expiryTimer: ReturnType<typeof setTimeout> | null;
   diagnostics: VoiceSpeechDiagnosticsCaptureContextV1 | null;
-  diagnosticPcmChunks: Buffer[] | null;
+  diagnosticWavFilePath: string | null;
+  diagnosticCapturePromise: Promise<void> | null;
   peerApplicationEncryption: PeerApplicationEncryptionSession | null;
 };
 
 type UploadBridgeStreamSession = BaseStreamSession & Readonly<{
   mode: 'upload_bridge';
-  rawFilePath: string;
   wavFilePath: string;
 }>;
 
@@ -150,7 +150,7 @@ export type VoiceInferenceSpeechStreamManager = Readonly<{
 
 export type CreateVoiceInferenceSpeechStreamManagerOptions = Readonly<{
   voiceInferenceWorker: VoiceInferenceSpeechStreamWorker;
-  voiceDiagnostics?: Pick<VoiceDiagnosticsController, 'capture'>;
+  voiceDiagnostics?: Pick<VoiceDiagnosticsController, 'captureFile'>;
   streamRoot?: string;
   sessionTtlMs?: number;
   resolveMaxUploadBytes?: () => number;
@@ -261,11 +261,27 @@ function parseEncryptedFinishRequest(bytes: Uint8Array): DaemonVoiceInferenceStt
   }
 }
 
-async function cleanupSessionFiles(session: UploadBridgeStreamSession): Promise<void> {
-  await Promise.all([
-    rm(session.rawFilePath, { force: true }).catch(() => undefined),
-    rm(session.wavFilePath, { force: true }).catch(() => undefined),
-  ]);
+async function finalizePcm16WavFile(filePath: string, dataBytes: number): Promise<void> {
+  const handle = await open(filePath, 'r+');
+  try {
+    const header = encodeWavHeader(dataBytes);
+    const { bytesWritten } = await handle.write(header, 0, header.byteLength, 0);
+    if (bytesWritten !== header.byteLength) {
+      throw new Error('voice_inference_stream_wav_header_write_incomplete');
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function cleanupSessionFiles(session: StreamSession): Promise<void> {
+  if (session.diagnosticCapturePromise) return;
+  const filePaths = session.mode === 'upload_bridge'
+    ? [session.wavFilePath]
+    : session.diagnosticWavFilePath ? [session.diagnosticWavFilePath] : [];
+  await Promise.all(filePaths.map(async (filePath) => {
+    await rm(filePath, { force: true }).catch(() => undefined);
+  }));
 }
 
 export function createVoiceInferenceSpeechStreamManager(
@@ -315,7 +331,6 @@ export function createVoiceInferenceSpeechStreamManager(
     sessions.delete(session.streamId);
     session.abortController.abort();
     await session.tail.catch(() => undefined);
-    session.diagnosticPcmChunks?.splice(0);
     session.peerApplicationEncryption?.recipientSecretKeySeed.fill(0);
     session.peerApplicationEncryption?.contentKey?.fill(0);
     if (session.peerApplicationEncryption) session.peerApplicationEncryption.contentKey = null;
@@ -328,25 +343,53 @@ export function createVoiceInferenceSpeechStreamManager(
     if (closeOptions?.cancelWorker === true) {
       await options.voiceInferenceWorker.cancelStt(session.requestId).catch(() => undefined);
     }
-    if (session.mode === 'upload_bridge') {
-      await cleanupSessionFiles(session);
-    }
+    await cleanupSessionFiles(session);
     activeApplicationAttemptIds.delete(session.requestId);
   }
 
-  function captureCompletedStream(session: StreamSession, raw: Buffer): void {
-    if (!session.diagnostics || session.diagnostics.captureAllowed !== true) return;
-    const wav = Buffer.concat([encodeWavHeader(raw.byteLength), raw]);
-    void options.voiceDiagnostics?.capture({
-      direction: 'stt_input',
-      format: 'wav',
-      bytes: wav,
-      durationMs: session.diagnostics.durationMs,
-      sessionId: session.diagnostics.sessionId,
-      authorizationId: session.diagnostics.authorizationId,
-      providerId: 'local_neural',
-      attemptId: session.requestId,
-    });
+  function captureCompletedStream(session: StreamSession, filePath: string): void {
+    if (!session.diagnostics || session.diagnostics.captureAllowed !== true || !options.voiceDiagnostics) return;
+    session.diagnosticCapturePromise = Promise.resolve()
+      .then(async () => await options.voiceDiagnostics!.captureFile({
+        direction: 'stt_input',
+        format: 'wav',
+        filePath,
+        durationMs: session.diagnostics!.durationMs,
+        sessionId: session.diagnostics!.sessionId,
+        authorizationId: session.diagnostics!.authorizationId,
+        providerId: 'local_neural',
+        attemptId: session.requestId,
+      }))
+      .then(() => undefined, () => undefined)
+      .finally(async () => {
+        await rm(filePath, { force: true }).catch(() => undefined);
+      });
+  }
+
+  async function appendRuntimeDiagnosticPcm(session: RuntimeStreamSession, pcm: Buffer): Promise<void> {
+    const filePath = session.diagnosticWavFilePath;
+    if (!filePath) return;
+    try {
+      await appendFile(filePath, pcm);
+    } catch {
+      // Diagnostics must never make otherwise healthy STT delivery fail. Stop retaining this
+      // capture and remove the incomplete daemon-owned staging file.
+      session.diagnosticWavFilePath = null;
+      await rm(filePath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  async function finalizeRuntimeDiagnosticCapture(session: RuntimeStreamSession): Promise<void> {
+    const filePath = session.diagnosticWavFilePath;
+    if (!filePath) return;
+    try {
+      await finalizePcm16WavFile(filePath, session.totalBytes);
+      captureCompletedStream(session, filePath);
+    } catch {
+      // Keep the transcription result independent from best-effort diagnostic persistence.
+      session.diagnosticWavFilePath = null;
+      await rm(filePath, { force: true }).catch(() => undefined);
+    }
   }
 
   function scheduleExpiry(session: StreamSession): void {
@@ -361,6 +404,7 @@ export function createVoiceInferenceSpeechStreamManager(
       let startAbortController: AbortController | null = null;
       let reservedApplicationAttempt = false;
       let publishedSession = false;
+      let session: StreamSession | null = null;
       try {
         if (disposed) {
           throw Object.assign(new Error('voice_inference_stream_manager_disposed'), { code: 'cancelled' });
@@ -392,7 +436,6 @@ export function createVoiceInferenceSpeechStreamManager(
         }
         activeApplicationAttemptIds.add(input.requestId);
         reservedApplicationAttempt = true;
-        let session: StreamSession;
         const diagnostics = input.diagnostics?.captureAllowed === true ? input.diagnostics : null;
         const abortController = new AbortController();
         const peerApplicationEncryption: PeerApplicationEncryptionSession | null = input.peerApplicationEncryption
@@ -416,6 +459,9 @@ export function createVoiceInferenceSpeechStreamManager(
             format: input.format,
             signal: abortController.signal,
           });
+          const diagnosticWavFilePath = diagnostics && options.voiceDiagnostics
+            ? join(streamRoot, `${streamId}.diagnostic.wav`)
+            : null;
           session = {
             mode: 'runtime',
             requestId: input.requestId,
@@ -435,9 +481,14 @@ export function createVoiceInferenceSpeechStreamManager(
             abortController,
             expiryTimer: null,
             diagnostics,
-            diagnosticPcmChunks: diagnostics ? [] : null,
+            diagnosticWavFilePath,
+            diagnosticCapturePromise: null,
             peerApplicationEncryption,
           };
+          if (diagnosticWavFilePath) {
+            await mkdir(streamRoot, { recursive: true });
+            await writeFile(diagnosticWavFilePath, encodeWavHeader(0), { flag: 'wx', mode: 0o600 });
+          }
         } else {
           await mkdir(streamRoot, { recursive: true });
           session = {
@@ -447,7 +498,6 @@ export function createVoiceInferenceSpeechStreamManager(
             generation: 0,
             packId: input.packId,
             language: input.language,
-            rawFilePath: join(streamRoot, `${streamId}.pcm`),
             wavFilePath: join(streamRoot, `${streamId}.wav`),
             ackSeq: -1,
             admittedSeq: -1,
@@ -460,24 +510,29 @@ export function createVoiceInferenceSpeechStreamManager(
             abortController,
             expiryTimer: null,
             diagnostics,
-            diagnosticPcmChunks: null,
+            diagnosticWavFilePath: null,
+            diagnosticCapturePromise: null,
             peerApplicationEncryption,
           };
-          await writeFile(session.rawFilePath, Buffer.alloc(0));
+          await writeFile(session.wavFilePath, encodeWavHeader(0), { flag: 'wx', mode: 0o600 });
+        }
+        const createdSession = session;
+        if (!createdSession) {
+          throw new Error('voice_inference_stream_session_missing');
         }
         if (disposed || abortController.signal.aborted) {
-          await closeSession(session, { cancelWorker: true });
+          await closeSession(createdSession, { cancelWorker: true });
           throw Object.assign(new Error('voice_inference_stream_start_cancelled'), { code: 'cancelled' });
         }
-        sessions.set(streamId, session);
+        sessions.set(streamId, createdSession);
         publishedSession = true;
-        scheduleExpiry(session);
+        scheduleExpiry(createdSession);
         return {
           ok: true,
           requestId: input.requestId,
           streamId,
-          generation: session.generation,
-          ackSeq: session.ackSeq,
+          generation: createdSession.generation,
+          ackSeq: createdSession.ackSeq,
           format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
           ...(peerApplicationEncryption ? {
             peerApplicationEncryption: {
@@ -491,6 +546,9 @@ export function createVoiceInferenceSpeechStreamManager(
           } : {}),
         };
       } catch (error) {
+        if (session && session.state !== 'closed') {
+          await closeSession(session, { cancelWorker: true });
+        }
         return errorResponse(error);
       } finally {
         if (reservedApplicationAttempt && !publishedSession) {
@@ -693,11 +751,9 @@ export function createVoiceInferenceSpeechStreamManager(
             signal: session.abortController.signal,
           });
           events = [...appended.events];
-          if (session.diagnosticPcmChunks) {
-            session.diagnosticPcmChunks.push(Buffer.from(pcm));
-          }
+          await appendRuntimeDiagnosticPcm(session, pcm);
         } else {
-          await appendFile(session.rawFilePath, pcm);
+          await appendFile(session.wavFilePath, pcm);
         }
         session.ackSeq = input.seq;
         session.totalBytes = nextTotalBytes;
@@ -768,9 +824,7 @@ export function createVoiceInferenceSpeechStreamManager(
                 language: finished.language,
                 modelPackId,
               }];
-          if (session.diagnosticPcmChunks) {
-            captureCompletedStream(session, Buffer.concat(session.diagnosticPcmChunks));
-          }
+          await finalizeRuntimeDiagnosticCapture(session);
           await closeSession(session);
           return {
             ok: true,
@@ -783,8 +837,7 @@ export function createVoiceInferenceSpeechStreamManager(
             events,
           };
         }
-        const raw = await readFile(session.rawFilePath);
-        await writeFile(session.wavFilePath, Buffer.concat([encodeWavHeader(raw.byteLength), raw]));
+        await finalizePcm16WavFile(session.wavFilePath, session.totalBytes);
         const transcribed = await options.voiceInferenceWorker.transcribeAudio({
           requestId: session.requestId,
           uploadId: session.streamId,
@@ -802,7 +855,7 @@ export function createVoiceInferenceSpeechStreamManager(
         if (!hasState(session, 'finishing')) {
           return streamError('invalid_stream_state', 'daemon_voice_inference_stream_not_open');
         }
-        captureCompletedStream(session, raw);
+        captureCompletedStream(session, session.wavFilePath);
         await closeSession(session);
         return {
           ok: true,

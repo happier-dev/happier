@@ -3,6 +3,7 @@ import { logger } from '@/ui/logger';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import * as z from 'zod';
 import { CATALOG_AGENT_IDS } from '@/agent/catalog/ids';
 import {
@@ -10,42 +11,25 @@ import {
   writeSessionRunnerRespawnDescriptorForPersistence,
 } from './processSupervision/sessionRunnerRespawnDescriptor';
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
-import { cleanupPluginLocalServicesBridgeTokenFile } from './local/services/pluginBridgeAuthorization';
 import { readProcessIdentityByPid } from './processIdentity';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import {
   AgentSessionStartupInstructionsMarkerV1Schema,
   type AgentSessionStartupInstructionsMarkerV1,
 } from '@happier-dev/protocol';
-
-const PluginLocalServicesBridgeAuthorizationSchema = z.object({
-  v: z.literal(1),
-  tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  pluginId: z.string().trim().min(1).max(256),
-  contributionId: z.string().trim().min(1).max(256),
-  tokenFilePath: z.string().trim().min(1).optional(),
-}).strict();
-
-export const ManagedLocalServiceRunAttachmentV1Schema = z.object({
-  v: z.literal(1),
-  process: z.object({
-    pid: z.number().int().positive(),
-    processStartTimeMs: z.number().int().nonnegative(),
-    processCommandHash: z.string().regex(/^[a-f0-9]{64}$/),
-  }).strict(),
-  endpoint: z.object({
-    host: z.enum(['127.0.0.1', '::1']),
-    port: z.number().int().min(1).max(65_535),
-  }).strict(),
-  materialization: z.object({
-    rootDir: z.string().trim().min(1).max(16_384),
-    materializationId: z.string().trim().min(1).max(512),
-  }).strict(),
-}).strict();
-
-export type ManagedLocalServiceRunAttachmentV1 = z.infer<
-  typeof ManagedLocalServiceRunAttachmentV1Schema
->;
+import {
+  AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema,
+  type AgentRuntimeDaemonServiceSessionOpenAttestationV1,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import {
+  areRunnerManagedProviderRetainedAuthoritiesEqual,
+  mergeRunnerManagedDependencyRetentionV1,
+  RunnerManagedDependencyRetentionV1Schema,
+  type RunnerManagedDependencyRetentionV1,
+  RunnerManagedProviderRetainedAuthorityV1Schema,
+  type RunnerManagedProviderRetainedAuthorityV1,
+  withRunnerManagedProviderAuthorityRetention,
+} from '@/plugins/runtime/runner/runnerManagedDependencyRetention';
 
 const DaemonSessionMarkerSchema = z.object({
   pid: z.number().int().positive(),
@@ -56,9 +40,9 @@ const DaemonSessionMarkerSchema = z.object({
   flavor: z.enum(CATALOG_AGENT_IDS).optional(),
   startedBy: z.enum(['daemon', 'terminal']).optional(),
   cwd: z.string().optional(),
-  // Process identity safety (PID reuse mitigation). Hash of the observed process command line.
+  // Legacy positive-classification witness and diagnostic snapshot. Mutable command text is not process generation.
   processCommandHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  // Canonical OS process birth timestamp paired with the PID and command hash.
+  // Canonical OS process-generation witness paired with the PID.
   processStartTimeMs: z.number().int().nonnegative().optional(),
   // Optional debug-only sample of the observed command (best-effort; may be truncated by ps-list).
   processCommand: z.string().optional(),
@@ -70,26 +54,75 @@ const DaemonSessionMarkerSchema = z.object({
     v: z.literal(1),
     requestedAtMs: z.number().int().nonnegative(),
   }).optional(),
-  localServicesBridgeAuthorization: PluginLocalServicesBridgeAuthorizationSchema.optional(),
+  // Stable private authority-document path only. The scoped capability is
+  // atomically rotated inside that document and must never enter the marker.
+  agentRuntimeDaemonServiceAuthorityFilePath:
+    z.string().trim().min(1).max(32_768).optional(),
   activeTurnId: z.string().trim().min(1).max(512).optional(),
+  agentRuntimeDaemonServiceActiveAdmission: z.object({
+    turnId: z.string().trim().min(1).max(512),
+    inputId: z.string().trim().min(1).max(512),
+    userMessageSeq: z.number().int().nonnegative().nullable(),
+    userMessageSeqs:
+      z.array(z.number().int().nonnegative()).max(4_096),
+  }).strict().optional(),
+  agentRuntimeDaemonServiceSessionOpenAttestation:
+    AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema.optional(),
+  // Non-secret byte-retention facts for the exact live runner. Destructive
+  // managed-dependency owners revalidate the marker's process identity before
+  // consulting these pins; effect authority remains in the private document.
+  runnerAgentImmutableGenerationId:
+    z.string().trim().min(1).max(512).optional(),
+  runnerManagedDependencyRetentionV1:
+    RunnerManagedDependencyRetentionV1Schema.optional(),
   // Required startup identity persisted before runtime open; not proof of application.
   agentSessionStartupInstructionsMarkerV1:
     AgentSessionStartupInstructionsMarkerV1Schema.optional(),
-  managedLocalServiceRunAttachment: ManagedLocalServiceRunAttachmentV1Schema.optional(),
+}).superRefine((marker, context) => {
+  if (
+    marker.agentRuntimeDaemonServiceActiveAdmission
+    && marker.agentRuntimeDaemonServiceActiveAdmission.turnId
+      !== marker.activeTurnId
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['agentRuntimeDaemonServiceActiveAdmission', 'turnId'],
+      message:
+        'Runner Agent daemon-service admission must match the active turn',
+    });
+  }
 });
 
 export type DaemonSessionMarker = z.infer<typeof DaemonSessionMarkerSchema>;
+type AgentRuntimeDaemonServiceActiveAdmission = Readonly<{
+  turnId: string;
+  inputId: string;
+  userMessageSeq: number | null;
+  userMessageSeqs: readonly number[];
+}>;
+
+function agentRuntimeDaemonServiceActiveAdmissionsEqual(
+  left: AgentRuntimeDaemonServiceActiveAdmission | undefined,
+  right: AgentRuntimeDaemonServiceActiveAdmission,
+): boolean {
+  return Boolean(
+    left
+    && left.turnId === right.turnId
+    && left.inputId === right.inputId
+    && left.userMessageSeq === right.userMessageSeq
+    && left.userMessageSeqs.length === right.userMessageSeqs.length
+    && left.userMessageSeqs.every(
+      (sequence, index) => sequence === right.userMessageSeqs[index],
+    ),
+  );
+}
 
 type SessionMarkerWriteInput = Omit<
   DaemonSessionMarker,
-  'createdAt' | 'updatedAt' | 'happyHomeDir' | 'managedLocalServiceRunAttachment'
+  'createdAt' | 'updatedAt' | 'happyHomeDir'
 > & Readonly<{
   createdAt?: number;
   updatedAt?: number;
-}>;
-
-type InternalSessionMarkerWriteInput = SessionMarkerWriteInput & Readonly<{
-  managedLocalServiceRunAttachment?: ManagedLocalServiceRunAttachmentV1;
 }>;
 
 export function hashProcessCommand(command: string): string {
@@ -193,9 +226,35 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
 export type WriteSessionMarkerOptions = Readonly<{
   preserveConnectedServiceRestartIntent?: boolean;
   preserveActiveTurnId?: boolean;
-  preserveManagedLocalServiceRunAttachment?: boolean;
+  preserveRunnerAgentImmutableGenerationId?: boolean;
+  preserveRunnerManagedDependencyRetention?: boolean;
   adoptCanonicalSessionIdFromPidPlaceholder?: boolean;
 }>;
+
+/**
+ * A replay seed is the user's prior conversation in cleartext. The marker mirrors the
+ * session metadata reported at startup and then carries that snapshot verbatim for the
+ * whole process lifetime, so mirroring the seed would leave the plaintext of an e2ee
+ * Session in a temp file long after the provider consumed it — and long after the
+ * Session-metadata owner retired its own copy.
+ *
+ * No marker reader consumes the seed: readers take `flavor`, terminal state, resume
+ * bindings and connected-service snapshots. Retirement itself belongs to the seed's
+ * canonical owner in `agent/runtime/replaySeed/replaySeedV1.ts`, and this blanks the
+ * mirror the same way that owner does — `seedText: ''`, identity fields intact —
+ * rather than dropping `replaySeedV1` or the marker file.
+ */
+function withoutMirroredReplaySeedText(metadata: unknown): unknown {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
+  const seed = (metadata as { replaySeedV1?: unknown }).replaySeedV1;
+  if (!seed || typeof seed !== 'object' || Array.isArray(seed)) return metadata;
+  const seedText = (seed as { seedText?: unknown }).seedText;
+  if (typeof seedText !== 'string' || seedText.length === 0) return metadata;
+  return {
+    ...(metadata as Record<string, unknown>),
+    replaySeedV1: { ...(seed as Record<string, unknown>), seedText: '' },
+  };
+}
 
 function isPidPlaceholderSessionId(value: string): boolean {
   return /^PID-\d+$/u.test(value);
@@ -225,21 +284,6 @@ function sessionMarkerProcessIdentityMatches(
     && marker.processStartTimeMs === expected.processStartTimeMs;
 }
 
-export function managedLocalServiceRunAttachmentsEqual(
-  left: ManagedLocalServiceRunAttachmentV1 | undefined | null,
-  right: ManagedLocalServiceRunAttachmentV1 | undefined | null,
-): boolean {
-  if (!left || !right) return !left && !right;
-  return left.v === right.v
-    && left.process.pid === right.process.pid
-    && left.process.processStartTimeMs === right.process.processStartTimeMs
-    && left.process.processCommandHash === right.process.processCommandHash
-    && left.endpoint.host === right.endpoint.host
-    && left.endpoint.port === right.endpoint.port
-    && left.materialization.rootDir === right.materialization.rootDir
-    && left.materialization.materializationId === right.materialization.materializationId;
-}
-
 function agentSessionStartupInstructionsMarkersEqual(
   left: AgentSessionStartupInstructionsMarkerV1 | undefined | null,
   right: AgentSessionStartupInstructionsMarkerV1 | undefined | null,
@@ -251,7 +295,7 @@ function agentSessionStartupInstructionsMarkersEqual(
 }
 
 async function writeSessionMarkerUnlocked(
-  marker: InternalSessionMarkerWriteInput,
+  marker: SessionMarkerWriteInput,
   options: WriteSessionMarkerOptions = {},
 ): Promise<void> {
   await ensureDir(daemonSessionsDir());
@@ -338,6 +382,18 @@ async function writeSessionMarkerUnlocked(
     && existingMarkerFromDisk?.happySessionId === marker.happySessionId
       ? existingMarkerFromDisk.activeTurnId
       : undefined;
+  const preservedAgentRuntimeDaemonServiceActiveAdmission =
+    options.preserveActiveTurnId !== false
+    && marker.agentRuntimeDaemonServiceActiveAdmission
+      === undefined
+    && existingMarkerFromDisk?.happySessionId
+      === marker.happySessionId
+    && existingMarkerFromDisk
+      .agentRuntimeDaemonServiceActiveAdmission
+      ?.turnId === preservedActiveTurnId
+      ? existingMarkerFromDisk
+          .agentRuntimeDaemonServiceActiveAdmission
+      : undefined;
   const preservedAgentSessionStartupInstructionsMarker =
     marker.agentSessionStartupInstructionsMarkerV1 === undefined
     && existingMarkerFromDisk?.agentSessionStartupInstructionsMarkerV1
@@ -347,27 +403,70 @@ async function writeSessionMarkerUnlocked(
     )
       ? existingMarkerFromDisk.agentSessionStartupInstructionsMarkerV1
       : undefined;
-  const preservedManagedLocalServiceRunAttachment =
-    options.preserveManagedLocalServiceRunAttachment !== false
-    && marker.managedLocalServiceRunAttachment === undefined
-    && existingMarkerFromDisk?.managedLocalServiceRunAttachment
+  const preservedRunnerManagedDependencyRetention =
+    options.preserveRunnerManagedDependencyRetention !== false
+    &&
+    marker.runnerManagedDependencyRetentionV1 === undefined
+    && existingMarkerFromDisk?.runnerManagedDependencyRetentionV1
     && marker.processCommandHash !== undefined
     && marker.processStartTimeMs !== undefined
-    && (
-      sessionMarkerProcessOwnershipMatches(existingMarkerFromDisk, {
+    && sessionMarkerProcessOwnershipMatches(
+      existingMarkerFromDisk,
+      {
         happySessionId: marker.happySessionId,
         processCommandHash: marker.processCommandHash,
         processStartTimeMs: marker.processStartTimeMs,
-      })
-      || (
-        canonicalAdoptionRequested
-        && sessionMarkerProcessIdentityMatches(existingMarkerFromDisk, {
-          processCommandHash: marker.processCommandHash,
-          processStartTimeMs: marker.processStartTimeMs,
-        })
-      )
+      },
     )
-      ? existingMarkerFromDisk.managedLocalServiceRunAttachment
+      ? existingMarkerFromDisk
+          .runnerManagedDependencyRetentionV1
+      : undefined;
+  const preservedRespawn =
+    marker.respawn === undefined
+    && existingMarkerFromDisk?.respawn
+    && marker.startedBy === 'daemon'
+    && existingMarkerFromDisk.startedBy === 'daemon'
+    && marker.processCommandHash !== undefined
+    && marker.processStartTimeMs !== undefined
+    && sessionMarkerProcessOwnershipMatches(
+      existingMarkerFromDisk,
+      {
+        happySessionId: marker.happySessionId,
+        processCommandHash: marker.processCommandHash,
+        processStartTimeMs: marker.processStartTimeMs,
+      },
+    )
+      ? existingMarkerFromDisk.respawn
+      : undefined;
+  const existingRunnerAgentImmutableGenerationId =
+    options.preserveRunnerAgentImmutableGenerationId !== false
+    &&
+    existingMarkerFromDisk?.runnerAgentImmutableGenerationId
+    && marker.processCommandHash !== undefined
+    && marker.processStartTimeMs !== undefined
+    && sessionMarkerProcessOwnershipMatches(
+      existingMarkerFromDisk,
+      {
+        happySessionId: marker.happySessionId,
+        processCommandHash: marker.processCommandHash,
+        processStartTimeMs: marker.processStartTimeMs,
+      },
+    )
+      ? existingMarkerFromDisk.runnerAgentImmutableGenerationId
+      : undefined;
+  if (
+    existingRunnerAgentImmutableGenerationId
+    && marker.runnerAgentImmutableGenerationId
+    && marker.runnerAgentImmutableGenerationId
+      !== existingRunnerAgentImmutableGenerationId
+  ) {
+    throw new Error(
+      'Runner Agent immutable generation cannot change for the same process identity',
+    );
+  }
+  const preservedRunnerAgentImmutableGenerationId =
+    marker.runnerAgentImmutableGenerationId === undefined
+      ? existingRunnerAgentImmutableGenerationId
       : undefined;
   const payload: DaemonSessionMarker = DaemonSessionMarkerSchema.parse({
     ...marker,
@@ -375,15 +474,34 @@ async function writeSessionMarkerUnlocked(
       ? { connectedServiceRestartIntent: preservedConnectedServiceRestartIntent }
       : {}),
     ...(preservedActiveTurnId ? { activeTurnId: preservedActiveTurnId } : {}),
+    ...(preservedAgentRuntimeDaemonServiceActiveAdmission
+      ? {
+          agentRuntimeDaemonServiceActiveAdmission:
+            preservedAgentRuntimeDaemonServiceActiveAdmission,
+        }
+      : {}),
     ...(preservedAgentSessionStartupInstructionsMarker
       ? {
           agentSessionStartupInstructionsMarkerV1:
             preservedAgentSessionStartupInstructionsMarker,
         }
       : {}),
-    ...(preservedManagedLocalServiceRunAttachment
-      ? { managedLocalServiceRunAttachment: preservedManagedLocalServiceRunAttachment }
+    ...(preservedRunnerManagedDependencyRetention
+      ? {
+          runnerManagedDependencyRetentionV1:
+            preservedRunnerManagedDependencyRetention,
+        }
       : {}),
+    ...(preservedRespawn ? { respawn: preservedRespawn } : {}),
+    ...(preservedRunnerAgentImmutableGenerationId
+      ? {
+          runnerAgentImmutableGenerationId:
+            preservedRunnerAgentImmutableGenerationId,
+        }
+      : {}),
+    ...(marker.metadata === undefined
+      ? {}
+      : { metadata: withoutMirroredReplaySeedText(marker.metadata) }),
     happyHomeDir: configuration.happyHomeDir,
     createdAt: marker.createdAt ?? createdAtFromDisk ?? now,
     updatedAt: now,
@@ -400,11 +518,7 @@ export async function writeSessionMarker(
   marker: SessionMarkerWriteInput,
   options: WriteSessionMarkerOptions = {},
 ): Promise<void> {
-  const {
-    managedLocalServiceRunAttachment: _managedLocalServiceRunAttachment,
-    ...ownedInput
-  } = marker as InternalSessionMarkerWriteInput;
-  await runWithSessionMarkerMutationLock(marker.pid, () => writeSessionMarkerUnlocked(ownedInput, options));
+  await runWithSessionMarkerMutationLock(marker.pid, () => writeSessionMarkerUnlocked(marker, options));
 }
 
 export async function updateSessionMarkerAgentSessionStartupInstructionsMarker(
@@ -452,6 +566,270 @@ export async function updateSessionMarkerAgentSessionStartupInstructionsMarker(
       happySessionId: sessionId,
       agentSessionStartupInstructionsMarkerV1:
         AgentSessionStartupInstructionsMarkerV1Schema.parse(params.marker),
+    });
+    return true;
+  });
+}
+
+export async function updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath(
+  params: Readonly<{
+    pid: number;
+    sessionId: string;
+    processCommandHash: string;
+    processStartTimeMs: number;
+    authorityFilePath: string;
+  }>,
+): Promise<boolean> {
+  return await runWithSessionMarkerMutationLock(params.pid, async () => {
+    const existing = await readSessionMarkerForPid(params.pid);
+    if (
+      !existing
+      || existing.happySessionId !== params.sessionId
+      || existing.processCommandHash !== params.processCommandHash
+      || existing.processStartTimeMs !== params.processStartTimeMs
+    ) {
+      return false;
+    }
+    const {
+      happyHomeDir: _happyHomeDir,
+      updatedAt: _updatedAt,
+      ...rest
+    } = existing;
+    await writeSessionMarkerUnlocked({
+      ...rest,
+      agentRuntimeDaemonServiceAuthorityFilePath: params.authorityFilePath,
+    });
+    return true;
+  });
+}
+
+/**
+ * Removes only promotion facts owned by an exact foreground runner candidate.
+ * The marker remains the Session lifecycle owner: a failed promotion must not
+ * delete unrelated terminal/daemon custody that shares the same process.
+ */
+export async function clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned(
+  params: Readonly<{
+    pid: number;
+    sessionId: string;
+    processCommandHash: string;
+    processStartTimeMs: number;
+    authorityFilePath: string;
+    immutableGenerationId?: string;
+    retention?: RunnerManagedDependencyRetentionV1;
+  }>,
+): Promise<boolean> {
+  if (
+    (params.immutableGenerationId === undefined)
+    !== (params.retention === undefined)
+  ) {
+    return false;
+  }
+  const expectedRetention = params.retention
+    ? RunnerManagedDependencyRetentionV1Schema.parse(params.retention)
+    : undefined;
+  return await runWithSessionMarkerMutationLock(params.pid, async () => {
+    const existing = await readSessionMarkerForPid(params.pid);
+    if (
+      !existing
+      || existing.happySessionId !== params.sessionId
+      || existing.processCommandHash !== params.processCommandHash
+      || existing.processStartTimeMs !== params.processStartTimeMs
+      || existing.agentRuntimeDaemonServiceAuthorityFilePath
+        !== params.authorityFilePath
+      || (
+        params.immutableGenerationId !== undefined
+        && (
+          existing.runnerAgentImmutableGenerationId
+            !== params.immutableGenerationId
+          || !isDeepStrictEqual(
+            existing.runnerManagedDependencyRetentionV1,
+            expectedRetention,
+          )
+        )
+      )
+    ) {
+      return false;
+    }
+    if (params.immutableGenerationId === undefined) {
+      const {
+        agentRuntimeDaemonServiceAuthorityFilePath: _authorityFilePath,
+        agentRuntimeDaemonServiceSessionOpenAttestation: _sessionOpenAttestation,
+        happyHomeDir: _happyHomeDir,
+        updatedAt: _updatedAt,
+        ...rest
+      } = existing;
+      await writeSessionMarkerUnlocked(rest);
+      return true;
+    }
+    const {
+      agentRuntimeDaemonServiceAuthorityFilePath: _authorityFilePath,
+      agentRuntimeDaemonServiceSessionOpenAttestation: _sessionOpenAttestation,
+      runnerAgentImmutableGenerationId: _immutableGenerationId,
+      runnerManagedDependencyRetentionV1: _retention,
+      happyHomeDir: _happyHomeDir,
+      updatedAt: _updatedAt,
+      ...rest
+    } = existing;
+    await writeSessionMarkerUnlocked(rest, {
+      preserveRunnerAgentImmutableGenerationId: false,
+      preserveRunnerManagedDependencyRetention: false,
+    });
+    return true;
+  });
+}
+
+export async function updateSessionMarkerRunnerManagedDependencyRetention(
+  params: Readonly<{
+    pid: number;
+    sessionId: string;
+    processCommandHash: string;
+    processStartTimeMs: number;
+    retention: RunnerManagedDependencyRetentionV1;
+  }>,
+): Promise<boolean> {
+  return await runWithSessionMarkerMutationLock(params.pid, async () => {
+    const existing = await readSessionMarkerForPid(params.pid);
+    if (
+      !existing
+      || existing.happySessionId !== params.sessionId
+      || existing.processCommandHash !== params.processCommandHash
+      || existing.processStartTimeMs !== params.processStartTimeMs
+    ) {
+      return false;
+    }
+    const {
+      happyHomeDir: _happyHomeDir,
+      updatedAt: _updatedAt,
+      ...rest
+    } = existing;
+    await writeSessionMarkerUnlocked({
+      ...rest,
+      runnerManagedDependencyRetentionV1:
+        withRunnerManagedProviderAuthorityRetention(
+          mergeRunnerManagedDependencyRetentionV1(
+            existing.runnerManagedDependencyRetentionV1,
+            params.retention,
+          ),
+          existing.runnerManagedDependencyRetentionV1
+            ?.adoptedManagedProviderAuthority ?? null,
+        ),
+    });
+    return true;
+  });
+}
+
+export async function updateSessionMarkerRunnerManagedProviderAuthority(
+  params: Readonly<{
+    pid: number;
+    sessionId: string;
+    processCommandHash: string;
+    processStartTimeMs: number;
+  } & (
+    Readonly<{
+      authority: RunnerManagedProviderRetainedAuthorityV1;
+    }>
+    | Readonly<{
+      authority: null;
+      expectedAuthority: RunnerManagedProviderRetainedAuthorityV1;
+    }>
+  )>,
+): Promise<boolean> {
+  return await runWithSessionMarkerMutationLock(params.pid, async () => {
+    const existing = await readSessionMarkerForPid(params.pid);
+    if (
+      !existing
+      || existing.happySessionId !== params.sessionId
+      || existing.processCommandHash !== params.processCommandHash
+      || existing.processStartTimeMs !== params.processStartTimeMs
+    ) {
+      return false;
+    }
+    const currentAuthority =
+      existing.runnerManagedDependencyRetentionV1
+        ?.adoptedManagedProviderAuthority;
+    const authority = params.authority
+      ? RunnerManagedProviderRetainedAuthorityV1Schema.parse(
+          params.authority,
+        )
+      : null;
+    if (authority) {
+      if (
+        currentAuthority
+        && !areRunnerManagedProviderRetainedAuthoritiesEqual(
+          currentAuthority,
+          authority,
+        )
+      ) {
+        return false;
+      }
+    } else {
+      if (!('expectedAuthority' in params)) {
+        return false;
+      }
+      const expectedAuthority =
+        RunnerManagedProviderRetainedAuthorityV1Schema.parse(
+          params.expectedAuthority,
+        );
+      if (
+        !areRunnerManagedProviderRetainedAuthoritiesEqual(
+          currentAuthority,
+          expectedAuthority,
+        )
+      ) {
+        return false;
+      }
+    }
+    const {
+      happyHomeDir: _happyHomeDir,
+      updatedAt: _updatedAt,
+      ...rest
+    } = existing;
+    await writeSessionMarkerUnlocked({
+      ...rest,
+      runnerManagedDependencyRetentionV1:
+        withRunnerManagedProviderAuthorityRetention(
+          existing.runnerManagedDependencyRetentionV1,
+          authority,
+        ),
+    });
+    return true;
+  });
+}
+
+export async function updateSessionMarkerRunnerAgentImmutableGenerationId(
+  params: Readonly<{
+    pid: number;
+    sessionId: string;
+    processCommandHash: string;
+    processStartTimeMs: number;
+    immutableGenerationId: string;
+  }>,
+): Promise<boolean> {
+  return await runWithSessionMarkerMutationLock(params.pid, async () => {
+    const existing = await readSessionMarkerForPid(params.pid);
+    if (
+      !existing
+      || existing.happySessionId !== params.sessionId
+      || existing.processCommandHash !== params.processCommandHash
+      || existing.processStartTimeMs !== params.processStartTimeMs
+      || (
+        existing.runnerAgentImmutableGenerationId !== undefined
+        && existing.runnerAgentImmutableGenerationId
+          !== params.immutableGenerationId
+      )
+    ) {
+      return false;
+    }
+    const {
+      happyHomeDir: _happyHomeDir,
+      updatedAt: _updatedAt,
+      ...rest
+    } = existing;
+    await writeSessionMarkerUnlocked({
+      ...rest,
+      runnerAgentImmutableGenerationId:
+        params.immutableGenerationId,
     });
     return true;
   });
@@ -505,21 +883,6 @@ export async function rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned(
   );
 }
 
-export async function writeSessionMarkerWithManagedLocalServiceRunAttachment(params: Readonly<{
-  marker: SessionMarkerWriteInput;
-  attachment: ManagedLocalServiceRunAttachmentV1;
-}>): Promise<void> {
-  await runWithSessionMarkerMutationLock(params.marker.pid, () => (
-    writeSessionMarkerUnlocked({
-      ...params.marker,
-      managedLocalServiceRunAttachment:
-        ManagedLocalServiceRunAttachmentV1Schema.parse(params.attachment),
-    }, {
-      preserveManagedLocalServiceRunAttachment: false,
-    })
-  ));
-}
-
 export type SessionMarkerOwnership = Readonly<{
   happySessionId: string;
   processCommandHash?: string;
@@ -541,8 +904,6 @@ export async function readExactSessionMarkerOwnership(
       processStartTimeMs: number;
     }>;
     expectedSpawnNonce?: string;
-    expectedManagedLocalServiceRunAttachment?:
-      ManagedLocalServiceRunAttachmentV1;
   }>,
 ): Promise<Readonly<{
   ownership: SessionMarkerOwnership;
@@ -566,16 +927,6 @@ export async function readExactSessionMarkerOwnership(
           && marker.respawn?.spawnNonce?.trim()
             !== params.expectedSpawnNonce
         )
-        || (
-          params.expectedManagedLocalServiceRunAttachment
-          && (
-            !marker.managedLocalServiceRunAttachment
-            || !managedLocalServiceRunAttachmentsEqual(
-              marker.managedLocalServiceRunAttachment,
-              params.expectedManagedLocalServiceRunAttachment,
-            )
-          )
-        )
       ) {
         return null;
       }
@@ -591,81 +942,6 @@ export async function readExactSessionMarkerOwnership(
       };
     },
   );
-}
-
-export type ManagedLocalServiceRunAttachmentMarkerOwnership = Readonly<{
-  happySessionId: string;
-  processCommandHash: string;
-  processStartTimeMs: number;
-}>;
-
-export async function setSessionMarkerManagedLocalServiceRunAttachment(params: Readonly<{
-  pid: number;
-  ownership: ManagedLocalServiceRunAttachmentMarkerOwnership;
-  expectedAttachment: ManagedLocalServiceRunAttachmentV1 | null;
-  attachment: ManagedLocalServiceRunAttachmentV1;
-}>): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
-    if (
-      !existing
-      || !sessionMarkerProcessOwnershipMatches(existing, params.ownership)
-      || !managedLocalServiceRunAttachmentsEqual(
-        existing.managedLocalServiceRunAttachment,
-        params.expectedAttachment,
-      )
-    ) {
-      return false;
-    }
-    const {
-      happyHomeDir: _happyHomeDir,
-      updatedAt: _updatedAt,
-      managedLocalServiceRunAttachment: _managedLocalServiceRunAttachment,
-      ...rest
-    } = existing;
-    await writeSessionMarkerUnlocked({
-      ...rest,
-      managedLocalServiceRunAttachment: ManagedLocalServiceRunAttachmentV1Schema.parse(params.attachment),
-    });
-    return true;
-  });
-}
-
-export async function clearSessionMarkerManagedLocalServiceRunAttachment(params: Readonly<{
-  pid: number;
-  ownership: ManagedLocalServiceRunAttachmentMarkerOwnership;
-  attachment: ManagedLocalServiceRunAttachmentV1;
-}>): Promise<'cleared' | 'already_absent' | 'mismatch'> {
-  return await runWithSessionMarkerMutationLock(params.pid, async () => {
-    const existing = await readSessionMarkerForPid(params.pid);
-    if (
-      !existing
-      || !sessionMarkerProcessOwnershipMatches(existing, params.ownership)
-    ) {
-      return 'mismatch';
-    }
-    if (existing.managedLocalServiceRunAttachment === undefined) {
-      return 'already_absent';
-    }
-    if (
-      !managedLocalServiceRunAttachmentsEqual(
-        existing.managedLocalServiceRunAttachment,
-        params.attachment,
-      )
-    ) {
-      return 'mismatch';
-    }
-    const {
-      happyHomeDir: _happyHomeDir,
-      updatedAt: _updatedAt,
-      managedLocalServiceRunAttachment: _managedLocalServiceRunAttachment,
-      ...rest
-    } = existing;
-    await writeSessionMarkerUnlocked(rest, {
-      preserveManagedLocalServiceRunAttachment: false,
-    });
-    return 'cleared';
-  });
 }
 
 async function removeSessionMarkerUnlocked(
@@ -703,13 +979,6 @@ async function removeSessionMarkerUnlocked(
         if (ownership.isStillOwned && !ownership.isStillOwned()) {
           return removed;
         }
-      }
-      if (marker) {
-        cleanupPluginLocalServicesBridgeTokenFile({
-          happyHomeDir: configuration.happyHomeDir,
-          publicReleaseRing: configuration.publicReleaseRing,
-          tokenFilePath: marker.localServicesBridgeAuthorization?.tokenFilePath,
-        });
       }
       await unlink(filePath);
       removed = true;
@@ -804,15 +1073,6 @@ export async function promoteSessionMarkerPid(
       ) {
         return null;
       }
-      const sourceAttachment = sourceMarker.managedLocalServiceRunAttachment;
-      const targetAttachment = targetMarker.managedLocalServiceRunAttachment;
-      if (
-        sourceAttachment
-        && targetAttachment
-        && !managedLocalServiceRunAttachmentsEqual(sourceAttachment, targetAttachment)
-      ) {
-        return null;
-      }
       const sourceStartupInstructionsMarker =
         sourceMarker.agentSessionStartupInstructionsMarkerV1;
       const targetStartupInstructionsMarker =
@@ -827,25 +1087,9 @@ export async function promoteSessionMarkerPid(
       ) {
         return null;
       }
-      if (sourceAttachment ?? targetAttachment) {
-        const targetProcessIdentity = await (
-          dependencies.readProcessIdentityByPidFn ?? readProcessIdentityByPid
-        )(toPid);
-        const targetProcessCommand = targetProcessIdentity?.command.trim() ?? '';
-        if (
-          !targetProcessCommand
-          || targetProcessIdentity?.processStartTimeMs === undefined
-          || targetMarker.processStartTimeMs !== targetProcessIdentity.processStartTimeMs
-          || targetMarker.processCommandHash !== hashProcessCommand(targetProcessCommand)
-        ) {
-          return null;
-        }
-      }
-
       const {
         happyHomeDir: _happyHomeDir,
         updatedAt: _updatedAt,
-        managedLocalServiceRunAttachment: _targetManagedLocalServiceRunAttachment,
         ...targetInput
       } = targetMarker;
       await writeSessionMarkerUnlocked({
@@ -859,9 +1103,6 @@ export async function promoteSessionMarkerPid(
               agentSessionStartupInstructionsMarkerV1:
                 sourceStartupInstructionsMarker,
             }
-          : {}),
-        ...((sourceAttachment ?? targetAttachment)
-          ? { managedLocalServiceRunAttachment: sourceAttachment ?? targetAttachment }
           : {}),
         pid: toPid,
         createdAt: targetMarker.createdAt,
@@ -891,19 +1132,12 @@ export async function promoteSessionMarkerPid(
       processCommandHash: _sourceProcessCommandHash,
       processStartTimeMs: _sourceProcessStartTimeMs,
       processCommand: _sourceProcessCommand,
-      managedLocalServiceRunAttachment,
       ...markerInput
     } = sourceMarker;
     const targetProcessIdentity = await (
       dependencies.readProcessIdentityByPidFn ?? readProcessIdentityByPid
     )(toPid);
     const targetProcessCommand = targetProcessIdentity?.command.trim() ?? '';
-    if (
-      managedLocalServiceRunAttachment
-      && (!targetProcessCommand || targetProcessIdentity?.processStartTimeMs === undefined)
-    ) {
-      return null;
-    }
     const promotedProcessIdentity =
       targetProcessCommand && targetProcessIdentity?.processStartTimeMs !== undefined
         ? {
@@ -912,20 +1146,13 @@ export async function promoteSessionMarkerPid(
             processStartTimeMs: targetProcessIdentity.processStartTimeMs,
           }
         : null;
-    const promotedHappySessionId =
-      managedLocalServiceRunAttachment
-      && markerInput.happySessionId === `PID-${fromPid}`
-        ? `PID-${toPid}`
-        : markerInput.happySessionId;
+    const promotedHappySessionId = markerInput.happySessionId;
     await writeSessionMarkerUnlocked({
       ...markerInput,
       happySessionId: promotedHappySessionId,
       pid: toPid,
       createdAt: sourceMarker.createdAt,
       ...(promotedProcessIdentity ?? {}),
-      ...(managedLocalServiceRunAttachment
-        ? { managedLocalServiceRunAttachment }
-        : {}),
     });
     return {
       sourceMarkerOwnership,
@@ -947,7 +1174,7 @@ export async function promoteSessionMarkerPid(
   });
 }
 
-async function readSessionMarkerForPid(pid: number): Promise<DaemonSessionMarker | null> {
+export async function readSessionMarkerForPid(pid: number): Promise<DaemonSessionMarker | null> {
   for (const dir of daemonSessionMarkerDirs()) {
     const filePath = join(dir, `pid-${pid}.json`);
     try {
@@ -1008,13 +1235,35 @@ export async function updateSessionMarkerActiveTurn(params: Readonly<{
   pid: number;
   sessionId: string;
   activeTurnId: string | null;
+  agentRuntimeDaemonServiceActiveAdmission?:
+    AgentRuntimeDaemonServiceActiveAdmission;
+  expectedAgentRuntimeDaemonServiceActiveAdmission?:
+    AgentRuntimeDaemonServiceActiveAdmission;
 }>): Promise<boolean> {
+  if (
+    params.agentRuntimeDaemonServiceActiveAdmission
+    && params.agentRuntimeDaemonServiceActiveAdmission.turnId
+      !== params.activeTurnId
+  ) {
+    return false;
+  }
   return await runWithSessionMarkerMutationLock(params.pid, async () => {
     const existing = await readSessionMarkerForPid(params.pid);
     if (!existing || existing.happySessionId !== params.sessionId) return false;
+    if (
+      params.expectedAgentRuntimeDaemonServiceActiveAdmission
+      && !agentRuntimeDaemonServiceActiveAdmissionsEqual(
+        existing.agentRuntimeDaemonServiceActiveAdmission,
+        params.expectedAgentRuntimeDaemonServiceActiveAdmission,
+      )
+    ) {
+      return false;
+    }
 
     const {
       activeTurnId: _activeTurnId,
+      agentRuntimeDaemonServiceActiveAdmission:
+        _agentRuntimeDaemonServiceActiveAdmission,
       happyHomeDir: _happyHomeDir,
       updatedAt: _updatedAt,
       ...rest
@@ -1022,7 +1271,56 @@ export async function updateSessionMarkerActiveTurn(params: Readonly<{
     await writeSessionMarkerUnlocked({
       ...rest,
       ...(params.activeTurnId ? { activeTurnId: params.activeTurnId } : {}),
+      ...(params.agentRuntimeDaemonServiceActiveAdmission
+        ? {
+            agentRuntimeDaemonServiceActiveAdmission:
+              {
+                ...params.agentRuntimeDaemonServiceActiveAdmission,
+                userMessageSeqs: [
+                  ...params
+                    .agentRuntimeDaemonServiceActiveAdmission
+                    .userMessageSeqs,
+                ],
+              },
+          }
+        : {}),
     }, { preserveActiveTurnId: false });
+    return true;
+  });
+}
+
+export async function updateSessionMarkerAgentRuntimeSessionOpenAttestation(
+  params: Readonly<{
+    pid: number;
+    sessionId: string;
+    authorityFilePath: string;
+    attestation:
+      AgentRuntimeDaemonServiceSessionOpenAttestationV1;
+  }>,
+): Promise<boolean> {
+  return await runWithSessionMarkerMutationLock(params.pid, async () => {
+    const existing = await readSessionMarkerForPid(params.pid);
+    if (
+      !existing
+      || existing.happySessionId !== params.sessionId
+      || existing.agentRuntimeDaemonServiceAuthorityFilePath
+        !== params.authorityFilePath
+    ) {
+      return false;
+    }
+    const {
+      agentRuntimeDaemonServiceSessionOpenAttestation:
+        _agentRuntimeDaemonServiceSessionOpenAttestation,
+      happyHomeDir: _happyHomeDir,
+      updatedAt: _updatedAt,
+      ...rest
+    } = existing;
+    await writeSessionMarkerUnlocked({
+      ...rest,
+      agentRuntimeDaemonServiceSessionOpenAttestation:
+        AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema
+          .parse(params.attestation),
+    });
     return true;
   });
 }

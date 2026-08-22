@@ -1,9 +1,6 @@
 import os from 'node:os';
 
-import {
-  getAgentResumeConfig,
-  isAgentId,
-} from '@happier-dev/agents';
+import { getAgentResumeConfig } from '@happier-dev/agents';
 import {
   applySessionStateUpdatesToMetadata,
   applyDisplayTitleSessionMetadata,
@@ -17,21 +14,25 @@ import {
   SessionSharedMetadataV1Schema,
   projectSessionOwnerCompatibilityViewV1,
   buildLinkedExternalSessionMetadataV1,
-  readExternalHistoryImportV1FromMetadata,
+  resolveExternalHistoryImportV1FromMetadata,
   readLinkedExternalSessionV1FromMetadata,
+  resolveLinkedExternalSessionMetadataV1,
   normalizeLinkedExternalSessionMetadataV1,
   normalizeCodexBackendMode,
   type CodexBackendMode,
   type ExternalSessionsAgentId,
   type ExternalSessionsSource,
+  type LinkedExternalSessionV1,
   type LinkedExternalSessionQualifiedIdentityV1,
   type PluginAgentExternalSessionLinkData,
   type RuntimeDescriptorV1,
   type SessionOwnerMetadataV1,
   type SessionSharedMetadataV1,
+  type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
   fetchSessionById,
   fetchSessionsPage,
@@ -71,7 +72,9 @@ import {
   type ExternalSessionTagLookupCandidate,
 } from './externalSessionTagLookupCandidates';
 import { uniqueSnapshotKey } from './connectedServiceRuntimeSnapshotKey';
-import { metadataProvesHostedExternalSessionIdentity } from './hostedExternalSessionIdentity';
+import {
+  resolveHostedExternalSessionIdentityProof,
+} from './hostedExternalSessionIdentity';
 
 function normalizeNullableString(value: unknown): string | null {
   if (value === null) return null;
@@ -118,11 +121,13 @@ function assignIfDifferent(
 }
 
 const EXISTING_LINK_TOP_LEVEL_CANONICAL_SKIP_KEYS = new Set([
+  'tag',
   'path',
   'host',
   'machineId',
   'flavor',
   'externalSessionV1',
+  'directSessionV1',
   'summary',
   'name',
 ]);
@@ -144,10 +149,40 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
   titleHint?: string | null;
   directoryHint?: string | null;
   nowMs: number;
+  resolveSourceKey(source: ExternalSessionsSource): string | null;
+  expectedCurrentLink: LinkedExternalSessionV1;
 }>): Record<string, unknown> | null {
-  const currentLink = readLinkedExternalSessionV1FromMetadata(params.currentMetadata);
+  const currentLinkResolution = resolveLinkedExternalSessionMetadataV1(
+    params.currentMetadata,
+  );
+  if (!currentLinkResolution.ok) {
+    throw new ExternalSessionProviderFailureError({
+      code: 'conflict',
+      message: currentLinkResolution.error,
+      operation: 'externalSession.refreshExisting',
+    });
+  }
+  const currentLink = currentLinkResolution.linkedSession;
+  const expectedSourceKey = params.resolveSourceKey(
+    params.expectedCurrentLink.source,
+  );
   if (
-    currentLink?.qualifiedIdentity
+    currentLink.agentId !== params.expectedCurrentLink.agentId
+    || currentLink.machineId !== params.expectedCurrentLink.machineId
+    || currentLink.remoteSessionId
+      !== params.expectedCurrentLink.remoteSessionId
+    || currentLink.linkedAtMs !== params.expectedCurrentLink.linkedAtMs
+    || expectedSourceKey === null
+    || params.resolveSourceKey(currentLink.source) !== expectedSourceKey
+  ) {
+    throw new ExternalSessionProviderFailureError({
+      code: 'conflict',
+      message: 'linked_session_identity_mismatch',
+      operation: 'externalSession.refreshExisting',
+    });
+  }
+  if (
+    currentLink.qualifiedIdentity
     && !deepEqual(currentLink.qualifiedIdentity, params.qualifiedIdentity)
   ) {
     throw new ExternalSessionProviderFailureError({
@@ -209,7 +244,7 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
     }
   }
 
-  const currentExternalSession = asMetadataRecord(params.currentMetadata.externalSessionV1) ?? {};
+  const currentExternalSession: Record<string, unknown> = { ...currentLink };
   const canonicalExternalSession = asMetadataRecord(canonicalMetadata.externalSessionV1);
   if (canonicalExternalSession) {
     const currentExternalSessionWithoutGeneration = {
@@ -237,13 +272,23 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
     const nextLinkGeneration = linkIdentityChanged && currentLinkGeneration !== null
       ? Math.max(params.nowMs, currentLinkGeneration + 1)
       : currentLinkGeneration ?? params.nowMs;
-    const nextExternalSession = {
+    const nextExternalSession: Record<string, unknown> = {
       ...currentExternalSession,
       ...canonicalExternalSession,
       linkedAtMs: nextLinkGeneration,
     };
+    if (
+      currentLinkGeneration !== null
+      && nextLinkGeneration > currentLinkGeneration
+    ) {
+      delete nextExternalSession.followStatusV1;
+      delete nextExternalSession.lastFollowIssueV1;
+    }
     if (!deepEqual(currentExternalSession, nextExternalSession)) {
-      nextMetadata.externalSessionV1 = nextExternalSession;
+      nextMetadata = buildLinkedExternalSessionMetadataV1(
+        nextMetadata,
+        nextExternalSession as LinkedExternalSessionV1,
+      );
       didChange = true;
     }
     if (
@@ -287,7 +332,8 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
 }
 
 async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
   sessionId: string;
   tag: string;
   machineId: string;
@@ -305,6 +351,8 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
   directoryHint?: string | null;
   shouldCommit?: () => boolean;
   nowMs: number;
+  resolveSourceKey(source: ExternalSessionsSource): string | null;
+  expectedCurrentLink: LinkedExternalSessionV1;
 }>): Promise<void> {
   const hasDisplayRefresh = Boolean(normalizeNullableString(params.titleHint) || normalizeNullableString(params.directoryHint));
   const hasIdentityRefresh = Boolean(
@@ -326,9 +374,10 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
   }).catch(() => null);
   if (!rawSession) return;
 
-  const initialMetadata = tryDecryptSessionMetadata({
+  const initialMetadata = tryDecryptSessionOwnerMetadataView({
     credentials: params.credentials,
     rawSession,
+    accountEncryptionMode: params.accountEncryptionCurrentness.mode,
   });
   const initialMetadataRecord = asMetadataRecord(initialMetadata);
   if (!initialMetadataRecord) return;
@@ -350,6 +399,8 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
     titleHint: params.titleHint,
     directoryHint: params.directoryHint,
     nowMs: params.nowMs,
+    resolveSourceKey: params.resolveSourceKey,
+    expectedCurrentLink: params.expectedCurrentLink,
   });
   if (!nextMetadata) return;
   assertExternalSessionLinkCommitPrecondition(params.shouldCommit);
@@ -359,6 +410,7 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
     credentials: params.credentials,
     sessionId: params.sessionId,
     rawSession,
+    accountEncryptionCurrentness: params.accountEncryptionCurrentness,
     updater: (currentMetadata) => {
       assertExternalSessionLinkCommitPrecondition(params.shouldCommit);
       return resolveRefreshedExternalSessionMetadata({
@@ -378,6 +430,8 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
         titleHint: params.titleHint,
         directoryHint: params.directoryHint,
         nowMs: params.nowMs,
+        resolveSourceKey: params.resolveSourceKey,
+        expectedCurrentLink: params.expectedCurrentLink,
       }) ?? currentMetadata;
     },
   }).catch((error: unknown) => {
@@ -405,8 +459,10 @@ function resolveMaxScanPages(): number {
 }
 
 async function findExistingSessionIdByTag(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
   tag: string;
+  signal?: AbortSignal;
   metadataMatches?: (
     metadata: Readonly<Record<string, unknown>>,
     row: RawSessionListRow,
@@ -433,14 +489,31 @@ async function findExistingSessionIdByTag(params: Readonly<{
   }> | null> => {
     let cursor: string | undefined;
     for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-      const page = await fetchSessionsPage({ token: params.credentials.token, cursor, limit: 200, archivedOnly });
+      const page = await fetchSessionsPage({
+        token: params.credentials.token,
+        cursor,
+        limit: 200,
+        archivedOnly,
+        ...(params.signal ? { signal: params.signal } : {}),
+      });
       for (const row of page.sessions) {
         const meta = tryDecryptSessionOwnerMetadataView({
           credentials: params.credentials,
           rawSession: row,
+          accountEncryptionMode: params.accountEncryptionMode,
         });
         const rowTagRaw = meta?.['tag'];
         const rowTag = typeof rowTagRaw === 'string' ? rowTagRaw.trim() : '';
+        if (meta !== null && rowTag === params.tag) {
+          const linked = resolveLinkedExternalSessionMetadataV1(meta);
+          if (!linked.ok && linked.error !== 'linked_session_not_found') {
+            throw new ExternalSessionProviderFailureError({
+              code: 'conflict',
+              message: linked.error,
+              operation: 'externalSession.lookupByTags',
+            });
+          }
+        }
         if (meta !== null && (
           (rowTag && rowTag === params.tag && (!params.metadataMatches || params.metadataMatches(meta, row)))
           || params.metadataIdentityMatches?.(meta, row) === true
@@ -500,17 +573,25 @@ function metadataProvesExternalHistoryImportIdentity(
     resolveSourceKey(source: ExternalSessionsSource): string | null;
   }>,
 ): boolean {
-  const imported = readExternalHistoryImportV1FromMetadata(metadata);
+  const resolution = resolveExternalHistoryImportV1FromMetadata(metadata);
+  if (resolution.state === 'invalid') {
+    throw new ExternalSessionProviderFailureError({
+      code: 'conflict',
+      message: resolution.error,
+      operation: 'externalSession.lookupByTags',
+    });
+  }
+  if (resolution.state === 'absent') return false;
+  const imported = resolution.historyImport;
   return metadata.machineId === expected.machineId
-    && imported?.agentId === expected.agentId
+    && imported.agentId === expected.agentId
     && imported.remoteSessionId === expected.remoteSessionId
     && expected.resolveSourceKey(imported.source) === expected.resolveSourceKey(expected.source);
 }
 
-function metadataProvesCodexGroup(metadata: Readonly<Record<string, unknown>>, expectedGroupId: string): boolean {
+function metadataProvesConnectedServiceGroup(metadata: Readonly<Record<string, unknown>>, expectedGroupId: string): boolean {
   const linkedSession = readLinkedExternalSessionV1FromMetadata(metadata);
-  return linkedSession?.agentId === 'codex'
-    && linkedSession.source.kind === 'codexHome'
+  return linkedSession?.source.kind === 'codexHome'
     && linkedSession.source.home === 'connectedService'
     && normalizeNullableString(linkedSession.source.connectedServiceGroupId) === expectedGroupId;
 }
@@ -532,13 +613,12 @@ function metadataProvesExternalSessionIdentity(
     && expected.resolveSourceKey(linkedSession.source) === expected.resolveSourceKey(expected.source);
 }
 
-function metadataProvesCodexExternalSessionGroupIdentity(
+function metadataProvesExternalSessionGroupIdentity(
   metadata: Readonly<Record<string, unknown>>,
   expected: Readonly<{ machineId: string; remoteSessionId: string; groupId: string }>,
 ): boolean {
   const linkedSession = readLinkedExternalSessionV1FromMetadata(metadata);
-  return linkedSession?.agentId === 'codex'
-    && linkedSession.machineId === expected.machineId
+  return linkedSession?.machineId === expected.machineId
     && linkedSession.remoteSessionId === expected.remoteSessionId
     && linkedSession.source.kind === 'codexHome'
     && linkedSession.source.home === 'connectedService'
@@ -551,7 +631,8 @@ function sameStringSet(left: readonly string[], right: readonly string[]): boole
 }
 
 export async function resolveExternalSessionIndexedTagLookup(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
   machineId: string;
   agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
@@ -605,6 +686,7 @@ export async function resolveExternalSessionIndexedTagLookup(params: Readonly<{
     ? tryDecryptSessionOwnerMetadata({
       credentials: params.credentials,
       rawSession: row,
+      accountEncryptionMode: params.accountEncryptionMode,
     })
     : null;
   if (
@@ -619,14 +701,23 @@ export async function resolveExternalSessionIndexedTagLookup(params: Readonly<{
       ownerMetadata,
     })
     : sharedOrLegacyMetadata;
+  const linkedMetadataResolution = resolveLinkedExternalSessionMetadataV1(
+    metadata,
+  );
+  if (
+    !linkedMetadataResolution.ok
+    && linkedMetadataResolution.error !== 'linked_session_not_found'
+  ) {
+    return { state: 'conflict' };
+  }
   const storedTag = typeof metadata?.tag === 'string'
     ? metadata.tag.trim()
     : '';
   const candidate = storedTag
     ? params.tagCandidates.find((value) => value.tag === storedTag)
     : params.tagCandidates.find((value) => (
-      value.kind === 'codex-connected-service-predecessor'
-        ? metadataProvesCodexExternalSessionGroupIdentity(metadata ?? {}, {
+      value.kind === 'connected-service-group-predecessor'
+        ? metadataProvesExternalSessionGroupIdentity(metadata ?? {}, {
             machineId: params.machineId,
             remoteSessionId: params.remoteSessionId,
             groupId: value.expectedConnectedServiceGroupId,
@@ -644,6 +735,21 @@ export async function resolveExternalSessionIndexedTagLookup(params: Readonly<{
     return { state: 'conflict' };
   }
 
+  const hostedIdentityProof = resolveHostedExternalSessionIdentityProof({
+    metadata,
+    currentStorageState: row.currentStorageState,
+    currentStorageStateWasOmitted:
+      !Object.prototype.hasOwnProperty.call(row, 'currentStorageState'),
+    expected: {
+      machineId: params.machineId,
+      agentId: params.agentId,
+      remoteSessionId: params.remoteSessionId,
+    },
+  });
+  if (hostedIdentityProof.state === 'conflict') {
+    return { state: 'conflict' };
+  }
+
   let kind: ExistingExternalSessionLookup['kind'] | null = null;
   if (metadataProvesExternalHistoryImportIdentity(metadata, {
     machineId: params.machineId,
@@ -654,24 +760,12 @@ export async function resolveExternalSessionIndexedTagLookup(params: Readonly<{
   })) {
     kind = 'history_import';
   } else if (
-    !readLinkedExternalSessionV1FromMetadata(metadata)
-    && !readExternalHistoryImportV1FromMetadata(metadata)
-    && metadataProvesHostedExternalSessionIdentity({
-      metadata,
-      currentStorageState: row.currentStorageState,
-      currentStorageStateWasOmitted:
-        !Object.prototype.hasOwnProperty.call(row, 'currentStorageState'),
-      expected: {
-      machineId: params.machineId,
-      agentId: params.agentId,
-      remoteSessionId: params.remoteSessionId,
-      },
-    })
+    hostedIdentityProof.state === 'matched'
   ) {
     kind = 'hosted_resume';
   } else if (
-    candidate.kind === 'codex-connected-service-predecessor'
-      ? metadataProvesCodexExternalSessionGroupIdentity(metadata, {
+    candidate.kind === 'connected-service-group-predecessor'
+      ? metadataProvesExternalSessionGroupIdentity(metadata, {
           machineId: params.machineId,
           remoteSessionId: params.remoteSessionId,
           groupId: candidate.expectedConnectedServiceGroupId,
@@ -706,7 +800,12 @@ export async function resolveExternalSessionIndexedTagLookup(params: Readonly<{
   };
 }
 
-function buildExternalSessionMetadata(params: Readonly<{
+/**
+ * Canonical constructor for a linked external session's persisted envelope.
+ * Exported so the first-party link guard can assert the real envelope every
+ * registered Agent produces, instead of a re-implementation of this order.
+ */
+export function buildExternalSessionMetadata(params: Readonly<{
   tag: string;
   machineId: string;
   agentId: ExternalSessionsAgentId;
@@ -725,7 +824,7 @@ function buildExternalSessionMetadata(params: Readonly<{
 }>): Record<string, unknown> {
   const titleHint = normalizeNullableString(params.titleHint);
   const directoryHint = normalizeNullableString(params.directoryHint) ?? '';
-  const resume = isAgentId(params.agentId) ? getAgentResumeConfig(params.agentId) : null;
+  const resume = getAgentResumeConfig(params.agentId);
   const vendorResumeIdField = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
   const sessionStateRuntimeDescriptor = params.sessionStateUpdates?.find((update) =>
     update.fieldId === 'identity.runtimeDescriptor'
@@ -739,7 +838,13 @@ function buildExternalSessionMetadata(params: Readonly<{
     params.vendorMetadata ?? {},
     null,
   );
+  // Agent-supplied records are laid down FIRST so the host's own identity and
+  // custody facts, written last, can never be shadowed by a colliding key.
   const externalSessionV1 = {
+    ...applyRuntimeDescriptorSessionMetadata(
+      externalSessionMetadata as Record<string, unknown>,
+      runtimeDescriptor,
+    ),
     v: 1 as const,
     agentId: params.agentId,
     machineId: params.machineId,
@@ -747,13 +852,13 @@ function buildExternalSessionMetadata(params: Readonly<{
     source: params.source,
     linkedAtMs: params.nowMs,
     ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
-    ...applyRuntimeDescriptorSessionMetadata(
-      externalSessionMetadata as Record<string, unknown>,
-      runtimeDescriptor,
-    ),
     qualifiedIdentity: params.qualifiedIdentity,
   };
   const baseWithoutLink: Record<string, unknown> = {
+    ...applyRuntimeDescriptorSessionMetadata(
+      vendorMetadata as Record<string, unknown>,
+      runtimeDescriptor,
+    ),
     tag: params.tag,
     path: directoryHint,
     host: os.hostname(),
@@ -765,10 +870,6 @@ function buildExternalSessionMetadata(params: Readonly<{
         value: params.remoteSessionId,
       })
       : {}),
-    ...applyRuntimeDescriptorSessionMetadata(
-      vendorMetadata as Record<string, unknown>,
-      runtimeDescriptor,
-    ),
     ...(hasConnectedServiceBindings(params.connectedServiceRuntimeSnapshot ?? {})
       ? {
         connectedServices: params.connectedServiceRuntimeSnapshot?.connectedServices,
@@ -799,7 +900,7 @@ function buildExternalSessionMetadata(params: Readonly<{
 }
 
 export async function ensureExternalSessionLink(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   machineId: string;
   agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
@@ -833,7 +934,13 @@ export async function ensureExternalSessionLink(params: Readonly<{
   }> | null>;
 }>): Promise<{ sessionId: string; created: boolean; tag: string }> {
   const nowMs = params.nowMs ?? (() => Date.now());
-  const externalSessionProviderOps = await deps.resolveExternalSessionProviderOps(params.agentId);
+  const [externalSessionProviderOps, accountEncryptionCurrentness] = await Promise.all([
+    deps.resolveExternalSessionProviderOps(params.agentId),
+    fetchAccountEncryptionCurrentness({
+      token: params.credentials.token,
+      ...(params.signal ? { signal: params.signal } : {}),
+    }),
+  ]);
   const linkIdentity = await resolveExternalSessionLinkIdentityFromSurface(
     {
       agentId: params.agentId,
@@ -909,10 +1016,10 @@ export async function ensureExternalSessionLink(params: Readonly<{
   const connectedServiceRuntimeSnapshot = await resolveConnectedServiceRuntimeSnapshotForExternalSession({
     agentId: params.agentId,
     remoteSessionId,
-    directoryHint: params.directoryHint,
   });
   const indexedLookup = await resolveExternalSessionIndexedTagLookup({
     credentials: params.credentials,
+    accountEncryptionMode: accountEncryptionCurrentness.mode,
     machineId: params.machineId,
     agentId: params.agentId,
     remoteSessionId,
@@ -952,7 +1059,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
   const indexedAbsenceNeedsCodexGroupRecovery =
     indexedLookupProvedNoServerTagMatch
     && lookupTags.some(
-      (lookup) => lookup.kind === 'codex-connected-service-predecessor',
+      (lookup) => lookup.kind === 'connected-service-group-predecessor',
     );
   const indexedAbsenceNeedsLegacyMetadataRecovery =
     indexedLookupProvedNoServerTagMatch
@@ -975,7 +1082,9 @@ export async function ensureExternalSessionLink(params: Readonly<{
   let existingSession = shouldScanLegacyMetadata
     ? await findExistingSessionIdByTag({
         credentials: params.credentials,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
         tag,
+        ...(params.signal ? { signal: params.signal } : {}),
         ...(indexedAbsenceNeedsLegacyMetadataRecovery
           ? {
               metadataMatches: (metadata: Readonly<Record<string, unknown>>) =>
@@ -988,15 +1097,17 @@ export async function ensureExternalSessionLink(params: Readonly<{
                 }),
             }
           : {}),
-        metadataIdentityMatches: (metadata, row) => (
-          metadataProvesExternalHistoryImportIdentity(metadata, {
+        metadataIdentityMatches: (metadata, row) => {
+          if (metadataProvesExternalHistoryImportIdentity(metadata, {
             machineId: params.machineId,
             agentId: params.agentId,
             remoteSessionId,
             source,
             resolveSourceKey: sourceKeyOwner.resolveSourceKey,
-          })
-          || metadataProvesHostedExternalSessionIdentity({
+          })) {
+            return true;
+          }
+          const hostedIdentityProof = resolveHostedExternalSessionIdentityProof({
             metadata,
             currentStorageState: row.currentStorageState,
             currentStorageStateWasOmitted:
@@ -1006,17 +1117,27 @@ export async function ensureExternalSessionLink(params: Readonly<{
               agentId: params.agentId,
               remoteSessionId,
             },
-          })
-        ),
+          });
+          if (hostedIdentityProof.state === 'conflict') {
+            throw new ExternalSessionProviderFailureError({
+              code: 'conflict',
+              message: hostedIdentityProof.error,
+              operation: 'externalSession.lookupByTags',
+            });
+          }
+          return hostedIdentityProof.state === 'matched';
+        },
       })
     : indexedExistingSession;
   if (shouldScanLegacyMetadata) {
     for (const legacyLookup of lookupTags.slice(1)) {
-      if (legacyLookup.kind === 'codex-connected-service-predecessor') continue;
+      if (legacyLookup.kind === 'connected-service-group-predecessor') continue;
       if (existingSession) break;
       existingSession = await findExistingSessionIdByTag({
         credentials: params.credentials,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
         tag: legacyLookup.tag,
+        ...(params.signal ? { signal: params.signal } : {}),
         metadataMatches: (metadata) => metadataProvesExternalSessionIdentity(metadata, {
           machineId: params.machineId,
           agentId: params.agentId,
@@ -1033,21 +1154,22 @@ export async function ensureExternalSessionLink(params: Readonly<{
       || indexedAbsenceNeedsCodexGroupRecovery
     )
     && !existingSession
-    && params.agentId === 'codex'
     && source.kind === 'codexHome'
   ) {
     const predecessor = lookupTags.find(
-      (lookup) => lookup.kind === 'codex-connected-service-predecessor',
+      (lookup) => lookup.kind === 'connected-service-group-predecessor',
     );
     if (predecessor) {
       existingSession = await findExistingSessionIdByTag({
         credentials: params.credentials,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
         tag: predecessor.tag,
-        metadataMatches: (metadata) => metadataProvesCodexGroup(
+        ...(params.signal ? { signal: params.signal } : {}),
+        metadataMatches: (metadata) => metadataProvesConnectedServiceGroup(
           metadata,
           predecessor.expectedConnectedServiceGroupId,
         ),
-        metadataIdentityMatches: (metadata) => metadataProvesCodexExternalSessionGroupIdentity(metadata, {
+        metadataIdentityMatches: (metadata) => metadataProvesExternalSessionGroupIdentity(metadata, {
           machineId: params.machineId,
           remoteSessionId,
           groupId: predecessor.expectedConnectedServiceGroupId,
@@ -1075,9 +1197,8 @@ export async function ensureExternalSessionLink(params: Readonly<{
     return { sessionId: existingSession.sessionId, created: false, tag };
   }
 
-  if (
-    existingSession
-    && metadataProvesHostedExternalSessionIdentity({
+  if (existingSession) {
+    const hostedIdentityProof = resolveHostedExternalSessionIdentityProof({
       metadata: existingSession.metadata,
       currentStorageState: existingSession.currentStorageState,
       currentStorageStateWasOmitted:
@@ -1087,12 +1208,20 @@ export async function ensureExternalSessionLink(params: Readonly<{
         agentId: params.agentId,
         remoteSessionId,
       },
-    })
-  ) {
-    // Hosted sessions already own both the Happier session and native Agent
-    // transcript. Linking must reuse that owner without changing storage or
-    // writing a second external-session identity over it.
-    return { sessionId: existingSession.sessionId, created: false, tag };
+    });
+    if (hostedIdentityProof.state === 'conflict') {
+      throw new ExternalSessionProviderFailureError({
+        code: 'conflict',
+        message: hostedIdentityProof.error,
+        operation: 'externalSession.lookupByTags',
+      });
+    }
+    if (hostedIdentityProof.state === 'matched') {
+      // Hosted sessions already own both the Happier session and native Agent
+      // transcript. Linking must reuse that owner without changing storage or
+      // writing a second external-session identity over it.
+      return { sessionId: existingSession.sessionId, created: false, tag };
+    }
   }
 
   const metadata = buildExternalSessionMetadata({
@@ -1114,8 +1243,18 @@ export async function ensureExternalSessionLink(params: Readonly<{
   });
 
   if (existingSession) {
+    const expectedCurrentLinkResolution =
+      resolveLinkedExternalSessionMetadataV1(existingSession.metadata);
+    if (!expectedCurrentLinkResolution.ok) {
+      throw new ExternalSessionProviderFailureError({
+        code: 'conflict',
+        message: expectedCurrentLinkResolution.error,
+        operation: 'externalSession.refreshExisting',
+      });
+    }
     await refreshExistingExternalSessionMetadataIfNeeded({
       credentials: params.credentials,
+      accountEncryptionCurrentness,
       sessionId: existingSession.sessionId,
       tag,
       machineId: params.machineId,
@@ -1131,6 +1270,8 @@ export async function ensureExternalSessionLink(params: Readonly<{
       connectedServiceRuntimeSnapshot,
       titleHint: params.titleHint,
       directoryHint: params.directoryHint,
+      resolveSourceKey: sourceKeyOwner.resolveSourceKey,
+      expectedCurrentLink: expectedCurrentLinkResolution.linkedSession,
       ...(params.shouldCommit
         ? { shouldCommit: params.shouldCommit }
         : {}),
@@ -1146,6 +1287,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
     }
     await getOrCreateSessionByTag({
       credentials: params.credentials,
+      accountEncryptionCurrentness,
       tag: existingSession.persistedTag,
       metadata,
       agentState: null,
@@ -1159,6 +1301,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
 
   const { session, created } = await getOrCreateSessionByTag({
     credentials: params.credentials,
+    accountEncryptionCurrentness,
     tag,
     metadata,
     agentState: null,

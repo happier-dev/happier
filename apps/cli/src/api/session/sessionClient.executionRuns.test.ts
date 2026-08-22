@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -13,6 +14,8 @@ const sessionSocketStubState = vi.hoisted(() => ({
   userSocketStub: null as any,
   executionRunHandlerContext: null as any,
   createExecutionRunRuntimeMock: vi.fn(),
+  fetchSessionByIdCompatMock: vi.fn(),
+  importHistoricalSessionTranscriptMock: vi.fn(),
   executionRunServiceMocks: {
     startExecutionRun: vi.fn(),
     listExecutionRuns: vi.fn(),
@@ -84,6 +87,13 @@ vi.mock('@/session/services/executionRuns', () => ({
   waitForExecutionRun: (...args: unknown[]) => sessionSocketStubState.executionRunServiceMocks.waitForExecutionRun(...args),
 }));
 
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
+  fetchSessionByIdCompat: (...args: unknown[]) =>
+    sessionSocketStubState.fetchSessionByIdCompatMock(...args),
+  importHistoricalSessionTranscript: (...args: unknown[]) =>
+    sessionSocketStubState.importHistoricalSessionTranscriptMock(...args),
+}));
+
 vi.mock('@/settings/accountSettings/activeAccountSettingsSnapshot', () => ({
   getActiveAccountSettingsSnapshot: () => null,
 }));
@@ -96,6 +106,12 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     sessionSocketStubState.userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
     sessionSocketStubState.executionRunHandlerContext = null;
     sessionSocketStubState.createExecutionRunRuntimeMock.mockReset();
+    sessionSocketStubState.fetchSessionByIdCompatMock.mockReset();
+    sessionSocketStubState.importHistoricalSessionTranscriptMock.mockReset();
+    sessionSocketStubState.importHistoricalSessionTranscriptMock.mockResolvedValue({
+      imported: 2,
+      cursor: '2',
+    });
     sessionSocketStubState.createExecutionRunRuntimeMock.mockReturnValue({
       readResumeSupport: vi.fn(async () => false),
       provisionSession: vi.fn(async () => ({ sessionId: 'run-session-1' })),
@@ -116,6 +132,13 @@ describe('ApiSessionClient execution-run backend wiring', () => {
 
   it('exposes the canonical permission request store provider to execution-run handlers', async () => {
     let requestStore: unknown = null;
+    let resolveAdmission!: (result: Readonly<{ persisted: boolean; delivered: boolean }>) => void;
+    const enqueueAgentMessageCommitted = vi.fn(() => new Promise<Readonly<{
+      persisted: boolean;
+      delivered: boolean;
+    }>>((resolve) => {
+      resolveAdmission = resolve;
+    }));
 
     registerSessionClientRuntimeHandlers({
       rpcHandlerManager: new RpcHandlerManager({
@@ -131,13 +154,12 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sessionId: 's1',
       getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
       enqueueSessionUserMessage: vi.fn(),
-      sendUserTextMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendUserTextMessageCommitted: vi.fn(async () => {}),
+      enqueueUserTextMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
       enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
+      enqueueAgentMessageCommitted,
       sendAgentMessageEphemeral: vi.fn(),
       getTranscriptQueryContext: () => ({
+        encryptionMode: 'e2ee' as const,
         encryptionKey: new Uint8Array(32),
         encryptionVariant: 'dataKey',
       }),
@@ -157,6 +179,81 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     };
 
     expect(getPermissionRequestStore()).toBe(requestStore);
+
+    const publication = sessionSocketStubState.executionRunHandlerContext.sendAcp(
+      'codex',
+      { type: 'message', message: 'durable execution output' },
+    );
+    let publicationSettled = false;
+    void Promise.resolve(publication).then(() => {
+      publicationSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(publicationSettled).toBe(false);
+    expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
+      'codex',
+      { type: 'message', message: 'durable execution output' },
+      expect.objectContaining({
+        localId: expect.any(String),
+        provenance: { kind: 'non_dependent', source: 'external' },
+      }),
+    );
+
+    resolveAdmission({ persisted: true, delivered: false });
+    await publication;
+    expect(publicationSettled).toBe(true);
+
+    enqueueAgentMessageCommitted.mockResolvedValueOnce({ persisted: false, delivered: false });
+    await expect(sessionSocketStubState.executionRunHandlerContext.sendAcp(
+      'codex',
+      { type: 'message', message: 'closed outbox output' },
+    )).rejects.toThrow('durable custody');
+  });
+
+  it('routes the runtime transcript.import RPC through one historical batch request', async () => {
+    const rpcHandlerManager = new RpcHandlerManager({
+      scopePrefix: 's1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'dataKey',
+      encryptionMode: 'plain',
+      logger: () => undefined,
+    });
+    const items = [
+      { id: 'history-1', content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'first' } } } },
+      { id: 'history-2', content: { t: 'encrypted', c: 'ciphertext' } },
+    ] as const;
+
+    registerSessionClientRuntimeHandlers({
+      rpcHandlerManager,
+      token: 'token-1',
+      metadataPath: '/tmp/project',
+      metadata: createTestMetadata({ path: '/tmp/project' }),
+      sessionId: 's1',
+      getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
+      enqueueSessionUserMessage: vi.fn(),
+      enqueueUserTextMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
+      enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
+      sendAgentMessageEphemeral: vi.fn(),
+      getTranscriptQueryContext: () => ({ encryptionMode: 'plain' as const }),
+      persistVoiceAgentRunMetadataFromPublicRun: vi.fn(),
+      socketEmitExecutionRunUpdated: vi.fn(),
+    });
+
+    await expect(rpcHandlerManager.invokeLocal(RPC_METHODS.TRANSCRIPT_IMPORT, {
+      sessionId: 's1',
+      items,
+    })).resolves.toMatchObject({ ok: true, imported: 2, cursor: '2' });
+    expect(sessionSocketStubState.importHistoricalSessionTranscriptMock).toHaveBeenCalledTimes(1);
+    expect(sessionSocketStubState.importHistoricalSessionTranscriptMock).toHaveBeenCalledWith({
+      token: 'token-1',
+      sessionId: 's1',
+      items: [
+        expect.objectContaining({ id: 'history-1', content: items[0].content }),
+        expect.objectContaining({ id: 'history-2', content: items[1].content }),
+      ],
+    });
   });
 
   it('passes simulator preview routes into execution-run handlers when the session runtime owns them', async () => {
@@ -186,13 +283,12 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sessionId: 's1',
       getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
       enqueueSessionUserMessage: vi.fn(),
-      sendUserTextMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendUserTextMessageCommitted: vi.fn(async () => {}),
+      enqueueUserTextMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
       enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageEphemeral: vi.fn(),
       getTranscriptQueryContext: () => ({
+        encryptionMode: 'e2ee' as const,
         encryptionKey: new Uint8Array(32),
         encryptionVariant: 'dataKey',
       }),
@@ -235,13 +331,12 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sessionId: 's1',
       getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
       enqueueSessionUserMessage: vi.fn(),
-      sendUserTextMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendUserTextMessageCommitted: vi.fn(async () => {}),
+      enqueueUserTextMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
       enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageEphemeral: vi.fn(),
       getTranscriptQueryContext: () => ({
+        encryptionMode: 'e2ee' as const,
         encryptionKey: new Uint8Array(32),
         encryptionVariant: 'dataKey',
       }),
@@ -277,13 +372,12 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sessionId: 's1',
       getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
       enqueueSessionUserMessage: vi.fn(),
-      sendUserTextMessage: vi.fn(),
-      sendAgentMessage: vi.fn(),
-      sendUserTextMessageCommitted: vi.fn(async () => {}),
+      enqueueUserTextMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
+      enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
       enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageEphemeral: vi.fn(),
       getTranscriptQueryContext: () => ({
+        encryptionMode: 'e2ee' as const,
         encryptionKey: new Uint8Array(32),
         encryptionVariant: 'dataKey' as const,
       }),
@@ -317,6 +411,26 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     );
 
     expect(sessionSocketStubState.executionRunHandlerContext?.parentProvider).toBe('codex');
+
+    await client.close();
+  });
+
+  it('preserves an installed external Agent runtime descriptor as the execution-run parent provider', async () => {
+    const metadata = createTestMetadata({
+      path: '/tmp/project',
+      flavor: undefined,
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'acme.agent',
+        agent: {},
+      },
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1', metadata }),
+    );
+
+    expect(sessionSocketStubState.executionRunHandlerContext?.parentProvider).toBe('acme.agent');
 
     await client.close();
   });
@@ -360,60 +474,42 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sessionId: 's1',
       mode: 'plain',
       request: { intent: 'review' },
-      ctx: expect.objectContaining({
-        encryptionVariant: 'dataKey',
-        encryptionKey: expect.any(Uint8Array),
-      }),
+      ctx: null,
     }));
     expect(sessionSocketStubState.executionRunServiceMocks.listExecutionRuns).toHaveBeenCalledWith(expect.objectContaining({
       token: 'tok',
       sessionId: 's1',
       mode: 'plain',
       request: { status: 'running' },
-      ctx: expect.objectContaining({
-        encryptionVariant: 'dataKey',
-        encryptionKey: expect.any(Uint8Array),
-      }),
+      ctx: null,
     }));
     expect(sessionSocketStubState.executionRunServiceMocks.getExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
       token: 'tok',
       sessionId: 's1',
       mode: 'plain',
       request: { runId: 'run_1' },
-      ctx: expect.objectContaining({
-        encryptionVariant: 'dataKey',
-        encryptionKey: expect.any(Uint8Array),
-      }),
+      ctx: null,
     }));
     expect(sessionSocketStubState.executionRunServiceMocks.sendExecutionRunMessage).toHaveBeenCalledWith(expect.objectContaining({
       token: 'tok',
       sessionId: 's1',
       mode: 'plain',
       request: { runId: 'run_1', message: 'hello' },
-      ctx: expect.objectContaining({
-        encryptionVariant: 'dataKey',
-        encryptionKey: expect.any(Uint8Array),
-      }),
+      ctx: null,
     }));
     expect(sessionSocketStubState.executionRunServiceMocks.stopExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
       token: 'tok',
       sessionId: 's1',
       mode: 'plain',
       request: { runId: 'run_1' },
-      ctx: expect.objectContaining({
-        encryptionVariant: 'dataKey',
-        encryptionKey: expect.any(Uint8Array),
-      }),
+      ctx: null,
     }));
     expect(sessionSocketStubState.executionRunServiceMocks.executeExecutionRunAction).toHaveBeenCalledWith(expect.objectContaining({
       token: 'tok',
       sessionId: 's1',
       mode: 'plain',
       request: { runId: 'run_1', actionId: 'review.apply' },
-      ctx: expect.objectContaining({
-        encryptionVariant: 'dataKey',
-        encryptionKey: expect.any(Uint8Array),
-      }),
+      ctx: null,
     }));
     expect(sessionSocketStubState.executionRunServiceMocks.waitForExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
       token: 'tok',
@@ -422,10 +518,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       runId: 'run_1',
       timeoutMs: 2_000,
       pollIntervalMs: 10,
-      ctx: expect.objectContaining({
-        encryptionVariant: 'dataKey',
-        encryptionKey: expect.any(Uint8Array),
-      }),
+      ctx: null,
     }));
     expect(sessionSocketStubState.executionRunServiceMocks.waitForExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
       token: 'tok',
@@ -434,10 +527,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       runId: 'run_2',
       timeoutMs: null,
       pollIntervalMs: 10,
-      ctx: expect.objectContaining({
-        encryptionVariant: 'dataKey',
-        encryptionKey: expect.any(Uint8Array),
-      }),
+      ctx: null,
     }));
 
     await client.close();
@@ -500,6 +590,14 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     });
     let persistedMetadata = session.metadata;
     let persistedMetadataVersion = session.metadataVersion;
+    sessionSocketStubState.fetchSessionByIdCompatMock.mockResolvedValue({
+      ...session,
+      metadataLayoutVersion: 0,
+      metadata: JSON.stringify(session.metadata ?? {}),
+      agentState: null,
+      encryptionMode: 'plain',
+      dataEncryptionKey: null,
+    });
 
     sessionSocketStubState.sessionSocketStub = (await import('@/testkit/backends/apiSessionSocketHarness')).createApiSessionSocketStub({
       id: 'session-socket',
@@ -519,7 +617,9 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       },
     });
 
-    const client = new ApiSessionClient('tok', session);
+    const client = new ApiSessionClient('tok', session, {
+      credentials: { token: 'tok', encryption: null },
+    });
     const callback = sessionSocketStubState.executionRunHandlerContext.onExecutionRunPublicStateUpdated as
       | ((run: Record<string, unknown>) => void)
       | undefined;

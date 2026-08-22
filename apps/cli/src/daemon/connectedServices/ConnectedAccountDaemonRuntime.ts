@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { PluginContributionRef } from '@happier-dev/plugin-sdk/runtime';
+import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
 import type {
     ConnectedAccountAttemptResponse,
@@ -192,7 +192,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     input.service,
                 );
                 if (!contribution) {
-                    throw new Error('Connected-account runtime registry is unavailable');
+                    throw new Error('Connected-account service runtime is unavailable');
                 }
                 const descriptor = contribution.descriptor.authentication.modes
                     .find((candidate) => candidate.id === input.modeId);
@@ -243,6 +243,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                 return await invoker.invokeAuthentication({
                     ...input,
                     isConfigurationCurrent: configuration.isCurrent,
+                    configurationRevocationSignal: configuration.currentnessSignal,
                 });
             } finally {
                 await registryLease.release();

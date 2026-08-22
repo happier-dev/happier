@@ -4,13 +4,49 @@ import type { SendAgentSessionMediaCommittedRequest } from './client/transcript/
 import type { EphemeralSendResult } from './client/transcript/ephemeralSendOutcome';
 import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
+export type CommittedTranscriptAdmission = Readonly<{
+  signal: AbortSignal;
+  deadlineAtMs?: number;
+}>;
+
+export class CommittedTranscriptAdmissionExpiredError extends Error {
+  readonly code = 'committed_transcript_admission_expired';
+
+  constructor() {
+    super('Committed transcript admission expired');
+    this.name = 'CommittedTranscriptAdmissionExpiredError';
+  }
+}
+
+export function assertCommittedTranscriptAdmission(
+  admission: CommittedTranscriptAdmission | undefined,
+): void {
+  if (
+    !admission
+    || (
+      !admission.signal.aborted
+      && (
+        admission.deadlineAtMs === undefined
+        || Date.now() < admission.deadlineAtMs
+      )
+    )
+  ) {
+    return;
+  }
+  throw new CommittedTranscriptAdmissionExpiredError();
+}
+
+export type CommittedTranscriptMessageOptions = Readonly<{
+  localId: string;
+  meta?: Record<string, unknown>;
+  createdAt?: number;
+  updatedAt?: number;
+  provenance: SessionTranscriptObservationProvenanceV1;
+  admission?: CommittedTranscriptAdmission;
+}>;
+
 export type TranscriptSessionPort = Readonly<{
   turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
-  sendAgentMessage?: (
-    provider: ACPProvider,
-    body: ACPMessageData,
-    opts?: { localId?: string; meta?: Record<string, unknown> },
-  ) => void;
   sendAgentMessageEphemeral?: (
     provider: ACPProvider,
     body: ACPMessageData,
@@ -50,13 +86,8 @@ export type TranscriptSessionPort = Readonly<{
   enqueueAgentMessageCommitted?: (
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
+    opts: CommittedTranscriptMessageOptions,
   ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
-  sendAgentMessageCommitted: (
-    provider: ACPProvider,
-    body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown> },
-  ) => Promise<void>;
   sendAgentSessionMediaCommitted?: (
     provider: ACPProvider,
     request: SendAgentSessionMediaCommittedRequest,

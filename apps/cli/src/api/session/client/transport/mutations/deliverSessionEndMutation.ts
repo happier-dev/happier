@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
@@ -109,6 +110,7 @@ async function fetchSessionEndProof(params: Readonly<{
     sessionId: string;
 }>): Promise<boolean> {
     const headers = {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'X-Happier-Request-Purpose': 'session-detail:legacy-compat-proof',
     };
@@ -145,6 +147,7 @@ export async function deliverSessionEndMutation(params: Readonly<{
                 { time: params.mutation.observedAt },
                 {
                     headers: {
+                        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                         Authorization: `Bearer ${params.token}`,
                         'Content-Type': 'application/json',
                     },
@@ -160,9 +163,13 @@ export async function deliverSessionEndMutation(params: Readonly<{
         } catch (error) {
             if (isAuthenticationError(error)) throw error;
             if (isUnsupportedHttpError(error)) {
+                // Released v0.2.1 accepts this unacknowledged compatibility event only
+                // within a bounded wall-clock window. Keep the durable observation
+                // immutable, but timestamp each legacy delivery attempt so it remains
+                // admissible; refreshed server state still supplies the clearing proof.
                 const payload = {
                     sid: params.mutation.sessionId,
-                    time: params.mutation.observedAt,
+                    time: Date.now(),
                     ...(params.mutation.exit !== undefined ? { exit: params.mutation.exit } : {}),
                 };
                 if (params.socket?.connected === true) {

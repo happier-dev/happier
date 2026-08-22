@@ -14,6 +14,7 @@ import {
     type ConnectedServiceAuthGroupGenerationApplyResult,
     type ConnectedServiceAuthGroupSwitchEvent,
 } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import type { ConnectedServiceAuthGroupQuotaProbeResult } from '../accountGroups/quotas/preTurnQuotaProbe';
 import {
     buildConnectedServiceAuthGroupSwitchState,
     buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState,
@@ -27,6 +28,7 @@ import {
     buildConnectedServiceAuthGroupObservedFailureMemberState,
     resolveConnectedServiceAuthGroupFailureRetryAtMs,
 } from '../accountGroups/runtimeState/buildConnectedServiceAuthGroupObservedFailureMemberState';
+import type { ConnectedServiceAuthGroupCandidatePreparationResult } from '../refresh/ConnectedServiceRefreshCoordinator';
 
 type AuthGroupApi = Readonly<{
     getConnectedServiceAuthGroup(input: Readonly<{
@@ -162,7 +164,13 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
         groupId: string;
         profileIds: ReadonlyArray<string>;
         reason: string;
-    }>) => Promise<void>;
+    }>) => Promise<ConnectedServiceAuthGroupQuotaProbeResult | void>;
+    prepareCandidateForSwitch?: (input: Readonly<{
+        serviceId: ConnectedServiceId;
+        groupId: string;
+        profileId: string;
+        reason: string;
+    }>) => Promise<ConnectedServiceAuthGroupCandidatePreparationResult>;
     emitEvent?: (event: ConnectedServiceAuthGroupSwitchEvent) => void;
 }>): ConnectedServiceAuthGroupSwitchCoordinator {
     const buildSwitchState = (group: ConnectedServiceAuthGroupV1) => {
@@ -243,6 +251,20 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
             rememberGroupLabel(group);
             return buildSwitchState(group);
         },
+        ...(params.prepareCandidateForSwitch
+            ? {
+                prepareCandidateForSwitch: async (input) => (
+                    await params.prepareCandidateForSwitch?.({
+                        serviceId: ConnectedServiceIdSchema.parse(
+                            input.serviceId,
+                        ),
+                        groupId: input.groupId,
+                        profileId: input.profileId,
+                        reason: input.reason,
+                    }) ?? { status: 'ready' as const }
+                ),
+            }
+            : {}),
         ...(params.preflightConnectedServiceAuthGeneration ? {
             preflightApplyGeneration: async (input) => {
                 const serviceId = ConnectedServiceIdSchema.parse(input.serviceId);
@@ -335,7 +357,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
                 // The quota coordinator already owns bounded provider fetches, leases, and
                 // credential refresh. Returning from a shorter outer race detached a still-
                 // mutating probe from the selection which depended on it.
-                await params.probeQuotaSnapshotsForGroup?.({
+                return await params.probeQuotaSnapshotsForGroup?.({
                     serviceId,
                     groupId: input.groupId,
                     profileIds: input.profileIds,

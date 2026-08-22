@@ -7,7 +7,7 @@
  *
  * The runner is deliberately thin: model residency / LRU / readiness bookkeeping stays in
  * the daemon-side manager. The child just executes engine calls and forwards results,
- * partials (streaming STT / chunked TTS), readiness snapshots, abort, and errors.
+ * readiness snapshots, abort, and errors.
  *
  * The engine boundary is injected so the dispatch loop is testable without native models.
  */
@@ -90,6 +90,43 @@ export function createVoiceInferenceWorkerRunner(
     }
   }
 
+  function sendSynthesizeResult(
+    id: string,
+    synthesized: Awaited<ReturnType<VoiceInferenceRuntime['synthesizeTts']>>,
+  ): void {
+    // The runtime is terminal-buffered today. Check the base64 payload length before allocating
+    // it: there is no partial-result producer on this IPC wire, so an over-ceiling result must
+    // settle as a typed error rather than be dropped and force the daemon into a timeout/restart.
+    const resultWithoutAudio = {
+      kind: 'result' as const,
+      id,
+      result: {
+        kind: 'synthesize' as const,
+        output: synthesized.output,
+        bytesBase64: '',
+        name: synthesized.name ?? null,
+      },
+    };
+    const encodedAudioBytes = Math.ceil(synthesized.bytes.byteLength / 3) * 4;
+    const resultBytes = Buffer.byteLength(JSON.stringify(resultWithoutAudio), 'utf8') + encodedAudioBytes;
+    if (resultBytes > maxFrameBytes) {
+      send({
+        kind: 'error',
+        id,
+        code: 'output_too_large',
+        message: 'voice_inference_tts_output_too_large',
+      });
+      return;
+    }
+    send({
+      ...resultWithoutAudio,
+      result: {
+        ...resultWithoutAudio.result,
+        bytesBase64: Buffer.from(synthesized.bytes).toString('base64'),
+      },
+    });
+  }
+
   async function resolveRuntime(): Promise<VoiceInferenceRuntime> {
     if (cachedRuntime) {
       return cachedRuntime;
@@ -111,9 +148,8 @@ export function createVoiceInferenceWorkerRunner(
   function emitSnapshot(
     packId: string,
     runtimeState: DaemonVoiceInferenceModelRuntimeState,
-    residentMemoryBytes: number | null,
   ): void {
-    send({ kind: 'snapshot', packId, runtimeState, residentMemoryBytes });
+    send({ kind: 'snapshot', packId, runtimeState });
   }
 
   async function cleanupStreamingSession(
@@ -156,7 +192,7 @@ export function createVoiceInferenceWorkerRunner(
       }
       switch (frame.kind) {
         case 'warm': {
-          emitSnapshot(frame.packId, 'warming', null);
+          emitSnapshot(frame.packId, 'warming');
           await runtime.warmModel?.({
             packId: frame.packId,
             packDir: frame.packDir,
@@ -165,7 +201,7 @@ export function createVoiceInferenceWorkerRunner(
             supportArtifacts: frame.supportArtifacts,
             signal: abortController.signal,
           });
-          emitSnapshot(frame.packId, 'ready', null);
+          emitSnapshot(frame.packId, 'ready');
           send({ kind: 'result', id: frame.id, result: { kind: 'warm' } });
           return;
         }
@@ -190,7 +226,7 @@ export function createVoiceInferenceWorkerRunner(
             supportArtifacts: frame.supportArtifacts,
             signal: abortController.signal,
           });
-          emitSnapshot(frame.packId, 'evicted', null);
+          emitSnapshot(frame.packId, 'evicted');
           send({ kind: 'result', id: frame.id, result: { kind: 'release' } });
           return;
         }
@@ -208,16 +244,7 @@ export function createVoiceInferenceWorkerRunner(
             output: frame.output,
             signal: abortController.signal,
           });
-          send({
-            kind: 'result',
-            id: frame.id,
-            result: {
-              kind: 'synthesize',
-              output: synthesized.output,
-              bytesBase64: Buffer.from(synthesized.bytes).toString('base64'),
-              name: synthesized.name ?? null,
-            },
-          });
+          sendSynthesizeResult(frame.id, synthesized);
           return;
         }
         case 'transcribe': {

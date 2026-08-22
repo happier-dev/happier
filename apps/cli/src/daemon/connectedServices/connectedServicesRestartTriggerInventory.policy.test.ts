@@ -128,9 +128,6 @@ const TRIGGER_PATTERNS: ReadonlyArray<TriggerPattern> = [
  * `switchSessionConnectedServiceAuth.ts` both DEFINES
  * `applyConnectedServiceAuthGenerationToTrackedSession` and re-invokes it for its
  * own retry; that internal call is part of the FSM, not a daemon trigger.
- * `createConnectedServicesAuthUpdatedRestartHandler.ts` declares
- * `requestRestartSignal` as a dependency TYPE; its single real call site keeps the
- * call-shape (`requestRestartSignal(` with an open paren and no `:`).
  */
 const PRIMITIVE_DEFINITION_BASENAMES: ReadonlySet<string> = new Set([
   'requestConnectedServiceSessionRestartSignal.ts',

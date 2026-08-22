@@ -7,6 +7,9 @@ import {
   ExternalSessionAttachResponseSchema,
   ExternalSessionFollowPolicySetResponseSchema,
   ExternalSessionLinkEnsureResponseSchema,
+  ExternalSessionMaterializeStartInputV1Schema,
+  ExternalSessionOperationActionResponseV1Schema,
+  ExternalSessionOperationTransportReferenceV1Schema,
   ExternalSessionStatusGetResponseSchema,
   ExternalSessionTakeoverPersistResponseSchema,
   ExternalSessionTakeoverResponseSchema,
@@ -22,7 +25,7 @@ import {
 } from '@/session/external/providerOps';
 import type {
   AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { ExternalSessionHostOperationSet } from '@/session/external/hostOperationOwner';
 import type {
@@ -33,6 +36,7 @@ const {
   resolveExecutionSurfacesMock,
   observationProjectionParams,
   authoritativeRuntimeRegistryLeaseOverride,
+  resolveTranscriptRefreshBindingMock,
   writeFollowStatusMock,
 } = vi.hoisted(() => {
   const resolveExecutionSurfacesMock = vi.fn();
@@ -47,6 +51,7 @@ const {
         release(): Promise<void>;
       }>,
     },
+    resolveTranscriptRefreshBindingMock: vi.fn(),
     writeFollowStatusMock: vi.fn(async (_input: unknown) => {}),
   };
 });
@@ -72,17 +77,19 @@ vi.mock('@/plugins/runtime/reload/runtimeLease', async (importOriginal) => {
 
 vi.mock('@/persistence', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/persistence')>();
+  const resolveFixtureCredentials = () => authoritativeRuntimeRegistryLeaseOverride.current
+    ? Promise.resolve({
+        token: 'fixture-token',
+        encryption: {
+          type: 'legacy' as const,
+          secret: new Uint8Array(),
+        },
+      })
+    : null;
   return {
     ...actual,
-    readCredentials: () => authoritativeRuntimeRegistryLeaseOverride.current
-      ? Promise.resolve({
-          token: 'fixture-token',
-          encryption: {
-            type: 'legacy' as const,
-            secret: new Uint8Array(),
-          },
-        })
-      : actual.readCredentials(),
+    readCredentials: () => resolveFixtureCredentials() ?? actual.readCredentials(),
+    readStoredCredentials: () => resolveFixtureCredentials() ?? actual.readStoredCredentials(),
   };
 });
 
@@ -105,7 +112,64 @@ vi.mock('@/api/session/external/backgroundFollow/externalSessionBackgroundFollow
   writeExternalSessionFollowStatus: (input: unknown) => writeFollowStatusMock(input),
 }));
 
+vi.mock('@/api/session/external/secureRefresh/resolveExternalSessionTranscriptRefreshBinding', () => ({
+  resolveExternalSessionTranscriptRefreshBinding: (...args: unknown[]) =>
+    resolveTranscriptRefreshBindingMock(...args),
+}));
+
+// This host-composition test does not invoke bundled SCM behavior. Treat the
+// concurrently edited plugin manifest as the package boundary it is, so its
+// unrelated loading error cannot prevent this lifecycle contract from running.
+vi.mock('@happier-dev/plugins-scm-azure-devops/manifest', () => ({
+  PLUGIN_MANIFEST: {},
+}));
+
 import { registerMachineExternalSessionsRpcHandlers } from './rpcHandlers.externalSessions';
+
+const MATERIALIZE_START_TRANSPORT_INPUT = ExternalSessionMaterializeStartInputV1Schema.parse({
+  request: {
+    v: 1,
+    idempotencyKey: 'materialize-1',
+    sessionId: 'linked-session-1',
+    plan: 'materialize',
+    targetStorageMode: 'external-linked',
+    targetRuntimeMode: null,
+  },
+});
+
+const OPERATION_REFERENCE_TRANSPORT_INPUT = ExternalSessionOperationTransportReferenceV1Schema.parse({
+  sessionId: 'linked-session-1',
+  operationId: 'operation-1',
+  revision: 0,
+});
+
+const TAKEOVER_START_TRANSPORT_INPUT = {
+  request: {
+    v: 1,
+    idempotencyKey: 'takeover-1',
+    sessionId: 'linked-session-1',
+    source: {
+      machineId: 'machine-1',
+      remoteSessionId: 'remote-session-1',
+      qualifiedIdentity: {
+        v: 1,
+        agent: {
+          pluginId: 'acme.external',
+          localId: 'agent',
+        },
+        source: {
+          kind: 'source',
+          contractVersion: 1,
+        },
+      },
+      linkGeneration: 'link-generation-1',
+    },
+    plan: 'takeover',
+    targetStorageMode: 'persisted',
+    targetDirectory: '/local/selected/workspace',
+    targetRuntimeMode: 'terminal',
+  },
+};
 
 function createRpcHandlerManager(): { handlers: Map<string, (params: unknown) => Promise<unknown>>; registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => void } {
   const handlers = new Map<string, (params: unknown) => Promise<unknown>>();
@@ -122,18 +186,7 @@ function createServerFeaturesSnapshot(
 ): CliServerFeaturesSnapshot {
   const features = FeaturesResponseSchema.parse({
     features: {},
-    capabilities: {
-      compatibility: {
-        v: 1,
-        sessionSync: {
-          v: 1,
-          enforcement: 'observe',
-          minimumSessionSyncProtocolVersion: 1,
-          currentSessionSyncProtocolVersion: 2,
-          declarationTransport: 'headers-v1',
-        },
-      },
-    },
+    capabilities: {},
   });
   return {
     status: 'ready',
@@ -143,10 +196,10 @@ function createServerFeaturesSnapshot(
       ...features,
       capabilities: {
         ...features.capabilities,
-        compatibility: {
-          ...features.capabilities.compatibility!,
-          externalSessionImport: {
-            currentPublicationFenceVersion,
+        session: {
+          ...features.capabilities.session,
+          externalImport: {
+            publicationFenceVersion: currentPublicationFenceVersion,
           },
         },
       },
@@ -159,8 +212,67 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     resolveExecutionSurfacesMock.mockReset();
     observationProjectionParams.current = null;
     authoritativeRuntimeRegistryLeaseOverride.current = null;
+    resolveTranscriptRefreshBindingMock.mockReset();
     writeFollowStatusMock.mockReset();
     writeFollowStatusMock.mockResolvedValue(undefined);
+  });
+
+  it('injects daemon device-local custody into secure transcript read-after validation', async () => {
+    resolveTranscriptRefreshBindingMock.mockResolvedValue(null);
+    const deviceLocalSecretStorage = {
+      sealJson: vi.fn(() => 'sealed'),
+      openJson: vi.fn(() => null),
+      deriveOpaqueIdentity: vi.fn(() => 'a'.repeat(64)),
+    } as never;
+    const binding = {
+      v: 1 as const,
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      link: {
+        generation: 'link-1',
+        remoteSessionId: 'remote-1',
+      },
+      source: {
+        qualifiedIdentity: {
+          v: 1 as const,
+          agent: {
+            pluginId: 'happier.codex',
+            localId: 'codex',
+          },
+          source: {
+            kind: 'codexHome',
+            contractVersion: 1 as const,
+          },
+        },
+        generation: 'source-1',
+      },
+      contributionGeneration: 'plugin-1',
+      cursorIdentity: `external_session_cursor_binding_v1:${'a'.repeat(64)}`,
+    };
+    const cursor = 'happier_external_cursor_v1:Y3Vyc29yLTE';
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      deviceLocalSecretStorage,
+    });
+
+    const handler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER,
+    );
+    await expect(handler?.({
+      v: 1,
+      binding,
+      cursor,
+    })).resolves.toEqual({
+      v: 1,
+      binding,
+      result: { outcome: 'source_unavailable' },
+    });
+    expect(resolveTranscriptRefreshBindingMock).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      cursor,
+      deviceLocalSecretStorage,
+    });
   });
 
   it('installs and retires daemon-scoped host operations with machine RPC composition', async () => {
@@ -183,12 +295,113 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
 
     expect(installExternalSessionHostOperations).toHaveBeenCalledOnce();
     expect(capturedOperations).toMatchObject({
-      takeoverOperation: { execute: expect.any(Function) },
       followTargetOperation: { execute: expect.any(Function) },
       followOperation: { execute: expect.any(Function) },
     });
     await registration.dispose();
     expect(disposeInstallation).toHaveBeenCalledOnce();
+  });
+
+  it('continues composed daemon teardown after an earlier owner fails and returns a sanitized aggregate', async () => {
+    const rpcHandlerManager = createRpcHandlerManager();
+    const cleanupOrder: string[] = [];
+    let hostOperationsDisposed = false;
+    const detachPersistedTakeoverAdmissionOwner = vi.fn(() => {
+      cleanupOrder.push('persisted_takeover_admission_owner');
+      throw new Error('persisted-takeover-private-cleanup-failure');
+    });
+    const disposeInstallation = vi.fn(async () => {
+      cleanupOrder.push('host_operations');
+      await Promise.resolve();
+      hostOperationsDisposed = true;
+    });
+    const detachSessionArchivedStateChanges = vi.fn(() => {
+      cleanupOrder.push('session_archived_state_changes');
+      expect(hostOperationsDisposed).toBe(true);
+    });
+    const detachDemand = vi.fn(() => {
+      cleanupOrder.push('status_demand_binding');
+    });
+    const detachConnection = vi.fn(() => {
+      cleanupOrder.push('status_demand_connection');
+    });
+    const disposePassiveObservation = vi.fn(async () => {
+      cleanupOrder.push('passive_observation');
+    });
+    const releaseFollowLease = vi.fn(async () => {
+      cleanupOrder.push('follow_lease_manager');
+    });
+    const captured: {
+      followLeaseManager:
+        Parameters<typeof startExternalSessionPassiveObservation>[0]['followLeaseManager']
+        | null;
+    } = { followLeaseManager: null };
+    const registration = registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      executeExternalSessionHistoricalImportCommand: async () => ({
+        v: 1,
+        kind: 'error',
+        errorCode: 'upgrade_required',
+        message: 'not-used-by-cleanup-test',
+      }),
+      persistedTakeoverAdmissionWaiter: {} as never,
+      attachPersistedTakeoverAdmissionOwner: () => detachPersistedTakeoverAdmissionOwner,
+      installExternalSessionHostOperations: async () => ({ dispose: disposeInstallation }),
+      statusDemand: {
+        machineId: 'machine-1',
+        channel: {
+          onExternalSessionStatusDemand: () => detachDemand,
+          onConnectionStateChange: () => detachConnection,
+        },
+      },
+      startPassiveObservation: (input) => {
+        captured.followLeaseManager = input.followLeaseManager;
+        return {
+          ready: Promise.resolve(),
+          pause: async () => {},
+          resume: async () => {},
+          reconcileSession: async () => ({ status: 'settled' as const }),
+          releaseSession: async () => {},
+          dispose: disposePassiveObservation,
+        };
+      },
+      subscribeSessionArchivedStateChanges: () => detachSessionArchivedStateChanges,
+    });
+    const followLeaseManager = captured.followLeaseManager;
+    if (!followLeaseManager) throw new Error('Expected follow lease manager');
+
+    await followLeaseManager.setBackgroundFollowEnabled({
+      sessionId: 'session-1',
+      enabled: true,
+      acquireFollowLease: async () => ({ release: releaseFollowLease }),
+    });
+
+    const failure = await registration.dispose().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toHaveLength(1);
+    expect(String((failure as AggregateError).errors[0])).toContain(
+      'external_session_daemon_cleanup_failed:persisted_takeover_admission_owner',
+    );
+    expect(String(failure)).not.toContain('persisted-takeover-private-cleanup-failure');
+    expect(disposeInstallation).toHaveBeenCalledOnce();
+    expect(detachSessionArchivedStateChanges).toHaveBeenCalledOnce();
+    expect(detachDemand).toHaveBeenCalledOnce();
+    expect(detachConnection).toHaveBeenCalledOnce();
+    expect(disposePassiveObservation).toHaveBeenCalledOnce();
+    expect(releaseFollowLease).toHaveBeenCalledOnce();
+    expect(cleanupOrder).toEqual([
+      'persisted_takeover_admission_owner',
+      'host_operations',
+      'session_archived_state_changes',
+      'status_demand_binding',
+      'status_demand_connection',
+      'passive_observation',
+      'follow_lease_manager',
+    ]);
   });
 
   it('owns the status-demand channel subscription and detaches it with the projection lifecycle', async () => {
@@ -515,10 +728,11 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
             },
             plan: 'takeover',
             targetStorageMode: 'persisted',
+            targetDirectory: '/local/selected/workspace',
             targetRuntimeMode: 'terminal',
           },
         }
-      : {};
+      : MATERIALIZE_START_TRANSPORT_INPUT;
 
     await expect(rpcHandlerManager.handlers.get(method)!(input)).resolves.toMatchObject({
       ok: false,
@@ -552,7 +766,9 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       getServerFeaturesSnapshot: () => CliServerFeaturesSnapshot;
     });
 
-    await expect(rpcHandlerManager.handlers.get(method)!({})).resolves.toEqual(expected);
+    await expect(
+      rpcHandlerManager.handlers.get(method)!(OPERATION_REFERENCE_TRANSPORT_INPUT),
+    ).resolves.toEqual(expected);
     expect(actionExecutor.execute).toHaveBeenCalledOnce();
   });
 
@@ -604,7 +820,9 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     });
 
     await expect(
-      rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START)!({}),
+      rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START)!(
+        MATERIALIZE_START_TRANSPORT_INPUT,
+      ),
     ).resolves.toEqual(expected);
     expect(actionExecutor.execute).toHaveBeenCalledOnce();
   });
@@ -662,7 +880,6 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
                 nullish: true,
               },
             ],
-            passthrough: true,
           },
           key: {
             segments: [
@@ -930,7 +1147,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       ExternalSessionTranscriptReadAfterResponseSchema,
     ],
   ] as const)(
-    'returns a protocol-shaped %s precondition or source-validation error',
+    'returns a protocol-shaped %s precondition or source-validation outcome',
     async (method, input, expectedError, responseSchema) => {
       resolveExecutionSurfacesMock.mockRejectedValueOnce(
         Object.assign(new Error('Cannot find providerOps chunk'), { code: 'ERR_MODULE_NOT_FOUND' }),
@@ -945,19 +1162,36 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       const response = await handler!(input);
 
       const expectsAuthenticatedPersistedLink =
-        method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET;
-      expect(response).toEqual(expectsAuthenticatedPersistedLink
-        ? {
-            ok: false,
-            errorCode: 'agent_unavailable',
-            error: 'not_authenticated',
-          }
-        : {
-            ok: false,
-            errorCode: 'internal_error',
-            error: expectedError,
-          });
-      if (expectsAuthenticatedPersistedLink) {
+        method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH
+        || method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET;
+      const expectsPassiveUnknownStatus =
+        method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET;
+      expect(response).toEqual(
+        expectsAuthenticatedPersistedLink
+          ? {
+              ok: false,
+              errorCode: 'agent_unavailable',
+              error: 'not_authenticated',
+            }
+          : expectsPassiveUnknownStatus
+            ? {
+                ok: true,
+                machineOnline: true,
+                runnerActive: false,
+                activity: 'unknown',
+                canTakeOverDirect: false,
+                canTakeOverPersist: false,
+                canForceStop: false,
+                trustedPid: null,
+                externalAgent: null,
+              }
+            : {
+                ok: false,
+                errorCode: 'internal_error',
+                error: expectedError,
+              },
+      );
+      if (expectsAuthenticatedPersistedLink || expectsPassiveUnknownStatus) {
         expect(resolveExecutionSurfacesMock).not.toHaveBeenCalled();
       }
       expect(responseSchema.safeParse(response).success).toBe(true);
@@ -998,22 +1232,14 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     expect(ExternalSessionsCandidatesListResponseSchema.safeParse(response).success).toBe(true);
   });
 
-  it('routes canonical and safe legacy RPCs while retiring unphased legacy persisted takeover before domain execution', async () => {
+  it('routes canonical and safe legacy RPCs while retiring both unphased legacy takeovers before domain execution', async () => {
     const calls: Array<Readonly<{ actionId: string; input: unknown }>> = [];
     const actionExecutor: RpcActionExecutor = {
       execute: async (actionId, input) => {
         calls.push({ actionId, input });
         return {
           ok: true,
-          result: actionId === 'sessions.external.takeover'
-            ? {
-                ok: true,
-                sessionId: (input as { linkedSessionId?: string }).linkedSessionId ?? 'linked-session',
-                targetRuntimeMode: 'terminal',
-                storageMode: (input as { storageMode?: string }).storageMode ?? 'external-linked',
-                converted: (input as { storageMode?: string }).storageMode === 'persisted',
-              }
-            : { ok: true, candidates: [], nextCursor: null },
+          result: { ok: true, candidates: [], nextCursor: null },
         };
       },
     };
@@ -1048,7 +1274,11 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       machineId: 'machine-1',
       sessionId: 'linked-session-1',
       forceStop: true,
-    })).resolves.toEqual({ ok: true });
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'upgrade_required',
+    });
     await expect(takeoverPersistHandler!({
       machineId: 'machine-1',
       sessionId: 'linked-session-2',
@@ -1066,16 +1296,6 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
           agentId: 'codex',
           source: { kind: 'codexHome', home: 'user' },
           limit: 10,
-        },
-      },
-      {
-        actionId: 'sessions.external.takeover',
-        input: {
-          linkedSessionId: 'linked-session-1',
-          targetRuntimeMode: 'terminal',
-          storageMode: 'external-linked',
-          forceStop: true,
-          machineId: 'machine-1',
         },
       },
     ]);
@@ -1230,13 +1450,101 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     expect(ExternalSessionsCandidatesListResponseSchema.safeParse(response).success).toBe(true);
   });
 
-  it(
-    'maps thrown daemon.directSessions.takeover action failures to its legacy response envelope',
-    async () => {
+  it.each([
+    [
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START,
+      MATERIALIZE_START_TRANSPORT_INPUT,
+    ],
+    [
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START,
+      TAKEOVER_START_TRANSPORT_INPUT,
+    ],
+    [
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET,
+      OPERATION_REFERENCE_TRANSPORT_INPUT,
+    ],
+    [
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL,
+      OPERATION_REFERENCE_TRANSPORT_INPUT,
+    ],
+    [
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME,
+      OPERATION_REFERENCE_TRANSPORT_INPUT,
+    ],
+    [
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY,
+      OPERATION_REFERENCE_TRANSPORT_INPUT,
+    ],
+    [
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD,
+      OPERATION_REFERENCE_TRANSPORT_INPUT,
+    ],
+  ] as const)(
+    'maps a thrown durable Action failure at %s through the strict operation response binding',
+    async (method, input) => {
       const actionExecutor: RpcActionExecutor = {
         execute: async () => {
-          throw new Error('resolver exploded');
+          throw new Error('injected durable action failure');
         },
+      };
+      const rpcHandlerManager = createRpcHandlerManager();
+      registerMachineExternalSessionsRpcHandlers({
+        rpcHandlerManager: rpcHandlerManager as never,
+        actionExecutor,
+        getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(3),
+      } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
+        actionExecutor: RpcActionExecutor;
+        getServerFeaturesSnapshot: () => CliServerFeaturesSnapshot;
+      });
+
+      const response = await rpcHandlerManager.handlers.get(method)!(input);
+      expect(response).toMatchObject({
+        ok: false,
+        error: { code: 'internal_error' },
+      });
+      expect(
+        ExternalSessionOperationActionResponseV1Schema.safeParse(response).success,
+      ).toBe(true);
+    },
+  );
+
+  it('maps an Action-domain durable failure through the same strict operation response binding', async () => {
+    const actionExecutor: RpcActionExecutor = {
+      execute: async () => ({
+        ok: false,
+        errorCode: 'external_session_action_failed',
+        error: 'external_session_action_failed',
+      }),
+    };
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      actionExecutor,
+      getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(3),
+    } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
+      actionExecutor: RpcActionExecutor;
+      getServerFeaturesSnapshot: () => CliServerFeaturesSnapshot;
+    });
+
+    const response = await rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START,
+    )!(MATERIALIZE_START_TRANSPORT_INPUT);
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: 'internal_error' },
+    });
+    expect(
+      ExternalSessionOperationActionResponseV1Schema.safeParse(response).success,
+    ).toBe(true);
+  });
+
+  it(
+    'retires legacy direct takeover before a throwing action executor can run',
+    async () => {
+      const actionExecutor: RpcActionExecutor = {
+        execute: vi.fn(async () => {
+          throw new Error('resolver exploded');
+        }),
       };
 
       const rpcHandlerManager = createRpcHandlerManager();
@@ -1253,6 +1561,15 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       );
       expect(handler).toBeDefined();
 
+      await expect(handler!({
+        machineId: 'machine-1',
+        sessionId: '',
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'invalid_request',
+        error: 'invalid_request',
+      });
+
       const response = await handler!({
         machineId: 'machine-1',
         sessionId: 'linked-session-1',
@@ -1260,10 +1577,11 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
 
       expect(response).toEqual({
         ok: false,
-        errorCode: 'internal_error',
-        error: 'external_session_takeover_failed',
+        errorCode: 'invalid_request',
+        error: 'upgrade_required',
       });
       expect(ExternalSessionTakeoverResponseSchema.safeParse(response).success).toBe(true);
+      expect(actionExecutor.execute).not.toHaveBeenCalled();
     },
   );
 
@@ -1300,38 +1618,5 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     });
     expect(ExternalSessionTakeoverPersistResponseSchema.safeParse(response).success).toBe(true);
     expect(actionExecutor.execute).not.toHaveBeenCalled();
-  });
-
-  it('maps unsupported external-session takeover actions to legacy provider unavailable errors', async () => {
-    const actionExecutor: RpcActionExecutor = {
-      execute: async () => ({
-        ok: true,
-        result: {
-          ok: false,
-          errorCode: 'capability_unsupported',
-          error: 'takeover_not_supported',
-        },
-      }),
-    };
-
-    const rpcHandlerManager = createRpcHandlerManager();
-    registerMachineExternalSessionsRpcHandlers({
-      rpcHandlerManager: rpcHandlerManager as never,
-      actionExecutor,
-    } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
-      actionExecutor: RpcActionExecutor;
-    });
-
-    const takeoverHandler = rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY);
-    expect(takeoverHandler).toBeDefined();
-
-    await expect(takeoverHandler!({
-      machineId: 'machine-1',
-      sessionId: 'linked-session-1',
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'provider_unavailable',
-      error: 'takeover_not_supported',
-    });
   });
 });

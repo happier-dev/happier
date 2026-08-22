@@ -1,14 +1,14 @@
 import {
-  AGENT_IDS,
-  getAgentResumeConfig,
-  resolveAgentIdFromSessionMetadata,
-  resolveCanonicalAgentIdFromFlavor,
-  type AgentId,
+  resolveSessionMetadataAgentIdentity,
 } from '@happier-dev/agents';
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import {
+  readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 
 import { PersistedProviderResumeBindingError } from '@/providers/lifecycle/readPersistedResumeSelection';
-import { resolveExplicitBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
+import { isCatalogAgentId } from '@/agent/catalog/resolution';
+import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
+import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import {
   resolveCanonicalAbsolutePath,
@@ -56,35 +56,42 @@ function selectCanonicalPersistedDirectory(
     : metadataDirectory.path;
 }
 
+/**
+ * Resolves the exact Agent this inactive Session must be resumed as.
+ *
+ * Identity precedence is owned by `resolveSessionMetadataAgentIdentity`: a
+ * declared runtime/linked identity wins, then `flavor`, then exactly one flat
+ * vendor resume key. Deriving it here from a union of every piece of evidence
+ * would be a second decision-maker, and the union's unanimity rule made any
+ * Session that had ever carried two flat resume keys permanently unresumable —
+ * `REQ-STATE-01` allows at most one key on an active view, so a second key is
+ * legacy residue, not a competing identity.
+ *
+ * Ambiguity still fails closed: several flat keys with no higher authority
+ * resolve to no Agent rather than to the first Agent in catalog order.
+ */
 function resolveExactPersistedBackendIdentity(metadata: Record<string, unknown>): Readonly<{
   backendTarget: NonNullable<SpawnSessionOptions['backendTarget']>;
   runtimeDescriptorV1?: SpawnSessionOptions['runtimeDescriptorV1'];
 }> | null {
-  const backendTarget = resolveExplicitBackendTargetFromSessionMetadata(metadata);
+  const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
   if (!backendTarget) return null;
 
   const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
-  const identityCandidates = new Set<AgentId>();
-  const resolvedAgentId = resolveAgentIdFromSessionMetadata(metadata);
-  if (resolvedAgentId) identityCandidates.add(resolvedAgentId);
-  const flavorAgentId = resolveCanonicalAgentIdFromFlavor(metadata.flavor);
-  if (flavorAgentId) identityCandidates.add(flavorAgentId);
-  if (runtimeDescriptorV1 && (AGENT_IDS as readonly string[]).includes(runtimeDescriptorV1.agentId)) {
-    identityCandidates.add(runtimeDescriptorV1.agentId as AgentId);
-  }
-  for (const candidateAgentId of AGENT_IDS) {
-    const resumeField = getAgentResumeConfig(candidateAgentId).vendorResumeIdField ?? null;
-    if (resumeField && readNonEmptyString(metadata[resumeField])) {
-      identityCandidates.add(candidateAgentId);
-    }
-  }
+  const identity = resolveSessionMetadataAgentIdentity(metadata);
 
   if (backendTarget.sourceKind === 'configured') {
-    if (identityCandidates.size > 0 || runtimeDescriptorV1) return null;
+    // A configured ACP backend must carry no built-in Agent evidence at all;
+    // any is a contradiction between the persisted target and the identity.
+    if (identity.agentId || identity.vendorResumeKeyAgentIds.length > 0 || runtimeDescriptorV1) return null;
   } else {
-    if (!(AGENT_IDS as readonly string[]).includes(backendTarget.backendId)) return null;
-    identityCandidates.add(backendTarget.backendId as AgentId);
-    if (identityCandidates.size !== 1) return null;
+    if (!isCatalogAgentId(backendTarget.backendId)) return null;
+    if (!identity.agentId || identity.agentId !== backendTarget.backendId) return null;
+    if (
+      runtimeDescriptorV1
+      && isCatalogAgentId(runtimeDescriptorV1.agentId)
+      && runtimeDescriptorV1.agentId !== identity.agentId
+    ) return null;
   }
 
   return {
@@ -107,10 +114,16 @@ export function buildInactiveSessionResumeSpawnOptions(
   const metadataMachineId = readNonEmptyString(params.metadata.machineId);
   if (rawMachineId && metadataMachineId && rawMachineId !== metadataMachineId) return null;
 
-  const directory = selectCanonicalPersistedDirectory(rawDirectory, metadataDirectory);
+  const persistedDirectory = selectCanonicalPersistedDirectory(rawDirectory, metadataDirectory);
   const machineId = rawMachineId ?? metadataMachineId ?? readNonEmptyString(params.fallbackMachineId);
   const runtimeIdentity = resolveExactPersistedBackendIdentity(params.metadata);
-  if (!directory || !machineId || !runtimeIdentity) return null;
+  if (!persistedDirectory || !machineId || !runtimeIdentity) return null;
+  const directory = resolveSessionMachineWorkspacePath({
+    metadata: params.metadata,
+    currentMachineId: machineId,
+    candidatePath: persistedDirectory,
+  });
+  if (!directory) return null;
 
   let resolved: SpawnSessionOptions;
   try {

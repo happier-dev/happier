@@ -7,13 +7,21 @@ import {
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { SocketAckError } from '@/session/transport/shared/socketAck';
 import { PendingQueueAcceptedSettlementError } from './pendingQueueV2Transport';
-import { ApiSessionClient } from './sessionClient';
+import {
+  ApiSessionClient,
+  type ApiSessionClientOptions,
+} from './sessionClient';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
 const resolveAcceptedMock = vi.hoisted(() => vi.fn());
 const blockDeliveryMock = vi.hoisted(() => vi.fn());
 const listDeliveryStatusesMock = vi.hoisted(() => vi.fn());
+const sendSessionMessageMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/session/services/sendSessionMessage', () => ({
+  sendSessionMessage: sendSessionMessageMock,
+}));
 
 vi.mock('./sockets', () => ({
   createUserScopedSocket: () => {
@@ -67,6 +75,425 @@ describe('ApiSessionClient provider-input settlement', () => {
     resolveAcceptedMock.mockReset();
     blockDeliveryMock.mockReset();
     listDeliveryStatusesMock.mockReset();
+    sendSessionMessageMock.mockReset();
+  });
+
+  it('branches on the exact protected admission result instead of a generic send code', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    sendSessionMessageMock.mockResolvedValueOnce({
+      ok: false,
+      code: 'timeout',
+      admissionResult: {
+        status: 'outcomeUnknown',
+        localId: 'runtime-first-input',
+        code: 'machine_admission_acknowledgement_failed',
+      },
+    });
+    const credentials = { token: 'tok', encryption: null };
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      { credentials },
+    );
+
+    await expect(client.enqueueSessionUserMessage({
+      text: 'Hello',
+      localId: 'runtime-first-input',
+    })).rejects.toThrow(
+      'Session user input admission outcomeUnknown: machine_admission_acknowledgement_failed',
+    );
+  });
+
+  it('notifies prepared Composer attachments after durable admission and on an exact already-accepted retry, never from terminal settlement', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const localId = 'composer-accepted-local-1';
+    const firstAttachment = {
+      v: 1 as const,
+      instanceId: 'review-instance-1',
+      attachment: { pluginId: 'acme.review-comments', localId: 'review-comment' },
+      key: 'review-42',
+      value: { reviewId: '42' },
+      presentation: { label: 'Review #42', typeLabel: 'Review comment' },
+    };
+    const secondAttachment = {
+      ...firstAttachment,
+      instanceId: 'review-instance-2',
+      key: 'review-43',
+      value: { reviewId: '43' },
+    };
+    const afterComposerAttachmentMessageAccepted = vi.fn<NonNullable<
+      ApiSessionClientOptions['afterComposerAttachmentMessageAccepted']
+    >>(async () => {
+      throw new Error('post-admission target unavailable');
+    });
+    const machineAdmissionTransport = vi.fn(async () => ({
+      status: 'accepted' as const,
+      localId,
+    }));
+    const admissionOrder: string[] = [];
+    sendSessionMessageMock
+      .mockImplementationOnce(async () => {
+        admissionOrder.push('durable:accepted');
+        return {
+          admissionResult: { status: 'accepted', localId, code: 'accepted' },
+        };
+      })
+      .mockImplementationOnce(async () => {
+        admissionOrder.push('durable:alreadyAccepted');
+        return {
+          admissionResult: { status: 'alreadyAccepted', localId, code: 'already_accepted' },
+        };
+      });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      {
+        credentials: { token: 'tok', encryption: null },
+        transformSessionInputBeforeCommit: async (payload) => ({
+          ...payload,
+          preparedComposerAttachments: (payload.meta as {
+            happierStructuredInputV1: { composerAttachments: unknown[] };
+          }).happierStructuredInputV1.composerAttachments,
+        }),
+        afterComposerAttachmentMessageAccepted: async (input) => {
+          admissionOrder.push('after');
+          await afterComposerAttachmentMessageAccepted(input);
+        },
+        // RED seam: the runner must supply its authenticated daemon-backed
+        // machine admission transport to the Session client.
+        machineAdmissionTransport,
+      },
+    );
+    const request = {
+      text: '',
+      localId,
+      meta: {
+        happierStructuredInputV1: {
+          v: 1 as const,
+          composerAttachments: [firstAttachment, secondAttachment],
+        },
+      },
+    };
+
+    await expect(client.enqueueSessionUserMessage(request)).resolves.toBeUndefined();
+
+    expect(sendSessionMessageMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      machineAdmissionTransport,
+      signal: expect.any(AbortSignal),
+    }));
+    expect(admissionOrder).toEqual(['durable:accepted', 'after']);
+    expect(afterComposerAttachmentMessageAccepted).toHaveBeenCalledOnce();
+    expect(afterComposerAttachmentMessageAccepted).toHaveBeenCalledWith({
+      attachment: { pluginId: 'acme.review-comments', localId: 'review-comment' },
+      event: {
+        sessionId: 's1',
+        localId,
+        attachments: [
+          { instanceId: 'review-instance-1', key: 'review-42', value: { reviewId: '42' } },
+          { instanceId: 'review-instance-2', key: 'review-43', value: { reviewId: '43' } },
+        ],
+      },
+      signal: expect.any(AbortSignal),
+    });
+    expect(afterComposerAttachmentMessageAccepted.mock.calls[0]?.[0]?.event)
+      .not.toHaveProperty('messageId');
+    const firstNotification = afterComposerAttachmentMessageAccepted.mock.calls[0]?.[0];
+    expect(firstNotification?.signal.aborted).toBe(false);
+
+    await expect(client.observeProviderInputSettlement({
+      kind: 'accepted',
+      localId,
+      userMessageSeq: 5,
+    })).resolves.toBe(false);
+    expect(afterComposerAttachmentMessageAccepted).toHaveBeenCalledOnce();
+
+    await expect(client.enqueueSessionUserMessage(request)).resolves.toBeUndefined();
+    expect(sendSessionMessageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      machineAdmissionTransport,
+      signal: expect.any(AbortSignal),
+    }));
+    expect(admissionOrder).toEqual([
+      'durable:accepted',
+      'after',
+      'durable:alreadyAccepted',
+      'after',
+    ]);
+    expect(afterComposerAttachmentMessageAccepted).toHaveBeenCalledTimes(2);
+
+    await client.close();
+    expect(firstNotification?.signal.aborted).toBe(true);
+  });
+
+  it('starts the acceptance notification without waiting for staged-media settlement', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const localId = 'composer-accepted-before-settlement';
+    const attachment = {
+      v: 1 as const,
+      instanceId: 'media-instance-1',
+      attachment: { pluginId: 'com.example.media', localId: 'composer' },
+      key: 'media-1',
+      value: { media: 'review' },
+      presentation: { label: 'Review image', typeLabel: 'Review media' },
+    };
+    const order: string[] = [];
+    let releaseSettlement: (() => void) | undefined;
+    const settlementReached = new Promise<void>((resolve) => {
+      releaseSettlement = resolve;
+    });
+    // Staged-media settlement is a daemon round trip whose default budget is
+    // 300s. The best-effort acceptance notification contractually FOLLOWS
+    // durable acceptance, not settlement, so it must not be serialized behind it.
+    const onAccepted = vi.fn(async () => {
+      order.push('settlement:start');
+      await settlementReached;
+      order.push('settlement:end');
+    });
+    const afterComposerAttachmentMessageAccepted = vi.fn(async () => {
+      order.push('notify');
+      releaseSettlement?.();
+    });
+    sendSessionMessageMock.mockResolvedValueOnce({
+      admissionResult: { status: 'accepted', localId, code: 'accepted' },
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      {
+        credentials: { token: 'tok', encryption: null },
+        transformSessionInputBeforeCommit: async (payload) => ({
+          transformed: {
+            ...payload,
+            preparedComposerAttachments: (payload.meta as {
+              happierStructuredInputV1: { composerAttachments: unknown[] };
+            }).happierStructuredInputV1.composerAttachments,
+          },
+          settlement: { onAccepted, onDefinitiveAdmissionFailure: vi.fn(async () => undefined) },
+        }),
+        afterComposerAttachmentMessageAccepted,
+      },
+    );
+
+    await expect(client.enqueueSessionUserMessage({
+      text: '',
+      localId,
+      meta: {
+        happierStructuredInputV1: { v: 1, composerAttachments: [attachment] },
+      },
+    })).resolves.toBeUndefined();
+
+    expect(afterComposerAttachmentMessageAccepted).toHaveBeenCalledOnce();
+    expect(order).toEqual(['notify', 'settlement:start', 'settlement:end']);
+    await client.close();
+  });
+
+  it('does not notify a Composer attachment target when durable admission is unknown', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const localId = 'composer-unknown-admission-local-1';
+    const afterComposerAttachmentMessageAccepted = vi.fn(async () => undefined);
+    sendSessionMessageMock.mockResolvedValueOnce({
+      admissionResult: {
+        status: 'outcomeUnknown',
+        localId,
+        code: 'machine_admission_acknowledgement_failed',
+      },
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      {
+        credentials: { token: 'tok', encryption: null },
+        transformSessionInputBeforeCommit: async (payload) => ({
+          ...payload,
+          preparedComposerAttachments: (payload.meta as {
+            happierStructuredInputV1: { composerAttachments: unknown[] };
+          }).happierStructuredInputV1.composerAttachments,
+        }),
+        afterComposerAttachmentMessageAccepted,
+      },
+    );
+
+    await expect(client.enqueueSessionUserMessage({
+      text: '',
+      localId,
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [{
+            v: 1,
+            instanceId: 'review-instance-1',
+            attachment: { pluginId: 'acme.review-comments', localId: 'review-comment' },
+            key: 'review-42',
+            value: { reviewId: '42' },
+            presentation: { label: 'Review #42', typeLabel: 'Review comment' },
+          }],
+        },
+      },
+    })).rejects.toThrow(
+      'Session user input admission outcomeUnknown: machine_admission_acknowledgement_failed',
+    );
+    expect(afterComposerAttachmentMessageAccepted).not.toHaveBeenCalled();
+
+    await client.close();
+  });
+
+  it.each([
+    { status: 'accepted' as const, code: 'accepted' as const },
+    { status: 'alreadyAccepted' as const, code: 'already_accepted' as const },
+  ])('settles staged-media custody only for known Composer $status admission', async ({ status, code }) => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const attachment = {
+      v: 1 as const,
+      instanceId: 'media-instance-1',
+      attachment: { pluginId: 'com.example.media', localId: 'composer' },
+      key: 'media-1',
+      value: { media: 'review' },
+      presentation: { label: 'Review image', typeLabel: 'Review media' },
+    };
+    const onAccepted = vi.fn(async () => undefined);
+    const onDefinitiveAdmissionFailure = vi.fn(async () => undefined);
+    const localId = 'staged-media-local-1';
+    sendSessionMessageMock.mockResolvedValueOnce({
+      admissionResult: { status, localId, code },
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      {
+        credentials: { token: 'tok', encryption: null },
+        transformSessionInputBeforeCommit: async (payload) => ({
+          transformed: {
+            ...payload,
+            preparedComposerAttachments: (payload.meta as {
+              happierStructuredInputV1: { composerAttachments: unknown[] };
+            }).happierStructuredInputV1.composerAttachments,
+          },
+          settlement: { onAccepted, onDefinitiveAdmissionFailure },
+        }),
+      },
+    );
+
+    await expect(client.enqueueSessionUserMessage({
+      text: '',
+      localId,
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [attachment],
+        },
+      },
+    })).resolves.toBeUndefined();
+
+    expect(onAccepted).toHaveBeenCalledOnce();
+    expect(onDefinitiveAdmissionFailure).not.toHaveBeenCalled();
+    await client.close();
+  });
+
+  it('keeps staged-media settlement inert when Composer admission is outcome-unknown', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const localId = 'staged-media-unknown-local-1';
+    const onAccepted = vi.fn(async () => undefined);
+    const onDefinitiveAdmissionFailure = vi.fn(async () => undefined);
+    sendSessionMessageMock.mockResolvedValueOnce({
+      admissionResult: {
+        status: 'outcomeUnknown',
+        localId,
+        code: 'machine_admission_acknowledgement_failed',
+      },
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      {
+        credentials: { token: 'tok', encryption: null },
+        transformSessionInputBeforeCommit: async (payload) => ({
+          transformed: {
+            ...payload,
+            preparedComposerAttachments: (payload.meta as {
+              happierStructuredInputV1: { composerAttachments: unknown[] };
+            }).happierStructuredInputV1.composerAttachments,
+          },
+          settlement: { onAccepted, onDefinitiveAdmissionFailure },
+        }),
+      },
+    );
+
+    await expect(client.enqueueSessionUserMessage({
+      text: '',
+      localId,
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [{
+            v: 1,
+            instanceId: 'media-instance-1',
+            attachment: { pluginId: 'com.example.media', localId: 'composer' },
+            key: 'media-1',
+            value: { media: 'review' },
+            presentation: { label: 'Review image', typeLabel: 'Review media' },
+          }],
+        },
+      },
+    })).rejects.toThrow(
+      'Session user input admission outcomeUnknown: machine_admission_acknowledgement_failed',
+    );
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(onDefinitiveAdmissionFailure).not.toHaveBeenCalled();
+    await client.close();
+  });
+
+  it('settles staged-media custody for an explicit rejected Composer admission only', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const localId = 'staged-media-rejected-local-1';
+    const onAccepted = vi.fn(async () => undefined);
+    const onDefinitiveAdmissionFailure = vi.fn(async () => undefined);
+    sendSessionMessageMock.mockResolvedValueOnce({
+      admissionResult: { status: 'rejected', code: 'session_input_cancelled' },
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      {
+        credentials: { token: 'tok', encryption: null },
+        transformSessionInputBeforeCommit: async (payload) => ({
+          transformed: {
+            ...payload,
+            preparedComposerAttachments: (payload.meta as {
+              happierStructuredInputV1: { composerAttachments: unknown[] };
+            }).happierStructuredInputV1.composerAttachments,
+          },
+          settlement: { onAccepted, onDefinitiveAdmissionFailure },
+        }),
+      },
+    );
+
+    await expect(client.enqueueSessionUserMessage({
+      text: '',
+      localId,
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [{
+            v: 1,
+            instanceId: 'media-instance-1',
+            attachment: { pluginId: 'com.example.media', localId: 'composer' },
+            key: 'media-1',
+            value: { media: 'review' },
+            presentation: { label: 'Review image', typeLabel: 'Review media' },
+          }],
+        },
+      },
+    })).rejects.toThrow('Session user input admission rejected: session_input_cancelled');
+
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(onDefinitiveAdmissionFailure).toHaveBeenCalledOnce();
+    await client.close();
   });
 
   it('retires only exact absent terminal custody without emitting a provider settlement', async () => {
@@ -294,6 +721,80 @@ describe('ApiSessionClient provider-input settlement', () => {
     expect(client.hasPendingProviderInput(localId)).toBe(false);
   });
 
+  it('retires local custody only after the exact pre-provider rejection is durably blocked', async () => {
+    blockDeliveryMock.mockResolvedValueOnce({
+      pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 1, pendingVersion: 2 },
+    });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const localId = 'admission-unavailable-blocked-local';
+    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId(localId);
+
+    await expect(client.observeProviderInputSettlement({
+      kind: 'rejected_before_effect',
+      localId,
+      userMessageSeq: 42,
+      reason: 'provider_unavailable_before_acceptance',
+      diagnostic: { code: 'daemon_turn_admission_unavailable', severity: 'error' },
+      retryable: true,
+      retireLocalCustodyAfterDurableBlock: true,
+    })).resolves.toBe(true);
+
+    await vi.waitFor(() => expect(blockDeliveryMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(client.hasPendingProviderInput(localId)).toBe(false));
+
+    // A later materialization of the same exact local id is no longer suppressed by stale
+    // pre-provider custody once the terminal block has been acknowledged.
+    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId(localId);
+    expect(client.hasPendingProviderInput(localId)).toBe(true);
+  });
+
+  it('retains exact local custody when the pre-provider durable block fails', async () => {
+    blockDeliveryMock.mockRejectedValueOnce(new Error('block unavailable'));
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const localId = 'admission-unavailable-block-failed-local';
+    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId(localId);
+
+    await expect(client.observeProviderInputSettlement({
+      kind: 'rejected_before_effect',
+      localId,
+      userMessageSeq: 42,
+      reason: 'provider_unavailable_before_acceptance',
+      diagnostic: { code: 'daemon_turn_admission_unavailable', severity: 'error' },
+      retryable: true,
+      retireLocalCustodyAfterDurableBlock: true,
+    })).resolves.toBe(false);
+
+    await vi.waitFor(() => expect(blockDeliveryMock).toHaveBeenCalledTimes(1));
+    expect(client.hasPendingProviderInput(localId)).toBe(true);
+  });
+
+  it('retains generic provider-unavailable custody without exact pre-provider proof', async () => {
+    blockDeliveryMock.mockResolvedValueOnce({
+      pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 1, pendingVersion: 2 },
+    });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const localId = 'generic-provider-unavailable-local';
+    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId(localId);
+
+    client.observeProviderInputSettlement({
+      kind: 'rejected_before_effect',
+      localId,
+      userMessageSeq: 42,
+      reason: 'provider_unavailable_before_acceptance',
+      diagnostic: { code: 'provider_unavailable_before_acceptance', severity: 'error' },
+      retryable: true,
+    });
+
+    await vi.waitFor(() => expect(blockDeliveryMock).toHaveBeenCalledTimes(1));
+    expect(client.hasPendingProviderInput(localId)).toBe(true);
+  });
+
   it('retries an accepted settlement once at the typed operation-local delay and accepts exact committed replay', async () => {
     vi.useFakeTimers();
     resolveAcceptedMock
@@ -433,5 +934,35 @@ describe('ApiSessionClient provider-input settlement', () => {
 
     await vi.waitFor(() => expect(resolveAcceptedMock).toHaveBeenCalledTimes(1));
     expect(client.hasPendingProviderInput('unrelated-noop-local')).toBe(true);
+  });
+
+  it('re-drives exact provider acceptance after reconnect when acceptance arrived while disconnected', async () => {
+    resolveAcceptedMock.mockResolvedValueOnce({
+      didResolve: true,
+      pendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3 },
+      message: { localId: 'accepted-while-disconnected', seq: 45 },
+    });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId('accepted-while-disconnected');
+
+    sessionSocketStub.connected = false;
+    await expect(client.observeProviderInputSettlement({
+      kind: 'accepted',
+      localId: 'accepted-while-disconnected',
+      userMessageSeq: null,
+    })).resolves.toBe(false);
+
+    expect(resolveAcceptedMock).not.toHaveBeenCalled();
+    expect(client.hasPendingProviderInput('accepted-while-disconnected')).toBe(true);
+    expect((client as any).acceptedPendingSettlementLocalIds.has('accepted-while-disconnected')).toBe(true);
+
+    sessionSocketStub.connected = true;
+    (client as any).sessionConnectionEpoch += 1;
+    (client as any).reofferAcceptedProviderInputSettlementsAfterConnection();
+    await vi.waitFor(() => expect(resolveAcceptedMock).toHaveBeenCalledTimes(1));
+    expect(client.hasPendingProviderInput('accepted-while-disconnected')).toBe(false);
+    expect(client.getCommittedUserMessageSeq('accepted-while-disconnected')).toBe(45);
   });
 });

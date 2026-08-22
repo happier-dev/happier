@@ -5,8 +5,9 @@ import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happ
 import type { ChildExit } from '../sessions/onChildExited';
 import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
 import type { TrackedSession } from '../types';
-import type { PluginLocalServicesBridgeAuthorization } from '../local/services/pluginBridgeAuthorization';
-import type { AgentRuntimeSessionBridgeAuthorization } from '../agentRuntime/sessionBridgeAuthorization';
+import type {
+  RunnerAgentSessionBootstrapAuthorization,
+} from '../agentRuntime/sessionBridgeAuthorization';
 import { spawnHappyCLI, type HappyCliSubprocessLaunchOptions } from '@/utils/spawnHappyCLI';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 
@@ -62,8 +63,8 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   directoryCreated: boolean;
   extraEnvForChildWithMessage: Record<string, string>;
   unsetEnvKeys?: readonly string[];
-  localServicesBridgeAuthorization: PluginLocalServicesBridgeAuthorization;
-  agentRuntimeSessionBridgeAuthorization?: AgentRuntimeSessionBridgeAuthorization | null;
+  runnerAgentSessionBootstrapAuthorization?:
+    RunnerAgentSessionBootstrapAuthorization | null;
   processEnv: NodeJS.ProcessEnv;
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
@@ -180,20 +181,16 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     childProcess: happyProcess,
     spawnOptions: params.trackedSpawnOptions,
     acceptedSpawnMarkerGate,
-    localServicesBridgeTokenHash: params.localServicesBridgeAuthorization.tokenHash,
-    localServicesBridgePluginId: params.localServicesBridgeAuthorization.pluginId,
-    localServicesBridgeContributionId: params.localServicesBridgeAuthorization.contributionId,
-    localServicesBridgeTokenFilePath: params.localServicesBridgeAuthorization.tokenFilePath,
-    ...(params.agentRuntimeSessionBridgeAuthorization ? {
-      agentRuntimeBridgeTokenHash: params.agentRuntimeSessionBridgeAuthorization.tokenHash,
-      agentRuntimeBridgePluginId:
-        params.agentRuntimeSessionBridgeAuthorization.descriptor.pluginId,
-      agentRuntimeBridgeAgentId:
-        params.agentRuntimeSessionBridgeAuthorization.descriptor.agentId,
-      agentRuntimeBridgeBackendId:
-        params.agentRuntimeSessionBridgeAuthorization.descriptor.backendId,
-      agentRuntimeBridgeGeneration:
-        params.agentRuntimeSessionBridgeAuthorization.descriptor.generation,
+    ...(params.runnerAgentSessionBootstrapAuthorization ? {
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        params.runnerAgentSessionBootstrapAuthorization
+          .authorityFilePath,
+      runnerAgentBootstrapIdentity: {
+        agentId:
+          params.runnerAgentSessionBootstrapAuthorization.descriptor.agentId,
+        backendId:
+          params.runnerAgentSessionBootstrapAuthorization.descriptor.backendId,
+      },
     } : {}),
     vendorResumeId: params.effectiveResume || undefined,
     directoryCreated: params.directoryCreated,
@@ -513,7 +510,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   }
   if (spawnResult.type === 'success') {
     delete trackedSession.cancelStartupLaunchBeforeAck;
-    params.logDebug(`[DAEMON RUN] Session ${spawnResult.sessionId} fully spawned with webhook`);
+    params.logDebug('[DAEMON RUN] Session fully spawned with webhook');
   }
   return resolveSpawnWebhookResult({
     pid,

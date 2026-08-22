@@ -27,6 +27,7 @@ const queryParams = {
   sessionId: 's1',
   encryptionKey: new Uint8Array(32),
   encryptionVariant: 'dataKey' as const,
+  encryptionMode: 'e2ee' as const,
 }
 
 afterEach(() => {
@@ -35,7 +36,7 @@ afterEach(() => {
 })
 
 describe('transcriptQueries (plaintext envelopes)', () => {
-  it('resolves permission intent from plaintext transcript messages', async () => {
+  it('ignores plaintext permission intent on an E2EE session', async () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
       data: {
         messages: [
@@ -56,6 +57,34 @@ describe('transcriptQueries (plaintext envelopes)', () => {
 
     const res = await fetchLatestUserPermissionIntentFromEncryptedTranscript({
       ...queryParams,
+    })
+
+    expect(res).toBeNull()
+  })
+
+  it('resolves permission intent from plaintext transcript messages on a plaintext session', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      data: {
+        messages: [
+          {
+            createdAt: 123,
+            content: {
+              t: 'plain',
+              v: {
+                role: 'user',
+                content: { type: 'text', text: 'hello' },
+                meta: { permissionMode: 'yolo' },
+              },
+            },
+          },
+        ],
+      },
+    } as any)
+
+    const res = await fetchLatestUserPermissionIntentFromEncryptedTranscript({
+      token: 't',
+      sessionId: 's1',
+      encryptionMode: 'plain',
     })
 
     expect(res).toEqual({ intent: 'yolo', updatedAt: 123 })
@@ -223,8 +252,8 @@ describe('transcriptQueries (plaintext envelopes)', () => {
     const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
       data: {
         messages: [
-          { createdAt: 101 },
-          { createdAt: 99 },
+          { createdAt: 101, content: { t: 'encrypted', c: 'c101' } },
+          { createdAt: 99, content: { t: 'encrypted', c: 'c99' } },
         ],
       },
     } as any)
@@ -245,8 +274,8 @@ describe('transcriptQueries (plaintext envelopes)', () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
       data: {
         messages: [
-          { createdAt: 100 },
-          { createdAt: 99 },
+          { createdAt: 100, content: { t: 'encrypted', c: 'c100' } },
+          { createdAt: 99, content: { t: 'encrypted', c: 'c99' } },
         ],
       },
     } as any)
@@ -295,5 +324,27 @@ describe('transcriptQueries (plaintext envelopes)', () => {
     vi.spyOn(axios, 'get').mockRejectedValueOnce(new Error('temporary server failure'))
 
     await expect(fetchLatestUserPermissionIntentFromEncryptedTranscript(queryParams)).resolves.toBeNull()
+  })
+
+  it('does not convert malformed authoritative transcript content into empty semantic results', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValue({
+      status: 200,
+      data: {
+        messages: [
+          {
+            createdAt: 100,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'valid' } } },
+          },
+          { createdAt: 101, content: { t: 'future', value: 'unreadable' } },
+        ],
+      },
+    } as any)
+
+    await expect(fetchRecentTranscriptTextItemsForAcpImportFromServer(queryParams)).rejects.toMatchObject({
+      code: 'session_transcript_stored_content_unavailable',
+    })
+    await expect(fetchLatestUserPermissionIntentFromEncryptedTranscript(queryParams)).rejects.toMatchObject({
+      code: 'session_transcript_stored_content_unavailable',
+    })
   })
 })

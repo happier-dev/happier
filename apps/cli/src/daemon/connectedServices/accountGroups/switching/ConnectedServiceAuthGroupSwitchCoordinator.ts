@@ -10,6 +10,10 @@ import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from '../
 import { readConnectedServiceAuthGenerationApplyFailure } from '../../runtimeAuth/connectedServiceAuthGenerationApplyFailure';
 import type { AcceptedConnectedServiceAccountVerificationByServiceId } from '../../accountTransitions/acceptedConnectedServiceAccountVerification';
 import { evaluatePredictiveSoftSwitchSessionApplyPolicy } from './predictiveSoftSwitchPolicy';
+import {
+    ConnectedServiceAuthGroupQuotaProbeIncompleteError,
+    type ConnectedServiceAuthGroupQuotaProbeResult,
+} from '../quotas/preTurnQuotaProbe';
 import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
 const WAITABLE_CLASSIFIED_FAILURE_REASONS: ReadonlySet<string> = new Set([
@@ -32,6 +36,7 @@ export type ConnectedServiceAuthGroupSwitchState<
     serviceId: TServiceIdentity;
     groupId: string;
     activeProfileId: string | null;
+    incarnation?: string;
     generation: number;
     runtimeStateRevision?: number;
     credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
@@ -679,11 +684,24 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             fromProfileId: string | null;
             toProfileId: string;
             expectedGeneration: number;
+            expectedIncarnation?: string;
             expectedRuntimeStateRevision?: number;
             expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
             expectedConfigurationRevision?: string | null;
             reason: string;
         }>): Promise<ConnectedServiceAuthGroupSwitchState<TServiceIdentity>>;
+        prepareCandidateForSwitch?(input: Readonly<{
+            serviceId: TServiceIdentity;
+            groupId: string;
+            profileId: string;
+            reason: string;
+        }>): Promise<
+            | Readonly<{ status: 'ready' }>
+            | Readonly<{
+                status: 'ineligible';
+                memberState: ConnectedServiceAuthGroupMemberRuntimeState;
+            }>
+        >;
         preflightApplyGeneration?(
             input: ConnectedServiceAuthGroupGenerationApplyInput<
                 TServiceIdentity
@@ -710,12 +728,55 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             groupId: string;
             profileIds: ReadonlyArray<string>;
             reason: string;
-        }>): Promise<void>;
+        }>): Promise<ConnectedServiceAuthGroupQuotaProbeResult | void>;
         resolveGenerationConflict?(error: unknown): number | null;
         emitEvent?: (
             event: ConnectedServiceAuthGroupSwitchEvent<TServiceIdentity>,
         ) => void;
     }>) {}
+
+    private async selectPreparedCandidate(input: Readonly<{
+        state: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
+        activeProfileId: string | null | undefined;
+        reason: string;
+        allowCurrentProfileRetry?: boolean;
+    }>): Promise<ReturnType<typeof selectConnectedServiceAuthGroupCandidate>> {
+        const memberStatesByProfileId = new Map(
+            input.state.memberStatesByProfileId,
+        );
+        for (;;) {
+            const selected = selectConnectedServiceAuthGroupCandidate({
+                nowMs: this.deps.nowMs(),
+                quotaFreshnessMs: this.deps.quotaFreshnessMs,
+                activeProfileId: input.activeProfileId ?? null,
+                policy: input.state.policy,
+                members: input.state.members,
+                memberStatesByProfileId,
+                ...(input.allowCurrentProfileRetry === undefined
+                    ? {}
+                    : {
+                        allowCurrentProfileRetry:
+                            input.allowCurrentProfileRetry,
+                    }),
+            });
+            if (!selected.selected || !this.deps.prepareCandidateForSwitch) {
+                return selected;
+            }
+            const prepared = await this.deps.prepareCandidateForSwitch({
+                serviceId: input.state.serviceId,
+                groupId: input.state.groupId,
+                profileId: selected.selected.profileId,
+                reason: input.reason,
+            });
+            if (prepared.status === 'ready') return selected;
+            memberStatesByProfileId.set(selected.selected.profileId, {
+                ...(memberStatesByProfileId.get(
+                    selected.selected.profileId,
+                ) ?? {}),
+                ...prepared.memberState,
+            });
+        }
+    }
 
     private isExpectedFailureSourceCurrent(input: Readonly<{
         expectedFailureSource?: ConnectedServiceAuthGroupExpectedFailureSource;
@@ -774,12 +835,15 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             allowCurrentProfileRetry: input.allowCurrentProfileRetry,
         });
         if (profileIds.length === 0) return input.loaded;
-        await this.deps.probeQuotaSnapshotsForGroup({
+        const probeResult = await this.deps.probeQuotaSnapshotsForGroup({
             serviceId: input.request.serviceId,
             groupId: input.request.groupId,
             profileIds,
             reason: input.request.reason,
         });
+        if (probeResult?.status === 'incomplete') {
+            throw new ConnectedServiceAuthGroupQuotaProbeIncompleteError(probeResult);
+        }
         return await this.deps.loadState({
             serviceId: input.request.serviceId,
             groupId: input.request.groupId,
@@ -1234,6 +1298,53 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         });
     }
 
+    private async waitForLeaseOwnerOrAuthoritativeState(input: Readonly<{
+        serviceId: TServiceIdentity;
+        groupId: string;
+        observedProfileId?: string | null;
+    }>, lease: Extract<
+        LeaseAcquireResult<TServiceIdentity>,
+        Readonly<{ kind: 'loser' }>
+    >): Promise<Readonly<{
+        observed: LeaseCompletion<TServiceIdentity> | LeaseResultCompletion;
+        fromAuthoritativeReread: boolean;
+    }>> {
+        try {
+            return {
+                observed: await lease.waitForOwner(),
+                fromAuthoritativeReread: false,
+            };
+        } catch (error) {
+            const failedProfileId = normalizeProfileId(input.observedProfileId);
+            if (
+                !(error instanceof ConnectedServiceAuthGroupSwitchLeaseExpiredError)
+                || !failedProfileId
+            ) {
+                throw error;
+            }
+            const current = await this.deps.loadState(input);
+            const currentProfileId = normalizeProfileId(current.activeProfileId);
+            if (!currentProfileId || currentProfileId === failedProfileId) {
+                throw error;
+            }
+            // A peer committed current group truth before its longer application work
+            // completed. Consume that authoritative generation instead of terminalizing the
+            // recovery on a coordination timeout.
+            return {
+                observed: {
+                    serviceId: current.serviceId,
+                    groupId: current.groupId,
+                    activeProfileId: currentProfileId,
+                    generation: current.generation,
+                    ...(current.credentialRevision === undefined
+                        ? {}
+                        : { credentialRevision: current.credentialRevision }),
+                },
+                fromAuthoritativeReread: true,
+            };
+        }
+    }
+
     async switchAfterClassifiedFailure(input: Readonly<{
         sessionId?: string;
         serviceId: TServiceIdentity;
@@ -1255,37 +1366,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         const startedAtMs = this.deps.nowMs();
         const lease = this.deps.leases.acquire(input);
         if (lease.kind === 'loser') {
-            let observed: LeaseCompletion<TServiceIdentity> | LeaseResultCompletion;
-            let observedFromAuthoritativeReread = false;
-            try {
-                observed = await lease.waitForOwner();
-            } catch (error) {
-                const failedProfileId = normalizeProfileId(input.observedProfileId);
-                if (
-                    !(error instanceof ConnectedServiceAuthGroupSwitchLeaseExpiredError)
-                    || !failedProfileId
-                ) {
-                    throw error;
-                }
-                const current = await this.deps.loadState(input);
-                const currentProfileId = normalizeProfileId(current.activeProfileId);
-                if (!currentProfileId || currentProfileId === failedProfileId) {
-                    throw error;
-                }
-                // A peer committed current group truth before its longer application work
-                // completed. Consume that authoritative generation instead of terminalizing the
-                // recovery on a coordination timeout.
-                observed = {
-                    serviceId: current.serviceId,
-                    groupId: current.groupId,
-                    activeProfileId: currentProfileId,
-                    generation: current.generation,
-                    ...(current.credentialRevision === undefined
-                        ? {}
-                        : { credentialRevision: current.credentialRevision }),
-                };
-                observedFromAuthoritativeReread = true;
-            }
+            const {
+                observed,
+                fromAuthoritativeReread: observedFromAuthoritativeReread,
+            } = await this.waitForLeaseOwnerOrAuthoritativeState(input, lease);
             if (input.expectedFailureSource && !observedFromAuthoritativeReread) {
                 const current = await this.deps.loadState(input);
                 if (!this.isExpectedFailureSourceCurrent(input, current)) {
@@ -1633,13 +1717,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                     return this.completeStaleFailureContext(lease, loaded);
                 }
             }
-            const selected = selectConnectedServiceAuthGroupCandidate({
-                nowMs: this.deps.nowMs(),
-                quotaFreshnessMs: this.deps.quotaFreshnessMs,
+            const selected = await this.selectPreparedCandidate({
+                state: loaded,
                 activeProfileId: selectionActiveProfileId,
-                policy: loaded.policy,
-                members: loaded.members,
-                memberStatesByProfileId: loaded.memberStatesByProfileId,
+                reason: input.reason,
             });
             if (!selected.selected) {
                 if (selected.reason === 'manual_strategy') {
@@ -1747,6 +1828,12 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                         fromProfileId: commitLoaded.activeProfileId,
                         toProfileId: selectedProfileId,
                         expectedGeneration: commitLoaded.generation,
+                        ...(commitLoaded.incarnation === undefined
+                            ? {}
+                            : {
+                                expectedIncarnation:
+                                    commitLoaded.incarnation,
+                            }),
                         ...(commitLoaded.runtimeStateRevision === undefined
                             ? {}
                             : {
@@ -1808,13 +1895,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                     if (resolvedConflict?.kind === 'retry') {
                         commitLoaded = resolvedConflict.state;
                         commitSelectionActiveProfileId = resolvedConflict.selectionActiveProfileId ?? commitSelectionActiveProfileId;
-                        const retrySelected = selectConnectedServiceAuthGroupCandidate({
-                            nowMs: this.deps.nowMs(),
-                            quotaFreshnessMs: this.deps.quotaFreshnessMs,
+                        const retrySelected = await this.selectPreparedCandidate({
+                            state: commitLoaded,
                             activeProfileId: commitSelectionActiveProfileId,
-                            policy: commitLoaded.policy,
-                            members: commitLoaded.members,
-                            memberStatesByProfileId: commitLoaded.memberStatesByProfileId,
+                            reason: input.reason,
                         });
                         if (!retrySelected.selected) {
                             if (retrySelected.reason === 'manual_strategy') {
@@ -1992,9 +2076,31 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         memberStateOverridesByProfileId?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
     }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
         const startedAtMs = this.deps.nowMs();
+        let preloaded = applyMemberStateOverrides({
+            loaded: await this.deps.loadState(input),
+            overrides: input.memberStateOverridesByProfileId,
+        });
+        let didProbePreTurnQuota = false;
+        if (
+            preloaded.policy.autoSwitch
+            && preloaded.policy.recoveryMode !== 'off'
+            && preloaded.policy.recoveryMode !== 'wait_until_reset'
+            && isReasonEnabled(preloaded.policy, input.reason)
+        ) {
+            preloaded = applyMemberStateOverrides({
+                loaded: await this.probeQuotaSnapshotsBeforePreTurnSelection({
+                    request: input,
+                    loaded: preloaded,
+                    allowCurrentProfileRetry: canRetryObservedProfileDuringPreTurnSelection(input.reason),
+                }),
+                overrides: input.memberStateOverridesByProfileId,
+            });
+            didProbePreTurnQuota = true;
+        }
+
         const lease = this.deps.leases.acquire(input);
         if (lease.kind === 'loser') {
-            const observed = await lease.waitForOwner();
+            const { observed } = await this.waitForLeaseOwnerOrAuthoritativeState(input, lease);
             if (isLeaseResultCompletion(observed)) return observed.result;
             const observedResult = await this.applyObservedGeneration(this.buildSessionApplyInput({
                 completion: observed,
@@ -2005,10 +2111,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         }
 
         try {
-            let loaded = applyMemberStateOverrides({
-                loaded: await this.deps.loadState(input),
-                overrides: input.memberStateOverridesByProfileId,
-            });
+            let loaded = preloaded;
             if (!loaded.policy.autoSwitch) {
                 const result = { status: 'auto_switch_disabled', generation: loaded.generation } as const;
                 lease.completeResult(result);
@@ -2059,14 +2162,16 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 return result;
             }
             const allowCurrentProfileRetry = canRetryObservedProfileDuringPreTurnSelection(input.reason);
-            loaded = applyMemberStateOverrides({
-                loaded: await this.probeQuotaSnapshotsBeforePreTurnSelection({
-                    request: input,
-                    loaded,
-                    allowCurrentProfileRetry,
-                }),
-                overrides: input.memberStateOverridesByProfileId,
-            });
+            if (!didProbePreTurnQuota) {
+                loaded = applyMemberStateOverrides({
+                    loaded: await this.probeQuotaSnapshotsBeforePreTurnSelection({
+                        request: input,
+                        loaded,
+                        allowCurrentProfileRetry,
+                    }),
+                    overrides: input.memberStateOverridesByProfileId,
+                });
+            }
             const observedProfileId = normalizeProfileId(input.observedProfileId);
             const loadedActiveProfileId = normalizeProfileId(loaded.activeProfileId);
             if (observedProfileId && loadedActiveProfileId && loadedActiveProfileId !== observedProfileId) {
@@ -2107,13 +2212,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 observedProfileId,
                 activeProfileId: loaded.activeProfileId,
             });
-            const selected = selectConnectedServiceAuthGroupCandidate({
-                nowMs: this.deps.nowMs(),
-                quotaFreshnessMs: this.deps.quotaFreshnessMs,
+            const selected = await this.selectPreparedCandidate({
+                state: loaded,
                 activeProfileId: loaded.activeProfileId,
-                policy: loaded.policy,
-                members: loaded.members,
-                memberStatesByProfileId: loaded.memberStatesByProfileId,
+                reason: input.reason,
                 allowCurrentProfileRetry: allowLoadedActiveProfileRetry,
             });
             if (!selected.selected) {
@@ -2191,6 +2293,12 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                         fromProfileId: commitLoaded.activeProfileId,
                         toProfileId: selectedProfileId,
                         expectedGeneration: commitLoaded.generation,
+                        ...(commitLoaded.incarnation === undefined
+                            ? {}
+                            : {
+                                expectedIncarnation:
+                                    commitLoaded.incarnation,
+                            }),
                         ...(commitLoaded.runtimeStateRevision === undefined
                             ? {}
                             : {
@@ -2228,13 +2336,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                             loaded: resolvedConflict.state,
                             overrides: input.memberStateOverridesByProfileId,
                         });
-                        const retrySelected = selectConnectedServiceAuthGroupCandidate({
-                            nowMs: this.deps.nowMs(),
-                            quotaFreshnessMs: this.deps.quotaFreshnessMs,
+                        const retrySelected = await this.selectPreparedCandidate({
+                            state: commitLoaded,
                             activeProfileId: commitLoaded.activeProfileId,
-                            policy: commitLoaded.policy,
-                            members: commitLoaded.members,
-                            memberStatesByProfileId: commitLoaded.memberStatesByProfileId,
+                            reason: input.reason,
                             allowCurrentProfileRetry: canRetryCurrentProfileForObservedProfile({
                                 reason: input.reason,
                                 observedProfileId: input.observedProfileId,

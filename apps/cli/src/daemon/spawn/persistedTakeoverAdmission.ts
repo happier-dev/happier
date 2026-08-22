@@ -1,7 +1,10 @@
 export const HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY =
   'HAPPIER_PERSISTED_TAKEOVER_ADMISSION';
 
+export type TakeoverAdmissionMode = 'persisted' | 'external_linked';
+
 export type HostPrivatePersistedTakeoverAdmission = Readonly<{
+  mode: TakeoverAdmissionMode;
   operationId: string;
   attemptId: string;
 }>;
@@ -62,7 +65,7 @@ export function createPersistedTakeoverAdmissionWaiter(options: Readonly<{
   const pendingByAttempt = new Map<string, PendingAdmission>();
   const keyFor = (correlation: HostPrivatePersistedTakeoverAdmission): string => {
     const parsed = parsePersistedTakeoverAdmission(correlation);
-    return JSON.stringify([parsed.operationId, parsed.attemptId]);
+    return JSON.stringify([parsed.mode, parsed.operationId, parsed.attemptId]);
   };
 
   const settle = (
@@ -139,6 +142,7 @@ export function createPersistedTakeoverAdmissionWaiter(options: Readonly<{
           return false;
         }
         pendingByAttempt.delete(key);
+        clearTimeout(pending.timer);
         pending.settledOutcome = outcome;
         pending.resolve(outcome);
         return true;
@@ -169,17 +173,23 @@ export function parsePersistedTakeoverAdmission(
   const record = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
     : null;
+  const mode = record?.mode === 'persisted' || record?.mode === 'external_linked'
+    ? record.mode
+    : null;
   const operationId = readBoundedIdentity(record?.operationId);
   const attemptId = readBoundedIdentity(record?.attemptId);
   if (
-    !operationId
+    !mode
+    || !operationId
     || !attemptId
     || !record
-    || Object.keys(record).some((key) => key !== 'operationId' && key !== 'attemptId')
+    || Object.keys(record).some(
+      (key) => key !== 'mode' && key !== 'operationId' && key !== 'attemptId',
+    )
   ) {
     throw new Error('Persisted takeover admission handoff is malformed');
   }
-  return Object.freeze({ operationId, attemptId });
+  return Object.freeze({ mode, operationId, attemptId });
 }
 
 export function serializePersistedTakeoverAdmissionForEnv(

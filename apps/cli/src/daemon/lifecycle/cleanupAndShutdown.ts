@@ -1,5 +1,10 @@
 import type { ApiMachineClient } from '@/api/apiMachine';
-import { clearDaemonState, acquireDaemonLock } from '@/persistence';
+import {
+    acquireDaemonLock,
+    clearDaemonStateForLockOwner,
+    releaseDaemonLock,
+    type DaemonStateOwner,
+} from '@/persistence';
 import { logger } from '@/ui/logger';
 import type { AutomationWorkerHandle } from '../automation/automationWorker';
 import type { ConnectedServiceQuotasLoopHandle } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
@@ -32,13 +37,30 @@ export type CleanupAndShutdownParams = Readonly<{
     trackedSessionCount: number;
     stopDirectPeerServer: () => Promise<void>;
     stopTailscaleTransferServeLifecycle: () => Promise<void>;
-    stopManagedServersOnShutdown: () => Promise<void>;
     stopSshTunnelsOnShutdown?: () => Promise<void>;
     stopControlServer: () => Promise<void>;
     stopCaffeinate: () => Promise<void>;
+    daemonStateOwner?: DaemonStateOwner;
     daemonLockHandle: DaemonLockHandle | null;
     releaseDaemonLock: (handle: DaemonLockHandle) => Promise<void>;
 }>;
+
+export async function releaseDaemonOwnershipAfterFatal(params: Readonly<{
+    daemonLockHandle: DaemonLockHandle | null;
+    daemonStateOwner: DaemonStateOwner | null;
+}>): Promise<void> {
+    if (!params.daemonLockHandle) return;
+    try {
+        if (params.daemonStateOwner) {
+            clearDaemonStateForLockOwner(
+                params.daemonLockHandle,
+                params.daemonStateOwner,
+            );
+        }
+    } finally {
+        await releaseDaemonLock(params.daemonLockHandle);
+    }
+}
 
 export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Promise<void> {
     const exitCode = getDaemonShutdownExitCode(params.source);
@@ -56,13 +78,19 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
         logger.debug('[DAEMON RUN] Health check interval cleared');
     }
 
-    // Clear daemon.state.json early in shutdown so callers observing "stop" don't race a later
-    // heartbeat tick or long tail cleanup work (and to satisfy daemon stop integration tests).
-    try {
-        await clearDaemonState({ includeLockFile: false });
-        logger.debug('[DAEMON RUN] Daemon state file removed');
-    } catch (error) {
-        logger.debug('[DAEMON RUN] Error cleaning up daemon metadata', error);
+    // Clear daemon.state.json early only while this process still owns the exact lifecycle lock.
+    // A self-restart predecessor has already handed that lock to its successor and must preserve
+    // the successor's state publication.
+    if (params.daemonLockHandle && params.daemonStateOwner) {
+        const removed = clearDaemonStateForLockOwner(
+            params.daemonLockHandle,
+            params.daemonStateOwner,
+        );
+        logger.debug(
+            removed
+                ? '[DAEMON RUN] Daemon state file removed'
+                : '[DAEMON RUN] Daemon state cleanup skipped because lifecycle ownership changed',
+        );
     }
 
     if (params.connectedServiceRefreshLoopHandle) {
@@ -127,7 +155,6 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
         await params.voiceInferenceWorker.stop();
     }
 
-    await params.stopManagedServersOnShutdown();
     await params.stopSshTunnelsOnShutdown?.();
     await params.stopControlServer();
     await params.stopCaffeinate();

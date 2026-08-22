@@ -128,6 +128,7 @@ describe('prepareDaemonSpawnChildEnvironment pending first input', () => {
       options: {
         directory: '/tmp/repo',
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: 'operation-1',
           attemptId: 'attempt-1',
         },
@@ -150,6 +151,7 @@ describe('prepareDaemonSpawnChildEnvironment pending first input', () => {
     expect(JSON.parse(
       result.extraEnvForChild[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY]!,
     )).toEqual({
+      mode: 'persisted',
       operationId: 'operation-1',
       attemptId: 'attempt-1',
     });

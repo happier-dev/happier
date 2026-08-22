@@ -21,7 +21,7 @@ import {
   extractReleasePayloadRootFromArchive,
   renderPrismaCompatibleSqliteDatabaseUrl,
   resolveFirstPartyComponentPublicReleaseVariant,
-  resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
+  resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
   resolveRelayRuntimeDefaults,
   type RelayRuntimeHealthResult,
   type RelayRuntimeNormalizedStatus,
@@ -199,7 +199,7 @@ function renderRelayRuntimeEnv(config: RelayRuntimeConfig, existingEnvText: stri
         ? join(config.dataDir, 'happier-server-light.sqlite')
         : `${config.dataDir}/happier-server-light.sqlite`,
       platform: config.platform,
-      sqlite: resolvePrismaSqliteDatabaseUrlOptionsFromEnv(sqliteEnv),
+      sqlite: resolveServerLightSqliteDatabaseUrlOptionsFromEnv(sqliteEnv),
     }),
     HAPPIER_FILES_BACKEND: 'local',
     HAPPIER_SQLITE_AUTO_MIGRATE: '1',

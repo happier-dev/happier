@@ -1,5 +1,3 @@
-import { createHmac } from 'node:crypto';
-
 import {
     ExternalSessionTranscriptRefreshBindingV1Schema,
     type ExternalSessionTranscriptRefreshBindingV1,
@@ -7,7 +5,8 @@ import {
 
 import { resolveExternalSessionObservationLinkInput } from '@/api/session/external/leases/resolveExternalSessionObservationLinkInput';
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readCredentials } from '@/persistence';
+import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
+import { readStoredCredentials } from '@/persistence';
 
 type ExternalSessionTranscriptRefreshAuthority = Omit<
     ExternalSessionTranscriptRefreshBindingV1,
@@ -15,7 +14,7 @@ type ExternalSessionTranscriptRefreshAuthority = Omit<
 >;
 
 export function deriveExternalSessionTranscriptRefreshCursorIdentity(params: Readonly<{
-    key: Uint8Array;
+    deviceLocalSecretStorage: DeviceLocalSecretStorage;
     cursor: string;
     authority: ExternalSessionTranscriptRefreshAuthority;
 }>): string {
@@ -36,15 +35,20 @@ export function deriveExternalSessionTranscriptRefreshCursorIdentity(params: Rea
         params.cursor,
     ]);
     return `external_session_cursor_binding_v1:${
-        createHmac('sha256', params.key).update(commitment, 'utf8').digest('hex')
+        params.deviceLocalSecretStorage.deriveOpaqueIdentity({
+            purpose: 'external_session_transcript_refresh_cursor',
+            value: commitment,
+        })
     }`;
 }
 
 export async function resolveExternalSessionTranscriptRefreshBinding(params: Readonly<{
     sessionId: string;
     cursor: string;
+    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
 }>): Promise<ExternalSessionTranscriptRefreshBindingV1 | null> {
-    const credentials = await readCredentials().catch(() => null);
+    if (!params.deviceLocalSecretStorage) return null;
+    const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) return null;
     const loaded = await loadLinkedExternalSession({
         credentials,
@@ -70,15 +74,11 @@ export async function resolveExternalSessionTranscriptRefreshBinding(params: Rea
         },
         contributionGeneration: observation.resource.pluginGeneration,
     };
-    const key = credentials.encryption.type === 'legacy'
-        ? credentials.encryption.secret
-        : credentials.encryption.machineKey;
-
     return ExternalSessionTranscriptRefreshBindingV1Schema.parse({
         v: 1,
         ...authority,
         cursorIdentity: deriveExternalSessionTranscriptRefreshCursorIdentity({
-            key,
+            deviceLocalSecretStorage: params.deviceLocalSecretStorage,
             cursor: params.cursor,
             authority,
         }),

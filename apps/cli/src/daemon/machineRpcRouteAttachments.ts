@@ -8,6 +8,7 @@ import type { SimulatorPreviewRoutes } from './devices/simulator/previewRoutes.t
 import type { DaemonLocalServicesMachineRpcRoutes } from '@/rpc/handlers/daemonLocalServices';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
 import type { ConnectedAccountDaemonRuntime } from './connectedServices/ConnectedAccountDaemonRuntime';
+import type { DaemonConnectedAccountPurposeBindingRuntime } from './connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 
 export type DaemonMachineRpcRouteRegistrar = Pick<
   ApiMachineClient,
@@ -19,6 +20,7 @@ export type DaemonMachineRpcRouteRegistrar = Pick<
   | 'registerBrowserRecordingRoutes'
   | 'registerSimulatorPreviewRoutes'
   | 'registerConnectedAccountDaemonRuntime'
+  | 'registerConnectedAccountPurposeBindingRuntime'
 >;
 
 export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
@@ -30,6 +32,10 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   attachBrowserRecordingRoutes(routes: BrowserRecordingRoutes): void;
   attachSimulatorPreviewRoutes(routes: SimulatorPreviewRoutes): void;
   attachConnectedAccountDaemonRuntime(runtime: ConnectedAccountDaemonRuntime): void;
+  attachConnectedAccountPurposeBindingRuntime(runtime: Pick<
+    DaemonConnectedAccountPurposeBindingRuntime,
+    'listActionFormConnectedAccountOptions'
+  >): void;
   prepareApiMachineForSessions(apiMachineForSessions: DaemonMachineRpcRouteRegistrar): void;
   attachApiMachineForSessions(apiMachineForSessions: DaemonMachineRpcRouteRegistrar | null): void;
 }>;
@@ -45,8 +51,14 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   let browserRecordingRoutes: BrowserRecordingRoutes | null = null;
   let simulatorPreviewRoutes: SimulatorPreviewRoutes | null = null;
   let connectedAccountDaemonRuntime: ConnectedAccountDaemonRuntime | null = null;
+  let connectedAccountPurposeBindingRuntime: Pick<
+    DaemonConnectedAccountPurposeBindingRuntime,
+    'listActionFormConnectedAccountOptions'
+  > | null = null;
   const connectedAccountRuntimeByRegistrar =
     new WeakMap<object, ConnectedAccountDaemonRuntime>();
+  const connectedAccountPurposeRuntimeByRegistrar =
+    new WeakMap<object, Pick<DaemonConnectedAccountPurposeBindingRuntime, 'listActionFormConnectedAccountOptions'>>();
 
   function registerConnectedAccountRuntime(
     registrar: DaemonMachineRpcRouteRegistrar,
@@ -64,6 +76,25 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
     connectedAccountRuntimeByRegistrar.set(
       registrar,
       connectedAccountDaemonRuntime,
+    );
+  }
+
+  function registerConnectedAccountPurposeRuntime(
+    registrar: DaemonMachineRpcRouteRegistrar,
+  ): void {
+    if (
+      !connectedAccountPurposeBindingRuntime
+      || connectedAccountPurposeRuntimeByRegistrar.get(registrar)
+        === connectedAccountPurposeBindingRuntime
+    ) {
+      return;
+    }
+    registrar.registerConnectedAccountPurposeBindingRuntime(
+      connectedAccountPurposeBindingRuntime,
+    );
+    connectedAccountPurposeRuntimeByRegistrar.set(
+      registrar,
+      connectedAccountPurposeBindingRuntime,
     );
   }
 
@@ -128,8 +159,15 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       if (registrar) registerConnectedAccountRuntime(registrar);
     },
 
+    attachConnectedAccountPurposeBindingRuntime(runtime) {
+      connectedAccountPurposeBindingRuntime = runtime;
+      const registrar = input.getApiMachineForSessions();
+      if (registrar) registerConnectedAccountPurposeRuntime(registrar);
+    },
+
     prepareApiMachineForSessions(apiMachineForSessions) {
       registerConnectedAccountRuntime(apiMachineForSessions);
+      registerConnectedAccountPurposeRuntime(apiMachineForSessions);
     },
 
     attachApiMachineForSessions(apiMachineForSessions) {
@@ -138,6 +176,7 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       // machine transport is published; later optional route families must not
       // delay or prevent this canonical command owner from being reattached.
       registerConnectedAccountRuntime(apiMachineForSessions);
+      registerConnectedAccountPurposeRuntime(apiMachineForSessions);
       if (localServicesPreviewRoutes) {
         apiMachineForSessions.registerLocalServicesPreviewRoutes(localServicesPreviewRoutes);
       }

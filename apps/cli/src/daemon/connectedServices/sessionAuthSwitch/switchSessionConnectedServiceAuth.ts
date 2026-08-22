@@ -152,6 +152,7 @@ export type SessionConnectedServiceAuthSwitchErrorCode =
   | 'metadata_update_failed'
   | 'restart_failed'
   | 'hot_apply_failed'
+  | 'credential_revision_superseded'
   | 'hot_apply_succeeded_but_recovery_failed'
   | 'provider_account_adoption_mismatch'
   | 'post_switch_verification_failed'
@@ -418,12 +419,89 @@ function hotApplySucceededButRecoveryFailed(
 function partialAppliedPendingReconciliation(input: Readonly<{
   reason: ConnectedServiceSessionAuthSwitchReason;
   phase: Extract<SessionConnectedServiceAuthSwitchApplicationState['phase'], 'hot_apply' | 'restart'>;
-  rollback: SessionConnectedServiceAuthSwitchRollbackDiagnostic;
+  // Present only when a rollback was ATTEMPTED and failed. A partial apply that is deliberately
+  // left un-rolled-back carries no rollback diagnostic, because none was tried.
+  rollback?: SessionConnectedServiceAuthSwitchRollbackDiagnostic;
+  serviceId?: string;
+  serviceResultsByServiceId?: Readonly<Record<string, SessionConnectedServiceAuthSwitchServiceResult>>;
 }>): SessionConnectedServiceAuthSwitchFailure {
   return failureResult('partial_applied_pending_reconciliation', {
     failurePhase: 'reconciliation',
     application: applicationFailure(input.reason, input.phase, 'partial_applied_pending_reconciliation'),
-    rollback: input.rollback,
+    ...(input.rollback ? { rollback: input.rollback } : {}),
+    ...(input.serviceId ? { serviceId: input.serviceId } : {}),
+    ...(input.serviceResultsByServiceId
+      ? { serviceResultsByServiceId: input.serviceResultsByServiceId }
+      : {}),
+  });
+}
+
+/**
+ * A hot apply walks the changed services in order and stops at the first failure, so a failed
+ * result can still carry services whose Provider credential ALREADY changed. There is no rollback
+ * API for those, which makes the operation post-effect: restoring the previous persisted bindings
+ * and spawn options would leave the canonical record claiming the applied service still holds its
+ * old account while its runtime holds the new one.
+ */
+function hotApplyAlreadyAppliedAnyService(input: Readonly<{
+  serviceResultsByServiceId?: Readonly<Record<string, SessionConnectedServiceAuthSwitchServiceResult>>;
+}>): boolean {
+  return Object.values(input.serviceResultsByServiceId ?? {})
+    .some((result) => result.status === 'applied');
+}
+
+/**
+ * ONE settlement owner for a restart attempt that never signalled.
+ *
+ * Restoring the previous persisted bindings and spawn options is only honest while the operation is
+ * still PRE-EFFECT. Once any service has taken its new credential there is no rollback API for it,
+ * so the same restore would write a canonical record claiming that service still holds its old
+ * account while its runtime already holds the new one. In that case the staged target stays
+ * persisted and the attempt settles as the partial state the session-scope Retry/Revert surface
+ * reconciles, exactly as the non-restart hot-apply branch already does.
+ */
+async function settleFailedRestartAttempt(input: Readonly<{
+  persistSessionBindings: SwitchSessionConnectedServiceAuthInput['persistSessionBindings'];
+  sessionId: string;
+  previousBindings: ConnectedServiceBindingsV1;
+  previousSpawnOptions: TrackedSession['spawnOptions'];
+  tracked: TrackedSession;
+  reason: ConnectedServiceSessionAuthSwitchReason;
+  diagnosticSource: ConnectedServiceUxDiagnosticV1['source'];
+  error: unknown;
+  appliedHotApplyResult?: Readonly<{
+    serviceId?: string;
+    serviceResultsByServiceId?: Readonly<Record<string, SessionConnectedServiceAuthSwitchServiceResult>>;
+  }>;
+}>): Promise<SessionConnectedServiceAuthSwitchFailure> {
+  if (input.appliedHotApplyResult && hotApplyAlreadyAppliedAnyService(input.appliedHotApplyResult)) {
+    return partialAppliedPendingReconciliation({
+      reason: input.reason,
+      phase: 'restart',
+      ...(input.appliedHotApplyResult.serviceId ? { serviceId: input.appliedHotApplyResult.serviceId } : {}),
+      ...(input.appliedHotApplyResult.serviceResultsByServiceId
+        ? { serviceResultsByServiceId: input.appliedHotApplyResult.serviceResultsByServiceId }
+        : {}),
+    });
+  }
+  const rollback = await rollbackPersistedSessionBindings({
+    persistSessionBindings: input.persistSessionBindings,
+    sessionId: input.sessionId,
+    previousBindings: input.previousBindings,
+    connectedServiceMaterializationIdentityV1:
+      readConnectedServiceMaterializationIdentityFromSpawnOptions(input.previousSpawnOptions),
+  });
+  input.tracked.spawnOptions = input.previousSpawnOptions;
+  if (!rollback.ok) {
+    return partialAppliedPendingReconciliation({
+      reason: input.reason,
+      phase: 'restart',
+      rollback: rollback.diagnostic,
+    });
+  }
+  return failureResult('restart_failed', {
+    ...restartFailure(input.reason, input.error),
+    diagnosticSource: input.diagnosticSource,
   });
 }
 
@@ -538,7 +616,8 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
   transitionLockMode?: ConnectedServiceTransitionLockMode;
   getChildren: () => ReadonlyArray<TrackedSession>;
   resolveInactiveSession?(input: Readonly<{ sessionId: string }>): Promise<Readonly<{
-    agentId: CatalogAgentId;
+    /** Absent when the Session declares no Agent this daemon has installed. */
+    agentId: CatalogAgentId | null;
     connectedServices: ConnectedServiceBindingsV1;
     connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
     vendorResumeId?: string | null;
@@ -622,7 +701,7 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
     acceptedConnectedServicesBindingsRaw: ConnectedServiceBindingsV1;
     acceptedConnectedServiceSelectionsEnv: Readonly<Record<string, string>>;
   }>): void | Promise<void>;
-  emitSessionEvent(sessionId: string, event: unknown): void;
+  emitSessionEvent(sessionId: string, event: unknown): void | Promise<void>;
   dryRun?: boolean;
   reason?: ConnectedServiceSessionAuthSwitchReason;
   runtimeAuthApplyReason?: ConnectedServiceRuntimeAuthApplyReason;
@@ -1463,15 +1542,37 @@ function resolveNextEffectiveBindings(input: Readonly<{
   return out;
 }
 
-function emitSwitchEvents(input: Readonly<{
-  emitSessionEvent: (sessionId: string, event: unknown) => void;
+/**
+ * Warning appended to an otherwise successful switch when the outcome could not be admitted to the
+ * transcript. The Provider effect and every canonical projection already completed, so the switch is
+ * APPLIED — only its evidence is incomplete.
+ */
+const CONNECTED_SERVICE_SWITCH_EVENT_ADMISSION_FAILED_WARNING =
+  'connected_service_switch_event_admission_failed';
+
+/**
+ * POST-EFFECT EVIDENCE: the switch outcome is already settled when these events are admitted, so an
+ * admission failure must never rewrite that outcome into an untyped throw. It is reported through
+ * the existing `warnings` channel instead; the caller-visible action stays what actually happened.
+ */
+async function admitSettledSwitchEvidence(admit: () => Promise<void>): Promise<boolean> {
+  try {
+    await admit();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function emitSwitchEvents(input: Readonly<{
+  emitSessionEvent: (sessionId: string, event: unknown) => void | Promise<void>;
   sessionId: string;
   reason: ConnectedServiceSessionAuthSwitchReason;
   mode: ConnectedServiceAccountSwitchMode;
   previousByServiceId: ReadonlyMap<ConnectedServiceId, EffectiveBinding>;
   nextByServiceId: ReadonlyMap<ConnectedServiceId, EffectiveBinding>;
   groupMetadataByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceGroupRuntimeMetadata>;
-}>): void {
+}>): Promise<void> {
   const commitAccountSwitchEvents = input.reason !== 'pre_turn_group_policy';
   for (const [serviceId, next] of input.nextByServiceId.entries()) {
     const previous = input.previousByServiceId.get(serviceId) ?? null;
@@ -1491,7 +1592,7 @@ function emitSwitchEvents(input: Readonly<{
       mode: input.mode,
     };
     if (!shouldCommitAutomaticGroupApplySessionEvent(event, { commitAccountSwitchEvents })) continue;
-    input.emitSessionEvent(input.sessionId, event);
+    await input.emitSessionEvent(input.sessionId, event);
   }
 }
 
@@ -1558,12 +1659,21 @@ function resolveFailedSwitchAttemptEventProjection(
   return null;
 }
 
-function emitFailedSwitchAttemptEvent(input: Readonly<{
-  emitSessionEvent: (sessionId: string, event: unknown) => void;
+function resolveFailedSwitchAttemptPartialState(
+  result: Extract<SessionConnectedServiceAuthSwitchResult, { ok: false }>,
+): 'runtime_auth_partially_applied' | null {
+  return result.errorCode === 'partial_applied_pending_reconciliation'
+    || result.diagnostics?.application?.status === 'partial_applied_pending_reconciliation'
+    ? 'runtime_auth_partially_applied'
+    : null;
+}
+
+async function emitFailedSwitchAttemptEvent(input: Readonly<{
+  emitSessionEvent: (sessionId: string, event: unknown) => void | Promise<void>;
   sessionId: string;
   result: SessionConnectedServiceAuthSwitchResult;
   reason?: ConnectedServiceRuntimeAuthApplyReason;
-}>): void {
+}>): Promise<void> {
   if (input.result.ok) return;
   // A predictive soft-threshold switch is a background optimization with a fail-safe design: it only
   // ever hot-applies (never restarts a working session) and declines BEFORE side effects when no safe
@@ -1577,7 +1687,7 @@ function emitFailedSwitchAttemptEvent(input: Readonly<{
   if (input.reason === 'soft_threshold' && input.result.errorCode === 'hot_apply_failed') return;
   const projection = resolveFailedSwitchAttemptEventProjection(input.result);
   if (!projection) return;
-  input.emitSessionEvent(input.sessionId, {
+  await input.emitSessionEvent(input.sessionId, {
     type: 'connected_service_account_switch_attempt',
     ok: false,
     action: projection.action,
@@ -1586,7 +1696,10 @@ function emitFailedSwitchAttemptEvent(input: Readonly<{
     outcome: projection.outcome,
     outcomeAction: projection.outcomeAction,
     errorCode: input.result.errorCode,
-    partialState: null,
+    // The transcript entry must agree with the settled outcome: a post-effect partial already
+    // changed real authority, so reporting `partialState: null` there would tell the user the
+    // attempt left nothing behind while the session badge says otherwise.
+    partialState: resolveFailedSwitchAttemptPartialState(input.result),
     ...(input.result.diagnostics?.uxDiagnostic
       ? { diagnostic: input.result.diagnostics.uxDiagnostic }
       : {}),
@@ -1859,6 +1972,16 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
             ...spreadPostSwitchVerification(continuationOutcome),
           };
         }
+        if (hotApplyAlreadyAppliedAnyService(hotApplyResult)) {
+          return partialAppliedPendingReconciliation({
+            reason: input.reason,
+            phase: 'hot_apply',
+            ...(hotApplyResult.serviceId ? { serviceId: hotApplyResult.serviceId } : {}),
+            ...(hotApplyResult.serviceResultsByServiceId
+              ? { serviceResultsByServiceId: hotApplyResult.serviceResultsByServiceId }
+              : {}),
+          });
+        }
         input.tracked.spawnOptions = previousSpawnOptions;
         return failureResult('hot_apply_failed', {
           serviceId: hotApplyResult.serviceId,
@@ -2001,8 +2124,9 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
 export type ApplyConnectedServiceAuthGenerationToTrackedSessionInput =
   Omit<SwitchSessionConnectedServiceAuthInput, 'core'>;
 
-export async function applyConnectedServiceAuthGenerationToTrackedSession(
+async function applyConnectedServiceAuthGenerationToTrackedSessionWithGroupConvergence(
   input: ApplyConnectedServiceAuthGenerationToTrackedSessionInput,
+  authoritativeGroupTargetRetriesRemaining: number,
 ): Promise<SessionConnectedServiceAuthSwitchResult> {
   const switchReason = input.reason ?? 'manual';
   const diagnosticSource = resolveSwitchUxDiagnosticSource(switchReason);
@@ -2010,13 +2134,16 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
   if (!tracked) {
     const inactive = await input.resolveInactiveSession?.({ sessionId: input.request.sessionId }) ?? null;
     if (!inactive) return failureResult('session_not_found', { failurePhase: 'session_lookup' });
-    if (input.request.agentId.trim() !== inactive.agentId) {
+    // A Session whose Agent identity is unreadable cannot match the requested
+    // Agent, so this fails closed exactly like a genuine mismatch.
+    const inactiveAgentId = inactive.agentId;
+    if (!inactiveAgentId || input.request.agentId.trim() !== inactiveAgentId) {
       return failureResult('agent_mismatch', { failurePhase: 'agent_validation' });
     }
 
     const normalized = await normalizeRequestedBindings({
       api: input.api,
-      agentId: inactive.agentId,
+      agentId: inactiveAgentId,
       request: input.request,
       dryRun: input.dryRun === true,
     });
@@ -2054,7 +2181,7 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       const continuity = await input.resolveContinuity({
         tracked: null,
         sessionId: input.request.sessionId,
-        agentId: inactive.agentId,
+        agentId: inactiveAgentId,
         serviceId,
         previous: previousByServiceId.get(serviceId) ?? null,
         next,
@@ -2099,7 +2226,7 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       return failureResult('metadata_update_failed', { failurePhase: 'metadata', diagnosticSource });
     }
 
-    emitSwitchEvents({
+    const metadataEvidenceAdmitted = await admitSettledSwitchEvidence(async () => await emitSwitchEvents({
       emitSessionEvent: input.emitSessionEvent,
       sessionId: input.request.sessionId,
       reason: switchReason,
@@ -2107,14 +2234,16 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       previousByServiceId,
       nextByServiceId,
       groupMetadataByServiceId: normalized.groupMetadataByServiceId,
-    });
+    }));
 
     return {
       ok: true,
       action: 'metadata_updated',
       normalizedBindings: normalized.normalized,
       continuityByServiceId,
-      warnings,
+      warnings: metadataEvidenceAdmitted
+        ? warnings
+        : [...warnings, CONNECTED_SERVICE_SWITCH_EVENT_ADMISSION_FAILED_WARNING],
     };
   }
 
@@ -2324,24 +2453,18 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
           try {
             await input.restartSession(tracked);
           } catch (error) {
-            const rollback = await rollbackPersistedSessionBindings({
+            return await settleFailedRestartAttempt({
               persistSessionBindings: input.persistSessionBindings,
               sessionId: input.request.sessionId,
               previousBindings,
-              connectedServiceMaterializationIdentityV1:
-                readConnectedServiceMaterializationIdentityFromSpawnOptions(previousSpawnOptions),
-            });
-            tracked.spawnOptions = previousSpawnOptions;
-            if (!rollback.ok) {
-              return partialAppliedPendingReconciliation({
-                reason: switchReason,
-                phase: 'restart',
-                rollback: rollback.diagnostic,
-              });
-            }
-            return failureResult('restart_failed', {
-              ...restartFailure(switchReason, error),
+              previousSpawnOptions,
+              tracked,
+              reason: switchReason,
               diagnosticSource,
+              error,
+              // A restart-required hot apply can still have applied EARLIER services before the one
+              // that demanded the restart, so this settlement is post-effect for those.
+              appliedHotApplyResult: hotApplyResult,
             });
           }
           action = 'restart_requested';
@@ -2372,6 +2495,19 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
           if (continuationOutcome.failure) return continuationOutcome.failure;
           mergePostSwitchVerification(postSwitchVerificationByServiceId, continuationOutcome);
         } else {
+          if (hotApplyAlreadyAppliedAnyService(hotApplyResult)) {
+            // POST-EFFECT PARTIAL: keep the staged target persisted and on the tracked session so a
+            // later restart converges the still-unapplied services through the ONE canonical apply
+            // path, and report the partial state the session-scope Retry/Revert surface reconciles.
+            return partialAppliedPendingReconciliation({
+              reason: switchReason,
+              phase: 'hot_apply',
+              ...(hotApplyResult.serviceId ? { serviceId: hotApplyResult.serviceId } : {}),
+              ...(hotApplyResult.serviceResultsByServiceId
+                ? { serviceResultsByServiceId: hotApplyResult.serviceResultsByServiceId }
+                : {}),
+            });
+          }
           const rollback = await rollbackPersistedSessionBindings({
             persistSessionBindings: input.persistSessionBindings,
             sessionId: input.request.sessionId,
@@ -2386,6 +2522,23 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
               phase: 'hot_apply',
               rollback: rollback.diagnostic,
             });
+          }
+          const supersededNext = changedServiceIds.length === 1
+            ? nextByServiceId.get(changedServiceIds[0]!) ?? null
+            : null;
+          const isPreEffectGroupSupersession = authoritativeGroupTargetRetriesRemaining > 0
+            && hotApplyResult.errorCode === 'credential_revision_superseded'
+            && supersededNext?.selection === 'group';
+          if (isPreEffectGroupSupersession) {
+            // Dev's plugin currentness guard runs under the provider destination lock before the
+            // plugin mutates its auth surface. Metadata was staged before that guard, so restore the
+            // previous session projection first, then re-enter normalization once to consume the
+            // newer group/profile/generation/revision as one coherent target. Restricting the retry
+            // to a single changed group service prevents re-running after a sibling service effect.
+            return await applyConnectedServiceAuthGenerationToTrackedSessionWithGroupConvergence(
+              input,
+              authoritativeGroupTargetRetriesRemaining - 1,
+            );
           }
           return failureResult('hot_apply_failed', {
             serviceId: hotApplyResult.serviceId,
@@ -2436,38 +2589,15 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
         });
         if (continuationOutcome.failure) {
           if (!isRetryableHotApplyPostSwitchVerificationFailure(continuationOutcome.failure)) return continuationOutcome.failure;
-          try {
-            await input.restartSession(tracked);
-          } catch (error) {
-            const rollback = await rollbackPersistedSessionBindings({
-              persistSessionBindings: input.persistSessionBindings,
-              sessionId: input.request.sessionId,
-              previousBindings,
-              connectedServiceMaterializationIdentityV1:
-                readConnectedServiceMaterializationIdentityFromSpawnOptions(previousSpawnOptions),
-            });
-            tracked.spawnOptions = previousSpawnOptions;
-            if (!rollback.ok) {
-              return partialAppliedPendingReconciliation({
-                reason: switchReason,
-                phase: 'restart',
-                rollback: rollback.diagnostic,
-              });
-            }
-            return failureResult('restart_failed', {
-              ...restartFailure(switchReason, error),
-              diagnosticSource,
-            });
-          }
           action = 'restart_requested';
           Object.assign(continuityByServiceId, markHotApplyContinuityAsRestart(continuityByServiceId));
-          const restartContinuationAttemptId = buildConnectedServiceSwitchContinuationAttemptId({
-            action,
-            serviceIds: changedServiceIdSet,
-            normalizedBindings: normalized.normalized,
-            expectedGroupGenerationByServiceId: input.request.expectedGroupGenerationByServiceId,
-          });
-          const restartContinuationOutcome = await runPostSwitchVerificationRecoveryAndContinuation({
+          // POST-EFFECT SETTLEMENT: the hot apply and its commit already completed, so the new
+          // authority is ACTIVE and the persisted target already agrees with it. The restart is an
+          // extra remediation for an inconclusive (retryable) verification, and the shared owner
+          // below settles a failed one WITHOUT restoring the previous bindings -- restoring them
+          // would write a canonical claim contradicting the live runtime.
+          const restartOutcome = await restartAfterRetryableHotApplyVerificationFailure({
+            restartSession: input.restartSession,
             recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
             continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
             verifyProviderAccountAdoption: input.verifyProviderAccountAdoption,
@@ -2476,18 +2606,22 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
             reason: switchReason,
             tracked,
             sessionId: input.request.sessionId,
-            attemptId: restartContinuationAttemptId,
+            attemptId: buildConnectedServiceSwitchContinuationAttemptId({
+              action,
+              serviceIds: changedServiceIdSet,
+              normalizedBindings: normalized.normalized,
+              expectedGroupGenerationByServiceId: input.request.expectedGroupGenerationByServiceId,
+            }),
             normalizedBindings: normalized.normalized,
             agentId: trackedAgentId,
             nextByServiceId,
             serviceIds: changedServiceIdSet,
-            action,
             ...(runtimeAuthSelectionsByServiceId.size === 0 ? {} : { runtimeAuthSelectionsByServiceId }),
           });
-          if (restartContinuationOutcome.failure) {
-            return withSwitchAttemptedAction(restartContinuationOutcome.failure, 'hot_applied');
+          if (restartOutcome.failure) {
+            return withSwitchAttemptedAction(restartOutcome.failure, 'hot_applied');
           }
-          mergePostSwitchVerification(postSwitchVerificationByServiceId, restartContinuationOutcome);
+          mergePostSwitchVerification(postSwitchVerificationByServiceId, restartOutcome);
         } else {
           mergePostSwitchVerification(postSwitchVerificationByServiceId, continuationOutcome);
         }
@@ -2508,24 +2642,17 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       try {
         await input.restartSession(tracked);
       } catch (error) {
-        const rollback = await rollbackPersistedSessionBindings({
+        // Pure restart-rematerialize: no credential was ever hot-applied, so this attempt really is
+        // PRE-EFFECT and the previous persisted bindings must be restored.
+        return await settleFailedRestartAttempt({
           persistSessionBindings: input.persistSessionBindings,
           sessionId: input.request.sessionId,
           previousBindings,
-          connectedServiceMaterializationIdentityV1:
-            readConnectedServiceMaterializationIdentityFromSpawnOptions(previousSpawnOptions),
-        });
-        tracked.spawnOptions = previousSpawnOptions;
-        if (!rollback.ok) {
-          return partialAppliedPendingReconciliation({
-            reason: switchReason,
-            phase: 'restart',
-            rollback: rollback.diagnostic,
-          });
-        }
-        return failureResult('restart_failed', {
-          ...restartFailure(switchReason, error),
+          previousSpawnOptions,
+          tracked,
+          reason: switchReason,
           diagnosticSource,
+          error,
         });
       }
       const continuationOutcome = await runPostSwitchVerificationRecoveryAndContinuation({
@@ -2567,7 +2694,7 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
     );
   }
 
-  emitSwitchEvents({
+  const switchEvidenceAdmitted = await admitSettledSwitchEvidence(async () => await emitSwitchEvents({
     emitSessionEvent: input.emitSessionEvent,
     sessionId: input.request.sessionId,
     reason: switchReason,
@@ -2575,16 +2702,24 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
     previousByServiceId,
     nextByServiceId,
     groupMetadataByServiceId: normalized.groupMetadataByServiceId,
-  });
+  }));
 
   return {
     ok: true,
     action,
     normalizedBindings: normalized.normalized,
     continuityByServiceId,
-    warnings,
+    warnings: switchEvidenceAdmitted
+      ? warnings
+      : [...warnings, CONNECTED_SERVICE_SWITCH_EVENT_ADMISSION_FAILED_WARNING],
     ...spreadPostSwitchVerification({ verificationByServiceId: postSwitchVerificationByServiceId }),
   };
+}
+
+export async function applyConnectedServiceAuthGenerationToTrackedSession(
+  input: ApplyConnectedServiceAuthGenerationToTrackedSessionInput,
+): Promise<SessionConnectedServiceAuthSwitchResult> {
+  return await applyConnectedServiceAuthGenerationToTrackedSessionWithGroupConvergence(input, 1);
 }
 
 export async function switchSessionConnectedServiceAuth(
@@ -2603,12 +2738,12 @@ export async function switchSessionConnectedServiceAuth(
     }),
   });
   if (!input.dryRun) {
-    emitFailedSwitchAttemptEvent({
+    await admitSettledSwitchEvidence(async () => await emitFailedSwitchAttemptEvent({
       emitSessionEvent: input.emitSessionEvent,
       sessionId: input.request.sessionId,
       result,
       reason: input.runtimeAuthApplyReason,
-    });
+    }));
   }
   return result;
 }

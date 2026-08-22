@@ -2,10 +2,9 @@ import { ALLOWED_HAPPY_SESSION_PROCESS_TYPES } from './pidSafety';
 import type { HappyProcessInfo } from './doctor';
 import { hashProcessCommand, writeSessionMarker } from './sessionRegistry';
 import type { DaemonSessionMarker } from './sessionRegistry';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { TrackedSession } from './types';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { projectPath } from '@/projectPath';
 import { resolvePackagedRuntimeProjectRoots } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import {
@@ -20,12 +19,13 @@ import {
   PersistedProviderResumeBindingError,
   readPersistedProviderResumeState,
 } from '@/providers/lifecycle/readPersistedResumeSelection';
-import { readProcessIdentityByPid } from './processIdentity';
+import { processGenerationMatches, readProcessIdentityByPid } from './processIdentity';
 import type { LocalServiceProcessFact } from './local/services/inventory/provenance';
 import {
   normalizeProcessCommandPathValue,
   processCommandContainsPathFragment,
 } from '@/subprocess/processCommandPathMatch';
+import type { DeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 
 const LIVE_RECOVERABLE_HAPPY_SESSION_PROCESS_TYPES = new Set([
   'daemon-spawned-session',
@@ -33,7 +33,6 @@ const LIVE_RECOVERABLE_HAPPY_SESSION_PROCESS_TYPES = new Set([
 ] as const);
 
 type LiveRecoverableHappySessionProcessType = 'daemon-spawned-session' | 'dev-daemon-spawned';
-let respawnDescriptorEncryptionMaterial: AccountScopedCryptoMaterial | null = null;
 
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -128,23 +127,18 @@ function canAdoptDaemonStartedHashDriftMarker(params: Readonly<{
   );
 }
 
-export function setRespawnDescriptorEncryptionMaterialForRestore(
-  encryptionMaterial: AccountScopedCryptoMaterial | null,
-): void {
-  respawnDescriptorEncryptionMaterial = encryptionMaterial;
-}
-
 export function adoptSessionsFromMarkers(params: {
   markers: DaemonSessionMarker[];
   happyProcesses: HappyProcessInfo[];
   pidToTrackedSession: Map<number, TrackedSession>;
-  credentials?: Credentials | null;
+  credentials?: StoredCredentials | null;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   processIdentityByPid?: ReadonlyMap<number, LocalServiceProcessFact>;
 }): { adopted: number; eligible: number } {
   const happyPidToType = new Map(params.happyProcesses.map((p) => [p.pid, p.type] as const));
   const happyPidToCommandHash = new Map(params.happyProcesses.map((p) => [p.pid, hashProcessCommand(p.command)] as const));
   const happyPidToCommand = new Map(params.happyProcesses.map((p) => [p.pid, p.command] as const));
-  const encryptionMaterial = params.credentials?.encryption ?? respawnDescriptorEncryptionMaterial ?? undefined;
+  const encryptionMaterial = params.credentials?.encryption ?? undefined;
 
   let adopted = 0;
   let eligible = 0;
@@ -159,15 +153,15 @@ export function adoptSessionsFromMarkers(params: {
     eligible++;
     if (marker.processStartTimeMs !== undefined) {
       const processIdentity = params.processIdentityByPid?.get(marker.pid);
-      if (
-        processIdentity?.processStartTimeMs !== marker.processStartTimeMs
-        || hashProcessCommand(processIdentity.command) !== marker.processCommandHash
-      ) {
+      if (!processGenerationMatches(
+        marker.processStartTimeMs,
+        processIdentity?.processStartTimeMs,
+      )) {
         continue;
       }
     }
 
-    // Stronger PID reuse safety: require the marker's observed command hash to match what is currently running.
+    // Legacy markers without a process-generation witness require strict command continuity.
     if (!marker.processCommandHash) {
       continue;
     }
@@ -180,7 +174,7 @@ export function adoptSessionsFromMarkers(params: {
     if (markerHasRespawnDescriptor && !respawnParsed.success) {
       continue;
     }
-    if (currentHash !== marker.processCommandHash) {
+    if (currentHash !== marker.processCommandHash && marker.processStartTimeMs === undefined) {
       const currentCommand = happyPidToCommand.get(marker.pid);
       if (
         !canAdoptDaemonStartedHashDriftMarker({
@@ -194,6 +188,15 @@ export function adoptSessionsFromMarkers(params: {
         continue;
       }
     }
+    const processIdentity = params.processIdentityByPid?.get(marker.pid);
+    const observedProcessStartTimeMs =
+      marker.processStartTimeMs
+      ?? (
+        processIdentity
+        && hashProcessCommand(processIdentity.command) === currentHash
+          ? processIdentity.processStartTimeMs
+          : undefined
+      );
 
     if (params.pidToTrackedSession.has(marker.pid)) continue;
     const currentCommand = happyPidToCommand.get(marker.pid);
@@ -221,7 +224,12 @@ export function adoptSessionsFromMarkers(params: {
     if (respawnParsed.success) {
       const restoredSpawnOptions = buildSpawnSessionOptionsFromRespawnDescriptorV1(
         respawnParsed.data,
-        encryptionMaterial ? { encryptionMaterial } : undefined,
+        {
+          ...(params.deviceLocalSecretStorage
+            ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage }
+            : {}),
+          ...(encryptionMaterial ? { encryptionMaterial } : {}),
+        },
       );
       const runtimeSnapshot = resolveSessionRuntimeSnapshot({
         incomingOptions: restoredSpawnOptions,
@@ -246,6 +254,9 @@ export function adoptSessionsFromMarkers(params: {
       ...(spawnOptions ? { spawnOptions } : {}),
       ...(vendorResumeId ? { vendorResumeId } : {}),
       processCommandHash: currentHash,
+      ...(observedProcessStartTimeMs !== undefined
+        ? { processStartTimeMs: observedProcessStartTimeMs }
+        : {}),
       processCommand: currentCommand,
       reattachedFromDiskMarker: true,
     }));

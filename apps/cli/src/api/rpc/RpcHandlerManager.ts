@@ -10,14 +10,26 @@ import {
     RpcHandlerMap,
     RpcRequest,
     RpcHandlerConfig,
+    type RpcHandlerActiveExecution,
 } from './types';
 import { Socket } from 'socket.io-client';
 import {
     SOCKET_RPC_EVENTS,
+    SocketRpcCancellationPayloadSchema,
+    SocketRpcRequestIdSchema,
     SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
     type SocketRpcTransportAcknowledgementV1,
 } from '@happier-dev/protocol/socketRpc';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
+import {
+    AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
+    SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+} from '@happier-dev/protocol';
+import {
+    isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext,
+    isSocketRpcSessionServerStartServerOriginAuthorizationContext,
+    RPC_ERROR_CODES,
+    RPC_ERROR_MESSAGES,
+} from '@happier-dev/protocol/rpc';
 
 type OwnedHandlerRegistrationContext = {
     ownerId: string;
@@ -25,34 +37,74 @@ type OwnedHandlerRegistrationContext = {
     nextMethods: Set<string>;
 };
 
+export type RpcHandlerRegistrationReadiness =
+    | Readonly<{ status: 'ready' }>
+    | Readonly<{
+        status: 'timeout' | 'disconnected';
+        missingMethods: readonly string[];
+    }>;
+
+type RegistrationReadinessWaiter = Readonly<{
+    requiredMethods: readonly string[];
+    requiredPrefixedMethods: ReadonlySet<string>;
+    resolve: (result: RpcHandlerRegistrationReadiness) => void;
+    timeout: ReturnType<typeof setTimeout>;
+}>;
+
 export class RpcHandlerManager {
     private handlers: RpcHandlerMap = new Map();
     private readonly scopePrefix: string;
-    private readonly encryptionKey: Uint8Array;
-    private readonly encryptionVariant: 'legacy' | 'dataKey';
-    private readonly encryptionMode: 'e2ee' | 'plain';
+    private readonly transport:
+        | Readonly<{ mode: 'plain' }>
+        | Readonly<{
+            mode: 'e2ee';
+            encryptionKey: Uint8Array;
+            encryptionVariant: 'legacy' | 'dataKey';
+        }>;
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
     private readonly projectTransportAcknowledgement:
         RpcHandlerConfig['projectTransportAcknowledgement'];
     private readonly logger: (message: string, data?: any) => void;
     private readonly onRegistrationError: RpcHandlerConfig['onRegistrationError'];
+    private readonly onRegistrationAcknowledged:
+        RpcHandlerConfig['onRegistrationAcknowledged'];
+    private readonly nowMs: () => number;
     private socket: Socket | null = null;
+    private acknowledgedRegistrationMethods = new Set<string>();
+    private registrationReadinessWaiters = new Set<RegistrationReadinessWaiter>();
     private inFlightRequestCount = 0;
     private activeTransportRequestControllers = new Set<AbortController>();
+    /**
+     * The authenticated relay stamps this short-lived id immediately before it
+     * dispatches here. It is deliberately transport-local: a caller cannot
+     * cancel another caller's work by reusing its own outbound id.
+     */
+    private activeTransportRequestControllersByRequestId = new Map<string, AbortController>();
     private idleResolvers = new Set<() => void>();
+    private nextHandlerExecutionId = 1;
+    private activeHandlerExecutions = new Map<number, Readonly<{
+        method: string;
+        startedAtMs: number;
+    }>>();
     private readonly ownedHandlerMethodsByOwner = new Map<string, Set<string>>();
     private ownedHandlerRegistration: OwnedHandlerRegistrationContext | null = null;
 
     constructor(config: RpcHandlerConfig) {
         this.scopePrefix = config.scopePrefix;
-        this.encryptionKey = config.encryptionKey;
-        this.encryptionVariant = config.encryptionVariant;
-        this.encryptionMode = config.encryptionMode ?? 'e2ee';
+        this.transport = config.encryptionMode === 'plain'
+            ? { mode: 'plain' }
+            : {
+                mode: 'e2ee',
+                encryptionKey: config.encryptionKey,
+                encryptionVariant: config.encryptionVariant,
+            };
         this.authorizeRequest = config.authorizeRequest;
         this.projectTransportAcknowledgement =
             config.projectTransportAcknowledgement;
         this.logger = config.logger || ((msg, data) => defaultLogger.debug(msg, data));
         this.onRegistrationError = config.onRegistrationError;
+        this.onRegistrationAcknowledged = config.onRegistrationAcknowledged;
+        this.nowMs = config.nowMs ?? (() => performance.now());
     }
 
     /**
@@ -78,6 +130,7 @@ export class RpcHandlerManager {
         this.handlers.set(prefixedMethod, handler);
 
         if (this.socket) {
+            this.acknowledgedRegistrationMethods.delete(prefixedMethod);
             this.socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
         }
     }
@@ -90,9 +143,32 @@ export class RpcHandlerManager {
     async handleRequest(
         request: RpcRequest,
     ): Promise<any> {
+        const parsedRequestId = request.requestId === undefined
+            ? null
+            : SocketRpcRequestIdSchema.safeParse(request.requestId);
+        if (parsedRequestId && !parsedRequestId.success) {
+            return this.encodeTransportResponse(request, {
+                error: 'Invalid RPC request correlation',
+                errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            });
+        }
+        const requestId = parsedRequestId && parsedRequestId.success
+            ? parsedRequestId.data
+            : null;
+        if (requestId && this.activeTransportRequestControllersByRequestId.has(requestId)) {
+            // A duplicate target-side id must not replace the first controller:
+            // doing so would let one cancel event abort the wrong live effect.
+            return this.encodeTransportResponse(request, {
+                error: 'RPC request correlation collision',
+                errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            });
+        }
         this.beginInFlightRequest();
         const controller = new AbortController();
         this.activeTransportRequestControllers.add(controller);
+        if (requestId) {
+            this.activeTransportRequestControllersByRequestId.set(requestId, controller);
+        }
         const timeoutMs = typeof request.timeoutMs === 'number'
             && Number.isSafeInteger(request.timeoutMs)
             && request.timeoutMs > 0
@@ -101,7 +177,24 @@ export class RpcHandlerManager {
         const timeout = timeoutMs === null
             ? null
             : setTimeout(() => controller.abort(new Error('RPC request timed out')), timeoutMs);
+        let handlerExecutionId: number | null = null;
         try {
+            const isReservedAutomationReplyHandoff = this.isReservedAutomationReplyHandoffRequest(request);
+            const isReservedSessionServerStart = this.isReservedSessionServerStartRequest(request);
+            const isReservedServerOriginRequest = isReservedAutomationReplyHandoff || isReservedSessionServerStart;
+            const isServerOriginAutomationReplyHandoff = isReservedAutomationReplyHandoff
+                && isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext(request.authorization);
+            const isServerOriginSessionServerStart = isReservedSessionServerStart
+                && isSocketRpcSessionServerStartServerOriginAuthorizationContext(request.authorization);
+            const isServerOriginReservedRequest = isServerOriginAutomationReplyHandoff
+                || isServerOriginSessionServerStart;
+            if (isReservedServerOriginRequest && !isServerOriginReservedRequest) {
+                return this.encodeTransportResponse(request, {
+                    error: RPC_ERROR_MESSAGES.FORBIDDEN,
+                    errorCode: RPC_ERROR_CODES.FORBIDDEN,
+                });
+            }
+
             const handler = this.handlers.get(request.method);
 
             if (!handler) {
@@ -111,12 +204,20 @@ export class RpcHandlerManager {
             }
 
             // Decrypt the incoming params (unless session is plaintext).
-            const decryptedParams = this.encryptionMode === 'plain'
+            const decryptedParams = isServerOriginReservedRequest || this.transport.mode === 'plain'
               ? request.params
               : typeof request.params === 'string'
-                ? decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(request.params))
+                ? decrypt(
+                    this.transport.encryptionKey,
+                    this.transport.encryptionVariant,
+                    decodeBase64(request.params),
+                )
                 : null;
-            if (this.encryptionMode !== 'plain' && decryptedParams === null) {
+            if (
+                !isServerOriginReservedRequest
+                && this.transport.mode !== 'plain'
+                && decryptedParams === null
+            ) {
               const errorResponse = {
                 error: 'Invalid RPC params',
               };
@@ -140,7 +241,13 @@ export class RpcHandlerManager {
 
             // Call the handler
             this.logger('[RPC] Calling handler', { method: request.method });
-            const result = await handler(decryptedParams, Object.freeze({ signal: controller.signal }));
+            handlerExecutionId = this.beginHandlerExecution(
+                this.readUnprefixedMethod(request.method),
+            );
+            const result = await handler(decryptedParams, Object.freeze({
+                signal: controller.signal,
+                ...(request.authorization ? { authorization: request.authorization } : {}),
+            }));
             this.logger('[RPC] Handler returned', { method: request.method, hasResult: result !== undefined });
 
             // Encrypt and return the response
@@ -150,7 +257,7 @@ export class RpcHandlerManager {
                 result,
             );
             const response = this.encodeTransportResponse(request, result, acknowledgement);
-            if (this.encryptionMode !== 'plain') {
+            if (this.transport.mode !== 'plain') {
                 const encodedResult = request.transportResponseEnvelopeVersion
                     === SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1
                     && response
@@ -165,14 +272,28 @@ export class RpcHandlerManager {
             }
             return response;
         } catch (error) {
-            this.logger('[RPC] [ERROR] Error handling request', { error });
+            this.logger('[RPC] [ERROR] Error handling request', {
+                error: error instanceof Error
+                    ? {
+                        name: error.name,
+                        message: error.message,
+                        stack: error.stack,
+                    }
+                    : error,
+            });
             const errorResponse = {
                 error: error instanceof Error ? error.message : 'Unknown error'
             };
             return this.encodeTransportResponse(request, errorResponse);
         } finally {
+            if (handlerExecutionId !== null) {
+                this.activeHandlerExecutions.delete(handlerExecutionId);
+            }
             if (timeout) clearTimeout(timeout);
             this.activeTransportRequestControllers.delete(controller);
+            if (requestId && this.activeTransportRequestControllersByRequestId.get(requestId) === controller) {
+                this.activeTransportRequestControllersByRequestId.delete(requestId);
+            }
             this.finishInFlightRequest();
         }
     }
@@ -183,24 +304,36 @@ export class RpcHandlerManager {
      * This is intended for internal control-plane surfaces (e.g. MCP tools) that
      * must delegate to the same handler implementations as session RPC.
      */
-    async invokeLocal(method: string, params: unknown, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown> {
+    async invokeLocal(method: string, params: unknown, options?: Readonly<{
+        signal?: AbortSignal;
+        localActionContext?: import('./types').RpcLocalActionContext;
+    }>): Promise<unknown> {
         const prefixedMethod = this.getPrefixedMethod(method);
         const handler = this.handlers.get(prefixedMethod);
         if (!handler) {
             return { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
         }
         this.beginInFlightRequest();
+        const handlerExecutionId = this.beginHandlerExecution(method);
         try {
             return await handler(params as any, Object.freeze({
                 signal: options?.signal ?? new AbortController().signal,
+                ...(options?.localActionContext
+                    ? { localActionContext: options.localActionContext }
+                    : {}),
             }));
         } finally {
+            this.activeHandlerExecutions.delete(handlerExecutionId);
             this.finishInFlightRequest();
         }
     }
 
     onSocketConnect(socket: Socket): void {
+        if (this.socket && this.socket !== socket) {
+            this.settleRegistrationReadinessWaiters('disconnected');
+        }
         this.socket = socket;
+        this.acknowledgedRegistrationMethods.clear();
         socket.on(SOCKET_RPC_EVENTS.ERROR, (error: unknown) => {
             if (this.socket !== socket) {
                 return;
@@ -214,6 +347,32 @@ export class RpcHandlerManager {
             this.logger('[RPC] [ERROR] Handler registration rejected', { error });
             this.onRegistrationError?.(error);
         });
+        socket.on(SOCKET_RPC_EVENTS.REGISTERED, (data: unknown) => {
+            if (this.socket !== socket) {
+                return;
+            }
+            const method = data && typeof data === 'object' && !Array.isArray(data)
+                ? (data as Record<string, unknown>).method
+                : null;
+            if (typeof method !== 'string' || !this.handlers.has(method)) {
+                return;
+            }
+            this.acknowledgedRegistrationMethods.add(method);
+            this.settleReadyRegistrationWaiters();
+            this.onRegistrationAcknowledged?.(method);
+        });
+        socket.on(SOCKET_RPC_EVENTS.CANCEL, (payload: unknown) => {
+            if (this.socket !== socket) {
+                return;
+            }
+            const parsed = SocketRpcCancellationPayloadSchema.safeParse(payload);
+            if (!parsed.success) {
+                return;
+            }
+            this.activeTransportRequestControllersByRequestId
+                .get(parsed.data.requestId)
+                ?.abort(new Error('RPC request cancelled by caller'));
+        });
         for (const [prefixedMethod] of this.handlers) {
             socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
         }
@@ -221,9 +380,48 @@ export class RpcHandlerManager {
 
     onSocketDisconnect(): void {
         this.socket = null;
+        this.acknowledgedRegistrationMethods.clear();
+        this.settleRegistrationReadinessWaiters('disconnected');
         for (const controller of this.activeTransportRequestControllers) {
             controller.abort(new Error('RPC target transport disconnected'));
         }
+        this.activeTransportRequestControllersByRequestId.clear();
+    }
+
+    async waitForRegisteredHandlers(
+        methods: readonly string[],
+        options: Readonly<{ timeoutMs: number }>,
+    ): Promise<RpcHandlerRegistrationReadiness> {
+        const requiredMethods = Array.from(new Set(methods.map((method) => method.trim()).filter(Boolean)));
+        const requiredPrefixedMethods = new Set(requiredMethods.map((method) => this.getPrefixedMethod(method)));
+        if (this.areRegistrationMethodsAcknowledged(requiredPrefixedMethods)) {
+            return { status: 'ready' };
+        }
+        if (!this.socket) {
+            return {
+                status: 'disconnected',
+                missingMethods: this.readMissingRegistrationMethods(requiredMethods),
+            };
+        }
+
+        return await new Promise<RpcHandlerRegistrationReadiness>((resolve) => {
+            let waiter!: RegistrationReadinessWaiter;
+            const timeout = setTimeout(() => {
+                this.registrationReadinessWaiters.delete(waiter);
+                resolve({
+                    status: 'timeout',
+                    missingMethods: this.readMissingRegistrationMethods(requiredMethods),
+                });
+            }, Math.max(0, options.timeoutMs));
+            waiter = {
+                requiredMethods,
+                requiredPrefixedMethods,
+                resolve,
+                timeout,
+            };
+            this.registrationReadinessWaiters.add(waiter);
+            this.settleReadyRegistrationWaiters();
+        });
     }
 
     /**
@@ -235,6 +433,14 @@ export class RpcHandlerManager {
 
     getInFlightRequestCount(): number {
         return this.inFlightRequestCount;
+    }
+
+    getActiveHandlerExecutions(): readonly RpcHandlerActiveExecution[] {
+        const observedAtMs = this.nowMs();
+        return Array.from(this.activeHandlerExecutions.values(), (execution) => ({
+            method: execution.method,
+            activeForMs: Math.max(0, Math.round(observedAtMs - execution.startedAtMs)),
+        }));
     }
 
     async waitForIdle(): Promise<void> {
@@ -274,6 +480,7 @@ export class RpcHandlerManager {
             methods.delete(method);
         }
         if (this.socket) {
+            this.acknowledgedRegistrationMethods.delete(prefixedMethod);
             this.socket.emit(SOCKET_RPC_EVENTS.UNREGISTER, { method: prefixedMethod });
         }
         return true;
@@ -333,13 +540,23 @@ export class RpcHandlerManager {
      */
     clearHandlers(): void {
         this.handlers.clear();
+        this.acknowledgedRegistrationMethods.clear();
         this.ownedHandlerMethodsByOwner.clear();
         this.logger('Cleared all RPC handlers');
     }
 
-    private encodeResponse(response: unknown): unknown {
-        if (this.encryptionMode === 'plain') return response;
-        return encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, response));
+    private encodeResponse(request: RpcRequest, response: unknown): unknown {
+        if (
+            this.transport.mode === 'plain'
+            || this.isServerOriginReservedRequest(request)
+        ) {
+            return response;
+        }
+        return encodeBase64(encrypt(
+            this.transport.encryptionKey,
+            this.transport.encryptionVariant,
+            response,
+        ));
     }
 
     private encodeTransportResponse(
@@ -347,7 +564,7 @@ export class RpcHandlerManager {
         result: unknown,
         acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null,
     ): unknown {
-        const encodedResult = this.encodeResponse(result);
+        const encodedResult = this.encodeResponse(request, result);
         if (
             request.transportResponseEnvelopeVersion
             !== SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1
@@ -397,6 +614,81 @@ export class RpcHandlerManager {
      */
     private getPrefixedMethod(method: string): string {
         return `${this.scopePrefix}:${method}`;
+    }
+
+    private readUnprefixedMethod(method: string): string {
+        const prefix = `${this.scopePrefix}:`;
+        return method.startsWith(prefix) ? method.slice(prefix.length) : method;
+    }
+
+    private beginHandlerExecution(method: string): number {
+        const id = this.nextHandlerExecutionId;
+        this.nextHandlerExecutionId += 1;
+        this.activeHandlerExecutions.set(id, {
+            method,
+            startedAtMs: this.nowMs(),
+        });
+        return id;
+    }
+
+    private isReservedAutomationReplyHandoffRequest(request: RpcRequest): boolean {
+        return request.method === this.getPrefixedMethod(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1);
+    }
+
+    private isServerOriginAutomationReplyHandoffRequest(request: RpcRequest): boolean {
+        return this.isReservedAutomationReplyHandoffRequest(request)
+            && isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext(request.authorization);
+    }
+
+    private isReservedSessionServerStartRequest(request: RpcRequest): boolean {
+        return request.method === this.getPrefixedMethod(SESSION_SERVER_START_DAEMON_RPC_METHOD_V1);
+    }
+
+    private isServerOriginSessionServerStartRequest(request: RpcRequest): boolean {
+        return this.isReservedSessionServerStartRequest(request)
+            && isSocketRpcSessionServerStartServerOriginAuthorizationContext(request.authorization);
+    }
+
+    private isServerOriginReservedRequest(request: RpcRequest): boolean {
+        return this.isServerOriginAutomationReplyHandoffRequest(request)
+            || this.isServerOriginSessionServerStartRequest(request);
+    }
+
+    private areRegistrationMethodsAcknowledged(methods: ReadonlySet<string>): boolean {
+        for (const method of methods) {
+            if (!this.acknowledgedRegistrationMethods.has(method)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private readMissingRegistrationMethods(methods: readonly string[]): readonly string[] {
+        return methods.filter((method) => (
+            !this.acknowledgedRegistrationMethods.has(this.getPrefixedMethod(method))
+        ));
+    }
+
+    private settleReadyRegistrationWaiters(): void {
+        for (const waiter of Array.from(this.registrationReadinessWaiters)) {
+            if (!this.areRegistrationMethodsAcknowledged(waiter.requiredPrefixedMethods)) {
+                continue;
+            }
+            this.registrationReadinessWaiters.delete(waiter);
+            clearTimeout(waiter.timeout);
+            waiter.resolve({ status: 'ready' });
+        }
+    }
+
+    private settleRegistrationReadinessWaiters(status: 'disconnected'): void {
+        for (const waiter of Array.from(this.registrationReadinessWaiters)) {
+            this.registrationReadinessWaiters.delete(waiter);
+            clearTimeout(waiter.timeout);
+            waiter.resolve({
+                status,
+                missingMethods: this.readMissingRegistrationMethods(waiter.requiredMethods),
+            });
+        }
     }
 
     private beginInFlightRequest(): void {

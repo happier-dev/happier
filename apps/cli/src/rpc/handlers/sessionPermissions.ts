@@ -1,4 +1,4 @@
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
@@ -10,7 +10,7 @@ type RpcRegistrar = Readonly<{
 }>;
 
 async function resolveProductionActionExecutor(): Promise<RpcActionExecutor> {
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return {
             execute: async () => ({

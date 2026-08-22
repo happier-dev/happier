@@ -793,14 +793,49 @@ describe('createOnChildExited', () => {
     expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(pid);
   });
 
+  it('hands a final tracked exit to terminal-host recovery only after durable exit staging', async () => {
+    const pid = 322;
+    const tracked = {
+      pid,
+      startedBy: 'daemon',
+      happySessionId: 'session-register-terminal-host',
+    };
+    const events: string[] = [];
+    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const removeSessionMarkerFn = vi.fn(async () => {});
+    const onFinalTrackedSessionExitStaged = vi.fn(async () => {
+      events.push('register-terminal-host');
+    });
+
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid: new Map<number, () => void>(),
+      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      getApiMachineForSessions: () => null,
+      removeSessionMarkerFn,
+      shouldPreserveSessionMarkerOnExit: () => true,
+      stageObservedExitFn: vi.fn(async () => {
+        events.push('stage-exit');
+      }),
+      onFinalTrackedSessionExitStaged,
+    } as any);
+
+    await onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
+
+    expect(events).toEqual(['stage-exit', 'register-terminal-host']);
+    expect(onFinalTrackedSessionExitStaged).toHaveBeenCalledWith({
+      pid,
+      trackedSession: tracked,
+      exit: { reason: 'process-exited', code: 0, signal: null },
+      observedAt: expect.any(Number),
+    });
+    expect(removeSessionMarkerFn).not.toHaveBeenCalled();
+    expect(pidToTrackedSession.has(pid)).toBe(false);
+  });
+
   it('transfers PID-owned cleanup and notifies promotion listeners when a live runner replaces the wrapper', async () => {
     const wrapperPid = 123;
     const runnerPid = 456;
-    let releaseManagedCustodyPromotion!: () => void;
-    const managedCustodyPromotionPaused = new Promise<void>((resolve) => {
-      releaseManagedCustodyPromotion = resolve;
-    });
-    const managedCustodyPromotionStarted = vi.fn();
     const tracked = {
       pid: wrapperPid,
       startedBy: 'daemon',
@@ -810,24 +845,6 @@ describe('createOnChildExited', () => {
       processStartTimeMs: 1_000,
       processCommand: 'wrapper command',
       childProcess: { pid: wrapperPid },
-      managedLocalServiceRunAttachment: {
-        v: 1,
-        process: {
-          pid: 9001,
-          processStartTimeMs: 1_000,
-          processCommandHash: 'c'.repeat(64),
-        },
-        endpoint: { host: '127.0.0.1', port: 8317 },
-        materialization: {
-          rootDir: '/tmp/managed-runtime',
-          materializationId: 'managed-runtime',
-        },
-      },
-      onManagedLocalServiceMarkerPidPromoted: vi.fn(async () => {
-        managedCustodyPromotionStarted();
-        await managedCustodyPromotionPaused;
-        return 'attachment_cleared' as const;
-      }),
     };
 
     const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
@@ -863,18 +880,10 @@ describe('createOnChildExited', () => {
       onPidPromoted,
     } as any);
 
-    const observation = onChildExited(
+    await onChildExited(
       wrapperPid,
       { reason: 'process-exited', code: 0, signal: null },
     );
-    await vi.waitFor(() =>
-      expect(managedCustodyPromotionStarted).toHaveBeenCalledOnce(),
-    );
-    expect(pidToTrackedSession.get(wrapperPid)).toBe(tracked);
-    expect(pidToTrackedSession.has(runnerPid)).toBe(false);
-    expect(tracked.pid).toBe(wrapperPid);
-    releaseManagedCustodyPromotion();
-    await observation;
 
     expect(spawnResourceCleanupByPid.has(wrapperPid)).toBe(false);
     expect(spawnResourceCleanupByPid.get(runnerPid)).toBe(spawnCleanup);
@@ -889,99 +898,13 @@ describe('createOnChildExited', () => {
       processStartTimeMs: 2_000,
       processCommand: 'runner command',
     }));
-    expect(
-      pidToTrackedSession.get(runnerPid),
-    ).not.toHaveProperty('managedLocalServiceRunAttachment');
     expect(onPidPromoted).toHaveBeenCalledWith({
       fromPid: wrapperPid,
       toPid: runnerPid,
       trackedSession: expect.objectContaining({ pid: runnerPid, happySessionId: 'session-1' }),
     });
-    expect(
-      tracked.onManagedLocalServiceMarkerPidPromoted,
-    ).toHaveBeenCalledWith({
-      fromPid: wrapperPid,
-      toPid: runnerPid,
-      ownership: {
-        happySessionId: 'session-1',
-        processCommandHash: 'b'.repeat(64),
-        processStartTimeMs: 2_000,
-      },
-      processCommand: 'runner command',
-    });
     expect(spawnCleanup).not.toHaveBeenCalled();
     killSpy.mockRestore();
   });
 
-  it('keeps wrapper custody when managed marker cleanup refuses the promotion', async () => {
-    const wrapperPid = 123;
-    const runnerPid = 456;
-    const tracked = {
-      pid: wrapperPid,
-      startedBy: 'daemon',
-      happySessionId: 'session-1',
-      sessionRunnerPid: runnerPid,
-      managedLocalServiceRunAttachment: {
-        v: 1,
-        process: {
-          pid: 9001,
-          processStartTimeMs: 1_000,
-          processCommandHash: 'c'.repeat(64),
-        },
-        endpoint: { host: '127.0.0.1', port: 8317 },
-        materialization: {
-          rootDir: '/tmp/managed-runtime',
-          materializationId: 'managed-runtime',
-        },
-      },
-      onManagedLocalServiceMarkerPidPromoted: vi.fn(async () => false),
-    };
-    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
-    const originalKill = process.kill.bind(process);
-    const killSpy = vi.spyOn(process, 'kill')
-      .mockImplementation(((targetPid: number, signal?: any) => {
-        if (targetPid === runnerPid && signal === 0) return true;
-        return originalKill(targetPid, signal as any);
-    }) as any);
-    const removeSessionMarkerFn = vi.fn(async () => undefined);
-    const removeSessionMarkerIfOwnedFn =
-      vi.fn(async () => true);
-    const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
-      getApiMachineForSessions: () => null,
-      removeSessionMarkerFn,
-      removeSessionMarkerIfOwnedFn,
-      promoteSessionMarkerFn: vi.fn(async () => ({
-        sourceMarkerOwnership: {
-          happySessionId: 'session-1',
-        },
-        targetMarkerOwnership: {
-          happySessionId: 'session-1',
-          processCommandHash: 'b'.repeat(64),
-          processStartTimeMs: 2_000,
-        },
-        targetProcessCommand: 'runner command',
-      })),
-    } as any);
-
-    await onChildExited(
-      wrapperPid,
-      { reason: 'process-exited', code: 0, signal: null },
-    );
-
-    expect(pidToTrackedSession.get(wrapperPid)).toBe(tracked);
-    expect(pidToTrackedSession.has(runnerPid)).toBe(false);
-    expect(tracked.pid).toBe(wrapperPid);
-    expect(removeSessionMarkerFn).not.toHaveBeenCalled();
-    expect(removeSessionMarkerIfOwnedFn).toHaveBeenCalledWith({
-      pid: runnerPid,
-      happySessionId: 'session-1',
-      processCommandHash: 'b'.repeat(64),
-      processStartTimeMs: 2_000,
-      isStillOwned: expect.any(Function),
-    });
-    killSpy.mockRestore();
-  });
 });

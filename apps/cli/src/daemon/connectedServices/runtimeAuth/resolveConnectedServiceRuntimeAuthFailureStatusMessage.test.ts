@@ -115,7 +115,7 @@ describe('resolveConnectedServiceRuntimeAuthFailureStatusMessage', () => {
 
     expect(status).toEqual({
       code: 'recovery_superseded_source_tuple_mismatch',
-      message: 'Connected-service account already updated; the old turn was interrupted. Retry your request.',
+      message: 'Connected-service account already updated; the old turn was interrupted.',
     });
   });
 

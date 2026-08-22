@@ -1,10 +1,12 @@
 import type { ApiClient } from '@/api/api';
-import { materializeConnectedServiceRuntimeAuthSelectionThroughCatalog } from '@/daemon/connectedServices/catalogHooks';
 import { resolveConnectedServiceCredentialResolutions } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
+  type ConnectedServiceChildSelection,
   readConnectedServiceChildSelectionsFromEnv,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import { resolveConnectedServiceMaterializedHomeRoot } from '@/daemon/connectedServices/catalogHooks';
+import { createSessionConnectedServiceAuthTransport } from '@/session/runtime/control/transport';
 import {
   type AccountSettings,
 } from '@happier-dev/protocol';
@@ -16,7 +18,7 @@ function readNonEmptyString(value: unknown): string {
 }
 
 export async function materializeSessionConnectedServiceRuntimeAuthSelection(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   api: ApiClient;
   activeServerDir?: string;
   input: SessionConnectedServiceRuntimeAuthSelectionMaterializerInput;
@@ -66,6 +68,18 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   const resolution = resolutions.get(params.input.serviceId);
   if (resolution?.revisionSemantics !== 'revisioned') return null;
   const { record, credentialRevision } = resolution;
+  const fallbackProfileId = binding.selection === 'group'
+    ? readNonEmptyString(groupMetadata?.fallbackProfileId)
+      || readNonEmptyString(previousGroupSelection?.fallbackProfileId)
+      || profileId
+    : null;
+  const generation = binding.selection === 'group'
+    ? typeof groupMetadata?.generation === 'number'
+      ? groupMetadata.generation
+      : typeof previousGroupSelection?.generation === 'number'
+        ? previousGroupSelection.generation
+        : 0
+    : null;
 
   const baseSelection = {
     serviceId: params.input.serviceId,
@@ -81,22 +95,48 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
       ? {
           groupId: binding.groupId,
           activeProfileId: profileId,
-          fallbackProfileId: readNonEmptyString(groupMetadata?.fallbackProfileId)
-            || readNonEmptyString(previousGroupSelection?.fallbackProfileId)
-            || profileId,
-          generation: typeof groupMetadata?.generation === 'number'
-            ? groupMetadata.generation
-            : typeof previousGroupSelection?.generation === 'number'
-              ? previousGroupSelection.generation
-              : 0,
+          fallbackProfileId: fallbackProfileId!,
+          generation: generation!,
         }
       : {}),
     record,
     credentialRevision,
   };
 
-  return await materializeConnectedServiceRuntimeAuthSelectionThroughCatalog(params.input.agentId, {
-    ...params,
-    baseSelection,
-  }) ?? baseSelection;
+  const targetSelection = (binding.selection === 'group'
+    ? {
+        kind: 'group',
+        serviceId: params.input.serviceId,
+        groupId: binding.groupId,
+        activeProfileId: profileId,
+        fallbackProfileId: fallbackProfileId!,
+        generation: generation!,
+        policy: null,
+        credentialRevision,
+      }
+    : {
+        kind: 'profile',
+        serviceId: params.input.serviceId,
+        profileId,
+        credentialRevision,
+      }) satisfies ConnectedServiceChildSelection;
+  const targetMaterializedRoot = params.activeServerDir
+    ? resolveConnectedServiceMaterializedHomeRoot(params.input.agentId, {
+        activeServerDir: params.activeServerDir,
+        serviceId: params.input.serviceId,
+        profileId,
+        selection: targetSelection,
+    })
+    : null;
+  const runtimeAuthTransport = createSessionConnectedServiceAuthTransport({
+    credentials: params.credentials,
+    sessionId: params.input.sessionId,
+  });
+
+  return {
+    ...baseSelection,
+    applyConnectedServiceAuthGeneration:
+      runtimeAuthTransport.applyConnectedServiceAuthGeneration,
+    ...(targetMaterializedRoot ? { targetMaterializedRoot } : {}),
+  };
 }

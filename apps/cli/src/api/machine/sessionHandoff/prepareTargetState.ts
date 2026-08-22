@@ -6,13 +6,14 @@ import {
   type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 
-import type {
-  SessionHandoffMetadataV2,
-  SessionHandoffPrepareTargetRequest,
-  SessionHandoffPrepareTargetResultGetSuccessResponse,
-  SessionHandoffStartRequest,
-  SessionHandoffStatus,
-  WorkspaceManifest,
+import {
+  normalizeSessionHandoffWorkspaceRootPath,
+  type SessionHandoffMetadataV2,
+  type SessionHandoffPrepareTargetRequest,
+  type SessionHandoffPrepareTargetResultGetSuccessResponse,
+  type SessionHandoffStartRequest,
+  type SessionHandoffStatus,
+  type WorkspaceManifest,
 } from '@happier-dev/protocol';
 
 export type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
@@ -40,15 +41,7 @@ export function buildStartPendingStatus(input: Readonly<{
   };
 }
 
-export function normalizeHandoffWorkspaceRootPath(raw: unknown): string | null {
-  const candidate = typeof raw === 'string' ? raw.trim() : '';
-  if (!candidate.startsWith('/')) return null;
-  if (candidate.includes('\0')) return null;
-  const segments = candidate.split('/').filter(Boolean).filter((segment) => segment !== '.');
-  if (segments.length === 0) return null;
-  if (segments.some((segment) => segment === '..')) return null;
-  return `/${segments.join('/')}`;
-}
+export const normalizeHandoffWorkspaceRootPath = normalizeSessionHandoffWorkspaceRootPath;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

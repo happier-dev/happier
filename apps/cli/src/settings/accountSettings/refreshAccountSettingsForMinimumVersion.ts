@@ -1,8 +1,11 @@
 import type { AgentId } from '@happier-dev/agents';
 import type { BackendTargetRefV1, BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
-import { getActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
+import type { StoredCredentials } from '@/persistence';
+import {
+  getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
+} from './activeAccountSettingsSnapshot';
 import type { ActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
 import { AccountSettingsStaleError } from './accountSettingsRefreshError';
 import { resolveAccountSettingsScopeKey } from './accountSettingsScopeKey';
@@ -18,22 +21,25 @@ import {
 
 type RefreshDeps = Readonly<{
   getActiveSnapshot: typeof getActiveAccountSettingsSnapshot;
+  getActiveLifetimeToken: typeof getActiveAccountSettingsSnapshotLifetimeToken;
   bootstrapAccountSettingsContext: typeof bootstrapAccountSettingsContext;
   resolveScopeKey: typeof resolveAccountSettingsScopeKey;
 }>;
 
 type RefreshParams = Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   minSettingsVersion?: number | null;
   agentId?: AgentId;
   backendTarget?: BackendTargetRefV1 | BackendTargetRefV2;
   mode?: AccountSettingsBootstrapMode;
   forceRefresh?: boolean;
+  shouldCommit?: () => boolean;
   deps?: Partial<RefreshDeps>;
 }>;
 
 type InFlightRefresh = Readonly<{
   minimum: number | null;
+  forceRefresh: boolean;
   promise: Promise<AccountSettingsContext>;
 }>;
 
@@ -56,6 +62,7 @@ function contextFromActiveSnapshot(active: ActiveAccountSettingsSnapshot): Accou
 export async function refreshAccountSettingsForMinimumVersion(params: RefreshParams): Promise<AccountSettingsContext> {
   const deps: RefreshDeps = {
     getActiveSnapshot: params.deps?.getActiveSnapshot ?? getActiveAccountSettingsSnapshot,
+    getActiveLifetimeToken: params.deps?.getActiveLifetimeToken ?? getActiveAccountSettingsSnapshotLifetimeToken,
     bootstrapAccountSettingsContext: params.deps?.bootstrapAccountSettingsContext ?? bootstrapAccountSettingsContext,
     resolveScopeKey: params.deps?.resolveScopeKey ?? resolveAccountSettingsScopeKey,
   };
@@ -73,12 +80,14 @@ export async function refreshAccountSettingsForMinimumVersion(params: RefreshPar
     return contextFromActiveSnapshot(active);
   }
 
-  const refreshKey = scopeKey;
+  const refreshKey = `${scopeKey}\u0000${deps.getActiveLifetimeToken()}`;
   const inFlight = inFlightByScope.get(refreshKey);
   if (
-    !forceRefresh
-    &&
-    inFlight
+    !params.shouldCommit
+    && inFlight
+    // A forced refresh must not be satisfied by an older opportunistic one,
+    // while an opportunistic caller may safely join the stronger forced work.
+    && (!forceRefresh || inFlight.forceRefresh)
     && (
       minSettingsVersion === null
       || (inFlight.minimum !== null && inFlight.minimum >= minSettingsVersion)
@@ -94,13 +103,21 @@ export async function refreshAccountSettingsForMinimumVersion(params: RefreshPar
     mode: params.mode ?? 'blocking',
     refresh: forceRefresh ? 'force' : 'auto',
     ...(minSettingsVersion !== null ? { minSettingsVersion } : {}),
+    ...(params.shouldCommit ? { shouldCommit: params.shouldCommit } : {}),
   }).then((ctx) => assertMinimumSatisfied(ctx, minSettingsVersion));
 
-  inFlightByScope.set(refreshKey, { minimum: minSettingsVersion, promise });
+  const tracksSharedRefresh = !params.shouldCommit;
+  if (tracksSharedRefresh) {
+    inFlightByScope.set(refreshKey, {
+      minimum: minSettingsVersion,
+      forceRefresh,
+      promise,
+    });
+  }
   try {
     return await promise;
   } finally {
-    if (inFlightByScope.get(refreshKey)?.promise === promise) {
+    if (tracksSharedRefresh && inFlightByScope.get(refreshKey)?.promise === promise) {
       inFlightByScope.delete(refreshKey);
     }
   }

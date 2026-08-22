@@ -4,12 +4,10 @@ import {
   type SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
 import { mergeSpawnSessionOptions } from '@/rpc/handlers/spawnSessionOptionsContract';
-import { createPendingFirstInput } from '@/daemon/spawn/pendingFirstInput';
 
 export async function runAutomationAsNewSession(params: {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   runId: string;
-  firstInputText?: string;
   template: SpawnSessionOptions;
 }): Promise<SpawnSessionResult> {
   const normalizedRunId = params.runId.trim();
@@ -26,15 +24,8 @@ export async function runAutomationAsNewSession(params: {
       {
         approvedNewDirectoryCreation: true,
         spawnNonce: `automation:${normalizedRunId}`,
-        ...(typeof params.firstInputText === 'string' && params.firstInputText.trim().length > 0
-          ? {
-              pendingFirstInput: createPendingFirstInput({
-                text: params.firstInputText,
-                spawnNonce: `automation:${normalizedRunId}`,
-              }),
-            }
-          : {}),
       },
+      { omit: ['pendingFirstInput'] },
     ) as SpawnSessionOptions,
   );
 }

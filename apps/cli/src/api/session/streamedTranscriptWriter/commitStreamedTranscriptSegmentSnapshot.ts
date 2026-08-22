@@ -58,14 +58,8 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
         .then((result) => {
           if (result.persisted) markDurablyPersisted();
         });
-    } else if (typeof session.sendAgentMessageCommitted === 'function') {
-      committedSnapshotPromise = session
-        .sendAgentMessageCommitted(provider, body, { localId: durableLocalId, meta })
-        .then(() => {
-          markDurablyPersisted();
-        });
     } else {
-      throw new Error('sendAgentMessageCommitted unavailable');
+      throw new Error('enqueueAgentMessageCommitted unavailable');
     }
   } catch (error) {
     committedSnapshotPromise = Promise.reject(error);

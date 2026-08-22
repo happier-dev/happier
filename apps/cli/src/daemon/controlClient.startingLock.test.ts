@@ -148,7 +148,11 @@ describe('daemon control client startup lock inspection', () => {
       writeFileSync(configuration.daemonLockFile, `${process.pid}\n`, 'utf8');
       const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
 
-      await stopDaemon();
+      await expect(stopDaemon()).rejects.toMatchObject({
+        code: 'daemon_stop_incomplete',
+        reason: 'startup_in_progress',
+        pid: process.pid,
+      });
 
       expect(killSpy).toHaveBeenCalledWith(process.pid, 0);
       expect(killSpy).not.toHaveBeenCalledWith(process.pid, 'SIGTERM');

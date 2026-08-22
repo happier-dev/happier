@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { RpcHandlerManager } from './RpcHandlerManager';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
+import {
+  RPC_ERROR_CODES,
+  RPC_ERROR_MESSAGES,
+  SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
+} from '@happier-dev/protocol/rpc';
+import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from '@/api/encryption';
 import type { Socket } from 'socket.io-client';
@@ -67,6 +72,97 @@ describe('RpcHandlerManager registration receipts', () => {
       requirement: { v: 1 },
     });
   });
+
+  it('reports ready only after every required handler is acknowledged on the active socket', async () => {
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionMode: 'plain',
+      logger: () => {},
+    });
+    rpc.registerHandler('core.spawn', async () => ({ ok: true }));
+    rpc.registerHandler('core.stop', async () => ({ ok: true }));
+    rpc.registerHandler('optional.status', async () => ({ ok: true }));
+    const boundary = createSocketEventBoundary();
+
+    rpc.onSocketConnect(boundary.socket);
+    const readiness = rpc.waitForRegisteredHandlers(
+      ['core.spawn', 'core.stop'],
+      { timeoutMs: 1_000 },
+    );
+    boundary.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: 'machine-1:optional.status' });
+    boundary.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: 'machine-1:core.spawn' });
+
+    let settled = false;
+    void readiness.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    boundary.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: 'machine-1:core.stop' });
+    await expect(readiness).resolves.toEqual({ status: 'ready' });
+  });
+
+  it('disconnects old waiters and ignores stale acknowledgements after reconnect', async () => {
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionMode: 'plain',
+      logger: () => {},
+    });
+    rpc.registerHandler('core.spawn', async () => ({ ok: true }));
+    const first = createSocketEventBoundary();
+    const second = createSocketEventBoundary();
+
+    rpc.onSocketConnect(first.socket);
+    const firstReadiness = rpc.waitForRegisteredHandlers(['core.spawn'], { timeoutMs: 1_000 });
+    rpc.onSocketConnect(second.socket);
+    const secondReadiness = rpc.waitForRegisteredHandlers(['core.spawn'], { timeoutMs: 1_000 });
+
+    first.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: 'machine-1:core.spawn' });
+    await expect(firstReadiness).resolves.toEqual({
+      status: 'disconnected',
+      missingMethods: ['core.spawn'],
+    });
+
+    let secondSettled = false;
+    void secondReadiness.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    second.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: 'machine-1:core.spawn' });
+    await expect(secondReadiness).resolves.toEqual({ status: 'ready' });
+  });
+
+  it('returns the exact missing handlers when the readiness deadline expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const rpc = new RpcHandlerManager({
+        scopePrefix: 'machine-1',
+        encryptionMode: 'plain',
+        logger: () => {},
+      });
+      rpc.registerHandler('core.spawn', async () => ({ ok: true }));
+      rpc.registerHandler('core.stop', async () => ({ ok: true }));
+      const boundary = createSocketEventBoundary();
+      rpc.onSocketConnect(boundary.socket);
+
+      const readiness = rpc.waitForRegisteredHandlers(
+        ['core.spawn', 'core.stop'],
+        { timeoutMs: 50 },
+      );
+      boundary.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: 'machine-1:core.spawn' });
+      await vi.advanceTimersByTimeAsync(50);
+
+      await expect(readiness).resolves.toEqual({
+        status: 'timeout',
+        missingMethods: ['core.stop'],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('RpcHandlerManager.invokeLocal', () => {
@@ -97,14 +193,38 @@ describe('RpcHandlerManager.invokeLocal', () => {
     const res = await rpc.invokeLocal('missing.method', {});
     expect(res).toEqual({ error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
   });
+
+  it('passes a host-only active-turn context to a local handler', async () => {
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'sess_1',
+      encryptionMode: 'plain',
+      logger: () => {},
+    });
+    const causalPermissionAuthority = {
+      kind: 'admittedSessionInputV1',
+      admittedPermissionCeiling: 'default',
+    } as const;
+
+    rpc.registerHandler('demo.active-turn', async (_params, context) => context?.localActionContext ?? null);
+
+    await expect(rpc.invokeLocal('demo.active-turn', {}, {
+      localActionContext: {
+        surface: 'agent',
+        callerPermissionMode: 'yolo',
+        causalPermissionAuthority,
+      },
+    })).resolves.toEqual({
+      surface: 'agent',
+      callerPermissionMode: 'yolo',
+      causalPermissionAuthority,
+    });
+  });
 });
 
 describe('RpcHandlerManager.handleRequest (plaintext)', () => {
   it('passes plaintext params through and returns plaintext results', async () => {
     const rpc = new RpcHandlerManager({
       scopePrefix: 'sess_1',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'dataKey',
       encryptionMode: 'plain',
       logger: () => {},
     });
@@ -117,11 +237,36 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
     expect(res).toEqual({ ok: true, echoed: { a: 1 } });
   });
 
+  it('retains structured error details when a plaintext handler throws', async () => {
+    const logger = vi.fn();
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'sess_1',
+      encryptionMode: 'plain',
+      logger,
+    });
+    rpc.registerHandler('demo.failure', async () => {
+      throw new Error('handler failed');
+    });
+
+    await expect(rpc.handleRequest({
+      method: 'sess_1:demo.failure',
+      params: {},
+    })).resolves.toEqual({ error: 'handler failed' });
+
+    const errorLog = logger.mock.calls.find(
+      ([message]) => message === '[RPC] [ERROR] Error handling request',
+    );
+    expect(errorLog).toBeDefined();
+
+    const serializedLogData = JSON.stringify(errorLog![1]);
+    expect(serializedLogData).toContain('"name":"Error"');
+    expect(serializedLogData).toContain('"message":"handler failed"');
+    expect(serializedLogData).toContain('"stack":"Error: handler failed');
+  });
+
   it('returns a method-not-found error object when handler is missing', async () => {
     const rpc = new RpcHandlerManager({
       scopePrefix: 'sess_1',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'dataKey',
       encryptionMode: 'plain',
       logger: () => {},
     });
@@ -129,9 +274,175 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
     const res = await rpc.handleRequest({ method: 'sess_1:missing.method', params: {} });
     expect(res).toEqual({ error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
   });
+
+  it('passes a server-stamped permission actor to the transport handler but never fabricates one locally', async () => {
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'sess_1',
+      encryptionMode: 'plain',
+      logger: () => {},
+    });
+    const authorization = {
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_PERMISSION_RESPOND,
+      sessionId: 'sess_1',
+      actor: {
+        kind: 'accountUser' as const,
+        accountId: 'account-owner',
+        relationship: 'owner' as const,
+      },
+    };
+
+    rpc.registerHandler('demo.permission', async (_params, context) => context?.authorization ?? null);
+
+    await expect(rpc.handleRequest({
+      method: 'sess_1:demo.permission',
+      params: {},
+      authorization,
+    })).resolves.toEqual(authorization);
+    await expect(rpc.invokeLocal('demo.permission', {})).resolves.toBeNull();
+  });
 });
 
 describe('RpcHandlerManager.handleRequest (encrypted)', () => {
+  it('passes the reserved Session server-start envelope through raw only for its stamped server origin', async () => {
+    const encryptionKey = new Uint8Array(32).fill(29);
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      logger: () => {},
+    });
+    const serverOrigin = {
+      kind: 'session.serverStart.serverOrigin',
+    } as const;
+    const rawEnvelope = {
+      v: 1,
+      kind: 'session.serverStart.dispatch',
+      target: { accountId: 'account-1', machineId: 'machine-1', machineInstallationId: 'installation-1' },
+      start: {
+        automationId: 'automation-1',
+        runId: 'run-1',
+        origin: 'event',
+        accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
+        requestEnvelope: { t: 'plain', v: { opaque: true } },
+      },
+    };
+    const rawResult = { type: 'error', code: 'target_unavailable', retryable: true };
+    const handler = vi.fn(async (params: unknown, context) => {
+      expect(params).toEqual(rawEnvelope);
+      expect(context?.authorization).toEqual(serverOrigin);
+      return rawResult;
+    });
+    rpc.registerHandler('daemon.sessions.serverStart.dispatch', handler);
+
+    await expect(rpc.handleRequest({
+      method: 'machine-1:daemon.sessions.serverStart.dispatch',
+      params: rawEnvelope,
+      authorization: serverOrigin,
+    } as Parameters<typeof rpc.handleRequest>[0])).resolves.toEqual(rawResult);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the reserved Automation reply-handoff envelope through raw only for the stamped server origin', async () => {
+    const encryptionKey = new Uint8Array(32).fill(17);
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      logger: () => {},
+    });
+    const serverOrigin = {
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN,
+    } as const;
+    const rawEnvelope = {
+      v: 1,
+      kind: 'automation.replyHandoff.dispatch',
+      handoffId: 'handoff-1',
+    };
+    const rawResult = { kind: 'settled', settlement: { kind: 'accepted' } };
+    const handler = vi.fn(async (params: unknown, context) => {
+      expect(params).toEqual(rawEnvelope);
+      expect(context?.authorization).toEqual(serverOrigin);
+      return rawResult;
+    });
+    rpc.registerHandler(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1, handler);
+
+    const response = await rpc.handleRequest({
+      method: `machine-1:${AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1}`,
+      params: rawEnvelope,
+      authorization: serverOrigin,
+    } as Parameters<typeof rpc.handleRequest>[0]);
+
+    expect(response).toEqual(rawResult);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed before the reserved handler when the server-origin stamp is absent or malformed', async () => {
+    const encryptionKey = new Uint8Array(32).fill(19);
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      logger: () => {},
+    });
+    const handler = vi.fn(async () => ({ kind: 'settled' }));
+    rpc.registerHandler(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1, handler);
+
+    for (const authorization of [
+      undefined,
+      {
+        kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN,
+        forged: true,
+      },
+    ]) {
+      const response = await rpc.handleRequest({
+        method: `machine-1:${AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1}`,
+        params: { v: 1, kind: 'automation.replyHandoff.dispatch' },
+        ...(authorization ? { authorization } : {}),
+      } as Parameters<typeof rpc.handleRequest>[0]);
+
+      expect(typeof response).toBe('string');
+      expect(decrypt(
+        encryptionKey,
+        'dataKey',
+        decodeBase64(response as string),
+      )).toEqual({
+        error: RPC_ERROR_MESSAGES.FORBIDDEN,
+        errorCode: RPC_ERROR_CODES.FORBIDDEN,
+      });
+    }
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('keeps every other encrypted RPC encrypted even when it carries the Automation origin marker', async () => {
+    const encryptionKey = new Uint8Array(32).fill(23);
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      logger: () => {},
+    });
+    const handler = vi.fn(async () => ({ ok: true }));
+    rpc.registerHandler('demo.other', handler);
+
+    const response = await rpc.handleRequest({
+      method: 'machine-1:demo.other',
+      params: { raw: true },
+      authorization: {
+        kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN,
+      },
+    } as Parameters<typeof rpc.handleRequest>[0]);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(typeof response).toBe('string');
+    expect(decrypt(
+      encryptionKey,
+      'dataKey',
+      decodeBase64(response as string),
+    )).toEqual({ error: 'Invalid RPC params' });
+  });
+
   it('wraps an encrypted result with only the requested projected transport acknowledgement', async () => {
     const encryptionKey = new Uint8Array(32).fill(13);
     const rpc = new RpcHandlerManager({
@@ -276,6 +587,82 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
 });
 
 describe('RpcHandlerManager in-flight request tracking', () => {
+  it('exposes only safe method timing while the actual handler is executing', async () => {
+    const authorizationStarted = createDeferredVoid();
+    const handlerStarted = createDeferredVoid();
+    let nowMs = 1_000;
+
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-secret-scope',
+      encryptionMode: 'plain',
+      logger: () => {},
+      nowMs: () => nowMs,
+      authorizeRequest: async () => {
+        await authorizationStarted.promise;
+        return { ok: true };
+      },
+    });
+
+    rpc.registerHandler('scm.status.snapshot', async () => {
+      await handlerStarted.promise;
+      return { secretPayload: 'must-not-appear-in-diagnostics' };
+    });
+
+    const requestPromise = rpc.handleRequest({
+      method: 'machine-secret-scope:scm.status.snapshot',
+      params: { secretInput: 'must-not-appear-in-diagnostics' },
+    });
+    await Promise.resolve();
+    expect(rpc.getActiveHandlerExecutions()).toEqual([]);
+
+    authorizationStarted.resolve();
+    await vi.waitFor(() => expect(rpc.getActiveHandlerExecutions()).toHaveLength(1));
+    nowMs = 2_250;
+    expect(rpc.getActiveHandlerExecutions()).toEqual([
+      {
+        method: 'scm.status.snapshot',
+        activeForMs: 1_250,
+      },
+    ]);
+
+    handlerStarted.resolve();
+    await requestPromise;
+    expect(rpc.getActiveHandlerExecutions()).toEqual([]);
+  });
+
+  it('tracks local handler execution without changing the caller signal', async () => {
+    const handlerStarted = createDeferredVoid();
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    let nowMs = 5_000;
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-secret-scope',
+      encryptionMode: 'plain',
+      logger: () => {},
+      nowMs: () => nowMs,
+    });
+    rpc.registerHandler('workspace.favicon.resolve', async (_params, context) => {
+      observedSignal = context?.signal;
+      await handlerStarted.promise;
+      return null;
+    });
+
+    const requestPromise = rpc.invokeLocal('workspace.favicon.resolve', {}, {
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    nowMs = 5_400;
+
+    expect(observedSignal).toBe(controller.signal);
+    expect(rpc.getActiveHandlerExecutions()).toEqual([
+      { method: 'workspace.favicon.resolve', activeForMs: 400 },
+    ]);
+
+    handlerStarted.resolve();
+    await requestPromise;
+    expect(rpc.getActiveHandlerExecutions()).toEqual([]);
+  });
+
   it('waits for an active request to settle before reporting idle', async () => {
     const handlerStarted = createDeferredVoid();
 
@@ -346,6 +733,56 @@ describe('RpcHandlerManager in-flight request tracking', () => {
 });
 
 describe('RpcHandlerManager request lifetime', () => {
+  it('aborts only the exact request correlated by a server-relayed cancellation', async () => {
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'sess_1', encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey',
+      encryptionMode: 'plain', logger: () => {},
+    });
+    const boundary = createSocketEventBoundary();
+    let handlerStarts = 0;
+    let secondSettled = false;
+    rpc.registerHandler('demo.abort', (async (_request: unknown, context?: { signal: AbortSignal }) => {
+      handlerStarts += 1;
+      await new Promise<void>((resolve) => context?.signal.addEventListener('abort', () => resolve(), { once: true }));
+      return { aborted: context?.signal.aborted === true };
+    }) as Parameters<typeof rpc.registerHandler>[1]);
+    rpc.onSocketConnect(boundary.socket);
+
+    const first = rpc.handleRequest({
+      method: 'sess_1:demo.abort', params: {}, requestId: 'relay-request-a',
+    } as Parameters<typeof rpc.handleRequest>[0]);
+    const second = rpc.handleRequest({
+      method: 'sess_1:demo.abort', params: {}, requestId: 'relay-request-b',
+    } as Parameters<typeof rpc.handleRequest>[0]).finally(() => {
+      secondSettled = true;
+    });
+    await vi.waitFor(() => expect(handlerStarts).toBe(2));
+
+    // This is emitted only by the authenticated server relay; the target owns
+    // the mapping from its stamped request id to the active AbortController.
+    boundary.trigger('rpc-cancel', { requestId: 'relay-request-a' });
+
+    const firstSettled = await Promise.race([
+      first.then(
+        (value) => ({ status: 'resolved' as const, value }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      ),
+      new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50)),
+    ]);
+    expect(firstSettled).toEqual({ status: 'resolved', value: { aborted: true } });
+    expect(secondSettled).toBe(false);
+
+    boundary.trigger('rpc-cancel', { requestId: 'relay-request-b' });
+    const secondSettledResult = await Promise.race([
+      second.then(
+        (value) => ({ status: 'resolved' as const, value }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      ),
+      new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50)),
+    ]);
+    expect(secondSettledResult).toEqual({ status: 'resolved', value: { aborted: true } });
+  });
+
   it('aborts the central handler signal when the target transport disconnects', async () => {
     const rpc = new RpcHandlerManager({
       scopePrefix: 'sess_1', encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey',

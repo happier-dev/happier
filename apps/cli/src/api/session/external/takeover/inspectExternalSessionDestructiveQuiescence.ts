@@ -2,7 +2,6 @@ import {
   doesExternalSessionDestructiveQuiescencePermitAdmissionV1,
   ExternalSessionDestructiveQuiescenceResultV1Schema,
   readLinkedExternalSessionV1FromMetadata,
-  resolveExternalSessionsSourceKey,
   type ExternalSessionDestructiveQuiescenceResultV1,
   type ExternalSessionDestructiveQuiescenceStatusV1,
   type ExternalSessionTakeoverResultV1,
@@ -22,7 +21,13 @@ import type { LoadedLinkedExternalSession } from './loadLinkedExternalSession';
 
 type DestructiveQuiescenceLinkedSession = Pick<
   LoadedLinkedExternalSession,
-  'agentId' | 'linkGeneration' | 'machineId' | 'metadata' | 'remoteSessionId' | 'source'
+  | 'agentId'
+  | 'linkGeneration'
+  | 'machineId'
+  | 'metadata'
+  | 'remoteSessionId'
+  | 'source'
+  | 'canonicalResolvedSourceKey'
 >;
 
 export type ExternalSessionDestructiveQuiescenceInspection = Readonly<{
@@ -57,6 +62,8 @@ export async function inspectExternalSessionDestructiveQuiescence(params: Readon
   if (params.machineId !== params.linked.machineId) return unknown(null);
   const persistedLink = readLinkedExternalSessionV1FromMetadata(params.linked.metadata);
   if (!persistedLink?.qualifiedIdentity) return unknown(null);
+  const sourceKey = params.linked.canonicalResolvedSourceKey ?? null;
+  if (!sourceKey) return unknown(null);
 
   const markers = await (params.listSessionMarkersFn ?? listSessionMarkers)().catch(() => null);
   if (!markers) return unknown(null);
@@ -89,7 +96,7 @@ export async function inspectExternalSessionDestructiveQuiescence(params: Readon
     linkedSessionId: params.linkedSessionId,
     remoteSessionId: params.linked.remoteSessionId,
     linkGeneration: params.linked.linkGeneration,
-    sourceKey: resolveExternalSessionsSourceKey(params.linked.source),
+    sourceKey,
     qualifiedIdentity: persistedLink.qualifiedIdentity,
   };
   const processIdentity = {

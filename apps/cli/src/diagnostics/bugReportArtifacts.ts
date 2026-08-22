@@ -21,7 +21,7 @@ import {
 
 import packageJson from '../../package.json';
 import { configuration } from '@/configuration';
-import { readCredentials, readSettings } from '@/persistence';
+import { readSettings, readStoredCredentials } from '@/persistence';
 import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from '@/diagnostics/bugReportMachineDiagnosticsRecipe';
 import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
@@ -153,7 +153,7 @@ export async function collectBugReportDiagnosticsArtifacts(
   }> = [];
 
   try {
-    const credentials = await readCredentials();
+    const credentials = await readStoredCredentials();
     credentialsToken = credentials?.token ?? null;
     if (credentialsToken) {
       const payload = decodeJwtPayload(credentialsToken);
@@ -326,6 +326,7 @@ export async function collectBugReportDiagnosticsArtifacts(
           await fetch(`${normalizeBaseUrl(input.serverUrl)}/v1/diagnostics/bug-report-snapshot?lines=${lines}`, {
             method: 'GET',
             headers: {
+              ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
               Authorization: `Bearer ${credentialsToken}`,
             },
             signal,
@@ -392,3 +393,4 @@ export async function collectBugReportDiagnosticsArtifacts(
 
   return { artifacts, environment };
 }
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

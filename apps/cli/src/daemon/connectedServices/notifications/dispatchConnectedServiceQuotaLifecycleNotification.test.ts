@@ -54,7 +54,7 @@ describe('dispatchConnectedServiceQuotaLifecycleNotificationAsync', () => {
       topic: 'connected_service_quota_blocked',
       sessionId: 'sess-1',
       serviceId: 'openai-codex',
-      serviceDisplayName: 'OpenAI',
+      serviceDisplayName: 'Codex',
       groupId: 'main',
       profileId: 'primary',
       issueFingerprint: 'quota-blocked:openai-codex:main',
@@ -113,7 +113,7 @@ describe('dispatchConnectedServiceQuotaLifecycleNotificationAsync', () => {
       topic: 'connected_service_quota_recovered',
       sessionId: 'sess-1',
       serviceId: 'openai-codex',
-      serviceDisplayName: 'OpenAI',
+      serviceDisplayName: 'Codex',
       profileId: 'backup',
       retryAfterMs: null,
     });

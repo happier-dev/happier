@@ -67,6 +67,7 @@ function createFakeChannel(handlers: Readonly<{
     },
     waitForTermination: () => termination,
     terminate: () => resolveTermination({ type: 'signaled', signal: 'SIGTERM' }),
+    forceTerminate: () => resolveTermination({ type: 'signaled', signal: 'SIGKILL' }),
   };
 
   return {
@@ -83,18 +84,15 @@ describe('forked voice inference runtime client', () => {
     vi.useRealTimers();
   });
 
-  it('proxies synthesize over IPC and reassembles chunked TTS audio', async () => {
+  it('proxies a terminal direct TTS result over IPC', async () => {
     const audio = Buffer.from('forked-tts-audio');
     const fake = createFakeChannel({
       onRequest: (frame, reply) => {
         if (frame.kind === 'synthesize') {
-          // Stream two chunks then a terminal result with the inline bytes empty.
-          reply({ kind: 'partial', id: frame.id, partialKind: 'tts', index: 0, chunkBase64: audio.subarray(0, 6).toString('base64') });
-          reply({ kind: 'partial', id: frame.id, partialKind: 'tts', index: 1, chunkBase64: audio.subarray(6).toString('base64') });
           reply({
             kind: 'result',
             id: frame.id,
-            result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: '', name: 'forked.wav' },
+            result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: audio.toString('base64'), name: 'forked.wav' },
           });
         }
       },
@@ -120,16 +118,31 @@ describe('forked voice inference runtime client', () => {
     await client.stop();
   });
 
-  it('tolerates streaming STT partials and returns the final transcription', async () => {
-    const emittedPartials: string[] = [];
+  it('preserves an output-bound terminal error without retiring a healthy worker', async () => {
+    let synthesizeCount = 0;
     const fake = createFakeChannel({
       onRequest: (frame, reply) => {
-        if (frame.kind === 'transcribe') {
-          emittedPartials.push('hel');
-          reply({ kind: 'partial', id: frame.id, partialKind: 'stt', text: 'hel', language: 'en' });
-          emittedPartials.push('hello');
-          reply({ kind: 'partial', id: frame.id, partialKind: 'stt', text: 'hello', language: 'en' });
-          reply({ kind: 'result', id: frame.id, result: { kind: 'transcribe', text: 'hello world', language: 'en' } });
+        if (frame.kind === 'synthesize') {
+          synthesizeCount += 1;
+          if (synthesizeCount === 1) {
+            reply({
+              kind: 'error',
+              id: frame.id,
+              code: 'output_too_large',
+              message: 'voice_inference_tts_output_too_large',
+            });
+            return;
+          }
+          reply({
+            kind: 'result',
+            id: frame.id,
+            result: {
+              kind: 'synthesize',
+              output: { codec: 'wav', mimeType: 'audio/wav' },
+              bytesBase64: Buffer.from('healthy-successor').toString('base64'),
+              name: 'healthy.wav',
+            },
+          });
         }
       },
     });
@@ -137,21 +150,28 @@ describe('forked voice inference runtime client', () => {
       channelFactory: async () => fake.channel,
     });
 
-    const result = await client.transcribeAudio({
-      requestId: 'stt-1',
-      filePath: '/tmp/upload.wav',
-      inputMimeType: 'audio/wav',
+    await expect(client.synthesizeTts({
+      requestId: 'tts-too-large',
+      text: 'long output',
       packId: 'pack-1',
       packDir: '/tmp/pack-1',
       manifest,
-      runtimeDescriptor: publicRuntimeDescriptor,
-      supportArtifacts: [{ type: 'file', kind: 'notice', path: 'NOTICE.txt' }],
-      language: 'en',
-      normalization: { inputTransport: 'upload_transfer', strategy: 'daemon_decode', systemFfmpegAllowed: false },
-    });
-    // Partial frames must not break the terminal settle; the final transcription wins.
-    expect(result).toEqual({ text: 'hello world', language: 'en' });
-    expect(emittedPartials).toEqual(['hel', 'hello']);
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    })).rejects.toMatchObject({ code: 'output_too_large' });
+
+    await expect(client.synthesizeTts({
+      requestId: 'tts-after-bound-error',
+      text: 'short output',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    })).resolves.toMatchObject({ name: 'healthy.wav' });
+    expect(synthesizeCount).toBe(2);
     await client.stop();
   });
 
@@ -465,6 +485,371 @@ describe('forked voice inference runtime client', () => {
     await client.stop();
   });
 
+  it('settles an executing TTS abort locally and terminates an unresponsive native worker', async () => {
+    const abortTargets: string[] = [];
+    let pendingId: string | null = null;
+    let terminateCount = 0;
+    const fake = createFakeChannel({
+      onRequest: (frame) => {
+        if (frame.kind === 'synthesize') {
+          // Model the real synchronous native engine: the request is executing, but the child
+          // event loop cannot consume the abort frame or emit a terminal response.
+          pendingId = frame.id;
+          return;
+        }
+        if (frame.kind === 'abort') {
+          abortTargets.push(frame.targetId);
+        }
+      },
+    });
+    const channel: VoiceInferenceWorkerChannel = {
+      ...fake.channel,
+      forceTerminate: () => {
+        terminateCount += 1;
+        fake.channel.forceTerminate();
+      },
+    };
+    const client = createForkedVoiceInferenceRuntimeClient({
+      channelFactory: async () => channel,
+      pingIntervalMs: 0,
+    });
+
+    const controller = new AbortController();
+    const pending = client.synthesizeTts({
+      requestId: 'tts-native-active-cancel',
+      text: 'cancel active native synthesis',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(pendingId).not.toBeNull());
+    controller.abort();
+
+    const outcome = await Promise.race([
+      pending.then(
+        () => ({ kind: 'resolved' as const }),
+        (error: unknown) => ({ kind: 'rejected' as const, error }),
+      ),
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        setTimeout(() => resolve({ kind: 'timeout' }), 100);
+      }),
+    ]);
+    expect(outcome).toMatchObject({
+      kind: 'rejected',
+      error: { code: 'cancelled' },
+    });
+    expect(abortTargets).toEqual([pendingId]);
+    expect(terminateCount).toBe(1);
+    await client.stop();
+  });
+
+  it('routes an immediate retry to the replacement while the cancelled TTS worker is still terminating', async () => {
+    let spawnCount = 0;
+    let forceTerminateCount = 0;
+    let cancelledRequestId: string | null = null;
+    let staleRetryCount = 0;
+    const firstFakeRef: { value: ReturnType<typeof createFakeChannel> | null } = { value: null };
+
+    const client = createForkedVoiceInferenceRuntimeClient({
+      channelFactory: async () => {
+        spawnCount += 1;
+        const generation = spawnCount;
+        const fake = createFakeChannel({
+          pid: 4_200 + generation,
+          onRequest: (frame, reply) => {
+            if (frame.kind !== 'synthesize') {
+              return;
+            }
+            if (generation === 1 && cancelledRequestId === null) {
+              cancelledRequestId = frame.id;
+              return;
+            }
+            if (generation === 1) {
+              staleRetryCount += 1;
+              reply({
+                kind: 'error',
+                id: frame.id,
+                code: 'runtime_unavailable',
+                message: 'retiring_worker_rejected_retry',
+              });
+              return;
+            }
+            reply({
+              kind: 'result',
+              id: frame.id,
+              result: {
+                kind: 'synthesize',
+                output: { codec: 'wav', mimeType: 'audio/wav' },
+                bytesBase64: Buffer.from(`replacement-${generation}`).toString('base64'),
+                name: 'replacement.wav',
+              },
+            });
+          },
+        });
+        if (generation === 1) {
+          firstFakeRef.value = fake;
+          return {
+            ...fake.channel,
+            forceTerminate: () => {
+              forceTerminateCount += 1;
+              // Model asynchronous OS termination: cancellation settles before waitForTermination.
+            },
+          };
+        }
+        return fake.channel;
+      },
+      random: () => 0,
+      pingIntervalMs: 0,
+      policy: {
+        kind: 'other',
+        restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
+        logging: { logTerminationEvents: false },
+        artifacts: { captureStderr: false },
+        terminateGraceMs: 0,
+      },
+    });
+
+    const controller = new AbortController();
+    const cancelled = client.synthesizeTts({
+      requestId: 'tts-cancel-before-immediate-retry',
+      text: 'cancel active native synthesis',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(cancelledRequestId).not.toBeNull());
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ code: 'cancelled' });
+
+    const retry = client.synthesizeTts({
+      requestId: 'tts-immediate-retry',
+      text: 'route me to the replacement',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+
+    const retiringFake = firstFakeRef.value;
+    if (!retiringFake || cancelledRequestId === null) {
+      throw new Error('expected the first worker to own the cancelled request');
+    }
+    // A late result from the doomed child must remain inert. Its eventual exit is what gives the
+    // existing sequential supervisor authority to create the replacement.
+    retiringFake.reply({
+      kind: 'result',
+      id: cancelledRequestId,
+      result: {
+        kind: 'synthesize',
+        output: { codec: 'wav', mimeType: 'audio/wav' },
+        bytesBase64: Buffer.from('stale-cancelled-output').toString('base64'),
+        name: 'stale.wav',
+      },
+    });
+    expect(spawnCount).toBe(1);
+    retiringFake.crash();
+
+    await expect(retry).resolves.toMatchObject({ name: 'replacement.wav' });
+    expect(forceTerminateCount).toBe(1);
+    expect(staleRetryCount).toBe(0);
+    expect(spawnCount).toBe(2);
+    await client.stop();
+  });
+
+  it('retires an aborted STT worker before stale output and admits a successor only after its exact replacement', async () => {
+    let spawnCount = 0;
+    let forceTerminateCount = 0;
+    let cancelledRequestId: string | null = null;
+    let staleSuccessorCount = 0;
+    const firstFakeRef: { value: ReturnType<typeof createFakeChannel> | null } = { value: null };
+    const client = createForkedVoiceInferenceRuntimeClient({
+      channelFactory: async () => {
+        spawnCount += 1;
+        const generation = spawnCount;
+        const fake = createFakeChannel({
+          pid: 4_300 + generation,
+          onRequest: (frame, reply) => {
+            if (frame.kind !== 'transcribe') {
+              return;
+            }
+            if (generation === 1 && cancelledRequestId === null) {
+              cancelledRequestId = frame.id;
+              return;
+            }
+            if (generation === 1) {
+              staleSuccessorCount += 1;
+              return;
+            }
+            reply({
+              kind: 'result',
+              id: frame.id,
+              result: { kind: 'transcribe', text: 'replacement transcription', language: 'en' },
+            });
+          },
+        });
+        if (generation === 1) {
+          firstFakeRef.value = fake;
+          return {
+            ...fake.channel,
+            forceTerminate: () => {
+              forceTerminateCount += 1;
+              // Model asynchronous OS termination: stale output can arrive before the exact child exits.
+            },
+          };
+        }
+        return fake.channel;
+      },
+      random: () => 0,
+      pingIntervalMs: 0,
+      policy: {
+        kind: 'other',
+        restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
+        logging: { logTerminationEvents: false },
+        artifacts: { captureStderr: false },
+        terminateGraceMs: 0,
+      },
+    });
+
+    const controller = new AbortController();
+    const cancelled = client.transcribeAudio({
+      requestId: 'stt-cancel-before-successor',
+      filePath: '/tmp/cancelled.wav',
+      inputMimeType: 'audio/wav',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      language: 'en',
+      normalization: { inputTransport: 'upload_transfer', strategy: 'daemon_decode', systemFfmpegAllowed: false },
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(cancelledRequestId).not.toBeNull());
+    controller.abort();
+
+    const cancellationOutcome = await Promise.race([
+      cancelled.then(
+        () => ({ kind: 'resolved' as const }),
+        (error: unknown) => ({ kind: 'rejected' as const, error }),
+      ),
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        setTimeout(() => resolve({ kind: 'timeout' }), 100);
+      }),
+    ]);
+    expect(cancellationOutcome).toMatchObject({
+      kind: 'rejected',
+      error: { code: 'cancelled' },
+    });
+    expect(forceTerminateCount).toBe(1);
+
+    const successor = client.transcribeAudio({
+      requestId: 'stt-successor-after-cancel',
+      filePath: '/tmp/successor.wav',
+      inputMimeType: 'audio/wav',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      language: 'en',
+      normalization: { inputTransport: 'upload_transfer', strategy: 'daemon_decode', systemFfmpegAllowed: false },
+    });
+
+    const retiringFake = firstFakeRef.value;
+    if (!retiringFake || cancelledRequestId === null) {
+      throw new Error('expected the first worker to own the cancelled transcription');
+    }
+    retiringFake.reply({
+      kind: 'result',
+      id: cancelledRequestId,
+      result: { kind: 'transcribe', text: 'stale transcription', language: 'en' },
+    });
+    expect(spawnCount).toBe(1);
+    expect(staleSuccessorCount).toBe(0);
+    retiringFake.crash();
+
+    await expect(successor).resolves.toEqual({ text: 'replacement transcription', language: 'en' });
+    expect(spawnCount).toBe(2);
+    await client.stop();
+  });
+
+  it('rejects replacement waiters and awaits the retiring child when stopped during cancellation', async () => {
+    let cancelledRequestId: string | null = null;
+    let spawnCount = 0;
+    const retiringFakeRef: { value: ReturnType<typeof createFakeChannel> | null } = { value: null };
+    const client = createForkedVoiceInferenceRuntimeClient({
+      channelFactory: async () => {
+        spawnCount += 1;
+        const fake = createFakeChannel({
+          onRequest: (frame) => {
+            if (frame.kind === 'synthesize') {
+              cancelledRequestId = frame.id;
+            }
+          },
+        });
+        retiringFakeRef.value = fake;
+        return {
+          ...fake.channel,
+          forceTerminate: () => {
+            // Keep OS termination pending until the test releases the exact child below.
+          },
+          terminate: () => {
+            // stop() must await waitForTermination rather than treating retired as already gone.
+          },
+        };
+      },
+      pingIntervalMs: 0,
+    });
+
+    const controller = new AbortController();
+    const cancelled = client.synthesizeTts({
+      requestId: 'tts-cancel-before-stop',
+      text: 'cancel before daemon stop',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(cancelledRequestId).not.toBeNull());
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ code: 'cancelled' });
+
+    const replacementWaiter = client.synthesizeTts({
+      requestId: 'tts-waiting-for-replacement-at-stop',
+      text: 'must not outlive stop',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+    const stopPromise = client.stop();
+
+    await expect(replacementWaiter).rejects.toMatchObject({ code: 'runtime_unavailable' });
+    await expect(Promise.race([
+      stopPromise.then(() => 'stopped' as const),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 25)),
+    ])).resolves.toBe('pending');
+
+    const stoppedFake = retiringFakeRef.value;
+    if (!stoppedFake) {
+      throw new Error('expected a retiring worker channel');
+    }
+    stoppedFake.crash();
+    await expect(stopPromise).resolves.toBeUndefined();
+    expect(spawnCount).toBe(1);
+  });
+
   it('rejects an already-aborted request locally without spawning the worker', async () => {
     const sentFrames: VoiceInferenceWorkerRequestFrame[] = [];
     let spawnCount = 0;
@@ -499,91 +884,6 @@ describe('forked voice inference runtime client', () => {
     expect(result).toMatchObject({ code: 'cancelled' });
     expect(spawnCount).toBe(0);
     expect(sentFrames).toEqual([]);
-    await client.stop();
-  });
-
-  it('rejects and terminates when TTS partial indexes exceed the bounded sequence', async () => {
-    vi.useFakeTimers();
-    let terminateCount = 0;
-    const fake = createFakeChannel({
-      onRequest: (frame, reply) => {
-        if (frame.kind !== 'synthesize') {
-          return;
-        }
-        reply({ kind: 'partial', id: frame.id, partialKind: 'tts', index: 1_000_000, chunkBase64: Buffer.from('boom').toString('base64') });
-        reply({ kind: 'result', id: frame.id, result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: '', name: 'bad.wav' } });
-      },
-    });
-    const wrapped: VoiceInferenceWorkerChannel = {
-      ...fake.channel,
-      terminate: () => {
-        terminateCount += 1;
-        fake.crash();
-      },
-    };
-    const client = createForkedVoiceInferenceRuntimeClient({
-      channelFactory: async () => wrapped,
-      requestTimeoutMs: 1_000_000,
-      pingIntervalMs: 0,
-    });
-
-    await expect(client.synthesizeTts({
-      requestId: 'tts-high-index',
-      text: 'bad',
-      packId: 'pack-1',
-      packDir: '/tmp/pack-1',
-      manifest,
-      voiceId: null,
-      speed: null,
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-    })).rejects.toMatchObject({
-      code: 'internal_error',
-      message: 'voice_inference_worker_invalid_tts_partial',
-    });
-    expect(terminateCount).toBeGreaterThanOrEqual(1);
-    await client.stop();
-  });
-
-  it('rejects and terminates when TTS partial chunks are non-contiguous or out of order', async () => {
-    vi.useFakeTimers();
-    let terminateCount = 0;
-    const fake = createFakeChannel({
-      onRequest: (frame, reply) => {
-        if (frame.kind !== 'synthesize') {
-          return;
-        }
-        reply({ kind: 'partial', id: frame.id, partialKind: 'tts', index: 0, chunkBase64: Buffer.from('a').toString('base64') });
-        reply({ kind: 'partial', id: frame.id, partialKind: 'tts', index: 2, chunkBase64: Buffer.from('c').toString('base64') });
-        reply({ kind: 'result', id: frame.id, result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: '', name: 'bad.wav' } });
-      },
-    });
-    const wrapped: VoiceInferenceWorkerChannel = {
-      ...fake.channel,
-      terminate: () => {
-        terminateCount += 1;
-        fake.crash();
-      },
-    };
-    const client = createForkedVoiceInferenceRuntimeClient({
-      channelFactory: async () => wrapped,
-      requestTimeoutMs: 1_000_000,
-      pingIntervalMs: 0,
-    });
-
-    await expect(client.synthesizeTts({
-      requestId: 'tts-gap',
-      text: 'bad',
-      packId: 'pack-1',
-      packDir: '/tmp/pack-1',
-      manifest,
-      voiceId: null,
-      speed: null,
-      output: { codec: 'wav', mimeType: 'audio/wav' },
-    })).rejects.toMatchObject({
-      code: 'internal_error',
-      message: 'voice_inference_worker_invalid_tts_partial',
-    });
-    expect(terminateCount).toBeGreaterThanOrEqual(1);
     await client.stop();
   });
 
@@ -723,9 +1023,9 @@ describe('forked voice inference runtime client', () => {
     });
     const wrapped: VoiceInferenceWorkerChannel = {
       ...fake.channel,
-      terminate: () => {
+      forceTerminate: () => {
         terminateCount += 1;
-        fake.channel.terminate();
+        fake.channel.forceTerminate();
       },
     };
 
@@ -751,49 +1051,193 @@ describe('forked voice inference runtime client', () => {
     await client.stop();
   });
 
-  it('does not time out a streaming request that keeps emitting chunks (H1 streaming keepalive)', async () => {
+  it('ignores late snapshots and results from a timed-out channel for its other concurrent requests', async () => {
     vi.useFakeTimers();
-    const captured: {
-      reply: ((response: VoiceInferenceWorkerResponseFrame) => void) | null;
-      id: string | null;
-    } = { reply: null, id: null };
-    const audio = Buffer.from('streamed-tts-payload');
+    const requestIdsByCaller = new Map<string, string>();
+    const snapshots: string[] = [];
     const fake = createFakeChannel({
-      onRequest: (frame, reply) => {
+      onRequest: (frame) => {
         if (frame.kind === 'synthesize') {
-          captured.reply = reply;
-          captured.id = frame.id;
+          requestIdsByCaller.set(frame.requestId, frame.id);
         }
       },
     });
-
     const client = createForkedVoiceInferenceRuntimeClient({
-      channelFactory: async () => fake.channel,
+      channelFactory: async () => ({
+        ...fake.channel,
+        forceTerminate: () => {
+          // Model asynchronous OS termination: the retiring child can still emit buffered frames
+          // before waitForTermination settles.
+        },
+      }),
       requestTimeoutMs: 1_000,
       pingIntervalMs: 0,
+      onSnapshot: (snapshot) => snapshots.push(`${snapshot.packId}:${snapshot.runtimeState}`),
+      policy: {
+        kind: 'other',
+        restart: { mode: 'never' },
+        logging: { logTerminationEvents: false },
+        artifacts: { captureStderr: false },
+        terminateGraceMs: 0,
+      },
     });
 
-    const pending = client.synthesizeTts({
-      requestId: 'tts-stream', text: 'long', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
+    const timedOutOutcome = client.synthesizeTts({
+      requestId: 'tts-concurrent-timeout-a',
+      text: 'time out first',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    }).then(
+      (result) => ({ kind: 'resolved' as const, result }),
+      (error: unknown) => ({ kind: 'rejected' as const, error }),
+    );
+    await vi.advanceTimersByTimeAsync(500);
+
+    const concurrentOutcome = client.synthesizeTts({
+      requestId: 'tts-concurrent-pending-b',
+      text: 'remain pending on the same child',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    }).then(
+      (result) => ({ kind: 'resolved' as const, result }),
+      (error: unknown) => ({ kind: 'rejected' as const, error }),
+    );
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(timedOutOutcome).resolves.toMatchObject({
+      kind: 'rejected',
+      error: { code: 'runtime_timeout' },
+    });
+    const concurrentId = requestIdsByCaller.get('tts-concurrent-pending-b');
+    if (!concurrentId) {
+      throw new Error('expected the concurrent request to be admitted to the first worker');
+    }
+
+    fake.reply({ kind: 'snapshot', packId: 'pack-1', runtimeState: 'ready' });
+    fake.reply({
+      kind: 'result',
+      id: concurrentId,
+      result: {
+        kind: 'synthesize',
+        output: { codec: 'wav', mimeType: 'audio/wav' },
+        bytesBase64: Buffer.from('late-old').toString('base64'),
+        name: 'late-old.wav',
+      },
+    });
+    fake.crash();
+
+    await expect(concurrentOutcome).resolves.toMatchObject({
+      kind: 'rejected',
+      error: { code: 'runtime_unavailable' },
+    });
+    expect(snapshots).toEqual([]);
+    await client.stop();
+  });
+
+  it('waits for the supervised replacement instead of sending an immediate successor to a timed-out worker', async () => {
+    vi.useFakeTimers();
+    let spawnCount = 0;
+    let forceTerminateCount = 0;
+    let staleSuccessorCount = 0;
+    const firstFakeRef: { value: ReturnType<typeof createFakeChannel> | null } = { value: null };
+    const client = createForkedVoiceInferenceRuntimeClient({
+      channelFactory: async () => {
+        spawnCount += 1;
+        const generation = spawnCount;
+        const fake = createFakeChannel({
+          pid: 5_100 + generation,
+          onRequest: (frame, reply) => {
+            if (frame.kind !== 'synthesize') {
+              return;
+            }
+            if (generation === 1 && frame.requestId === 'tts-timeout-successor') {
+              staleSuccessorCount += 1;
+              return;
+            }
+            if (generation > 1) {
+              reply({
+                kind: 'result',
+                id: frame.id,
+                result: {
+                  kind: 'synthesize',
+                  output: { codec: 'wav', mimeType: 'audio/wav' },
+                  bytesBase64: Buffer.from(`replacement-${generation}`).toString('base64'),
+                  name: 'replacement.wav',
+                },
+              });
+            }
+          },
+        });
+        if (generation === 1) {
+          firstFakeRef.value = fake;
+          return {
+            ...fake.channel,
+            forceTerminate: () => {
+              forceTerminateCount += 1;
+              // Model asynchronous OS termination: the timeout settles before child exit.
+            },
+          };
+        }
+        return fake.channel;
+      },
+      random: () => 0,
+      requestTimeoutMs: 1_000,
+      pingIntervalMs: 0,
+      policy: {
+        kind: 'other',
+        restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
+        logging: { logTerminationEvents: false },
+        artifacts: { captureStderr: false },
+        terminateGraceMs: 0,
+      },
+    });
+
+    const timedOut = client.synthesizeTts({
+      requestId: 'tts-timeout-retiring',
+      text: 'time out this worker',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(timedOut).resolves.toMatchObject({ code: 'runtime_timeout' });
+
+    const successor = client.synthesizeTts({
+      requestId: 'tts-timeout-successor',
+      text: 'wait for the replacement',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
     });
     await vi.advanceTimersByTimeAsync(1);
-    const requestId = captured.id;
-    const reply = captured.reply;
-    if (requestId === null || reply === null) {
-      throw new Error('expected the worker to have received the synthesize request');
-    }
 
-    // Emit a chunk every 800ms — under the 1s deadline. Activity must reset the timer, so the
-    // request survives well past the original deadline (4 * 800ms = 3.2s > 1s).
-    for (let index = 0; index < 4; index += 1) {
-      await vi.advanceTimersByTimeAsync(800);
-      reply({ kind: 'partial', id: requestId, partialKind: 'tts', index, chunkBase64: audio.subarray(index * 5, index * 5 + 5).toString('base64') });
-    }
-    // Now finish; the request must resolve, never having timed out.
-    reply({ kind: 'result', id: requestId, result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: '', name: 's.wav' } });
+    expect(forceTerminateCount).toBe(1);
+    expect(staleSuccessorCount).toBe(0);
+    expect(spawnCount).toBe(1);
 
-    const result = await pending;
-    expect(Buffer.from(result.bytes)).toEqual(audio);
+    const firstFake = firstFakeRef.value;
+    if (!firstFake) {
+      throw new Error('expected the timed-out worker channel');
+    }
+    firstFake.crash();
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(successor).resolves.toMatchObject({ name: 'replacement.wav' });
+    expect(spawnCount).toBe(2);
     await client.stop();
   });
 
@@ -870,7 +1314,7 @@ describe('forked voice inference runtime client', () => {
       });
       const wrapped: VoiceInferenceWorkerChannel = {
         ...fake.channel,
-        terminate: () => {
+        forceTerminate: () => {
           terminateCount += 1;
           // Terminating a real child resolves waitForTermination → the supervisor's restart path.
           fake.crash();
@@ -1016,7 +1460,7 @@ describe('forked voice inference runtime client', () => {
       }
       return {
         ...fake.channel,
-        terminate: () => {
+        forceTerminate: () => {
           terminateCount += 1;
           fake.crash();
         },
@@ -1081,9 +1525,18 @@ describe('forked voice inference runtime client', () => {
             return;
           }
           if (generation === 1) {
-            // Well-framed, valid JSON, but the tts partial carries an illegal negative index used
-            // directly as a chunk array key. It decodes cleanly yet must be REJECTED → terminate.
-            reply({ kind: 'partial', id: frame.id, partialKind: 'tts', index: -1, chunkBase64: 'AAA=' });
+            // Well-framed, valid JSON, but the terminal output descriptor is invalid. It decodes
+            // cleanly yet must be REJECTED → terminate.
+            reply({
+              kind: 'result',
+              id: frame.id,
+              result: {
+                kind: 'synthesize',
+                output: { codec: 'wav', mimeType: 'audio/mpeg' },
+                bytesBase64: 'AAA=',
+                name: 'invalid.wav',
+              },
+            } as unknown as VoiceInferenceWorkerResponseFrame);
             return;
           }
           reply({ kind: 'result', id: frame.id, result: { kind: 'synthesize', output: { codec: 'wav', mimeType: 'audio/wav' }, bytesBase64: Buffer.from(`gen-${generation}`).toString('base64'), name: 'r.wav' } });

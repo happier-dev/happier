@@ -36,6 +36,8 @@ describe('resolveTailscaleTransferListenerState', () => {
         tailnetName: null,
         tailscaleIps: [],
         loggedIn: false,
+        running: false,
+        daemonReachable: true,
       })),
       runTailscaleServeStatus: vi.fn(),
     });
@@ -63,6 +65,8 @@ describe('resolveTailscaleTransferListenerState', () => {
         tailnetName: 'tailnet.ts.net',
         tailscaleIps: ['100.64.0.1'],
         loggedIn: true,
+        running: true,
+        daemonReachable: true,
       })),
       runTailscaleServeStatus,
     });
@@ -89,6 +93,8 @@ describe('resolveTailscaleTransferListenerState', () => {
         tailnetName: 'tailnet.ts.net',
         tailscaleIps: ['100.64.0.1'],
         loggedIn: true,
+        running: true,
+        daemonReachable: true,
       })),
       runTailscaleServeStatus: vi.fn(async () => {
         throw new Error('serve status unavailable');
@@ -116,6 +122,8 @@ describe('resolveTailscaleTransferListenerState', () => {
         tailnetName: 'tailnet.ts.net',
         tailscaleIps: ['100.64.0.1'],
         loggedIn: true,
+        running: true,
+        daemonReachable: true,
       })),
       runTailscaleServeStatus: vi.fn(async () => 'https://machine.tailnet.ts.net\n|-- /__happier/transfer proxy http://127.0.0.1:46001'),
     });
@@ -141,6 +149,8 @@ describe('resolveTailscaleTransferListenerState', () => {
         tailnetName: 'tailnet.ts.net',
         tailscaleIps: ['100.64.0.1'],
         loggedIn: true,
+        running: true,
+        daemonReachable: true,
       })),
       runTailscaleServeStatus: vi.fn(async () => 'https://machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:46001'),
     });
@@ -169,6 +179,8 @@ describe('resolveTailscaleTransferListenerState', () => {
         tailnetName: 'tailnet.ts.net',
         tailscaleIps: ['100.64.0.1'],
         loggedIn: true,
+        running: true,
+        daemonReachable: true,
       })),
       runTailscaleServeStatus: vi.fn(async () => 'https://machine.tailnet.ts.net\n|-- /__happier/transfer proxy http://127.0.0.1:46001'),
       runTailscaleServeDisable,
@@ -207,6 +219,8 @@ describe('resolveTailscaleTransferListenerState', () => {
         tailnetName: 'tailnet.ts.net',
         tailscaleIps: ['100.64.0.1'],
         loggedIn: true,
+        running: true,
+        daemonReachable: true,
       })),
       runTailscaleServeStatus: vi.fn(async () => 'https://machine.tailnet.ts.net\n|-- /__happier/transfer proxy http://127.0.0.1:46001'),
       runTailscaleServeDisable,
@@ -219,5 +233,70 @@ describe('resolveTailscaleTransferListenerState', () => {
       available: true,
     });
     expect(runTailscaleServeDisable).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('resolveTailscaleTransferListenerState backend liveness', () => {
+  it('does not publish a configured listener while the machine is signed in but tailscaled is stopped', async () => {
+    // Serve config outlives `tailscale down`, so `tailscale serve status` still
+    // prints the transfer mount. Publishing that as configured tells other
+    // devices this machine can accept a transfer while nothing is listening.
+    const runTailscaleServeStatus = vi.fn(async () => [
+      'https://machine.tailnet.ts.net',
+      '|-- /__happier/transfer proxy http://127.0.0.1:46001',
+    ].join('\n'));
+
+    const state = await resolveTailscaleTransferListenerState({
+      enabled: true,
+      transferPort: 46001,
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+      runTailscaleStatusJson: vi.fn(async () => ({
+        backendState: 'Stopped',
+        authUrl: null,
+        dnsName: 'machine.tailnet.ts.net',
+        tailnetName: 'tailnet.ts.net',
+        tailscaleIps: ['100.64.0.10'],
+        loggedIn: true,
+        running: false,
+        daemonReachable: true,
+      })),
+      runTailscaleServeStatus,
+    });
+
+    expect(state).toEqual({
+      enabled: true,
+      configured: false,
+      active: false,
+      available: true,
+    });
+    expect(runTailscaleServeStatus).not.toHaveBeenCalled();
+  });
+
+  it('publishes an unavailable listener when tailscaled never answered', async () => {
+    const state = await resolveTailscaleTransferListenerState({
+      enabled: true,
+      transferPort: 46001,
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+      runTailscaleStatusJson: vi.fn(async () => ({
+        backendState: null,
+        authUrl: null,
+        dnsName: null,
+        tailnetName: null,
+        tailscaleIps: [],
+        loggedIn: false,
+        running: false,
+        daemonReachable: false,
+      })),
+      runTailscaleServeStatus: vi.fn(),
+    });
+
+    expect(state).toEqual({
+      enabled: true,
+      configured: false,
+      active: false,
+      available: false,
+    });
   });
 });

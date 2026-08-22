@@ -13,14 +13,6 @@ vi.mock('@/scm/rpc/dispatch', () => ({
   runScmRoute: (...args: unknown[]) => runScmRouteMock(...args),
 }));
 
-vi.mock('./scm/registerScmPullRequestHandlers', () => ({
-  registerScmPullRequestHandlers: vi.fn(),
-}));
-
-vi.mock('./scm/registerScmRepositoryProvisioningHandlers', () => ({
-  registerScmRepositoryProvisioningHandlers: vi.fn(),
-}));
-
 describe('registerScmHandlers status snapshot coalescing', () => {
   afterEach(() => {
     delete process.env.HAPPIER_SCM_STATUS_SNAPSHOT_CACHE_TTL_MS;

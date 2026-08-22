@@ -7,7 +7,7 @@ import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configu
 import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend';
 import { configuration } from '@/configuration';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import { isConfiguredAcpProbeTarget } from './isConfiguredAcpProbeTarget';
 
@@ -33,7 +33,7 @@ export async function createConfiguredAcpProbeBackend(params: Readonly<{
   backendTarget?: BackendTargetRefV1;
   cwd: string;
   accountSettings?: Readonly<Record<string, unknown>> | null;
-  credentials?: Credentials | null;
+  credentials?: StoredCredentials | null;
 }>): Promise<AcpProbeBackend | null> {
   if (!isConfiguredAcpProbeTarget(params)) return null;
 

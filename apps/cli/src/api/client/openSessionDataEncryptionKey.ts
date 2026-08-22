@@ -1,13 +1,13 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { decodeBase64 } from '../encryption';
 
 export function openSessionDataEncryptionKey(params: {
-  credential: Credentials;
+  credential: StoredCredentials;
   encryptedDataEncryptionKeyBase64: string | null | undefined;
 }): Uint8Array | null {
-  if (params.credential.encryption.type !== 'dataKey') {
+  if (params.credential.encryption?.type !== 'dataKey') {
     return null;
   }
 

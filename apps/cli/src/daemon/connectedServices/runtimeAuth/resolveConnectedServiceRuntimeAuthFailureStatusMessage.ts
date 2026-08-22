@@ -121,7 +121,7 @@ export function resolveConnectedServiceRuntimeAuthFailureStatusMessage(
   ) {
     return toStatusNote(
       'recovery_superseded_source_tuple_mismatch',
-      'Connected-service account already updated; the old turn was interrupted. Retry your request.',
+      'Connected-service account already updated; the old turn was interrupted.',
     );
   }
   if (outerResult?.status === 'temporary_retry_armed') {

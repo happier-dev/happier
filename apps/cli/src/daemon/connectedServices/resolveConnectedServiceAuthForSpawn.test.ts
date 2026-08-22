@@ -10,17 +10,19 @@ import {
   buildProviderAccountUsageRecordId,
   buildConnectedServiceCredentialRecord,
   sealAccountScopedBlobCiphertext,
+  type ConnectedServiceBindingsV1,
   type ConnectedServiceId,
   type ProviderAccountUsageRecordKeyV1,
   type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import type { ApiClient } from '@/api/api';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from './accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import {
   ConnectedServiceAuthGroupSwitchCoordinator,
   InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
 } from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './accountGroups/quotas/preTurnQuotaProbe';
 import { buildConnectedServiceAuthGroupSwitchState } from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
 import {
   ConnectedServiceLegacyUnfencedAuthorityError,
@@ -33,14 +35,15 @@ import {
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
 } from '@happier-dev/plugins-claude/agent';
 import {
-  PLUGIN_MANIFEST as CODEX_PLUGIN_MANIFEST,
-} from '@happier-dev/plugins-codex';
-import {
   CODEX_AGENT_RUNTIME_CONTRIBUTION,
 } from '@happier-dev/plugins-codex/agent/contributions/runtime';
 import {
+  getResolvedContributionRegistry,
+} from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+  resolveQualifiedPurposeBindingSnapshotForAgentSpawn,
   resolveQualifiedPurposeBindingsForAgentSpawn,
-  resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn,
+  type AgentSpawnPurposeContributions,
 } from './requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 
 type SpawnPreflightRefreshService = Readonly<{
@@ -68,9 +71,44 @@ type SpawnAuthGroupSwitchCoordinator = NonNullable<
 
 const exactOldServerContract = {
   mode: 'released_server_v0_2_1' as const,
+  runtimeActivity: 'legacy' as const,
+  pendingInput: 'released_server_v0_2_1' as const,
+  publisherAuthority: 'indeterminate' as const,
   sessionConnectionEpoch: 9,
   socket: { connected: true },
 };
+
+function withoutAppliedRequestAuthUses(
+  contributions: AgentSpawnPurposeContributions,
+  agentId: string,
+): AgentSpawnPurposeContributions {
+  const contribution = contributions.agentDefinitionsById.get(agentId);
+  if (!contribution?.catalogEntry) {
+    throw new Error(`test fixture expected an applied ${agentId} catalog entry`);
+  }
+  const {
+    connectedAccountRequestAuthUses: _omittedRequestAuthUses,
+    ...catalogEntryWithoutRequestAuthUses
+  } = contribution.catalogEntry;
+  const agentDefinitionsById = new Map(contributions.agentDefinitionsById);
+  agentDefinitionsById.set(agentId, {
+    ...contribution,
+    catalogEntry: catalogEntryWithoutRequestAuthUses,
+  });
+  return { agentDefinitionsById };
+}
+
+function createAppliedQualifiedPurposeBindingSnapshotResolver(
+  agentId: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['agentId'],
+) {
+  const contributions = getResolvedContributionRegistry();
+  return (bindings: ConnectedServiceBindingsV1) =>
+    resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+      agentId,
+      bindings,
+      contributions,
+    });
+}
 
 async function readClaudeCodeNativeCredential(claudeConfigDir: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(join(claudeConfigDir, '.credentials.json'), 'utf8')) as Record<string, unknown>;
@@ -127,20 +165,22 @@ function createProviderAccountUsageSnapshot(profileId: string, remainingPct: num
 }
 
 async function createSpawnPreTurnSwitchScenario(input: Readonly<{
-  switchResult: Readonly<{
+  switchResult?: Readonly<{
     status: string;
     activeProfileId?: string | null;
     generation?: number;
     errorCode?: string;
   }>;
+  switchError?: Error;
+  activeRemainingPercent?: number;
   rereadGroup?: Readonly<Record<string, unknown>> | null;
   rereadError?: Error;
 }>) {
   const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-single-spawn-switch-test-'));
   const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-single-spawn-switch-server-test-'));
-  const credentials: Credentials = {
+  const credentials: StoredCredentials = {
     token: 'happy-token',
-    encryption: { type: 'legacy', secret: new Uint8Array(32).fill(4) },
+    encryption: null,
   };
   const recordsByProfileId = new Map([
     ['primary', buildConnectedServiceCredentialRecord({
@@ -271,12 +311,15 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
       ) {
         return null;
       }
-      if (source.profileId === 'primary') return createProviderAccountUsageSnapshot('primary', 5);
+      if (source.profileId === 'primary') return createProviderAccountUsageSnapshot('primary', input.activeRemainingPercent ?? 5);
       if (source.profileId === 'backup') return createProviderAccountUsageSnapshot('backup', 60);
       return null;
     }),
   };
-  const switchBeforeTurn = vi.fn(async () => input.switchResult);
+  const switchBeforeTurn = vi.fn(async () => {
+    if (input.switchError) throw input.switchError;
+    return input.switchResult!;
+  });
 
   return {
     getConnectedServiceAuthGroup,
@@ -299,6 +342,8 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
       baseDir,
       credentials,
       api,
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       accountUsageStore,
       quotaFreshnessMs: 60_000,
       nowMs: () => 1_000,
@@ -311,6 +356,401 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
 }
 
 describe('resolveConnectedServiceAuthForSpawn', () => {
+  it('projects the applied OpenCode request-auth purpose into fresh spawn materialization', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-opencode-fresh-request-auth-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-opencode-fresh-request-auth-server-'));
+    const record = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: 1_700_000_000_000,
+      oauth: {
+        accessToken: 'access-must-not-reach-opencode',
+        refreshToken: 'refresh-must-not-reach-opencode',
+        idToken: null,
+        scope: null,
+        tokenType: 'Bearer',
+        providerAccountId: 'acct-work',
+        providerEmail: null,
+      },
+    });
+    if (record.kind !== 'oauth' || !record.oauth) {
+      throw new Error('test fixture expected OAuth credentials');
+    }
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') {
+      throw new Error('test fixture expected legacy encryption');
+    }
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const api = {
+      getAccountEncryptionMode: async () => 'e2ee' as const,
+      getConnectedServiceCredentialSealed: async (params: {
+        serviceId: string;
+        profileId: string;
+      }) => (
+        params.serviceId === 'openai-codex' && params.profileId === 'work'
+          ? {
+              revisionSemantics: 'revisioned' as const,
+              credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+              sealed: { format: 'account_scoped_v1' as const, ciphertext },
+              metadata: {
+                kind: 'oauth' as const,
+                providerEmail: null,
+                providerAccountId: 'acct-work',
+                expiresAt: record.expiresAt,
+              },
+            }
+          : null
+      ),
+    } as unknown as ApiClient;
+    const appliedContributions = getResolvedContributionRegistry();
+    const spawnInput = {
+      agentId: 'opencode',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'work',
+          },
+        },
+      },
+      materializationKey: 'fresh-opencode-request-auth',
+      activeServerDir,
+      baseDir,
+      credentials,
+      api,
+    } as const;
+
+    const withoutRequestAuth = await resolveConnectedServiceAuthForSpawn({
+      ...spawnInput,
+      materializationKey: 'fresh-opencode-missing-request-auth-projection',
+      resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: 'opencode',
+          bindings,
+          contributions: withoutAppliedRequestAuthUses(
+            appliedContributions,
+            'opencode',
+          ),
+        }),
+    });
+    expect(withoutRequestAuth?.requestAuthPurposeBindings).toEqual([]);
+    expect(withoutRequestAuth?.env)
+      .not.toHaveProperty('HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH');
+    expect(JSON.stringify(withoutRequestAuth?.env)).not.toContain(record.oauth.accessToken);
+
+    const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
+      ...spawnInput,
+      materializationKey: 'fresh-opencode-request-auth',
+      resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: 'opencode',
+          bindings,
+          contributions: appliedContributions,
+        }),
+    });
+
+    expect(connectedServiceAuth?.requestAuthPurposeBindings).toEqual([
+      expect.objectContaining({
+        purpose: {
+          consumer: {
+            pluginId: 'happier.agent.opencode',
+            localId: 'opencode',
+          },
+          purpose: 'openai-codex-model-request',
+        },
+      }),
+    ]);
+    expect(connectedServiceAuth?.env.HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH)
+      .toContain(join('request-auth', 'capability.json'));
+    expect(JSON.parse(connectedServiceAuth?.env.OPENCODE_AUTH_CONTENT ?? '{}')).toEqual({
+      openai: {
+        type: 'api',
+        key: 'happier-request-auth:openai:1',
+      },
+    });
+    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(record.oauth.accessToken);
+    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(record.oauth.refreshToken);
+  });
+
+  it('projects the applied Pi request-auth purpose into fresh spawn materialization', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-pi-fresh-request-auth-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-pi-fresh-request-auth-server-'));
+    const record = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: 1_700_000_000_000,
+      oauth: {
+        accessToken: 'access-must-not-reach-pi',
+        refreshToken: 'refresh-must-not-reach-pi',
+        idToken: null,
+        scope: null,
+        tokenType: 'Bearer',
+        providerAccountId: 'acct-work',
+        providerEmail: null,
+      },
+    });
+    if (record.kind !== 'oauth' || !record.oauth) {
+      throw new Error('test fixture expected OAuth credentials');
+    }
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(8) },
+    };
+    if (credentials.encryption.type !== 'legacy') {
+      throw new Error('test fixture expected legacy encryption');
+    }
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const api = {
+      getAccountEncryptionMode: async () => 'e2ee' as const,
+      getConnectedServiceCredentialSealed: async (params: {
+        serviceId: string;
+        profileId: string;
+      }) => (
+        params.serviceId === 'openai-codex' && params.profileId === 'work'
+          ? {
+              revisionSemantics: 'revisioned' as const,
+              credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+              sealed: { format: 'account_scoped_v1' as const, ciphertext },
+              metadata: {
+                kind: 'oauth' as const,
+                providerEmail: null,
+                providerAccountId: 'acct-work',
+                expiresAt: record.expiresAt,
+              },
+            }
+          : null
+      ),
+    } as unknown as ApiClient;
+    const appliedContributions = getResolvedContributionRegistry();
+    const spawnInput = {
+      agentId: 'pi',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'work',
+          },
+        },
+      },
+      activeServerDir,
+      baseDir,
+      credentials,
+      api,
+    } as const;
+
+    const withoutRequestAuth = await resolveConnectedServiceAuthForSpawn({
+      ...spawnInput,
+      materializationKey: 'fresh-pi-missing-request-auth-projection',
+      resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: 'pi',
+          bindings,
+          contributions: withoutAppliedRequestAuthUses(
+            appliedContributions,
+            'pi',
+          ),
+        }),
+    });
+    expect(withoutRequestAuth?.requestAuthPurposeBindings).toEqual([]);
+    expect(withoutRequestAuth?.env.HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH)
+      .toBe('');
+    expect(JSON.stringify(withoutRequestAuth?.env)).not.toContain(record.oauth.accessToken);
+
+    const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
+      ...spawnInput,
+      materializationKey: 'fresh-pi-request-auth',
+      resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: 'pi',
+          bindings,
+          contributions: appliedContributions,
+        }),
+    });
+
+    expect(connectedServiceAuth?.requestAuthPurposeBindings).toEqual([
+      expect.objectContaining({
+        purpose: {
+          consumer: {
+            pluginId: 'happier.agent.pi',
+            localId: 'pi',
+          },
+          purpose: 'openai-codex-model-request',
+        },
+      }),
+    ]);
+    expect(connectedServiceAuth?.env.HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH)
+      .toContain(join('request-auth', 'capability.json'));
+    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(record.oauth.accessToken);
+    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(record.oauth.refreshToken);
+  });
+
+  it('does not forward a revisioned Gemini token through the private materializer when its qualified purpose is not request-auth', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-gemini-qualified-materialization-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-gemini-qualified-materialization-server-'));
+    const record = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'gemini',
+      profileId: 'work',
+      kind: 'token',
+      token: {
+        token: 'gemini-token-must-not-reach-private-materializer',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+    if (record.kind !== 'token' || !record.token) {
+      throw new Error('test fixture expected token credentials');
+    }
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(6) },
+    };
+    if (credentials.encryption.type !== 'legacy') {
+      throw new Error('test fixture expected legacy encryption');
+    }
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const api = {
+      getAccountEncryptionMode: async () => 'e2ee' as const,
+      getConnectedServiceCredentialSealed: async (params: {
+        serviceId: string;
+        profileId: string;
+      }) => (
+        params.serviceId === 'gemini' && params.profileId === 'work'
+          ? {
+              revisionSemantics: 'revisioned' as const,
+              credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+              sealed: { format: 'account_scoped_v1' as const, ciphertext },
+              metadata: {
+                kind: 'token' as const,
+                providerEmail: null,
+                providerAccountId: null,
+                expiresAt: null,
+              },
+            }
+          : null
+      ),
+    } as unknown as ApiClient;
+    const contributions = getResolvedContributionRegistry();
+
+    const missingSnapshotResult = await Promise.allSettled([
+      resolveConnectedServiceAuthForSpawn({
+        agentId: 'gemini',
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            gemini: {
+              source: 'connected',
+              selection: 'profile',
+              profileId: 'work',
+            },
+          },
+        },
+        materializationKey: 'gemini-qualified-missing-snapshot',
+        activeServerDir,
+        baseDir,
+        credentials,
+        api,
+        resolveQualifiedPurposeBindingSnapshot: () => null,
+      }),
+      resolveConnectedServiceAuthForSpawn({
+        agentId: 'gemini',
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            gemini: {
+              source: 'connected',
+              selection: 'profile',
+              profileId: 'work',
+            },
+          },
+        },
+        materializationKey: 'gemini-qualified-incomplete-snapshot',
+        activeServerDir,
+        baseDir,
+        credentials,
+        api,
+        resolveQualifiedPurposeBindingSnapshot: () => ({
+          purposes: [],
+          bindings: [],
+        }),
+      }),
+    ]);
+
+    expect(missingSnapshotResult).toEqual([
+      {
+        status: 'rejected',
+        reason: expect.objectContaining({
+          name: 'ConnectedServiceQualifiedPurposeAuthorityError',
+          code: 'connected_service_qualified_purpose_authority_unavailable',
+          missingServiceIds: ['gemini'],
+        }),
+      },
+      {
+        status: 'rejected',
+        reason: expect.objectContaining({
+          name: 'ConnectedServiceQualifiedPurposeAuthorityError',
+          code: 'connected_service_qualified_purpose_authority_unavailable',
+          missingServiceIds: ['gemini'],
+        }),
+      },
+    ]);
+
+    const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
+      agentId: 'gemini',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          gemini: {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'work',
+          },
+        },
+      },
+      materializationKey: 'gemini-qualified-non-request-auth',
+      activeServerDir,
+      baseDir,
+      credentials,
+      api,
+      resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: 'gemini',
+          bindings,
+          contributions,
+        }),
+    });
+
+    expect(connectedServiceAuth?.requestAuthPurposeBindings).toEqual([]);
+    expect(JSON.stringify(connectedServiceAuth?.env))
+      .not.toContain(record.token.token);
+  });
+
   it('fetches, decrypts, and materializes auth for a spawn', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
@@ -349,6 +789,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     });
 
     const api = {
+      getAccountEncryptionMode: async () => 'e2ee' as const,
       getConnectedServiceCredentialSealed: async (params: { serviceId: string; profileId: string }) => {
         const { serviceId, profileId } = params;
         if (serviceId !== 'openai-codex' || profileId !== 'work') return null;
@@ -366,23 +807,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       }>
     ).requestAuthUses;
     expect(actualCodexRequestAuthUses).toBeUndefined();
-    const codexContributions = {
-      agentDefinitionsById: new Map([['codex', {
-        identity: {
-          pluginId: CODEX_PLUGIN_MANIFEST.id,
-          localId: CODEX_PLUGIN_MANIFEST.contributes.agents[0]!.id,
-        },
-        richDefinition: {
-          definition: CODEX_PLUGIN_MANIFEST.contributes.agents[0]!,
-        },
-        catalogEntry: actualCodexRequestAuthUses === undefined
-          ? {}
-          : {
-              connectedAccountRequestAuthUses:
-                actualCodexRequestAuthUses,
-            },
-      }]]),
-    };
+    const codexContributions = getResolvedContributionRegistry();
 
     const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
       agentId: 'codex',
@@ -401,8 +826,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       baseDir,
       credentials,
       api,
-      resolveRequestAuthPurposeBindings: (resolvedBindings) =>
-        resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn({
+      resolveQualifiedPurposeBindingSnapshot: (resolvedBindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
           agentId: 'codex',
           bindings: resolvedBindings,
           contributions: codexContributions,
@@ -419,8 +844,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(connectedServiceAuth!.env.CODEX_HOME).toBe(
       join(activeServerDir, 'daemon', 'connected-services', 'homes', 'openai-codex', 'work', 'codex', 'codex-home'),
     );
-    const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
-    expect(auth.access_token).toBe('access');
+    expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('access');
   });
 
   it('materializes the real built-in Codex legacy path once but refuses qualified request-auth authority', async () => {
@@ -484,6 +908,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
           kind: 'oauth' as const,
         }],
       })),
+      getAccountEncryptionMode: async () => 'e2ee' as const,
       getConnectedServiceCredentialSealed: async () => ({
         // Released server-v0.2.1 shape: no revisionSemantics or credentialRevision.
         sealed: { format: 'account_scoped_v1' as const, ciphertext },
@@ -520,17 +945,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         switchAfterClassifiedFailure,
       },
     };
-    const codexContributions = {
-      agentDefinitionsById: new Map([['codex', {
-        identity: {
-          pluginId: CODEX_PLUGIN_MANIFEST.id,
-          localId: CODEX_PLUGIN_MANIFEST.contributes.agents[0]!.id,
-        },
-        richDefinition: {
-          definition: CODEX_PLUGIN_MANIFEST.contributes.agents[0]!,
-        },
-      }]]),
-    };
+    const codexContributions = getResolvedContributionRegistry();
 
     await expect(resolveConnectedServiceAuthForSpawn({
       ...common,
@@ -538,8 +953,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       credentialRefreshService: {
         refreshConnectedServiceCredentialForSpawnPreflight,
       },
-      resolveRequestAuthPurposeBindings: (bindings) =>
-        resolveQualifiedPurposeBindingsForAgentSpawn({
+      resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
           agentId: 'codex',
           bindings,
           contributions: codexContributions,
@@ -583,22 +998,12 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     await expect(resolveConnectedServiceAuthForSpawn({
       ...common,
       materializationKey: 'legacy-request-auth',
-      resolveRequestAuthPurposeBindings: () => [{
-        purpose: {
-          consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
-          purpose: 'model-request',
-        },
-        target: {
-          kind: 'account',
-          account: {
-            service: {
-              pluginId: 'happier.agent.codex',
-              localId: 'openai-codex',
-            },
-            accountId: 'work',
-          },
-        },
-      }],
+      resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: 'codex',
+          bindings,
+          contributions: codexContributions,
+        }),
     })).rejects.toBeInstanceOf(
       ConnectedServiceLegacyUnfencedAuthorityError,
     );
@@ -619,8 +1024,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serverContract: null,
       activeServerDir: indeterminateActiveServerDir,
       materializationKey: 'indeterminate-legacy-direct',
-      resolveRequestAuthPurposeBindings: (bindings) =>
-        resolveQualifiedPurposeBindingsForAgentSpawn({
+      resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
           agentId: 'codex',
           bindings,
           contributions: codexContributions,
@@ -635,6 +1040,110 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         'homes', 'openai-codex', 'work', 'codex', 'codex-home', 'auth.json'),
       'utf8',
     )).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('refuses a mixed legacy and revisioned selection before legacy raw materialization', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-mixed-legacy-test-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-mixed-legacy-server-test-'));
+    const legacyRecord = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai-codex',
+      profileId: 'legacy-codex',
+      kind: 'oauth',
+      expiresAt: 1_700_000_000_000,
+      oauth: {
+        accessToken: 'legacy-codex-access',
+        refreshToken: 'legacy-codex-refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'legacy-codex-account',
+        providerEmail: null,
+      },
+    });
+    const revisionedRecord = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'anthropic',
+      profileId: 'revisioned-anthropic',
+      kind: 'token',
+      token: {
+        token: 'revisioned-anthropic-secret',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+    const getConnectedServiceCredentialPlain = vi.fn(async (params: Readonly<{
+      serviceId: ConnectedServiceId;
+      profileId: string;
+    }>) => params.serviceId === 'openai-codex'
+      ? {
+          revisionSemantics: 'legacy_unfenced' as const,
+          credentialRevision: null,
+          content: { t: 'plain' as const, v: legacyRecord },
+        }
+      : {
+          revisionSemantics: 'revisioned' as const,
+          credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+          content: { t: 'plain' as const, v: revisionedRecord },
+        });
+    const api = {
+      getServerFeaturesSnapshot: vi.fn(async () => ({
+        status: 'ready' as const,
+        features: {
+          features: { sharing: { pendingQueueV2: { enabled: true } } },
+          capabilities: {},
+        },
+      })),
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      listConnectedServiceProfiles: vi.fn(async (params: Readonly<{
+        serviceId: ConnectedServiceId;
+      }>) => ({
+        serviceId: params.serviceId,
+        profiles: [{
+          profileId: params.serviceId === 'openai-codex'
+            ? 'legacy-codex'
+            : 'revisioned-anthropic',
+          status: 'connected' as const,
+          kind: params.serviceId === 'openai-codex'
+            ? 'oauth' as const
+            : 'token' as const,
+        }],
+      })),
+      getConnectedServiceCredentialPlain,
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as ApiClient;
+
+    await expect(resolveConnectedServiceAuthForSpawn({
+      agentId: 'opencode',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'legacy-codex',
+          },
+          anthropic: {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'revisioned-anthropic',
+          },
+        },
+      },
+      materializationKey: 'mixed-legacy-revisioned',
+      activeServerDir,
+      baseDir,
+      credentials: {
+        token: 'happy-token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+      },
+      api,
+      serverContract: exactOldServerContract,
+      allowLegacyUnfencedOneShotMaterialization: true,
+    })).rejects.toMatchObject({
+      code: 'connected_service_legacy_unfenced_authority_unsupported',
+      operation: 'materialization',
+    });
   });
 
   it('refuses exact-old Claude multi-mode one-shot before materialization', async () => {
@@ -791,6 +1300,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'refresh-reread-fence',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials: {
@@ -981,6 +1492,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
           ],
         };
       },
+      getAccountEncryptionMode: async () => 'e2ee' as const,
       getConnectedServiceCredentialSealed: async (params: { serviceId: string; profileId: string }) => {
         const { serviceId, profileId } = params;
         if (serviceId !== 'openai-codex' || profileId !== 'backup') return null;
@@ -1006,6 +1518,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-1',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials,
@@ -1016,8 +1530,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(connectedServiceAuth!.env.CODEX_HOME).toBe(
       join(activeServerDir, 'daemon', 'connected-services', 'homes', 'openai-codex', '__groups', 'codex-main', 'codex', 'codex-home'),
     );
-    const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
-    expect(auth.access_token).toBe('backup-access');
+    expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('backup-access');
     expect(connectedServiceAuth!.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON).toContain('"kind":"group"');
   });
 
@@ -1059,6 +1572,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-1',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials,
@@ -1146,6 +1661,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     const api = {
       getConnectedServiceAuthGroup: async () => group,
       updateConnectedServiceAuthGroupActiveProfile,
+      getAccountEncryptionMode: async () => 'e2ee' as const,
       getConnectedServiceCredentialSealed: async (params: { serviceId: string; profileId: string }) => {
         const { serviceId, profileId } = params;
         if (serviceId !== 'openai-codex' || profileId !== 'backup') return null;
@@ -1172,6 +1688,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-1',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials,
@@ -1301,6 +1819,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
           { profileId: 'backup', status: 'connected' as const },
         ],
       })),
+      getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceCredentialSealed: vi.fn(async (params: { serviceId: string; profileId: string }) => {
         const ciphertext = params.serviceId === 'openai-codex'
           ? ciphertextByProfileId.get(params.profileId)
@@ -1336,6 +1855,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-stale-probe',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials,
@@ -1348,8 +1869,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
 
     expect(authGroupSwitchCoordinator.switchBeforeTurn).not.toHaveBeenCalled();
     expect(connectedServiceAuth).not.toBeNull();
-    const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
-    expect(auth.access_token).toBe('primary-access');
+    expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('primary-access');
   });
 
   it('uses source-backed provider account usage for spawn-time group switching without runtime quota snapshots', async () => {
@@ -1476,6 +1996,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
           { profileId: 'backup', status: 'connected' as const },
         ],
       })),
+      getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceCredentialSealed: vi.fn(async (params: { serviceId: string; profileId: string }) => {
         const ciphertext = params.serviceId === 'openai-codex'
           ? ciphertextByProfileId.get(params.profileId)
@@ -1517,6 +2038,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-stale-probe-account-usage',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials,
@@ -1542,8 +2065,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       profileId: 'backup',
     });
     expect(connectedServiceAuth).not.toBeNull();
-    const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
-    expect(auth.access_token).toBe('backup-access');
+    expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('backup-access');
   });
 
   it('rereads authoritative group truth after one ambiguous spawn switch result without local reselection', async () => {
@@ -1603,14 +2125,61 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     const connectedServiceAuth = await scenario.run();
 
     expect(scenario.switchBeforeTurn).toHaveBeenCalledTimes(1);
+    expect(scenario.switchBeforeTurn).toHaveBeenCalledWith(expect.objectContaining({
+      observedProfileId: 'primary',
+    }));
     expect(scenario.getConnectedServiceAuthGroup).toHaveBeenCalledTimes(2);
     expect(scenario.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
       profileId: 'backup',
     });
     expect(connectedServiceAuth).not.toBeNull();
-    const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
-    expect(auth.access_token).toBe('backup-access');
+    expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('backup-access');
+  });
+
+  it('retains the authoritative current group when a soft-threshold quota probe is incomplete', async () => {
+    const scenario = await createSpawnPreTurnSwitchScenario({
+      switchError: new ConnectedServiceAuthGroupQuotaProbeIncompleteError({
+        status: 'incomplete',
+        requestedProfileCount: 2,
+        completedProfileCount: 1,
+        reason: 'deadline_exceeded',
+      }),
+    });
+
+    await expect(scenario.run()).resolves.not.toBeNull();
+    expect(scenario.switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'session-single-spawn-switch',
+      serviceId: 'openai-codex',
+      groupId: 'codex-main',
+      reason: 'soft_threshold',
+      observedProfileId: 'primary',
+    });
+    expect(scenario.getConnectedServiceAuthGroup).toHaveBeenCalledTimes(1);
+    expect(scenario.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+    });
+  });
+
+  it('fails closed on incomplete hard usage-limit quota evidence', async () => {
+    const incomplete = new ConnectedServiceAuthGroupQuotaProbeIncompleteError({
+      status: 'incomplete',
+      requestedProfileCount: 2,
+      completedProfileCount: 0,
+      reason: 'deadline_exceeded',
+    });
+    const scenario = await createSpawnPreTurnSwitchScenario({
+      activeRemainingPercent: 0,
+      switchError: incomplete,
+    });
+
+    await expect(scenario.run()).rejects.toBe(incomplete);
+    expect(scenario.switchBeforeTurn).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'usage_limit',
+      observedProfileId: 'primary',
+    }));
+    expect(scenario.getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
   });
 
   it('fails closed after one ambiguous spawn switch result when authoritative group truth is missing', async () => {
@@ -1798,6 +2367,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-preflight-authority',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials: {
@@ -1835,8 +2406,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       groupId: 'codex-main',
     });
     expect(connectedServiceAuth).not.toBeNull();
-    const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
-    expect(auth.access_token).toBe('primary-access');
+    expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('primary-access');
   });
 
   it('does not consult recovery suppression when no source-backed spawn switch is eligible', async () => {
@@ -1925,6 +2495,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
           { profileId: 'backup', status: 'connected' as const },
         ],
       })),
+      getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceCredentialSealed: vi.fn(async () => ({
         revisionSemantics: 'revisioned' as const,
         credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
@@ -1954,6 +2525,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-stale-probe-suppressed',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials,
@@ -1970,8 +2543,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       profileId: 'primary',
     });
     expect(connectedServiceAuth).not.toBeNull();
-    const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
-    expect(auth.access_token).toBe('primary-access');
+    expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('primary-access');
   });
 
   it('rejects explicit spawn profile selections that need reauth with a typed action requirement', async () => {
@@ -2019,6 +2591,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-profile-health',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials: {
@@ -2037,7 +2611,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
   });
 
-  it('lets a server-classified unsupported legacy credential reach provider materialization diagnostics', async () => {
+  it('does not let a revisioned Gemini credential reach private provider materialization diagnostics', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-legacy-unsupported-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-legacy-unsupported-server-test-'));
     const record = buildConnectedServiceCredentialRecord({
@@ -2075,7 +2649,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     } as unknown as ApiClient;
 
-    await expect(resolveConnectedServiceAuthForSpawn({
+    const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
       agentId: 'gemini',
       connectedServicesBindingsRaw: {
         v: 1,
@@ -2084,6 +2658,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-legacy-unsupported',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('gemini'),
       activeServerDir,
       baseDir,
       credentials: {
@@ -2091,16 +2667,14 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(4) },
       },
       api,
-    })).rejects.toMatchObject({
-      code: 'connected_service_materialization_blocked',
-      diagnostics: expect.arrayContaining([
-        expect.objectContaining({
-          code: 'gemini_oauth_deferred_api_key_or_vertex_required',
-          serviceId: 'gemini',
-          severity: 'blocking',
-        }),
-      ]),
     });
+    expect(connectedServiceAuth?.diagnostics).toEqual([]);
+    const oauth = record.oauth;
+    if (!oauth) {
+      throw new Error('test fixture expected OAuth credentials');
+    }
+    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(oauth.accessToken);
+    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(oauth.refreshToken);
     expect(getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
       serviceId: 'gemini',
       profileId: 'legacy-oauth',
@@ -2227,6 +2801,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-group-health',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials: {
@@ -2389,6 +2965,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-group-coordinator-health',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials: {
@@ -2408,8 +2986,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       profileId: 'backup',
     });
     expect(connectedServiceAuth).not.toBeNull();
-    const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
-    expect(auth.access_token).toBe('backup-access');
+    expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('backup-access');
   });
 
   it('continues from the canonical coordinator result after active-profile spawn preflight refresh requires reconnect', async () => {
@@ -2510,6 +3087,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     };
     const api = {
       getConnectedServiceAuthGroup: vi.fn(async () => group),
+      getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceCredentialSealed: vi.fn(async (params: { serviceId: string; profileId: string }) => {
         if (params.serviceId !== 'openai-codex') return null;
         const ciphertext = ciphertextByProfileId.get(params.profileId);
@@ -2607,6 +3185,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-1',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials,
@@ -2741,6 +3321,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       getConnectedServiceAuthGroup: vi.fn()
         .mockResolvedValueOnce(buildGroup('primary', 5))
         .mockResolvedValueOnce(buildGroup('backup', 6)),
+      getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceCredentialSealed: vi.fn(async (params: { serviceId: string; profileId: string }) => {
         if (params.serviceId !== 'openai-codex') return null;
         const ciphertext = ciphertextByProfileId.get(params.profileId);
@@ -2798,6 +3379,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-stale-switch',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       activeServerDir,
       baseDir,
       credentials,
@@ -2829,7 +3412,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     });
   });
 
-  it('consults the canonical coordinator when Claude materialization reports an unusable credential', async () => {
+  it('does not classify or switch on a Claude credential through the qualified private materializer', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-claude-materialization-switch-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-claude-materialization-switch-test-'));
     const processEnv = await createIsolatedClaudeSourceEnv();
@@ -2933,6 +3516,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     });
     const updateConnectedServiceCredentialHealth = vi.fn(async () => {});
     const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceAuthGroup: vi.fn(async () => ({
         v: 1 as const,
         serviceId: 'claude-subscription' as const,
@@ -2972,7 +3556,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         activeProfileId: 'healthy',
         generation: 7,
       });
-    await expect(resolveConnectedServiceAuthForSpawn({
+    const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
       agentId: 'claude',
       connectedServicesBindingsRaw: {
         v: 1,
@@ -2985,6 +3569,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-1',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('claude'),
       activeServerDir,
       baseDir,
       credentials,
@@ -2999,23 +3585,18 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         })),
         switchAfterClassifiedFailure,
       },
-    })).rejects.toMatchObject({
-      name: 'ConnectedServiceMaterializationBlockedError',
     });
-
-    expect(switchAfterClassifiedFailure).toHaveBeenCalledTimes(1);
-    expect(updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
-      serviceId: 'claude-subscription',
-      profileId: 'narrow',
-      health: expect.objectContaining({
-        status: 'needs_reauth',
-        reconnectRequired: true,
-        providerErrorCode: 'claude_subscription_missing_claude_code_scope',
-      }),
-    }));
+    expect(connectedServiceAuth).not.toBeNull();
+    const narrowOAuth = narrowRecord.oauth;
+    if (!narrowOAuth) {
+      throw new Error('test fixture expected OAuth credentials');
+    }
+    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(narrowOAuth.accessToken);
+    expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
+    expect(updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
   });
 
-  it('continues canonical group materialization fallback through multiple blocked Claude profiles', async () => {
+  it('does not drive private Claude profile fallback from qualified materialization', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-claude-multi-materialization-switch-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-claude-multi-materialization-switch-test-'));
     const processEnv = await createIsolatedClaudeSourceEnv();
@@ -3119,6 +3700,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     });
     const updateConnectedServiceCredentialHealth = vi.fn(async () => {});
     const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
       getConnectedServiceAuthGroup: vi.fn(async () => ({
         v: 1 as const,
         serviceId: 'claude-subscription' as const,
@@ -3159,7 +3741,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         generation: 7,
       });
 
-    await expect(resolveConnectedServiceAuthForSpawn({
+    const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
       agentId: 'claude',
       connectedServicesBindingsRaw: {
         v: 1,
@@ -3172,6 +3754,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-1',
+      resolveQualifiedPurposeBindingSnapshot:
+        createAppliedQualifiedPurposeBindingSnapshotResolver('claude'),
       activeServerDir,
       baseDir,
       credentials,
@@ -3186,18 +3770,16 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         })),
         switchAfterClassifiedFailure,
       },
-    })).resolves.not.toBeNull();
+    });
 
-    expect(switchAfterClassifiedFailure).toHaveBeenCalledTimes(2);
-    expect(updateConnectedServiceCredentialHealth).toHaveBeenCalledTimes(2);
-    expect(updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
-      serviceId: 'claude-subscription',
-      profileId: 'narrow-one',
-      health: expect.objectContaining({
-        status: 'needs_reauth',
-        reconnectRequired: true,
-      }),
-    }));
+    expect(connectedServiceAuth).not.toBeNull();
+    const narrowOneOAuth = narrowOneRecord.oauth;
+    if (!narrowOneOAuth) {
+      throw new Error('test fixture expected OAuth credentials');
+    }
+    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(narrowOneOAuth.accessToken);
+    expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
+    expect(updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
   });
 });
 

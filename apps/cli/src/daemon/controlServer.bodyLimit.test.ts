@@ -63,6 +63,52 @@ describe('createDaemonControlApp /session-started body limit', () => {
         }
     });
 
+    it('forwards a validated create-or-rejoin fact only with its runner startup report', async () => {
+        const onHappySessionWebhook = vi.fn();
+        const app = createDaemonControlApp({
+            getChildren: () => [],
+            machineId: 'machine-1',
+            stopSession: vi.fn(async () => ({ status: 'stopped' as const })),
+            spawnSession: vi.fn(async () => ({
+                type: 'error' as const,
+                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                errorMessage: 'unused',
+            })),
+            requestShutdown: vi.fn(),
+            onHappySessionWebhook,
+            controlToken: 'control-token',
+        });
+
+        const metadata = { path: '/test/create-result', hostPid: 99995, startedBy: 'daemon' } as Metadata;
+        const sessionCreationOutcome = {
+            disposition: 'rejoined' as const,
+            organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
+        };
+
+        try {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/session-started',
+                headers: { 'x-happier-daemon-token': 'control-token' },
+                payload: {
+                    sessionId: 'test-session-create-result',
+                    metadata,
+                    sessionCreationOutcome,
+                },
+            });
+
+            expect(response.statusCode).toBe(200);
+            expect(onHappySessionWebhook).toHaveBeenCalledWith(
+                'test-session-create-result',
+                metadata,
+                undefined,
+                sessionCreationOutcome,
+            );
+        } finally {
+            await app.close();
+        }
+    });
+
     it('does not acknowledge session-started until required readiness completes', async () => {
         let resolveReadiness!: () => void;
         const readiness = new Promise<void>((resolve) => {
@@ -161,9 +207,14 @@ describe('createDaemonControlApp /session-started body limit', () => {
                     sessionId: 'session-takeover',
                     metadata,
                     persistedTakeoverAdmission: {
+                        mode: 'persisted',
                         operationId: 'operation-1',
                         attemptId: 'attempt-1',
                         phase: 'admit',
+                        publisherPrecondition: {
+                            machineId: 'machine-1',
+                            committedFenceMs: 1,
+                        },
                     },
                 },
             });
@@ -175,6 +226,11 @@ describe('createDaemonControlApp /session-started body limit', () => {
                 operationId: 'operation-1',
                 attemptId: 'attempt-1',
                 phase: 'admit',
+                mode: 'persisted',
+                publisherPrecondition: {
+                    machineId: 'machine-1',
+                    committedFenceMs: 1,
+                },
                 signal: expect.any(AbortSignal),
             });
             expect(onHappySessionWebhook).toHaveBeenCalledOnce();
@@ -234,9 +290,14 @@ describe('createDaemonControlApp /session-started body limit', () => {
                 sessionId: 'session-takeover',
                 metadata: { startedBy: 'daemon' },
                 persistedTakeoverAdmission: {
+                    mode: 'persisted',
                     operationId: 'operation-1',
                     attemptId: 'attempt-1',
                     phase: 'admit',
+                    publisherPrecondition: {
+                        machineId: 'machine-1',
+                        committedFenceMs: 1,
+                    },
                 },
             });
             const request = requestHttp({
@@ -293,8 +354,13 @@ describe('createDaemonControlApp /session-started body limit', () => {
                     sessionId: 'session-takeover',
                     metadata: { startedBy: 'daemon' },
                     persistedTakeoverAdmission: {
+                        mode: 'persisted',
                         operationId: 'operation-1',
                         attemptId: 'attempt-1',
+                        publisherPrecondition: {
+                            machineId: 'machine-1',
+                            committedFenceMs: 1,
+                        },
                     },
                 },
             });

@@ -97,11 +97,13 @@ function attempt(
       sessionBindingMetadata: binding(bindingOverrides),
     },
     isAuthorizationCurrent: () => true,
+    isRetainedAuthorizationCurrent: () => true,
     revalidateBeforeEffect: vi.fn(async () => ({ ok: true as const })),
     materializeAfterHooks: vi.fn(),
     revalidateBeforeCommit: vi.fn(),
     cleanupOnFailure: vi.fn(),
     takeCleanupOnExit: vi.fn(),
+    transferLaunchMaterializationCleanupOwnership: vi.fn(),
   };
 }
 

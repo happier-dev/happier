@@ -1,5 +1,6 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
 import type { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import type { RpcLocalActionContext } from '@/api/rpc/types';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
@@ -21,6 +22,7 @@ export type RpcActionDispatchRequest = Readonly<{
     defaultSessionId?: string | null;
     serverId?: string | null;
     signal?: AbortSignal;
+    localActionContext?: RpcLocalActionContext;
     executor?: RpcActionExecutor;
     executorParams?: CliActionExecutorParams;
 }>;
@@ -34,16 +36,31 @@ function normalizeOptionalString(value: string | null | undefined): string | und
 }
 
 export function buildActionExecutorContextForRpc(
-    params: Pick<RpcActionDispatchRequest, 'defaultSessionId' | 'serverId' | 'signal'>,
+    params: Pick<RpcActionDispatchRequest, 'defaultSessionId' | 'serverId' | 'signal' | 'localActionContext'>,
 ): RpcActionExecutorContext {
     const defaultSessionId = normalizeOptionalString(params.defaultSessionId);
     const serverId = normalizeOptionalString(params.serverId);
+    const localActionContext = params.localActionContext;
+    const hasLocalCallerPermissionMode = Boolean(
+        localActionContext
+        && Object.prototype.hasOwnProperty.call(localActionContext, 'callerPermissionMode'),
+    );
+    const hasLocalCausalPermissionAuthority = Boolean(
+        localActionContext
+        && Object.prototype.hasOwnProperty.call(localActionContext, 'causalPermissionAuthority'),
+    );
 
     return {
         ...(defaultSessionId ? { defaultSessionId } : {}),
         ...(serverId ? { serverId } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
-        surface: 'rpc',
+        surface: localActionContext?.surface ?? 'rpc',
+        ...(hasLocalCallerPermissionMode
+            ? { callerPermissionMode: localActionContext?.callerPermissionMode ?? null }
+            : {}),
+        ...(hasLocalCausalPermissionAuthority
+            ? { causalPermissionAuthority: localActionContext?.causalPermissionAuthority ?? null }
+            : {}),
     };
 }
 

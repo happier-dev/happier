@@ -1,5 +1,6 @@
 import type { ExactSessionTurnEndMutationV1 } from '@happier-dev/protocol';
 import type {
+  MachineSessionTerminalAuthorityV1,
   MachineSessionTerminalCaptureResponseV1,
   MachineSessionTerminalFinalizeResponseV1,
 } from '@happier-dev/protocol';
@@ -17,7 +18,7 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
     enqueueDaemonTerminalExactTurnEnd: (mutation: ExactSessionTurnEndMutationV1) => Promise<void>;
     captureMachineSessionTerminal: (sessionId: string) => Promise<MachineSessionTerminalCaptureResponseV1>;
     finalizeMachineSessionTerminal: (
-      target: Readonly<{ sessionId: string; committedFenceMs: number }>,
+      target: Readonly<{ sessionId: string; authority: MachineSessionTerminalAuthorityV1 }>,
     ) => Promise<MachineSessionTerminalFinalizeResponseV1>;
   };
   orphanedDeadDaemonSessions: ReadonlyArray<OrphanedDeadDaemonSession>;
@@ -98,7 +99,7 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
       if (isShuttingDown()) return;
       const finalized = await params.apiMachine.finalizeMachineSessionTerminal({
         sessionId: captured.sessionId,
-        committedFenceMs: captured.committedFenceMs,
+        authority: captured.authority,
       });
       if (finalized.status === 'rejected') {
         logger.debug('[DAEMON] Startup orphan terminal finalize was not accepted; retaining marker evidence', {

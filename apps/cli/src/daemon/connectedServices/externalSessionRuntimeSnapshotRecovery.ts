@@ -1,6 +1,5 @@
 import {
   getAgentResumeConfig,
-  isAgentId,
   readProviderSessionIdSessionState,
   resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
@@ -18,7 +17,6 @@ import {
   readConnectedServiceRuntimeSnapshot,
   type ConnectedServiceRuntimeSnapshot,
 } from './connectedServiceRuntimeSnapshot';
-import { uniqueSnapshotKey } from '@/api/session/external/linking/connectedServiceRuntimeSnapshotKey';
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -61,8 +59,8 @@ function readProviderResumeFieldSessionId(
   metadata: Readonly<Record<string, unknown>>,
   agentId: ExternalSessionsAgentId,
 ): string | null {
-  if (!isAgentId(agentId)) return null;
   const resume = getAgentResumeConfig(agentId);
+  if (!resume) return null;
   const field = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
   return field ? normalizeNullableString(metadata[field]) : null;
 }
@@ -110,25 +108,6 @@ function markerMatchesExternalSession(
     && resolveMarkerRemoteSessionId(marker, agentId) === remoteSessionId;
 }
 
-function normalizeDirectoryKey(value: unknown): string | null {
-  const normalized = normalizeNullableString(value);
-  if (!normalized) return null;
-  const slashed = normalized.replaceAll('\\', '/').replace(/\/+$/, '');
-  return /^[a-zA-Z]:\//.test(slashed) ? slashed.toLowerCase() : slashed;
-}
-
-function resolveMarkerDirectoryKeys(marker: DaemonSessionMarker): ReadonlySet<string> {
-  const metadata = readRecord(marker.metadata);
-  const respawn = readRecord(marker.respawn);
-  return new Set(
-    [
-      normalizeDirectoryKey(marker.cwd),
-      normalizeDirectoryKey(metadata?.path),
-      normalizeDirectoryKey(respawn?.directory),
-    ].filter((value): value is string => Boolean(value)),
-  );
-}
-
 function resolveMarkerConnectedServiceRuntimeSnapshot(marker: DaemonSessionMarker): ConnectedServiceRuntimeSnapshot {
   return mergeConnectedServiceRuntimeSnapshots(
     readConnectedServiceRuntimeSnapshot(marker.respawn),
@@ -136,35 +115,24 @@ function resolveMarkerConnectedServiceRuntimeSnapshot(marker: DaemonSessionMarke
   );
 }
 
+/**
+ * Resolve the Connected Services a linked external session must run under.
+ *
+ * Ownership is proven by the Agent plus the native session identity a Session
+ * marker carries. Directory coincidence is not ownership: markers are
+ * Session/PID-owned, and two sessions in one repository may legitimately run
+ * under different Connected Service profiles, so an unmatched marker never
+ * contributes credentials.
+ */
 export async function resolveConnectedServiceRuntimeSnapshotForExternalSession(params: Readonly<{
   agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
-  directoryHint?: string | null;
 }>): Promise<ConnectedServiceRuntimeSnapshot> {
   const markers = await listSessionMarkers().catch(() => [] as DaemonSessionMarker[]);
-  const markersWithSnapshots = markers
-    .map((marker) => ({
-      marker,
-      snapshot: resolveMarkerConnectedServiceRuntimeSnapshot(marker),
-    }))
-    .filter((entry) => hasConnectedServiceBindings(entry.snapshot));
-
-  const exactRemoteMatch = markersWithSnapshots
-    .filter((entry) => markerMatchesExternalSession(entry.marker, params.agentId, params.remoteSessionId))
-    .sort((left, right) => right.marker.updatedAt - left.marker.updatedAt)[0];
-  if (exactRemoteMatch) return exactRemoteMatch.snapshot;
-
-  const directoryKey = normalizeDirectoryKey(params.directoryHint);
-  if (!directoryKey) return {};
-
-  const contextualMatches = markersWithSnapshots
-    .filter((entry) => resolveMarkerProviderId(entry.marker) === params.agentId)
-    .filter((entry) => resolveMarkerDirectoryKeys(entry.marker).has(directoryKey))
-    .sort((left, right) => right.marker.updatedAt - left.marker.updatedAt);
-
-  const uniqueSnapshots = new Map<string, ConnectedServiceRuntimeSnapshot>();
-  for (const match of contextualMatches) {
-    uniqueSnapshots.set(uniqueSnapshotKey(match.snapshot), match.snapshot);
-  }
-  return uniqueSnapshots.size === 1 ? [...uniqueSnapshots.values()][0] ?? {} : {};
+  return markers
+    .filter((marker) => markerMatchesExternalSession(marker, params.agentId, params.remoteSessionId))
+    .map((marker) => ({ marker, snapshot: resolveMarkerConnectedServiceRuntimeSnapshot(marker) }))
+    .filter((entry) => hasConnectedServiceBindings(entry.snapshot))
+    .sort((left, right) => right.marker.updatedAt - left.marker.updatedAt)[0]
+    ?.snapshot ?? {};
 }

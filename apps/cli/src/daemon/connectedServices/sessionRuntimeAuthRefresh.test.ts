@@ -5,7 +5,7 @@ import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from './connectedService
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from './runtimeAuth/types';
 import { ConnectedServiceRuntimeRegistry } from './runtimeRegistry/registry';
 import { createSessionConnectedServiceRuntimeAuthRefreshHandler } from './sessionRuntimeAuthRefresh';
-import { createSessionScopedAuthServices } from '@/plugins/runtime/context/session/services/auth';
+import { createSessionHandleAuthService } from '@/plugins/runtime/context/session/services/auth';
 
 function buildRegistry(): ConnectedServiceRuntimeRegistry {
   const registry = new ConnectedServiceRuntimeRegistry();
@@ -144,6 +144,35 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
     });
   });
 
+  it('settles a known credential-health bridge failure as typed reconnect-required instead of rejecting the daemon route', async () => {
+    const reconnectRequired = Object.assign(
+      new Error('credential refresh requires reconnect'),
+      { code: 'connected_service_credential_reconnect_required' as const },
+    );
+    const handler = createSessionConnectedServiceRuntimeAuthRefreshHandler({
+      registry: buildRegistry(),
+      resolveDaemonAuthBridge: async () => ({
+        registration: {
+          serviceId: 'openai-codex',
+          refresh: async () => { throw reconnectRequired; },
+        },
+      }),
+    });
+
+    await expect(handler({
+      sessionId: 'session-1',
+      refreshAttemptId: 'codex-refresh-attempt-needs-reauth',
+      selection,
+      expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+    })).resolves.toEqual({
+      ok: true,
+      result: {
+        status: 'failed',
+        reason: 'connected_service_credential_reconnect_required',
+      },
+    });
+  });
+
   it.each([
     ['failed', { status: 'failed', reason: 'provider_failed' }, { status: 'failed', reason: 'provider_failed' }],
     ['unavailable', { status: 'unavailable', reason: 'provider_unavailable' }, { status: 'unavailable', reason: 'provider_unavailable' }],
@@ -178,8 +207,9 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
         registration: { serviceId: 'claude-subscription', refresh },
       }),
     });
-    const auth = createSessionScopedAuthServices({
+    const auth = createSessionHandleAuthService({
       readSessionId: async () => 'claude-session-1',
+      readAgentId: async () => 'claude',
       resolveAdapter: async () => unsupportedRuntimeAuthAdapter(),
       refreshViaDaemon: async (request) => {
         const settlement = await handler({
@@ -199,7 +229,6 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
     });
 
     await expect(auth.services.refreshRuntimeAuth({
-      agentId: 'claude',
       serviceId: 'claude-subscription',
       refreshAttemptId: 'claude-auth-refresh-stable',
       selection: {
@@ -278,8 +307,9 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
         },
       }),
     });
-    const auth = createSessionScopedAuthServices({
+    const auth = createSessionHandleAuthService({
       readSessionId: async () => 'session-1',
+      readAgentId: async () => 'codex',
       resolveAdapter: async () => unsupportedRuntimeAuthAdapter(),
       refreshViaDaemon: async (request) => {
         const settlement = await handler({
@@ -294,7 +324,6 @@ describe('createSessionConnectedServiceRuntimeAuthRefreshHandler', () => {
     });
 
     await expect(auth.services.refreshRuntimeAuth({
-      agentId: 'codex',
       serviceId: 'openai-codex',
       refreshAttemptId: 'composed-attempt',
       selection,

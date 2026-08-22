@@ -1,9 +1,15 @@
 import {
+    readExecutionRunStartRunCreation,
+    withExecutionRunStartFailureDetails,
     type ActionExecuteResult,
     type ActionExecutorContext,
     type ActionId,
 } from '@happier-dev/protocol/actions';
-import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
+import {
+    ACTION_SPECS,
+    type ActionSpecSurfaceBindings,
+    type ActionSurfaceBindingContext,
+} from '@happier-dev/protocol/actions/actionSpecs';
 
 import {
     dispatchActionFromRpc,
@@ -20,6 +26,7 @@ export type ActionSpecRpcHandlerSpec = Readonly<{
     id: string;
     surfaces?: Readonly<{ rpc?: boolean }>;
     bindings?: Readonly<{ rpcMethod?: string | null; rpcMethodAliases?: readonly string[] }>;
+    surfaceBindings?: ActionSpecSurfaceBindings;
 }>;
 
 export type ActionSpecRpcExceptionLike = Readonly<{
@@ -50,7 +57,7 @@ export type RegisterActionSpecRpcHandlersParams = Readonly<{
         method: string;
         isAlias: boolean;
         response: unknown;
-    }>) => unknown;
+    }>) => unknown | Promise<unknown>;
 }>;
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -77,14 +84,21 @@ export function readServerIdFromRpcInput(input: unknown): string | undefined {
     return normalizeOptionalString(readObjectValue(input, 'serverId'));
 }
 
-export function unwrapActionResultForRpc(result: ActionExecuteResult): unknown {
+export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecuteResult): unknown {
     if (result.ok) {
         return result.result;
     }
+    const details = actionId === 'execution.run.start'
+        ? withExecutionRunStartFailureDetails(
+            undefined,
+            readExecutionRunStartRunCreation(result.details),
+        )
+        : undefined;
     return {
         ok: false,
         errorCode: result.errorCode,
         error: result.error,
+        ...(details !== undefined ? { details } : {}),
     };
 }
 
@@ -130,6 +144,42 @@ function collectRpcMethodsForSpec(spec: ActionSpecRpcHandlerSpec): readonly stri
     return [...new Set(methods)];
 }
 
+function transportFailure(
+    actionId: ActionId,
+    errorCode: 'invalid_action_transport_input' | 'invalid_action_transport_output',
+): ActionExecuteResult {
+    return {
+        ok: false,
+        errorCode,
+        error: errorCode,
+        ...(actionId === 'execution.run.start'
+            ? {
+                details: withExecutionRunStartFailureDetails(
+                    undefined,
+                    errorCode === 'invalid_action_transport_input'
+                        ? 'noRunCreated'
+                        : 'outcomeUnknown',
+                ),
+            }
+            : {}),
+    };
+}
+
+function buildRpcSurfaceBindingContext(
+    actionId: ActionId,
+    input: unknown,
+    signal?: AbortSignal,
+): ActionSurfaceBindingContext {
+    const hints = buildActionExecutorContextHints(input);
+    return {
+        actionId,
+        surface: 'rpc',
+        caller: { kind: 'host' },
+        ...hints,
+        ...(signal ? { signal } : {}),
+    };
+}
+
 export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandlersParams): void {
     const actionSpecs = params.actionSpecs ?? ACTION_SPECS;
     const actionIds = buildIncludedSet(params.actionIds);
@@ -161,15 +211,50 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
             input: unknown,
             context?: RpcHandlerContext,
         ) => {
+            const typedActionId = actionId as ActionId;
+            const rpcBinding = spec.surfaceBindings?.rpc;
+            let semanticInput = input;
+            if (rpcBinding) {
+                const transportInput = rpcBinding.inputSchema.safeParse(input);
+                if (!transportInput.success) {
+                    return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
+                }
+                try {
+                    semanticInput = await rpcBinding.decodeInput(
+                        transportInput.data,
+                        buildRpcSurfaceBindingContext(typedActionId, transportInput.data, context?.signal),
+                    );
+                } catch {
+                    return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
+                }
+            }
             const executor = await resolveActionExecutor(params);
             const result = await dispatchActionFromRpc({
-                actionId: actionId as ActionId,
-                input,
-                ...buildActionExecutorContextHints(input),
+                actionId: typedActionId,
+                input: semanticInput,
+                ...buildActionExecutorContextHints(semanticInput),
                 ...(context?.signal ? { signal: context.signal } : {}),
+                ...(context?.localActionContext
+                  ? { localActionContext: context.localActionContext }
+                  : {}),
                 executor,
             });
-            return unwrapActionResultForRpc(result);
+            if (!result.ok || !rpcBinding) {
+                return unwrapActionResultForRpc(typedActionId, result);
+            }
+            let encoded: unknown;
+            try {
+                encoded = await rpcBinding.encodeOutput(
+                    result.result,
+                    buildRpcSurfaceBindingContext(typedActionId, semanticInput, context?.signal),
+                );
+            } catch {
+                return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_output'));
+            }
+            const transportOutput = rpcBinding.outputSchema.safeParse(encoded);
+            return transportOutput.success
+                ? transportOutput.data
+                : unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_output'));
         };
 
         for (const method of collectRpcMethodsForSpec(spec)) {
@@ -191,7 +276,7 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
                 context?: RpcHandlerContext,
             ) => {
                 const response = await handleAction(input, context);
-                return params.mapResponseForMethod?.({
+                return await params.mapResponseForMethod?.({
                     actionId: actionId as ActionId,
                     method,
                     isAlias: method !== rpcMethod,

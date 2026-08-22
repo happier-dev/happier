@@ -42,7 +42,7 @@ import type { VoiceInferenceRuntime } from './voiceInferenceRuntimeTypes';
 import type { DaemonPublicVoiceModelPackRuntime } from './publicModelPacks/runtime';
 import {
   resolveVoiceInferenceIdleResidencyMs,
-  resolveVoiceInferenceMaxResidentBytes,
+  resolveVoiceInferenceMaxLoadedArtifactBytes,
   resolveVoiceInferencePerModelConcurrency,
 } from './voiceInferenceWorkerConfig';
 import { resolveVoiceInferencePaths } from './voiceInferencePaths';
@@ -95,7 +95,7 @@ type VoiceInferenceWorkerLifecycleParams = Readonly<{
   now?: () => number;
   residencyMs?: number;
   perModelConcurrency?: number;
-  maxResidentBytes?: number;
+  maxLoadedArtifactBytes?: number;
   publicModelPacks?: DaemonPublicVoiceModelPackRuntime;
   onStop?: () => Promise<void> | void;
   installerOps?: Readonly<{
@@ -104,7 +104,7 @@ type VoiceInferenceWorkerLifecycleParams = Readonly<{
   }>;
 }>;
 
-function sumManifestResidentBytes(manifest: ModelPackManifest): number {
+function sumManifestLoadedArtifactBytes(manifest: ModelPackManifest): number {
   return manifest.files.reduce((total, file) => total + Math.max(0, Math.trunc(file.sizeBytes)), 0);
 }
 
@@ -119,17 +119,17 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   const concurrencyCoordinator = createInferenceConcurrencyCoordinator({
     perModelConcurrency: params?.perModelConcurrency ?? resolveVoiceInferencePerModelConcurrency(),
   });
-  const maxResidentBytes = params?.maxResidentBytes ?? resolveVoiceInferenceMaxResidentBytes();
-  // Per-pack readiness/resident bookkeeping for the daemon-side readiness snapshot (T6).
+  const maxLoadedArtifactBytes = params?.maxLoadedArtifactBytes ?? resolveVoiceInferenceMaxLoadedArtifactBytes();
+  // Per-pack readiness/declared-artifact bookkeeping for the daemon-side readiness snapshot (T6).
   const runtimeStateByPackId = new Map<string, DaemonVoiceInferenceModelRuntimeState>();
-  const residentBytesByPackId = new Map<string, number>();
+  const loadedArtifactBytesByPackId = new Map<string, number>();
   // In-use lease count per pack. A pack with active leases is mid-inference and must never
   // be evicted by the memory-budget LRU.
   const inUseCountByPackId = new Map<string, number>();
   const warmupCoordinator = createInferenceWarmupCoordinator<VoiceInferenceRuntime>({
     residencyMs,
-    maxResidentBytes,
-    resolveResidentBytes: (packId) => residentBytesByPackId.get(packId) ?? 0,
+    maxLoadedBytes: maxLoadedArtifactBytes,
+    resolveLoadedBytes: (packId) => loadedArtifactBytesByPackId.get(packId) ?? 0,
     isInUse: (packId) => (inUseCountByPackId.get(packId) ?? 0) > 0,
     onRelease: async (packId) => {
       runtimeStateByPackId.set(packId, 'evicted');
@@ -181,7 +181,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   }
 
   async function releaseRuntimeForPack(packId: string): Promise<void> {
-    residentBytesByPackId.delete(packId);
+    loadedArtifactBytesByPackId.delete(packId);
     const warmRuntime = warmRuntimeByPackId.get(packId);
     if (!warmRuntime) {
       return;
@@ -308,11 +308,11 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
         : null,
       lastError: installed.lastError,
       updatedAtMs: Math.trunc(statResult.updatedAtMs),
-      // Additive readiness snapshot fields (T6). Resident bytes are only meaningful while
-      // the model is loaded; omit them otherwise so the snapshot stays truthful.
+      // Additive readiness snapshot fields (T6). The declared artifact byte count is only
+      // meaningful while that pack's runtime is loaded; it is not process-memory telemetry.
       runtimeState: resolveRuntimeStateForPack(packId),
-      ...(residentBytesByPackId.has(packId)
-        ? { residentMemoryBytes: residentBytesByPackId.get(packId) ?? 0 }
+      ...(loadedArtifactBytesByPackId.has(packId)
+        ? { loadedArtifactBytes: loadedArtifactBytesByPackId.get(packId) ?? 0 }
         : {}),
       ...(publicEntry?.descriptor?.contribution?.manifest.license.requiresAcceptance
         && publicEntry.descriptor.contribution.manifest.license.text
@@ -330,7 +330,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
               licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(
                 publicEntry.descriptor.contribution.manifest.license.text,
               ),
-              artifactDigest: publicEntry.descriptor.sourceDigest,
+              artifactBinding: publicEntry.descriptor.artifactBinding,
               accepted: publicEntry.descriptor.status !== 'blocked'
                 || publicEntry.descriptor.reason !== 'license_acceptance_required',
             },
@@ -439,7 +439,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
           }
           throw error;
         }
-        residentBytesByPackId.set(packId, sumManifestResidentBytes(manifest));
+        loadedArtifactBytesByPackId.set(packId, sumManifestLoadedArtifactBytes(manifest));
         runtimeStateByPackId.set(packId, 'ready');
         return loadedRuntime;
       });
@@ -447,7 +447,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       diagnostics = { ...diagnostics, runtimeState: 'ready' };
       return { runtime, packDir, manifest, runtimeDescriptor, supportArtifacts };
     } catch (error) {
-      residentBytesByPackId.delete(packId);
+      loadedArtifactBytesByPackId.delete(packId);
       runtimeStateByPackId.delete(packId);
       if (readVoiceInferenceErrorCode(error) === 'runtime_unavailable') {
         diagnostics = createUnavailableInferenceDiagnostics();

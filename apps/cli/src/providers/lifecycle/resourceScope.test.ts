@@ -59,7 +59,7 @@ describe('Provider launch resource scope', () => {
     expect(events).toEqual(['cleanup']);
   });
 
-  it('stops cleanup at the first failure so remaining custody and its sanitizer stay available', async () => {
+  it('attempts every reverse-order cleanup while preserving the first failure', async () => {
     const events: string[] = [];
     const cleanupErrors: string[] = [];
     const scope = createProviderLaunchResourceScope({
@@ -78,7 +78,7 @@ describe('Provider launch resource scope', () => {
 
     await expect(scope.release()).rejects.toThrow('cleanup leaked secret-value');
 
-    expect(events).toEqual(['second']);
+    expect(events).toEqual(['second', 'first']);
     expect(cleanupErrors).toEqual(['cleanup leaked [REDACTED]']);
   });
 

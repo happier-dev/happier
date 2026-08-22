@@ -29,10 +29,8 @@ import type {
 } from '../sessionMessageTypes';
 import { normalizeAcpSessionMessageBody } from '../sessionOutboundMessageNormalization';
 import { resolveAcpSessionMessageRole } from '../messageRole';
-import { extractAssistantTextSnapshotFromSessionContent } from '../turns/extractAssistantTextSnapshot';
 import type { PostSendReactionPort } from '../client/reactions/providers/postSendReactionPort';
 import { publishTokenCountUsageObservation } from '../client/reactions/usagePublishing';
-import type { SessionClientTranscriptSendPort } from '../client/transcript/sendMessages';
 import { readSidechainId } from './shared';
 
 export class RuntimeOutboundTranscriptDispatchUnavailableError extends Error {
@@ -119,41 +117,6 @@ export function prepareAcpTranscriptDispatch(params: Readonly<{
     localId,
     sidechainId,
   };
-}
-
-export async function commitRuntimeOutboundTranscriptDispatchPlan(
-  port: SessionClientTranscriptSendPort,
-  plan: RuntimeOutboundTranscriptDispatchPlanV1,
-): Promise<void> {
-  for (const log of plan.outboundShapeLogs ?? []) {
-    port.outboundShapeLogger.log(log.label, log.payload);
-  }
-  for (const log of plan.debugLargeJsonLogs ?? []) {
-    port.debugLargeJson(log.message, log.data);
-  }
-  if (plan.disconnectedLog) {
-    port.logSendWhileDisconnected(plan.disconnectedLog.context, plan.disconnectedLog.details);
-  }
-
-  const payload = port.buildOutboundSessionMessagePayload(plan.content);
-  await port.commitSessionMessageBestEffort({
-    message: payload,
-    localId: plan.localId,
-    sidechainId: plan.sidechainId,
-    messageRole: plan.messageRole,
-    logErrorMessage: plan.logErrorMessage,
-  });
-
-  const extracted = extractAssistantTextSnapshotFromSessionContent(plan.content);
-  if (extracted) {
-    port.turnAssistantTextSnapshotStore?.observe({
-      text: extracted.text,
-      provider: extracted.provider,
-      sidechainId: extracted.sidechainId,
-      localId: plan.localId,
-      source: 'provider-dispatch',
-    });
-  }
 }
 
 function isDisplayTitleValue(value: unknown): value is Readonly<{ title: string; updatedAt: number }> {

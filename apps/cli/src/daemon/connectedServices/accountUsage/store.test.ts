@@ -310,6 +310,50 @@ describe('provider account usage store', () => {
         expect('resolveByAlias' in store).toBe(false);
     });
 
+    it('rejects cross-provider and materially cross-scope adoption before mutation', async () => {
+        const module = await loadStoreModule();
+        expect(module).not.toBeNull();
+        const store = module!.createProviderAccountUsageStore();
+        const provisionalKey = createKey('provisional:native');
+        const provisional = createSnapshot({
+            recordKey: provisionalKey,
+            accountSubject: { kind: 'provisionalLocalSubject', id: provisionalKey.accountSubjectId },
+        });
+        store.recordSnapshot(provisional);
+
+        const crossProviderKey: ProviderAccountUsageRecordKeyV1 = {
+            providerId: 'openai-codex',
+            accountSubjectId: 'acct-stable',
+            subjectKind: 'account',
+            quotaScope: 'account',
+        };
+        expect(() => store.prepareAdoption({
+            providerId: 'openai-codex',
+            fromRecordId: provisional.recordId,
+            toRecordId: buildProviderAccountUsageRecordId(crossProviderKey),
+            stableRecordKey: crossProviderKey,
+            proof: { kind: 'provider_account_id_match' },
+            observedAtMs: 2_000,
+        })).toThrow(/provider/i);
+
+        const crossScopeKey = createKey('sub-stable-model') as ProviderAccountUsageRecordKeyV1;
+        const materiallyCrossScopeKey: ProviderAccountUsageRecordKeyV1 = {
+            ...crossScopeKey,
+            quotaScope: 'model',
+            quotaScopeId: 'gpt-5',
+        };
+        expect(() => store.prepareAdoption({
+            providerId: 'claude',
+            fromRecordId: provisional.recordId,
+            toRecordId: buildProviderAccountUsageRecordId(materiallyCrossScopeKey),
+            stableRecordKey: materiallyCrossScopeKey,
+            proof: { kind: 'provider_account_id_match' },
+            observedAtMs: 2_000,
+        })).toThrow(/scope/i);
+
+        expect(store.resolveRecordId(provisional.recordId)?.recordId).toBe(provisional.recordId);
+    });
+
     it('moves explicit source links during provisional record adoption without deriving source authority from adoption data', async () => {
         const module = await loadStoreModule();
         expect(module).not.toBeNull();

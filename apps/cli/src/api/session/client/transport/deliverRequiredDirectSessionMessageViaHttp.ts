@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
@@ -42,6 +43,7 @@ export async function deliverRequiredDirectSessionMessageViaHttp(params: Readonl
             body,
             {
                 headers: {
+                    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                     Authorization: `Bearer ${params.token}`,
                     'Content-Type': 'application/json',
                     'Idempotency-Key': params.localId,

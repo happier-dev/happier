@@ -1,7 +1,7 @@
 import { access, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -275,6 +275,47 @@ describe('daemon spawn hook substrate', () => {
         stderr: expect.stringContaining('warning'),
         source: 'system',
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps bounded system-tool output on a UTF-8 character boundary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-daemon-spawn-utf8-output-'));
+    const maximumBytes = 2_000;
+    const head = 'a'.repeat(maximumBytes - 1);
+    try {
+      const outputScript = join(root, 'emit-utf8-output.cjs');
+      await writeFile(
+        outputScript,
+        `process.stdout.write(${JSON.stringify(`${head}🙂`)}); process.stderr.write(${JSON.stringify(`${head}🙂`)});`,
+        'utf8',
+      );
+
+      const command = basename(process.execPath);
+      const context = daemonSpawnHooks.createDaemonSpawnToolResolutionContext({
+        processEnv: { PATH: dirname(process.execPath) },
+        signal: new AbortController().signal,
+        logInfo: () => {},
+        logWarn: () => {},
+      });
+      const result = await context.runSystemTool({
+        toolId: command,
+        lookupNames: [command],
+        args: [outputScript],
+        reason: 'unit-test UTF-8 output bound',
+        timeoutMs: 2_000,
+        maxStdoutBytes: maximumBytes,
+        maxStderrBytes: maximumBytes,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      for (const text of [result.stdout, result.stderr]) {
+        expect(text).toBe(head);
+        expect(text).not.toContain('\uFFFD');
+        expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(maximumBytes);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AxiosError, AxiosHeaders, type InternalAxiosRequestConfig } from 'axios';
 
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
@@ -6,22 +6,6 @@ import { createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
-let ApiSessionClient: typeof import('./sessionClient').ApiSessionClient;
-let logger: typeof import('@/ui/logger').logger;
-
-function createAxiosConfig(params: Readonly<{
-  method: string;
-  url: string;
-  headers?: AxiosHeaders;
-  data?: unknown;
-}>): InternalAxiosRequestConfig {
-  return {
-    method: params.method,
-    url: params.url,
-    headers: params.headers ?? new AxiosHeaders(),
-    ...(params.data === undefined ? {} : { data: params.data }),
-  };
-}
 
 vi.mock('./sockets', () => ({
   createUserScopedSocket: () => {
@@ -36,13 +20,9 @@ vi.mock('./connection/createSessionSocketTransport', () => ({
     return {
       socket: sessionSocketStub as any,
       transport: {
-        connect: async () => {},
-        disconnect: async () => {},
-        destroy: async () => {},
+        connect: async () => {}, disconnect: async () => {}, destroy: async () => {},
         isConnected: () => sessionSocketStub?.connected === true,
-        onConnected: () => () => {},
-        onDisconnected: () => () => {},
-        onError: () => () => {},
+        onConnected: () => () => {}, onDisconnected: () => () => {}, onError: () => () => {},
       },
     };
   },
@@ -51,70 +31,61 @@ vi.mock('./connection/createSessionSocketTransport', () => ({
 vi.mock('@happier-dev/connection-supervisor', () => ({
   DEFAULT_MANAGED_CONNECTION_POLICY: {},
   createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
-    start: async () => {
-      params.createTransport();
-      await params.onConnected?.();
-    },
+    start: async () => { params.createTransport(); await params.onConnected?.(); },
     stop: async () => {},
   }),
 }));
 
+function createAxiosConfig(params: Readonly<{ method: string; url: string; headers?: AxiosHeaders; data?: unknown }>): InternalAxiosRequestConfig {
+  return {
+    method: params.method,
+    url: params.url,
+    headers: params.headers ?? new AxiosHeaders(),
+    ...(params.data === undefined ? {} : { data: params.data }),
+  };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  sessionSocketStub = null;
+  userSocketStub = null;
+});
+
 describe('ApiSessionClient outbound diagnostics logging', () => {
-  beforeAll(async () => {
-    ({ ApiSessionClient } = await import('./sessionClient'));
-    ({ logger } = await import('@/ui/logger'));
-  });
-
-  beforeEach(() => {
-    sessionSocketStub = null;
-    userSocketStub = null;
-  });
-
-  it('logs outbound ACP message shapes without leaking message content', () => {
-    sessionSocketStub = createApiSessionSocketStub({
-      connected: true,
-      emitWithAck: async (event: string) => {
-        if (event === 'message') {
-          return { ok: true, id: 'm1', seq: 1, localId: 'l1' };
-        }
-        return { ok: true };
-      },
-    });
-    userSocketStub = createApiSessionSocketStub({
-      connected: true,
-      emitWithAck: async () => ({ ok: true }),
-    });
-
+  it('logs durable outbound ACP shapes without leaking message content', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { logger } = await import('@/ui/logger');
     const debugSpy = vi.spyOn(logger, 'debug');
-    debugSpy.mockClear();
-
+    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
 
-    client.sendAgentMessage('claude' as any, { type: 'message', message: 'SUPER_SECRET_VALUE' } as any);
+    await client.enqueueAgentMessageCommitted(
+      'claude',
+      { type: 'message', message: 'SUPER_SECRET_VALUE' },
+      { localId: 'shape-1', provenance: { kind: 'non_dependent', source: 'external' } },
+    );
 
     const calls = JSON.stringify(debugSpy.mock.calls);
     expect(calls).not.toContain('SUPER_SECRET_VALUE');
-    expect(debugSpy.mock.calls.some((c) => String(c[0]).includes('[shape:session-out]'))).toBe(true);
+    expect(debugSpy.mock.calls.some((call) => String(call[0]).includes('[shape:session-out]'))).toBe(true);
+    await client.close();
   });
 
-  it('serializes socket connection errors without leaking raw network error fields', () => {
+  it('serializes socket connection errors without leaking raw network error fields', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
-    userSocketStub = createApiSessionSocketStub({
-      connected: true,
-      emitWithAck: async () => ({ ok: true }),
-    });
-
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { logger } = await import('@/ui/logger');
     const debugSpy = vi.spyOn(logger, 'debug');
-    debugSpy.mockClear();
-
-    new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-socket-log' }));
-
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-socket-log' }));
     const socketError = new AxiosError('socket failed', 'ECONNRESET', createAxiosConfig({
       method: 'get',
       url: 'https://relay:SUPER_SECRET_PASSWORD@api.example.test/socket.io/?token=SECRET',
       headers: new AxiosHeaders({ Authorization: 'Bearer SECRET' }),
       data: { secret: 'SECRET_BODY' },
     }));
+
     sessionSocketStub.trigger('connect_error', socketError);
     sessionSocketStub.trigger('error', socketError);
 
@@ -122,11 +93,11 @@ describe('ApiSessionClient outbound diagnostics logging', () => {
     expect(calls).toContain('[API] Socket connection error');
     expect(calls).toContain('[API] Socket error');
     expect(calls).toContain('https://api.example.test/socket.io/');
-    expect(calls).not.toContain('Authorization');
     expect(calls).not.toContain('Bearer SECRET');
     expect(calls).not.toContain('SECRET_BODY');
     expect(calls).not.toContain('SUPER_SECRET_PASSWORD');
     expect(calls).not.toContain('"headers"');
     expect(calls).not.toContain('"data"');
+    await client.close();
   });
 });

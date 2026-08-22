@@ -1,36 +1,30 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import {
+  ChangeEntrySchema,
+  ChangesResponseSchema,
+  CursorGoneErrorSchema,
+  type ChangeEntry,
+  type ChangesResponse,
+  type CursorGoneError,
+} from '@happier-dev/protocol/changes';
 import axios from 'axios';
-import * as z from 'zod';
 import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from './client/httpStatusError';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
-export const ChangeEntrySchema = z.object({
-  cursor: z.number().int().min(0),
-  kind: z.string(),
-  entityId: z.string(),
-  changedAt: z.number().int().min(0),
-  hint: z.unknown().nullable().optional(),
-});
-
-export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
-
-export const ChangesResponseSchema = z.object({
-  changes: z.array(ChangeEntrySchema),
-  nextCursor: z.number().int().min(0),
-});
-
-export type ChangesResponse = z.infer<typeof ChangesResponseSchema>;
-
-export const CursorGoneErrorSchema = z.object({
-  error: z.literal('cursor-gone'),
-  currentCursor: z.number().int().min(0),
-});
-
-export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;
+export {
+  ChangeEntrySchema,
+  ChangesResponseSchema,
+  CursorGoneErrorSchema,
+  type ChangeEntry,
+  type ChangesResponse,
+  type CursorGoneError,
+};
 
 export async function fetchChangesAccountId(opts: { token: string; signal?: AbortSignal }): Promise<string> {
   const serverUrl = resolveServerHttpBaseUrl();
   const response = await axios.get(`${serverUrl}/v1/account/profile`, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${opts.token}`,
       'Content-Type': 'application/json',
     },
@@ -58,7 +52,7 @@ export async function fetchChangesAccountId(opts: { token: string; signal?: Abor
   return id;
 }
 
-export async function fetchChanges(opts: { token: string; after: number; limit?: number; signal?: AbortSignal }): Promise<{
+export async function fetchChanges(opts: { token: string; after: number; limit?: number; sessionAccessSessionId?: string; signal?: AbortSignal }): Promise<{
   status: 'ok';
   response: ChangesResponse;
 } | {
@@ -75,10 +69,17 @@ export async function fetchChanges(opts: { token: string; after: number; limit?:
   try {
     const response = await axios.get(`${serverUrl}/v2/changes`, {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${opts.token}`,
         'Content-Type': 'application/json',
       },
-      params: { after, limit },
+      params: {
+        after,
+        limit,
+        ...(opts.sessionAccessSessionId === undefined
+          ? {}
+          : { sessionAccessSessionId: opts.sessionAccessSessionId }),
+      },
       timeout: 15_000,
       ...(opts.signal ? { signal: opts.signal } : {}),
       validateStatus: () => true,
@@ -89,7 +90,7 @@ export async function fetchChanges(opts: { token: string; after: number; limit?:
       if (parsed.success) {
         return { status: 'cursor-gone', currentCursor: parsed.data.currentCursor };
       }
-      return { status: 'cursor-gone', currentCursor: 0 };
+      return { status: 'error', error: parsed.error };
     }
 
     if (response.status < 200 || response.status >= 300) {

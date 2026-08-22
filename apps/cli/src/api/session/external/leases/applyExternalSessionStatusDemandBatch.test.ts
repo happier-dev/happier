@@ -18,7 +18,7 @@ const {
 }));
 
 vi.mock('@/persistence', () => ({
-    readCredentials: readCredentialsMock,
+    readStoredCredentials: readCredentialsMock,
 }));
 
 vi.mock('@/api/session/external/takeover/loadLinkedExternalSession', () => ({

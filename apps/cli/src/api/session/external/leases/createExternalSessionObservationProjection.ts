@@ -123,6 +123,7 @@ export function createExternalSessionObservationProjection(
     let expiryTimer: ReturnType<typeof setTimeout> | null = null;
     let publicationRetryTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
+    let disposalTail: Promise<void> | null = null;
 
     const isCurrentRecord = (record: ProjectionRecord): boolean => (
         !disposed
@@ -270,16 +271,6 @@ export function createExternalSessionObservationProjection(
                     state.retryExhausted = false;
                     return;
                 }
-                // A retirement/removal may enqueue one fail-closed unknown
-                // publication, but no removed generation owns a later retry.
-                if (
-                    !isCurrentRecord(item.record)
-                    && item.allowAfterRecordRemoval
-                ) {
-                    state.desiredItem = null;
-                    state.retryAttempt = 0;
-                    return;
-                }
                 const retryDelayMs =
                     PUBLICATION_RETRY_DELAYS_MS[state.retryAttempt];
                 if (retryDelayMs === undefined) {
@@ -400,13 +391,27 @@ export function createExternalSessionObservationProjection(
         };
     };
 
-    const failClosedAndRemoveRecord = (record: ProjectionRecord): void => {
-        if (recordsBySessionId.get(record.sessionId) !== record) return;
+    const failClosedAndRemoveRecord = (
+        record: ProjectionRecord,
+        options?: Readonly<{ allowAlreadyRemoved?: boolean }>,
+    ): void => {
+        const current = recordsBySessionId.get(record.sessionId);
+        if (
+            current !== record
+            && !(
+                options?.allowAlreadyRemoved === true
+                && current === undefined
+            )
+        ) {
+            return;
+        }
         const unknown = reduceRecordToUnknown(record);
         if (unknown && record.publicationActive) {
             trackPublication(record, unknown, { allowAfterRecordRemoval: true });
         }
-        recordsBySessionId.delete(record.sessionId);
+        if (current === record) {
+            recordsBySessionId.delete(record.sessionId);
+        }
         cancelRemovedRecordPublication(record);
         releasePublicationStateIfIdle(record.sessionId);
         scheduleExpiry();
@@ -451,9 +456,7 @@ export function createExternalSessionObservationProjection(
                 const shouldReleaseInertRecord = (
                     record.reduction.snapshot.status === 'unknown'
                     && record.reduction.nextExpiryAtMs === undefined
-                    && !record.demand.passiveEvent
-                    && !record.demand.persistedPolicy
-                    && !record.demand.fallbackDemand
+                    && !hasObservationDemand(record.demand)
                 );
                 if (record.publicationActive) {
                     trackPublication(record, record.reduction.snapshot, {
@@ -646,7 +649,7 @@ export function createExternalSessionObservationProjection(
                 ...(matchingExisting?.demand ?? noObservationDemand()),
                 fallbackDemand: true,
             },
-        }, true, true);
+        }, true);
     };
 
     const reconcileTranscriptDemandNow = async (input: Readonly<{
@@ -685,6 +688,50 @@ export function createExternalSessionObservationProjection(
                 transcriptDemand: true,
             },
         }, true, true);
+    };
+
+    const removeLinkNow = async (
+        link: ExternalSessionObservationLinkIdentity,
+        releaseOnlyLocalCustody: boolean,
+    ) => {
+        const record = recordsBySessionId.get(link.sessionId);
+        const ownsMatchingProjection = Boolean(
+            record
+            && record.link.linkGeneration === link.linkGeneration
+            && record.link.linkKey === link.linkKey,
+        );
+        const preservesDurableObservation = Boolean(
+            releaseOnlyLocalCustody
+            && record
+            && ownsMatchingProjection
+            && record.resource.retirementSignal?.aborted !== true,
+        );
+        if (record && preservesDurableObservation) {
+            // Local daemon/account custody ends without changing the Account's
+            // last durable fact. Remove the record before observer disposal so
+            // a disposal-time callback cannot enqueue a late publication.
+            removeProjectionRecord(link.sessionId, link);
+        }
+        const result = await params.reconciler.removeLink(link);
+        const retiredDuringLocalRelease = Boolean(
+            preservesDurableObservation
+            && record?.resource.retirementSignal?.aborted === true,
+        );
+        if (
+            record
+            && ownsMatchingProjection
+            && (!preservesDurableObservation || retiredDuringLocalRelease)
+        ) {
+            // Semantic retirement wins even when a later local pause/account
+            // rotation requested release while waiting for this serialized
+            // owner. Publish the matching link's fail-closed terminal fact.
+            failClosedAndRemoveRecord(record, {
+                allowAlreadyRemoved: retiredDuringLocalRelease,
+            });
+        }
+        return {
+            removed: result.removed || ownsMatchingProjection,
+        } as const;
     };
 
     const api = {
@@ -916,7 +963,7 @@ export function createExternalSessionObservationProjection(
                     const admitted = await reconcileLinkNow({
                         ...input,
                         demand: temporaryDemand,
-                    }, false, true);
+                    }, false);
                     if (
                         admitted.state !== 'observing'
                         && admitted.state !== 'reconcile-only'
@@ -969,25 +1016,17 @@ export function createExternalSessionObservationProjection(
         },
 
         async removeLink(link: ExternalSessionObservationLinkIdentity) {
-            return await runSerialized(link.sessionId, async () => {
-                const record = recordsBySessionId.get(link.sessionId);
-                const ownsMatchingProjection = Boolean(
-                    record
-                    && record.link.linkGeneration === link.linkGeneration
-                    && record.link.linkKey === link.linkKey,
-                );
-                const result = await params.reconciler.removeLink(link);
-                // Generation retirement can remove the lower resource before
-                // the passive lifecycle finishes releasing its projection.
-                // The projection still owns the published semantic state and
-                // must fail it closed exactly once for the matching link.
-                if (record && ownsMatchingProjection) {
-                    failClosedAndRemoveRecord(record);
-                }
-                return {
-                    removed: result.removed || ownsMatchingProjection,
-                } as const;
-            });
+            return await runSerialized(
+                link.sessionId,
+                async () => await removeLinkNow(link, false),
+            );
+        },
+
+        async releaseLink(link: ExternalSessionObservationLinkIdentity) {
+            return await runSerialized(
+                link.sessionId,
+                async () => await removeLinkNow(link, true),
+            );
         },
 
         async flush(): Promise<void> {
@@ -997,7 +1036,10 @@ export function createExternalSessionObservationProjection(
         },
 
         async dispose(): Promise<void> {
-            if (disposed) return;
+            // Terminal intent is recorded first and stays fail-closed, but the
+            // fallible tail below must remain retryable: the reconciler deliberately
+            // retains an observer whose disposal rejected so the exact same cleanup
+            // can be retried. Returning early on the next call would strand it.
             disposed = true;
             if (expiryTimer) {
                 clearTimer(expiryTimer);
@@ -1013,10 +1055,20 @@ export function createExternalSessionObservationProjection(
                 state.retryAtMs = null;
                 state.retryExhausted = false;
             }
-            await params.reconciler.dispose();
-            await Promise.all([...mutationTailsBySessionId.values()]);
-            await Promise.all([...pendingPublications]);
-            publicationStatesBySessionId.clear();
+            const attempt = disposalTail ??= (async () => {
+                await params.reconciler.dispose();
+                await Promise.all([...mutationTailsBySessionId.values()]);
+                await Promise.all([...pendingPublications]);
+                publicationStatesBySessionId.clear();
+            })();
+            try {
+                await attempt;
+            } catch (error) {
+                if (disposalTail === attempt) {
+                    disposalTail = null;
+                }
+                throw error;
+            }
         },
     };
     return api;

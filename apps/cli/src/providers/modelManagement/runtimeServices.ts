@@ -22,6 +22,7 @@ import { resolveProviderContributionRegistryView } from '@/providers/registry/co
 import { createProviderProbeHttpClient } from '@/providers/probe/client';
 import { createRuntimeProviderServices } from '@/providers/probe/runtimeServices';
 import type { RuntimeProviderServices } from '@/providers/probe/runtimeServices';
+import { PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS } from '@/providers/probe/scheduler';
 import type { ProviderRuntimeStateStore } from '@/providers/runtimeState';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -45,7 +46,9 @@ import type { ProviderModelSettingsMutationIntent } from '@/providers/connection
 import {
   resolveProviderSpawnAuthorization,
 } from '@/providers/spawn/resolve';
-import { resolveProviderRuntimeCatalogSelectionObservation } from '@/providers/spawn/runtimeCatalog';
+import {
+  resolveProviderRuntimeCatalogSelectionObservation,
+} from '@/providers/spawn/runtimeCatalog';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { selectCurrentProviderEndpointHealthByTemplateId } from '@/providers/connections/runtimeSummary';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
@@ -74,6 +77,7 @@ export type RuntimeProviderModelManagementServices = Readonly<{
     request: DaemonProviderBindingStatusRequestV1,
   ): Promise<DaemonProviderBindingStatusResponseV1>;
   runtimeStore: ProviderRuntimeStateStore;
+  probeInfrastructure: RuntimeProviderServices['probeInfrastructure'];
   loadModel(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult>;
   cancelModelLoad(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult>;
   rpcHandler: ReturnType<typeof createProviderModelLoadRpcHandler>;
@@ -227,6 +231,23 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     loadNow: service.loadNow,
     cancelNow: service.cancelNow,
   });
+  const schedulePickerDemandRefreshes = (
+    identities: readonly Readonly<{ connectionId: string; machineId: string }>[],
+  ): void => {
+    let nextIdentityIndex = 0;
+    const refreshNext = async (): Promise<void> => {
+      for (;;) {
+        const identity = identities[nextIdentityIndex];
+        nextIdentityIndex += 1;
+        if (!identity) return;
+        await sharedRuntime.scheduleDemandRefresh(identity, 'picker_open');
+      }
+    };
+    void Promise.all(Array.from(
+      { length: Math.min(PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS, identities.length) },
+      refreshNext,
+    )).catch(() => undefined);
+  };
 
   const projectModels = async (
     request: DaemonProviderModelProjectionRequestV1,
@@ -266,6 +287,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         preflightPolicy: 'advisory' | 'required' | null;
       }>>();
       const confirmedByRef = new Map<string, boolean>();
+      const pickerDemand: Array<Readonly<{ connectionId: string; machineId: string }>> = [];
       for (const connection of settingsRead.settings.connections) {
         const context = await sharedRuntime.resolvePresentationCatalogContext({
           connectionId: connection.id,
@@ -273,10 +295,10 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         }, runtimeState);
         if (context.status === 'error') continue;
         if (context.connection.authorization.authorized) {
-          sharedRuntime.scheduleDemandRefresh({
+          pickerDemand.push({
             connectionId: connection.id,
             machineId: request.machineId,
-          }, 'picker_open');
+          });
         }
         const modelLoadDescriptor =
           context.connection.source.kind === 'contribution'
@@ -396,6 +418,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         projectedGroups: groups,
         machineId: request.machineId,
       });
+      schedulePickerDemandRefreshes(pickerDemand);
       return DaemonProviderModelProjectionResponseV1Schema.parse({
         status: 'success',
         agentTargetKey: request.agentTargetKey,
@@ -522,6 +545,10 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       let managedPurposeBindingSnapshot:
         import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingsV1
         | undefined;
+      let managedProviderRuntime:
+        import('@/plugins/projection/registry/types')
+          .ResolvedManagedProviderRuntime
+        | undefined;
       if (
         connectionResolution.status === 'resolved'
         && connectionResolution.record.deployment.kind === 'managedLocal'
@@ -538,11 +565,21 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             await resolveManagedProviderPurposeBindingSnapshot({
               implementationIdentity:
                 connectionResolution.record.deployment.implementationIdentity,
-              facet: connectionResolution.record.deployment.facet,
+              connectedAccounts:
+                connectionResolution.record.deployment.managedRuntime
+                  .connectedAccounts,
               purposeBindingIntents:
                 connectionResolution.record.deployment.purposeBindingIntents,
               resolveBindingIntent: input.resolveManagedPurposeBindingIntent,
             });
+          managedProviderRuntime =
+            await lease.registry.acquireManagedProviderRuntime?.(
+              connectionResolution.record.deployment
+                .implementationIdentity,
+            ) ?? undefined;
+          if (!managedProviderRuntime?.isCurrent()) {
+            throw new Error('Managed Provider runtime is unavailable');
+          }
         } catch {
           const error = createProviderErrorV1(
             'provider_connection_invalid',
@@ -579,6 +616,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         registry,
         dnsEvidenceByEndpointUrl,
         lease,
+        ...(managedProviderRuntime ? { managedProviderRuntime } : {}),
         ...(managedPurposeBindingSnapshot
           ? { managedPurposeBindingSnapshot }
           : {}),

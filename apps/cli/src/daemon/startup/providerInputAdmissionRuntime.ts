@@ -1,6 +1,7 @@
 import { setTimeout as setTimeoutPromise } from 'node:timers/promises';
 
-import type { Credentials } from '@/persistence';
+import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
+import type { StoredCredentials } from '@/persistence';
 import { requestSessionProviderInputAdmission } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
@@ -16,10 +17,11 @@ export type ProviderInputAdmissionRequest = Readonly<{
   serviceId: string;
   groupId: string;
   epochId?: string;
+  applicationSettled?: true;
 }>;
 
 export async function callSessionProviderInputAdmission(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionId: string;
 }> & ProviderInputAdmissionRequest): Promise<Readonly<{ status: 'enforced' | 'cleared' | 'not_matched' }>> {
   const transport = await resolveSessionTransportContext({
@@ -27,18 +29,30 @@ export async function callSessionProviderInputAdmission(params: Readonly<{
     idOrPrefix: params.sessionId,
   });
   if (!transport.ok) {
+    if (transport.code === 'encryption_material_unavailable') {
+      throw new AccountEncryptionMaterialUnavailableError();
+    }
     throw new Error('session_provider_input_admission_transport_unavailable');
   }
   return await requestSessionProviderInputAdmission({
     ...params,
-    callRpc: async (method, request) => await callSessionRpc({
-      token: params.credentials.token,
-      sessionId: transport.sessionId,
-      ctx: transport.ctx,
-      mode: transport.mode,
-      method: `${transport.sessionId}:${method}`,
-      request,
-    }),
+    callRpc: async (method, request) => transport.mode === 'plain'
+      ? await callSessionRpc({
+          token: params.credentials.token,
+          sessionId: transport.sessionId,
+          ctx: transport.ctx,
+          mode: transport.mode,
+          method: `${transport.sessionId}:${method}`,
+          request,
+        })
+      : await callSessionRpc({
+          token: params.credentials.token,
+          sessionId: transport.sessionId,
+          ctx: transport.ctx,
+          mode: transport.mode,
+          method: `${transport.sessionId}:${method}`,
+          request,
+        }),
   });
 }
 

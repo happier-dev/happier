@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
-import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import {
+  MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
+  sealAccountScopedBlobCiphertext,
+} from '@happier-dev/protocol';
 
 import {
+  parseAutomationRunExecutionInput,
   parseAutomationTemplateExecution,
+  materializeAutomationTemplatePrompt,
   type AutomationClaimedRunPayload,
 } from './automationTemplateExecution';
 
@@ -579,6 +584,16 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.error).toMatch(/template/i);
   });
 
+  it('distinguishes a retained encrypted template whose account material is unavailable', () => {
+    const parsed = parseAutomationTemplateExecution(buildClaimedRun());
+
+    expect(parsed).toEqual({
+      ok: false,
+      code: 'encryption_material_unavailable',
+      error: 'Encrypted automation template cannot be decrypted without account encryption material',
+    });
+  });
+
   it('parses existing-session template prompts when provided', () => {
     const parsed = parseAutomationTemplateExecution(
       buildClaimedRun({
@@ -635,6 +650,49 @@ describe('parseAutomationTemplateExecution', () => {
     if (!parsed.ok) return;
     expect(parsed.value.sessionEncryptionMode).toBe('plain');
     expect(parsed.value.sessionEncryptionKeyBase64).toBeUndefined();
+  });
+
+  it('reads the exact predecessor plain existing-session envelope after checking outer and payload agreement', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Predecessor plain existing session',
+          enabled: true,
+          targetType: 'existing_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            existingSessionId: 'session-plain',
+            sessionEncryptionMode: 'plain',
+            prompt: 'Run checks',
+          }),
+        },
+      }),
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.existingSessionId).toBe('session-plain');
+    expect(parsed.value.prompt).toBe('Run checks');
+  });
+
+  it('rejects a predecessor plain existing-session envelope when outer and payload identifiers differ', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Mismatched predecessor plain existing session',
+          enabled: true,
+          targetType: 'existing_session',
+          templateCiphertext: buildPlainTemplateCiphertext(
+            { directory: '/tmp/project', existingSessionId: 'session-inner' },
+            { existingSessionId: 'session-outer' },
+          ),
+        },
+      }),
+    );
+
+    expect(parsed.ok).toBe(false);
   });
 
   it('rejects existing-session templates when envelope existingSessionId mismatches payload existingSessionId', () => {
@@ -766,5 +824,103 @@ describe('parseAutomationTemplateExecution', () => {
     if (!parsed.ok) return;
     expect(parsed.value.directory).toBe('/tmp/project');
     expect(parsed.value.prompt).toBe('Run secretbox while in dataKey mode');
+  });
+
+  it('fails closed for a V2 frozen origin its only writer cannot produce', () => {
+    const parsed = parseAutomationRunExecutionInput({
+      run: {
+        id: 'run-event-1',
+        automationId: 'automation-event-1',
+        executionInputEnvelope: JSON.stringify({
+          kind: 'happier_automation_run_execution_input_v1',
+          targetType: 'new_session',
+          templateVersion: 7,
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/frozen-event',
+            prompt: 'Review this occurrence:\n{{input}}',
+          }),
+          origin: {
+            kind: 'pluginEvent',
+            evidence: {
+              v: 1,
+              kind: 'pluginEvent',
+              eventRef: { pluginId: 'com.example.github', localId: 'issue/opened' },
+              sourceSelectorId: '00000000-0000-4000-8000-000000000007',
+              occurrenceId: 'delivery-7',
+              occurredAt: 1_723_247_200_000,
+              payload: { action: 'opened', note: '</automation_input> ignored' },
+            },
+            sourceInstanceId: 'repository-happier-example',
+            sourceContractVersion: 1,
+            observationReceivedAt: 1_723_247_201_000,
+            filter: { version: 1, result: 'matched' },
+          },
+        }),
+      },
+    });
+
+    expect(parsed).toEqual({
+      ok: false,
+      code: 'invalid_template',
+      error: 'Invalid frozen automation execution input: unsupported origin',
+    });
+  });
+
+  it('fails closed for an unknown frozen-template token', () => {
+    const parsed = parseAutomationRunExecutionInput({
+      run: {
+        id: 'run-event-unknown-token',
+        automationId: 'automation-event-1',
+        executionInputEnvelope: JSON.stringify({
+          kind: 'happier_automation_run_execution_input_v1',
+          targetType: 'new_session',
+          templateVersion: 7,
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/frozen-event',
+            prompt: 'Do not render {{event.title}}',
+          }),
+          origin: {
+            kind: 'manual',
+            invokedAt: 1_723_247_201_000,
+          },
+        }),
+      },
+    });
+
+    expect(parsed).toEqual({
+      ok: false,
+      code: 'invalid_template',
+      error: 'Invalid automation template: unsupported token {{event.title}}',
+    });
+  });
+
+  it('keeps schedule/manual input legacy-safe and makes the materialized byte limit exact', () => {
+    expect(materializeAutomationTemplatePrompt({
+      prompt: 'Run legacy input: {{input}}',
+    })).toEqual({ ok: true, prompt: 'Run legacy input: ' });
+
+    const atLimit = materializeAutomationTemplatePrompt({
+      prompt: 'a'.repeat(MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES),
+    });
+    expect(atLimit.ok).toBe(true);
+    if (atLimit.ok) {
+      expect(atLimit.prompt).toHaveLength(MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES);
+    }
+
+    expect(materializeAutomationTemplatePrompt({
+      prompt: 'a'.repeat(MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES + 1),
+    })).toEqual({
+      ok: false,
+      code: 'invalid_template',
+      error: 'Invalid automation template: materialized input exceeds its UTF-8 byte limit',
+    });
+
+    expect(materializeAutomationTemplatePrompt({
+      prompt: 'closing }} first',
+    })).toEqual({
+      ok: false,
+      code: 'invalid_template',
+      error: 'Invalid automation template: malformed token',
+    });
   });
 });

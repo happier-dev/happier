@@ -23,7 +23,8 @@ import type {
   SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
+import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import { createConnectedServiceQuotaPersistenceScheduler } from '../quotas/createConnectedServiceQuotaPersistenceScheduler';
 import {
   shouldPersistQuotaSnapshot,
@@ -137,7 +138,7 @@ function normalizePersistenceSources(
 
 function resolveFingerprintKey(params: Readonly<{
   fingerprintKey?: ProviderAccountUsageFingerprintKey;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   serverScope?: string;
   accountScope?: string;
 }>): ProviderAccountUsageFingerprintKey {
@@ -156,7 +157,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
   api: AccountUsageApi;
   now: () => number;
   fingerprintKey?: ProviderAccountUsageFingerprintKey;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
   randomBytes?: (length: number) => Uint8Array;
   serverScope?: string;
   accountScope?: string;
@@ -210,7 +211,8 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     if (!params.credentials || !params.randomBytes) {
       throw new Error('Provider account usage sealed persistence requires credentials and randomBytes');
     }
-    const encryption = params.credentials.encryption;
+    const encryption =
+      requireAccountEncryptionCredentials(params.credentials).encryption;
     const material =
       encryption.type === 'legacy'
         ? ({ type: 'legacy' as const, secret: encryption.secret })

@@ -1,7 +1,9 @@
 import {
   ProviderModelDescriptorV1Schema,
+  createProviderManagedRuntimeDeclarationEqualityKeyV1,
   createProviderManagedProbeRequestFingerprintV1,
   createProviderProbeRequestFingerprintV1,
+  resolveProviderManagedRuntimeDeclarationV1,
   type ProviderCatalogFingerprintV1,
   type ProviderModelDescriptorV1,
   type ProviderModelLoadStateV1,
@@ -134,7 +136,6 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
   if (record.deployment.kind === 'managedLocal') {
     if (
       record.source.kind !== 'contribution'
-      || record.source.provenance !== 'first_party'
       || catalog.probes.length !== 1
     ) {
       return null;
@@ -142,24 +143,32 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
     const contribution = input.registry.providersByContributionKey.get(
       record.source.contributionKey,
     );
-    const runtimeAdapter = contribution?.provenance === 'first_party'
-      && contribution.source.kind === 'bundled'
-      ? contribution.managedRuntimeAdapter
-      : undefined;
     const probe = catalog.probes[0]!;
     const endpointTemplate = record.source.definition.endpointTemplates.find(
       (candidate) => candidate.id === probe.endpointTemplateId,
     );
+    const contributionManagedRuntime = contribution?.definition.managedRuntime
+      ? resolveProviderManagedRuntimeDeclarationV1({
+          implementationIdentity: contribution.identity,
+          managedRuntime: contribution.definition.managedRuntime,
+        })
+      : null;
     if (
       !contribution
-      || contribution.provenance !== 'first_party'
-      || contribution.source.kind !== 'bundled'
-      || !contribution.managed
-      || !runtimeAdapter
+      || !contribution.definition.managedRuntime
+      || !contributionManagedRuntime
       || !endpointTemplate
-      || !record.deployment.facet.managedEndpoint.protocols.includes(
-        endpointTemplate.protocol,
+      || !record.deployment.managedRuntime.endpointTemplateIds.includes(
+        endpointTemplate.id,
       )
+      || createProviderManagedRuntimeDeclarationEqualityKeyV1({
+        implementationIdentity: contribution.identity,
+        managedRuntime: contributionManagedRuntime,
+      })
+        !== createProviderManagedRuntimeDeclarationEqualityKeyV1({
+          implementationIdentity: record.deployment.implementationIdentity,
+          managedRuntime: record.deployment.managedRuntime,
+        })
     ) {
       return null;
     }
@@ -170,7 +179,8 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
         purposeBindings =
           await resolveManagedProviderPurposeBindingSnapshot({
             implementationIdentity: record.deployment.implementationIdentity,
-            facet: record.deployment.facet,
+            connectedAccounts:
+              record.deployment.managedRuntime.connectedAccounts ?? [],
             purposeBindingIntents: record.deployment.purposeBindingIntents,
             resolveBindingIntent: input.resolveManagedPurposeBindingIntent,
           });
@@ -180,9 +190,8 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
     }
     const managedSource = {
       implementationIdentity: record.deployment.implementationIdentity,
-      managedFacet: record.deployment.facet,
+      managedRuntime: record.deployment.managedRuntime,
       purposeBindings,
-      catalogSource: runtimeAdapter.catalogSource,
       endpointTemplateId: endpointTemplate.id,
       protocol: endpointTemplate.protocol,
       publicHeaders: {},
@@ -206,9 +215,8 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
         machineId: input.machineId,
         implementationIdentity:
           record.deployment.implementationIdentity,
-        managedFacet: record.deployment.facet,
+        managedRuntime: record.deployment.managedRuntime,
         purposeBindings,
-        catalogSource: runtimeAdapter.catalogSource,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
         path: probe.path,

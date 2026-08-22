@@ -1,8 +1,6 @@
 import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, join, delimiter as PATH_DELIMITER } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 
 import {
   GH_BINARY_NAME,
@@ -10,7 +8,11 @@ import {
   GH_GITHUB_REPO,
   INSTALLABLE_KEYS,
 } from '@happier-dev/protocol/installables';
-import { downloadGitHubReleaseAsset } from '@happier-dev/cli-common/agents';
+import {
+  createManagedToolScratchDir,
+  downloadGitHubReleaseAsset,
+  promoteManagedCurrentInstall,
+} from '@happier-dev/cli-common/agents';
 import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
@@ -200,12 +202,16 @@ async function installLatestGhRelease(logPath: string, deps: GhInstallDeps): Pro
     ...(githubFetchImpl ? { fetchImpl: githubFetchImpl } : {}),
   });
   const asset = resolveGhReleaseAsset(release);
-  const scratchDir = await mkdtemp(join(tmpdir(), 'happier-gh-'));
+  const installRoot = ghInstallDir();
+  const scratchDir = await createManagedToolScratchDir({
+    installDir: installRoot,
+    prefix: 'gh',
+  });
   try {
     const archivePath = join(scratchDir, basename(asset.name));
     const extractDir = join(scratchDir, 'extract');
-    const nextDir = join(ghInstallDir(), 'next');
-    const nextBinPath = join(nextDir, 'bin', process.platform === 'win32' ? 'gh.exe' : GH_BINARY_NAME);
+    const candidateDir = join(scratchDir, 'candidate');
+    const candidateBinPath = join(candidateDir, 'bin', process.platform === 'win32' ? 'gh.exe' : GH_BINARY_NAME);
 
     await deps.downloadGitHubReleaseAsset({
       url: asset.url,
@@ -214,17 +220,16 @@ async function installLatestGhRelease(logPath: string, deps: GhInstallDeps): Pro
       userAgent: 'happier-cli',
     });
 
-    await rm(nextDir, { recursive: true, force: true });
     const payloadRoot = await deps.extractReleasePayloadRootFromArchive({
       archivePath,
       archiveName: asset.name,
       extractDir,
     });
     const payloadBinPath = join(payloadRoot, 'bin', process.platform === 'win32' ? 'gh.exe' : GH_BINARY_NAME);
-    await mkdir(dirname(nextBinPath), { recursive: true });
-    await rename(payloadBinPath, nextBinPath);
+    await mkdir(dirname(candidateBinPath), { recursive: true });
+    await rename(payloadBinPath, candidateBinPath);
     if (process.platform !== 'win32') {
-      await access(nextBinPath, fsConstants.X_OK);
+      await access(candidateBinPath, fsConstants.X_OK);
     }
 
     await writeInstallLog({
@@ -237,9 +242,10 @@ async function installLatestGhRelease(logPath: string, deps: GhInstallDeps): Pro
         `# version: ${asset.version ?? 'unknown'}`,
       ],
     });
-    await rm(join(ghInstallDir(), 'current'), { recursive: true, force: true });
-    await mkdir(ghInstallDir(), { recursive: true });
-    await rename(nextDir, join(ghInstallDir(), 'current'));
+    await promoteManagedCurrentInstall({
+      installRoot,
+      candidatePath: candidateDir,
+    });
     return { version: asset.version };
   } finally {
     await rm(scratchDir, { recursive: true, force: true });

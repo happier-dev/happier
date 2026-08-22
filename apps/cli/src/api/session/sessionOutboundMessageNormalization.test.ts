@@ -1,8 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { normalizeAcpSessionMessageBody } from './sessionOutboundMessageNormalization';
+import {
+  normalizeAcpSessionMessageBody,
+  normalizeCodexSessionMessageBody,
+} from './sessionOutboundMessageNormalization';
 
 describe('normalizeAcpSessionMessageBody', () => {
+  it('diagnoses an unmatched Codex tool result at the normalization owner', () => {
+    const debug = vi.fn();
+
+    normalizeCodexSessionMessageBody({
+      body: { type: 'tool-call-result', callId: 'call-missing', output: { stdout: 'x' }, id: 'msg-1' },
+      toolCallCanonicalNameByProviderAndId: new Map(),
+      debug,
+    });
+
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringContaining('tool-call-result without prior tool-call'),
+      expect.objectContaining({ callId: 'call-missing' }),
+    );
+  });
+
   it('ensures ACP tool-call input includes opaque _acp and locations keys (even when provider omits them)', () => {
     const toolCallCanonicalNameByProviderAndId = new Map<string, { rawToolName: string; canonicalToolName: string }>();
     const permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();

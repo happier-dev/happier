@@ -1,46 +1,95 @@
 import { randomBytes } from 'node:crypto';
 
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import {
+  PluginAgentContributionV2Schema,
+  type BackendTargetRefV2,
+} from '@happier-dev/protocol';
 
+import type {
+  AgentRuntimeDaemonSessionDescriptorV1,
+} from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
-import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { configuration } from '@/configuration';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 
-import { createAgentRuntimeSessionBridgeAuthorization } from '../agentRuntime/sessionBridgeAuthorization';
+import {
+  createForegroundAgentRuntimeBootstrapAuthorization,
+  createRunnerAgentSessionBootstrapAuthorization,
+} from '../agentRuntime/sessionBridgeAuthorization';
 import type { SpawnPluginRuntimeLease } from './spawnPluginRuntimeLease';
 import { resolveEngineRuntimeContribution } from '@/agent/runtime/registry/engineRegistry/contributions';
 import {
   snapshotActivatedPluginRuntimeAuthority,
 } from '@/plugins/runtime/lifecycle/activation/runtimeAuthority';
-import {
-  snapshotAgentSessionRealtimeVoiceProviders,
-} from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
 
-export async function prepareAgentRuntimeSessionBridge(input: Readonly<{
+export async function prepareForegroundAgentRuntimeBootstrapForLease(input: Readonly<{
   target: BackendTargetRefV2;
-  pluginRuntimeLease: SpawnPluginRuntimeLease;
+  lease: PluginRuntimeRegistryLease;
 }>) {
+  const descriptor =
+    await resolveRunnerAgentSessionDescriptorForLease(input);
+  if (!descriptor) return null;
+  return await createForegroundAgentRuntimeBootstrapAuthorization({
+    happyHomeDir: configuration.happyHomeDir,
+    publicReleaseRing: configuration.publicReleaseRing,
+    capability: randomBytes(32).toString('base64url'),
+    descriptor,
+  });
+}
+
+export async function prepareRunnerAgentSessionBootstrap(
+  input: Readonly<{
+    target: BackendTargetRefV2;
+    pluginRuntimeLease: SpawnPluginRuntimeLease;
+  }>,
+) {
   const lease = await input.pluginRuntimeLease.acquire();
-  return await prepareAgentRuntimeSessionBridgeForLease({
+  return await prepareRunnerAgentSessionBootstrapForLease({
     target: input.target,
     lease,
   });
 }
 
-export async function prepareAgentRuntimeSessionBridgeForLease(input: Readonly<{
-  target: BackendTargetRefV2;
-  lease: PluginRuntimeRegistryLease;
-}>) {
+export async function prepareRunnerAgentSessionBootstrapForLease(
+  input: Readonly<{
+    target: BackendTargetRefV2;
+    lease: PluginRuntimeRegistryLease;
+  }>,
+) {
+  const descriptor =
+    await resolveRunnerAgentSessionDescriptorForLease(input);
+  if (!descriptor) return null;
+  return await createRunnerAgentSessionBootstrapAuthorization({
+    happyHomeDir: configuration.happyHomeDir,
+    publicReleaseRing: configuration.publicReleaseRing,
+    descriptor,
+  });
+}
+
+async function resolveRunnerAgentSessionDescriptorForLease(
+  input: Readonly<{
+    target: BackendTargetRefV2;
+    lease: PluginRuntimeRegistryLease;
+  }>,
+): Promise<AgentRuntimeDaemonSessionDescriptorV1 | null> {
   const lease = input.lease;
   const backend = resolveEngineRuntimeContribution(
     lease.registry.contributes,
     input.target.backendId,
   );
-  if (!backend) return null;
+  if (!backend) {
+    if (input.target.sourceKind === 'configured') return null;
+    throw new Error(
+      `Runner Agent backend '${input.target.backendId}' is unavailable in the admitted plugin registry`,
+    );
+  }
   await activateAgentRuntimeContributionOnDemand(lease.registry, backend.agentId);
   const registration = lease.registry.agentRuntimesByAgentId.get(backend.agentId);
-  if (!registration?.hasPrimaryRuntime) return null;
+  if (!registration?.hasPrimaryRuntime) {
+    throw new Error(
+      `Runner Agent runtime '${backend.pluginId ?? 'unknown'}/${backend.agentId}' was not published by activation`,
+    );
+  }
   const runtimeAuthority = snapshotActivatedPluginRuntimeAuthority(
     lease.registry,
     registration.pluginId,
@@ -51,55 +100,40 @@ export async function prepareAgentRuntimeSessionBridgeForLease(input: Readonly<{
     );
   }
   const agent = lease.registry.contributes.agentDefinitionsById.get(backend.agentId);
-  const sessionCapabilities = readAgentSessionCapabilities(agent?.richDefinition?.definition);
-  const realtimeProviders = snapshotAgentSessionRealtimeVoiceProviders({
-    runtimeRegistry: lease.registry,
-    policyAgentRef: {
-      pluginId: registration.pluginId,
-      localId: registration.agentId,
+  if (
+    !agent?.richDefinition
+    || !agent.identity
+    || agent.pluginId !== registration.pluginId
+    || agent.identity.pluginId !== registration.pluginId
+    || agent.richDefinition.provenance !== agent.provenance
+  ) {
+    throw new Error(
+      `Activated Agent declaration is unavailable for plugin '${registration.pluginId}'`,
+    );
+  }
+  const agentDefinition = PluginAgentContributionV2Schema.parse(
+    {
+      ...agent.richDefinition.definition,
+      id: agent.identity.localId,
     },
-  });
-  return await createAgentRuntimeSessionBridgeAuthorization({
-    happyHomeDir: configuration.happyHomeDir,
-    publicReleaseRing: configuration.publicReleaseRing,
-    token: randomBytes(32).toString('base64url'),
-    descriptor: {
-      v: 1,
-      pluginId: registration.pluginId,
-      pluginVersion: registration.pluginVersion,
-      agentId: registration.agentId,
-      backendId: backend.id,
-      generation: registration.generation,
-      ...(registration.immutableGenerationId
-        ? { immutableGenerationId: registration.immutableGenerationId }
-        : {}),
-      runtimeAuthority: {
-        permissions: [...runtimeAuthority.permissions],
-        runtimeCapabilities: [...runtimeAuthority.runtimeCapabilities],
-      },
-      runtimeSurfaces: {
-        terminal:
-          agent?.richDefinition?.definition.capabilities.surfaces
-            ?.includes('terminal') === true,
-        ...(realtimeProviders.length > 0
-          ? {
-              realtimeConversation: {
-                providers: realtimeProviders.map(({ provider, lifecycle }) => ({
-                  identity: provider.identity,
-                  manifestDigest: provider.manifestDigest,
-                  generation: lifecycle.generation,
-                  declaration: provider.definition,
-                })),
-              },
-            }
-          : {}),
-      },
-      factoryControls: {
-        continuation: sessionCapabilities?.continuationVerification !== undefined,
-        goals: sessionCapabilities?.goals !== undefined,
-        catalog: sessionCapabilities?.catalog !== undefined,
-        usageLimitRecovery: sessionCapabilities?.usageLimitRecovery !== undefined,
-      },
+  );
+  return {
+    v: 1,
+    pluginId: registration.pluginId,
+    pluginVersion: registration.pluginVersion,
+    agentId: agent.identity.localId,
+    backendId: backend.id,
+    generation: registration.generation,
+    ...(registration.immutableGenerationId
+      ? { immutableGenerationId: registration.immutableGenerationId }
+      : {}),
+    agentDeclaration: {
+      provenance: agent.provenance,
+      source: agent.source,
+      definition: agentDefinition,
     },
-  });
+    runtimeAuthority: {
+      runtimeCapabilities: [...runtimeAuthority.runtimeCapabilities],
+    },
+  };
 }

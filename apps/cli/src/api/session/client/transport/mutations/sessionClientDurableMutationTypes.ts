@@ -115,7 +115,31 @@ export type DaemonUsageLimitRecoveryFieldMutation = RegisteredSessionStateFieldM
     deliveryClass: 'durable_required';
 }>;
 
-export type QueuedSessionClientDurableMutation =
+export type SessionClientDurableMutationAttemptReason =
+    | 'delivery_not_confirmed'
+    | 'delivery_error'
+    | 'transcript_message_provenance_missing_or_invalid'
+    | 'transcript_message_invalid_observation';
+
+export type SessionClientDurableMutationAttemptV1 = Readonly<{
+    v: 1;
+    reason: SessionClientDurableMutationAttemptReason;
+    attemptedAt: number;
+}>;
+
+type SessionClientDurableMutationAttemptAccounting =
+    | Readonly<{
+        firstFailedAt?: undefined;
+        lastAttempt?: undefined;
+    }>
+    | Readonly<{
+        /** Wall-clock time of the first real delivery attempt that did not settle successfully. */
+        firstFailedAt: number;
+        /** Typed diagnostic for the most recent real delivery attempt. */
+        lastAttempt: SessionClientDurableMutationAttemptV1;
+    }>;
+
+export type QueuedSessionClientDurableMutation = SessionClientDurableMutationAttemptAccounting & (
     | Readonly<{
         kind: 'session_turn_mutation';
         mutationId: string;
@@ -167,7 +191,8 @@ export type QueuedSessionClientDurableMutation =
         nextAttemptAt: number;
         dependsOn?: readonly SessionClientDurableMutationDependency[];
         paused?: SessionClientDurableMutationPause;
-    }>;
+    }>
+);
 
 export function resolveTranscriptMessageAppendMutationId(params: Readonly<{
     sessionId: string;

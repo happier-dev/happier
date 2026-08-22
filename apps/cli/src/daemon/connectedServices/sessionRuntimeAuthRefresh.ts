@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
+import {
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
+  type ConnectedServiceCredentialRevisionV1,
+} from '@happier-dev/protocol';
 
 import type {
   ConnectedServiceDaemonAuthBridgeRefreshResult,
@@ -11,6 +14,7 @@ import {
 } from './runtimeAuthRefreshAuthorization';
 import type { ConnectedServiceRuntimeRegistry } from './runtimeRegistry/registry';
 import type { ConnectedServiceRuntimeTarget } from './runtimeRegistry/target';
+import type { ConnectedServiceCredentialRefreshFailureCode } from './refresh/ConnectedServiceRefreshCoordinator';
 
 export type SessionConnectedServiceRuntimeAuthRefreshInput = Readonly<{
   sessionId: string;
@@ -74,6 +78,15 @@ function parseDaemonAuthBridgeRefreshSettlement(
       : { status: 'failed', reason: 'runtime_auth_refresh_attempt_mismatch' };
   }
   return parsed.data;
+}
+
+function readCredentialRefreshFailureCode(error: unknown): ConnectedServiceCredentialRefreshFailureCode | null {
+  if (!error || typeof error !== 'object' || !('code' in error)) return null;
+  const code = (error as { code?: unknown }).code;
+  return code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired
+    || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable
+    ? code
+    : null;
 }
 
 export type SessionConnectedServiceRuntimeAuthRefreshHandler = (
@@ -153,18 +166,25 @@ export function createSessionConnectedServiceRuntimeAuthRefreshHandler(input: Re
       return { ok: false, errorCode: 'connected_service_daemon_auth_bridge_unavailable' };
     }
 
-    const bridgeSettlement = await bridge.refresh({
-      sessionId: request.sessionId,
-      refreshAttemptId: request.refreshAttemptId,
-      selection: current.selection,
-      ...(request.planType === undefined ? {} : { planType: request.planType }),
-      ...(request.failingAccessTokenFingerprint === undefined
-        ? {}
-        : { failingAccessTokenFingerprint: request.failingAccessTokenFingerprint }),
-      expectedCredentialRevision: current.credentialRevision,
-      ...(request.reason === undefined ? {} : { reason: request.reason }),
-      forceRefresh: true,
-    });
+    let bridgeSettlement: ConnectedServiceDaemonAuthBridgeRefreshResult;
+    try {
+      bridgeSettlement = await bridge.refresh({
+        sessionId: request.sessionId,
+        refreshAttemptId: request.refreshAttemptId,
+        selection: current.selection,
+        ...(request.planType === undefined ? {} : { planType: request.planType }),
+        ...(request.failingAccessTokenFingerprint === undefined
+          ? {}
+          : { failingAccessTokenFingerprint: request.failingAccessTokenFingerprint }),
+        expectedCredentialRevision: current.credentialRevision,
+        ...(request.reason === undefined ? {} : { reason: request.reason }),
+        forceRefresh: true,
+      });
+    } catch (error) {
+      const failureCode = readCredentialRefreshFailureCode(error);
+      if (!failureCode) throw error;
+      bridgeSettlement = { status: 'failed', reason: failureCode };
+    }
     if (input.registry.getBySessionId(request.sessionId) !== target) {
       return { ok: false, errorCode: 'connected_service_session_refresh_forbidden' };
     }

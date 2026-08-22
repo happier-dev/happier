@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type {
     DaemonLocalServicePublicPreviewCopyUrlRequestV1,
     DaemonLocalServicePublicPreviewCopyUrlResponseV1,
@@ -58,8 +59,11 @@ function endpoint(baseUrl: string, path: string): string {
     return `${trimTrailingSlash(baseUrl)}${path}`;
 }
 
-function authHeaders(token: string): Readonly<{ Authorization: string }> {
-    return { Authorization: `Bearer ${token}` };
+function authHeaders(token: string): Readonly<Record<string, string>> {
+    return {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+        Authorization: `Bearer ${token}`,
+    };
 }
 
 function findBoundExposure(

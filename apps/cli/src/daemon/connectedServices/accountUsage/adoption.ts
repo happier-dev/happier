@@ -7,14 +7,6 @@ import {
 
 const ProviderAccountUsageAdoptionProofV1Schema = z.discriminatedUnion('kind', [
     z.object({
-        kind: z.literal('opaque_local_credential_ref_match'),
-        localCredentialRef: z.string().trim().min(1),
-    }).strict(),
-    z.object({
-        kind: z.literal('session_subject_match'),
-        sessionId: z.string().trim().min(1).nullable().optional(),
-    }).strict(),
-    z.object({
         kind: z.literal('id_token_account_id'),
         issuer: z.string().trim().min(1).optional(),
     }).strict(),

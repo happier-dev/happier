@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CURRENT_SESSION_SYNC_PROTOCOL_VERSION } from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
 
-const ioMock = vi.hoisted(() => vi.fn(() => ({
+const ioMock = vi.hoisted(() => vi.fn((_url: string, _options?: unknown) => ({
     on: vi.fn(),
 })));
 
@@ -18,8 +18,7 @@ describe('createMachineSocketTransport', () => {
         ioMock.mockClear();
     });
 
-    it('declares the current CLI as a daemon on the machine-scoped socket', async () => {
-        const { configuration } = await import('@/configuration');
+    it('declares only the account-storage contract on the machine-scoped socket', async () => {
         const { createMachineSocketTransport } = await import('./createMachineSocketTransport');
 
         createMachineSocketTransport({
@@ -31,14 +30,14 @@ describe('createMachineSocketTransport', () => {
 
         expect(ioMock).toHaveBeenLastCalledWith('https://api.example.com', expect.objectContaining({
             auth: expect.objectContaining({
-                clientCompatibility: {
+                accountStoredContentCompatibility: {
                     v: 1,
-                    clientKind: 'daemon',
-                    appVersion: configuration.currentCliVersion,
-                    sessionSyncProtocolVersion: CURRENT_SESSION_SYNC_PROTOCOL_VERSION,
+                    protocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
                 },
             }),
         }));
+        expect((ioMock.mock.calls.at(-1)?.[1] as { auth?: Record<string, unknown> })?.auth)
+            .not.toHaveProperty('clientCompatibility');
     });
 
     it('includes installation identity fields in machine-scoped socket auth when provided', async () => {

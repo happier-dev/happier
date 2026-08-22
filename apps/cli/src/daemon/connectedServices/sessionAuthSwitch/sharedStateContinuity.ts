@@ -2,22 +2,15 @@ import {
   resolveConnectedServicesProviderStateSharingPolicyV1,
   type AccountSettings,
 } from '@happier-dev/protocol';
-import { AGENTS_CORE } from '@happier-dev/agents';
+import { getConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/catalogHooks';
 import { canResumeFromMaterializedState } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedState';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 
 import type { SessionConnectedServiceSwitchContinuity } from './switchSessionConnectedServiceAuth';
 
-function agentSupportsSharedSessionState(agentId: CatalogAgentId): boolean {
-  const connectedServices = AGENTS_CORE[agentId].connectedServices;
-  if (!connectedServices || !('providerStateSharing' in connectedServices)) {
-    return false;
-  }
-  const withProviderStateSharing = connectedServices as Readonly<{
-    providerStateSharing?: Readonly<{ state?: Readonly<{ supported?: boolean }> }>;
-  }>;
-  return withProviderStateSharing.providerStateSharing?.state?.supported === true;
+async function agentSupportsSharedSessionState(agentId: CatalogAgentId): Promise<boolean> {
+  return (await getConnectedServiceStateSharingDescriptor(agentId))?.state.supported === true;
 }
 
 function asNonEmptyString(value: unknown): string | null {
@@ -62,7 +55,7 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
     input.agentId,
   );
   if (policy.stateMode === 'shared') {
-    if (!agentSupportsSharedSessionState(input.agentId)) {
+    if (!(await agentSupportsSharedSessionState(input.agentId))) {
       return {
         mode: 'unsupported',
         errorCode: 'provider_state_sharing_unavailable',

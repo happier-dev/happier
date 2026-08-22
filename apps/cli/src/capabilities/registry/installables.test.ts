@@ -217,20 +217,20 @@ describe('installable capability projection', () => {
     ]);
   });
 
-  it('exposes a complete V2 managed PyPI source through the user-consented install capability', async () => {
+  it('exposes an installed external V2 managed PyPI source through the user-consented install capability', async () => {
     const installOrUpgrade = vi.fn(async () => ({ ok: true as const, logPath: '/tmp/localharness.log' }));
     const contribution = {
-      provenance: 'first_party',
-      source: { kind: 'bundled' },
-      pluginId: 'happier.agent.antigravity',
-      manifestPath: 'bundled:happier.agent.antigravity',
-      manifestDigest: 'sha256:antigravity',
-      daemonEntryPath: '@happier-dev/plugins-antigravity',
+      provenance: 'external',
+      source: { kind: 'package' },
+      pluginId: 'com.acme.antigravity',
+      manifestPath: '/immutable/generations/com.acme.antigravity/.happier-plugin/plugin.json',
+      daemonEntryPath: '/immutable/generations/com.acme.antigravity/daemon.mjs',
       sourceSpec: {
-        kind: 'bundled',
-        locator: '@happier-dev/plugins-antigravity',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'copy',
+        kind: 'package',
+        locator: '@acme/antigravity',
+        trustPolicy: 'prompt',
+        installPolicy: 'managed_install',
+        resolvedVersion: '1.0.0',
       },
       definition: {
         id: 'localharness',

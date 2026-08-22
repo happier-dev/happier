@@ -28,25 +28,32 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 describe('stateUpdates (plaintext sessions)', () => {
   it('sends runtime activity through its public projection socket mutation only', async () => {
     const emitWithAck = vi.fn(async (_event: string, payload: any) => ({
-      result: 'success',
-      didWrite: true,
-      runtimeActivityState: payload.state,
-      runtimeActivityActiveCount: payload.runtimeActivityActiveCount,
-      runtimeActivityObservedAt: 1_000,
-      runtimeActivityRevision: 1,
+      status: 'applied',
+      sessionId: payload.sessionId,
+      mutationId: payload.mutationId,
+      projection: {
+        state: payload.snapshot.state,
+        activeCount: payload.snapshot.activeCount,
+        observedAt: 1_000,
+        revision: 1,
+      },
     }));
 
     await updateSessionRuntimeActivityProjectionWithAck({
       socket: { emitWithAck },
       sessionId: 's1',
+      mutationId: 'runtime-activity-snapshot:s1',
       state: 'active',
       runtimeActivityActiveCount: 1,
     });
 
-    expect(emitWithAck).toHaveBeenCalledWith('runtime-activity-snapshot', {
-      sid: 's1',
-      state: 'active',
-      runtimeActivityActiveCount: 1,
+    expect(emitWithAck).toHaveBeenCalledWith('session-runtime-activity-snapshot', {
+      sessionId: 's1',
+      mutationId: 'runtime-activity-snapshot:s1',
+      snapshot: {
+        state: 'active',
+        activeCount: 1,
+      },
     });
     const [, payload] = emitWithAck.mock.calls[0]!;
     expect(payload).not.toHaveProperty('thinking');
@@ -68,6 +75,7 @@ describe('stateUpdates (plaintext sessions)', () => {
     await expect(updateSessionRuntimeActivityProjectionWithAck({
       socket,
       sessionId: 's1',
+      mutationId: 'runtime-activity-snapshot:s1',
       state: 'active',
       runtimeActivityActiveCount: 1,
     })).rejects.toMatchObject({
@@ -96,8 +104,6 @@ describe('stateUpdates (plaintext sessions)', () => {
       socket,
       sessionId: 's1',
       sessionEncryptionMode: 'plain',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
       getMetadata: () => metadata,
       setMetadata: (next) => {
         metadata = next;
@@ -111,6 +117,88 @@ describe('stateUpdates (plaintext sessions)', () => {
     });
 
     expect(metadata.path).toBe('/tmp2');
+    expect(version).toBe(2);
+  });
+
+  it('projects predecessor Agent aliases only onto the socket wire payload', async () => {
+    let wireMetadata: Record<string, unknown> | null = null;
+    const emitWithAck = vi.fn(async (
+      _event: string,
+      payload: PlainMetadataAckPayload,
+    ) => {
+      wireMetadata = JSON.parse(payload.metadata) as Record<string, unknown>;
+      return {
+        result: 'success',
+        metadata: payload.metadata,
+        version: payload.expectedVersion + 1,
+      };
+    });
+    let metadata = createMetadata();
+    let version = 1;
+
+    const result = await updateSessionMetadataWithAck({
+      socket: { emitWithAck },
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      getMetadata: () => metadata,
+      setMetadata: (next) => {
+        metadata = next ?? createMetadata();
+      },
+      getMetadataVersion: () => version,
+      setMetadataVersion: (next) => {
+        version = next;
+      },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => ({
+        ...current,
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'codex',
+          updatedAt: 1,
+          currentModelId: 'codex-1',
+          availableModels: [{ id: 'codex-1', name: 'Codex 1' }],
+        },
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: {
+            backendMode: 'appServer',
+            providerSessionId: 'thread-private',
+          },
+        },
+        forkV1: {
+          v: 1,
+          parentSessionId: 'parent-session',
+          parentCutoffSeqInclusive: 42,
+          createdAtMs: 2,
+          strategy: 'provider_native',
+          agentHint: {
+            agentId: 'codex',
+            backendMode: 'appServer',
+            agentSessionId: 'thread-private',
+          },
+        },
+      }),
+    });
+
+    expect(wireMetadata).toMatchObject({
+      sessionModelsV1: { provider: 'codex' },
+      agentRuntimeDescriptorV1: {
+        providerId: 'codex',
+        provider: { vendorSessionId: 'thread-private' },
+      },
+      forkV1: {
+        providerHint: {
+          providerId: 'codex',
+          vendorSessionId: 'thread-private',
+        },
+      },
+    });
+    expect(metadata.sessionModelsV1).toMatchObject({ agentId: 'codex' });
+    expect(metadata.sessionModelsV1).not.toHaveProperty('provider');
+    expect(metadata).not.toHaveProperty('agentRuntimeDescriptorV1');
+    expect(metadata).not.toHaveProperty('forkV1.providerHint');
+    expect(result.metadata).toEqual(metadata);
     expect(version).toBe(2);
   });
 
@@ -131,8 +219,6 @@ describe('stateUpdates (plaintext sessions)', () => {
       socket,
       sessionId: 's1',
       sessionEncryptionMode: 'plain',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
       getMetadata: () => metadata,
       setMetadata: (next) => {
         metadata = next;
@@ -189,8 +275,6 @@ describe('stateUpdates (plaintext sessions)', () => {
       socket,
       sessionId: 's1',
       sessionEncryptionMode: 'plain',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
       getAgentState: () => agentState,
       setAgentState: (next) => {
         agentState = next;
@@ -264,8 +348,6 @@ describe('stateUpdates (plaintext sessions)', () => {
       socket: { emitWithAck },
       sessionId: 's1',
       sessionEncryptionMode: 'plain',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
       getAgentState: () => agentState,
       setAgentState: (next) => {
         agentState = next;
@@ -294,8 +376,6 @@ describe('stateUpdates (plaintext sessions)', () => {
       socket,
       sessionId: 's1',
       sessionEncryptionMode: 'plain',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
       getMetadata: () => null,
       setMetadata: () => {},
       getMetadataVersion: () => version,
@@ -326,8 +406,6 @@ describe('stateUpdates (plaintext sessions)', () => {
       socket: { emitWithAck },
       sessionId: 's1',
       sessionEncryptionMode: 'plain',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
       getMetadata: () => metadata,
       setMetadata: (next) => {
         metadata = next;
@@ -361,8 +439,6 @@ describe('stateUpdates (plaintext sessions)', () => {
       socket,
       sessionId: 's1',
       sessionEncryptionMode: 'plain',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
       getMetadata: () => createMetadata({ path: '/tmp' }),
       setMetadata: () => {},
       getMetadataVersion: () => 1,
@@ -391,8 +467,6 @@ describe('stateUpdates (plaintext sessions)', () => {
         socket,
         sessionId: 's1',
         sessionEncryptionMode: 'plain',
-        encryptionKey: new Uint8Array(32),
-        encryptionVariant: 'legacy',
         getMetadata: () => createMetadata({ path: '/tmp' }),
         setMetadata: () => {},
         getMetadataVersion: () => 1,

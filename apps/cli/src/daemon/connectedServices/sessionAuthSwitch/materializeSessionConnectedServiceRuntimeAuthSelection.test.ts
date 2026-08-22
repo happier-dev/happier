@@ -1,5 +1,3 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -7,14 +5,16 @@ import { buildConnectedServiceCredentialRecord, type ConnectedServiceBindingsV1 
 
 import type { ApiClient } from '@/api/api';
 import type { TrackedSession } from '@/daemon/types';
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
-import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from '@happier-dev/plugins-claude/agent';
+import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
 import { materializeSessionConnectedServiceRuntimeAuthSelection } from './materializeSessionConnectedServiceRuntimeAuthSelection';
+
+const CREDENTIAL_REVISION = 'csr_0123456789ABCDEFGHJKMNPQRS';
 
 describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
   it('carries the exact server credential revision into the provider auth generation', async () => {
-    const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const credentialRevision = CREDENTIAL_REVISION;
     const record = buildConnectedServiceCredentialRecord({
       now: 1_000,
       serviceId: 'openai-codex',
@@ -50,17 +50,20 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        revisionSemantics: 'revisioned' as const,
         credentialRevision,
         content: { t: 'plain' as const, v: record },
       })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
 
-    await expect(materializeSessionConnectedServiceRuntimeAuthSelection({
-      credentials: {
-        token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
-      },
+    const credentials = {
+      token: 'token',
+      encryption: null,
+    } satisfies StoredCredentials;
+
+    const selection = await materializeSessionConnectedServiceRuntimeAuthSelection({
+      credentials,
       api: api as unknown as ApiClient,
       input: {
         mode: 'apply',
@@ -73,7 +76,17 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         previousBindings: bindings,
         normalizedBindings: bindings,
       },
-    })).resolves.toMatchObject({ record, credentialRevision });
+    });
+
+    expect(selection).toMatchObject({ record, credentialRevision });
+    const adapter = await getConnectedServiceRuntimeAuthAdapter('codex');
+    expect(adapter?.canHotApply({
+      target: { agentId: 'codex' },
+      selection,
+    })).toEqual({
+      supported: true,
+      mode: 'codex_chatgpt_auth_tokens',
+    });
   });
 
   it('preserves group fallback profile and generation from the current session selection env', async () => {
@@ -90,7 +103,11 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: CREDENTIAL_REVISION,
+        content: { t: 'plain' as const, v: record },
+      })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
     const credentials: Credentials = {
@@ -184,7 +201,11 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: CREDENTIAL_REVISION,
+        content: { t: 'plain' as const, v: record },
+      })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
     const credentials: Credentials = {
@@ -276,7 +297,11 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: CREDENTIAL_REVISION,
+        content: { t: 'plain' as const, v: record },
+      })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
     const credentials: Credentials = {
@@ -369,7 +394,11 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: CREDENTIAL_REVISION,
+        content: { t: 'plain' as const, v: record },
+      })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
     const credentials: Credentials = {
@@ -454,10 +483,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
   });
 
-  it('materializes Claude subscription runtime switches as isolated native Claude Code auth', async () => {
-    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-switch-server-'));
-    const sourceClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-switch-source-'));
-    await writeFile(join(sourceClaudeConfigDir, 'settings.json'), '{"theme":"source"}\n');
+  it('returns the canonical Claude selection without reviving the retired catalog side-effect materializer', async () => {
     const record = buildConnectedServiceCredentialRecord({
       now: 1_000,
       serviceId: 'claude-subscription',
@@ -468,7 +494,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         accessToken: 'selected-access-placeholder',
         refreshToken: 'selected-refresh-placeholder',
         idToken: null,
-        scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
+        scope: 'user:inference user:profile user:sessions:claude_code',
         tokenType: 'Bearer',
         providerAccountId: 'provider-account',
         providerEmail: null,
@@ -476,7 +502,11 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: CREDENTIAL_REVISION,
+        content: { t: 'plain' as const, v: record },
+      })),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     };
     const credentials: Credentials = {
@@ -514,13 +544,13 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         connectedServices: previousBindings,
         environmentVariables: {
-          CLAUDE_CONFIG_DIR: sourceClaudeConfigDir,
           CLAUDE_CODE_OAUTH_TOKEN: 'ambient-token-must-not-propagate',
           CLAUDE_CODE_SETUP_TOKEN: 'ambient-setup-must-not-propagate',
         },
       },
     };
 
+    const activeServerDir = '/tmp/happier-active-server';
     const params = {
       credentials,
       api: api as unknown as ApiClient,
@@ -555,14 +585,15 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         },
       },
       accountSettings: null,
-      processEnv: { HOME: tmpdir(), CLAUDE_CONFIG_DIR: sourceClaudeConfigDir },
+      processEnv: {
+        CLAUDE_CODE_OAUTH_TOKEN: 'ambient-token-must-not-propagate',
+        CLAUDE_CODE_SETUP_TOKEN: 'ambient-setup-must-not-propagate',
+      },
     } satisfies Parameters<typeof materializeSessionConnectedServiceRuntimeAuthSelection>[0] & {
-      activeServerDir: string;
+      activeServerDir?: string;
     };
 
     const result = await materializeSessionConnectedServiceRuntimeAuthSelection(params);
-    const targetMaterializedEnv = (result as { targetMaterializedEnv?: Record<string, string> } | null)
-      ?.targetMaterializedEnv;
 
     expect(result).toMatchObject({
       serviceId: 'claude-subscription',
@@ -571,27 +602,19 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 3,
-      targetMaterializedEnv: {
-        CLAUDE_CONFIG_DIR: join(
-          activeServerDir,
-          'daemon',
-          'connected-services',
-          'homes',
-          'claude-subscription',
-          '__groups',
-          'work',
-          'claude',
-          'claude-config',
-        ),
-      },
+      record,
+      targetMaterializedRoot: join(
+        activeServerDir,
+        'daemon',
+        'connected-services',
+        'homes',
+        'claude-subscription',
+        '__groups',
+        'work',
+        'claude',
+        'claude-config',
+      ),
     });
-    expect(targetMaterializedEnv?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(targetMaterializedEnv?.CLAUDE_CODE_SETUP_TOKEN).toBeUndefined();
-
-    const credential = JSON.parse(await readFile(join(targetMaterializedEnv!.CLAUDE_CONFIG_DIR, '.credentials.json'), 'utf8'));
-    expect(credential.claudeAiOauth.accessToken).toBe('selected-access-placeholder');
-    expect(credential.claudeAiOauth).not.toHaveProperty('refreshToken');
-    expect(credential.claudeAiOauth.scopes).toContain('user:sessions:claude_code');
-    await expect(readFile(join(targetMaterializedEnv!.CLAUDE_CONFIG_DIR, 'settings.json'), 'utf8')).resolves.toBe('{"theme":"source"}\n');
+    expect(result).not.toHaveProperty('targetMaterializedEnv');
   });
 });

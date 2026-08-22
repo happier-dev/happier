@@ -101,6 +101,7 @@ describe('createDaemonControlApp provider account usage routes', () => {
                     sessionId: 'sess_1',
                     snapshot,
                     source,
+                    deriveCredentialFingerprintFromSource: true,
                     credentialFingerprint: 'sha256:deadbeef',
                     policyDisposition: 'evidence_only',
                 },
@@ -115,6 +116,7 @@ describe('createDaemonControlApp provider account usage routes', () => {
                 sessionId: 'sess_1',
                 snapshot,
                 source,
+                deriveCredentialFingerprintFromSource: true,
                 credentialFingerprint: 'sha256:deadbeef',
                 policyDisposition: 'evidence_only',
             });

@@ -58,7 +58,6 @@ async function createTrustedLocalLinkInstall(input: Readonly<{
   return {
     mode: 'link' as const,
     manifestVersion: '1.0.0',
-    manifestDigest: null,
     installedPath: null,
     trust: createPluginTrustRecord({
       pluginId: input.pluginId,
@@ -266,6 +265,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     const readCredential = vi.fn(async () => ({
       ref: account,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: qualifiedRevision,
       configurationRevision: null,
       content: qualifiedContent,
@@ -573,6 +573,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     const readCredential = vi.fn(async () => ({
       ref: novelAccount,
       authenticationModeId: 'manual',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: revision,
       configurationRevision: null,
       content,
@@ -666,6 +667,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
           ref: novelAccount,
           status: 'connected',
           authenticationModeId: 'manual',
+          revisionSemantics: 'revisioned',
           credentialRevision: firstRevision,
           configurationReady: true,
           configurationRevision: null,
@@ -698,6 +700,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
           ref: novelAccount,
           status: 'connected' as const,
           authenticationModeId: 'manual',
+          revisionSemantics: 'revisioned' as const,
           credentialRevision: revision,
           configurationReady: true,
           configurationRevision: null,
@@ -898,6 +901,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
           ref: novelAccount,
           status: 'connected',
           authenticationModeId: 'manual',
+          revisionSemantics: 'revisioned',
           credentialRevision: thirdRevision,
           configurationReady: true,
           configurationRevision: null,

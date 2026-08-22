@@ -36,6 +36,10 @@ function resolvedMigrationRegistry() {
   };
 }
 
+async function resolvePlainAccountEncryptionMode(): Promise<'plain'> {
+  return 'plain';
+}
+
 describe('legacy profile migration coordinator', () => {
   it('fails closed before acquiring registry/settings when providers are disabled', async () => {
     let acquired = 0;
@@ -167,6 +171,7 @@ describe('legacy profile migration coordinator', () => {
         ...params,
         deps: {
           fetchSettings: async () => ({ content: { t: 'plain', v: {} }, version: 1 }),
+          resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
           updateSettings: async (): Promise<AccountSettingsV2UpdateResponse> => ({ success: true, version: 2 }),
           resolveCachePath: () => '/unused/provider-migration-cache',
           writeCache: async () => undefined,
@@ -194,6 +199,7 @@ describe('legacy profile migration coordinator', () => {
         ...params,
         deps: {
           fetchSettings: async () => ({ content: { t: 'plain', v: { favoriteProfiles: ['deepseek'] } }, version: 1 }),
+          resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
           updateSettings: async (request): Promise<AccountSettingsV2UpdateResponse> => {
             updateAttempt += 1;
             if (request.content) attemptedContents.push(request.content);

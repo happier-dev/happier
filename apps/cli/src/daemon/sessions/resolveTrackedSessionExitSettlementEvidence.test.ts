@@ -10,7 +10,7 @@ describe('resolveTrackedSessionExitSettlementEvidence', () => {
       startedBy: 'daemon',
       happySessionId: 'session-restarted',
       reattachedInterruptedTurnId: 'native-turn-1',
-      agentRuntimeRestartDisposition: 'bridge_authority_unavailable',
+      agentRuntimeRunnerRestartDisposition: 'runner_authority_unavailable',
     } satisfies TrackedSession;
 
     const settlement =

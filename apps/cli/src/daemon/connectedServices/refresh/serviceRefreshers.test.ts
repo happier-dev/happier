@@ -1,9 +1,56 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
 
 import {
   isRevisionedLegacyOauthRefreshService,
   refreshReleasedPeerLegacyConnectedAccountOauthTokens,
 } from './serviceRefreshers';
+
+const encoder = new TextEncoder();
+type LegacyFetchResponseFixture = Readonly<{
+  ok?: boolean;
+  status?: number;
+  headers?: Readonly<Record<string, string>>;
+  text?: () => Promise<string>;
+  json?: () => Promise<unknown>;
+}>;
+
+function canonicalRuntimeFetch(
+  runtimeFetch: (
+    request: Parameters<HttpService['request']>[0],
+    options?: Parameters<HttpService['request']>[1],
+  ) => Promise<LegacyFetchResponseFixture>,
+): HttpService['request'] {
+  return async (request, options) => {
+    const response = await runtimeFetch(request, options);
+    const text = response.ok !== false && typeof response.json === 'function'
+      ? JSON.stringify(await response.json())
+      : typeof response.text === 'function'
+      ? await response.text()
+      : JSON.stringify(typeof response.json === 'function' ? await response.json() : null);
+    return {
+      status: response.status ?? (response.ok === false ? 500 : 200),
+      finalUrl: request.url,
+      headers: response.headers ?? {},
+      body: encoder.encode(text),
+    };
+  };
+}
+
+function installGlobalFetchMock<TArgs extends readonly unknown[]>(
+  fetchMock: (...args: TArgs) => Promise<LegacyFetchResponseFixture>,
+): void {
+  vi.stubGlobal('fetch', async (...args: TArgs) => {
+    const response = await fetchMock(...args);
+    const body = typeof response.text === 'function'
+      ? await response.text()
+      : JSON.stringify(typeof response.json === 'function' ? await response.json() : null);
+    return new Response(body, {
+      status: response.status ?? (response.ok === false ? 500 : 200),
+      headers: response.headers,
+    });
+  });
+}
 
 describe('serviceRefreshers', () => {
   it('admits only revisioned legacy OAuth refresh services, never PAT services', () => {
@@ -40,7 +87,7 @@ describe('serviceRefreshers', () => {
       serviceId: 'openai-codex' as const,
       refreshToken: 'old-refresh',
       now: 1000,
-      runtimeFetch,
+      runtimeFetch: { request: canonicalRuntimeFetch(runtimeFetch) },
     };
     const refreshed = await refreshReleasedPeerLegacyConnectedAccountOauthTokens(params);
 
@@ -51,8 +98,7 @@ describe('serviceRefreshers', () => {
       headers: expect.objectContaining({
         'Content-Type': 'application/x-www-form-urlencoded',
       }),
-      signal: expect.any(AbortSignal),
-    }));
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(refreshed).toMatchObject({
       accessToken: 'new-access',
       refreshToken: 'new-refresh',
@@ -79,13 +125,13 @@ describe('serviceRefreshers', () => {
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 1000,
-      runtimeFetch,
+      runtimeFetch: { request: canonicalRuntimeFetch(runtimeFetch) },
     })).rejects.toThrow(/Connected account refresh failed \(openai-codex, 400\): invalid_grant/);
     await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 1000,
-      runtimeFetch,
+      runtimeFetch: { request: canonicalRuntimeFetch(runtimeFetch) },
     })).rejects.not.toThrow(/secret-refresh-token|secret-access-token|old-refresh/);
   });
 
@@ -99,7 +145,7 @@ describe('serviceRefreshers', () => {
         expires_in: 3600,
       }),
     }));
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    installGlobalFetchMock(fetchMock);
 
     const now = 1000;
     const refreshed = await refreshReleasedPeerLegacyConnectedAccountOauthTokens({
@@ -123,7 +169,7 @@ describe('serviceRefreshers', () => {
         expires_in: 3600,
       }),
     }));
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    installGlobalFetchMock(fetchMock);
 
     await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'openai-codex',
@@ -159,7 +205,7 @@ describe('serviceRefreshers', () => {
         }),
       };
     });
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    installGlobalFetchMock(fetchMock);
 
     const now = 2000;
     try {
@@ -175,7 +221,11 @@ describe('serviceRefreshers', () => {
       const init: unknown = fetchMock.mock.calls[0]?.[1];
       const bodyRaw =
         init && typeof init === 'object' && 'body' in init ? (init as { body?: unknown }).body : undefined;
-      const bodyText = typeof bodyRaw === 'string' ? bodyRaw : '';
+      const bodyText = bodyRaw instanceof Uint8Array
+        ? new TextDecoder().decode(bodyRaw)
+        : typeof bodyRaw === 'string'
+          ? bodyRaw
+          : '';
       expect(bodyText).toContain('"grant_type":"refresh_token"');
       expect(bodyText).toContain('"refresh_token":"old-refresh"');
       expect(bodyText).toContain('"client_id":"client-123"');
@@ -230,7 +280,7 @@ describe('serviceRefreshers', () => {
         serviceId: 'claude-subscription',
         refreshToken: 'previous-refresh',
         now: 2_000,
-        runtimeFetch,
+        runtimeFetch: { request: canonicalRuntimeFetch(runtimeFetch) },
       })).rejects.toThrow(
         /refreshed access-token verification failed \(claude-subscription, 401\): invalid_token/,
       );
@@ -276,7 +326,7 @@ describe('serviceRefreshers', () => {
         serviceId: 'claude-subscription',
         refreshToken: 'previous-refresh',
         now: 2_000,
-        runtimeFetch,
+        runtimeFetch: { request: canonicalRuntimeFetch(runtimeFetch) },
       })).resolves.toMatchObject({
         accessToken: 'accepted-access',
         refreshToken: 'rotated-refresh',
@@ -295,7 +345,7 @@ describe('serviceRefreshers', () => {
         expires_in: 123,
       }),
     }));
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    installGlobalFetchMock(fetchMock);
 
     await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'claude-subscription',
@@ -308,7 +358,7 @@ describe('serviceRefreshers', () => {
     const fetchMock = vi.fn(async () => {
       throw new Error('Gemini OAuth refresh must not call the network');
     });
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    installGlobalFetchMock(fetchMock);
 
     await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'gemini',
@@ -322,7 +372,7 @@ describe('serviceRefreshers', () => {
     'refuses %s before transport because immutable old peers do not all accept that legacy identity',
     async (serviceId) => {
       const fetchMock = vi.fn();
-      vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+      installGlobalFetchMock(fetchMock);
 
       await expect(
         refreshReleasedPeerLegacyConnectedAccountOauthTokens({
@@ -360,18 +410,14 @@ describe('serviceRefreshers', () => {
         serviceId: 'claude-subscription',
         refreshToken: 'old-refresh',
         now: 4000,
-        runtimeFetch,
+        runtimeFetch: { request: canonicalRuntimeFetch(runtimeFetch) },
       });
 
       expect(runtimeFetch).toHaveBeenCalledWith(expect.objectContaining({
         url: 'https://example.test/claude/token',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          grant_type: 'refresh_token',
-          refresh_token: 'old-refresh',
-          client_id: 'claude-client',
-        }),
-      }));
+        body: expect.any(Uint8Array),
+      }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
       expect(refreshed).toEqual({
         accessToken: 'new-access',
         refreshToken: 'new-refresh',
@@ -406,7 +452,7 @@ describe('serviceRefreshers', () => {
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 5000,
-      runtimeFetch,
+      runtimeFetch: { request: canonicalRuntimeFetch(runtimeFetch) },
     });
 
     expect(refreshed).toEqual({
@@ -439,7 +485,7 @@ describe('serviceRefreshers', () => {
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 7000,
-      runtimeFetch,
+      runtimeFetch: { request: canonicalRuntimeFetch(runtimeFetch) },
     });
 
     expect(refreshed).toEqual({
@@ -460,7 +506,7 @@ describe('serviceRefreshers', () => {
         expires_in: 60,
       }),
     }));
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    installGlobalFetchMock(fetchMock);
 
     await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'gemini',

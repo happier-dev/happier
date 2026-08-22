@@ -109,7 +109,6 @@ describe('restartDaemonAndWait', () => {
 
         expect(stopDaemonMock).toHaveBeenCalledWith({
             stopSessions: true,
-            transferManagedLocalServices: true,
         });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
             startupSource: 'self-restart',
@@ -129,7 +128,6 @@ describe('restartDaemonAndWait', () => {
 
         expect(stopDaemonMock).toHaveBeenCalledWith({
             stopSessions: false,
-            transferManagedLocalServices: false,
         });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
             startupSource: 'self-restart',
@@ -149,7 +147,6 @@ describe('restartDaemonAndWait', () => {
 
         expect(stopDaemonMock).toHaveBeenCalledWith({
             stopSessions: true,
-            transferManagedLocalServices: true,
         });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
             startupSource: 'self-restart',
@@ -170,7 +167,6 @@ describe('restartDaemonAndWait', () => {
 
         expect(stopDaemonMock).toHaveBeenCalledWith({
             stopSessions: true,
-            transferManagedLocalServices: true,
         });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledTimes(1);
         expect(waitForDaemonRunningWithinBudgetMock).toHaveBeenCalledTimes(1);

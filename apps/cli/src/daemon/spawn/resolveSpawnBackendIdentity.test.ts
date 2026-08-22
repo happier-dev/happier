@@ -1,16 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import type {
   ExistingSessionAttachContext,
   ExistingSessionAttachContextFailure,
 } from '../sessionEncryption/resolveExistingSessionAttachContext';
 
 const {
-  readCredentialsMock,
+  readStoredCredentialsMock,
+  readAgentCatalogSnapshotMock,
   resolveExistingSessionAttachContextMock,
 } = vi.hoisted(() => ({
-  readCredentialsMock: vi.fn(async (): Promise<Credentials | null> => null),
+  readStoredCredentialsMock: vi.fn(async (): Promise<StoredCredentials | null> => null),
+  readAgentCatalogSnapshotMock: vi.fn(),
   resolveExistingSessionAttachContextMock: vi.fn(async (): Promise<ExistingSessionAttachContext | ExistingSessionAttachContextFailure> => ({
     ok: true,
     attachPayload: { v: 2, encryptionMode: 'plain' },
@@ -20,7 +22,11 @@ const {
 }));
 
 vi.mock('@/persistence', () => ({
-  readCredentials: readCredentialsMock,
+  readStoredCredentials: readStoredCredentialsMock,
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot: readAgentCatalogSnapshotMock,
 }));
 
 vi.mock('../sessionEncryption/resolveExistingSessionAttachContext', () => ({
@@ -40,9 +46,25 @@ function createLegacyCredentials(token: string, seed: number): Credentials {
 }
 
 describe('resolveSpawnBackendIdentity credential precedence', () => {
+  beforeEach(() => {
+    readAgentCatalogSnapshotMock.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        codex: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'supported' },
+        claude: { id: 'claude', cliSubcommand: 'claude', vendorResumeSupport: 'supported' },
+        antigravity: { id: 'antigravity', cliSubcommand: 'antigravity', vendorResumeSupport: 'supported' },
+        'acme-agent': {
+          id: 'acme-agent',
+          cliSubcommand: 'acme-agent',
+          vendorResumeSupport: 'supported',
+        },
+      },
+    });
+  });
+
   afterEach(() => {
-    readCredentialsMock.mockReset();
-    readCredentialsMock.mockResolvedValue(null);
+    readStoredCredentialsMock.mockReset();
+    readStoredCredentialsMock.mockResolvedValue(null);
     resolveExistingSessionAttachContextMock.mockReset();
     resolveExistingSessionAttachContextMock.mockResolvedValue({
       ok: true,
@@ -55,7 +77,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
   it('prefers caller-provided credentials over persisted credentials for existing-session attach context', async () => {
     const liveCredentials = createLegacyCredentials('live-token', 1);
     const stalePersistedCredentials = createLegacyCredentials('stale-token', 9);
-    readCredentialsMock.mockResolvedValueOnce(stalePersistedCredentials);
+    readStoredCredentialsMock.mockResolvedValueOnce(stalePersistedCredentials);
 
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-live',
@@ -72,7 +94,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
       sessionId: 'sess-live',
       credentials: liveCredentials,
     });
-    expect(readCredentialsMock).not.toHaveBeenCalled();
+    expect(readStoredCredentialsMock).not.toHaveBeenCalled();
   });
 
   it('accepts canonical V2 backend targets directly on the spawn path', async () => {
@@ -102,8 +124,11 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
   });
 
   it('falls back to persisted credentials only when caller credentials are null', async () => {
-    const persistedCredentials = createLegacyCredentials('persisted-token', 7);
-    readCredentialsMock.mockResolvedValueOnce(persistedCredentials);
+    const persistedCredentials: StoredCredentials = {
+      token: 'persisted-token',
+      encryption: null,
+    };
+    readStoredCredentialsMock.mockResolvedValueOnce(persistedCredentials);
 
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-persisted',
@@ -114,7 +139,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(readCredentialsMock).toHaveBeenCalledTimes(1);
+    expect(readStoredCredentialsMock).toHaveBeenCalledTimes(1);
     expect(resolveExistingSessionAttachContextMock).toHaveBeenCalledTimes(1);
     expect(resolveExistingSessionAttachContextMock).toHaveBeenCalledWith({
       token: 'persisted-token',
@@ -161,6 +186,62 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
       catalogAgentId: 'claude',
     });
     expect(loadLocalHandoffMetadataByVendorResumeId).toHaveBeenCalledWith('sess-handoff-direct');
+  });
+
+  it('uses an active external Agent handoff identity without substituting a bundled Agent', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 14);
+    resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: 'acme-session-1',
+      backendTarget: null,
+    });
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: 'sess-external',
+      resume: '',
+      backendTarget: undefined,
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId: async () => ({
+        handoffV1: { v: 1, agentId: 'acme-agent' },
+      }),
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        backendId: 'acme-agent',
+        sourceKind: 'built_in',
+      },
+      catalogAgentId: 'acme-agent',
+    });
+  });
+
+  it('fails closed when an external Agent is unavailable rather than falling back to Claude', async () => {
+    readAgentCatalogSnapshotMock.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        codex: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'supported' },
+      },
+    });
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: '',
+      resume: '',
+      backendTarget: { kind: 'backend', backendId: 'acme-agent', sourceKind: 'built_in' },
+      credentials: createLegacyCredentials('live-token', 15),
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        type: 'error',
+        errorCode: 'INVALID_REQUEST',
+        errorMessage: 'Unknown backend target',
+      },
+    });
   });
 
   it('refuses an existing-session spawn when linked resume identity is unavailable', async () => {

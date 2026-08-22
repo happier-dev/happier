@@ -34,22 +34,6 @@ function createFakeChildProcess(pid: number) {
   return child;
 }
 
-function createManagedAttachment() {
-  return {
-    v: 1 as const,
-    process: {
-      pid: 9_001,
-      processStartTimeMs: 1_717_171_700_001,
-      processCommandHash: 'a'.repeat(64),
-    },
-    endpoint: { host: '127.0.0.1' as const, port: 8317 },
-    materialization: {
-      rootDir: '/tmp/managed-materialized',
-      materializationId: 'csm_managed',
-    },
-  };
-}
-
 function createParams() {
   return {
     args: ['opencode'],
@@ -58,12 +42,6 @@ function createParams() {
     trackedSpawnOptions: { directory: '/tmp/happier-project' },
     normalizedExistingSessionId: '',
     effectiveResume: '',
-    localServicesBridgeAuthorization: {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
-      pluginId: 'happier.agent.opencode',
-      contributionId: 'opencode',
-      tokenFilePath: '/tmp/happier-bridge-token',
-    },
     directoryCreated: false,
     extraEnvForChildWithMessage: {},
     processEnv: {
@@ -110,6 +88,50 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       configurable: true,
       value: 'linux',
     });
+  });
+
+  it('tracks the stable V2 authority path and exact bootstrap identity for a runner bootstrap', async () => {
+    const params = createParams();
+    const pending = (await import(
+      './spawnRegularProcessAndWaitForWebhook'
+    )).spawnRegularProcessAndWaitForWebhook({
+      ...params,
+      runnerAgentSessionBootstrapAuthorization: {
+        authorityFilePath: '/private/runner-authority.json',
+        bootstrapFilePath: '/private/runner-bootstrap.json',
+        descriptor: {
+          v: 1,
+          pluginId: 'plugin.acme',
+          pluginVersion: '1.0.0',
+          agentId: 'agent',
+          backendId: 'agent',
+          generation: 'generation-1',
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(params.pidToAwaiter.has(4242)).toBe(true);
+    });
+    const tracked = params.pidToTrackedSession.get(4242)!;
+    expect(tracked).toMatchObject({
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        '/private/runner-authority.json',
+      runnerAgentBootstrapIdentity: {
+        agentId: 'agent',
+        backendId: 'agent',
+      },
+    });
+    params.pidToAwaiter.get(4242)?.({
+      ...tracked,
+      happySessionId: 'session-4242',
+    });
+
+    await expect(pending).resolves.toEqual({
+      type: 'success',
+      sessionId: 'session-4242',
+    });
+    expect(JSON.stringify(params.logDebug.mock.calls)).not.toContain('session-4242');
   });
 
   it('runs the final provider authorization guard immediately before regular child creation', async () => {
@@ -203,8 +225,6 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const activationStarted = vi.fn();
     params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker
       .mockImplementationOnce(async (tracked) => {
-        tracked.managedLocalServiceRunAttachment =
-          createManagedAttachment();
         tracked.activateConnectedAccountSessionBindingOnCanonicalSession =
           vi.fn(async () => {
             activationStarted();
@@ -300,9 +320,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(writeSessionMarkerFn).toHaveBeenLastCalledWith(
       expect.objectContaining({
         pid: runnerPid,
-        happySessionId: 'session-promoted',
+        happySessionId: `PID-${runnerPid}`,
       }),
-      { adoptCanonicalSessionIdFromPidPlaceholder: true },
     );
     expect(params.pidToTrackedSession.has(wrapperPid)).toBe(false);
     expect(params.pidToAwaiter).toHaveLength(0);
@@ -323,8 +342,6 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     });
     params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker
       .mockImplementationOnce(async (tracked) => {
-        tracked.managedLocalServiceRunAttachment =
-          createManagedAttachment();
         await markerPersisted;
       });
     const promoteSessionMarkerFn = vi.fn(async () => ({
@@ -1083,8 +1100,6 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     });
     params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker
       .mockImplementationOnce(async (tracked) => {
-        tracked.managedLocalServiceRunAttachment =
-          createManagedAttachment();
         tracked.activateConnectedAccountSessionBindingOnCanonicalSession =
           vi.fn(async () => {
             activationStarted();

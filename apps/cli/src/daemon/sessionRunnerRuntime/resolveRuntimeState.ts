@@ -67,10 +67,19 @@ function resolveVersionState(input: Readonly<{
   return input.runnerIdentity.comparableId === input.currentIdentity.comparableId ? 'current' : 'stale';
 }
 
+function foldVersionStates(
+  states: readonly SessionRunnerVersionState[],
+): SessionRunnerVersionState {
+  if (states.includes('stale')) return 'stale';
+  return states.every((state) => state === 'current') ? 'current' : 'unknown';
+}
+
 export function resolveSessionRunnerRuntimeState(params: Readonly<{
   sessionId: string;
   tracked: TrackedSession | null | undefined;
   currentIdentity: SessionRunnerEntrypointIdentity;
+  agentRuntimeVersionState?: SessionRunnerVersionState;
+  agentRuntimeRestartUnavailableReason?: SessionRunnerRestartDisabledReason | null;
   resolveActivityDisabledReason?: (sessionId: string) => SessionRunnerRestartDisabledReason | null;
   machineId?: string | null;
   daemonId?: string | null;
@@ -84,8 +93,20 @@ export function resolveSessionRunnerRuntimeState(params: Readonly<{
   const disabledReason =
     resolveDisabledReason(tracked) ??
     resolveIdentityDisabledReason({ runnerIdentity, currentIdentity: params.currentIdentity }) ??
+    params.agentRuntimeRestartUnavailableReason ??
     (sessionId ? params.resolveActivityDisabledReason?.(sessionId) ?? null : null);
-
+  const versionState = params.agentRuntimeVersionState === 'unknown'
+    && params.agentRuntimeRestartUnavailableReason === 'unsupported_backend'
+    ? 'unknown'
+    : foldVersionStates([
+        resolveVersionState({
+          runnerIdentity,
+          currentIdentity: params.currentIdentity,
+        }),
+        ...(params.agentRuntimeVersionState
+          ? [params.agentRuntimeVersionState]
+          : []),
+      ]);
   return {
     v: 1,
     sessionId,
@@ -114,8 +135,12 @@ export function resolveSessionRunnerRuntimeState(params: Readonly<{
         : null,
       currentEntrypointSource: readDaemonEntrypointSource(params.currentIdentity),
     },
-    versionState: resolveVersionState({ runnerIdentity, currentIdentity: params.currentIdentity }),
-    statusSource: runnerIdentity.status === 'known' ? 'process_command_inferred' : 'unknown',
+    versionState,
+    statusSource: params.agentRuntimeVersionState
+      ? 'daemon_tracking'
+      : runnerIdentity.status === 'known'
+        ? 'process_command_inferred'
+        : 'unknown',
     plannedRestart: {
       supported: !!tracked,
       eligible: disabledReason === null,

@@ -31,6 +31,29 @@ function recovery(
   };
 }
 
+it('cancels the session-wide active recovery generation and retires its runner after explicit Stop', async () => {
+  const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000 });
+  const owner = createInactiveUsageLimitRecoveryCheckOwner();
+  const active = recovery('replacement', 2_000, 'runtime-b');
+  await owner.schedule({
+    sessionId: 'session-stop',
+    recovery: active,
+    runCheckNow: vi.fn(async () => ({ status: 'waiting' })),
+    scheduler,
+  });
+
+  await expect(owner.cancelSession({
+    sessionId: 'session-stop',
+    scheduler,
+  })).resolves.toMatchObject({
+    status: 'cancelled',
+    issueFingerprint: 'replacement',
+    runtimeAuthRecoveryAttemptId: 'runtime-b',
+    nextCheckAtMs: null,
+  });
+  expect(owner.hasRunner('session-stop')).toBe(false);
+});
+
 it('preserves B runner when B commits after A observation and removes it only after exact B cancellation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-inactive-usage-cancel-cas-'));
   try {

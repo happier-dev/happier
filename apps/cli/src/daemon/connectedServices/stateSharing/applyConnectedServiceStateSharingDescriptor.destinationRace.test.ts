@@ -103,6 +103,7 @@ describe('applyConnectedServiceStateSharingDescriptor destination races', () => 
     const targetProjects = join(targetRoot, 'projects');
     const promotionSources: string[] = [];
     const terminalError = createRenameError('EEXIST');
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_785_907_024_119);
 
     try {
       await mkdir(join(sourceRoot, 'projects'), { recursive: true });
@@ -134,6 +135,7 @@ describe('applyConnectedServiceStateSharingDescriptor destination races', () => 
       expect(targetEntries.filter((name) => name.startsWith('projects.local-'))).toHaveLength(2);
       await expect(readFile(join(targetProjects, 'provider-3.txt'), 'utf8')).resolves.toBe('preserve me');
     } finally {
+      now.mockRestore();
       await rm(root, { recursive: true, force: true });
     }
   });

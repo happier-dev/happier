@@ -1,14 +1,12 @@
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import {
-    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
     SessionTranscriptObservationAckV1Schema,
-    SessionTranscriptObservationCapabilityAckV1Schema,
     SessionTranscriptObservationProvenanceV1Schema,
     MessageAckResponseSchema,
 } from '@happier-dev/protocol';
-import type { SessionSyncPendingInputServerContractMode } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import type { SessionClientConnectionContractResult } from '../sessionClientConnectionContract';
 
 import type {
     PersistedTranscriptMessageAppendMutationV1,
@@ -22,7 +20,9 @@ export type TranscriptMessageMutationDeliveryResult =
         delivered: false;
         reason:
             | 'transcript_message_provenance_missing_or_invalid'
-            | 'transcript_message_transport_unavailable';
+            | 'transcript_message_transport_unavailable'
+            | 'transcript_message_invalid_observation'
+            | 'transcript_message_delivery_failed';
     }>;
 
 export type TranscriptMessageMutationDeliveryAck = Readonly<{
@@ -33,21 +33,20 @@ export type TranscriptMessageMutationDeliveryAck = Readonly<{
     didUpdate?: boolean;
 }>;
 
+type TranscriptSocketDeliveryResult =
+    | Readonly<{ status: 'delivered'; ack: TranscriptMessageMutationDeliveryAck }>
+    | Readonly<{ status: 'unavailable' }>
+    | Readonly<{ status: 'invalid' }>
+    | Readonly<{ status: 'failed' }>;
+
 async function trySocketTranscriptMutation(params: Readonly<{
     socket: SessionClientDurableMutationSocket;
     mutation: TranscriptMessageAppendMutationV1;
-}>): Promise<TranscriptMessageMutationDeliveryAck | null> {
-    if (params.socket.connected !== true) return null;
+}>): Promise<TranscriptSocketDeliveryResult> {
+    if (params.socket.connected !== true) return { status: 'unavailable' };
     try {
         const socket = params.socket.timeout?.(10_000) ?? params.socket;
-        if (typeof socket.emitWithAck !== 'function') return null;
-        const capabilityRaw = await emitSocketWithAck({
-            socket,
-            event: SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
-            payload: { v: 1, sessionId: params.mutation.sessionId },
-        });
-        const capability = SessionTranscriptObservationCapabilityAckV1Schema.safeParse(capabilityRaw);
-        if (!capability.success || capability.data.ok !== true) return null;
+        if (typeof socket.emitWithAck !== 'function') return { status: 'unavailable' };
         const raw = await emitSocketWithAck({
             socket,
             event: SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
@@ -65,17 +64,26 @@ async function trySocketTranscriptMutation(params: Readonly<{
             },
         });
         const parsed = SessionTranscriptObservationAckV1Schema.safeParse(raw);
-        if (!parsed.success || parsed.data.ok !== true) return null;
+        if (!parsed.success) return { status: 'failed' };
+        if (parsed.data.ok !== true) {
+            return parsed.data.error === 'invalid_observation'
+                ? { status: 'invalid' }
+                : { status: 'failed' };
+        }
+        if (parsed.data.localId !== params.mutation.localId) return { status: 'failed' };
         return {
-            id: parsed.data.id,
-            seq: parsed.data.seq,
-            localId: parsed.data.localId,
-            didWrite: parsed.data.didWrite,
-            ...(typeof parsed.data.didUpdate === 'boolean' ? { didUpdate: parsed.data.didUpdate } : {}),
+            status: 'delivered',
+            ack: {
+                id: parsed.data.id,
+                seq: parsed.data.seq,
+                localId: parsed.data.localId,
+                didWrite: parsed.data.didWrite,
+                ...(typeof parsed.data.didUpdate === 'boolean' ? { didUpdate: parsed.data.didUpdate } : {}),
+            },
         };
     } catch (error) {
         if (isAuthenticationError(error)) throw error;
-        return null;
+        return { status: 'failed' };
     }
 }
 
@@ -88,10 +96,11 @@ async function trySocketTranscriptMutation(params: Readonly<{
 async function tryReleasedServerV021TranscriptMutation(params: Readonly<{
     socket: SessionClientDurableMutationSocket;
     mutation: TranscriptMessageAppendMutationV1;
-}>): Promise<TranscriptMessageMutationDeliveryAck | null> {
-    if (params.socket.connected !== true) return null;
+}>): Promise<TranscriptSocketDeliveryResult> {
+    if (params.socket.connected !== true) return { status: 'unavailable' };
     try {
         const socket = params.socket.timeout?.(10_000) ?? params.socket;
+        if (typeof socket.emitWithAck !== 'function') return { status: 'unavailable' };
         const raw = await emitSocketWithAck({
             socket,
             event: 'message',
@@ -105,23 +114,41 @@ async function tryReleasedServerV021TranscriptMutation(params: Readonly<{
             },
         });
         const parsed = MessageAckResponseSchema.safeParse(raw);
-        if (!parsed.success || parsed.data.ok !== true) return null;
+        if (!parsed.success || parsed.data.ok !== true) return { status: 'failed' };
+        if (parsed.data.localId !== params.mutation.localId) return { status: 'failed' };
         return {
-            id: parsed.data.id,
-            seq: parsed.data.seq,
-            localId: parsed.data.localId,
-            didWrite: parsed.data.didWrite,
+            status: 'delivered',
+            ack: {
+                id: parsed.data.id,
+                seq: parsed.data.seq,
+                localId: parsed.data.localId,
+                didWrite: parsed.data.didWrite,
+            },
         };
     } catch (error) {
         if (isAuthenticationError(error)) throw error;
-        return null;
+        return { status: 'failed' };
     }
+}
+
+function toTranscriptMessageMutationDeliveryResult(
+    result: TranscriptSocketDeliveryResult,
+): TranscriptMessageMutationDeliveryResult {
+    if (result.status === 'delivered') {
+        return { delivered: true, path: 'socket', ack: result.ack };
+    }
+    if (result.status === 'invalid') {
+        return { delivered: false, reason: 'transcript_message_invalid_observation' };
+    }
+    return result.status === 'unavailable'
+        ? { delivered: false, reason: 'transcript_message_transport_unavailable' }
+        : { delivered: false, reason: 'transcript_message_delivery_failed' };
 }
 
 export async function deliverTranscriptMessageMutation(params: Readonly<{
     token: string;
     socket: SessionClientDurableMutationSocket | null;
-    serverContractMode?: SessionSyncPendingInputServerContractMode;
+    connectionContract?: SessionClientConnectionContractResult | null;
     mutation: PersistedTranscriptMessageAppendMutationV1;
 }>): Promise<TranscriptMessageMutationDeliveryResult> {
     const parsedProvenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(params.mutation.provenance);
@@ -132,17 +159,17 @@ export async function deliverTranscriptMessageMutation(params: Readonly<{
         ...params.mutation,
         provenance: parsedProvenance.data,
     };
-    if (params.serverContractMode === 'released_server_v0_2_1') {
-        const releasedAck = params.socket
+    if (params.connectionContract?.transcriptTransport.mode === 'released_server_v0_2_1') {
+        const releasedResult = params.socket
             ? await tryReleasedServerV021TranscriptMutation({ socket: params.socket, mutation })
-            : null;
-        return releasedAck
-            ? { delivered: true, path: 'socket', ack: releasedAck }
-            : { delivered: false, reason: 'transcript_message_transport_unavailable' };
+            : { status: 'unavailable' as const };
+        return toTranscriptMessageMutationDeliveryResult(releasedResult);
     }
-    const socketAck = params.socket
+    if (params.connectionContract?.transcriptTransport.mode !== 'session_transcript_observation_v1') {
+        return { delivered: false, reason: 'transcript_message_transport_unavailable' };
+    }
+    const socketResult = params.socket
         ? await trySocketTranscriptMutation({ socket: params.socket, mutation })
-        : null;
-    if (socketAck) return { delivered: true, path: 'socket', ack: socketAck };
-    return { delivered: false, reason: 'transcript_message_transport_unavailable' };
+        : { status: 'unavailable' as const };
+    return toTranscriptMessageMutationDeliveryResult(socketResult);
 }

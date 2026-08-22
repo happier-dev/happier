@@ -3,9 +3,14 @@ import {
   ProviderCatalogCommandFallbackV1Schema,
   ProviderEndpointUrlSyntaxSchema,
   ProviderModelDescriptorV1Schema,
+  readBundledProviderCommandCatalogParserFactV1,
+  type BundledProviderCommandCatalogParserV1,
   type ProviderCatalogCommandFallbackV1,
+  type ProviderCommandCatalogParserV1,
   type ProviderModelDescriptorV1,
 } from '@happier-dev/protocol';
+
+import type { ProviderCatalogFormatParser } from './parsers';
 
 const LITERAL_TOKEN = /^[^\u0000-\u001f\u007f;&|`$<>]+$/u;
 const LOCAL_CATALOG_COMMAND_MAX_BYTES = 1024 * 1024;
@@ -55,24 +60,90 @@ export type ProviderLocalCatalogFallbackResult =
   | Readonly<{ status: 'success'; models: readonly ProviderModelDescriptorV1[] }>
   | Readonly<{ status: 'unavailable' }>;
 
-function parseOllamaListTable(stdout: string): ProviderLocalCatalogFallbackResult {
-  if (Buffer.byteLength(stdout, 'utf8') > LOCAL_CATALOG_COMMAND_MAX_BYTES) return { status: 'unavailable' };
-  const lines = stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 0) return { status: 'unavailable' };
+function commandStdout(input: unknown): string {
+  if (typeof input !== 'string') throw new TypeError('Provider command catalog output must be text');
+  if (Buffer.byteLength(input, 'utf8') > LOCAL_CATALOG_COMMAND_MAX_BYTES) {
+    throw new TypeError('Provider command catalog output exceeds the response limit');
+  }
+  return input;
+}
+
+const parseOllamaListTable: ProviderCatalogFormatParser = (input) => {
+  const lines = commandStdout(input).split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) throw new TypeError('Ollama model table is empty');
   const header = lines[0]!.split(/\s+/u).map((part) => part.toUpperCase());
   if (header.length !== 4 || header.join('\0') !== 'NAME\0ID\0SIZE\0MODIFIED') {
+    throw new TypeError('Ollama model table header is unrecognized');
+  }
+  return {
+    models: lines.slice(1).map((line) => {
+      const columns = line.split(/\s+/u);
+      if (columns.length < 4) throw new TypeError('Ollama model table row is malformed');
+      return { id: columns[0]! };
+    }),
+  };
+};
+
+/**
+ * The command-output catalog formats the host implements. A Provider plugin
+ * contributes any other format through the `providers` contribution family and
+ * implements it with the same registered catalog parser used for HTTP catalog
+ * formats; the bundled set never decides whether a declared format is valid.
+ */
+export const BUNDLED_PROVIDER_COMMAND_CATALOG_FORMAT_PARSERS: Readonly<
+  Record<BundledProviderCommandCatalogParserV1, ProviderCatalogFormatParser>
+> = Object.freeze({ 'ollama-list-table': parseOllamaListTable });
+
+/**
+ * Resolves a declared command-output format to its implementation. A
+ * contributed parser wins only for a format the host does not bundle, so a
+ * plugin can never displace a bundled format's meaning for another Provider.
+ */
+export function resolveProviderCommandCatalogFormatParser(
+  parser: ProviderCommandCatalogParserV1,
+  contributedParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>,
+): ProviderCatalogFormatParser | null {
+  const bundled = readBundledProviderCommandCatalogParserFactV1(
+    BUNDLED_PROVIDER_COMMAND_CATALOG_FORMAT_PARSERS,
+    parser,
+  );
+  if (bundled) return bundled;
+  const contributed = contributedParsers
+    ? Object.getOwnPropertyDescriptor(contributedParsers, parser)
+    : undefined;
+  return contributed && contributed.enumerable && typeof contributed.value === 'function'
+    ? contributed.value as ProviderCatalogFormatParser
+    : null;
+}
+
+/**
+ * Host-owned normalization of any command format's output. A contributed format
+ * decides the model rows; the descriptor schema, dedupe, and size limits stay
+ * here so a plugin cannot widen them. An unresolvable or unparseable format
+ * reports `unavailable` exactly as a failed command does — the fallback never
+ * hands the output to another format's parser.
+ */
+function runCommandCatalogFormat(
+  parser: ProviderCommandCatalogParserV1,
+  stdout: string,
+  contributedParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>,
+): ProviderLocalCatalogFallbackResult {
+  const parse = resolveProviderCommandCatalogFormatParser(parser, contributedParsers);
+  if (!parse) return { status: 'unavailable' };
+  let rows: ReturnType<ProviderCatalogFormatParser>;
+  try {
+    rows = parse(stdout);
+  } catch {
     return { status: 'unavailable' };
   }
-  if (lines.length - 1 > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection) {
+  if (!Array.isArray(rows.models)) return { status: 'unavailable' };
+  if (rows.models.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection) {
     return { status: 'unavailable' };
   }
   const models: ProviderModelDescriptorV1[] = [];
   const ids = new Set<string>();
-  for (const line of lines.slice(1)) {
-    const columns = line.split(/\s+/u);
-    if (columns.length < 4) return { status: 'unavailable' };
-    const id = columns[0];
-    const parsed = ProviderModelDescriptorV1Schema.safeParse({ id, name: id });
+  for (const row of rows.models) {
+    const parsed = ProviderModelDescriptorV1Schema.safeParse({ ...row, name: row.name ?? row.id });
     if (!parsed.success || ids.has(parsed.data.id)) return { status: 'unavailable' };
     ids.add(parsed.data.id);
     models.push(parsed.data);
@@ -106,6 +177,12 @@ export function createProviderLocalCatalogFallbackRunner(input: Readonly<{
   const run = async (raw: Readonly<{
     descriptor: ProviderCatalogCommandFallbackV1;
     endpointUrl: string;
+    /**
+     * Implementations of the command-output formats the declaring Provider
+     * plugin contributes, keyed by format id. A format the host bundles is
+     * never taken from here.
+     */
+    contributedCatalogParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>;
   }>): Promise<ProviderLocalCatalogFallbackResult> => {
     const descriptor = ProviderCatalogCommandFallbackV1Schema.parse(raw.descriptor);
     const endpointUrl = ProviderEndpointUrlSyntaxSchema.parse(raw.endpointUrl);
@@ -127,7 +204,7 @@ export function createProviderLocalCatalogFallbackRunner(input: Readonly<{
         reason: 'provider local catalog fallback',
       });
       if (!result.ok || result.exitCode !== 0) return { status: 'unavailable' };
-      return parseOllamaListTable(result.stdout);
+      return runCommandCatalogFormat(descriptor.parser, result.stdout, raw.contributedCatalogParsers);
     })();
     inFlight.set(key, operation);
     try {

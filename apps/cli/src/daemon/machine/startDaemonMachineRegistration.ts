@@ -1,5 +1,8 @@
 import type { BootstrapMachineSyncRuntimeParams, BootstrapMachineSyncRuntimeResult } from './bootstrapMachineSyncRuntime';
-import { bootstrapMachineSyncRuntime } from './bootstrapMachineSyncRuntime';
+import {
+  bootstrapMachineSyncRuntime,
+  retireMachineSyncRuntimeAttempt,
+} from './bootstrapMachineSyncRuntime';
 import type {
   MachineRegistrationRetryLoopHandle,
   StartMachineRegistrationRetryLoopParams,
@@ -26,7 +29,12 @@ export function startDaemonMachineRegistration(
         machineId,
         machine,
       });
-      await onMachineSyncRuntime(machineSyncRuntime);
+      try {
+        await onMachineSyncRuntime(machineSyncRuntime);
+      } catch (error) {
+        await retireMachineSyncRuntimeAttempt(machineSyncRuntime);
+        throw error;
+      }
     },
   });
 }

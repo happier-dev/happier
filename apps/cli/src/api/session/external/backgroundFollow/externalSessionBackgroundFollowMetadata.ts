@@ -15,7 +15,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
-import { readCredentials, type Credentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 
@@ -36,6 +36,7 @@ export function updateMetadataWithExternalSessionFollowPolicy(
     params: Readonly<{
         policy: ExternalSessionFollowPolicy;
         updatedAtMs: number;
+        expectedLinkGeneration: string;
     }>,
 ): Metadata {
     const resolved = resolveLinkedExternalSessionMetadataV1(metadata);
@@ -46,9 +47,12 @@ export function updateMetadataWithExternalSessionFollowPolicy(
         throw new Error('linked_session_reconciliation_required');
     }
     if (!resolved.ok) {
-        return metadata;
+        throw new Error('linked_session_identity_mismatch');
     }
     const currentExternalSession = resolved.linkedSession;
+    if (String(currentExternalSession.linkedAtMs) !== params.expectedLinkGeneration) {
+        throw new Error('linked_session_identity_mismatch');
+    }
 
     const currentPolicy = readCurrentFollowPolicy(metadata);
     const currentFollowPolicy = asRecord(currentExternalSession.followPolicyV1);
@@ -75,8 +79,17 @@ export function updateMetadataWithExternalSessionFollowStatus(
     params: Readonly<{
         followStatusV1: ExternalSessionFollowStatusV1;
         lastFollowIssueV1?: ExternalSessionFollowIssueV1;
+        expectedLinkGeneration: string;
     }>,
 ): Metadata {
+    const resolved = resolveLinkedExternalSessionMetadataV1(metadata);
+    if (
+        !resolved.ok
+        || String(resolved.linkedSession.linkedAtMs)
+            !== params.expectedLinkGeneration
+    ) {
+        throw new Error('linked_session_identity_mismatch');
+    }
     return updateLinkedExternalSessionFollowMetadataV1(metadata, {
         followStatusV1: params.followStatusV1,
         ...(params.lastFollowIssueV1 === undefined
@@ -90,11 +103,15 @@ export function updateMetadataWithExternalSessionObservedProgress(
     params: Readonly<{
         observedProgress?: ExternalSessionObservedProgress | null;
         lastKnownActivityAtMs?: number | null;
+        expectedLinkGeneration: string;
     }>,
 ): Metadata {
     const currentExternalSession = readLinkedExternalSessionV1FromMetadata(metadata);
     if (!currentExternalSession) {
         return metadata;
+    }
+    if (String(currentExternalSession.linkedAtMs) !== params.expectedLinkGeneration) {
+        throw new Error('linked_session_identity_mismatch');
     }
 
     const currentAttention = readExternalSessionAttentionV1(
@@ -137,7 +154,7 @@ export function updateMetadataWithExternalSessionObservedProgress(
 
 export async function updateSessionMetadataWithExternalSessionFollowPolicy(params: Readonly<{
     token: string;
-    credentials: Credentials;
+    credentials: StoredCredentials;
     sessionId: string;
     rawSession: Readonly<{
         metadata: string;
@@ -147,6 +164,7 @@ export async function updateSessionMetadataWithExternalSessionFollowPolicy(param
     }>;
     policy: ExternalSessionFollowPolicy;
     updatedAtMs: number;
+    expectedLinkGeneration: string;
 }>): Promise<void> {
     await updateSessionMetadataWithRetry({
         token: params.token,
@@ -156,13 +174,14 @@ export async function updateSessionMetadataWithExternalSessionFollowPolicy(param
         updater: (currentMetadata) => updateMetadataWithExternalSessionFollowPolicy(currentMetadata as Metadata, {
             policy: params.policy,
             updatedAtMs: params.updatedAtMs,
+            expectedLinkGeneration: params.expectedLinkGeneration,
         }),
     });
 }
 
 export async function updateSessionMetadataWithExternalSessionFollowStatus(params: Readonly<{
     token: string;
-    credentials: Credentials;
+    credentials: StoredCredentials;
     sessionId: string;
     rawSession: Readonly<{
         metadata: string;
@@ -172,6 +191,7 @@ export async function updateSessionMetadataWithExternalSessionFollowStatus(param
     }>;
     followStatusV1: ExternalSessionFollowStatusV1;
     lastFollowIssueV1?: ExternalSessionFollowIssueV1;
+    expectedLinkGeneration: string;
 }>): Promise<void> {
     await updateSessionMetadataWithRetry({
         token: params.token,
@@ -180,6 +200,7 @@ export async function updateSessionMetadataWithExternalSessionFollowStatus(param
         rawSession: params.rawSession,
         updater: (currentMetadata) => updateMetadataWithExternalSessionFollowStatus(currentMetadata as Metadata, {
             followStatusV1: params.followStatusV1,
+            expectedLinkGeneration: params.expectedLinkGeneration,
             ...(params.lastFollowIssueV1 === undefined
                 ? {}
                 : { lastFollowIssueV1: params.lastFollowIssueV1 }),
@@ -191,8 +212,15 @@ export async function writeExternalSessionFollowStatus(params: Readonly<{
     sessionId: string;
     followStatusV1: ExternalSessionFollowStatusV1;
     lastFollowIssueV1?: ExternalSessionFollowIssueV1;
+    expectedLinkGeneration?: string;
 }>): Promise<void> {
-    const credentials = await readCredentials();
+    if (
+        typeof params.expectedLinkGeneration !== 'string'
+        || params.expectedLinkGeneration.length === 0
+    ) {
+        throw new Error('linked_session_identity_mismatch');
+    }
+    const credentials = await readStoredCredentials();
     if (!credentials) {
         throw new Error('Authentication is unavailable while writing external-session follow status.');
     }
@@ -210,6 +238,7 @@ export async function writeExternalSessionFollowStatus(params: Readonly<{
         sessionId: params.sessionId,
         rawSession,
         followStatusV1: params.followStatusV1,
+        expectedLinkGeneration: params.expectedLinkGeneration,
         ...(params.lastFollowIssueV1 === undefined
             ? {}
             : { lastFollowIssueV1: params.lastFollowIssueV1 }),
@@ -218,7 +247,7 @@ export async function writeExternalSessionFollowStatus(params: Readonly<{
 
 export async function updateSessionMetadataWithObservedExternalSessionProgress(params: Readonly<{
     token: string;
-    credentials: Credentials;
+    credentials: StoredCredentials;
     sessionId: string;
     rawSession: Readonly<{
         metadata: string;
@@ -228,6 +257,7 @@ export async function updateSessionMetadataWithObservedExternalSessionProgress(p
     }>;
     observedProgress?: ExternalSessionObservedProgress | null;
     lastKnownActivityAtMs?: number | null;
+    expectedLinkGeneration: string;
 }>): Promise<void> {
     await updateSessionMetadataWithRetry({
         token: params.token,
@@ -237,6 +267,7 @@ export async function updateSessionMetadataWithObservedExternalSessionProgress(p
         updater: (currentMetadata) => updateMetadataWithExternalSessionObservedProgress(currentMetadata as Metadata, {
             observedProgress: params.observedProgress ?? null,
             lastKnownActivityAtMs: params.lastKnownActivityAtMs ?? null,
+            expectedLinkGeneration: params.expectedLinkGeneration,
         }),
     });
 }

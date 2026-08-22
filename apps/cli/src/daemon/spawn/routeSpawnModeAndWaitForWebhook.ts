@@ -9,8 +9,9 @@ import { resolveWindowsRemoteSessionConsoleMode } from '../platform/windows/wind
 import { buildHappySessionControlArgs } from '../sessionSpawnArgs';
 import type { ChildExit } from '../sessions/onChildExited';
 import type { TrackedSession } from '../types';
-import type { PluginLocalServicesBridgeAuthorization } from '../local/services/pluginBridgeAuthorization';
-import type { AgentRuntimeSessionBridgeAuthorization } from '../agentRuntime/sessionBridgeAuthorization';
+import type {
+  RunnerAgentSessionBootstrapAuthorization,
+} from '../agentRuntime/sessionBridgeAuthorization';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { spawnRegularProcessAndWaitForWebhook } from './spawnRegularProcessAndWaitForWebhook';
 import { spawnTmuxHostedSessionAndWaitForWebhook } from './spawnTmuxHostedSessionAndWaitForWebhook';
@@ -53,8 +54,8 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   directoryCreated: boolean;
   extraEnvForChildWithMessage: Record<string, string>;
   unsetEnvKeys?: readonly string[];
-  localServicesBridgeAuthorization: PluginLocalServicesBridgeAuthorization;
-  agentRuntimeSessionBridgeAuthorization?: AgentRuntimeSessionBridgeAuthorization | null;
+  runnerAgentSessionBootstrapAuthorization?:
+    RunnerAgentSessionBootstrapAuthorization | null;
   processEnv: NodeJS.ProcessEnv;
   happyHomeDir: string;
   pidToTrackedSession: Map<number, TrackedSession>;
@@ -75,6 +76,9 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   const sessionControlArgs = buildHappySessionControlArgs({
     resume: params.effectiveResume,
     nativeForkSource: params.options.nativeForkSource,
+    sessionCreationTag: params.options.sessionCreationTag,
+    sessionCreationCorrespondence: params.options.sessionCreationCorrespondence,
+    initialTitle: params.options.initialTitle,
     existingSessionId: params.normalizedExistingSessionId,
     backendTarget: params.effectiveBackendTargetV2,
     permissionMode: params.permissionMode,
@@ -139,8 +143,8 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
     directoryCreated: params.directoryCreated,
     extraEnvForChildWithMessage: params.extraEnvForChildWithMessage,
     unsetEnvKeys: params.unsetEnvKeys,
-    localServicesBridgeAuthorization: params.localServicesBridgeAuthorization,
-    agentRuntimeSessionBridgeAuthorization: params.agentRuntimeSessionBridgeAuthorization,
+    runnerAgentSessionBootstrapAuthorization:
+      params.runnerAgentSessionBootstrapAuthorization,
     pidToTrackedSession: params.pidToTrackedSession,
     pidToAwaiter: params.pidToAwaiter,
     pidToSpawnResultResolver: params.pidToSpawnResultResolver,
@@ -213,8 +217,8 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
       directoryCreated: params.directoryCreated,
       extraEnvForChildWithMessage: params.extraEnvForChildWithMessage,
       unsetEnvKeys: params.unsetEnvKeys,
-      localServicesBridgeAuthorization: params.localServicesBridgeAuthorization,
-      agentRuntimeSessionBridgeAuthorization: params.agentRuntimeSessionBridgeAuthorization,
+      runnerAgentSessionBootstrapAuthorization:
+        params.runnerAgentSessionBootstrapAuthorization,
       processEnv: params.processEnv,
       happyHomeDir: params.happyHomeDir,
       pidToTrackedSession: params.pidToTrackedSession,
@@ -243,8 +247,8 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
     directoryCreated: params.directoryCreated,
     extraEnvForChildWithMessage: params.extraEnvForChildWithMessage,
     unsetEnvKeys: params.unsetEnvKeys,
-    localServicesBridgeAuthorization: params.localServicesBridgeAuthorization,
-    agentRuntimeSessionBridgeAuthorization: params.agentRuntimeSessionBridgeAuthorization,
+    runnerAgentSessionBootstrapAuthorization:
+      params.runnerAgentSessionBootstrapAuthorization,
     processEnv: params.processEnv,
     pidToTrackedSession: params.pidToTrackedSession,
     pidToAwaiter: params.pidToAwaiter,

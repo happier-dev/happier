@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseProviderCatalogResponse } from './parsers';
+import {
+  ProviderCatalogFormatUnavailableError,
+  parseProviderCatalogResponse,
+  resolveProviderCatalogFormatParser,
+} from './parsers';
 
 describe('parseProviderCatalogResponse', () => {
   it('parses only the declared OpenAI models discriminant', () => {
@@ -176,6 +180,81 @@ describe('parseProviderCatalogResponse', () => {
     expect(() => parseProviderCatalogResponse('lmstudio-native-models', {
       models: [{ key: 'malformed', type: 42 }],
     })).toThrow('type');
+  });
+
+  it('parses a Provider-contributed catalog format the host does not bundle', () => {
+    const contributed = {
+      'acme-catalog-v3': (input: unknown) => ({
+        models: (input as { entries: readonly { slug: string; label: string }[] })
+          .entries.map((entry) => ({ id: entry.slug, name: entry.label })),
+        loadStates: [{ modelId: 'acme/one', loadState: 'loaded' as const }],
+      }),
+    };
+    expect(parseProviderCatalogResponse('acme-catalog-v3', {
+      entries: [{ slug: 'acme/one', label: 'Acme One' }, { slug: 'acme/two', label: 'Acme Two' }],
+    }, contributed)).toEqual({
+      models: [{ id: 'acme/one', name: 'Acme One' }, { id: 'acme/two', name: 'Acme Two' }],
+      loadStates: [{ modelId: 'acme/one', loadState: 'loaded' }],
+    });
+  });
+
+  it('reports a declared format with no reachable implementation instead of guessing one', () => {
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', { data: [{ id: 'gpt-a' }] }))
+      .toThrow(ProviderCatalogFormatUnavailableError);
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', { data: [{ id: 'gpt-a' }] }, {}))
+      .toThrow(ProviderCatalogFormatUnavailableError);
+  });
+
+  it('keeps every bundled format owned by the host even when a plugin claims its id', () => {
+    const hijack = () => ({ models: [{ id: 'hijacked' }] });
+    expect(parseProviderCatalogResponse('openai-models', { data: [{ id: 'gpt-a' }] }, {
+      'openai-models': hijack,
+    })).toEqual({ models: [{ id: 'gpt-a' }], loadStates: [] });
+    expect(resolveProviderCatalogFormatParser('openai-models', { 'openai-models': hijack }))
+      .not.toBe(hijack);
+  });
+
+  it('applies the host-owned catalog limits to a contributed format', () => {
+    const duplicates = { 'acme-catalog-v3': () => ({ models: [{ id: 'same' }, { id: 'same' }] }) };
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, duplicates)).toThrow('Duplicate');
+
+    const oversized = {
+      'acme-catalog-v3': () => ({
+        models: Array.from({ length: 5_001 }, (_row, index) => ({ id: `acme/${index}` })),
+      }),
+    };
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, oversized)).toThrow('limit');
+
+    const inherited = Object.create({ 'acme-catalog-v3': () => ({ models: [{ id: 'acme/one' }] }) }) as
+      Record<string, () => { models: readonly { id: string }[] }>;
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, inherited))
+      .toThrow(ProviderCatalogFormatUnavailableError);
+  });
+
+  it('bounds and validates contributed load states at the parser boundary, not at storage', () => {
+    const parsers = (loadStates: unknown) => ({
+      'acme-catalog-v3': () => ({ models: [{ id: 'acme/one' }, { id: 'acme/two' }], loadStates }),
+    }) as unknown as Record<string, () => { models: readonly { id: string }[] }>;
+
+    expect(parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
+      { modelId: 'acme/two', loadState: 'loaded' },
+    ])).loadStates).toEqual([{ modelId: 'acme/two', loadState: 'loaded' }]);
+
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
+      { modelId: 'acme/one', loadState: 'warming' },
+    ]))).toThrow();
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
+      { modelId: 'acme/one', loadState: 'loaded' },
+      { modelId: 'acme/one', loadState: 'unloaded' },
+    ]))).toThrow('Duplicate');
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
+      { modelId: 'acme/absent', loadState: 'loaded' },
+    ]))).toThrow('absent from the catalog');
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers(
+      Array.from({ length: 5_001 }, () => ({ modelId: 'acme/one', loadState: 'loaded' })),
+    ))).toThrow('limit');
+    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers('loaded')))
+      .toThrow('must be an array');
   });
 
   it('rejects duplicates, over-limit lists, and accessor-bearing input before value access', () => {

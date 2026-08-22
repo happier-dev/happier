@@ -15,6 +15,7 @@ import {
   deriveVoiceModelPackLicenseTextDigestV1,
   installModelPackWithHost,
   verifyInstalledModelPackWithHost,
+  voiceModelPackArtifactBindingsEqualV1,
   voiceModelPackSha256DigestsEqualV1,
   type EffectiveVoiceModelPackDescriptorV1,
   type InstalledVoiceModelPackMetadataV1,
@@ -22,6 +23,7 @@ import {
   type ModelPackInstallerHost,
   type ModelPackUrlPolicy,
   type VoiceModelPackHostCapabilitiesV1,
+  type VoiceModelPackArtifactBindingV1,
 } from '@happier-dev/voice-modelpacks';
 
 import packageJson from '../../../../package.json';
@@ -91,7 +93,7 @@ export type DaemonPublicVoiceModelPackRuntime = Readonly<{
     licenseId: string;
     licenseSourceUrl: string;
     licenseTextDigest: string;
-    artifactDigest: string;
+    artifactBinding: VoiceModelPackArtifactBindingV1;
   }>): Promise<DaemonPublicVoiceModelPackEntry>;
   remove(key: string): Promise<void>;
 }>;
@@ -186,7 +188,7 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
   const verificationKeyFor = (metadata: InstalledVoiceModelPackMetadataV1): string => JSON.stringify([
     metadata.identity.pluginId,
     metadata.identity.packId,
-    metadata.pluginSourceDigest,
+    metadata.artifactBinding,
     metadata.manifestDigest,
     metadata.verifiedAtMs,
   ]);
@@ -431,6 +433,26 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         supportArtifacts: Object.freeze([]),
       }));
     }
+    for (const cleanupOnly of durable.unboundInstalled) {
+      const identityKey = JSON.stringify([
+        cleanupOnly.identity.pluginId,
+        cleanupOnly.identity.packId,
+      ]);
+      if (activeIdentityKeys.has(identityKey)) continue;
+      entries.push(Object.freeze({
+        key: buildQualifiedPluginContributionKey({
+          pluginId: cleanupOnly.identity.pluginId,
+          localId: cleanupOnly.identity.packId,
+        }),
+        identity: cleanupOnly.identity,
+        directoryKey: cleanupOnly.directoryKey,
+        descriptor: null,
+        installedMetadata: null,
+        installedManifest: null,
+        runtimeDescriptor: null,
+        supportArtifacts: Object.freeze([]),
+      }));
+    }
     return Object.freeze(entries.sort((left, right) => left.key.localeCompare(right.key)));
   }
 
@@ -460,7 +482,7 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
           deriveVoiceModelPackLicenseTextDigestV1(license.text),
           input.licenseTextDigest,
         )
-        && voiceModelPackSha256DigestsEqualV1(descriptor.sourceDigest, input.artifactDigest);
+        && voiceModelPackArtifactBindingsEqualV1(descriptor.artifactBinding, input.artifactBinding);
       if (!exact || !descriptor.identity) throw new Error('voice_model_pack_license_binding_changed');
       await state.acceptLicense({
         identity: descriptor.identity,
@@ -468,7 +490,7 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         licenseId: license.id,
         licenseSourceUrl: license.url,
         licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(license.text),
-        artifactDigest: descriptor.sourceDigest,
+        artifactBinding: descriptor.artifactBinding,
         acceptedAtMs: now(),
       });
       const accepted = await resolve(input.qualifiedPackId);
@@ -487,7 +509,7 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         identity: descriptor.identity,
         directoryKey: descriptor.directoryKey,
         pluginVersion: descriptor.pluginVersion,
-        pluginSourceDigest: descriptor.sourceDigest,
+        artifactBinding: descriptor.artifactBinding,
         packVersion: descriptor.contribution.manifest.version,
         manifestDigest: deriveVoiceModelPackManifestDigestV1(descriptor.contribution.manifest),
         verifiedAtMs: now(),
@@ -515,7 +537,7 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
             pluginId: descriptor.identity.pluginId,
             packId: descriptor.identity.packId,
             pluginVersion: descriptor.pluginVersion,
-            sourceDigest: descriptor.sourceDigest,
+            artifactBinding: descriptor.artifactBinding,
           },
           priorInstall: priorMetadata
             ? Object.freeze({
@@ -550,7 +572,7 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
                 || currentDescriptor.identity?.pluginId !== metadata.identity.pluginId
                 || currentDescriptor.identity.packId !== metadata.identity.packId
                 || currentDescriptor.pluginVersion !== metadata.pluginVersion
-                || !voiceModelPackSha256DigestsEqualV1(currentDescriptor.sourceDigest, metadata.pluginSourceDigest)
+                || !voiceModelPackArtifactBindingsEqualV1(currentDescriptor.artifactBinding, metadata.artifactBinding)
                 || !currentDescriptor.contribution
                 || deriveVoiceModelPackManifestDigestV1(currentDescriptor.contribution.manifest) !== metadata.manifestDigest
               ) {

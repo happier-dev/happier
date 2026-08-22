@@ -106,9 +106,17 @@ import {
   type SessionHandoffRuntimeConfig,
 } from './runtimeConfig';
 import {
+  registerSessionHandoffPredecessorCompatibilityHandlers,
+} from './predecessorCompatibility';
+import {
   createExternalSessionOperationExclusion,
   type ExternalSessionOperationClaimMaintenance,
+  type ExternalSessionOperationExclusionOwner,
 } from '@/session/external/operationExclusion';
+import type {
+  SpawnSessionOptions,
+  SpawnSessionResult,
+} from '../../../session/shared/spawnSessionContract';
 
 export type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 
@@ -133,6 +141,7 @@ function isMachineTransferTimeoutErrorMessage(message: string): boolean {
 
 export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
+  sessionOperationExclusion?: ExternalSessionOperationExclusionOwner;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   loadSessionMetadata?: (sessionId: string) => Promise<Record<string, unknown> | null>;
   savePreparedTargetLocalMetadata?: (input: Readonly<{
@@ -140,6 +149,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     exportMetadataOverlay: Record<string, unknown>;
   }>) => Promise<void> | void;
   stopSessionForHandoff?: (sessionId: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
+  spawnSessionForHandoff?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   exportSessionBundle?: (metadata: Record<string, unknown>) => Promise<Readonly<{
     agentBundle: SessionHandoffAgentBundle;
     targetPath: string;
@@ -166,10 +176,11 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   });
   const activePrepareJobs = new Map<string, Promise<void>>();
   const prepareTargetJobLeaseOwnerId = `cli-daemon:${process.pid}:${createUuid()}`;
-  const sessionOperationExclusion = createExternalSessionOperationExclusion({
-    activeServerDir: runtimeConfig.activeServerDir,
-    ownerId: `cli-daemon:${process.pid}:session-operations:${createUuid()}`,
-  });
+  const sessionOperationExclusion = params.sessionOperationExclusion
+    ?? createExternalSessionOperationExclusion({
+      activeServerDir: runtimeConfig.activeServerDir,
+      ownerId: `cli-daemon:${process.pid}:session-operations:${createUuid()}`,
+    });
   const activeHandoffOperationClaims = new Map<string, Readonly<{
     maintenance: ExternalSessionOperationClaimMaintenance;
   }>>();
@@ -363,16 +374,29 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   const loadRemoteSessionMetadata =
     params.loadSessionMetadata ??
     (async (sessionId: string): Promise<Record<string, unknown> | null> => {
-      const [{ readCredentials }, { fetchSessionById }, { tryDecryptSessionOwnerMetadataView }] = await Promise.all([
+      const [
+        { readStoredCredentials },
+        { fetchSessionById },
+        { tryDecryptSessionOwnerMetadataView },
+        { fetchAccountEncryptionCurrentness },
+      ] = await Promise.all([
         import('../../../persistence'),
         import('@/session/transport/http/sessionsHttp'),
         import('@/session/transport/encryption/sessionEncryptionContext'),
+        import('@/api/client/connectedServiceCredentialApi'),
       ]);
-      const credentials = await readCredentials().catch(() => null);
+      const credentials = await readStoredCredentials().catch(() => null);
       if (!credentials) return null;
-      const rawSession = await fetchSessionById({ token: credentials.token, sessionId }).catch(() => null);
-      if (!rawSession) return null;
-      const metadata = tryDecryptSessionOwnerMetadataView({ credentials, rawSession });
+      const [rawSession, accountEncryptionCurrentness] = await Promise.all([
+        fetchSessionById({ token: credentials.token, sessionId }).catch(() => null),
+        fetchAccountEncryptionCurrentness({ token: credentials.token }).catch(() => null),
+      ]);
+      if (!rawSession || !accountEncryptionCurrentness) return null;
+      const metadata = tryDecryptSessionOwnerMetadataView({
+        credentials,
+        rawSession,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
+      });
       return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : null;
     });
   const loadLocalSessionMetadata =
@@ -667,5 +691,20 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       'session.handoff.status.get': statusGetHandler,
     }),
     scopes: SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
+  });
+
+  registerSessionHandoffPredecessorCompatibilityHandlers({
+    rpcHandlerManager,
+    prepareJobStore,
+    prepareTarget: prepareTargetHandler,
+    prepareTargetResultGet: prepareTargetResultGetHandler,
+    commit: commitHandler,
+    abort: abortHandler,
+    ...(params.spawnSessionForHandoff
+      ? { spawnSessionForHandoff: params.spawnSessionForHandoff }
+      : {}),
+    ...(params.stopSessionForHandoff
+      ? { stopSessionForHandoff: params.stopSessionForHandoff }
+      : {}),
   });
 }

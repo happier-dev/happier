@@ -8,7 +8,7 @@ import { createDaemonArchivePluginChangePreparer } from '@/plugins/daemon/archiv
 import { createDaemonPluginChangeService } from '@/plugins/daemon/changeService';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
-import { createPluginRegistryStateStore, type PluginRegistryRuntimeLifecycle } from '@/plugins/store/registry/currentState';
+import type { PluginRegistryRuntimeLifecycle } from '@/plugins/store/registry/currentState';
 import { archiveSha256IntegrityFromDigest } from '@/plugins/distribution/archive/integrity';
 
 export const VOICE_MODEL_PACK_TEST_RUNTIME_LIFECYCLE: PluginRegistryRuntimeLifecycle = Object.freeze({
@@ -27,8 +27,8 @@ export async function installVoiceModelPackPluginArchiveFixture(params: Readonly
 }>): Promise<Readonly<{
   archivePath: string;
   archiveSha256: string;
-  manifestDigest: string;
-  packageDigest: string;
+  sourceIntegrity: string;
+  immutableGenerationId: string;
 }>> {
   if (basename(params.packageRoot) !== 'package') {
     throw new Error('Voice model-pack npm archive fixtures must use a package/ root');
@@ -52,6 +52,7 @@ export async function installVoiceModelPackPluginArchiveFixture(params: Readonly
   const archivePath = join(params.archiveSourceRoot, params.archiveFileName);
   await tar.c({ gzip: true, file: archivePath, cwd: params.archiveSourceRoot, portable: true }, ['package']);
   const archiveSha256 = createHash('sha256').update(await readFile(archivePath)).digest('hex');
+  const sourceIntegrity = archiveSha256IntegrityFromDigest(archiveSha256);
 
   const service = createDaemonPluginChangeService({
     prepare: createDaemonArchivePluginChangePreparer({
@@ -63,7 +64,7 @@ export async function installVoiceModelPackPluginArchiveFixture(params: Readonly
     const begun = await service.requestPluginChange({
       kind: 'installArchive',
       locator: archivePath,
-      expectedIntegrity: archiveSha256IntegrityFromDigest(archiveSha256),
+      expectedIntegrity: sourceIntegrity,
     });
     if (begun.kind !== 'reviewRequired') {
       throw new Error(`Voice model-pack archive fixture did not require review: ${JSON.stringify(begun)}`);
@@ -85,11 +86,6 @@ export async function installVoiceModelPackPluginArchiveFixture(params: Readonly
       throw new Error(`Voice model-pack archive fixture was not committed: ${JSON.stringify(committed)}`);
     }
 
-    const installed = (await createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir }).read())
-      .plugins[manifest.id];
-    if (!installed?.install.manifestDigest) {
-      throw new Error('Committed Voice model-pack archive fixture is missing its manifest digest');
-    }
     const committedGenerations = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({
       happyHomeDir: params.happyHomeDir,
     }));
@@ -97,14 +93,14 @@ export async function installVoiceModelPackPluginArchiveFixture(params: Readonly
     if (!committedGeneration) {
       throw new Error('Committed Voice model-pack archive fixture is missing its immutable generation');
     }
-    if (committedGeneration.record.manifestDigest !== installed.install.manifestDigest) {
-      throw new Error('Committed Voice model-pack archive fixture manifest and generation identities differ');
+    if (committedGeneration.installation?.source.admittedIntegrity !== sourceIntegrity) {
+      throw new Error('Committed Voice model-pack archive fixture is missing its admitted source integrity');
     }
     return Object.freeze({
       archivePath,
       archiveSha256,
-      manifestDigest: installed.install.manifestDigest,
-      packageDigest: committedGeneration.record.packageDigest,
+      sourceIntegrity,
+      immutableGenerationId: committedGeneration.immutableGenerationId,
     });
   } finally {
     await service.shutdown();

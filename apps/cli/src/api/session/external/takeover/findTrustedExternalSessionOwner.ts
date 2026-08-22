@@ -1,4 +1,4 @@
-import { isAgentId, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ExternalSessionsAgentId } from '@happier-dev/protocol';
 
 import type { DaemonSessionMarker } from '@/daemon/sessionRegistry';
@@ -11,7 +11,6 @@ function extractProviderSessionIdFromMarkerMetadata(params: Readonly<{
   const rec = params.metadata as Record<string, unknown>;
   const expectedFlavor = typeof rec.flavor === 'string' ? rec.flavor.trim() : '';
   if (expectedFlavor && expectedFlavor !== params.agentId) return null;
-  if (!isAgentId(params.agentId)) return null;
   return resolveVendorResumeIdFromSessionMetadata(params.agentId, rec);
 }
 

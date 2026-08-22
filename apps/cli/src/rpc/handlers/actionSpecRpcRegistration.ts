@@ -75,11 +75,14 @@ export const PLUGIN_PERMISSION_GRANT_RPC_SCOPES = Object.freeze([
     { id: 'plugins.permissions.grants', methodPrefixes: ['plugins.permissions.grants.'] },
 ] satisfies readonly ActionSpecRpcRegistrationScope[]);
 
+export const SESSION_SPAWN_NEW_RPC_SCOPES = Object.freeze([
+    { id: 'session.spawn_new', methods: [RPC_METHODS.SESSION_SPAWN_NEW] },
+] satisfies readonly ActionSpecRpcRegistrationScope[]);
+
 export const MACHINE_SESSION_LIFECYCLE_RPC_SCOPES = Object.freeze([
     {
         id: 'machine.session.lifecycle',
         methods: [
-            RPC_METHODS.SPAWN_HAPPY_SESSION,
             RPC_METHODS.SESSION_FORK,
             RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
         ],
@@ -202,6 +205,7 @@ export const REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES = Object.freeze([
     ...SESSION_PERMISSION_RPC_SCOPES,
     ...APPROVAL_RPC_SCOPES,
     ...PLUGIN_PERMISSION_GRANT_RPC_SCOPES,
+    ...SESSION_SPAWN_NEW_RPC_SCOPES,
     ...SESSION_LIFECYCLE_RPC_SCOPES,
     ...EXECUTION_RUN_RPC_SCOPES,
     ...REVIEW_COMMENT_RPC_SCOPES,

@@ -12,6 +12,7 @@ import {
   type ProviderRuntimeStateParseFailureReasonV1,
 } from '@happier-dev/protocol';
 
+import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic as canonicalWriteJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 import {
@@ -159,6 +160,35 @@ function applyTouchToExistingRecord(
   return true;
 }
 
+/**
+ * Endpoint `activity` is the only runtime-state field the durable file never
+ * carries: `normalizeProviderRuntimeStateFileForStartupV1` writes every record
+ * as `idle`, and the probing process keeps `checking` in memory to know which
+ * transient record is still its own. Re-reading the file for a cross-process
+ * merge must therefore restore this process's live activity over the records it
+ * still holds; everything else comes from the file.
+ */
+function withLiveEndpointActivity(
+  durable: ProviderRuntimeStateFileV1,
+  live: ProviderRuntimeStateFileV1,
+): ProviderRuntimeStateFileV1 {
+  const activityByKey = new Map(live.endpointHealth.map((record) => [
+    serializeProviderRuntimeStateRecordKey('endpointHealth', record),
+    record.state.activity,
+  ] as const));
+  return {
+    ...durable,
+    endpointHealth: durable.endpointHealth.map((record) => {
+      const activity = activityByKey.get(
+        serializeProviderRuntimeStateRecordKey('endpointHealth', record),
+      );
+      return activity === undefined || activity === record.state.activity
+        ? record
+        : { ...record, state: { ...record.state, activity } };
+    }),
+  };
+}
+
 export function createProviderRuntimeStateStore(input: Readonly<{
   happyHomeDir: string;
   machineId: string;
@@ -176,6 +206,30 @@ export function createProviderRuntimeStateStore(input: Readonly<{
     const result = tail.then(operation, operation);
     tail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  /**
+   * The daemon and a standalone CLI each hold their own store over this one
+   * file, so in-process serialization alone would let a whole-file write
+   * overwrite records the other process persisted. Mutations run under the
+   * canonical owner-file lock and re-read the file inside it, so every
+   * transform sees the other writer's committed records instead of this
+   * store's private memory.
+   */
+  async function mutateLocked<T>(mutation: () => Promise<T>): Promise<T> {
+    await ensurePrivateParent(path);
+    return await withJsonOwnerFileLock({
+      lockPath: `${path}.lock`,
+      timeoutMs: 10_000,
+      staleAfterMs: 30_000,
+      errorCode: 'provider_runtime_state_lock_timeout',
+    }, async () => {
+      const live = memory;
+      memory = undefined;
+      const durable = await loadUnlocked();
+      memory = live ? withLiveEndpointActivity(durable, live) : durable;
+      return await mutation();
+    });
   }
 
   function diagnostic(reason: ProviderRuntimeStateParseFailureReasonV1): void {
@@ -230,7 +284,6 @@ export function createProviderRuntimeStateStore(input: Readonly<{
     const pruned = pruneProviderRuntimeStateV1(candidate, pruneContext);
     const parsed = ProviderRuntimeStateFileV1Schema.parse(pruned);
     const durable = normalizeProviderRuntimeStateFileForStartupV1(parsed);
-    await ensurePrivateParent(path);
     await writeJsonAtomic(path, durable);
     if (process.platform !== 'win32') await chmod(path, 0o600).catch(() => {});
     memory = parsed;
@@ -247,11 +300,11 @@ export function createProviderRuntimeStateStore(input: Readonly<{
   return {
     path,
     read: () => enqueue(async () => cloneState(await loadUnlocked())),
-    update: (transform, pruneContext = {}) => enqueue(async () => {
+    update: (transform, pruneContext = {}) => enqueue(async () => await mutateLocked(async () => {
       const current = await loadUnlocked();
       const candidate = await transform(cloneState(current));
       return cloneState(await commitUnlocked(candidate, pruneContext));
-    }),
+    })),
     touch(touch): void {
       const snapshot = structuredClone(touch);
       const key = validateTouch(snapshot);
@@ -259,25 +312,27 @@ export function createProviderRuntimeStateStore(input: Readonly<{
       if (!existing || snapshot.lastAccessedAt > existing.lastAccessedAt) pendingTouches.set(key, snapshot);
     },
     flushTouches: (pruneContext = {}) => enqueue(async () => {
-      const current = await loadUnlocked();
-      if (pendingTouches.size === 0) return cloneState(current);
-      const captured = new Map(pendingTouches);
-      pendingTouches.clear();
-      const candidate = cloneState(current);
-      let changed = false;
-      for (const touch of captured.values()) {
-        changed = applyTouchToExistingRecord(candidate, touch) || changed;
-      }
-      if (!changed) return cloneState(current);
-      try {
-        return cloneState(await commitUnlocked(candidate, pruneContext));
-      } catch (error) {
-        for (const [key, touch] of captured) {
-          const pending = pendingTouches.get(key);
-          if (!pending || touch.lastAccessedAt > pending.lastAccessedAt) pendingTouches.set(key, touch);
+      if (pendingTouches.size === 0) return cloneState(await loadUnlocked());
+      return await mutateLocked(async () => {
+        const current = await loadUnlocked();
+        const captured = new Map(pendingTouches);
+        pendingTouches.clear();
+        const candidate = cloneState(current);
+        let changed = false;
+        for (const touch of captured.values()) {
+          changed = applyTouchToExistingRecord(candidate, touch) || changed;
         }
-        throw error;
-      }
+        if (!changed) return cloneState(current);
+        try {
+          return cloneState(await commitUnlocked(candidate, pruneContext));
+        } catch (error) {
+          for (const [key, touch] of captured) {
+            const pending = pendingTouches.get(key);
+            if (!pending || touch.lastAccessedAt > pending.lastAccessedAt) pendingTouches.set(key, touch);
+          }
+          throw error;
+        }
+      });
     }),
   };
 }

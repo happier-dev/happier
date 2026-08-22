@@ -1,15 +1,19 @@
 import {
+  isMessageStructuredPresentationV1Candidate,
   makeExternalSessionHistoricalImportLocalId,
+  SESSION_MESSAGE_PROVENANCE_META_KEY,
   SessionMessageRoleSchema,
+  stripSessionInputProtectedMeta,
   type ExternalSessionTranscriptRawMessageV1,
   type SessionMessageRole,
   type SessionStoredMessageContent,
+  type SidechainId,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import {
-  encryptStoredSessionPayload,
+  encryptSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -20,7 +24,6 @@ import {
   projectSessionMediaMetadataForHistoricalImportValidation,
   stageSessionMediaMetadataForHistoricalImport,
 } from '@/session/media/adoption';
-import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
 
 export type ExternalSessionHistoricalImportRequiredItemFailureCategory =
   | 'record'
@@ -44,21 +47,62 @@ export type ExternalSessionHistoricalImportStagedItem = Readonly<{
   mediaWorkingDirectory?: string;
 }>;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * An External Sessions source classification is descriptive rather than an input admission.
+ * Strip source-owned protected facts and let this host boundary mint the one history provenance
+ * that external-share projection recognizes.
+ */
+function sanitizeHistoricalImportRaw(params: Readonly<{
+  item: ExternalSessionTranscriptRawMessageV1;
+  messageRole: SessionMessageRole | null;
+  raw: Record<string, unknown>;
+}>): Record<string, unknown> {
+  const sourceFact = params.item.userProjection === 'source_fact'
+    && params.messageRole === 'user';
+  const rawMeta = params.raw.meta;
+  if (!sourceFact && !isRecord(rawMeta)) return params.raw;
+
+  const meta = stripSessionInputProtectedMeta(isRecord(rawMeta) ? rawMeta : undefined);
+  delete meta[SESSION_MESSAGE_PROVENANCE_META_KEY];
+  if (sourceFact) {
+    meta[SESSION_MESSAGE_PROVENANCE_META_KEY] = {
+      v: 1,
+      kind: 'host',
+      producer: 'externalSessionHistory',
+    };
+  }
+  return { ...params.raw, meta };
+}
+
 function buildStoredMessageContent(params: Readonly<{
   rawSession: RawSessionRecord;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   raw: Record<string, unknown>;
 }>): SessionStoredMessageContent {
+  // Structured presentation remains host-private prework. This is the one
+  // historical-import boundary that still owns plaintext for both storage
+  // modes, so share the canonical Message-writer profile reservation before
+  // E2EE can make an unsupported profile opaque to that writer.
+  if (isMessageStructuredPresentationV1Candidate(params.raw)) {
+    throw new Error('reserved_message_structured_presentation_historical_import');
+  }
+
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
   if (mode === 'plain') {
     return { t: 'plain', v: params.raw };
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, params.rawSession);
+  if (!ctx) {
+    throw new Error('session_encryption_material_unavailable');
+  }
   return {
     t: 'encrypted',
-    c: encryptStoredSessionPayload({
-      mode: 'e2ee',
+    c: encryptSessionPayload({
       ctx,
       payload: params.raw,
     }),
@@ -68,15 +112,15 @@ function buildStoredMessageContent(params: Readonly<{
 export async function prepareExternalSessionHistoricalImportItem(params: Readonly<{
   item: ExternalSessionTranscriptRawMessageV1;
   linked: LoadedLinkedExternalSession;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionId: string;
   workingDirectory: string | null;
   sourceReadRoots: readonly string[];
   createdWorkspaceMediaPaths?: string[];
-  cleanupWorkspaceMediaPaths?: string[];
+  persistedWorkspaceMediaPaths?: string[];
 }>): Promise<Readonly<{
   localId: string;
-  sidechainId: string | null;
+  sidechainId: SidechainId | null;
   messageRole: SessionMessageRole | null;
   content: SessionStoredMessageContent;
   sourceCreatedAtMs?: number;
@@ -86,6 +130,8 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
     remoteSessionId: params.linked.remoteSessionId,
     directItemId: params.item.id,
   });
+  const parsedMessageRole = SessionMessageRoleSchema.safeParse(params.item.messageRole);
+  const messageRole = parsedMessageRole.success ? parsedMessageRole.data : null;
   let raw: Record<string, unknown>;
   try {
     if (
@@ -102,12 +148,13 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
         workingDirectory: params.workingDirectory,
         sourceReadRoots: params.sourceReadRoots,
         onCreatedWorkspacePath: (path) => params.createdWorkspaceMediaPaths?.push(path),
-        onAdoptedStagedWorkspacePath: (path) => params.cleanupWorkspaceMediaPaths?.push(path),
+        onPersistedWorkspacePath: (path) => params.persistedWorkspaceMediaPaths?.push(path),
       })
       : params.item.raw;
   } catch {
     throw new ExternalSessionHistoricalImportRequiredItemError('media');
   }
+  raw = sanitizeHistoricalImportRaw({ item: params.item, messageRole, raw });
   let content: SessionStoredMessageContent;
   try {
     content = buildStoredMessageContent({
@@ -118,11 +165,10 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
   } catch {
     throw new ExternalSessionHistoricalImportRequiredItemError('conversion');
   }
-  const messageRole = SessionMessageRoleSchema.safeParse(params.item.messageRole);
   return {
     localId,
-    sidechainId: null,
-    messageRole: messageRole.success ? messageRole.data : null,
+    sidechainId: params.item.sidechainId ?? null,
+    messageRole,
     content,
     ...(Number.isSafeInteger(params.item.createdAtMs) && params.item.createdAtMs >= 0
       ? { sourceCreatedAtMs: params.item.createdAtMs }
@@ -158,44 +204,6 @@ export async function stageExternalSessionHistoricalImportItem(params: Readonly<
   };
 }
 
-export async function cleanupExternalSessionHistoricalImportStagedMedia(params: Readonly<{
-  staged: ExternalSessionHistoricalImportStagedItem;
-  agentId: string;
-  remoteSessionId: string;
-  sessionId: string;
-}>): Promise<void> {
-  const stagedMediaCount = countStagedSessionMediaMetadata(params.staged.item.raw);
-  if (stagedMediaCount === 0) return;
-  const workingDirectory = params.staged.mediaWorkingDirectory;
-  if (!workingDirectory) {
-    throw new Error('historical_import_media_working_directory_unavailable');
-  }
-  const candidateWorkspaceRelativePaths: string[] = [];
-  await adoptSessionMediaMetadataForManagedSession({
-    raw: params.staged.item.raw,
-    sessionId: params.sessionId,
-    messageLocalId: makeExternalSessionHistoricalImportLocalId({
-      agentId: params.agentId,
-      remoteSessionId: params.remoteSessionId,
-      directItemId: params.staged.item.id,
-    }),
-    workingDirectory,
-    sourceReadRoots: [],
-    onAdoptedStagedWorkspacePath: (path) => candidateWorkspaceRelativePaths.push(path),
-  });
-  if (candidateWorkspaceRelativePaths.length !== stagedMediaCount) {
-    throw new Error('historical_import_staged_media_cleanup_unavailable');
-  }
-  const cleaned = await garbageCollectUncommittedSessionMedia({
-    workingDirectory,
-    candidateWorkspaceRelativePaths,
-    reason: 'interrupted_ingestion',
-  });
-  if (cleaned === null) {
-    throw new Error('historical_import_staged_media_cleanup_failed');
-  }
-}
-
 export function readExternalSessionHistoricalImportStagedItem(
   value: unknown,
 ): ExternalSessionHistoricalImportStagedItem | null {
@@ -229,42 +237,44 @@ export function readExternalSessionHistoricalImportStagedItem(
 export function validateExternalSessionHistoricalImportStagedItem(params: Readonly<{
   staged: ExternalSessionHistoricalImportStagedItem;
   linked: LoadedLinkedExternalSession;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionId: string;
 }>): Readonly<{
   localId: string;
-  sidechainId: string | null;
+  sidechainId: SidechainId | null;
   messageRole: SessionMessageRole | null;
   content: SessionStoredMessageContent;
   sourceCreatedAtMs?: number;
 }> {
+  const localId = makeExternalSessionHistoricalImportLocalId({
+    agentId: params.linked.agentId,
+    remoteSessionId: params.linked.remoteSessionId,
+    directItemId: params.staged.item.id,
+  });
+  const parsedMessageRole = SessionMessageRoleSchema.safeParse(params.staged.item.messageRole);
+  const messageRole = parsedMessageRole.success ? parsedMessageRole.data : null;
   let content: SessionStoredMessageContent;
   try {
     content = buildStoredMessageContent({
       rawSession: params.linked.rawSession,
       credentials: params.credentials,
-      raw: projectSessionMediaMetadataForHistoricalImportValidation({
-        raw: params.staged.item.raw,
-        sessionId: params.sessionId,
-        messageLocalId: makeExternalSessionHistoricalImportLocalId({
-          agentId: params.linked.agentId,
-          remoteSessionId: params.linked.remoteSessionId,
-          directItemId: params.staged.item.id,
+      raw: sanitizeHistoricalImportRaw({
+        item: params.staged.item,
+        messageRole,
+        raw: projectSessionMediaMetadataForHistoricalImportValidation({
+          raw: params.staged.item.raw,
+          sessionId: params.sessionId,
+          messageLocalId: localId,
         }),
       }),
     });
   } catch {
     throw new ExternalSessionHistoricalImportRequiredItemError('conversion');
   }
-  const messageRole = SessionMessageRoleSchema.safeParse(params.staged.item.messageRole);
   return {
-    localId: makeExternalSessionHistoricalImportLocalId({
-      agentId: params.linked.agentId,
-      remoteSessionId: params.linked.remoteSessionId,
-      directItemId: params.staged.item.id,
-    }),
-    sidechainId: null,
-    messageRole: messageRole.success ? messageRole.data : null,
+    localId,
+    sidechainId: params.staged.item.sidechainId ?? null,
+    messageRole,
     content,
     ...(Number.isSafeInteger(params.staged.item.createdAtMs) && params.staged.item.createdAtMs >= 0
       ? { sourceCreatedAtMs: params.staged.item.createdAtMs }

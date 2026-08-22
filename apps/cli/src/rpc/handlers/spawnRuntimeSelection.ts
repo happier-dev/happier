@@ -6,7 +6,6 @@ import {
 } from '@happier-dev/protocol';
 import {
   applyAgentRuntimeKindOverrideToAccountSettings,
-  isAgentId,
   resolveProviderSessionBackendMode,
 } from '@happier-dev/agents';
 
@@ -38,7 +37,7 @@ function readProviderRuntimeSelectionFromDescriptor(
   providerBackendMode?: string;
   providerRuntimeSelection?: Readonly<Record<string, unknown>>;
 }> {
-  if (!runtimeDescriptorV1 || !isAgentId(runtimeDescriptorV1.agentId)) {
+  if (!runtimeDescriptorV1) {
     return {};
   }
 

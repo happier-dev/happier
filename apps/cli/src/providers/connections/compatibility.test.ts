@@ -3,6 +3,7 @@ import {
   ProviderConnectionIdSchema,
   ProviderConnectionV1Schema,
   ProviderContributionV1Schema,
+  type ProviderWireProtocol,
 } from '@happier-dev/protocol';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -12,8 +13,8 @@ import { projectProviderConnectionCompatibility } from './compatibility';
 
 const contributionKey = 'acme.gateway/main';
 
-function lease(): PluginRuntimeRegistryLease {
-  const support = (protocol: 'openai-responses' | 'anthropic') => ({
+function lease(externalAgentProtocol?: ProviderWireProtocol): PluginRuntimeRegistryLease {
+  const support = (protocol: ProviderWireProtocol) => ({
     acceptsProtocols: [protocol],
     required: { streaming: true },
     credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
@@ -36,7 +37,12 @@ function lease(): PluginRuntimeRegistryLease {
       runtimeSpec: { title: 'Inactive supported Agent' },
     }],
     ['external', {
-      definition: { id: 'external', kindVersion: 1 },
+      definition: {
+        id: 'external',
+        kindVersion: 1,
+        ...(externalAgentProtocol ? { providerRequirements: support(externalAgentProtocol) } : {}),
+      },
+      ...(externalAgentProtocol ? { runtimeSpec: { title: 'External Agent' } } : {}),
       richDefinition: {
         provenance: 'external' as const,
         definition: { id: 'external', title: { key: 'agents.external.title', fallback: 'External Agent' } },
@@ -44,7 +50,7 @@ function lease(): PluginRuntimeRegistryLease {
     }],
     ['gemini', { definition: { id: 'gemini', kindVersion: 1 }, runtimeSpec: { title: 'Gemini' } }],
   ]);
-  const runtimes = new Map(['codex', 'claude'].map((agentId) => [agentId, {
+  const runtimes = new Map([...['codex', 'claude'], ...(externalAgentProtocol ? ['external'] : [])].map((agentId) => [agentId, {
     pluginId: `happier.agent.${agentId}`,
     pluginVersion: '1.0.0',
     agentId,
@@ -60,17 +66,21 @@ function lease(): PluginRuntimeRegistryLease {
   return { registry, source: 'active', release: async () => undefined };
 }
 
-function record(): ResolvedProviderConnectionRecord {
+function record(options: Readonly<{
+  protocol?: ProviderWireProtocol;
+  overrideAgentTargetKey?: string;
+}> = {}): ResolvedProviderConnectionRecord {
+  const protocol = options.protocol ?? 'openai-responses';
   const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
   const definition = ProviderContributionV1Schema.parse({
     v: 1, id: 'main', name: 'Gateway', kind: 'cloud',
     endpointTemplates: [{
-      id: 'responses', protocol: 'openai-responses', baseUrl: 'https://gateway.example/v1',
+      id: 'responses', protocol, baseUrl: 'https://gateway.example/v1',
       capabilities: { streaming: 'supported', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' },
     }],
     catalog: { source: 'manual', manualModelPolicy: 'allowed' },
     compatibilityOverrides: [{
-      agentTargetKey: 'backend:codex', protocol: 'openai-responses', status: 'verified',
+      agentTargetKey: options.overrideAgentTargetKey ?? 'backend:codex', protocol, status: 'verified',
       reason: 'Integration tested',
       evidence: { sourceUrls: ['https://docs.example.test/codex'], verifiedAt: '2026-07-11', testIds: ['codex-provider-live'] },
     }],
@@ -86,7 +96,7 @@ function record(): ResolvedProviderConnectionRecord {
     source: { kind: 'contribution', contributionKey, pluginId: 'acme.gateway', provenance: 'external', definition },
     deployment: { kind: 'external' },
     endpoints: [{
-      endpointTemplateId: 'responses', protocol: 'openai-responses', publicHeaders: {}, source: 'contribution',
+      endpointTemplateId: 'responses', protocol, publicHeaders: {}, source: 'contribution',
       machineOverrideApplied: false, normalizedUrl: 'https://gateway.example/v1', locality: 'public',
       endpointScope: 'account', resolvedAddresses: ['8.8.8.8'], nonPublicAddresses: [],
     }],
@@ -109,5 +119,19 @@ describe('provider connection compatibility summary', () => {
       { agentTargetKey: 'backend:external', agentName: 'External Agent', status: 'incompatible', reasons: ['agent_external_providers_unsupported'] },
       { agentTargetKey: 'backend:gemini', agentName: 'Gemini', status: 'incompatible', reasons: ['agent_external_providers_unsupported'] },
     ]);
+  });
+
+  it('binds an external Provider and external Agent on a wire protocol the host does not bundle', () => {
+    // `acme-wire` is contributed by plugins on both sides. The host never
+    // interprets a wire protocol - it only matches the two declarations - so a
+    // bundled protocol vocabulary must not decide whether the pair can bind.
+    const summaries = projectProviderConnectionCompatibility({
+      lease: lease('acme-wire'),
+      connection: record({ protocol: 'acme-wire', overrideAgentTargetKey: 'backend:external' }),
+    });
+    expect(summaries).toContainEqual({
+      agentTargetKey: 'backend:external', agentName: 'External Agent', status: 'verified', reasons: [],
+    });
+    expect(summaries.filter((summary) => summary.status !== 'incompatible')).toHaveLength(1);
   });
 });

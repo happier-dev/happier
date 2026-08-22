@@ -1,16 +1,19 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
   SESSION_METADATA_LAYOUT_VERSION_V1,
+  SessionOwnerMetadataEnvelopeV1Schema,
   SessionSharedMetadataV1Schema,
   projectSessionOwnerCompatibilityViewV1,
   readAcpConfiguredBackendV1FromMetadata,
-  readLinkedExternalSessionV1FromMetadata,
+  resolveLinkedExternalSessionMetadataV1,
   type BackendTargetRefV1,
+  type SessionOwnerMetadataEnvelopeV1,
   type SessionOwnerMetadataV1,
+  type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { AgentState, Metadata } from '@/api/types';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { encodeBase64 } from '@/api/encryption';
 import { resolveCurrentExternalSessionAgentIdentity } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 import { resolveVendorResumeIdForExistingSession } from '@/daemon/spawn/resolveVendorResumeIdForExistingSession';
@@ -24,6 +27,7 @@ import {
 import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
 const EXISTING_SESSION_ATTACH_DETAIL_CONCURRENCY = 4;
 let activeExistingSessionAttachDetailReads = 0;
@@ -93,7 +97,7 @@ function readNonNegativeInteger(value: unknown): number | null {
 
 function tryReadExistingSessionMetadataRecord(params: Readonly<{
   rawSession: Readonly<{ metadata?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown }>;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
 }>): Record<string, unknown> | null {
   const rawMetadata = typeof params.rawSession.metadata === 'string' ? params.rawSession.metadata.trim() : '';
   if (!rawMetadata) return null;
@@ -109,22 +113,34 @@ function tryReadExistingSessionMetadataRecord(params: Readonly<{
 
 function tryReadExistingSessionAgentState(params: Readonly<{
   rawSession: Readonly<{ agentState?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown }>;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
 }>): AgentState | null | undefined {
   const rawAgentState = typeof params.rawSession.agentState === 'string' ? params.rawSession.agentState.trim() : '';
   if (!rawAgentState) return null;
 
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
-  if (mode === 'e2ee' && !params.credentials) return undefined;
-
   try {
-    const value = decryptStoredSessionPayload({
-      mode,
-      ctx: mode === 'e2ee'
-        ? resolveSessionEncryptionContextFromCredentials(params.credentials!, params.rawSession)
-        : { encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey' },
-      value: rawAgentState,
-    });
+    const value = mode === 'plain'
+      ? decryptStoredSessionPayload({
+          mode,
+          ctx: null,
+          value: rawAgentState,
+        })
+      : (() => {
+          if (!params.credentials?.encryption) return undefined;
+          const context = resolveSessionEncryptionContextFromCredentials(
+            params.credentials,
+            params.rawSession,
+          );
+          return context
+            ? decryptStoredSessionPayload({
+                mode,
+                ctx: context,
+                value: rawAgentState,
+              })
+            : undefined;
+        })();
+    if (value === undefined) return undefined;
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
     return value as AgentState;
   } catch {
@@ -141,11 +157,11 @@ function buildAttachSnapshot(params: Readonly<{
     dataEncryptionKey?: unknown;
     encryptionMode?: unknown;
     metadataLayoutVersion?: unknown;
-    ownerMetadata?: unknown;
   }>;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
   metadataRecord: Record<string, unknown> | null;
   ownerMetadata?: SessionOwnerMetadataV1;
+  ownerMetadataEnvelope?: SessionOwnerMetadataEnvelopeV1;
 }>): SessionAttachFilePayload['snapshot'] | undefined {
   const metadataVersion = readNonNegativeInteger(params.rawSession.metadataVersion);
   const agentStateVersion = readNonNegativeInteger(params.rawSession.agentStateVersion);
@@ -164,11 +180,11 @@ function buildAttachSnapshot(params: Readonly<{
     metadataVersion,
     agentState,
     agentStateVersion,
-    ...(params.ownerMetadata
+    ...(params.ownerMetadata && params.ownerMetadataEnvelope
       ? {
         metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
         ownerMetadata: params.ownerMetadata,
-        ownerMetadataCiphertext: String(params.rawSession.ownerMetadata),
+        ownerMetadataEnvelope: params.ownerMetadataEnvelope,
       }
       : {}),
   };
@@ -216,7 +232,8 @@ async function buildExistingSessionAttachContext(params: Readonly<{
     ownerMetadata?: unknown;
     seq?: unknown;
   }>;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
+  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
 }>): Promise<ExistingSessionAttachContext | ExistingSessionAttachContextFailure> {
   const metadataLayoutVersion = readSessionMetadataLayoutVersion(
     params.rawSession.metadataLayoutVersion,
@@ -225,16 +242,26 @@ async function buildExistingSessionAttachContext(params: Readonly<{
     rawSession: params.rawSession,
     credentials: params.credentials,
   });
+  const parsedOwnerMetadataEnvelope =
+    metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
+      ? SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+          params.rawSession.ownerMetadata,
+        )
+      : null;
+  const ownerMetadataEnvelope = parsedOwnerMetadataEnvelope?.success
+    ? parsedOwnerMetadataEnvelope.data
+    : null;
   const ownerMetadata = metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
     && params.credentials
     ? tryDecryptSessionOwnerMetadata({
       credentials: params.credentials,
       rawSession: params.rawSession,
+      accountEncryptionMode: params.accountEncryptionCurrentness.mode,
     })
     : null;
   if (
     metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
-    && (!ownerMetadata || !metadataRecord)
+    && (!ownerMetadataEnvelope || !ownerMetadata || !metadataRecord)
   ) {
     return { ok: false, reason: 'invalidOwnerMetadata' };
   }
@@ -246,12 +273,22 @@ async function buildExistingSessionAttachContext(params: Readonly<{
     : null;
   const authorityMetadataRecord = ownerLocalRuntimeMetadata ?? metadataRecord;
   const backendTarget = resolveExistingSessionBackendTarget(authorityMetadataRecord);
-  const hasLinkedExternalSession = authorityMetadataRecord !== null
-    && Object.hasOwn(authorityMetadataRecord, 'externalSessionV1');
-  const linkedExternalSession = authorityMetadataRecord
-    ? readLinkedExternalSessionV1FromMetadata(authorityMetadataRecord)
+  const linkedSessionResolution = resolveLinkedExternalSessionMetadataV1(
+    authorityMetadataRecord,
+  );
+  if (
+    !linkedSessionResolution.ok
+    && linkedSessionResolution.error !== 'linked_session_not_found'
+  ) {
+    return { ok: false, reason: 'linkedResumeIdentityUnavailable' };
+  }
+  const hasLinkedExternalSession = linkedSessionResolution.ok;
+  const needsCurrentLinkedAgentIdentity = hasLinkedExternalSession
+    && linkedSessionResolution.source !== 'released';
+  const linkedExternalSession = linkedSessionResolution.ok
+    ? linkedSessionResolution.linkedSession
     : null;
-  const linkedSessionCurrentAgent = hasLinkedExternalSession && linkedExternalSession
+  const linkedSessionCurrentAgent = needsCurrentLinkedAgentIdentity && linkedExternalSession
     ? await resolveCurrentExternalSessionAgentIdentity(linkedExternalSession.agentId).catch(() => null)
     : null;
   const vendorResumeId = resolveVendorResumeIdForExistingSession({
@@ -274,7 +311,9 @@ async function buildExistingSessionAttachContext(params: Readonly<{
     rawSession: params.rawSession,
     credentials: params.credentials,
     metadataRecord,
-    ...(ownerMetadata ? { ownerMetadata } : {}),
+    ...(ownerMetadata && ownerMetadataEnvelope
+      ? { ownerMetadata, ownerMetadataEnvelope }
+      : {}),
   });
   if (mode === 'plain') {
     return {
@@ -295,7 +334,7 @@ async function buildExistingSessionAttachContext(params: Readonly<{
     };
   }
 
-  if (!params.credentials) return { ok: false, reason: 'missingCredentials' };
+  if (!params.credentials?.encryption) return { ok: false, reason: 'missingCredentials' };
 
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, params.rawSession);
   if (ctx.encryptionKey.length !== 32) return { ok: false, reason: 'invalidEncryptionKey' };
@@ -323,7 +362,7 @@ async function buildExistingSessionAttachContext(params: Readonly<{
 export async function resolveExistingSessionAttachContext(_params: Readonly<{
   token: string;
   sessionId: string;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
 }>): Promise<ExistingSessionAttachContext | ExistingSessionAttachContextFailure> {
   const token = normalizeString(_params.token);
   const sessionId = normalizeString(_params.sessionId);
@@ -331,14 +370,18 @@ export async function resolveExistingSessionAttachContext(_params: Readonly<{
   if (!token) return { ok: false, reason: 'missingToken' };
 
   try {
-    const raw = await withExistingSessionAttachDetailReadSlot(
-      () => fetchSessionByIdCompat({ token, sessionId, reason: 'manual-recovery' }),
-    );
+    const [raw, accountEncryptionCurrentness] = await Promise.all([
+      withExistingSessionAttachDetailReadSlot(
+        () => fetchSessionByIdCompat({ token, sessionId, reason: 'manual-recovery' }),
+      ),
+      fetchAccountEncryptionCurrentness({ token }),
+    ]);
     if (!raw) return { ok: false, reason: 'sessionNotFound' };
 
     return await buildExistingSessionAttachContext({
       rawSession: raw,
       credentials: _params.credentials,
+      accountEncryptionCurrentness,
     });
   } catch {
     return { ok: false, reason: 'fetchFailed' };

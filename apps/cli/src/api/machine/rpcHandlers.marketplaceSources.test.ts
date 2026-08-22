@@ -66,6 +66,56 @@ describe('rpcHandlers (marketplace sources)', () => {
     });
   });
 
+  it('forwards a source-root trust decision as `trustSourceRoot`, never as an install-and-trust commit', async () => {
+    // A pending source-root review can only be advanced by the daemon change
+    // service's `trustSourceRoot` decision. Forwarding it as `installAndTrust`
+    // is rejected there with `plugin_source_trust_required`, so a wrong
+    // implementation that reuses the positive branch is observable here.
+    const decideChange = vi.fn(async (_decision: PluginChangeDecision): Promise<PluginChangeDecisionResult> => ({
+      kind: 'reviewRequired',
+      pendingChangeId: 'pending-source-1',
+      review: {
+        pluginId: 'acme.example',
+        displayName: 'Acme Example',
+        version: '1.0.0',
+        source: { kind: 'path', locator: '/tmp/acme-example' },
+        requiredHostAccess: [],
+        optionalHostAccess: [],
+        contributions: [],
+        trustChange: 'newPlugin',
+      } as unknown as Extract<PluginChangeDecisionResult, { kind: 'reviewRequired' }>['review'],
+    }));
+    const mgr = createRpcHandlerManager();
+    registerMachineMarketplaceSourcesRpcHandlers({
+      rpcHandlerManager: mgr as any,
+      deps: {
+        decidePluginChange: decideChange,
+      },
+    });
+
+    const decide = mgr.handlers.get(HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD);
+    expect(decide).toBeTypeOf('function');
+    await expect(decide?.({
+      v: 1,
+      pendingChangeId: 'pending-source-1',
+      decision: 'trustSourceRoot',
+      actorEvidence: {
+        kind: 'authenticatedLocalUser',
+        interactionId: 'ui-interaction-source-1',
+        occurredAtMs: 44,
+      },
+    })).resolves.toMatchObject({ kind: 'reviewRequired', pendingChangeId: 'pending-source-1' });
+    expect(decideChange).toHaveBeenCalledWith({
+      pendingChangeId: 'pending-source-1',
+      decision: 'trustSourceRoot',
+      actorEvidence: {
+        kind: 'authenticatedLocalUser',
+        interactionId: 'ui-interaction-source-1',
+        occurredAtMs: 44,
+      },
+    });
+  });
+
   it('requires the strict UI evidence shape and never treats a transport receipt as evidence', async () => {
     const decideChange = vi.fn();
     const mgr = createRpcHandlerManager();

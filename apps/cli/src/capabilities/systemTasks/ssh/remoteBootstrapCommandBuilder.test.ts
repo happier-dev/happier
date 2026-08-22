@@ -165,4 +165,20 @@ describe('buildRemoteBootstrapCommand', () => {
     expect(command).not.toContain('--ssh');
     expect(command).not.toContain('scp');
   });
+
+  it('passes an already uploaded server payload to the canonical remote installer', () => {
+    const command = buildRemoteBootstrapCommand({
+      label: 'relay.runtime.install',
+      serverUrl: 'https://relay.example.test',
+      channel: 'dev',
+      data: {
+        relayRuntimeMode: 'user',
+        relayRuntimeServerBinaryPath: '$HOME/.happier/happier-server/publicdev/current/bin/happier-server',
+      },
+    });
+
+    expect(command).toContain('--server-binary');
+    expect(command).toContain(`--server-binary "$HOME"/'.happier/happier-server/publicdev/current/bin/happier-server'`);
+    expect(command).not.toContain(`--server-binary '$HOME/`);
+  });
 });

@@ -6,14 +6,17 @@ import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredent
 import { resolveVendorResumeIdForExistingSession } from './resolveVendorResumeIdForExistingSession';
 
 describe('resolveVendorResumeIdForExistingSession', () => {
-  it('requires Claude transcript continuity proof for a derived resume id', () => {
+  it('derives the Claude resume id from the persisted id alone', () => {
+    // `AM-24`: no continuity proof gate. The persisted id is the whole claim,
+    // and a dead one fails loudly at the first turn like any other resume.
     const rawSession = {
       encryptionMode: 'plain',
       metadata: JSON.stringify({ flavor: 'claude', claudeSessionId: 'claude-session-1' }),
       dataEncryptionKey: null,
     };
 
-    expect(resolveVendorResumeIdForExistingSession({ agent: 'claude', credentials: null, rawSession })).toBeNull();
+    expect(resolveVendorResumeIdForExistingSession({ agent: 'claude', credentials: null, rawSession }))
+      .toBe('claude-session-1');
 
     expect(resolveVendorResumeIdForExistingSession({
       agent: 'claude',

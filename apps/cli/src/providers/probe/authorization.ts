@@ -5,10 +5,9 @@ import type {
   ProviderCatalogParserV1,
   ProviderProbeRequestFingerprintV1,
   ProviderWireProtocol,
-  ProviderManagedCatalogSourceIdentityV1,
+  ResolvedProviderManagedRuntimeDeclarationV1,
   QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';
-import type { ResolvedFirstPartyManagedProviderFacet } from '../managed/types';
 
 import type { ProviderProbeCredential } from './client';
 
@@ -39,9 +38,8 @@ export type ProviderManagedProbeAuthorizationRequest = Readonly<{
   connectionId: string;
   machineId: string;
   implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
-  managedFacet: ResolvedFirstPartyManagedProviderFacet;
+  managedRuntime: ResolvedProviderManagedRuntimeDeclarationV1;
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
-  catalogSource: ProviderManagedCatalogSourceIdentityV1;
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
   path: string;

@@ -9,6 +9,7 @@ import {
   createProviderDiscoveryCandidateIdV1,
   createProviderErrorV1,
   createProviderFingerprintV1,
+  isBundledProviderCatalogParserV1,
   readOwnRecordValue,
   type ProviderConnectionV1,
   type ProviderDiscoveryCandidateV1,
@@ -313,7 +314,7 @@ async function resolvedContributionAuthoringPreview(input: Readonly<{
   };
   const mutation = applyCreatedEndpointOverrides({
     mutation: createConnectionMutation(
-      readSettings(input.snapshot.accountSettings),
+      readSettings(input.snapshot.rawAccountSettings),
       createInput,
       input.snapshot.registry,
       now,
@@ -323,7 +324,7 @@ async function resolvedContributionAuthoringPreview(input: Readonly<{
     scope: input.selection.endpointOverrideScope,
     now,
   });
-  const previewRaw = replaceSettings(input.snapshot.accountSettings, mutation.settings);
+  const previewRaw = replaceSettings(input.snapshot.rawAccountSettings, mutation.settings);
   const dnsEvidence = await input.deps.collectDnsEvidence({
     accountSettings: previewRaw,
     connectionId: mutation.connection.id,
@@ -591,7 +592,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
       if (input.preparedSavedSecret && input.savedSecretId !== input.preparedSavedSecret.id) {
         throw new ProviderConnectionValidationError('The prepared SavedSecret must be the exact bound secret');
       }
-      const initialMutation = createMutation(readSettings(snapshot.accountSettings), deps.now());
+      const initialMutation = createMutation(readSettings(snapshot.rawAccountSettings), deps.now());
       validateConnectionCredentialTransport(input, initialMutation.connection, snapshot.registry);
       if (!initialMutation.created) {
         const described = await describe({ machineId: input.machineId, connectionId: initialMutation.connection.id });
@@ -604,7 +605,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
               machineId: input.machineId,
             }) };
       }
-      const previewBase = addPreparedSavedSecret(snapshot.accountSettings, input.preparedSavedSecret);
+      const previewBase = addPreparedSavedSecret(snapshot.rawAccountSettings, input.preparedSavedSecret);
       const preview = createMutation(readSettings(previewBase), deps.now());
       const previewSettings = bindCreatedConnectionSecret(preview.settings, input, preview.connection, previewBase, snapshot.registry);
       const previewRaw = replaceSettings(previewBase, previewSettings);
@@ -712,15 +713,6 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
-    if (
-      input.deployment?.kind === 'managedLocal'
-      && !deps.featureGate.isEnabled('localServices.managed')
-    ) {
-      return {
-        status: 'error',
-        error: featureError(input.connectionId),
-      };
-    }
     const snapshot = await deps.loadSnapshot();
     const buildUpdate = (
       settings: ProviderSettingsV1,
@@ -819,13 +811,13 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
         ReturnType<ProviderConnectionServiceDeps['collectDnsEvidence']>
       > = new Map();
     if (input.deployment?.kind === 'managedLocal') {
-      const previewSettings = readSettings(snapshot.accountSettings);
+      const previewSettings = readSettings(snapshot.rawAccountSettings);
       const previewCurrent = previewSettings.connections.find((entry) =>
         entry.id === input.connectionId);
       if (previewCurrent?.revision === input.expectedRevision) {
         const preview = buildUpdate(previewSettings, previewCurrent);
         const previewRaw = replaceSettings(
-          snapshot.accountSettings,
+          snapshot.rawAccountSettings,
           preview.settings,
         );
         deploymentDnsEvidence = await deps.collectDnsEvidence({
@@ -961,8 +953,20 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
             };
           });
           const contributionCatalog = contribution.definition.catalog;
-          const catalog = 'probes' in contributionCatalog && contributionCatalog.probes.length > 0
-            ? { source: 'probe' as const, manualModelPolicy: contributionCatalog.manualModelPolicy, probes: contributionCatalog.probes }
+          const contributionProbes = 'probes' in contributionCatalog ? contributionCatalog.probes : [];
+          for (const probe of contributionProbes) {
+            // A custom template has no plugin behind it, so only a catalog
+            // format the host bundles can ever serve its probes. Copying a
+            // contributed format id would persist a probe nothing can run and
+            // silently leave the copy without a catalog.
+            if (!isBundledProviderCatalogParserV1(probe.parser)) {
+              throw new ProviderConnectionValidationError(
+                'Duplicate-as-custom requires a bundled catalog format for every probe',
+              );
+            }
+          }
+          const catalog = contributionProbes.length > 0
+            ? { source: 'probe' as const, manualModelPolicy: contributionCatalog.manualModelPolicy, probes: contributionProbes }
             : { source: 'manual' as const, manualModelPolicy: 'allowed' as const };
           source = { kind: 'custom', template: CustomProviderTemplateV1Schema.parse({
             v: 1, name: input.displayName, endpointTemplates,

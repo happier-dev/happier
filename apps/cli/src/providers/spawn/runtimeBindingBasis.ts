@@ -31,19 +31,18 @@ export function projectProviderRuntimeBindingBasis(
           ...common,
           deployment: {
             kind: 'managedLocal',
-            securityFacts: {
-              implementationIdentity:
-                authorization.deployment.implementation
-                  .implementationIdentity,
-              managedEndpoint:
-                authorization.deployment.implementation.facet
-                  .managedEndpoint,
-              connectedAccounts:
-                authorization.deployment.implementation.facet
-                  .connectedAccounts,
-              requestAuthUses:
-                authorization.deployment.implementation.facet
-                  .requestAuthUses,
+            implementationIdentity:
+              authorization.deployment.implementation
+                .implementationIdentity,
+            // The retained binding basis is runtime custody, not a display
+            // snapshot. Keep connected-account presentation out of it so a
+            // retitle cannot change active-session behavior or persistence.
+            managedRuntime: {
+              ...authorization.deployment.implementation.managedRuntime,
+              connectedAccounts: authorization.deployment.implementation
+                .managedRuntime.connectedAccounts.map(
+                  ({ title: _title, ...declaration }) => declaration,
+                ),
             },
             purposeBindings:
               authorization.deployment.implementation.purposeBindings,

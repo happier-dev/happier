@@ -1,7 +1,7 @@
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, TokenOnlyCredentials } from '@/persistence';
 
 const { applyProcessEnv } = vi.hoisted(() => ({
   applyProcessEnv: vi.fn(),
@@ -23,6 +23,13 @@ function credentials(token: string): Credentials {
   return {
     token,
     encryption: { type: 'legacy', secret: new Uint8Array(32).fill(3) },
+  };
+}
+
+function tokenOnlyCredentials(token: string): TokenOnlyCredentials {
+  return {
+    token,
+    encryption: null,
   };
 }
 
@@ -71,6 +78,43 @@ describe('applyAccountSettingsV2Update', () => {
     expect(applyProcessEnv).not.toHaveBeenCalled();
   });
 
+  it('applies a plain live update with token-only credentials without account crypto material', async () => {
+    const accountCredentials = tokenOnlyCredentials('plain-account');
+
+    const result = await applyAccountSettingsV2Update({
+      credentials: accountCredentials,
+      update: {
+        content: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' } },
+        version: 2,
+      },
+      deps: {
+        decryptCiphertext: async () => {
+          throw new Error('token-only plain updates must not enter account-cipher code');
+        },
+      },
+    });
+
+    expect(result.settings.sessionPendingQueueDeliveryTiming).toBe('after_runtime_idle');
+    expect(result.settingsSecretsReadKeys).toEqual([]);
+  });
+
+  it('reports an encrypted live update as unavailable for token-only credentials', async () => {
+    await expect(applyAccountSettingsV2Update({
+      credentials: tokenOnlyCredentials('plain-account'),
+      update: {
+        content: { t: 'encrypted', c: 'retained-e2ee-settings' },
+        version: 2,
+      },
+      deps: {
+        decryptCiphertext: async () => {
+          throw new Error('token-only credentials must not enter account-cipher code');
+        },
+      },
+    })).rejects.toMatchObject({
+      code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE',
+    });
+  });
+
   it('rejects a delayed update when the active account scope changes during decryption', async () => {
     const accountA = credentials('account-a');
     const accountB = credentials('account-b');
@@ -91,6 +135,41 @@ describe('applyAccountSettingsV2Update', () => {
 
     await expect(applying).rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_SCOPE_CHANGED' });
     expect(getActiveAccountSettingsSnapshot()).toBe(accountBWinner);
+    expect(applyProcessEnv).not.toHaveBeenCalled();
+  });
+
+  it('rejects a retired Account A update after Account B switches back to a new A lifetime', async () => {
+    const accountAOld = credentials('account-a');
+    const accountB = credentials('account-b');
+    const oldA = snapshot({ credentials: accountAOld, version: 1, timing: 'after_foreground_ready' });
+    setActiveAccountSettingsSnapshot(oldA);
+    let finishDecrypt: (value: Record<string, unknown>) => void = () => {};
+    const applying = applyAccountSettingsV2Update({
+      credentials: accountAOld,
+      update: { content: { t: 'encrypted', c: 'old-a-ciphertext' }, version: 5 },
+      deps: {
+        decryptCiphertext: () => new Promise((resolve) => {
+          finishDecrypt = resolve;
+        }),
+      },
+    });
+    setActiveAccountSettingsSnapshot(snapshot({
+      credentials: accountB,
+      version: 2,
+      timing: 'after_runtime_idle',
+    }));
+    const newA = {
+      ...snapshot({ credentials: accountAOld, version: 4, timing: 'after_runtime_idle' }),
+      settingsSecretsReadKeys: [new Uint8Array(32).fill(9)],
+    };
+    setActiveAccountSettingsSnapshot(newA);
+    finishDecrypt({ sessionPendingQueueDeliveryTiming: 'after_foreground_ready' });
+
+    await expect(applying).rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_SCOPE_CHANGED' });
+    expect(getActiveAccountSettingsSnapshot()).toBe(newA);
+    expect(getActiveAccountSettingsSnapshot()?.settingsSecretsReadKeys).toEqual([
+      new Uint8Array(32).fill(9),
+    ]);
     expect(applyProcessEnv).not.toHaveBeenCalled();
   });
 

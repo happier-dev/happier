@@ -1,7 +1,5 @@
 import {
   evaluatePluginFinalPolicy,
-  getModelPackCatalogEntry,
-  resolveCanonicalModelPackId,
   type VoiceModelPackContributionV1,
 } from '@happier-dev/protocol';
 import {
@@ -9,11 +7,13 @@ import {
   decideInstalledVoiceModelPackLifecycleV1,
   deriveVoiceModelPackManifestDigestV1,
   deriveVoiceModelPackLicenseTextDigestV1,
+  voiceModelPackArtifactBindingsEqualV1,
   voiceModelPackSha256DigestsEqualV1,
   type EffectiveVoiceModelPackDescriptorV1,
   type InstalledVoiceModelPackLifecycleDecisionV1,
   type InstalledVoiceModelPackMetadataV1,
   type VoiceModelPackHostCapabilitiesV1,
+  type VoiceModelPackArtifactBindingV1,
   type VoiceModelPackLicenseAcceptanceV1,
   type VoiceModelPackLicenseScopeV1,
   type VoiceModelPackResourcePolicyV1,
@@ -34,12 +34,36 @@ import {
 export type DaemonVoiceModelPackPluginRecordV1 = Readonly<{
   pluginId: string;
   pluginVersion: string;
-  pluginSourceDigest: string;
+  artifactBinding: VoiceModelPackArtifactBindingV1;
   enabled: boolean;
   authorization: ReturnType<typeof evaluatePluginFinalPolicy>;
   grantedNetworkOrigins: readonly string[];
   contributions: readonly VoiceModelPackContributionV1[];
 }>;
+
+function resolveInstalledVoiceModelPackArtifactBinding(
+  plugin: PluginCatalogEntry,
+  current: PluginFinalPolicyCurrentGeneration,
+): VoiceModelPackArtifactBindingV1 | null {
+  if (plugin.source.kind === 'path') {
+    return Object.freeze({
+      kind: 'materialization',
+      immutableGenerationId: current.immutableGenerationId,
+    });
+  }
+  if (
+    plugin.source.kind !== 'package'
+    && plugin.source.kind !== 'archive'
+    && plugin.source.kind !== 'marketplace'
+  ) {
+    // No bundled Voice model-pack route exists today. Do not invent a
+    // package/tree digest for a future bundled contribution.
+    return null;
+  }
+  return plugin.admittedIntegrity
+    ? Object.freeze({ kind: 'sourceIntegrity', integrity: plugin.admittedIntegrity })
+    : null;
+}
 
 export type DaemonVoiceModelPackCatalogEntryV1 = EffectiveVoiceModelPackDescriptorV1 & Readonly<{
   sourceLabel: Readonly<{ pluginId: string; pluginVersion: string }>;
@@ -74,13 +98,14 @@ export async function projectInstalledDaemonPluginVoiceModelPackCatalogV1(params
 }>): Promise<readonly DaemonVoiceModelPackCatalogEntryV1[]> {
   const records: DaemonVoiceModelPackPluginRecordV1[] = [];
   for (const plugin of params.installedPlugins) {
-    if (!plugin.manifest || !plugin.manifestDigest) continue;
+    if (!plugin.manifest) continue;
     const current = params.currentPluginGenerations.get(plugin.pluginId) ?? null;
-    if (!current) continue;
+    if (!current || plugin.desiredGeneration !== current.immutableGenerationId) continue;
+    const artifactBinding = resolveInstalledVoiceModelPackArtifactBinding(plugin, current);
+    if (!artifactBinding) continue;
     const authorization = evaluatePluginFinalPolicy({
       ...resolvePluginFinalPolicyAuthorizationFacts({
         pluginId: plugin.pluginId,
-        targetManifestDigest: plugin.manifestDigest,
         current,
       }),
       serviceAvailability: Object.freeze([]),
@@ -89,7 +114,7 @@ export async function projectInstalledDaemonPluginVoiceModelPackCatalogV1(params
     records.push({
       pluginId: plugin.pluginId,
       pluginVersion: plugin.version,
-      pluginSourceDigest: current.packageDigest,
+      artifactBinding,
       enabled: plugin.enabled,
       authorization,
       grantedNetworkOrigins: resolveRequiredPluginNetworkOrigins({
@@ -117,18 +142,21 @@ export function projectDaemonPluginVoiceModelPackCatalogV1(params: Readonly<{
   installedMetadata?: readonly InstalledVoiceModelPackMetadataV1[];
 }>): readonly DaemonVoiceModelPackCatalogEntryV1[] {
   const identities = new Set<string>();
+  const pluginIds = new Set<string>();
   const projected: DaemonVoiceModelPackCatalogEntryV1[] = [];
 
   for (const plugin of params.plugins) {
+    // Host integrity, not an authoring defect: the installed-plugin catalog
+    // cannot hold two records for one plugin id, so a repeated record means the
+    // caller assembled a malformed record set and no projection of it is
+    // trustworthy. This stays fail-closed.
+    if (pluginIds.has(plugin.pluginId)) throw new Error('duplicate_voice_model_pack_plugin_identity');
+    pluginIds.add(plugin.pluginId);
     for (const contribution of plugin.contributions) {
-      if (
-        getModelPackCatalogEntry(contribution.id)
-        || resolveCanonicalModelPackId(contribution.id) !== contribution.id
-      ) {
-        throw new Error('voice_model_pack_identity_reserved');
-      }
+      // Reserved-identity refusal is owned by `admitVoiceModelPackContributionV1`
+      // so a single mis-authored contribution cannot abort this catalog.
       const identityKey = JSON.stringify([plugin.pluginId, contribution.id]);
-      if (identities.has(identityKey)) throw new Error('duplicate_voice_model_pack_identity');
+      const duplicateIdentity = identities.has(identityKey);
       identities.add(identityKey);
 
       const acceptedLicense = params.acceptedLicenses?.find((acceptance) => (
@@ -142,13 +170,13 @@ export function projectDaemonPluginVoiceModelPackCatalogV1(params: Readonly<{
           acceptance.licenseTextDigest,
           deriveVoiceModelPackLicenseTextDigestV1(contribution.manifest.license.text),
         )
-        && voiceModelPackSha256DigestsEqualV1(acceptance.artifactDigest, plugin.pluginSourceDigest)
+        && voiceModelPackArtifactBindingsEqualV1(acceptance.artifactBinding, plugin.artifactBinding)
         && params.licenseScope !== undefined
         && acceptance.accountId === params.licenseScope.accountId
         && acceptance.executionHost === params.licenseScope.executionHost
         && acceptance.hostId === params.licenseScope.hostId
       ));
-      const admitted = admitVoiceModelPackContributionV1({
+      const admittedContribution = admitVoiceModelPackContributionV1({
         source: plugin,
         contribution,
         host: params.host,
@@ -156,6 +184,21 @@ export function projectDaemonPluginVoiceModelPackCatalogV1(params: Readonly<{
         ...(params.licenseScope ? { licenseScope: params.licenseScope } : {}),
         ...(params.resourcePolicy ? { resourcePolicy: params.resourcePolicy } : {}),
       });
+      // A manifest that declares the same pack id twice would otherwise produce
+      // two entries sharing one directory key. The first declaration wins (the
+      // manifest array order is stable, so the winner is deterministic and both
+      // claimants belong to the same plugin) and every later repeat is refused
+      // in the vocabulary the admission owner already uses.
+      // A contribution the admission owner already rejected outright carries no
+      // identity and is blocked already; there is nothing left to refuse.
+      const admitted: EffectiveVoiceModelPackDescriptorV1
+        = duplicateIdentity && admittedContribution.identity !== null
+          ? Object.freeze({
+              ...admittedContribution,
+              status: 'blocked' as const,
+              reason: 'duplicate_voice_model_pack_identity',
+            })
+          : admittedContribution;
       const active = admitted.status === 'available';
       const installed = params.installedMetadata?.find((metadata) => (
         metadata.identity.pluginId === plugin.pluginId
@@ -168,7 +211,7 @@ export function projectDaemonPluginVoiceModelPackCatalogV1(params: Readonly<{
               enabled: plugin.enabled,
               trusted: plugin.authorization.outcome === 'visible',
               pluginVersion: plugin.pluginVersion,
-              pluginSourceDigest: plugin.pluginSourceDigest,
+              artifactBinding: plugin.artifactBinding,
               packVersion: contribution.manifest.version,
               manifestDigest: deriveVoiceModelPackManifestDigestV1(contribution.manifest),
             },
@@ -221,7 +264,7 @@ export function projectDaemonInstalledVoiceModelPackPlacementsV1(params: Readonl
           enabled: plugin.enabled,
           trusted: plugin.authorization.outcome === 'visible',
           pluginVersion: plugin.pluginVersion,
-          pluginSourceDigest: plugin.pluginSourceDigest,
+          artifactBinding: plugin.artifactBinding,
           packVersion: contribution?.manifest.version ?? metadata.packVersion,
           manifestDigest: contribution
             ? deriveVoiceModelPackManifestDigestV1(contribution.manifest)

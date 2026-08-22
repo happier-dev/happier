@@ -28,6 +28,16 @@ describe('runner entrypoint identity', () => {
   });
 
   it('attests canonical package-dist snapshots while retaining live flat snapshot identity', () => {
+    const runtimeAssetSha256 = 'a'.repeat(64);
+    expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
+      `node /work/apps/cli/.runner-snapshots/30bb29f6afae521d-${runtimeAssetSha256}-package-dist-v2/package-dist/index.mjs claude`,
+    )).toMatchObject({
+      status: 'known',
+      source: 'process_command',
+      comparableId: `snapshot:30bb29f6afae521d-${runtimeAssetSha256}-package-dist-v2`,
+      entrypointVersion: null,
+    });
+
     expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
       'node /work/apps/cli/.runner-snapshots/2ee2ef1b2f776a89-package-dist-v1/package-dist/index.mjs claude',
     )).toMatchObject({

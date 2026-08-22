@@ -197,6 +197,73 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     });
   });
 
+  it('threads authoritative group currentness into the provider lock and reports supersession', async () => {
+    const credentialRevision = 'csr_abcdefghijklmnopqrstuv';
+    const authoritativeCredentialRevision = 'csr_2123456789ABCDEFGHJKMNPQRS';
+    const validateGroupMutationCurrentness = vi.fn(async () => ({
+      current: false as const,
+      reason: 'credential_revision_superseded',
+      authoritativeTarget: {
+        profileId: 'profile-current',
+        generation: 8,
+        credentialRevision: authoritativeCredentialRevision,
+      },
+    }));
+    const hotApply = vi.fn(async (request: Parameters<ConnectedServiceProviderRuntimeAuthAdapter['hotApply']>[0]) => {
+      const currentness = await request.validateCurrentBeforeMutation?.();
+      return currentness?.current === false
+        ? { applied: false, status: 'superseded_after_apply', reason: currentness.reason, recovery: 'none' }
+        : { applied: true };
+    });
+    const adapter = {
+      classifyRuntimeAuthFailure: () => null,
+      materializeActiveProfile: async () => ({}),
+      canHotApply: () => ({ supported: true }),
+      hotApply,
+      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
+      probeQuota: async () => ({}),
+      refreshActiveProfile: async () => ({}),
+    } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
+    const apply = createSessionConnectedServiceAuthHotApply({
+      resolveRuntimeAuthAdapter: async () => adapter,
+      validateGroupMutationCurrentness,
+    });
+
+    await expect(apply({
+      tracked: {
+        startedBy: 'daemon', happySessionId: 'sess_1', pid: 123,
+        spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } },
+      },
+      normalizedBindings: {
+        v: 1,
+        bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', selection: 'group', groupId: 'group-1', profileId: 'profile-1' },
+        },
+      },
+      runtimeAuthSelectionsByServiceId: new Map([['claude-subscription', {
+        serviceId: 'claude-subscription',
+        groupId: 'group-1',
+        activeProfileId: 'profile-1',
+        groupGeneration: 7,
+        credentialRevision,
+      }]]),
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'credential_revision_superseded',
+      serviceId: 'claude-subscription',
+    });
+    expect(validateGroupMutationCurrentness).toHaveBeenCalledWith({
+      serviceId: 'claude-subscription',
+      groupId: 'group-1',
+      profileId: 'profile-1',
+      generation: 7,
+      credentialRevision,
+    });
+    expect(hotApply).toHaveBeenCalledWith(expect.objectContaining({
+      validateCurrentBeforeMutation: expect.any(Function),
+    }));
+  });
+
   it('does not accept exact hot-apply proof without identity material', async () => {
     const adapter = {
       classifyRuntimeAuthFailure: () => null,

@@ -9,7 +9,7 @@ import { createPermissionModeQueueState } from '@/agent/runtime/createPermission
 import type {
     AgentSessionRuntime,
     AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
@@ -22,30 +22,14 @@ import {
 const { mockIo } = vi.hoisted(() => ({
     mockIo: vi.fn(),
 }));
-const sessionSyncCurrent = {
-    v: 1,
-    enforcement: 'observe',
-    minimumSessionSyncProtocolVersion: 1,
-    currentSessionSyncProtocolVersion: 2,
-    declarationTransport: 'headers-v1',
-    minimumVersionsByClientKind: {
-        daemon: '0.2.10',
-        'session-runner': '0.2.10-preview.1',
-    },
-    upgradeUrlsByClientKind: {
-        daemon: 'https://app.happier.dev/update?client=daemon',
-        'session-runner': 'https://app.happier.dev/update?client=session-runner',
-    },
-} as const;
-const pendingInputCurrent = { currentPendingInputProtocolVersion: 1 } as const;
-const currentCompatibilityAck = {
-    v: 1,
-    compatibility: { v: 1, sessionSync: sessionSyncCurrent, pendingInput: pendingInputCurrent },
-} as const;
 const currentFeatures = {
     features: {},
     capabilities: {
-        compatibility: { v: 1, sessionSync: sessionSyncCurrent, pendingInput: pendingInputCurrent },
+        session: {
+            runtimeActivity: { protocolVersion: 2 },
+            pendingInput: { protocolVersion: 1 },
+            publisherAuthority: { protocolVersion: 1 },
+        },
     },
 } as const;
 
@@ -54,10 +38,8 @@ const bindApiSessionSocketPairMock = (
     params: Parameters<typeof bindApiSessionSocketPairHarness>[1],
 ): void => {
     const emitWithAck = params.sessionSocket.emitWithAck.getMockImplementation();
-    params.sessionSocket.emitWithAck.mockImplementation(async (event: string, payload: unknown) => {
-        if (event === 'ping') return currentCompatibilityAck;
-        return emitWithAck ? await emitWithAck(event, payload) : { ok: true };
-    });
+    params.sessionSocket.emitWithAck.mockImplementation(async (event: string, payload: unknown) =>
+        emitWithAck ? await emitWithAck(event, payload) : { ok: true });
     bindApiSessionSocketPairHarness(ioMock, {
         ...params,
         // The connection supervisor may create a replacement transport while the test is
@@ -1260,12 +1242,15 @@ describe('ApiSessionClient pending queue materialization', () => {
         bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
 
         const client = createClient(mockSession);
-        client.sendAgentMessage('opencode', {
+        await client.enqueueAgentMessageCommitted('opencode', {
             type: 'tool-call',
             callId: 'call-1',
             name: 'read',
             input: { filePath: '/etc/hosts' },
             id: 'msg-1',
+        }, {
+            localId: 'msg-1',
+            provenance: { kind: 'non_dependent', source: 'background' },
         });
 
         await flushApiSessionClientMessageCommitQueue(client as any);

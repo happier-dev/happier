@@ -4,42 +4,52 @@
  */
 
 import { logger } from '@/ui/logger';
-import { clearDaemonState, inspectDaemonLockOwner, readDaemonLockPid, readDaemonState } from '@/persistence';
-import { Metadata } from '@/api/types';
+import {
+  clearReplaceableDaemonLock,
+  daemonStateMatchesOwner,
+  inspectDaemonLockOwner,
+  readDaemonLockOwnerIdentity,
+  readDaemonLockPid,
+  readDaemonState,
+} from '@/persistence';
+import {
+  daemonProcessMatchesCurrentScope,
+  isDaemonCommandForCurrentRuntimeRoot,
+  isDaemonProcessForCurrentRuntimeRoot,
+} from '@/daemon/ownership/daemonProcessScopeIdentity';
+import { readProcessIdentityByPid } from '@/daemon/processIdentity';
+import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import { projectPath } from '@/projectPath';
 import { readFileSync, statSync } from 'fs';
 import { configuration } from '@/configuration';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
 import {
-  PluginLocalServicesBridgeControlResponseV1Schema,
-  type PluginLocalServicesBridgeControlRequestV1,
-  type PluginLocalServicesBridgeControlResponseV1,
-} from './local/services/pluginBridgeProtocol';
-import {
-  AGENT_RUNTIME_DAEMON_BRIDGE_PATH,
-  AgentRuntimeDaemonBridgeResponseV1Schema,
-  type AgentRuntimeDaemonBridgeRequestV1,
-  type AgentRuntimeDaemonBridgeResponseV1,
-} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
-import {
   FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
+  FOREGROUND_AGENT_RUNTIME_CLAIM_PATH,
   FOREGROUND_AGENT_RUNTIME_RELEASE_PATH,
   ForegroundAgentRuntimeAdmissionRequestV1Schema,
   ForegroundAgentRuntimeAdmissionResponseV1Schema,
+  ForegroundAgentRuntimeClaimRequestV1Schema,
+  ForegroundAgentRuntimeClaimResponseV1Schema,
   ForegroundAgentRuntimeReleaseRequestV1Schema,
   ForegroundAgentRuntimeReleaseResponseV1Schema,
   type ForegroundAgentRuntimeAdmissionRequestV1,
   type ForegroundAgentRuntimeAdmissionResponseV1,
+  type ForegroundAgentRuntimeClaimRequestV1,
+  type ForegroundAgentRuntimeClaimResponseV1,
   type ForegroundAgentRuntimeReleaseRequestV1,
 } from './agentRuntime/foregroundAdmissionContract';
 import {
   createProviderErrorV1,
+  normalizeSpawnSessionNonceResolution,
   RestartAllSessionRunnersRequestV1Schema,
   RestartAllSessionRunnersResultV1Schema,
   RestartSessionRunnerRequestV1Schema,
+  RestartSessionRunnerRequestV2Schema,
   RestartSessionRunnerResultV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
   SessionRunnerRuntimeStateV1Schema,
+  SessionRunnerRuntimeStatusV2Schema,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceId,
   type ConnectedServiceUsageSourceV1,
@@ -47,16 +57,20 @@ import {
   type RestartAllSessionRunnersRequestV1,
   type RestartAllSessionRunnersResultV1,
   type RestartSessionRunnerRequestV1,
+  type RestartSessionRunnerRequestV2,
   type RestartSessionRunnerResultV1,
   type SessionRunnerStatusGetRequestV1,
   type SessionRunnerRuntimeStateV1,
+  type SessionRunnerRuntimeStatusV2,
   type SessionRunnerRestartModeV1,
+  type SessionMetadataPublisherPreconditionV1,
   type SshTunnelEnsureRequest,
   type SshTunnelEnsureResponse,
   type SshTunnelListResponse,
   type SshTunnelMutationResponse,
   type SshTunnelProbeResponse,
   type SessionUsageLimitRecoveryResumePromptModeV1,
+  type SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import {
   StopSessionResultSchema,
@@ -68,6 +82,10 @@ import type {
 import type {
   ConnectedServiceDaemonAuthBridgeRefreshResult,
 } from './connectedServices/daemonAuthBridgeTypes';
+import type {
+  ConnectedServiceTurnLifecycleRequestBody,
+  ConnectedServiceTurnLifecycleResult,
+} from './connectedServices/connectedServiceTurnLifecycleContract';
 import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/runs/capabilityToken';
 import {
   CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
@@ -80,19 +98,32 @@ import {
 } from './connectedServices/runs/materializeContract';
 import { resolveComparableCliVersion } from './resolveComparableCliVersion';
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from './spawn/sessionWebhookTimeoutPolicy';
+import type {
+  PersistedTakeoverAdmissionPhase,
+  TakeoverAdmissionMode,
+} from './spawn/persistedTakeoverAdmission';
 import { buildDaemonControlHttpHeaders } from './controlHttp';
 import {
+  PluginDevelopmentSourceRootReviewSchema,
   PluginInstallationReviewSchema,
   type PluginChangeDecision,
   type PluginChangeDecisionResult,
+  type PluginChangeListResult,
+  type PluginChangePendingReviewResult,
   type PluginChangeRequest,
   type PluginChangeRequestResult,
+  type PluginChangeStatusRequest,
+  type PluginChangeStatusResult,
+  type PluginChangeTerminalResult,
+  type PluginPendingChangeEntry,
 } from '@/plugins/daemon/changeContract';
 import {
   PLUGIN_ACTION_EXECUTE_PATH,
   PLUGIN_CATALOG_READ_PATH,
   PLUGIN_CHANGE_DECISION_PATH,
+  PLUGIN_CHANGE_LIST_PATH,
   PLUGIN_CHANGE_REQUEST_PATH,
+  PLUGIN_CHANGE_STATUS_PATH,
 } from '@/plugins/daemon/controlRoutes';
 import type { PluginActionExecutionAttempt } from '@/plugins/projection/actions/execute';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
@@ -112,6 +143,7 @@ type DaemonPostAuthScope = 'daemon-control' | 'connected-service-run-materialize
 
 type DaemonPostOptions = DaemonControlRequestOptions & {
   authScope?: DaemonPostAuthScope;
+  authTokenOverride?: string;
 };
 
 const DEFAULT_DAEMON_HTTP_TIMEOUT_MS = 10_000;
@@ -355,9 +387,10 @@ async function daemonPost(path: string, body?: any, options: DaemonPostOptions =
 
   try {
     const timeout = resolveDaemonControlTimeoutMs(path, options);
-    const authToken = options.authScope === 'connected-service-run-materialize'
+    const authToken = options.authTokenOverride
+      ?? (options.authScope === 'connected-service-run-materialize'
         ? deriveConnectedServiceRunMaterializeToken(state.controlToken)
-        : state.controlToken;
+        : state.controlToken);
     const headers = buildDaemonControlHttpHeaders(authToken);
     const timeoutSignal = timeout === null ? null : AbortSignal.timeout(timeout);
     const requestSignal = options.signal && timeoutSignal
@@ -423,10 +456,13 @@ export async function notifyDaemonSessionStarted(
   sessionId: string,
   metadata: Metadata,
   options: DaemonControlRequestOptions & Readonly<{
+    sessionCreationOutcome?: SessionCreationOutcome;
     persistedTakeoverAdmission?: Readonly<{
+      mode: TakeoverAdmissionMode;
       operationId: string;
       attemptId: string;
-      phase: 'admit' | 'runtime_bound';
+      phase: PersistedTakeoverAdmissionPhase;
+      publisherPrecondition: SessionMetadataPublisherPreconditionV1;
     }>;
   }> = {},
 ): Promise<Readonly<{
@@ -435,12 +471,77 @@ export async function notifyDaemonSessionStarted(
   errorCode?: string;
   response?: unknown;
 }>> {
-  const { persistedTakeoverAdmission, ...requestOptions } = options;
+  const {
+    sessionCreationOutcome,
+    persistedTakeoverAdmission,
+    ...requestOptions
+  } = options;
   return await daemonPost('/session-started', {
     sessionId,
     metadata,
+    ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
     ...(persistedTakeoverAdmission ? { persistedTakeoverAdmission } : {}),
   }, requestOptions);
+}
+
+/**
+ * Reports a terminal pre-Session startup failure over the same authenticated
+ * callback as a successful Session report. No Session identity or metadata is
+ * available (or fabricated) on this branch.
+ */
+export async function notifyDaemonSessionStartupFailure(
+  input: Readonly<{
+    spawnNonce: string;
+    errorDetail: import('@happier-dev/protocol').SessionCreationTerminalSpawnErrorDetail;
+  }>,
+  options: DaemonControlRequestOptions = {},
+): Promise<Readonly<{
+  status?: 'ok';
+  error?: string;
+  errorCode?: string;
+  response?: unknown;
+}>> {
+  const spawnNonce = input.spawnNonce.trim();
+  if (!spawnNonce) {
+    return { error: 'Session startup failure correlation is unavailable' };
+  }
+  return await daemonPost('/session-started', {
+    result: 'failure',
+    spawnNonce,
+    errorDetail: input.errorDetail,
+  }, options);
+}
+
+function parseDaemonPluginChangeReviewResult(
+  result: unknown,
+): PluginChangePendingReviewResult | null | undefined {
+  if (!result || typeof result !== 'object') return undefined;
+  const record = result as Readonly<Record<string, unknown>>;
+  if (record.kind === 'sourceRootReviewRequired') {
+    const pendingChangeId = typeof record.pendingChangeId === 'string'
+      ? record.pendingChangeId.trim()
+      : '';
+    const review = PluginDevelopmentSourceRootReviewSchema.safeParse(record.review);
+    if (!pendingChangeId || !review.success) return null;
+    return {
+      kind: 'sourceRootReviewRequired',
+      pendingChangeId,
+      review: review.data,
+    };
+  }
+  if (record.kind === 'reviewRequired') {
+    const pendingChangeId = typeof record.pendingChangeId === 'string'
+      ? record.pendingChangeId.trim()
+      : '';
+    const review = PluginInstallationReviewSchema.safeParse(record.review);
+    if (!pendingChangeId || !review.success) return null;
+    return {
+      kind: 'reviewRequired',
+      pendingChangeId,
+      review: review.data,
+    };
+  }
+  return undefined;
 }
 
 export async function requestDaemonPluginChange(
@@ -454,20 +555,9 @@ export async function requestDaemonPluginChange(
   if (result && typeof result === 'object' && typeof result.error === 'string') {
     return { kind: 'unavailable', code: result.errorCode ?? 'daemon_unavailable' };
   }
-  if (result && typeof result === 'object' && result.kind === 'reviewRequired') {
-    const pendingChangeId = typeof result.pendingChangeId === 'string'
-      ? result.pendingChangeId.trim()
-      : '';
-    const review = PluginInstallationReviewSchema.safeParse(result.review);
-    if (!pendingChangeId || !review.success) {
-      return { kind: 'unavailable', code: 'daemon_invalid_response' };
-    }
-    return {
-      kind: 'reviewRequired',
-      pendingChangeId,
-      review: review.data,
-    };
-  }
+  const review = parseDaemonPluginChangeReviewResult(result);
+  if (review === null) return { kind: 'unavailable', code: 'daemon_invalid_response' };
+  if (review) return review;
   return result as PluginChangeRequestResult;
 }
 
@@ -482,7 +572,87 @@ export async function decideDaemonPluginChange(
   if (result && typeof result === 'object' && typeof result.error === 'string') {
     return { kind: 'unavailable', code: result.errorCode ?? 'daemon_unavailable' };
   }
+  const review = parseDaemonPluginChangeReviewResult(result);
+  if (review === null) return { kind: 'unavailable', code: 'daemon_invalid_response' };
+  if (review) return review;
   return result as PluginChangeDecisionResult;
+}
+
+export async function readDaemonPluginChangeStatus(
+  request: PluginChangeStatusRequest,
+  options: DaemonControlRequestOptions = {},
+): Promise<PluginChangeStatusResult> {
+  const result = await daemonPost(PLUGIN_CHANGE_STATUS_PATH, request, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? 30_000,
+  });
+  if (result && typeof result === 'object' && typeof result.error === 'string') {
+    return { kind: 'daemonUnavailable' };
+  }
+  const review = parseDaemonPluginChangeReviewResult(result);
+  if (review) return review;
+  if (!result || typeof result !== 'object') return { kind: 'daemonUnavailable' };
+  const record = result as Readonly<Record<string, unknown>>;
+  const pendingChangeId = typeof record.pendingChangeId === 'string'
+    ? record.pendingChangeId.trim()
+    : '';
+  const terminalResult = record.result;
+  if (record.kind === 'applying' && pendingChangeId) {
+    return { kind: 'applying', pendingChangeId };
+  }
+  if (
+    record.kind === 'terminal'
+    && pendingChangeId
+    && terminalResult
+    && typeof terminalResult === 'object'
+    && 'kind' in terminalResult
+    && typeof terminalResult.kind === 'string'
+  ) {
+    return {
+      kind: 'terminal',
+      pendingChangeId,
+      result: terminalResult as PluginChangeTerminalResult,
+    };
+  }
+  if (record.kind === 'expired' || record.kind === 'daemonUnavailable') {
+    return { kind: record.kind };
+  }
+  return { kind: 'daemonUnavailable' };
+}
+
+/**
+ * Enumerates the daemon's outstanding plugin-change decisions.
+ *
+ * A daemon that is not reachable holds no in-memory pending changes by
+ * definition, so an unreachable or malformed response is an empty listing
+ * rather than an error: there is nothing for a present user to decide.
+ */
+export async function listDaemonPluginChanges(
+  options: DaemonControlRequestOptions = {},
+): Promise<PluginChangeListResult> {
+  const result = await daemonPost(PLUGIN_CHANGE_LIST_PATH, {}, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? 15_000,
+  });
+  if (!result || typeof result !== 'object' || typeof result.error === 'string') {
+    return { changes: [] };
+  }
+  const changes = (result as Readonly<Record<string, unknown>>).changes;
+  if (!Array.isArray(changes)) return { changes: [] };
+  return {
+    changes: changes.flatMap((entry): readonly PluginPendingChangeEntry[] => {
+      const review = parseDaemonPluginChangeReviewResult(entry);
+      if (review) return [review];
+      if (!entry || typeof entry !== 'object') return [];
+      const record = entry as Readonly<Record<string, unknown>>;
+      const pendingChangeId = typeof record.pendingChangeId === 'string'
+        ? record.pendingChangeId.trim()
+        : '';
+      return record.kind === 'applying' && pendingChangeId
+        ? [{ kind: 'applying', pendingChangeId }]
+        : [];
+    }),
+  };
 }
 
 export async function requestDaemonPluginActionExecution(request: Readonly<{
@@ -490,6 +660,8 @@ export async function requestDaemonPluginActionExecution(request: Readonly<{
   input: unknown;
   surface: 'cli' | 'mcp' | 'agent';
   defaultSessionId?: string;
+  /** Host-stamped turn admission fence; never Action input or SDK surface. */
+  expectedContributorImmutableGenerationId?: string;
 }>, options: DaemonControlRequestOptions = {}): Promise<PluginActionExecutionAttempt> {
   const result = await daemonPost(PLUGIN_ACTION_EXECUTE_PATH, request, {
     ...options,
@@ -537,6 +709,23 @@ export async function readDaemonPluginCatalog(
     : parsed;
 }
 
+const DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_ENV_KEY =
+  'HAPPIER_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_HTTP_TIMEOUT_MS';
+// The daemon may consume a 60s safe-boundary wait and a separate 60s bounded
+// application window. The HTTP caller must leave enough transport/materialization
+// margin for that canonical operation to settle before timing out.
+const DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS = 180_000;
+
+export function resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return resolvePositiveIntValue(
+    env[DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_ENV_KEY],
+    DEFAULT_DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH_TIMEOUT_MS,
+    { min: 1_000, max: 300_000 },
+  );
+}
+
 export async function requestDaemonSessionConnectedServiceAuthSwitch(
   body: Readonly<{
     sessionId: string;
@@ -557,7 +746,10 @@ export async function requestDaemonSessionConnectedServiceAuthSwitch(
     ...(body.accountSettingsVersionHint === undefined
       ? {}
       : { accountSettingsVersionHint: body.accountSettingsVersionHint }),
-  }, options);
+  }, {
+    timeoutMs: resolveDaemonSessionConnectedServiceAuthSwitchTimeoutMs(),
+    ...options,
+  });
   if (result?.error) {
     throw new Error(String(result.error));
   }
@@ -621,15 +813,9 @@ export async function notifyDaemonConnectedServiceRuntimeAuthFailure(
 }
 
 export async function notifyDaemonConnectedServiceTurnLifecycle(
-  body: Readonly<{
-    sessionId: string;
-    turnId?: string;
-    event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
-    terminalStatus?: 'completed' | 'failed';
-    connectedServiceSelectionsEnvRaw?: string;
-  }>,
+  body: ConnectedServiceTurnLifecycleRequestBody,
   options: DaemonControlRequestOptions = {},
-): Promise<{ error?: string } | any> {
+): Promise<ConnectedServiceTurnLifecycleResult | { error?: string }> {
   const response = await daemonPost('/connected-service-turn-lifecycle', {
     sessionId: body.sessionId,
     ...(body.turnId ? { turnId: body.turnId } : {}),
@@ -637,6 +823,12 @@ export async function notifyDaemonConnectedServiceTurnLifecycle(
     ...(body.terminalStatus ? { terminalStatus: body.terminalStatus } : {}),
     ...(body.connectedServiceSelectionsEnvRaw
       ? { connectedServiceSelectionsEnvRaw: body.connectedServiceSelectionsEnvRaw }
+      : {}),
+    ...(body.requestedAction
+      ? { requestedAction: body.requestedAction }
+      : {}),
+    ...(body.activeTurnId !== undefined
+      ? { activeTurnId: body.activeTurnId }
       : {}),
   }, options);
   if (
@@ -679,6 +871,7 @@ export async function notifyDaemonProviderAccountUsageSnapshot(
     sessionId: string;
     snapshot: ProviderAccountUsageSnapshotV1;
     source?: ConnectedServiceUsageSourceV1 | null;
+    deriveCredentialFingerprintFromSource?: true;
     credentialFingerprint?: string | null;
     policyDisposition?: 'evidence_only';
   }>,
@@ -688,6 +881,9 @@ export async function notifyDaemonProviderAccountUsageSnapshot(
     sessionId: body.sessionId,
     snapshot: body.snapshot,
     ...(body.source ? { source: body.source } : {}),
+    ...(body.deriveCredentialFingerprintFromSource
+      ? { deriveCredentialFingerprintFromSource: true as const }
+      : {}),
     ...(body.credentialFingerprint !== undefined ? { credentialFingerprint: body.credentialFingerprint } : {}),
     ...(body.policyDisposition ? { policyDisposition: body.policyDisposition } : {}),
   }, options);
@@ -729,11 +925,7 @@ export async function spawnDaemonSession(
   return result;
 }
 
-export type DaemonSpawnSessionResolveStatus =
-  | { status: 'success'; sessionId: string }
-  | { status: 'pending' }
-  | { status: 'not_found' }
-  | { status: 'unsupported' };
+export type DaemonSpawnSessionResolveStatus = SpawnSessionNonceResolution;
 
 export async function resolveDaemonSpawnSessionByNonce(spawnNonce: string): Promise<DaemonSpawnSessionResolveStatus> {
   const normalizedSpawnNonce = spawnNonce.trim();
@@ -745,12 +937,27 @@ export async function resolveDaemonSpawnSessionByNonce(spawnNonce: string): Prom
     const status = (result as { status: string }).status;
     if (status === 'pending') return { status: 'pending' };
     if (status === 'not_found') return { status: 'not_found' };
+    if (status === 'error') {
+      const normalized = normalizeSpawnSessionNonceResolution(result);
+      return normalized.status === 'error' ? normalized : { status: 'not_found' };
+    }
     if (status === 'success') {
       const sessionId = typeof (result as { sessionId?: unknown }).sessionId === 'string'
         ? (result as { sessionId: string }).sessionId.trim()
         : '';
       if (sessionId) {
-        return { status: 'success', sessionId };
+        const normalized = normalizeSpawnSessionNonceResolution({
+          status: 'success',
+          sessionId,
+          sessionCreationOutcome: (result as { sessionCreationOutcome?: unknown }).sessionCreationOutcome,
+        });
+        return {
+          status: 'success',
+          sessionId,
+          ...(normalized.status === 'success' && normalized.sessionCreationOutcome
+            ? { sessionCreationOutcome: normalized.sessionCreationOutcome }
+            : {}),
+        };
       }
       return { status: 'not_found' };
     }
@@ -803,6 +1010,25 @@ export async function requestDaemonSessionRunnerRestart(
   return parsed.data;
 }
 
+export async function requestDaemonSessionRunnerRestartV2(
+  request: RestartSessionRunnerRequestV2,
+  options: DaemonControlRequestOptions = {},
+): Promise<RestartSessionRunnerResultV1> {
+  const body = RestartSessionRunnerRequestV2Schema.parse(request);
+  const result = await daemonPost('/session-runners/restart-v2', body, {
+    timeoutMs: resolveDaemonSessionRunnerRestartTimeoutMs(),
+    ...options,
+  });
+  if (result?.error) {
+    throw new Error(String(result.error));
+  }
+  const parsed = RestartSessionRunnerResultV1Schema.safeParse(result);
+  if (!parsed.success) {
+    throw new Error('Invalid daemon session runner V2 restart response');
+  }
+  return parsed.data;
+}
+
 export async function restartAllDaemonSessionRunners(
   request: RestartAllDaemonSessionRunnersRequest,
   options: DaemonControlRequestOptions = {},
@@ -838,60 +1064,20 @@ export async function getDaemonSessionRunnerStatus(
   return parsed.data;
 }
 
-export async function dispatchDaemonPluginLocalServicesBridgeRequest(
-  request: PluginLocalServicesBridgeControlRequestV1,
+export async function getDaemonSessionRunnerStatusV2(
+  request: GetDaemonSessionRunnerStatusRequest,
   options: DaemonControlRequestOptions = {},
-): Promise<PluginLocalServicesBridgeControlResponseV1> {
-  const result = await daemonPost('/local-services/plugin/bridge', request, options);
+): Promise<SessionRunnerRuntimeStatusV2> {
+  const body = SessionRunnerStatusGetRequestV1Schema.parse(request);
+  const result = await daemonPost('/session-runners/status-v2', body, options);
   if (result?.error) {
     throw new Error(String(result.error));
   }
-  return PluginLocalServicesBridgeControlResponseV1Schema.parse(result);
-}
-
-export async function dispatchDaemonAgentRuntimeBridgeRequest(
-  request: AgentRuntimeDaemonBridgeRequestV1,
-  options: DaemonControlRequestOptions = {},
-): Promise<AgentRuntimeDaemonBridgeResponseV1> {
-  const result = await daemonPost(AGENT_RUNTIME_DAEMON_BRIDGE_PATH, request, {
-    ...options,
-    timeoutMs: options.timeoutMs === undefined ? 300_000 : options.timeoutMs,
-  });
-  const direct = AgentRuntimeDaemonBridgeResponseV1Schema.safeParse(result);
-  if (direct.success) {
-    return direct.data;
+  const parsed = SessionRunnerRuntimeStatusV2Schema.safeParse(result);
+  if (!parsed.success) {
+    throw new Error('Invalid daemon session runner V2 status response');
   }
-  if (
-    result
-    && typeof result === 'object'
-    && !Array.isArray(result)
-    && typeof (result as Readonly<{ error?: unknown }>).error === 'string'
-    && Object.hasOwn(result, 'response')
-  ) {
-    const remote = AgentRuntimeDaemonBridgeResponseV1Schema.safeParse(
-      (result as Readonly<{ response?: unknown }>).response,
-    );
-    if (remote.success && remote.data.ok === false) {
-      return remote.data;
-    }
-  }
-  if (
-    result
-    && typeof result === 'object'
-    && !Array.isArray(result)
-    && typeof (result as Readonly<{ error?: unknown }>).error === 'string'
-    && !Object.hasOwn(result, 'response')
-  ) {
-    options.signal?.throwIfAborted();
-    return {
-      ok: false,
-      error: {
-        code: 'agent_runtime_daemon_bridge_unavailable',
-        message: 'Agent runtime daemon bridge is unavailable',
-      },
-    };
-  }
-  return AgentRuntimeDaemonBridgeResponseV1Schema.parse(result);
+  return parsed.data;
 }
 
 export async function admitDaemonForegroundAgentRuntime(
@@ -917,6 +1103,24 @@ export async function admitDaemonForegroundAgentRuntime(
       },
     ),
   };
+}
+
+export async function claimDaemonForegroundAgentRuntime(
+  request: ForegroundAgentRuntimeClaimRequestV1,
+  options: DaemonControlRequestOptions = {},
+): Promise<ForegroundAgentRuntimeClaimResponseV1> {
+  const body = ForegroundAgentRuntimeClaimRequestV1Schema.parse(request);
+  const result = await daemonPost(
+    FOREGROUND_AGENT_RUNTIME_CLAIM_PATH,
+    body,
+    {
+      ...options,
+      authTokenOverride: body.capability,
+      timeoutMs:
+        options.timeoutMs === undefined ? 300_000 : options.timeoutMs,
+    },
+  );
+  return ForegroundAgentRuntimeClaimResponseV1Schema.parse(result);
 }
 
 export async function releaseDaemonForegroundAgentRuntime(
@@ -1017,13 +1221,9 @@ export async function checkExecutionRunConnectedServicesGenerationCurrent(
 
 export async function stopDaemonHttp(params: {
   stopSessions?: boolean;
-  transferManagedLocalServices?: boolean;
 } = {}): Promise<void> {
   const result = await daemonPost('/stop', {
     ...(params.stopSessions === true ? { stopSessions: true } : {}),
-    ...(params.transferManagedLocalServices === true
-      ? { transferManagedLocalServices: true }
-      : {}),
   });
   if (result?.error) {
     throw new Error(result.error);
@@ -1093,66 +1293,256 @@ export async function isDaemonRunningCurrentlyInstalledHappyVersion(params: Read
 
 export async function cleanupDaemonState(): Promise<void> {
   try {
-    await clearDaemonState();
-    logger.debug('[DAEMON RUN] Daemon state file removed');
+    await clearReplaceableDaemonLock();
+    logger.debug('[DAEMON RUN] Replaceable daemon lock removed');
   } catch (error) {
-    logger.debug('[DAEMON RUN] Error cleaning up daemon metadata', error);
+    logger.debug('[DAEMON RUN] Error cleaning up daemon lock metadata', error);
   }
 }
 
-async function forceKillKnownDaemonPid(pid: number): Promise<void> {
-  const { findHappyProcessByPid } = await import('@/daemon/doctor');
-  const proc = await findHappyProcessByPid(pid);
-  const safeToKill = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
-  if (!safeToKill) {
-    logger.warn(`[CONTROL CLIENT] Refusing to force-kill PID ${pid} (does not look like a happier daemon process)`);
-    await cleanupDaemonState();
-    return;
+export type DaemonStopResult = Readonly<
+  | { status: 'not_running' }
+  | { status: 'stopped'; method: 'graceful' | 'force' }
+>;
+
+export type DaemonStopIncompleteReason =
+  | 'startup_in_progress'
+  | 'process_identity_unavailable'
+  | 'process_identity_unverified'
+  | 'graceful_stop_unconfirmed'
+  | 'force_kill_unconfirmed'
+  | 'control_client_failure';
+
+/** A daemon may still hold process-local custody, so callers must surface this result. */
+export class DaemonStopIncompleteError extends Error {
+  readonly code = 'daemon_stop_incomplete';
+  readonly reason: DaemonStopIncompleteReason;
+  readonly pid: number | undefined;
+
+  constructor(input: Readonly<{ reason: DaemonStopIncompleteReason; pid?: number }>) {
+    super(
+      input.pid === undefined
+        ? `Daemon stop is incomplete (${input.reason})`
+        : `Daemon stop is incomplete for PID ${input.pid} (${input.reason})`,
+    );
+    this.name = 'DaemonStopIncompleteError';
+    this.reason = input.reason;
+    this.pid = input.pid;
+  }
+}
+
+export function isDaemonStopIncompleteError(error: unknown): error is DaemonStopIncompleteError {
+  return (
+    error instanceof DaemonStopIncompleteError
+    || (
+      typeof error === 'object'
+      && error !== null
+      && (error as { code?: unknown }).code === 'daemon_stop_incomplete'
+    )
+  );
+}
+
+function isProcessNotFound(error: unknown): boolean {
+  const errno = error as NodeJS.ErrnoException | undefined;
+  return errno?.code === 'ESRCH' || /\bESRCH\b/u.test(errno?.message ?? '');
+}
+
+async function confirmedForceStop(pid: number): Promise<DaemonStopResult> {
+  await cleanupDaemonState();
+  logger.debug('Force killed daemon (SIGTERM/SIGKILL)');
+  return { status: 'stopped', method: 'force' };
+}
+
+async function readForceStopProcessIdentity(
+  pid: number,
+): Promise<NonNullable<Awaited<ReturnType<typeof readProcessIdentityByPid>>>> {
+  try {
+    const processIdentity = await readProcessIdentityByPid(pid);
+    if (processIdentity) return processIdentity;
+  } catch (error) {
+    logger.debug('[CONTROL CLIENT] Could not read process identity before force stop', error);
+  }
+  throw new DaemonStopIncompleteError({ reason: 'process_identity_unavailable', pid });
+}
+
+async function assertForceStopIdentity(
+  pid: number,
+  expectedState?: Awaited<ReturnType<typeof readDaemonState>>,
+): Promise<NonNullable<Awaited<ReturnType<typeof readDaemonState>>>> {
+  let recordedState: NonNullable<Awaited<ReturnType<typeof readDaemonState>>>;
+  let lockIdentity: Readonly<{ pid: number; processStartedAtMs: number }>;
+  try {
+    const state = expectedState ?? await readDaemonState();
+    if (!state || state.pid !== pid) {
+      throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
+    }
+    const currentState = await readDaemonState();
+    if (!currentState || !daemonStateMatchesOwner(currentState, state)) {
+      throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
+    }
+    const currentLockIdentity = readDaemonLockOwnerIdentity();
+    if (!currentLockIdentity || currentLockIdentity.pid !== pid) {
+      throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
+    }
+    recordedState = state;
+    lockIdentity = currentLockIdentity;
+  } catch (error) {
+    if (isDaemonStopIncompleteError(error)) throw error;
+    logger.debug('[CONTROL CLIENT] Could not read daemon lifecycle identity before force stop', error);
+    throw new DaemonStopIncompleteError({ reason: 'process_identity_unavailable', pid });
+  }
+
+  let proc: Awaited<ReturnType<typeof import('@/daemon/doctor').findHappyProcessByPid>>;
+  try {
+    const { findHappyProcessByPid } = await import('@/daemon/doctor');
+    proc = await findHappyProcessByPid(pid);
+  } catch (error) {
+    logger.debug('[CONTROL CLIENT] Could not verify daemon process identity before force stop', error);
+    throw new DaemonStopIncompleteError({ reason: 'process_identity_unavailable', pid });
+  }
+  const isDaemonProcess = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
+  const matchesRecordedScope = !!proc
+    && daemonProcessMatchesCurrentScope(proc, { requireRecordedScopeFacts: true });
+  // Windows' supported CIM inventory provides an exact PID, command and
+  // creation time but cannot read a process environment. State + structured
+  // lifecycle lock + the exact process birth below establish the current
+  // lifecycle owner there; the long-lived current-runtime command excludes
+  // arbitrary Happy processes and transient wrappers without inventing a
+  // parallel process registry.
+  const matchesWindowsExactRuntime = !!proc
+    && process.platform === 'win32'
+    // A present record remains authoritative: Windows may compensate only for
+    // its inventory's documented inability to read any process environment,
+    // never for a recorded mismatch or missing required scope fact.
+    && !proc.daemonOwnershipEnvironmentVariables
+    && isDaemonProcessForCurrentRuntimeRoot(proc, projectPath());
+  if (
+    !proc
+    || proc.pid !== pid
+    || !isDaemonProcess
+    || (!matchesRecordedScope && !matchesWindowsExactRuntime)
+  ) {
+    logger.warn(`[CONTROL CLIENT] Refusing to force-kill PID ${pid} (daemon identity does not match the active lifecycle owner)`);
+    throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
+  }
+
+  const processIdentity = await readForceStopProcessIdentity(pid);
+  const processStartedAtMs = processIdentity.processStartTimeMs;
+  if (
+    processIdentity.pid !== pid
+    || typeof processStartedAtMs !== 'number'
+    || !Number.isSafeInteger(processStartedAtMs)
+    || processStartedAtMs < 0
+    || !isDaemonCommandForCurrentRuntimeRoot(processIdentity.command, projectPath())
+    // The released v1 lock's birth timestamp was derived from process.uptime,
+    // so it remains a compatibility correlation only. The adjacent current
+    // identity recheck below is the exact process-birth authority for signals.
+    || Math.abs(processStartedAtMs - lockIdentity.processStartedAtMs) > 1_000
+  ) {
+    throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
   }
 
   try {
-    process.kill(pid, 'SIGTERM');
-    await waitForProcessDeath(pid, 2000).catch(() => {});
-    try {
-      process.kill(pid, 0);
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // already exited
+    const settledState = await readDaemonState();
+    const settledLockIdentity = readDaemonLockOwnerIdentity();
+    if (
+      !settledState
+      || !daemonStateMatchesOwner(settledState, recordedState)
+      || !settledLockIdentity
+      || settledLockIdentity.pid !== lockIdentity.pid
+      || settledLockIdentity.processStartedAtMs !== lockIdentity.processStartedAtMs
+    ) {
+      throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
     }
-    await cleanupDaemonState();
-    logger.debug('Force killed daemon (SIGTERM/SIGKILL)');
   } catch (error) {
-    logger.debug('Daemon already dead');
-    await cleanupDaemonState();
+    if (isDaemonStopIncompleteError(error)) throw error;
+    logger.debug('[CONTROL CLIENT] Daemon lifecycle identity changed before force stop', error);
+    throw new DaemonStopIncompleteError({ reason: 'process_identity_unavailable', pid });
+  }
+
+  // Keep the exact process-identity recheck as the final awaited boundary
+  // before a signal. It binds the current daemon command/type and birth to
+  // one live observation, rather than combining an earlier inventory command
+  // with a later, unrelated PID observation.
+  const recheckedProcessIdentity = await readForceStopProcessIdentity(pid);
+  if (
+    recheckedProcessIdentity.pid !== pid
+    || recheckedProcessIdentity.processStartTimeMs !== processStartedAtMs
+    || !isDaemonCommandForCurrentRuntimeRoot(recheckedProcessIdentity.command, projectPath())
+  ) {
+    throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
+  }
+  return recordedState;
+}
+
+async function forceKillKnownDaemonPid(
+  pid: number,
+  expectedState?: Awaited<ReturnType<typeof readDaemonState>>,
+): Promise<DaemonStopResult> {
+  const forceState = await assertForceStopIdentity(pid, expectedState);
+
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (error) {
+    if (isProcessNotFound(error)) {
+      return await confirmedForceStop(pid);
+    }
+    logger.debug('[CONTROL CLIENT] SIGTERM could not stop daemon', error);
+    throw new DaemonStopIncompleteError({ reason: 'force_kill_unconfirmed', pid });
+  }
+
+  try {
+    await waitForProcessDeath(pid, 2000);
+    return await confirmedForceStop(pid);
+  } catch (error) {
+    logger.debug('[CONTROL CLIENT] Daemon remained live after SIGTERM; escalating to SIGKILL', error);
+  }
+
+  await assertForceStopIdentity(pid, forceState);
+
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if (isProcessNotFound(error)) {
+      return await confirmedForceStop(pid);
+    }
+    logger.debug('[CONTROL CLIENT] SIGKILL could not stop daemon', error);
+    throw new DaemonStopIncompleteError({ reason: 'force_kill_unconfirmed', pid });
+  }
+
+  try {
+    await waitForProcessDeath(pid, 2000);
+    return await confirmedForceStop(pid);
+  } catch (error) {
+    logger.debug('[CONTROL CLIENT] Daemon remained live after SIGKILL', error);
+    throw new DaemonStopIncompleteError({ reason: 'force_kill_unconfirmed', pid });
   }
 }
 
-export async function forceStopKnownDaemonPid(pid: number): Promise<void> {
-  await forceKillKnownDaemonPid(pid);
+export async function forceStopKnownDaemonPid(pid: number): Promise<DaemonStopResult> {
+  return await forceKillKnownDaemonPid(pid);
 }
 
 export async function stopDaemon(params: {
   stopSessions?: boolean;
-  transferManagedLocalServices?: boolean;
-} = {}) {
+} = {}): Promise<DaemonStopResult> {
   try {
     const state = await readDaemonState();
     if (!state) {
       const lockStartup = await inspectDaemonLockStartupProgress();
       if (lockStartup) {
         logger.debug('[CONTROL CLIENT] Daemon is still starting without state; refusing to stop startup lock PID');
-        return;
+        throw new DaemonStopIncompleteError({ reason: 'startup_in_progress', pid: lockStartup.pid });
       }
 
       const lockPid = readDaemonLockPid();
       if (!lockPid) {
         logger.debug('No daemon state found');
-        return;
+        return { status: 'not_running' };
       }
 
       logger.debug(`No daemon state found; falling back to daemon lock PID ${lockPid}`);
-      await forceKillKnownDaemonPid(lockPid);
-      return;
+      return await forceKillKnownDaemonPid(lockPid);
     }
 
     logger.debug(`Stopping daemon with PID ${state.pid}`);
@@ -1161,21 +1551,22 @@ export async function stopDaemon(params: {
     try {
       await stopDaemonHttp({
         stopSessions: params.stopSessions === true,
-        transferManagedLocalServices: params.transferManagedLocalServices === true,
       });
 
       // Wait for daemon to die
       await waitForProcessDeath(state.pid, resolveDaemonStopWaitForDeathTimeoutMs());
       await cleanupDaemonState();
       logger.debug('Daemon stopped gracefully via HTTP');
-      return;
+      return { status: 'stopped', method: 'graceful' };
     } catch (error) {
       logger.debug('HTTP stop failed, will force kill', error);
     }
 
-    await forceKillKnownDaemonPid(state.pid);
+    return await forceKillKnownDaemonPid(state.pid, state);
   } catch (error) {
+    if (isDaemonStopIncompleteError(error)) throw error;
     logger.debug('Error stopping daemon', error);
+    throw new DaemonStopIncompleteError({ reason: 'control_client_failure' });
   }
 }
 
@@ -1185,8 +1576,9 @@ async function waitForProcessDeath(pid: number, timeout: number): Promise<void> 
     try {
       process.kill(pid, 0);
       await new Promise(resolve => setTimeout(resolve, 100));
-    } catch {
-      return; // Process is dead
+    } catch (error) {
+      if (isProcessNotFound(error)) return;
+      throw error;
     }
   }
   throw new Error('Process did not die within timeout');

@@ -225,6 +225,42 @@ type InFlightEntry = Readonly<{
   state: { subscribers: number; settled: boolean };
 }>;
 
+const authorizationCancelled = Symbol('provider-model-load-authorization-cancelled');
+
+/**
+ * Authorization is an existing boundary without a cancellation parameter.
+ * Once an operation is locally cancelled, stop waiting for that boundary and
+ * ignore any late authorization result rather than letting it start work.
+ */
+function awaitAuthorizationOrCancellation<T>(
+  authorization: Promise<T>,
+  signal: AbortSignal,
+): Promise<T | typeof authorizationCancelled> {
+  if (signal.aborted) {
+    void authorization.catch(() => undefined);
+    return Promise.resolve(authorizationCancelled);
+  }
+  return new Promise<T | typeof authorizationCancelled>((resolve, reject) => {
+    let settled = false;
+    const finish = (result: T | typeof authorizationCancelled) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      resolve(result);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      reject(error);
+    };
+    const onAbort = () => finish(authorizationCancelled);
+    signal.addEventListener('abort', onAbort, { once: true });
+    authorization.then((result) => finish(result), fail);
+    if (signal.aborted) onAbort();
+  });
+}
+
 function cancelledResult(): ProviderModelLoadResult {
   return { status: 'cancelled', providerMayContinue: true };
 }
@@ -279,10 +315,9 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
   dependencies: ProviderModelLoadServiceDependencies<TTicket, TCredentialRef>,
 ) {
   const inFlight = new Map<string, InFlightEntry>();
-  const pendingAuthorization = new Map<string, Set<AbortController>>();
   let nextRefreshFrontier = 0;
 
-  function pendingAuthorizationKey(
+  function logicalOperationKey(
     request: Omit<ProviderModelLoadRequest, 'signal'>,
   ): string {
     return JSON.stringify([
@@ -290,6 +325,36 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
       request.connectionId,
       request.modelId,
     ]);
+  }
+
+  async function authorizeAndRunLoad(input: Readonly<{
+    request: Omit<ProviderModelLoadRequest, 'signal'>;
+    signal: AbortSignal;
+  }>): Promise<ProviderModelLoadResult> {
+    const { request, signal } = input;
+    if (signal.aborted) return cancelledResult();
+    const resolved = await awaitAuthorizationOrCancellation(
+      dependencies.authorization.authorize(request),
+      signal,
+    );
+    if (resolved === authorizationCancelled || signal.aborted) return cancelledResult();
+    if (resolved.status === 'error') return { status: 'error', error: resolved.error };
+    if (resolved.status === 'unavailable') {
+      return { status: 'not_supported', reason: 'descriptor_absent' };
+    }
+    const authorization = resolved.authorization;
+    if (authorization.source !== 'trusted_local_contribution') {
+      return { status: 'not_supported', reason: 'descriptor_absent' };
+    }
+    const parsedDescriptor = ProviderModelLoadDescriptorV1Schema.parse(authorization.descriptor);
+    if (parsedDescriptor.endpointTemplateId !== authorization.endpoint.endpointTemplateId) {
+      return { status: 'not_supported', reason: 'descriptor_absent' };
+    }
+    return runLoad({
+      request,
+      authorization: { ...authorization, descriptor: parsedDescriptor },
+      signal,
+    });
   }
 
   async function runLoad(input: Readonly<{
@@ -442,50 +507,7 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
       if (!dependencies.isFeatureEnabled()) return { status: 'not_supported', reason: 'feature_disabled' };
       if (input.signal?.aborted) return cancelledResult();
       const request = normalizeRequest(input);
-      const authorizationController = new AbortController();
-      const pendingKey = pendingAuthorizationKey(request);
-      const pendingControllers =
-        pendingAuthorization.get(pendingKey) ?? new Set<AbortController>();
-      pendingControllers.add(authorizationController);
-      pendingAuthorization.set(pendingKey, pendingControllers);
-      const onInputAbort = () => authorizationController.abort();
-      input.signal?.addEventListener('abort', onInputAbort, { once: true });
-      let resolved: Awaited<
-        ReturnType<typeof dependencies.authorization.authorize>
-      >;
-      try {
-        resolved = await dependencies.authorization.authorize(request);
-      } finally {
-        input.signal?.removeEventListener('abort', onInputAbort);
-        pendingControllers.delete(authorizationController);
-        if (pendingControllers.size === 0
-          && pendingAuthorization.get(pendingKey) === pendingControllers) {
-          pendingAuthorization.delete(pendingKey);
-        }
-      }
-      if (authorizationController.signal.aborted || input.signal?.aborted) {
-        return cancelledResult();
-      }
-      if (resolved.status === 'error') return { status: 'error', error: resolved.error };
-      if (resolved.status === 'unavailable') {
-        return { status: 'not_supported', reason: 'descriptor_absent' };
-      }
-      if (input.signal?.aborted) return cancelledResult();
-      const authorization = resolved.authorization;
-      if (authorization.source !== 'trusted_local_contribution') {
-        return { status: 'not_supported', reason: 'descriptor_absent' };
-      }
-      const parsedDescriptor = ProviderModelLoadDescriptorV1Schema.parse(authorization.descriptor);
-      if (parsedDescriptor.endpointTemplateId !== authorization.endpoint.endpointTemplateId) {
-        return { status: 'not_supported', reason: 'descriptor_absent' };
-      }
-      const verifiedAuthorization = { ...authorization, descriptor: parsedDescriptor };
-      const key = JSON.stringify([
-        request.machineId,
-        request.connectionId,
-        authorization.endpoint.endpointFingerprint,
-        request.modelId,
-      ]);
+      const key = logicalOperationKey(request);
       let entry = inFlight.get(key);
       if (entry?.controller.signal.aborted) {
         if (inFlight.get(key) === entry) inFlight.delete(key);
@@ -494,41 +516,21 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
       if (!entry) {
         const controller = new AbortController();
         const state = { subscribers: 0, settled: false };
-        const promise = runLoad({ request, authorization: verifiedAuthorization, signal: controller.signal });
-        entry = { controller, promise, state };
-        inFlight.set(key, entry);
-        void promise.finally(() => {
+        const promise = authorizeAndRunLoad({ request, signal: controller.signal });
+        const createdEntry = { controller, promise, state };
+        inFlight.set(key, createdEntry);
+        const settle = () => {
           state.settled = true;
-          if (inFlight.get(key) === entry) inFlight.delete(key);
-        });
+          if (inFlight.get(key) === createdEntry) inFlight.delete(key);
+        };
+        void promise.then(settle, settle);
+        entry = createdEntry;
       }
       return subscribe(entry, input.signal);
     },
     async cancelNow(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult> {
-      if (!dependencies.isFeatureEnabled()) return { status: 'not_supported', reason: 'feature_disabled' };
       const request = normalizeRequest(input);
-      pendingAuthorization.get(pendingAuthorizationKey(request))
-        ?.forEach((controller) => controller.abort());
-      const resolved = await dependencies.authorization.authorize(request);
-      if (resolved.status === 'error') return { status: 'error', error: resolved.error };
-      if (resolved.status === 'unavailable') {
-        return { status: 'not_supported', reason: 'descriptor_absent' };
-      }
-      const authorization = resolved.authorization;
-      if (authorization.source !== 'trusted_local_contribution') {
-        return { status: 'not_supported', reason: 'descriptor_absent' };
-      }
-      const parsedDescriptor = ProviderModelLoadDescriptorV1Schema.parse(authorization.descriptor);
-      if (parsedDescriptor.endpointTemplateId !== authorization.endpoint.endpointTemplateId) {
-        return { status: 'not_supported', reason: 'descriptor_absent' };
-      }
-      const key = JSON.stringify([
-        request.machineId,
-        request.connectionId,
-        authorization.endpoint.endpointFingerprint,
-        request.modelId,
-      ]);
-      inFlight.get(key)?.controller.abort();
+      inFlight.get(logicalOperationKey(request))?.controller.abort();
       return cancelledResult();
     },
   });

@@ -21,8 +21,13 @@ import { createCliCapabilitiesService } from './capabilities';
 const loadMarketplaceIndexSourceMock = vi.hoisted(() => vi.fn());
 const decideDaemonPluginChangeMock = vi.hoisted(() => vi.fn());
 const requestDaemonPluginChangeMock = vi.hoisted(() => vi.fn());
+const requestDaemonPluginDevelopmentPreflightMock = vi.hoisted(() => vi.fn());
+const listDaemonPluginChangesMock = vi.hoisted(() => vi.fn());
+const readDaemonPluginChangeStatusMock = vi.hoisted(() => vi.fn());
 const ensureDaemonRunningMock = vi.hoisted(() => vi.fn(async () => undefined));
 const promptConfirmYesNoMock = vi.hoisted(() => vi.fn());
+const runPluginAuthorToolchainMock = vi.hoisted(() => vi.fn());
+const runPluginUiArtifactBuildMock = vi.hoisted(() => vi.fn());
 
 function createMarketplaceSnapshot(params: Readonly<{
     source: Readonly<{
@@ -115,7 +120,26 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/daemon/controlClient')>()),
     decideDaemonPluginChange: (...args: unknown[]) => decideDaemonPluginChangeMock(...args),
     requestDaemonPluginChange: (...args: unknown[]) => requestDaemonPluginChangeMock(...args),
+    requestDaemonPluginDevelopmentPreflight: (...args: unknown[]) => (
+        requestDaemonPluginDevelopmentPreflightMock(...args)
+    ),
+    listDaemonPluginChanges: (...args: unknown[]) => listDaemonPluginChangesMock(...args),
+    readDaemonPluginChangeStatus: (...args: unknown[]) => readDaemonPluginChangeStatusMock(...args),
 }));
+vi.mock('@/plugins/authoring/toolchain', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/plugins/authoring/toolchain')>();
+    runPluginAuthorToolchainMock.mockImplementation(original.runPluginAuthorToolchain);
+    runPluginUiArtifactBuildMock.mockImplementation(original.runPluginUiArtifactBuild);
+    return {
+        ...original,
+        runPluginAuthorToolchain: (...args: Parameters<typeof original.runPluginAuthorToolchain>) => (
+            runPluginAuthorToolchainMock(...args)
+        ),
+        runPluginUiArtifactBuild: (...args: Parameters<typeof original.runPluginUiArtifactBuild>) => (
+            runPluginUiArtifactBuildMock(...args)
+        ),
+    };
+});
 vi.mock('@/daemon/ensureDaemon', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/daemon/ensureDaemon')>()),
     ensureDaemonRunningForSessionCommand: () => ensureDaemonRunningMock(),
@@ -231,8 +255,15 @@ describe('createCliCapabilitiesService tool.plugins', () => {
         loadMarketplaceIndexSourceMock.mockReset();
         decideDaemonPluginChangeMock.mockReset();
         requestDaemonPluginChangeMock.mockReset();
+        requestDaemonPluginDevelopmentPreflightMock.mockReset();
+        listDaemonPluginChangesMock.mockReset();
+        listDaemonPluginChangesMock.mockResolvedValue({ changes: [] });
+        readDaemonPluginChangeStatusMock.mockReset();
+        readDaemonPluginChangeStatusMock.mockResolvedValue({ kind: 'expired' });
         ensureDaemonRunningMock.mockClear();
         promptConfirmYesNoMock.mockReset();
+        runPluginAuthorToolchainMock.mockClear();
+        runPluginUiArtifactBuildMock.mockClear();
     });
 
     it('returns desired and applied generation from the canonical daemon catalog in capability detect', async () => {
@@ -240,6 +271,7 @@ describe('createCliCapabilitiesService tool.plugins', () => {
             pluginId: 'acme.current',
             desiredGeneration: 'generation-2',
             appliedGeneration: 'generation-2',
+            admittedIntegrity: null,
             title: 'Current',
             description: null,
             version: '2.0.0',
@@ -255,7 +287,6 @@ describe('createCliCapabilitiesService tool.plugins', () => {
             install: { mode: 'link', manifestVersion: '2.0.0' },
             compatibility: { status: 'compatible', diagnostics: [] },
             manifestPath: '/plugins/acme.current/.happier-plugin/plugin.json',
-            manifestDigest: null,
             manifest: null,
             contributionIntrospection: {
                 version: 1,
@@ -284,6 +315,58 @@ describe('createCliCapabilitiesService tool.plugins', () => {
                     },
                 },
             },
+        });
+    });
+
+    it('projects the daemon\'s outstanding decisions and rejoins one by its issued id', async () => {
+        // A change an Agent prepared has no caller left holding the issued id.
+        // The capability that already carries plugin truth to the app carries
+        // the outstanding decisions too, and the by-id rejoin is what the app
+        // re-reads before asking a user to approve anything.
+        const sourceRootReview = {
+            kind: 'sourceRootReviewRequired',
+            pendingChangeId: 'pending-agent-1',
+            review: { source: { kind: 'path', locator: '/workspace/plugins/agent-authored' } },
+        } as const;
+        listDaemonPluginChangesMock.mockResolvedValue({ changes: [sourceRootReview] });
+        readDaemonPluginChangeStatusMock.mockResolvedValue({ kind: 'applying', pendingChangeId: 'pending-agent-1' });
+        const service = await createCliCapabilitiesService({
+            readPluginCatalog: async () => Object.freeze([]),
+        });
+
+        await expect(service.detect({
+            requests: [{ id: 'tool.plugins' }],
+        })).resolves.toMatchObject({
+            results: {
+                'tool.plugins': { ok: true, data: { pendingChanges: [sourceRootReview] } },
+            },
+        });
+
+        await expect(service.invoke({
+            id: 'tool.plugins',
+            method: 'changeStatus',
+            params: { pendingChangeId: 'pending-agent-1' },
+        })).resolves.toEqual({
+            ok: true,
+            result: {
+                action: 'changeStatus',
+                pendingChangeId: 'pending-agent-1',
+                status: { kind: 'applying', pendingChangeId: 'pending-agent-1' },
+            },
+        });
+        expect(readDaemonPluginChangeStatusMock).toHaveBeenCalledWith({ pendingChangeId: 'pending-agent-1' });
+
+        // Rejoining is a read: it never creates a candidate and never decides.
+        expect(requestDaemonPluginChangeMock).not.toHaveBeenCalled();
+        expect(decideDaemonPluginChangeMock).not.toHaveBeenCalled();
+
+        await expect(service.invoke({
+            id: 'tool.plugins',
+            method: 'changeStatus',
+            params: {},
+        })).resolves.toEqual({
+            ok: false,
+            error: { message: 'pendingChangeId is required', code: 'plugin_change_missing' },
         });
     });
 
@@ -622,7 +705,6 @@ describe('createCliCapabilitiesService tool.plugins', () => {
                 targetDir: pluginRoot,
                 pluginId: 'acme.development-actions',
                 displayName: 'Development Actions',
-                pluginSdkVersion: '0.1.0-development-actions.test',
             });
             expect(scaffold.ok).toBe(true);
             if (!scaffold.ok) return;
@@ -704,10 +786,13 @@ describe('createCliCapabilitiesService tool.plugins', () => {
                     action: 'create',
                     pluginId: 'acme.created-from-settings',
                     sourceRootPath: createdRoot,
-                    manifestPath: join(createdRoot, '.happier-plugin', 'plugin.json'),
+                    sourceEntryPath: join(createdRoot, 'src', 'index.ts'),
                 },
             });
-            await expect(readFile(join(createdRoot, '.happier-plugin', 'plugin.json'), 'utf8')).resolves.toContain('acme.created-from-settings');
+            await expect(readFile(join(createdRoot, '.happier-plugin', 'plugin.json'), 'utf8'))
+                .rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(readFile(join(createdRoot, 'src', 'index.ts'), 'utf8'))
+                .resolves.toContain("id: \"acme.created-from-settings\"");
 
             const testResult = await service.invoke({
                 id: 'tool.plugins',
@@ -733,6 +818,283 @@ describe('createCliCapabilitiesService tool.plugins', () => {
                     archivePath: expect.stringMatching(/\.tgz$/u),
                 },
             });
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await rm(parent, { recursive: true, force: true });
+            await removeTempDir(home);
+        }
+    });
+    it('forwards the canonical scaffold UI mode through the daemon create capability', async () => {
+        // `PluginScaffoldUiModeSchema` is the single vocabulary owner the CLI
+        // `--ui` flag and the `plugins.scaffold` action input both resolve
+        // through. The daemon capability is the third caller of the same
+        // scaffold; dropping the mode here makes every plugin created from the
+        // app a non-UI plugin, and no in-app step can repair that afterwards.
+        const home = await createTempDir('happier-cli-capabilities-scaffold-ui-');
+        const parent = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-ui-'));
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+        try {
+            const service = await createCliCapabilitiesService();
+            const createdUiRoot = join(parent, 'created-ui-plugin');
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'create',
+                params: {
+                    targetDir: createdUiRoot,
+                    pluginId: 'acme.created-ui-from-settings',
+                    displayName: 'Created UI from Settings',
+                    ui: 'reactNative',
+                },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'create',
+                    pluginId: 'acme.created-ui-from-settings',
+                    sourceRootPath: createdUiRoot,
+                    uiEntryPath: join(createdUiRoot, 'src', 'ui', 'renderSurface.tsx'),
+                },
+            });
+            await expect(readFile(join(createdUiRoot, 'src', 'ui', 'renderSurface.tsx'), 'utf8'))
+                .resolves.toContain('renderSurface');
+            await expect(readFile(join(createdUiRoot, 'src', 'index.ts'), 'utf8'))
+                .resolves.toContain("kind: 'reactNative'");
+
+            // An unrecognised mode is rejected rather than silently scaffolding
+            // a plugin without the UI the caller asked for.
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'create',
+                params: {
+                    targetDir: join(parent, 'created-bogus-ui-plugin'),
+                    pluginId: 'acme.created-bogus-ui',
+                    displayName: 'Created bogus UI',
+                    ui: 'not-a-renderer',
+                },
+            })).resolves.toMatchObject({
+                ok: false,
+                error: { code: 'plugin_scaffold_invalid_input' },
+            });
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await rm(parent, { recursive: true, force: true });
+            await removeTempDir(home);
+        }
+    });
+
+    it('returns the source-root review to the client instead of approving a local development source itself', async () => {
+        const home = await createTempDir('happier-cli-capabilities-develop-');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+        envScope.patch({ HAPPIER_HOME_DIR: home });
+        reloadConfiguration();
+        const sourceRootPath = join(home, 'workspace', 'acme-plugin');
+        requestDaemonPluginDevelopmentPreflightMock.mockResolvedValue({
+            kind: 'sourceRootReviewRequired',
+            pendingChangeId: 'pending-source-root',
+            review: { source: { kind: 'path', locator: sourceRootPath } },
+        });
+        requestDaemonPluginChangeMock.mockResolvedValue({
+            kind: 'sourceRootReviewRequired',
+            pendingChangeId: 'pending-source-root',
+            review: { source: { kind: 'path', locator: sourceRootPath } },
+        });
+
+        try {
+            const service = await createCliCapabilitiesService();
+            const described = service.describe() as CapabilitiesDescribeResponse;
+            expect(described.capabilities.find((capability) => capability.id === 'tool.plugins')?.methods)
+                .toEqual(expect.objectContaining({ develop: expect.any(Object) }));
+
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'develop',
+                params: { sourceRootPath },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'develop',
+                    sourceRootPath,
+                    change: {
+                        kind: 'sourceRootReviewRequired',
+                        pendingChangeId: 'pending-source-root',
+                        review: { source: { kind: 'path', locator: sourceRootPath } },
+                    },
+                },
+            });
+            // The daemon's preflight is the trust owner. An untrusted root is
+            // handed back for a present-user decision before the CLI inspects,
+            // installs dependencies for, or builds source bytes.
+            expect(requestDaemonPluginDevelopmentPreflightMock).toHaveBeenCalledWith({
+                sourceRootPath,
+            });
+            expect(requestDaemonPluginChangeMock).not.toHaveBeenCalled();
+            expect(runPluginAuthorToolchainMock).not.toHaveBeenCalled();
+            expect(runPluginUiArtifactBuildMock).not.toHaveBeenCalled();
+            expect(promptConfirmYesNoMock).not.toHaveBeenCalled();
+            expect(decideDaemonPluginChangeMock).not.toHaveBeenCalled();
+
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'develop',
+                params: {},
+            })).resolves.toMatchObject({
+                ok: false,
+                error: { code: 'plugin_source_missing' },
+            });
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await removeTempDir(home);
+        }
+    });
+
+    it('runs a preflight-authorized remote development source through the one prepare-build-submit cycle', async () => {
+        const home = await createTempDir('happier-cli-capabilities-develop-authorized-');
+        const parent = await mkdtemp(join(tmpdir(), 'happier-plugin-capabilities-develop-authorized-'));
+        const pluginRoot = join(parent, 'plugin');
+        const pluginId = 'acme.capabilities-develop';
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+
+        try {
+            const scaffold = await scaffoldLocalPlugin({
+                targetDir: pluginRoot,
+                pluginId,
+                displayName: 'Capabilities develop',
+            });
+            expect(scaffold.ok).toBe(true);
+            if (!scaffold.ok) return;
+
+            requestDaemonPluginDevelopmentPreflightMock.mockResolvedValue({ kind: 'authorized' });
+            runPluginAuthorToolchainMock.mockResolvedValueOnce({
+                ok: true,
+                operation: 'install',
+                projectRoot: pluginRoot,
+            });
+            runPluginUiArtifactBuildMock.mockResolvedValueOnce({
+                ok: true,
+                projectRoot: pluginRoot,
+                built: true,
+            });
+            requestDaemonPluginChangeMock.mockResolvedValueOnce({
+                kind: 'committed',
+                pluginId,
+                desiredGeneration: 'generation-1',
+                appliedGeneration: 'generation-1',
+                pendingSurfaces: [],
+            });
+
+            const service = await createCliCapabilitiesService();
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'develop',
+                params: { sourceRootPath: pluginRoot, pluginId },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'develop',
+                    sourceRootPath: pluginRoot,
+                    change: { kind: 'committed', pluginId },
+                },
+            });
+
+            expect(requestDaemonPluginDevelopmentPreflightMock).toHaveBeenCalledWith({
+                sourceRootPath: pluginRoot,
+                pluginId,
+            });
+            expect(runPluginAuthorToolchainMock).toHaveBeenCalledWith({
+                operation: 'install',
+                projectRoot: pluginRoot,
+            });
+            expect(runPluginUiArtifactBuildMock).toHaveBeenCalledWith({ projectRoot: pluginRoot });
+            expect(requestDaemonPluginChangeMock).toHaveBeenCalledWith({
+                kind: 'development',
+                sourceRootPath: pluginRoot,
+                pluginId,
+            });
+            expect(requestDaemonPluginDevelopmentPreflightMock.mock.invocationCallOrder[0]).toBeLessThan(
+                runPluginAuthorToolchainMock.mock.invocationCallOrder[0]!,
+            );
+            expect(runPluginAuthorToolchainMock.mock.invocationCallOrder[0]).toBeLessThan(
+                runPluginUiArtifactBuildMock.mock.invocationCallOrder[0]!,
+            );
+            expect(runPluginUiArtifactBuildMock.mock.invocationCallOrder[0]).toBeLessThan(
+                requestDaemonPluginChangeMock.mock.invocationCallOrder[0]!,
+            );
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await rm(parent, { recursive: true, force: true });
+            await removeTempDir(home);
+        }
+    });
+
+    it('fails closed when source trust is revoked after preflight and before final submission', async () => {
+        const home = await createTempDir('happier-cli-capabilities-develop-revoked-');
+        const parent = await mkdtemp(join(tmpdir(), 'happier-plugin-capabilities-develop-revoked-'));
+        const pluginRoot = join(parent, 'plugin');
+        const pluginId = 'acme.capabilities-revoked';
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+
+        try {
+            const scaffold = await scaffoldLocalPlugin({
+                targetDir: pluginRoot,
+                pluginId,
+                displayName: 'Capabilities revoked',
+            });
+            expect(scaffold.ok).toBe(true);
+            if (!scaffold.ok) return;
+
+            requestDaemonPluginDevelopmentPreflightMock.mockResolvedValue({ kind: 'authorized' });
+            runPluginAuthorToolchainMock.mockResolvedValueOnce({
+                ok: true,
+                operation: 'install',
+                projectRoot: pluginRoot,
+            });
+            runPluginUiArtifactBuildMock.mockResolvedValueOnce({
+                ok: true,
+                projectRoot: pluginRoot,
+                built: true,
+            });
+            requestDaemonPluginChangeMock.mockResolvedValueOnce({
+                kind: 'sourceRootReviewRequired',
+                pendingChangeId: 'pending-revoked-root',
+                review: { source: { kind: 'path', locator: pluginRoot } },
+            });
+
+            const service = await createCliCapabilitiesService();
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'develop',
+                params: { sourceRootPath: pluginRoot, pluginId },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'develop',
+                    sourceRootPath: pluginRoot,
+                    change: {
+                        kind: 'sourceRootReviewRequired',
+                        pendingChangeId: 'pending-revoked-root',
+                    },
+                },
+            });
+
+            expect(requestDaemonPluginDevelopmentPreflightMock).toHaveBeenCalledTimes(1);
+            expect(runPluginAuthorToolchainMock).toHaveBeenCalledTimes(1);
+            expect(runPluginUiArtifactBuildMock).toHaveBeenCalledTimes(1);
+            expect(requestDaemonPluginChangeMock).toHaveBeenCalledWith({
+                kind: 'development',
+                sourceRootPath: pluginRoot,
+                pluginId,
+            });
+            expect(promptConfirmYesNoMock).not.toHaveBeenCalled();
+            expect(decideDaemonPluginChangeMock).not.toHaveBeenCalled();
         } finally {
             envScope.restore();
             reloadConfiguration();

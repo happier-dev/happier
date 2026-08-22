@@ -12,12 +12,17 @@ import {
   ExecutionRunTurnStreamReadRequestSchema,
   ExecutionRunTurnStreamStartRequestSchema,
   convertBackendTargetRefV2ToV1,
+  normalizeExecutionRunWaitPollIntervalMs,
+  normalizeExecutionRunWaitTimeoutMs,
+  readExecutionRunStartRunCreation,
   type ActionExecutorDeps,
   type ActionExecuteResult,
   type PluginPermissionGrantRequestActionInputV1,
   isRuntimeActionIdV1,
   type RuntimeActionExecute,
   type RuntimeActionIdV1,
+  waitForExecutionRunTerminal,
+  withExecutionRunStartFailureDetails,
 } from '@happier-dev/protocol';
 
 import { createSimulatorDaemonRuntimeActionExecutor } from '@/daemon/devices/simulator/actions/runtimeActionExecutor';
@@ -54,6 +59,7 @@ import {
 import type { ExecutionRunHostBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
 import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import { VoiceAgentError } from '@/agent/voice/agent/VoiceAgentManager';
+import { resolveReviewExecutionRunIntentInput } from '@/agent/reviews/resolveReviewExecutionRunIntentInput';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { isActionApprovalRequiredByEnv, isActionEnabledByEnv } from '@/settings/actionsSettings';
@@ -101,7 +107,8 @@ type ExecutionRunRpcActionDepsParams = Readonly<{
 }>;
 
 type ExecutionRunRpcActionContext = Readonly<{
-  sessionId: string;
+  /** The handler's fixed authoritative scope; null is the daemon detached scope. */
+  sessionId: string | null;
   cwd: string;
   serverUrl?: string;
   budgetRegistry?: unknown;
@@ -136,6 +143,10 @@ function invalidParams(): ExecutionRunRpcFailure {
 
 function executionRunNotFound(): ExecutionRunRpcFailure {
   return { ok: false, error: 'Not found', errorCode: 'execution_run_not_found' };
+}
+
+function executionRunScopeMismatch(): ExecutionRunRpcFailure {
+  return { ok: false, error: 'Execution-run scope does not match this daemon handler', errorCode: 'execution_run_scope_mismatch' };
 }
 
 function runtimeActionResultToExecutionRunActionResponse(
@@ -276,11 +287,55 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     });
   }
 
-  async function startRun(raw: unknown): Promise<ExecutionRunStartResult> {
+  function isAuthoritativeScope(sessionId: string | null): boolean {
+    return sessionId === params.context.sessionId;
+  }
+
+  function getRunInAuthoritativeScope(runId: string, sessionId: string | null) {
+    const run = params.manager.get(runId);
+    return run?.sessionId === sessionId ? run : null;
+  }
+
+  async function startRun(
+    raw: unknown,
+    sessionId: string | null,
+    actionOptions?: Parameters<ActionExecutorDeps['executionRunStart']>[2],
+  ): Promise<ExecutionRunStartResult> {
+    const classifyFailure = (
+      failure: ExecutionRunRpcFailure,
+      runCreation: 'noRunCreated' | 'outcomeUnknown',
+    ): ExecutionRunRpcFailure => ({
+      ...failure,
+      details: withExecutionRunStartFailureDetails(failure.details, runCreation),
+    });
+    const beforeStart = (failure: ExecutionRunRpcFailure) => classifyFailure(failure, 'noRunCreated');
+
+    if (!isAuthoritativeScope(sessionId)) return beforeStart(executionRunScopeMismatch());
     const disabled = ensureEnabled();
-    if (disabled) return disabled;
+    if (disabled) return beforeStart(disabled);
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
-    if (!parsed.success) return invalidParams();
+    if (!parsed.success) return beforeStart(invalidParams());
+    const backendTarget = convertBackendTargetRefV2ToV1(parsed.data.backendTarget);
+    const backendId = resolveExecutionRunRuntimeBackendId(backendTarget);
+    let normalizedReviewIntentInput: unknown;
+    let hasNormalizedReviewIntentInput = false;
+    if (parsed.data.intent === 'review') {
+      const reviewInput = resolveReviewExecutionRunIntentInput(parsed.data.intentInput, {
+        engineId: backendId,
+        instructions: parsed.data.instructions ?? '',
+      });
+      if (reviewInput.kind === 'invalid') {
+        return beforeStart({
+          ok: false,
+          error: 'Invalid review intentInput; omit it for a default prompt review or provide a valid review start or follow-up payload',
+          errorCode: 'execution_run_invalid_action_input',
+        });
+      }
+      if (reviewInput.kind === 'review_start') {
+        normalizedReviewIntentInput = reviewInput.input;
+        hasNormalizedReviewIntentInput = true;
+      }
+    }
     const intentPolicy = resolveExecutionRunIntentPolicy(parsed.data.intent);
     if (intentPolicy.requiredFeatureId) {
       const featureId = intentPolicy.requiredFeatureId;
@@ -298,7 +353,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
 
       if (featureDecision.state !== 'enabled') {
-        return {
+        return beforeStart({
           ok: false,
           error: featureId === 'voice' || featureId.startsWith('voice.')
             ? 'Voice feature disabled'
@@ -309,7 +364,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
             blockedBy: featureDecision.blockedBy,
             blockerCode: featureDecision.blockerCode,
           },
-        };
+        });
       }
     }
     if (!params.context.budgetRegistry) {
@@ -317,7 +372,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         typeof params.policy.maxConcurrentRuns === 'number'
         && params.manager.getRunningCount() >= params.policy.maxConcurrentRuns
       ) {
-        return { ok: false, error: 'Execution run budget exceeded', errorCode: 'execution_run_budget_exceeded' };
+        return beforeStart({ ok: false, error: 'Execution run budget exceeded', errorCode: 'execution_run_budget_exceeded' });
       }
     }
     const policyValidation = validateExecutionRunStartIntentPolicy({
@@ -328,10 +383,8 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       ioMode: parsed.data.ioMode,
     });
     if (!policyValidation.ok) {
-      return policyValidation;
+      return beforeStart(policyValidation);
     }
-    const backendTarget = convertBackendTargetRefV2ToV1(parsed.data.backendTarget);
-    const backendId = resolveExecutionRunRuntimeBackendId(backendTarget);
     if (intentPolicy.startPreflight) {
       const preflight = await intentPolicy.startPreflight({
         backendId,
@@ -340,34 +393,49 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         env: process.env,
       });
       if (!preflight.ok) {
-        return preflight;
+        return beforeStart(preflight);
       }
     }
     if (!params.policy.allowIoModes.has(parsed.data.ioMode)) {
-      return { ok: false, error: 'Unsupported ioMode', errorCode: 'execution_run_not_allowed' };
+      return beforeStart({ ok: false, error: 'Unsupported ioMode', errorCode: 'execution_run_not_allowed' });
     }
 
     const parentRunId = readParentRef(raw, 'parentRunId');
     const parentCallId = readParentRef(raw, 'parentCallId');
     if (parentRunId || parentCallId) {
       const parentDepth = parentRunId
-        ? params.manager.getDepthByRunId(parentRunId)
-        : params.manager.getDepthByCallId(parentCallId);
+        ? getRunInAuthoritativeScope(parentRunId, sessionId)?.depth ?? null
+        : params.manager.getDepthByCallId(parentCallId!, sessionId);
       if (typeof parentDepth !== 'number') {
-        return { ok: false, error: 'Invalid parent run reference', errorCode: 'execution_run_invalid_action_input' };
+        return beforeStart({ ok: false, error: 'Invalid parent run reference', errorCode: 'execution_run_invalid_action_input' });
       }
       if (parentDepth + 1 > params.policy.maxDepth) {
-        return { ok: false, error: 'Run depth exceeded', errorCode: 'run_depth_exceeded' };
+        return beforeStart({ ok: false, error: 'Run depth exceeded', errorCode: 'run_depth_exceeded' });
       }
     }
+    let accountSettings: Record<string, unknown> | null;
     try {
-      const accountSettings = await params.context.resolveAccountSettings?.() ?? null;
+      accountSettings = await params.context.resolveAccountSettings?.() ?? null;
+    } catch (error) {
+      return beforeStart({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Execution setup failed',
+        errorCode: 'execution_run_failed',
+      });
+    }
 
+    try {
       const started = await params.manager.start({
-        sessionId: params.context.sessionId,
         ...(accountSettings ? { accountSettings } : {}),
         ...parsed.data,
+        // The outer Action/RPC scope is authoritative; a passthrough field in
+        // the nested start request must not select a second scope.
+        sessionId,
         backendTarget,
+        ...(hasNormalizedReviewIntentInput ? { intentInput: normalizedReviewIntentInput } : {}),
+        ...(actionOptions?.causalPermissionAuthority
+          ? { causalPermissionAuthority: actionOptions.causalPermissionAuthority }
+          : {}),
         ...(() => {
           const boundedTimeoutMs = resolveExecutionRunStartBoundedTimeoutMs({
             policy: params.policy,
@@ -380,44 +448,83 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       });
       return { ok: true, ...started };
     } catch (error) {
+      const rawDetails = error && typeof error === 'object'
+        ? (error as { details?: unknown }).details
+        : undefined;
+      const runCreation = readExecutionRunStartRunCreation(rawDetails);
       const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
       if (code === 'execution_run_budget_exceeded') {
-        return { ok: false, error: 'Execution run budget exceeded', errorCode: 'execution_run_budget_exceeded' };
+        return classifyFailure({
+          ok: false,
+          error: 'Execution run budget exceeded',
+          errorCode: 'execution_run_budget_exceeded',
+          ...(rawDetails !== undefined ? { details: rawDetails } : {}),
+        }, runCreation);
+      }
+      if (code === 'execution_run_not_allowed') {
+        return classifyFailure({
+          ok: false,
+          error: error instanceof Error ? error.message : 'Execution run is not allowed in this scope',
+          errorCode: 'execution_run_not_allowed',
+          ...(rawDetails !== undefined ? { details: rawDetails } : {}),
+        }, runCreation);
       }
       if (error instanceof VoiceAgentError) {
-        return { ok: false, error: error.message, errorCode: error.code };
+        return classifyFailure({
+          ok: false,
+          error: error.message,
+          errorCode: error.code,
+          ...(rawDetails !== undefined ? { details: rawDetails } : {}),
+        }, runCreation);
       }
-      return {
+      return classifyFailure({
         ok: false,
         error: error instanceof Error ? error.message : 'Execution failed',
         errorCode: 'execution_run_failed',
-      };
+        ...(rawDetails !== undefined ? { details: rawDetails } : {}),
+      }, runCreation);
     }
   }
 
   actionDeps = {
-    executionRunStart: async (_sessionId, request) => {
+    // This executor is already running inside the exact V2-capable daemon
+    // owner. Remote callers perform exact-machine capability preflight before
+    // reaching it; local daemon composition must not recursively probe itself.
+    executionRunCheckProtocolV2: async () => ({ ok: true }),
+    executionRunStart: async (sessionId, request, actionOptions) => {
       const disabled = ensureEnabled();
-      if (disabled) return disabled;
-      const started = await startRun(request);
+      if (disabled) {
+        return {
+          ...disabled,
+          details: withExecutionRunStartFailureDetails(disabled.details, 'noRunCreated'),
+        };
+      }
+      if (!isAuthoritativeScope(sessionId)) {
+        const mismatch = executionRunScopeMismatch();
+        return {
+          ...mismatch,
+          details: withExecutionRunStartFailureDetails(mismatch.details, 'noRunCreated'),
+        };
+      }
+      const started = await startRun(request, sessionId, actionOptions);
       return started.ok
         ? { runId: started.runId, callId: started.callId, sidechainId: started.sidechainId }
         : started;
     },
-    executionRunList: async (_sessionId, request) => {
+    executionRunList: async (sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const listRequest = ExecutionRunListRequestSchema.parse(request);
-      return { runs: params.manager.listPublicForRequest(listRequest) };
+      return { runs: params.manager.listPublicForRequest(listRequest, sessionId) };
     },
-    executionRunGet: async (_sessionId, request) => {
+    executionRunGet: async (sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunGetRequestSchema.parse(request);
-      const run = params.manager.getPublic(parsed.runId);
-      if (!run) {
-        return { ok: false, error: 'Not found', errorCode: 'execution_run_not_found' };
-      }
+      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
+      const run = params.manager.getPublic(parsed.runId)!;
       const structuredMeta = parsed.includeStructured ? params.manager.getStructuredMeta(parsed.runId) : null;
       const latestToolResult = params.manager.getLatestToolResult(parsed.runId);
       return {
@@ -426,10 +533,12 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         ...(structuredMeta ? { structuredMeta } : {}),
       };
     },
-    executionRunSend: async (_sessionId, request) => {
+    executionRunSend: async (sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunSendRequestSchema.parse(request);
+      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
       const sent = await params.manager.send(parsed.runId, {
         message: parsed.message,
         resume: parsed.resume,
@@ -444,10 +553,12 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       return { ok: true };
     },
-    executionRunEnsure: async (_sessionId, request) => {
+    executionRunEnsure: async (sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunEnsureRequestSchema.parse(request);
+      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
       const ensured = await params.manager.ensure(parsed.runId, { resume: parsed.resume });
       if (!ensured.ok) {
         return {
@@ -458,12 +569,14 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       return { ok: true };
     },
-    executionRunEnsureOrStart: async (_sessionId, request) => {
+    executionRunEnsureOrStart: async (sessionId, request, actionOptions) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunEnsureOrStartRequestSchema.parse(request);
       const runId = typeof parsed.runId === 'string' ? parsed.runId.trim() : '';
       if (runId) {
+        if (!getRunInAuthoritativeScope(runId, sessionId)) return executionRunNotFound();
         const ensured = await params.manager.ensure(runId, { resume: parsed.resume });
         if (!ensured.ok) {
           return {
@@ -475,14 +588,16 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         return { ok: true, runId, created: false };
       }
 
-      const started = await startRun(parsed.start);
+      const started = await startRun(parsed.start, sessionId, actionOptions);
       if (!started.ok) return started;
       return { ok: true, runId: started.runId, created: true };
     },
-    executionRunStreamStart: async (_sessionId, request) => {
+    executionRunStreamStart: async (sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunTurnStreamStartRequestSchema.parse(request);
+      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
       const started = await params.manager.startTurnStream(parsed.runId, {
         message: parsed.message,
         ...(typeof parsed.displayMessage === 'string' ? { displayMessage: parsed.displayMessage } : {}),
@@ -493,10 +608,12 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       return { streamId: started.streamId };
     },
-    executionRunStreamRead: async (_sessionId, request) => {
+    executionRunStreamRead: async (sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunTurnStreamReadRequestSchema.parse(request);
+      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
       const read = await params.manager.readTurnStream(parsed.runId, {
         streamId: parsed.streamId,
         cursor: parsed.cursor,
@@ -507,20 +624,24 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       return { streamId: read.streamId, events: read.events, nextCursor: read.nextCursor, done: read.done };
     },
-    executionRunStreamCancel: async (_sessionId, request) => {
+    executionRunStreamCancel: async (sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunTurnStreamCancelRequestSchema.parse(request);
+      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
       const cancelled = await params.manager.cancelTurnStream(parsed.runId, { streamId: parsed.streamId });
       if (!cancelled.ok) {
         return { ok: false, error: cancelled.error, errorCode: cancelled.errorCode };
       }
       return { ok: true };
     },
-    executionRunStop: async (_sessionId, request) => {
+    executionRunStop: async (sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunGetRequestSchema.parse(request);
+      if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
       const stopped = await params.manager.stop(parsed.runId);
       if (!stopped.ok) {
         return {
@@ -534,20 +655,21 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     executionRunAction: async (sessionId, request, opts) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       const parsed = ExecutionRunActionRequestSchema.parse(request);
+      const runState = getRunInAuthoritativeScope(parsed.runId, sessionId);
+      if (!runState) return executionRunNotFound();
       if (isRuntimeActionIdV1(parsed.actionId)) {
-        const run = params.manager.getPublic(parsed.runId);
-        if (!run) return executionRunNotFound();
-        const defaultSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
-          ? sessionId.trim()
-          : params.context.sessionId;
+        if (sessionId === null) {
+          return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Runtime actions require a Session scope' };
+        }
         return runtimeActionResultToExecutionRunActionResponse(await executeRuntimeActionFromRunAction(
           parsed.actionId,
           parsed.input,
           {
-            defaultSessionId,
+            defaultSessionId: sessionId,
             ...(opts?.serverId ? { serverId: opts.serverId } : {}),
-            callerPermissionMode: run.permissionMode,
+            callerPermissionMode: runState.permissionMode,
           },
         ));
       }
@@ -568,14 +690,39 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         ...(typeof acted.result !== 'undefined' ? { result: acted.result } : {}),
       };
     },
-    executionRunWait: unsupportedActionDependency,
+    executionRunWait: async (sessionId, request, opts) => {
+      const disabled = ensureEnabled();
+      if (disabled) return disabled;
+      if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
+
+      const runId = typeof request.runId === 'string' ? request.runId.trim() : '';
+      if (!runId) return invalidParams();
+
+      // Start-and-wait has already admitted exactly one run. Reuse the shared
+      // observer with this daemon's fixed scope; it only reads that run and
+      // never retries, stops, or retargets it when observation is interrupted.
+      return await waitForExecutionRunTerminal({
+        runId,
+        timeoutMs: normalizeExecutionRunWaitTimeoutMs(request.timeoutSeconds),
+        pollIntervalMs: normalizeExecutionRunWaitPollIntervalMs(request.pollIntervalMs),
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+        readRun: async ({ runId: observedRunId }) => {
+          if (!getRunInAuthoritativeScope(observedRunId, sessionId)) {
+            return { ok: false, code: 'execution_run_not_found', message: 'Not found' } as const;
+          }
+          const run = params.manager.getPublic(observedRunId);
+          return run
+            ? { ok: true, data: { run } } as const
+            : { ok: false, code: 'execution_run_not_found', message: 'Not found' } as const;
+        },
+      });
+    },
     runtimeActionExecute: browserRuntimeActionExecutorWithGate,
 
     sessionOpen: unsupportedActionDependency,
     sessionFork: unsupportedActionDependency,
     sessionRollback: unsupportedActionDependency,
     sessionSpawnNew: unsupportedActionDependency,
-    sessionSpawnPicker: unsupportedActionDependency,
 
     pathsListRecent: unsupportedActionDependency,
     machinesList: unsupportedActionDependency,

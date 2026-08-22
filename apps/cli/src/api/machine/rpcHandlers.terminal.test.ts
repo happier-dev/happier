@@ -306,6 +306,72 @@ describe('registerMachineTerminalRpcHandlers', () => {
     });
   });
 
+  it('canonicalizes home aliases through the injected environment before terminal authorization', async () => {
+    const suiteDir = await mkdtemp(join(tmpdir(), 'happier-terminal-home-'));
+    const homeDir = join(suiteDir, 'home');
+    const workspaceDir = join(homeDir, 'workspace', 'mixed');
+    const siblingHomeDir = join(suiteDir, 'home2');
+    await mkdir(workspaceDir, { recursive: true });
+    await mkdir(siblingHomeDir, { recursive: true });
+    const realWorkspaceDir = await realpath(workspaceDir);
+
+    const provider = new FakePtyProvider();
+    const sessionManager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      env: { SHELL: '/bin/bash' } as any,
+      platform: 'linux',
+      now: () => 0,
+      config: {
+        maxSessions: 10,
+        idleTimeoutMs: 60_000,
+        bufferMaxBytes: 1_000_000,
+        bufferMaxEvents: 1000,
+        bufferRetentionMs: 10 * 60_000,
+        urlParseBufferLimit: 32_768,
+        maxWriteChunkBytes: 16_384,
+        defaultCols: 80,
+        defaultRows: 24,
+      },
+    });
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => registered.set(method, handler),
+    } as unknown as RpcHandlerManager;
+
+    registerMachineTerminalRpcHandlers({
+      rpcHandlerManager,
+      deps: {
+        env: {
+          HAPPIER_DAEMON_TERMINAL_ENABLED: '1',
+          HOME: homeDir,
+        },
+        platform: 'linux',
+        workingDirectory: homeDir,
+        accessPolicy: { kind: 'restrictedRoots', roots: [homeDir] },
+        sessionManager,
+      },
+    });
+
+    const ensure = registered.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE);
+    expect(ensure).toBeDefined();
+
+    await expect(ensure!({ terminalKey: 'home-forward', cwd: '~/workspace/mixed', cols: 80, rows: 24 }))
+      .resolves.toEqual(expect.objectContaining({ ok: true, reused: false }));
+    await expect(ensure!({ terminalKey: 'home-backslash', cwd: '~\\workspace\\mixed', cols: 80, rows: 24 }))
+      .resolves.toEqual(expect.objectContaining({ ok: true, reused: false }));
+    await expect(ensure!({ terminalKey: 'home-sibling', cwd: '~\\..\\home2', cols: 80, rows: 24 }))
+      .resolves.toEqual({
+        ok: false,
+        errorCode: 'terminal_cwd_denied',
+        error: 'terminal_cwd_denied',
+      });
+
+    expect(provider.spawned).toHaveLength(2);
+    await expect(Promise.all(provider.spawned.map(async ({ options }) => await realpath(options.cwd ?? ''))))
+      .resolves.toEqual([realWorkspaceDir, realWorkspaceDir]);
+  });
+
   it('bridges byte-stream reads to the daemon substrate when available', async () => {
     const sessionManager = {
       readByteStream: async (input: unknown) => ({

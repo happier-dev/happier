@@ -16,7 +16,10 @@ import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/s
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
 
-import { buildSpawnResumeUnreachableErrorResult } from '../connectedServices/buildSpawnResumeUnreachableErrorResult';
+import {
+    buildSpawnResumeUnreachableErrorResult,
+    resolveSafeResumeUnreachableDiagnosticReason,
+} from '../connectedServices/buildSpawnResumeUnreachableErrorResult';
 import {
     buildConnectedServiceCredentialSpawnErrorResult,
     buildConnectedServiceDiagnosticSpawnValidationErrorResult,
@@ -34,11 +37,15 @@ import {
     ConnectedServiceSpawnResumeUnreachableError,
     resolveConnectedServiceAuthForSpawn,
 } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from '../connectedServices/accountGroups/quotas/preTurnQuotaProbe';
 import {
     resolveQualifiedPurposeBindingSnapshotForAgentSpawn,
-    resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn,
     type AgentSpawnPurposeContributions,
 } from '../connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import {
+    CONNECTED_SERVICE_LOCAL_PATH_REDACTION_MARKER,
+    CONNECTED_SERVICE_PROVIDER_RESUME_ID_REDACTION_MARKER,
+} from '../connectedServices/runtimeAuth/sensitiveConnectedServiceDiagnosticFields';
 import { shouldResolveConnectedServiceAuthForSpawn } from '../connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 
 type SpawnCredentials = NonNullable<Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['credentials']>;
@@ -47,6 +54,11 @@ type SpawnAccountUsageStore = Parameters<typeof resolveConnectedServiceAuthForSp
 type SpawnAuthGroupSwitchCoordinator = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['authGroupSwitchCoordinator'];
 type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 type ConnectedServiceAuth = Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>;
+
+export type MissingConnectedServiceMaterializationIdentityRepair = Readonly<{
+    identity: ConnectedServiceMaterializationIdentityV1;
+    persistAfterMaterialization: () => Promise<void>;
+}>;
 
 function readConnectedServiceBindingsOrNull(raw: unknown): ConnectedServiceBindingsV1 | null {
     const parsed = ConnectedServiceBindingsV1Schema.safeParse(raw);
@@ -63,7 +75,8 @@ function connectedServiceBindingsRequireMaterializationIdentity(
 }
 
 function buildMaterializationIdentityMissingSpawnErrorResult(input: Readonly<{
-    agentId: CatalogAgentId;
+    /** Absent for a configured backend target, which has no catalog Agent identity. */
+    agentId: CatalogAgentId | null;
     reason: string;
 }>): Extract<SpawnSessionResult, { type: 'error' }> {
     return buildConnectedServiceDiagnosticSpawnValidationErrorResult({
@@ -72,11 +85,19 @@ function buildMaterializationIdentityMissingSpawnErrorResult(input: Readonly<{
             code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
             failurePhase: 'materialization',
             source: 'spawn_resume',
-            agentId: input.agentId,
+            ...(input.agentId ? { agentId: input.agentId } : {}),
             retryable: false,
             diagnostics: { reason: input.reason },
         }),
     });
+}
+
+export function buildConnectedServiceQuotaPreflightIncompleteSpawnErrorResult(): Extract<SpawnSessionResult, { type: 'error' }> {
+    return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'connected_service_quota_preflight_incomplete',
+    };
 }
 
 export type PreparedDaemonConnectedServices = Readonly<{
@@ -98,7 +119,6 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     requestedSessionId: string;
     effectiveResume: string;
     catalogAgentId: CatalogAgentId | null;
-    catalogAgentIdForConnectedServices: CatalogAgentId;
     credentials: SpawnCredentials;
     api: SpawnApi;
     providerAccountUsageStore?: SpawnAccountUsageStore;
@@ -115,7 +135,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
         agentId: CatalogAgentId;
         connectedServices: ConnectedServiceBindingsV1;
         vendorResumeId: string | null;
-    }>) => Promise<ConnectedServiceMaterializationIdentityV1 | null>;
+    }>) => Promise<MissingConnectedServiceMaterializationIdentityRepair | null>;
 }>): Promise<PreparedDaemonConnectedServices | Readonly<{
     ok: false;
     result: Extract<SpawnSessionResult, { type: 'error' }>;
@@ -124,6 +144,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     let materializationIdentity =
         readConnectedServiceMaterializationIdentityFromSpawnOptions(input.options)
         ?? readConnectedServiceMaterializationIdentityFromEnvironment(input.options.environmentVariables);
+    let missingIdentityRepair: MissingConnectedServiceMaterializationIdentityRepair | null = null;
     if (shouldResolveAuth && !materializationIdentity) {
         if (input.normalizedExistingSessionId) {
             const connectedServices = readConnectedServiceBindingsOrNull(input.options.connectedServices);
@@ -132,18 +153,19 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 && connectedServiceBindingsRequireMaterializationIdentity(connectedServices)
                 && input.repairMissingMaterializationIdentity
             ) {
-                materializationIdentity = await input.repairMissingMaterializationIdentity({
+                missingIdentityRepair = await input.repairMissingMaterializationIdentity({
                     sessionId: input.normalizedExistingSessionId,
                     agentId: input.catalogAgentId,
                     connectedServices,
                     vendorResumeId: input.effectiveResume || null,
                 });
+                materializationIdentity = missingIdentityRepair?.identity ?? null;
             }
             if (!materializationIdentity) {
                 return {
                     ok: false,
                     result: buildMaterializationIdentityMissingSpawnErrorResult({
-                        agentId: input.catalogAgentId ?? input.catalogAgentIdForConnectedServices,
+                        agentId: input.catalogAgentId,
                         reason: 'missing_identity_and_resume_state',
                     }),
                 };
@@ -194,8 +216,8 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 credentialRefreshService: input.connectedServiceRefreshCoordinator,
                 vendorResumeId: input.effectiveResume || null,
                 resumeReachabilityRequired: spawnSharedStateContinuityRequested,
-                resolveRequestAuthPurposeBindings: (bindings) =>
-                    resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn({
+                resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+                    resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                         agentId: input.catalogAgentId!,
                         bindings,
                         contributions: input.pluginContributions,
@@ -204,15 +226,29 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 serverContract: input.serverContract,
             });
         } catch (error) {
+            if (error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError) {
+                logger.warn('[DAEMON RUN] Connected-services quota preflight incomplete; failing closed before spawn', {
+                    agentId: input.catalogAgentId,
+                    reason: error.result.reason,
+                    requestedProfileCount: error.result.requestedProfileCount,
+                    completedProfileCount: error.result.completedProfileCount,
+                });
+                return {
+                    ok: false,
+                    result: buildConnectedServiceQuotaPreflightIncompleteSpawnErrorResult(),
+                };
+            }
             if (error instanceof ConnectedServiceSpawnResumeUnreachableError) {
                 logger.warn('[DAEMON RUN] Connected services resume reachability re-verify failed; failing closed before spawn', {
                     agentId: error.agentId,
                     errorCode: error.errorCode,
                     failurePhase: error.failurePhase,
-                    vendorResumeId: error.vendorResumeId,
-                    cwd: error.cwd,
-                    targetMaterializedRoot: error.targetMaterializedRoot,
-                    reason: error.reason,
+                    vendorResumeId: CONNECTED_SERVICE_PROVIDER_RESUME_ID_REDACTION_MARKER,
+                    cwd: CONNECTED_SERVICE_LOCAL_PATH_REDACTION_MARKER,
+                    targetMaterializedRoot: error.targetMaterializedRoot
+                        ? CONNECTED_SERVICE_LOCAL_PATH_REDACTION_MARKER
+                        : null,
+                    reason: resolveSafeResumeUnreachableDiagnosticReason(error),
                 });
                 return { ok: false, result: buildSpawnResumeUnreachableErrorResult(error) };
             }
@@ -258,6 +294,22 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 },
             };
         }
+        if (missingIdentityRepair) {
+            try {
+                await missingIdentityRepair.persistAfterMaterialization();
+            } catch (error) {
+                const cleanup = auth?.cleanupOnFailure ?? null;
+                await Promise.resolve(cleanup?.());
+                logger.warn('[DAEMON RUN] Failed to persist repaired connected-service materialization identity after exact existing-session materialization', error);
+                return {
+                    ok: false,
+                    result: buildMaterializationIdentityMissingSpawnErrorResult({
+                        agentId: input.catalogAgentId,
+                        reason: 'identity_repair_persist_failed',
+                    }),
+                };
+            }
+        }
     } else if (shouldResolveAuth && !input.catalogAgentId) {
         logger.warn('[DAEMON RUN] Ignoring connected-services spawn request for configured backend target');
     }
@@ -267,9 +319,11 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     const qualifiedPurposeBindingSnapshot =
         auth?.ongoingRuntimeRegistrationAllowed === false
         ? null
-        : effectiveBindingsV1
+        : auth
+        ? auth.qualifiedPurposeBindingSnapshot
+        : effectiveBindingsV1 && input.catalogAgentId
         ? resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
-            agentId: input.catalogAgentId ?? input.catalogAgentIdForConnectedServices,
+            agentId: input.catalogAgentId,
             bindings: effectiveBindingsV1,
             contributions: input.pluginContributions,
         })

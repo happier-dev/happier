@@ -1,101 +1,96 @@
-import { randomUUID } from 'node:crypto';
+import type { StoredCredentials } from '@/persistence';
+import { discardPendingQueueV2Messages } from '@/api/session/pendingQueueV2Transport';
+import { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import {
+  buildAutomationSessionInputAdmissionV1,
+  deriveAutomationSessionInputLocalIdV1,
+} from '@/session/services/sessionInputAdmissionIdentity';
+import {
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+  type MentionRefV1,
+  type SessionInputAdmissionResultV1,
+} from '@happier-dev/protocol';
 
-import { readPendingLocalId } from '@happier-dev/protocol';
-import { decodeBase64, encodeBase64, encrypt } from '@/api/encryption';
-import { enqueuePendingQueueV2MessageViaHttp } from '@/api/session/pendingQueueV2Transport';
-
-type PendingMessageCiphertextPayload = Readonly<{
-  role: 'user';
-  content: {
-    type: 'text';
-    text: string;
-  };
-  meta: {
-    sentFrom: 'cli';
-    source: 'automation';
-    displayText?: string;
-  };
-}>;
-
-function buildPendingCiphertext(params: {
+/**
+ * Automation is a non-interactive producer. It delegates the complete
+ * request-envelope, encryption, equality-evidence, and authenticated-machine
+ * admission path to the canonical Session Message sender. This leaf owns only
+ * Automation's run facts and the stable local identity.
+ */
+export async function enqueueAutomationPrompt(params: Readonly<{
+  credentials: StoredCredentials;
+  sessionId: string;
+  automationId: string;
+  runId: string;
   prompt: string;
   displayText?: string;
-  sessionEncryptionKeyBase64: string;
-}): string {
-  const message: PendingMessageCiphertextPayload = {
-    role: 'user',
-    content: {
-      type: 'text',
-      text: params.prompt,
-    },
-    meta: {
-      sentFrom: 'cli',
-      source: 'automation',
-      ...(typeof params.displayText === 'string' && params.displayText.trim().length > 0
-        ? { displayText: params.displayText }
-        : {}),
-    },
-  };
+  /**
+   * The composer references the frozen template carried, already admitted
+   * against this exact rendered prompt by the Protocol materializer. They are
+   * handed to the canonical Session sender in the one structured-input
+   * envelope an interactive send uses, so provider context is still
+   * reconstructed at dispatch rather than frozen here.
+   */
+  mentions?: readonly MentionRefV1[];
+  signal?: AbortSignal;
+  machineAdmissionTransport: NonNullable<Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']>;
+}>): Promise<SessionInputAdmissionResultV1> {
+  const prompt = params.prompt.trim();
+  if (!prompt) return { status: 'rejected', code: 'session_input_invalid' };
 
-  const dataKey = decodeBase64(params.sessionEncryptionKeyBase64);
-  const encrypted = encrypt(dataKey, 'dataKey', message);
-  return encodeBase64(encrypted);
+  const localId = deriveAutomationSessionInputLocalIdV1({
+    automationId: params.automationId,
+    runId: params.runId,
+  });
+  const inputAdmission = buildAutomationSessionInputAdmissionV1({
+    automationId: params.automationId,
+    runId: params.runId,
+  });
+  const displayText = typeof params.displayText === 'string' && params.displayText.trim().length > 0
+    ? params.displayText
+    : undefined;
+  const mentions = params.mentions ?? [];
+  const messageMeta = {
+    ...(displayText ? { displayText } : {}),
+    ...(mentions.length > 0
+      ? { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: { v: 1, mentions: [...mentions] } }
+      : {}),
+  };
+  const result = await sendSessionMessage({
+    credentials: params.credentials,
+    idOrPrefix: params.sessionId,
+    message: prompt,
+    wait: false,
+    timeoutMs: 30_000,
+    localId,
+    requestedAction: { v: 1, kind: 'enqueue' },
+    ...(Object.keys(messageMeta).length > 0 ? { messageMeta } : {}),
+    inputAdmission,
+    machineAdmissionTransport: params.machineAdmissionTransport,
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
+
+  return result.admissionResult;
 }
 
-export async function enqueueAutomationPrompt(params: {
+/**
+ * Authoritative Automation Run cancellation retires only its stable input.
+ * Generic worker/lease/attempt aborts must never call this function.
+ */
+export async function discardAutomationPromptAfterRunCancellation(params: Readonly<{
   token: string;
   sessionId: string;
-  prompt: string;
-  displayText?: string;
-  sessionEncryptionMode: 'e2ee' | 'plain';
-  sessionEncryptionKeyBase64?: string;
-  localId?: string;
-}): Promise<void> {
-  const prompt = params.prompt.trim();
-  if (!prompt) {
-    return;
-  }
-
-  const localId = readPendingLocalId(params.localId) ?? randomUUID();
-  const displayText = typeof params.displayText === 'string' ? params.displayText : undefined;
-
-  const body = params.sessionEncryptionMode === 'plain'
-    ? {
-        localId,
-        content: {
-          t: 'plain' as const,
-          v: {
-            role: 'user' as const,
-            content: {
-              type: 'text' as const,
-              text: prompt,
-            },
-            meta: {
-              sentFrom: 'cli' as const,
-              source: 'automation' as const,
-              ...(typeof displayText === 'string' && displayText.trim().length > 0
-                ? { displayText }
-                : {}),
-            },
-          },
-        },
-        messageRole: 'user' as const,
-        requestedAction: { v: 1 as const, kind: 'enqueue' as const },
-      }
-    : {
-        localId,
-        messageRole: 'user' as const,
-        ciphertext: buildPendingCiphertext({
-          prompt,
-          ...(displayText ? { displayText } : {}),
-          sessionEncryptionKeyBase64: String(params.sessionEncryptionKeyBase64 ?? ''),
-        }),
-        requestedAction: { v: 1 as const, kind: 'enqueue' as const },
-      };
-
-  await enqueuePendingQueueV2MessageViaHttp({
+  automationId: string;
+  runId: string;
+}>): Promise<void> {
+  const localId = deriveAutomationSessionInputLocalIdV1({
+    automationId: params.automationId,
+    runId: params.runId,
+  });
+  await discardPendingQueueV2Messages({
     token: params.token,
     sessionId: params.sessionId,
-    body,
+    localIds: [localId],
+    reason: 'session_input_cancelled',
   });
 }

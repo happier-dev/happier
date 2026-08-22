@@ -7,8 +7,8 @@
 // shared manifest.
 import { describe, expect, it } from 'vitest';
 
-import { AGENTS_CORE } from '@happier-dev/agents';
-import type { AgentCore, AgentSessionAuthSwitchTransition } from '@happier-dev/agents';
+import { getAgentCore } from '@happier-dev/agents';
+import type { AgentCore, AgentId, AgentSessionAuthSwitchTransition } from '@happier-dev/agents';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { CatalogAgentId, ConnectedServiceSwitchContinuityParams } from '@/agent/catalog/types';
@@ -38,11 +38,13 @@ const RESOLVED_TRANSITION_FIXTURES: ReadonlyArray<{
   },
 ];
 
-function resolveManifestAgentCore(agentId: CatalogAgentId): AgentCore {
-  return AGENTS_CORE[agentId];
+function resolveManifestAgentCore(agentId: AgentId): AgentCore {
+  const core = getAgentCore(agentId);
+  if (!core) throw new Error(`missing bundled Agent core fixture for ${agentId}`);
+  return core;
 }
 
-function resolvePrimaryServiceId(agentId: CatalogAgentId): ConnectedServiceId {
+function resolvePrimaryServiceId(agentId: AgentId): ConnectedServiceId {
   const serviceId = resolveManifestAgentCore(agentId).connectedServices?.supportedServiceIds[0];
   if (!serviceId) {
     throw new Error(`missing connected-service fixture service id for ${agentId}`);
@@ -50,12 +52,12 @@ function resolvePrimaryServiceId(agentId: CatalogAgentId): ConnectedServiceId {
   return serviceId;
 }
 
-function manifestSupportsSharedState(agentId: CatalogAgentId): boolean {
+function manifestSupportsSharedState(agentId: AgentId): boolean {
   return resolveManifestAgentCore(agentId).connectedServices?.providerStateSharing?.state.supported === true;
 }
 
 function manifestAdvertisesSwitchTransition(input: Readonly<{
-  agentId: CatalogAgentId;
+  agentId: AgentId;
   serviceId: ConnectedServiceId;
   transition: AgentSessionAuthSwitchTransition;
 }>): boolean {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LocalServiceLauncherSnapshotV1Schema, type LocalServiceLaunchTargetV1 } from '@happier-dev/protocol';
+import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol';
 
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
@@ -353,79 +353,6 @@ describe('createLocalServiceLauncherFeed', () => {
                 process.env.HOME = previousHome;
             }
         }
-    });
-
-    it('preserves Start only for daemon-private managed start declarations', async () => {
-        const inventoryRegistry = createLocalServiceInventoryRegistry();
-        const managedRegistry = createManagedLocalServiceRegistry();
-        const previewRegistry = createLocalServicePreviewRegistry();
-        const serviceKey = JSON.stringify(['acme.preview', 'preview-web', 'session-a', 'web']);
-        const target: LocalServiceLaunchTargetV1 = {
-            id: `managed:${serviceKey}`,
-            source: 'managed_service',
-            sourceClass: {
-                kind: 'managed_service',
-                managedServiceId: serviceKey,
-            },
-            machineId: 'machine-a',
-            sessionId: 'session-a',
-            title: 'Preview web',
-            subtitle: 'web',
-            kind: 'managed_service',
-            confidence: 'medium',
-            state: 'available',
-            actions: ['start'],
-        };
-        const feedInput: Parameters<typeof createLocalServiceLauncherFeed>[0] & Readonly<{
-            startDeclarations: Readonly<{
-                listLaunchTargets(): readonly LocalServiceLaunchTargetV1[];
-            }>;
-        }> = {
-            machineId: 'machine-a',
-            sessionId: 'session-a',
-            inventoryRegistry,
-            managedRegistry,
-            previewRegistry,
-            now: () => 3_000,
-            startDeclarations: {
-                listLaunchTargets: () => [target],
-            },
-            runTargets: [{
-                id: 'web:dev',
-                cwd: '/repo/web',
-                packageName: 'web',
-                packageManager: 'npm',
-                scriptName: 'dev',
-                command: 'vite --host 127.0.0.1',
-                launchIntent: {
-                    kind: 'packageScript',
-                    packageManager: 'npm',
-                    cwd: '/repo/web',
-                    scriptName: 'dev',
-                },
-            }],
-        };
-        const feed = createLocalServiceLauncherFeed(feedInput);
-
-        const snapshot = await feed.getSnapshot();
-
-        expect(LocalServiceLauncherSnapshotV1Schema.parse(snapshot)).toEqual(snapshot);
-        expect(snapshot.targets.find((candidate) => candidate.id === target.id)).toMatchObject({
-            id: target.id,
-            source: 'managed_service',
-            sourceClass: {
-                kind: 'managed_service',
-                managedServiceId: serviceKey,
-            },
-            state: 'available',
-            actions: ['start'],
-        });
-        expect(snapshot.targets.find((candidate) => candidate.id === 'package:web:dev')).toMatchObject({
-            state: 'unavailable',
-            unavailableReason: 'launch_unavailable',
-            actions: [],
-        });
-        expect(snapshot.targets.find((candidate) => candidate.id === target.id)).not.toHaveProperty('commandPreview');
     });
 
     it('scopes a requested snapshot to the session workspace PATH (not the session) and projects attribution', async () => {

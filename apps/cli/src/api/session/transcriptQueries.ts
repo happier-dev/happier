@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import { resolveLatestPermissionIntent } from '@happier-dev/agents';
@@ -9,8 +10,13 @@ import { isAuthenticationError } from '../client/httpStatusError';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
 
 import { decodeBase64, decrypt } from '../encryption';
-import { SessionMessageContentSchema, type PermissionMode } from '../types';
+import { SessionMessageContentSchema, type PermissionMode, type SessionMessageContent } from '../types';
 import { extractSemanticTranscriptItem } from '@/session/services/transcript/extractSemanticTranscriptItem';
+import {
+  createSessionTranscriptStoredContentUnavailableError,
+  resolveSessionTranscriptStoredContentUnavailableError,
+  throwIfSessionTranscriptStoredContentUnavailableResponse,
+} from './sessionTranscriptStoredContentUnavailable';
 
 export { pageSessionTranscript } from './pageSessionTranscript';
 export { readSessionTranscriptAfter } from './readSessionTranscriptAfter';
@@ -25,12 +31,21 @@ export {
 
 type EncryptionVariant = 'legacy' | 'dataKey';
 
-type SessionTranscriptQueryParams = {
+type SessionTranscriptQueryParams = Readonly<{
   token: string;
   sessionId: string;
-  encryptionKey: Uint8Array;
-  encryptionVariant: EncryptionVariant;
-};
+}> & (
+  | Readonly<{
+      encryptionMode: 'plain';
+      encryptionKey?: never;
+      encryptionVariant?: never;
+    }>
+  | Readonly<{
+      encryptionMode: 'e2ee';
+      encryptionKey: Uint8Array;
+      encryptionVariant: EncryptionVariant;
+    }>
+);
 
 function normalizeTake(value: number | undefined, max: number): number {
   if (typeof value !== 'number' || value <= 0) return max;
@@ -39,6 +54,33 @@ function normalizeTake(value: number | undefined, max: number): number {
 
 function logTranscriptQueryFailure(message: string, error: unknown): void {
   logger.debug(message, { error: serializeAxiosErrorForLog(error) });
+}
+
+type AvailableTranscriptRow = Readonly<{
+  row: Record<string, unknown>;
+  content: SessionMessageContent;
+}>;
+
+function requireAvailableTranscriptRows(raw: unknown): AvailableTranscriptRow[] {
+  if (!Array.isArray(raw)) {
+    throw createSessionTranscriptStoredContentUnavailableError();
+  }
+  const available: AvailableTranscriptRow[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw createSessionTranscriptStoredContentUnavailableError();
+    }
+    const record = row as Record<string, unknown>;
+    const content = SessionMessageContentSchema.safeParse(record.content);
+    if (!content.success) throw createSessionTranscriptStoredContentUnavailableError();
+    available.push({ row: record, content: content.data });
+  }
+  return available;
+}
+
+function rethrowUnavailableTranscriptQueryError(error: unknown): void {
+  const unavailable = resolveSessionTranscriptStoredContentUnavailableError(error);
+  if (unavailable) throw unavailable;
 }
 
 
@@ -51,28 +93,32 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },
       params: { limit: take, roles: 'user,agent' },
       timeout: 10_000,
     });
+    throwIfSessionTranscriptStoredContentUnavailableResponse(response.status, response.data);
 
     const data = response?.data as unknown;
     const raw = data && typeof data === 'object' ? (data as Record<string, unknown>).messages : null;
-    if (!Array.isArray(raw)) return [];
+    const rows = requireAvailableTranscriptRows(raw);
 
     const items: Array<{ role: 'user' | 'agent'; text: string; createdAt: number }> = [];
 
-    for (let index = 0; index < raw.length && items.length < take; index += 1) {
-      const msg = raw[index];
+    for (let index = 0; index < rows.length && items.length < take; index += 1) {
+      const msg = rows[index].row;
       const extracted = extractSemanticTranscriptItem({
         row: msg,
         index,
-        ctx: {
-          encryptionKey: params.encryptionKey,
-          encryptionVariant: params.encryptionVariant,
-        },
+        ctx: params.encryptionMode === 'plain'
+          ? null
+          : {
+              encryptionKey: params.encryptionKey,
+              encryptionVariant: params.encryptionVariant,
+            },
         options: {
           mode: 'transcript',
           transcriptRoles: ['user', 'assistant'],
@@ -97,6 +143,7 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
     return items.map((item) => ({ role: item.role, text: item.text }));
   } catch (error) {
     if (isAuthenticationError(error)) throw error;
+    rethrowUnavailableTranscriptQueryError(error);
     logTranscriptQueryFailure('[API] Failed to fetch transcript messages for ACP import', error);
     return [];
   }
@@ -111,35 +158,36 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },
       params: { limit: take, role: 'user' },
       timeout: 10_000,
     });
+    throwIfSessionTranscriptStoredContentUnavailableResponse(response.status, response.data);
 
     const data = response?.data as unknown;
     const raw = data && typeof data === 'object' ? (data as Record<string, unknown>).messages : null;
-    if (!Array.isArray(raw)) return null;
+    const rows = requireAvailableTranscriptRows(raw);
 
-    const sliced = raw.slice(0, take);
+    const sliced = rows.slice(0, take);
     const candidates: Array<{ rawMode: unknown; updatedAt: unknown }> = [];
 
-    for (const msg of sliced) {
+    for (const { row: msg, content } of sliced) {
       const createdAt = typeof msg?.createdAt === 'number' ? msg.createdAt : null;
       if (createdAt === null) continue;
-      const content = msg?.content;
-      const parsedContent = SessionMessageContentSchema.safeParse(content);
-      if (!parsedContent.success) continue;
 
       let decrypted: unknown;
-      if (parsedContent.data.t === 'plain') {
-        decrypted = parsedContent.data.v;
+      if (content.t === 'plain') {
+        if (params.encryptionMode !== 'plain') continue;
+        decrypted = content.v;
       } else {
+        if (params.encryptionMode === 'plain') continue;
         decrypted = decrypt(
           params.encryptionKey,
           params.encryptionVariant,
-          decodeBase64(parsedContent.data.c),
+          decodeBase64(content.c),
         );
       }
       const decryptedObj = decrypted && typeof decrypted === 'object' ? (decrypted as Record<string, unknown>) : null;
@@ -160,6 +208,7 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
     return { intent: resolved.intent as PermissionMode, updatedAt: resolved.updatedAt };
   } catch (error) {
     if (isAuthenticationError(error)) throw error;
+    rethrowUnavailableTranscriptQueryError(error);
     logTranscriptQueryFailure('[API] Failed to fetch transcript messages for permission intent resolution', error);
     return null;
   }
@@ -180,18 +229,20 @@ export async function hasCommittedUserMessageAfterMs(params: Readonly<{
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
       headers: {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },
       params: { limit: take, role: 'user' },
       timeout: 10_000,
     });
+    throwIfSessionTranscriptStoredContentUnavailableResponse(response.status, response.data);
 
     const data = response?.data as unknown;
     const raw = data && typeof data === 'object' ? (data as Record<string, unknown>).messages : null;
-    if (!Array.isArray(raw)) return false;
+    const rows = requireAvailableTranscriptRows(raw);
 
-    return raw.some((msg) => {
+    return rows.some(({ row: msg }) => {
       const createdAt = typeof msg?.createdAt === 'number' && Number.isFinite(msg.createdAt)
         ? Math.trunc(msg.createdAt)
         : null;
@@ -199,6 +250,7 @@ export async function hasCommittedUserMessageAfterMs(params: Readonly<{
     });
   } catch (error) {
     if (isAuthenticationError(error)) throw error;
+    rethrowUnavailableTranscriptQueryError(error);
     logTranscriptQueryFailure('[API] Failed to fetch transcript messages for continuation recovery suppression', error);
     throw error;
   }

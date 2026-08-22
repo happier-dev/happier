@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/protocol';
 import {
     digestConnectedAccountRequestAuthCapability,
-    removeConnectedAccountRequestAuthCapabilityFile,
+    removeConnectedAccountRequestAuthCapabilityFileIfOwned,
     verifyConnectedAccountRequestAuthCapabilityFile,
     writeConnectedAccountRequestAuthCapabilityFile,
     type ConnectedAccountRequestAuthCapabilityDescriptor,
@@ -20,11 +20,13 @@ import {
     ConnectedAccountRequestAuthError,
 } from './ConnectedAccountRequestAuthService';
 
-type SubjectRecord = Readonly<{
+type SubjectRecord = {
     subject: ConnectedAccountRequestAuthSubject;
     descriptor: ConnectedAccountRequestAuthCapabilityDescriptor;
     materializedRootDir: string;
-}>;
+    authorityCurrent: boolean;
+    cleanupPromise: Promise<void> | null;
+};
 
 export type ConnectedAccountRequestAuthSubjectRegistry = Readonly<{
     activate: (input: Readonly<{
@@ -42,14 +44,18 @@ export type ConnectedAccountRequestAuthSubjectRegistry = Readonly<{
             commit: () => void,
         ) => Promise<void>;
     }>) => Promise<ConnectedAccountRequestAuthCapabilityDescriptor>;
-    retire: (descriptor: ConnectedAccountRequestAuthCapabilityDescriptor) => Promise<void>;
+    retire: (
+        descriptor: ConnectedAccountRequestAuthCapabilityDescriptor,
+        options?: Readonly<{ removeMaterializedRoot?: boolean }>,
+    ) => Promise<void>;
     authenticate: (capability: unknown) => ConnectedAccountRequestAuthSubject | null;
 }>;
 
 export type ConnectedAccountRequestAuthSubjectRegistryDependencies = Readonly<{
     writeCapabilityFile?: typeof writeConnectedAccountRequestAuthCapabilityFile;
     verifyCapabilityFile?: typeof verifyConnectedAccountRequestAuthCapabilityFile;
-    removeCapabilityFile?: typeof removeConnectedAccountRequestAuthCapabilityFile;
+    removeCapabilityFileIfOwned?:
+        typeof removeConnectedAccountRequestAuthCapabilityFileIfOwned;
 }>;
 
 function materializationKey(input: Readonly<{
@@ -89,8 +95,9 @@ export function createConnectedAccountRequestAuthSubjectRegistry(
 ): ConnectedAccountRequestAuthSubjectRegistry {
     const writeCapabilityFile = dependencies.writeCapabilityFile
         ?? writeConnectedAccountRequestAuthCapabilityFile;
-    const removeCapabilityFile = dependencies.removeCapabilityFile
-        ?? removeConnectedAccountRequestAuthCapabilityFile;
+    const removeCapabilityFileIfOwned =
+        dependencies.removeCapabilityFileIfOwned
+        ?? removeConnectedAccountRequestAuthCapabilityFileIfOwned;
     const verifyCapabilityFile = dependencies.verifyCapabilityFile
         ?? verifyConnectedAccountRequestAuthCapabilityFile;
     const recordsByCapabilityDigest = new Map<string, SubjectRecord>();
@@ -126,7 +133,10 @@ export function createConnectedAccountRequestAuthSubjectRegistry(
             materializedRootDir: input.materializedRootDir,
         });
         if (!descriptor) {
-            await removeCapabilityFile(writtenDescriptor.path).catch(() => undefined);
+            await removeCapabilityFileIfOwned({
+                descriptor: writtenDescriptor,
+                materializedRootDir: input.materializedRootDir,
+            }).catch(() => undefined);
             throw new Error('request_auth_capability_verification_failed');
         }
 
@@ -140,6 +150,8 @@ export function createConnectedAccountRequestAuthSubjectRegistry(
                 subject: input.subject,
                 descriptor,
                 materializedRootDir: input.materializedRootDir,
+                authorityCurrent: true,
+                cleanupPromise: null,
             });
             capabilityDigestByMaterialization.set(key, descriptor.capabilityDigest);
             if (previousDigest && previousDigest !== descriptor.capabilityDigest) {
@@ -150,7 +162,10 @@ export function createConnectedAccountRequestAuthSubjectRegistry(
             try {
                 commitAuthority();
             } catch (error) {
-                await removeCapabilityFile(descriptor.path).catch(() => undefined);
+                await removeCapabilityFileIfOwned({
+                    descriptor,
+                    materializedRootDir: input.materializedRootDir,
+                }).catch(() => undefined);
                 throw error;
             }
             return descriptor;
@@ -181,13 +196,19 @@ export function createConnectedAccountRequestAuthSubjectRegistry(
                 ? retireDigest(descriptor.capabilityDigest)
                 : null;
             if (!committed || retired) {
-                await removeCapabilityFile(descriptor.path).catch(() => undefined);
+                await removeCapabilityFileIfOwned({
+                    descriptor,
+                    materializedRootDir: input.materializedRootDir,
+                }).catch(() => undefined);
             }
             throw error;
         }
     };
 
-    const retire: ConnectedAccountRequestAuthSubjectRegistry['retire'] = async (descriptor) => {
+    const retire: ConnectedAccountRequestAuthSubjectRegistry['retire'] = async (
+        descriptor,
+        options,
+    ) => {
         const record = recordsByCapabilityDigest.get(descriptor.capabilityDigest);
         if (
             !record
@@ -197,25 +218,69 @@ export function createConnectedAccountRequestAuthSubjectRegistry(
         ) {
             return;
         }
-        // Authority is removed synchronously before filesystem cleanup begins.
-        retireDigest(descriptor.capabilityDigest);
-        await removeCapabilityFile(descriptor.path);
+        if (record.authorityCurrent) {
+            // Authority is removed synchronously before filesystem cleanup begins.
+            record.authorityCurrent = false;
+            const key = materializationKey({
+                materializedRootDir: record.materializedRootDir,
+                materializationId: record.descriptor.materializationId,
+            });
+            if (
+                capabilityDigestByMaterialization.get(key)
+                === descriptor.capabilityDigest
+            ) {
+                capabilityDigestByMaterialization.delete(key);
+            }
+        }
+        if (record.cleanupPromise) {
+            return await record.cleanupPromise;
+        }
+        const cleanup = removeCapabilityFileIfOwned({
+            descriptor,
+            materializedRootDir: record.materializedRootDir,
+            ...(options?.removeMaterializedRoot === true
+                ? { removeMaterializedRoot: true }
+                : {}),
+        }).then(() => {
+            if (
+                recordsByCapabilityDigest.get(descriptor.capabilityDigest)
+                === record
+            ) {
+                recordsByCapabilityDigest.delete(descriptor.capabilityDigest);
+            }
+        });
+        record.cleanupPromise = cleanup;
+        try {
+            await cleanup;
+        } finally {
+            if (record.cleanupPromise === cleanup) {
+                record.cleanupPromise = null;
+            }
+        }
     };
 
     const authenticate: ConnectedAccountRequestAuthSubjectRegistry['authenticate'] = (capability) => {
         const capabilityDigest = digestConnectedAccountRequestAuthCapability(capability);
         if (!capabilityDigest) return null;
         const record = recordsByCapabilityDigest.get(capabilityDigest);
-        if (!record || !record.subject.isCurrent()) return null;
+        if (
+            !record
+            || !record.authorityCurrent
+            || !record.subject.isCurrent()
+        ) return null;
         // Return a registry-scoped principal, not the raw subject. A route may carry this
         // principal across an async materialization or recovery boundary; retirement or
         // replacement must invalidate that captured authority as well as future lookups.
         const isPrincipalCurrent = () => (
             recordsByCapabilityDigest.get(capabilityDigest) === record
+            && record.authorityCurrent
             && record.subject.isCurrent()
         );
         return Object.freeze({
             subjectId: record.subject.subjectId,
+            ...(record.subject.legacyServiceKeyedCompatibility === true
+                ? { legacyServiceKeyedCompatibility: true as const }
+                : {}),
             isCurrent: isPrincipalCurrent,
             registerRedaction: (values) => {
                 if (!isPrincipalCurrent()) {

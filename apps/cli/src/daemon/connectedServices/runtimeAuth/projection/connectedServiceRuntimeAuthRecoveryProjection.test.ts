@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY } from '@happier-dev/protocol';
 
 import {
+  buildRuntimeAuthRecoveryAttemptTransitionLocalId,
   buildRuntimeAuthRecoveryScheduledResult,
   normalizeConnectedServiceRuntimeAuthRecoveryProjection,
 } from './connectedServiceRuntimeAuthRecoveryProjection';
@@ -22,6 +23,18 @@ const classification = {
 } satisfies ConnectedServiceRuntimeFailureClassification;
 
 describe('connected service runtime auth recovery projection', () => {
+  it('builds a bounded deterministic local id from durable attempt and transition identity', () => {
+    const attemptId = `runtime-auth-attempt:${'opaque-'.repeat(100)}A`;
+    const first = buildRuntimeAuthRecoveryAttemptTransitionLocalId({ attemptId, transition: 'scheduled' });
+
+    expect(buildRuntimeAuthRecoveryAttemptTransitionLocalId({ attemptId, transition: 'scheduled' })).toBe(first);
+    expect(buildRuntimeAuthRecoveryAttemptTransitionLocalId({
+      attemptId: `${attemptId}B`,
+      transition: 'scheduled',
+    })).not.toBe(first);
+    expect(first.length).toBeLessThan(200);
+  });
+
   it('builds a typed retry-scheduled transcript event with runtime-auth diagnostics', () => {
     const result = buildRuntimeAuthRecoveryScheduledResult({
       classification,

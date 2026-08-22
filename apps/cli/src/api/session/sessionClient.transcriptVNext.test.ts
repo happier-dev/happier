@@ -11,10 +11,6 @@ import {
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { createSessionClientCommitQueueRuntime } from './client/transport/createSessionClientCommitQueueRuntime';
-import {
-  sendSessionEventViaPort,
-  type SessionClientTranscriptSendPort,
-} from './client/transcript/sendMessages';
 import { ApiSessionClient as StaticApiSessionClient } from './sessionClient';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
@@ -37,29 +33,6 @@ function readSessionMediaEnvelope(meta: Record<string, unknown>): unknown {
 function trackClient<T extends { close: () => Promise<void> }>(client: T): T {
   openClients.push(client);
   return client;
-}
-
-function createTranscriptSendPort(): SessionClientTranscriptSendPort {
-  return {
-    sessionId: 'session-1',
-    socket: {
-      connected: true,
-      emit: vi.fn(),
-    },
-    outboundShapeLogger: {
-      log: vi.fn(),
-    },
-    debug: vi.fn(),
-    debugLargeJson: vi.fn(),
-    getMetadataSnapshot: () => null,
-    buildOutboundSessionMessagePayload: (content) => ({ t: 'plain', v: content }),
-    commitSessionMessageBestEffort: vi.fn(),
-    logSendWhileDisconnected: vi.fn(),
-    markAgentQueueEchoSuppressedLocalId: vi.fn(),
-    toolCallCanonicalNameByProviderAndId: new Map(),
-    permissionToolCallRawInputByProviderAndId: new Map(),
-    toolCallInputByProviderAndId: new Map(),
-  };
 }
 
 afterEach(async () => {
@@ -107,19 +80,6 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
 }));
 
 describe('ApiSessionClient transcript vNext transport', () => {
-
-  it('stamps ready session events with the ready event type', () => {
-    const port = createTranscriptSendPort();
-
-    sendSessionEventViaPort(port, { type: 'ready' });
-
-    expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
-      expect.objectContaining({
-        messageRole: 'event',
-        sessionEventType: 'ready',
-      }),
-    );
-  });
 
   it('does not expose transcript-draft ephemerals (legacy partial streaming removed)', () => {
     expect('sendTranscriptDraftDelta' in StaticApiSessionClient.prototype).toBe(false);
@@ -305,59 +265,22 @@ describe('ApiSessionClient transcript vNext transport', () => {
     expect((client as any).getEphemeralStreamConnectionEpoch()).toBe(initialEpoch + 1);
   });
 
-  it('observes committed and ephemeral root assistant text through the session transcript API', async () => {
+  it('does not expose retired direct transcript publication bypasses', async () => {
     vi.resetModules();
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 8, localId: 'segment-1', didWrite: true } });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
 
     const { ApiSessionClient } = await import('./sessionClient');
+    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' })));
 
-    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', seq: 5 })));
-    const snapshotStore = client.getTurnAssistantTextSnapshotStore();
-    snapshotStore.beginTurn({ turnToken: 'turn-1', startSeqExclusive: client.getLastObservedMessageSeq(), startedAtMs: 1_000 });
-
-    (client as any).sendAgentMessageEphemeral(
-      'codex',
-      { type: 'message', message: 'Live answer' },
-      { localId: 'segment-1', createdAt: 1_000 },
-    );
-    expect(snapshotStore.getCurrentTurnSnapshot({ turnToken: 'turn-1' })).toMatchObject({
-      normalizedText: 'Live answer',
-      source: 'ephemeral',
-    });
-
-    await client.sendAgentMessageCommitted(
-      'codex' as any,
-      { type: 'message', message: 'Final answer' } as any,
-      { localId: 'segment-1' },
-    );
-
-    expect(snapshotStore.getCurrentTurnSnapshot({ turnToken: 'turn-1' })).toMatchObject({
-      normalizedText: 'Final answer',
-      source: 'committed',
-    });
+    expect('sendAgentMessageCommitted' in client).toBe(false);
+    expect('sendUserTextMessageCommitted' in client).toBe(false);
+    expect('sendSessionEvent' in client).toBe(false);
+    expect('sendProviderMessage' in client).toBe(false);
+    expect('sendAgentMessage' in client).toBe(false);
   });
 
-  it('stamps committed thinking snapshots as event messages', async () => {
-    vi.resetModules();
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 8, localId: 'thinking-1', didWrite: true } });
-    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
 
-    const { ApiSessionClient } = await import('./sessionClient');
-
-    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', seq: 5 })));
-
-    await client.sendAgentMessageCommitted(
-      'codex' as any,
-      { type: 'thinking', text: 'checking' } as any,
-      { localId: 'thinking-1' },
-    );
-
-    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
-      'message',
-      expect.objectContaining({ messageRole: 'event' }),
-    );
-  });
 
   it('persists assistant session media through the central bridge before committing byte-free transcript metadata', async () => {
     vi.resetModules();
@@ -719,43 +642,4 @@ describe('ApiSessionClient transcript vNext transport', () => {
     }
   });
 
-  it('clears materialized localId state when a durable stream checkpoint arrives as message-updated', async () => {
-    vi.resetModules();
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'segment-1', didWrite: true } });
-    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-
-    const { ApiSessionClient } = await import('./sessionClient');
-
-    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' })));
-    await client.sendAgentMessageCommitted(
-      'codex' as any,
-      { type: 'message', message: 'Hello' } as any,
-      { localId: 'segment-1' },
-    );
-
-    expect((client as any).committedLocalIdsAwaitingEcho.has('segment-1')).toBe(true);
-
-    const updateHandler = sessionSocketStub.getHandler('update');
-    expect(updateHandler).toBeTypeOf('function');
-
-    updateHandler?.({
-      id: 'u2',
-      seq: 2,
-      createdAt: 2_000,
-      body: {
-        t: 'message-updated',
-        sid: 's1',
-        message: {
-          id: 'm1',
-          seq: 1,
-          localId: 'segment-1',
-          createdAt: 1_000,
-          updatedAt: 2_000,
-          content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Hello world' }, meta: {} } },
-        },
-      },
-    });
-
-    expect((client as any).committedLocalIdsAwaitingEcho.has('segment-1')).toBe(false);
-  });
 });

@@ -10,7 +10,10 @@ import type {
 } from '@/daemon/controlClient';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 import { readDaemonStartWaitPollMs, readDaemonStartWaitTimeoutMs } from '@/daemon/startupWaitDefaults';
-import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
+import {
+  hasObservableDaemonStartProcessExited,
+  waitForDaemonRunningWithinBudget,
+} from '@/daemon/waitForDaemonRunningWithinBudget';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 const DEFAULT_DAEMON_RESTART_STABILITY_TIMEOUT_MS = 2_000;
@@ -57,7 +60,6 @@ export async function restartDaemonAndWait(params: RestartDaemonAndWaitParams = 
   try {
     await stopDaemon({
       stopSessions: params.stopSessions,
-      transferManagedLocalServices: params.takeover !== false,
     });
   } catch {
     // best-effort; restart should still attempt to start even if the daemon wasn't running
@@ -81,6 +83,7 @@ export async function restartDaemonAndWait(params: RestartDaemonAndWaitParams = 
   const pollMs = readDaemonStartWaitPollMs();
   const started = await waitForDaemonRunningWithinBudget({
     isRunning: () => checkIfDaemonRunningAndCleanupStaleState(),
+    shouldAbort: () => hasObservableDaemonStartProcessExited(child),
     timeoutMs,
     pollMs,
   });

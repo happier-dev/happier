@@ -1,7 +1,7 @@
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 import { resolveCliFeatureDecision, type CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
@@ -9,90 +9,159 @@ import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog'
 import {
     DaemonContributionRegistryProjectionDescribeRequestSchema,
     DaemonContributionRegistryProjectionDescribeResponseSchema,
+    DaemonPluginUiTargetedSurfaceMountV1Schema,
     DaemonPluginSettingsGetRequestSchema,
     DaemonPluginSettingsGetResponseSchema,
     DaemonPluginSettingsSetRequestSchema,
     DaemonPluginSettingsSetResponseSchema,
-    DaemonPluginStructuredMessageResolveRequestSchema,
-    DaemonPluginStructuredMessageResolveResponseSchema,
+    DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS,
+    DaemonPluginSecretStatusRequestSchema,
+    DaemonPluginSecretStatusResponseSchema,
+    DaemonPluginSecretSetRequestSchema,
+    DaemonPluginSecretSetResponseSchema,
+    DaemonPluginSecretDeleteRequestSchema,
+    DaemonPluginSecretDeleteResponseSchema,
+    DaemonPluginUiResourceReadRequestSchema,
+    DaemonPluginUiResourceReadResponseSchema,
+    DaemonPluginUiResourceWatchOpenRequestSchema,
+    DaemonPluginUiResourceWatchOpenResponseSchema,
+    DaemonPluginUiResourceWatchNextRequestSchema,
+    DaemonPluginUiResourceWatchNextResponseSchema,
+    DaemonPluginUiResourceWatchCloseRequestSchema,
+    DaemonPluginUiResourceWatchCloseResponseSchema,
     DaemonPluginStructuredMessageActionExecuteRequestSchema,
     DaemonPluginStructuredMessageActionExecuteResponseSchema,
+    DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema,
+    DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema,
+    DaemonPluginComposerAttachmentPrepareRequestSchema,
+    DaemonPluginComposerAttachmentPrepareResponseSchema,
+    DaemonPluginComposerReferenceSearchRequestSchema,
+    DaemonPluginComposerReferenceSearchResponseSchema,
     type DaemonPluginSettingsSnapshot,
     DaemonPluginUiArtifactBytesReadRequestSchema,
     DaemonPluginUiArtifactBytesReadResponseSchema,
     DaemonPluginReactNativeCrashReportRequestV1Schema,
     DaemonPluginReactNativeCrashReportResponseV1Schema,
     DaemonPluginReactNativeBundleCacheIdentityV1Schema,
+    DaemonPluginHostedWebArtifactCacheIdentityV1Schema,
+    isSameDaemonPluginReactNativeCrashBindingTokenV1,
     type FeatureDecision,
+    type DaemonHostedWebFrameCapabilityV1,
     type DaemonReactNativeHostRuntimeIdentityV1,
     type DaemonReactNativeWebLoaderCapabilityV1,
     type DaemonPluginReactNativeBundleCacheIdentityV1,
+    type DaemonPluginHostedWebArtifactCacheIdentityV1,
     type DaemonContributionRegistryProjectionDescribeRequest,
     type DaemonContributionRegistryProjectionDescribeResponse,
     type PluginSettingFieldV2,
     type DaemonPluginUiArtifactBytesReadResponse,
+    type DaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginReactNativeCrashReportResponseV1,
+    type DaemonPluginUiTargetedSurfaceMountV1,
+    type DaemonPluginStructuredMessageActionInvocationV1,
+    type MessageActionReferenceV1,
+    type MessageActionResolutionV1,
+    PluginMachineExecutionOriginV1Schema,
+    PluginUiResourceBindingCapabilityV1Schema,
+    type PluginMachineExecutionOriginV1,
+    type PluginProjectionBrandAssetV2,
+    type PluginProjectionV2,
+    type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
+    buildQualifiedPluginContributionKey,
+    readPluginSettingSecretCustody,
 } from '@happier-dev/protocol';
-import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginSettingsService } from '@happier-dev/plugin-sdk/runtime';
+import {
+    isPluginError,
+    PluginError,
+    type JsonValue,
+    type PluginInvocationCaller,
+} from '@happier-dev/plugin-sdk';
+import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
+import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
 import {
     computePluginUiArtifactSha256DigestV1,
-    PluginUiChannelV1Schema,
-    verifyPluginUiArtifactBytesIntegrityV1,
+    PluginUiDestinationBindingV1Schema,
+    isPluginUiHermesBytecodeArtifactV1,
+    PluginUiTargetedContributionsV1Schema,
+    selectPluginUiRendererChainMemberV1,
     verifyPluginUiArtifactFileSetIntegrityV1,
+    type PluginUiArtifactDigestV1,
     type PluginUiArtifactsManifestEntryV1,
+    type PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import {
+    DaemonPluginSettingsWatchRequestSchema,
+    DaemonPluginSettingsWatchResponseSchema,
+    RPC_METHODS,
+    type DaemonPluginSettingsWatchResponse,
+} from '@happier-dev/protocol/rpc';
 
 import {
     resolveMergedContributionRegistry,
 } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { executePluginActionIfAvailable } from '@/plugins/projection/actions/execute';
-import type { ResolvedContributionRegistry, ResolvedUiArtifactContribution } from '@/plugins/projection/registry/types';
+import type {
+    TargetActionCurrentIntentRequest,
+    TargetActionCurrentIntentResult,
+} from '@/plugins/runtime/invocation/actionExecutor';
+import type {
+    AdmittedTargetedContributionSnapshot,
+    ResolvedContributionRegistry,
+} from '@/plugins/projection/registry/types';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
+import {
+    listComposerSurfaceDeclarations,
+    projectDaemonComposerSurfaceCatalog,
+    readCurrentComposerReactNativeCrashStateBindings,
+} from '@/plugins/projection/registry/composer';
 import { adaptTargetActivationFacts } from '@/plugins/projection/introspection/targetActivationFacts';
 import { mapPluginSourceToDiagnosticSource } from '@/plugins/projection/introspection/source';
 import {
     resolvePluginUiProjectionHostRuntime,
 } from '@/plugins/projection/registry/ui/hostRuntime';
 import {
+    projectPluginUiRendererAvailability,
+    projectPluginUiRendererCrashState,
+    projectPluginUiRendererRef,
+    resolvePluginUiRendererProjectionEntry,
+} from '@/plugins/projection/registry/ui/projection';
+import {
+    findGeneratedHostedWebArtifactEntry,
+    findResolvedGeneratedHostedWebArtifactOwner,
     findGeneratedReactNativeArtifactEntry,
+    findGeneratedReactNativeCollectionMigrationsModule,
+    findResolvedGeneratedReactNativeClientContributionArtifactOwner,
     findResolvedGeneratedReactNativeArtifactOwner,
+    type ResolvedGeneratedHostedWebArtifactOwner,
+    type ResolvedGeneratedReactNativeClientContributionArtifactOwner,
     type ResolvedGeneratedReactNativeArtifactOwner,
 } from '@/plugins/projection/registry/ui/generatedUiArtifactOwners';
 import { resolveDeclarativeProjectionModels } from '@/plugins/projection/registry/ui/declarativeModels';
+import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { logger } from '@/ui/logger';
 import type {
     ReactNativeHostRuntimeReadinessIdentity,
 } from '@/plugins/projection/registry/ui/hostRuntime';
-import type {
-    StablePluginDeclarativeNode,
-    StablePluginQualifiedReference,
-} from '@/plugins/runtime/invocation/services/declarativeModel';
-import type {
-    StablePluginStructuredMessageResolution,
-} from '@/plugins/runtime/invocation/services/structuredMessageConsumer';
 import {
-    createReactNativeCrashDisableStateStore,
-    createReactNativeCrashDisableContributionKey,
-    recordReactNativeCrashDisableReport,
-    resolveReactNativeCrashDisabledContributionIdsForProjection,
-    type ReactNativeCrashDisableCurrentCacheIdentity,
+    createReactNativeCrashStateBindingKey,
+    createReactNativeCrashStateStore,
+    reconcileReactNativeCrashStateBindings,
+    recordReactNativeCrashFailure,
+    resetReactNativeCrashState,
+    type ReactNativeCrashStateBinding,
+    type ReactNativeCrashStateProjection,
 } from '@/plugins/runtime/ui/reactNativeCrashDisableState';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { PluginFinalPolicyCurrentGeneration } from '@/plugins/runtime/policy/facts';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import {
-    validateInstalledReactNativeBundleArtifact,
-    type ReactNativeBundleCacheIdentity,
-    type ReactNativeBundleHostRuntime,
-} from '@/plugins/install/ui/reactNativeBundles';
 import { resolveContainedPluginResourcePath } from '@/plugins/projection/resources/package/resolve';
 import { GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH } from '@/plugins/install/ui/generatedArtifacts';
 import {
     assertPluginSettingFieldValue,
 } from '@/plugins/runtime/context/settings';
-import { createPluginSecretStore } from '@/plugins/runtime/context/secrets';
 import { PluginContextServiceError } from '@/plugins/runtime/context/errors';
-import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import type { DeclaredDaemonPluginSecretAdministrationPort } from '@/plugins/runtime/context/secrets';
+import { createPluginInvocationLifetime } from '@/plugins/runtime/invocation/lifetime';
 import {
     assertLocalSettingsDeclarationsAccessible,
     flattenLocalSettingsFields,
@@ -101,6 +170,15 @@ import {
 import { resolveNotificationChannelSettingsContributions } from '@/plugins/settings/notificationChannelSettings';
 import { resolveInvocationContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate';
 import { activateScmRuntimeContributionsOnDemand } from '@/scm/scmBackendCatalog';
+import {
+    resolveRegistryConnectedAccountActionFormPurposeAuthorization,
+} from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
+import type {
+    DaemonConnectedAccountPurposeBindingRuntime,
+} from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
+import {
+    registerDaemonPluginCollectionCandidatePreparationHandler,
+} from './daemonPluginCollectionCandidatePreparation';
 
 export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
     resolveRegistry?: () => Promise<ResolvedContributionRegistry>;
@@ -110,23 +188,45 @@ export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
     resolveHostedWebFeatureDecision?: () => Promise<FeatureDecision> | FeatureDecision;
     resolveReactNativeBundlesFeatureDecision?: () => Promise<FeatureDecision> | FeatureDecision;
     resolveReactNativeDevHotReloadFeatureDecision?: () => Promise<FeatureDecision> | FeatureDecision;
-    resolveStructuredMessagesFeatureDecision?: () => Promise<FeatureDecision> | FeatureDecision;
+    /**
+     * The connected machine supplies only its live server/machine identity.
+     * This handler combines it with the materialization ID captured by the
+     * same registry lease; it never infers either fact from a path or catalog.
+     */
+    resolvePluginProjectionExecutionOriginContext?: () => Promise<Readonly<{
+        serverIdentityId: string;
+        machineId: string;
+    }> | null> | Readonly<{
+        serverIdentityId: string;
+        machineId: string;
+    }> | null;
+    /**
+     * Machine-owned resolver for the opaque whole-message reference. The
+     * handler receives no content reader and cannot create a second Message
+     * authority; unavailable/currentness outcomes fail closed before dispatch.
+     */
+    resolveMessageActionReference?: (params: Readonly<{
+        reference: MessageActionReferenceV1;
+        signal?: AbortSignal;
+    }>) => Promise<MessageActionResolutionV1>;
+    /** Existing host-owned approval presenter for target actions. */
+    requestCurrentIntent?: (
+        request: TargetActionCurrentIntentRequest,
+    ) => Promise<TargetActionCurrentIntentResult>;
     // G-RC4: the SAME async server-features provider shape as the inventory/quotas/browser gates.
     // Threaded so the four plugin-UI-tier fallback decisions resolve against the live server
     // snapshot — a server that disables `plugins`/`plugins.ui` cascades the tiers OFF in the
     // projection (master §3.5 "server disables X → daemon refuses").
     resolveServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
-    resolveReactNativeCrashDisabledContributionIds?: (
-        input: Readonly<{
-            registry: ResolvedContributionRegistry;
-            generation: number;
-            pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
-        }>,
-    ) => Promise<readonly string[]> | readonly string[];
     processEnv?: NodeJS.ProcessEnv;
     installedReactNativeArtifactLoaderAvailable?: boolean;
     reactNativeScriptManagerRuntimeIntegrated?: boolean;
     reactNativeHostRuntime?: ReactNativeHostRuntimeReadinessIdentity;
+    /** Current daemon-owned Connected Account purpose runtime for form choices. */
+    resolveConnectedAccountPurposeBindingRuntime?: () => Pick<
+        DaemonConnectedAccountPurposeBindingRuntime,
+        'listActionFormConnectedAccountOptions'
+    > | null;
 }>;
 
 let cachedProjection: DaemonContributionRegistryProjectionDescribeResponse | null = null;
@@ -155,6 +255,14 @@ async function defaultResolveInstalledPackages(): Promise<readonly PluginCatalog
 async function defaultResolveGeneration(): Promise<number> {
     const { pluginReloadController } = await import('@/plugins/runtime/reload/singleton');
     return pluginReloadController.getState().generation;
+}
+
+async function isExpectedProjectionGenerationCurrent(
+    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
+    expectedGeneration: string,
+): Promise<boolean> {
+    const projectionGeneration = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
+    return String(projectionGeneration) === expectedGeneration;
 }
 
 async function resolveProjectionServerFeaturesSnapshot(
@@ -205,36 +313,548 @@ async function resolveHostedWebFeatureDecision(
         }));
 }
 
-async function resolveStructuredMessagesFeatureDecision(
-    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
-    serverSnapshot: CliServerFeaturesSnapshot | undefined,
-): Promise<FeatureDecision> {
-    return await (opts?.resolveStructuredMessagesFeatureDecision?.()
-        ?? resolveCliFeatureDecision({
-            featureId: 'plugins.ui.structuredMessages',
-            env: opts?.processEnv ?? process.env,
-            ...(serverSnapshot ? { serverSnapshot } : {}),
-        }));
-}
-
 function createProjectionCacheKey(input: Readonly<{
     generation: number;
     registryCacheToken: string;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+    brandAssetsByPluginId: Readonly<Record<string, PluginProjectionBrandAssetV2>>;
+    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    pluginFinalPolicyCurrentGenerationsById?: ReadonlyMap<string, PluginFinalPolicyCurrentGeneration>;
+    mountedTarget?: Readonly<{ pluginId: string; immutableGenerationId: string }>;
 }>): string {
     return JSON.stringify({
         generation: input.generation,
         registryCacheToken: input.registryCacheToken,
         pluginUiHostRuntime: input.pluginUiHostRuntime,
+        brandAssetsByPluginId: input.brandAssetsByPluginId,
+        pluginExecutionOriginsByPluginId: input.pluginExecutionOriginsByPluginId,
+        pluginFinalPolicyCurrentGenerations: input.pluginFinalPolicyCurrentGenerationsById
+            ? [...input.pluginFinalPolicyCurrentGenerationsById.entries()].sort(([left], [right]) => left.localeCompare(right))
+            : [],
+        mountedTarget: input.mountedTarget ?? null,
     });
+}
+
+type MountedTargetedContributionSnapshot = Readonly<{
+    point: Readonly<{
+        pointId: string;
+        protocol: Readonly<{ id: string; version: number }>;
+    }>;
+    snapshot: AdmittedTargetedContributionSnapshot;
+}>;
+
+/**
+ * The one cold-admission read for a mounted target. Its callers project public
+ * handles and private mounts from these same immutable snapshot objects; this
+ * is deliberately not another manifest scan, registry, or activation path.
+ */
+function readMountedTargetedContributionSnapshots(input: Readonly<{
+    runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
+    mountedTarget: Readonly<{ pluginId: string; immutableGenerationId: string }>;
+}>): readonly MountedTargetedContributionSnapshot[] {
+    const currentImmutableGenerationId = input.runtimeRegistry
+        .contributes.immutableGenerationIdsByPluginId?.[input.mountedTarget.pluginId];
+    if (currentImmutableGenerationId !== input.mountedTarget.immutableGenerationId) {
+        throw new PluginError({
+            code: 'plugin_targeted_contributions_target_stale',
+            message: 'Mounted target immutable generation is no longer current',
+        });
+    }
+    const points = [...(input.runtimeRegistry.contributes.pluginContributionPoints ?? [])]
+        .filter((candidate) => candidate.pluginId === input.mountedTarget.pluginId)
+        .sort((left, right) => left.definition.id.localeCompare(right.definition.id));
+    // A current contributor with no declared target points has one truthful,
+    // empty target snapshot. It needs no runtime reader and must not be treated
+    // as unavailable merely because there is nothing to admit.
+    if (points.length === 0) return Object.freeze([]);
+    const readAdmitted = input.runtimeRegistry.readAdmittedTargetedContributions;
+    if (!readAdmitted) {
+        throw new PluginError({
+            code: 'plugin_targeted_contributions_unavailable',
+            message: 'Targeted contribution admission is unavailable in the current runtime registry',
+        });
+    }
+    const snapshots: MountedTargetedContributionSnapshot[] = [];
+    for (const point of points) {
+        for (const protocol of [...point.definition.protocols]
+            .sort((left, right) => left.id.localeCompare(right.id) || left.version - right.version)) {
+            const snapshot = readAdmitted({
+                targetPluginId: input.mountedTarget.pluginId,
+                pointId: point.definition.id,
+                protocol: { id: protocol.id, version: protocol.version },
+            });
+            if (!snapshot) {
+                throw new PluginError({
+                    code: 'plugin_targeted_contributions_unavailable',
+                    message: 'Targeted contribution point is not admitted in the current runtime registry',
+                });
+            }
+            if (
+                snapshot.target.pluginId !== input.mountedTarget.pluginId
+                || snapshot.target.pointId !== point.definition.id
+                || snapshot.target.immutableGenerationId !== input.mountedTarget.immutableGenerationId
+            ) {
+                throw new PluginError({
+                    code: 'plugin_targeted_contributions_target_stale',
+                    message: 'Targeted contribution snapshot does not match the mounted target',
+                });
+            }
+            snapshots.push(Object.freeze({
+                point: Object.freeze({
+                    pointId: point.definition.id,
+                    protocol: Object.freeze({ id: protocol.id, version: protocol.version }),
+                }),
+                snapshot,
+            }));
+        }
+    }
+    return Object.freeze(snapshots);
+}
+
+function projectMountedTargetedContributionSnapshots(input: Readonly<{
+    mountedTarget: Readonly<{ pluginId: string; immutableGenerationId: string }>;
+    snapshots: readonly MountedTargetedContributionSnapshot[];
+}>): PluginUiTargetedContributionsV1 {
+    const pointsById = new Map<string, MountedTargetedContributionSnapshot[]>();
+    for (const snapshot of input.snapshots) {
+        const existing = pointsById.get(snapshot.point.pointId);
+        if (existing) existing.push(snapshot);
+        else pointsById.set(snapshot.point.pointId, [snapshot]);
+    }
+    const points = [...pointsById.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([pointId, snapshots]) => Object.freeze({
+            pointId,
+            protocols: Object.freeze(snapshots.map(({ point, snapshot }) => Object.freeze({
+                protocol: Object.freeze({ ...point.protocol }),
+                contributions: Object.freeze(snapshot.contributions.map((contribution) => Object.freeze({
+                    contributor: Object.freeze({ ...contribution.contributor }),
+                    protocol: Object.freeze({ ...contribution.protocol }),
+                    ...(contribution.descriptor === undefined
+                        ? {}
+                        : { descriptor: contribution.descriptor }),
+                    operations: Object.freeze(contribution.operations.map((operation) => Object.freeze({
+                        point: Object.freeze({
+                            pointId: point.pointId,
+                            protocol: Object.freeze({ ...point.protocol }),
+                        }),
+                        contributor: Object.freeze({ ...contribution.contributor }),
+                        role: operation.role,
+                        action: Object.freeze({ ...operation.action }),
+                    }))),
+                    surfaces: Object.freeze(contribution.surfaces.map((surface) => Object.freeze({
+                        point: Object.freeze({
+                            pointId: point.pointId,
+                            protocol: Object.freeze({ ...point.protocol }),
+                        }),
+                        contributor: Object.freeze({ ...surface.contributor }),
+                        role: surface.role,
+                        presentation: surface.presentation,
+                    }))),
+                }))),
+            }))),
+        }));
+    return PluginUiTargetedContributionsV1Schema.parse({
+        target: input.mountedTarget,
+        points,
+    });
+}
+
+/**
+ * The one current target-local inventory accepted by the Protocol declarative
+ * normalizer. It is derived from the exact cold-admitted snapshots used for
+ * this response, so a static target document cannot borrow a global catalog,
+ * contributor candidate, or a different immutable generation.
+ */
+function readMountedPreparedTargetedSurfaceInventories(input: Readonly<{
+    mountedTarget: Readonly<{ pluginId: string; immutableGenerationId: string }>;
+    snapshots: readonly MountedTargetedContributionSnapshot[];
+}>): Readonly<Record<string, readonly PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1[]>> {
+    const surfaces: PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1[] = [];
+    for (const { point, snapshot } of input.snapshots) {
+        for (const contribution of snapshot.contributions) {
+            for (const surface of contribution.surfaces) {
+                surfaces.push(Object.freeze({
+                    targetPluginId: input.mountedTarget.pluginId,
+                    handle: Object.freeze({
+                        point: Object.freeze({
+                            pointId: point.pointId,
+                            protocol: Object.freeze({ ...point.protocol }),
+                        }),
+                        contributor: Object.freeze({ ...surface.contributor }),
+                        role: surface.role,
+                        presentation: surface.presentation,
+                    }),
+                    inputSchema: surface.inputSchema,
+                    inputValidation: surface.inputValidation,
+                }));
+            }
+        }
+    }
+    return Object.freeze({
+        [input.mountedTarget.pluginId]: Object.freeze(surfaces),
+    });
+}
+
+/**
+ * Projects only the runtime registry's already-admitted target snapshots. The
+ * request is fenced to the exact mounted immutable generation; declarations
+ * supply the bounded point/protocol inventory, while the canonical reader
+ * supplies every contribution and never activates a plugin.
+ */
+function readMountedTargetedContributionsProjection(input: Readonly<{
+    runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
+    mountedTarget: Readonly<{ pluginId: string; immutableGenerationId: string }>;
+    snapshots?: readonly MountedTargetedContributionSnapshot[];
+}>): PluginUiTargetedContributionsV1 {
+    return projectMountedTargetedContributionSnapshots({
+        mountedTarget: input.mountedTarget,
+        snapshots: input.snapshots ?? readMountedTargetedContributionSnapshots(input),
+    });
+}
+
+function readTargetedSurfaceResourceCapability(
+    runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry,
+    pluginId: string,
+) {
+    try {
+        const parsed = PluginUiResourceBindingCapabilityV1Schema.safeParse(
+            runtimeRegistry.getPluginUiResourceCapability?.(pluginId),
+        );
+        return parsed.success
+            ? Object.freeze({ ...parsed.data })
+            : Object.freeze({ readable: false, dynamic: false });
+    } catch {
+        return Object.freeze({ readable: false, dynamic: false });
+    }
+}
+
+/**
+ * Projects only selected private mount facts from the already-admitted target
+ * snapshots and the same broad projection response. The consumer receives the
+ * producer-selected renderer, never a second renderer lookup or fallback
+ * decision path.
+ */
+function readMountedTargetedSurfaceMountsProjection(input: Readonly<{
+    runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
+    mountedTarget: Readonly<{ pluginId: string; immutableGenerationId: string }>;
+    snapshots: readonly MountedTargetedContributionSnapshot[];
+    projection: ReturnType<typeof buildPluginProjectionV2>;
+    pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+    modelsByRendererKey: Readonly<Record<string, import('@/plugins/runtime/invocation/services/declarativeModel').StablePluginDeclarativeModel | undefined>>;
+    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+}>): readonly DaemonPluginUiTargetedSurfaceMountV1[] {
+    const entriesById = input.projection.familiesById.pluginUi?.entriesById ?? {};
+    const mounts: DaemonPluginUiTargetedSurfaceMountV1[] = [];
+    for (const { point, snapshot } of input.snapshots) {
+        for (const contribution of snapshot.contributions) {
+            const executionOrigin = input.pluginExecutionOriginsByPluginId[contribution.contributor.pluginId];
+            if (!executionOrigin) continue;
+            const contributorTargetedContributions = readMountedTargetedContributionsProjection({
+                runtimeRegistry: input.runtimeRegistry,
+                mountedTarget: {
+                    pluginId: contribution.contributor.pluginId,
+                    immutableGenerationId: contribution.contributor.immutableGenerationId,
+                },
+            });
+            for (const surface of contribution.surfaces) {
+                const mount = Object.freeze({
+                    kind: 'targetedSurface' as const,
+                    target: Object.freeze({ ...input.mountedTarget }),
+                    point: Object.freeze({
+                        pointId: point.pointId,
+                        protocol: Object.freeze({ ...point.protocol }),
+                    }),
+                    contributor: Object.freeze({ ...surface.contributor }),
+                    role: surface.role,
+                    presentation: surface.presentation,
+                });
+                const candidates = surface.rendererChain.map((renderer) => {
+                    const declarativeModel = renderer.definition.kind === 'declarative'
+                        ? input.modelsByRendererKey[`${renderer.pluginId}\0${renderer.definition.id}`]
+                        : undefined;
+                    const rendererProjection = projectPluginUiRendererRef(renderer, declarativeModel);
+                    const availability = projectPluginUiRendererAvailability({
+                        pluginId: contribution.contributor.pluginId,
+                        renderer,
+                        declarativeModel,
+                        registryRendererRef: rendererProjection.registryRendererRef,
+                        entriesById,
+                    });
+                    const crashStateProjection = projectPluginUiRendererCrashState({
+                        mount,
+                        renderer,
+                        availability,
+                        hostRuntime: input.pluginUiHostRuntime,
+                    });
+                    const artifactProjection = resolvePluginUiRendererProjectionEntry({
+                        pluginId: contribution.contributor.pluginId,
+                        renderer: rendererProjection.registryRendererRef,
+                        entriesById,
+                    });
+                    return Object.freeze({
+                        renderer,
+                        rendererRef: rendererProjection.rendererRef,
+                        availability: crashStateProjection.availability,
+                        ...(artifactProjection ? { artifactProjection } : {}),
+                        ...(crashStateProjection.crashState
+                            ? { crashState: crashStateProjection.crashState }
+                            : {}),
+                    });
+                });
+                const selectedIdentity = selectPluginUiRendererChainMemberV1(
+                    surface.rendererChain.map((renderer) => renderer.identity),
+                    candidates
+                        .filter((candidate) => candidate.availability.state === 'available')
+                        .map((candidate) => candidate.renderer.definition.id),
+                ) ?? surface.rendererChain[0]?.identity;
+                const selectedCandidate = selectedIdentity
+                    ? candidates.find((candidate) => (
+                        candidate.renderer.identity.pluginId === selectedIdentity.pluginId
+                        && candidate.renderer.identity.localId === selectedIdentity.localId
+                    ))
+                    : undefined;
+                if (!selectedCandidate) {
+                    throw new PluginError({
+                        code: 'plugin_targeted_surface_mount_unavailable',
+                        message: 'Targeted Surface renderer selection is unavailable',
+                    });
+                }
+                const parsed = DaemonPluginUiTargetedSurfaceMountV1Schema.safeParse({
+                    ...mount,
+                    inputSchema: surface.inputSchema,
+                    rendererChain: surface.rendererChain.map((renderer) => renderer.identity),
+                    selectedRenderer: {
+                        identity: selectedCandidate.renderer.identity,
+                        renderer: selectedCandidate.rendererRef,
+                        availability: selectedCandidate.availability,
+                        ...(selectedCandidate.artifactProjection
+                            ? { artifactProjection: selectedCandidate.artifactProjection }
+                            : {}),
+                        ...(selectedCandidate.crashState
+                            ? { crashState: selectedCandidate.crashState }
+                            : {}),
+                    },
+                    executionOrigin,
+                    resourceCapability: readTargetedSurfaceResourceCapability(
+                        input.runtimeRegistry,
+                        contribution.contributor.pluginId,
+                    ),
+                    contributorTargetedContributions,
+                });
+                if (!parsed.success) {
+                    throw new PluginError({
+                        code: 'plugin_targeted_surface_mount_unavailable',
+                        message: 'Targeted Surface mount facts are unavailable',
+                    });
+                }
+                mounts.push(parsed.data);
+            }
+        }
+    }
+    return Object.freeze(mounts);
+}
+
+async function resolvePluginExecutionOriginsForProjection(
+    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
+    registry: ResolvedContributionRegistry,
+): Promise<Readonly<Record<string, PluginMachineExecutionOriginV1>>> {
+    let context: Readonly<{ serverIdentityId: string; machineId: string }> | null = null;
+    try {
+        context = await opts?.resolvePluginProjectionExecutionOriginContext?.() ?? null;
+    } catch {
+        // The context is external/currentness data. A failure must remove the
+        // stamp, not manufacture a local or coarse-machine substitute.
+        return Object.freeze({});
+    }
+    if (!context) return Object.freeze({});
+
+    const originsByPluginId: Record<string, PluginMachineExecutionOriginV1> = {};
+    for (const [pluginId, materializationId] of Object.entries(registry.materializationIdsByPluginId ?? {})) {
+        const parsed = PluginMachineExecutionOriginV1Schema.safeParse({
+            serverIdentityId: context.serverIdentityId,
+            materializationRef: {
+                machineId: context.machineId,
+                materializationId,
+                pluginId,
+            },
+        });
+        if (parsed.success) originsByPluginId[pluginId] = parsed.data;
+    }
+    return Object.freeze(originsByPluginId);
+}
+
+/**
+ * Convert a mounted UI binding into invocation provenance only after the
+ * daemon has matched every component against its current runtime lease. The
+ * wire record is a claim from the client, not caller authority.
+ */
+async function deriveMountedPluginInvocationCaller(input: Readonly<{
+    request: Readonly<{
+        machineId: string;
+        invocationSurface: 'cli' | 'ui' | 'voice';
+        invocation?: DaemonPluginStructuredMessageActionInvocationV1;
+    }>;
+    registry: ResolvedExecutablePluginRuntimeRegistry;
+    resolveCurrentPluginMaterializationRef?: NonNullable<
+        ResolvedExecutablePluginRuntimeRegistry['resolveCurrentPluginMaterializationRef']
+    >;
+    options: DaemonContributionRegistryProjectionRegistrationOptions | undefined;
+}>): Promise<
+    | Readonly<{ status: 'absent' }>
+    | Readonly<{ status: 'unavailable' }>
+    | Readonly<{
+        status: 'available';
+        caller: Extract<PluginInvocationCaller, Readonly<{ kind: 'plugin' }>>;
+        /** Re-read live machine identity immediately before target effect. */
+        isMountedCallerCurrent: () => Promise<boolean>;
+    }>
+> {
+    const binding = input.request.invocation?.kind === 'mountedPluginSurface'
+        ? input.request.invocation.mountedBinding
+        : undefined;
+    if (!binding) return Object.freeze({ status: 'absent' as const });
+    const contributes = input.registry.contributes;
+
+    let machineContext: Readonly<{ serverIdentityId: string; machineId: string }> | null = null;
+    try {
+        machineContext = await input.options?.resolvePluginProjectionExecutionOriginContext?.() ?? null;
+    } catch {
+        return Object.freeze({ status: 'unavailable' as const });
+    }
+    const materialization = binding.materializationRef;
+    if (
+        !machineContext
+        || machineContext.machineId !== input.request.machineId
+        || materialization.machineId !== machineContext.machineId
+        || contributes.materializationIdsByPluginId?.[materialization.pluginId]
+            !== materialization.materializationId
+    ) {
+        return Object.freeze({ status: 'unavailable' as const });
+    }
+    const initialMachineContext = machineContext;
+
+    const mountedContribution = [
+        ...(contributes.uiViewsV2 ?? []),
+        ...(contributes.uiSettingsPagesV2 ?? []),
+        // Plugin manifest ingestion reserves local contribution IDs across
+        // families, so this exact pluginId/localId pair is unambiguous for a
+        // mounted app-shell Voice invocation too.
+        ...(contributes.voiceProviders ?? []),
+    ].find((entry) => (
+        entry.pluginId === materialization.pluginId
+        && entry.identity.pluginId === materialization.pluginId
+        && entry.identity.localId === binding.contributionLocalId
+    ));
+    if (!mountedContribution) return Object.freeze({ status: 'unavailable' as const });
+
+    return Object.freeze({
+        status: 'available' as const,
+        caller: Object.freeze({
+            kind: 'plugin' as const,
+            pluginId: materialization.pluginId,
+            contribution: Object.freeze({
+                id: mountedContribution.identity.localId,
+                qualifiedId: buildQualifiedPluginContributionKey(mountedContribution.identity),
+            }),
+            materialization: Object.freeze({ ...materialization }),
+            // Diagnostic provenance only. Target policy receives the independent
+            // invocationSurface below.
+            originSurface: input.request.invocationSurface,
+        }),
+        isMountedCallerCurrent: async (): Promise<boolean> => {
+            let current: Readonly<{ serverIdentityId: string; machineId: string }> | null = null;
+            try {
+                current = await input.options?.resolvePluginProjectionExecutionOriginContext?.() ?? null;
+            } catch {
+                return false;
+            }
+            let liveMaterialization: typeof materialization | null = null;
+            try {
+                liveMaterialization = input
+                    .resolveCurrentPluginMaterializationRef?.(materialization.pluginId)
+                    ?? null;
+            } catch {
+                return false;
+            }
+            return current !== null
+                && liveMaterialization !== null
+                && current.serverIdentityId === initialMachineContext.serverIdentityId
+                && current.machineId === initialMachineContext.machineId
+                && current.machineId === input.request.machineId
+                && current.machineId === materialization.machineId
+                && liveMaterialization.pluginId === materialization.pluginId
+                && liveMaterialization.machineId === materialization.machineId
+                && liveMaterialization.materializationId === materialization.materializationId;
+        },
+    });
+}
+
+/**
+ * A host-presented provenance arm is meaningful only for the Action's
+ * declarative semantic placement. Absence remains the existing non-Composer
+ * compatibility path, so it is deliberately not inferred from this catalog.
+ */
+function isComposerActionPlacement(binding: string): boolean {
+    return binding === 'composer.primary'
+        || binding === 'composer.more'
+        || binding === 'composer.slash';
+}
+
+function actionRequiresHostPresentedInvocation(
+    action: Readonly<{
+        definition: Readonly<{ placementBindings?: readonly string[] }>;
+    }> | undefined,
+): boolean {
+    const bindings = action?.definition.placementBindings ?? [];
+    return bindings.length > 0 && bindings.every((binding) => (
+        isComposerActionPlacement(binding) || binding === 'message.menu'
+    ));
+}
+
+function isHostPresentedActionInvocationAvailable(
+    action: Readonly<{
+        definition: Readonly<{ placementBindings?: readonly string[] }>;
+    }> | undefined,
+    invocation: Exclude<
+        DaemonPluginStructuredMessageActionInvocationV1,
+        Readonly<{ kind: 'mountedPluginSurface' }>
+    >,
+): boolean {
+    const bindings = action?.definition.placementBindings ?? [];
+    return invocation.kind === 'hostPresentedComposer'
+        ? bindings.some(isComposerActionPlacement)
+        : bindings.includes('message.menu');
+}
+
+/**
+ * Project only immutable, display-safe facts supplied by the current Resource
+ * owner. The handler never reopens a package or interprets the manifest brand
+ * declaration, so it cannot become a second asset-admission authority.
+ */
+function readCurrentPluginBrandAssetsForProjection(input: Readonly<{
+    registry: ResolvedContributionRegistry;
+    runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
+}>): Readonly<Record<string, PluginProjectionBrandAssetV2>> {
+    const readBrandAsset = input.runtimeRegistry?.getPluginBrandAsset;
+    if (!readBrandAsset) return Object.freeze({});
+
+    const assetsByPluginId: Record<string, PluginProjectionBrandAssetV2> = {};
+    const pluginIds = [...new Set(input.registry.activationTargets.map((target) => target.pluginId))]
+        .sort((left, right) => left.localeCompare(right));
+    for (const pluginId of pluginIds) {
+        const asset = readBrandAsset(pluginId);
+        if (asset !== undefined) assetsByPluginId[pluginId] = asset;
+    }
+    return Object.freeze(assetsByPluginId);
 }
 
 async function resolveProjectionHostRuntime(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     params?: Readonly<{
-        reactNativeCrashDisabledContributionIds?: readonly string[];
         reactNativeHostRuntimeIdentity?: DaemonReactNativeHostRuntimeIdentityV1;
         reactNativeWebLoaderCapability?: DaemonReactNativeWebLoaderCapabilityV1;
+        hostedWebFrameCapability?: DaemonHostedWebFrameCapabilityV1;
     }>,
 ): Promise<ReturnType<typeof resolvePluginUiProjectionHostRuntime>> {
     const reactNativeHostRuntime = params?.reactNativeHostRuntimeIdentity
@@ -261,11 +881,6 @@ async function resolveProjectionHostRuntime(
         hostedWebFeatureDecision: await resolveHostedWebFeatureDecision(opts, serverFeaturesSnapshot),
         reactNativeBundlesFeatureDecision: await resolveReactNativeBundlesFeatureDecision(opts, serverFeaturesSnapshot),
         reactNativeDevHotReloadFeatureDecision: await resolveReactNativeDevHotReloadFeatureDecision(opts, serverFeaturesSnapshot),
-        structuredMessagesFeatureDecision: await resolveStructuredMessagesFeatureDecision(opts, serverFeaturesSnapshot),
-        // Phase 6.2: the UI-reported deployment CSP capability is the source of
-        ...(params?.reactNativeCrashDisabledContributionIds
-            ? { reactNativeCrashDisabledContributionIds: params.reactNativeCrashDisabledContributionIds }
-            : {}),
         ...(installedArtifactLoaderAvailable !== undefined
             ? { installedArtifactLoaderAvailable }
             : {}),
@@ -277,6 +892,9 @@ async function resolveProjectionHostRuntime(
             : {}),
         ...(params?.reactNativeWebLoaderCapability
             ? { reactNativeWebLoaderCapability: params.reactNativeWebLoaderCapability }
+            : {}),
+        ...(params?.hostedWebFrameCapability
+            ? { hostedWebFrameCapability: params.hostedWebFrameCapability }
             : {}),
     });
 }
@@ -307,11 +925,80 @@ function toReactNativeHostRuntimeReadinessIdentity(
     });
 }
 
-function readCurrentReactNativeCacheKeysForCrashDisable(params: Readonly<{
+/**
+ * Reads the registry's own projected renderer/cache facts to derive every
+ * currently executable destination binding. This is a projection reader, not
+ * another artifact or renderer selector.
+ */
+function readCurrentReactNativeCrashStateBindings(params: Readonly<{
+    projection: PluginProjectionV2;
+}>): readonly ReactNativeCrashStateBinding[] {
+    const entries = params.projection.familiesById.pluginUi?.entriesById ?? {};
+    const bindingsByKey = new Map<string, ReactNativeCrashStateBinding>();
+    for (const entry of Object.values(entries)) {
+        const descriptor = readRecord(entry);
+        if (
+            !descriptor
+            || (descriptor.contributionKind !== 'surfacePlacement'
+                && descriptor.contributionKind !== 'settingsPage')
+        ) {
+            continue;
+        }
+        const binding = PluginUiDestinationBindingV1Schema.safeParse(descriptor.binding);
+        const renderer = readRecord(descriptor.renderer);
+        const rendererId = typeof renderer?.contributionId === 'string'
+            ? renderer.contributionId.trim()
+            : '';
+        if (!binding.success || renderer?.kind !== 'reactNative' || !rendererId) continue;
+
+        const rendererEntry = readRecord(entries[
+            `reactNativeBundle:${binding.data.destination.pluginId}:${rendererId}`
+        ]);
+        const rendererRuntime = readRecord(rendererEntry?.runtime);
+        const cacheIdentity = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(
+            rendererRuntime?.cacheIdentity,
+        );
+        if (
+            !cacheIdentity.success
+            || cacheIdentity.data.pluginId !== binding.data.destination.pluginId
+            || cacheIdentity.data.contributionId !== rendererId
+        ) {
+            continue;
+        }
+        const current: ReactNativeCrashStateBinding = Object.freeze({
+            mount: Object.freeze({
+                kind: 'destination',
+                destination: Object.freeze({ ...binding.data.destination }),
+            }),
+            renderer: Object.freeze({
+                pluginId: cacheIdentity.data.pluginId,
+                localId: cacheIdentity.data.contributionId,
+            }),
+            artifactDigest: cacheIdentity.data.artifactDigest,
+        });
+        const key = createReactNativeCrashStateBindingKey(current);
+        const previous = bindingsByKey.get(key);
+        if (previous && previous.artifactDigest !== current.artifactDigest) {
+            throw new Error('Projected React Native binding has conflicting current artifact digests');
+        }
+        bindingsByKey.set(key, current);
+    }
+    return Object.freeze([...bindingsByKey.values()]);
+}
+
+/**
+ * Reads target-private RN bindings from the exact admitted target snapshots.
+ * It reuses the broad projection's already-normalized cache identity and does
+ * not select a renderer, materialize a plugin, or inspect an authored
+ * manifest. The target/contributor generations in `mount` are therefore the
+ * same currentness fence used by the private mount response.
+ */
+function readCurrentTargetedReactNativeCrashStateBindings(params: Readonly<{
     registry: ResolvedContributionRegistry;
     generation: number;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
-}>): Readonly<Record<string, ReactNativeCrashDisableCurrentCacheIdentity>> {
+    snapshots: readonly MountedTargetedContributionSnapshot[];
+}>): readonly ReactNativeCrashStateBinding[] {
     const projection = buildPluginProjectionV2({
         registry: params.registry,
         generation: params.generation,
@@ -320,79 +1007,75 @@ function readCurrentReactNativeCacheKeysForCrashDisable(params: Readonly<{
         pluginUiHostRuntime: params.pluginUiHostRuntime,
     });
     const entries = projection.familiesById.pluginUi?.entriesById ?? {};
-    const currentCacheKeysByContributionId: Record<string, ReactNativeCrashDisableCurrentCacheIdentity> = {};
-    for (const entry of Object.values(entries)) {
-        const entryRecord = readRecord(entry);
-        if (entryRecord?.contributionKind !== 'reactNativeBundle') continue;
-
-        const pluginId = typeof entryRecord.pluginId === 'string' ? entryRecord.pluginId.trim() : '';
-        const contributionId = typeof entryRecord.contributionId === 'string' ? entryRecord.contributionId.trim() : '';
-        if (!pluginId || !contributionId) continue;
-
-        const runtime = readRecord(entryRecord.runtime);
-        const cacheKey = typeof runtime?.cacheKey === 'string' ? runtime.cacheKey.trim() : '';
-        if (!cacheKey) continue;
-
-        const cacheIdentity = readRecord(runtime?.cacheIdentity);
-        const artifactDigest = typeof cacheIdentity?.artifactDigest === 'string'
-            ? cacheIdentity.artifactDigest.trim()
-            : '';
-        const contributionKey = `${pluginId}:${contributionId}`;
-        const currentIdentity: ReactNativeCrashDisableCurrentCacheIdentity = artifactDigest
-            ? { cacheKey, artifactDigest }
-            : { cacheKey };
-        currentCacheKeysByContributionId[contributionKey] = currentIdentity;
-        currentCacheKeysByContributionId[contributionId] = currentIdentity;
+    const bindingsByKey = new Map<string, ReactNativeCrashStateBinding>();
+    for (const { point, snapshot } of params.snapshots) {
+        for (const contribution of snapshot.contributions) {
+            for (const surface of contribution.surfaces) {
+                for (const renderer of surface.rendererChain) {
+                    if (renderer.definition.kind !== 'reactNative') continue;
+                    const rendererEntry = readRecord(entries[
+                        `reactNativeBundle:${renderer.pluginId}:${renderer.definition.id}`
+                    ]);
+                    const rendererRuntime = readRecord(rendererEntry?.runtime);
+                    const cacheIdentity = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(
+                        rendererRuntime?.cacheIdentity,
+                    );
+                    if (
+                        !cacheIdentity.success
+                        || cacheIdentity.data.pluginId !== contribution.contributor.pluginId
+                        || cacheIdentity.data.contributionId !== renderer.definition.id
+                        || renderer.identity.pluginId !== contribution.contributor.pluginId
+                        || renderer.identity.localId !== renderer.definition.id
+                    ) {
+                        continue;
+                    }
+                    const current: ReactNativeCrashStateBinding = Object.freeze({
+                        mount: Object.freeze({
+                            kind: 'targetedSurface' as const,
+                            target: Object.freeze({
+                                pluginId: snapshot.target.pluginId,
+                                immutableGenerationId: snapshot.target.immutableGenerationId,
+                            }),
+                            point: Object.freeze({
+                                pointId: point.pointId,
+                                protocol: Object.freeze({ ...point.protocol }),
+                            }),
+                            contributor: Object.freeze({ ...surface.contributor }),
+                            role: surface.role,
+                            presentation: surface.presentation,
+                        }),
+                        renderer: Object.freeze({
+                            pluginId: cacheIdentity.data.pluginId,
+                            localId: cacheIdentity.data.contributionId,
+                        }),
+                        artifactDigest: cacheIdentity.data.artifactDigest,
+                    });
+                    const key = createReactNativeCrashStateBindingKey(current);
+                    const previous = bindingsByKey.get(key);
+                    if (previous && previous.artifactDigest !== current.artifactDigest) {
+                        throw new Error('Projected targeted React Native binding has conflicting current artifact digests');
+                    }
+                    bindingsByKey.set(key, current);
+                }
+            }
+        }
     }
-    return currentCacheKeysByContributionId;
+    return Object.freeze([...bindingsByKey.values()]);
 }
 
-function resolveFailClosedReactNativeCrashDisabledContributionIds(
-    currentCacheKeysByContributionId: Readonly<Record<string, ReactNativeCrashDisableCurrentCacheIdentity>>,
-): readonly string[] {
-    return Object.freeze(Object.keys(currentCacheKeysByContributionId)
-        .filter((contributionId) => contributionId.includes(':'))
-        .sort((left, right) => left.localeCompare(right)));
+function emptyReactNativeCrashStatesByBindingKey(): Readonly<Record<string, ReactNativeCrashStateProjection | undefined>> {
+    return Object.freeze({});
 }
 
-async function defaultResolveReactNativeCrashDisabledContributionIdsForProjection(input: Readonly<{
-    registry: ResolvedContributionRegistry;
-    generation: number;
-    pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
-}>): Promise<readonly string[]> {
-    const currentCacheKeysByContributionId = readCurrentReactNativeCacheKeysForCrashDisable(input);
-    try {
-        const state = await createReactNativeCrashDisableStateStore({
-            happyHomeDir: configuration.happyHomeDir,
-        }).read();
-        return resolveReactNativeCrashDisabledContributionIdsForProjection({
-            state,
-            currentCacheKeysByContributionId,
-        });
-    } catch {
-        return resolveFailClosedReactNativeCrashDisabledContributionIds(currentCacheKeysByContributionId);
-    }
-}
-
-async function resolveReactNativeCrashDisabledContributionIds(
-    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
-    input: Readonly<{
-        registry: ResolvedContributionRegistry;
-        generation: number;
-        pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
-    }>,
-): Promise<readonly string[]> {
-    return await (opts?.resolveReactNativeCrashDisabledContributionIds?.(input)
-        ?? defaultResolveReactNativeCrashDisabledContributionIdsForProjection(input));
-}
-
-async function resolveProjectionHostRuntimeWithCrashDisableState(
+async function resolveProjectionHostRuntimeWithCrashState(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     input: Readonly<{
         registry: ResolvedContributionRegistry;
         generation: number;
         reactNativeHostRuntimeIdentity?: DaemonReactNativeHostRuntimeIdentityV1;
         reactNativeWebLoaderCapability?: DaemonReactNativeWebLoaderCapabilityV1;
+        hostedWebFrameCapability?: DaemonHostedWebFrameCapabilityV1;
+        targetedSurfaceSnapshots?: readonly MountedTargetedContributionSnapshot[];
     }>,
 ): Promise<ReturnType<typeof resolvePluginUiProjectionHostRuntime>> {
     const baseHostRuntime = await resolveProjectionHostRuntime(opts, {
@@ -402,33 +1085,80 @@ async function resolveProjectionHostRuntimeWithCrashDisableState(
         ...(input.reactNativeWebLoaderCapability
             ? { reactNativeWebLoaderCapability: input.reactNativeWebLoaderCapability }
             : {}),
+        ...(input.hostedWebFrameCapability
+            ? { hostedWebFrameCapability: input.hostedWebFrameCapability }
+            : {}),
     });
-    const crashDisabledContributionIds = await resolveReactNativeCrashDisabledContributionIds(opts, {
-        ...input,
-        pluginUiHostRuntime: baseHostRuntime,
-    });
-    return crashDisabledContributionIds.length === 0
-        ? baseHostRuntime
-        : await resolveProjectionHostRuntime(opts, {
-            ...(input.reactNativeHostRuntimeIdentity
-                ? { reactNativeHostRuntimeIdentity: input.reactNativeHostRuntimeIdentity }
-                : {}),
-            ...(input.reactNativeWebLoaderCapability
-                ? { reactNativeWebLoaderCapability: input.reactNativeWebLoaderCapability }
-                : {}),
-            reactNativeCrashDisabledContributionIds: crashDisabledContributionIds,
+    if (!baseHostRuntime.reactNativeBundles) return baseHostRuntime;
+
+    let crashStatesByBindingKey: Readonly<Record<string, ReactNativeCrashStateProjection | undefined>>;
+    try {
+        const projection = buildPluginProjectionV2({
+            registry: input.registry,
+            generation: input.generation,
+            installedPackages: [],
+            pluginDiagnosticsByPluginId: {},
+            pluginUiHostRuntime: baseHostRuntime,
         });
+        const bindings = [
+            ...readCurrentReactNativeCrashStateBindings({
+                projection,
+            }),
+            ...readCurrentComposerReactNativeCrashStateBindings({
+                registry: input.registry,
+                projection,
+            }),
+            ...(input.targetedSurfaceSnapshots
+                ? readCurrentTargetedReactNativeCrashStateBindings({
+                    registry: input.registry,
+                    generation: input.generation,
+                    pluginUiHostRuntime: baseHostRuntime,
+                    snapshots: input.targetedSurfaceSnapshots,
+                })
+                : []),
+        ];
+        crashStatesByBindingKey = (await reconcileReactNativeCrashStateBindings({
+            store: createReactNativeCrashStateStore({ happyHomeDir: configuration.happyHomeDir }),
+            bindings,
+        })).statesByBindingKey;
+    } catch {
+        // A missing/corrupt durable owner must not authorize executable RN
+        // bytes. Projection receives an explicitly present empty map, whose
+        // exact-binding consumer fails closed.
+        crashStatesByBindingKey = emptyReactNativeCrashStatesByBindingKey();
+    }
+
+    return Object.freeze({
+        ...baseHostRuntime,
+        reactNativeBundles: Object.freeze({
+            ...baseHostRuntime.reactNativeBundles,
+            crashStatesByBindingKey,
+        }),
+    });
 }
 
-async function acquireProjectionRuntimeRegistryLease(opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined): Promise<Readonly<{
+async function acquireProjectionRuntimeRegistryLease(
+    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
+    allowColdInitialization = false,
+): Promise<Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
+    resolveCurrentPluginMaterializationRef?: NonNullable<
+        ResolvedExecutablePluginRuntimeRegistry['resolveCurrentPluginMaterializationRef']
+    >;
     release: () => Promise<void>;
 }>> {
     if (opts?.resolveRuntimeRegistry) {
+        const registry = await opts.resolveRuntimeRegistry();
         return {
-            registry: await opts.resolveRuntimeRegistry(),
+            registry,
+            resolveCurrentPluginMaterializationRef: registry.resolveCurrentPluginMaterializationRef,
             release: async () => {},
         };
+    }
+
+    if (allowColdInitialization) {
+        const { pluginReloadController } = await import('@/plugins/runtime/reload/singleton');
+        return await pluginReloadController.acquireRuntimeRegistry();
     }
 
     return await acquireAuthoritativePluginRuntimeRegistryLease({
@@ -436,84 +1166,42 @@ async function acquireProjectionRuntimeRegistryLease(opts: DaemonContributionReg
     });
 }
 
-function projectQualifiedReferenceGeneration<T extends StablePluginQualifiedReference>(
-    reference: T,
-    generation: string,
-): T {
-    return Object.freeze({ ...reference, generation });
+function sameConnectedAccountServiceRefs(
+    left: readonly Readonly<{ pluginId: string; localId: string }>[],
+    right: readonly Readonly<{ pluginId: string; localId: string }>[],
+): boolean {
+    if (left.length !== right.length) return false;
+    const key = (entry: Readonly<{ pluginId: string; localId: string }>) => (
+        `${entry.pluginId}\u0000${entry.localId}`
+    );
+    const leftKeys = [...left].map(key).sort();
+    const rightKeys = [...right].map(key).sort();
+    return leftKeys.every((entry, index) => entry === rightKeys[index]);
 }
 
-function projectDeclarativeNodeGeneration(
-    node: StablePluginDeclarativeNode,
-    generation: string,
-): StablePluginDeclarativeNode {
-    switch (node.kind) {
-        case 'stack':
-        case 'group':
-            return Object.freeze({
-                ...node,
-                children: Object.freeze(node.children.map((child) => (
-                    projectDeclarativeNodeGeneration(child, generation)
-                ))),
-            });
-        case 'action':
-            return Object.freeze({
-                ...node,
-                action: projectQualifiedReferenceGeneration(node.action, generation),
-            });
-        case 'text':
-        case 'markdown':
-        case 'field':
-        case 'status':
-            return node;
-    }
-}
-
-function projectStructuredMessageResolutionGeneration(
-    resolution: StablePluginStructuredMessageResolution,
-    generation: string,
-): StablePluginStructuredMessageResolution {
-    return Object.freeze({
-        model: Object.freeze({
-            ...resolution.model,
-            identity: Object.freeze({ ...resolution.model.identity, generation }),
-            renderer: projectQualifiedReferenceGeneration(resolution.model.renderer, generation),
-            actions: Object.freeze(resolution.model.actions.map((action) => (
-                projectQualifiedReferenceGeneration(action, generation)
-            ))),
-            resources: Object.freeze(resolution.model.resources.map((resource) => (
-                projectQualifiedReferenceGeneration(resource, generation)
-            ))),
-        }),
-        renderer: Object.freeze({
-            ...resolution.renderer,
-            identity: Object.freeze({ ...resolution.renderer.identity, generation }),
-            root: projectDeclarativeNodeGeneration(resolution.renderer.root, generation),
-            nodes: Object.freeze(resolution.renderer.nodes.map((node) => (
-                projectDeclarativeNodeGeneration(node, generation)
-            ))),
-        }),
-        resources: Object.freeze(resolution.resources.map((resource) => Object.freeze({
-            ...resource,
-            reference: projectQualifiedReferenceGeneration(resource.reference, generation),
-        }))),
-    });
+function isCurrentConnectedAccountActionFormTarget(
+    registry: ResolvedExecutablePluginRuntimeRegistry,
+    action: Readonly<{ pluginId: string; localId: string }>,
+): boolean {
+    return registry.targetActionInvocations?.has(action.pluginId, action.localId) === true;
 }
 
 function readPluginSettingsDeclaration(
     registry: ResolvedExecutablePluginRuntimeRegistry,
     pluginId: string,
     machineId: string,
+    scope: DaemonPluginSettingsSnapshot['scope'],
 ): Readonly<{
     fields: readonly PluginSettingFieldV2[];
-    storageScope: DaemonPluginSettingsSnapshot['storageScope'];
 }> {
     const declarations = resolveLocalSettingsDeclarations({
         settings: [
-            ...(registry.contributes.settings ?? []),
+            ...(registry.contributes.settings ?? []).filter((entry) => (
+                entry.definition.scope === scope.kind
+            )),
             ...resolveNotificationChannelSettingsContributions(
                 registry.contributes.notificationChannels ?? [],
-            ),
+            ).filter((entry) => entry.definition.scope === scope.kind),
         ],
         pluginId,
     });
@@ -522,94 +1210,329 @@ function readPluginSettingsDeclaration(
         facts: resolveInvocationContributionPolicyFacts({
             facts: { 'machine.id': machineId },
         }),
-        supportedScopes: new Set(['local', 'synced']),
+        supportedScopes: new Set([scope.kind]),
     });
-    const storageScope = declarations[0]?.definition.scope;
-    if (!storageScope || declarations.some((entry) => entry.definition.scope !== storageScope)) {
+    if (declarations.length === 0) {
         throw new PluginContextServiceError(
-            'PLUGIN_SETTINGS_DECLARATION_INVALID',
-            `Plugin settings declarations for '${pluginId}' have no single canonical storage scope`,
+            'PLUGIN_SETTINGS_SCOPE_UNAVAILABLE',
+            `Plugin settings scope '${scope.kind}' is not declared for '${pluginId}'`,
         );
     }
     return {
         fields: flattenLocalSettingsFields(declarations),
-        storageScope,
     };
+}
+
+function isSecretSettingsField(field: PluginSettingFieldV2): boolean {
+    return readPluginSettingSecretCustody(field.secret) !== null;
+}
+
+function isPluginSettingsRevisionConflict(error: unknown): boolean {
+    return isPluginError(error)
+        && (
+            error.code === 'plugin_settings_revision_conflict'
+            || error.code === 'plugin_secret_revision_conflict'
+        );
+}
+
+/**
+ * The UI/CLI route chooses a portable target, but the daemon remains the
+ * authority that decides whether that target still names this receiver. Do
+ * not reinterpret a machine id alone as an equivalent local target.
+ */
+async function assertCurrentDaemonPluginSettingsTarget(
+    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
+    target: Readonly<{ serverIdentityId: string; machineId: string }>,
+    signal: AbortSignal | undefined,
+): Promise<void> {
+    signal?.throwIfAborted();
+    let current: Readonly<{ serverIdentityId: string; machineId: string }> | null = null;
+    try {
+        current = await opts?.resolvePluginProjectionExecutionOriginContext?.() ?? null;
+    } catch {
+        signal?.throwIfAborted();
+    }
+    signal?.throwIfAborted();
+    if (
+        !current
+        || current.serverIdentityId !== target.serverIdentityId
+        || current.machineId !== target.machineId
+    ) {
+        throw new PluginContextServiceError(
+            'plugin_settings_target_not_current',
+            'The requested daemon Settings target is no longer current.',
+        );
+    }
 }
 
 async function withPluginSettingsService<T>(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     pluginId: string,
     machineId: string,
+    scope: DaemonPluginSettingsSnapshot['scope'],
+    signal: AbortSignal | undefined,
     run: (params: Readonly<{
-        service: PluginSettingsService;
-        secrets: ReturnType<typeof createPluginSecretStore>;
+        service: ScopedSettingsService;
+        secrets: SecretsService | null;
         fields: readonly PluginSettingFieldV2[];
-        storageScope: DaemonPluginSettingsSnapshot['storageScope'];
+        scope: DaemonPluginSettingsSnapshot['scope'];
     }>) => Promise<T>,
 ): Promise<T> {
-    const lease = await acquireProjectionRuntimeRegistryLease(opts);
+    if (scope.kind !== 'daemon') {
+        throw new PluginContextServiceError(
+            'PLUGIN_SETTINGS_SCOPE_UNAVAILABLE',
+            `Exact-daemon settings RPC does not serve Account scope for '${pluginId}'`,
+        );
+    }
+    const lifetime = createPluginInvocationLifetime(signal);
+    let lease: Awaited<ReturnType<typeof acquireProjectionRuntimeRegistryLease>> | null = null;
     try {
-        const { fields, storageScope } = readPluginSettingsDeclaration(lease.registry, pluginId, machineId);
-        const paths = resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir });
-        const service = lease.registry.createPluginSettingsService?.({ pluginId }) ?? null;
+        lease = await acquireProjectionRuntimeRegistryLease(opts);
+        const { fields } = readPluginSettingsDeclaration(lease.registry, pluginId, machineId, scope);
+        const service = lease.registry.createPluginSettingsService?.({
+            pluginId,
+            scope,
+            signal: lifetime.signal,
+        }) ?? null;
         if (!service) {
             throw new PluginContextServiceError(
                 'PLUGIN_SETTINGS_RUNTIME_UNAVAILABLE',
                 `Plugin settings for '${pluginId}' have no current canonical runtime owner`,
             );
         }
-        const secrets = createPluginSecretStore({ pluginId, paths });
+        const secrets = lease.registry.createPluginSecretsService?.({
+            pluginId,
+            signal: lifetime.signal,
+        }) ?? null;
         return await run({
             service,
             secrets,
             fields,
-            storageScope,
+            scope,
         });
     } finally {
-        await lease.release();
+        try {
+            await lease?.release();
+        } finally {
+            lifetime.complete();
+        }
     }
+}
+
+/**
+ * One bounded, content-free Settings watch request. The scoped daemon service
+ * remains the only change producer; this handler observes its revision and
+ * releases that service/registry lease before the caller opens the next parked
+ * request. The UI record store remains the only Settings snapshot reader.
+ */
+async function waitForDaemonPluginSettingsWatch(
+    input: Readonly<{
+        service: ScopedSettingsService;
+        knownRevision?: string;
+        signal?: AbortSignal;
+    }>,
+): Promise<DaemonPluginSettingsWatchResponse> {
+    input.signal?.throwIfAborted();
+    return await new Promise<DaemonPluginSettingsWatchResponse>((resolve, reject) => {
+        let settled = false;
+        let subscription: ReturnType<ScopedSettingsService['watch']> | null = null;
+        let disposeAfterRegistration = false;
+        let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const disposeSubscription = (): void => {
+            if (!subscription) {
+                disposeAfterRegistration = true;
+                return;
+            }
+            const current = subscription;
+            subscription = null;
+            try {
+                const result = current.dispose();
+                if (result instanceof Promise) void result.catch(() => undefined);
+            } catch {
+                // Lease teardown is best effort; the enclosing owner still
+                // retires its invocation lifetime and registry lease.
+            }
+        };
+        const onAbort = (): void => {
+            fail(input.signal?.reason ?? new Error('Daemon Settings watch aborted'));
+        };
+        const cleanup = (): void => {
+            if (idleTimer !== null) {
+                clearTimeout(idleTimer);
+                idleTimer = null;
+            }
+            input.signal?.removeEventListener('abort', onAbort);
+            disposeSubscription();
+        };
+        const settle = (result: DaemonPluginSettingsWatchResponse): void => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+        };
+        const fail = (error: unknown): void => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        };
+
+        input.signal?.addEventListener('abort', onAbort, { once: true });
+        if (input.signal?.aborted) {
+            onAbort();
+            return;
+        }
+        try {
+            subscription = input.service.watch((change) => {
+                // The service itself scopes/deduplicates this callback. Keep
+                // an identical cursor level-triggered too, so a malformed
+                // duplicate cannot ask the UI record store to reread twice.
+                if (change.scope.kind !== 'daemon' || change.revision === input.knownRevision) return;
+                settle({ status: 'changed', revision: change.revision });
+            });
+            if (disposeAfterRegistration) {
+                disposeSubscription();
+                return;
+            }
+        } catch (error) {
+            fail(error);
+            return;
+        }
+
+        void input.service.snapshot({ signal: input.signal }).then(
+            (snapshot) => {
+                if (settled) return;
+                if (snapshot.scope.kind !== 'daemon') {
+                    fail(new PluginContextServiceError(
+                        'PLUGIN_SETTINGS_SCOPE_UNAVAILABLE',
+                        'Exact-daemon Settings watch received an Account snapshot.',
+                    ));
+                    return;
+                }
+                if (input.knownRevision === undefined) {
+                    settle({ status: 'ready', revision: snapshot.revision });
+                    return;
+                }
+                if (snapshot.revision !== input.knownRevision) {
+                    settle({ status: 'changed', revision: snapshot.revision });
+                    return;
+                }
+                // Reuse the incumbent Resource parked-call budget. This is a
+                // bounded RPC lifetime, not a Settings retry timer or poller.
+                idleTimer = setTimeout(() => {
+                    settle({ status: 'idle', revision: snapshot.revision });
+                }, DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS);
+            },
+            fail,
+        );
+    });
+}
+
+/**
+ * Secret-native daemon administration is intentionally independent of the
+ * Settings model. The leased port owns declaration lookup, exact origin
+ * partitioning, custody, and generation currentness.
+ */
+async function withDaemonPluginSecretAdministrationPort<T>(
+    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
+    pluginId: string,
+    signal: AbortSignal | undefined,
+    run: (params: Readonly<{
+        port: DeclaredDaemonPluginSecretAdministrationPort;
+        signal: AbortSignal;
+    }>) => Promise<T>,
+): Promise<T> {
+    const lifetime = createPluginInvocationLifetime(signal);
+    let lease: Awaited<ReturnType<typeof acquireProjectionRuntimeRegistryLease>> | null = null;
+    try {
+        lease = await acquireProjectionRuntimeRegistryLease(opts);
+        const port = lease.registry.createDaemonPluginSecretAdministrationPort?.({
+            pluginId,
+            signal: lifetime.signal,
+        }) ?? null;
+        if (!port) {
+            throw new PluginContextServiceError(
+                'PLUGIN_SETTINGS_SECRET_CUSTODY_UNAVAILABLE',
+                `Plugin '${pluginId}' has no current declared secret custody service`,
+            );
+        }
+        return await run({ port, signal: lifetime.signal });
+    } finally {
+        try {
+            await lease?.release();
+        } finally {
+            lifetime.complete();
+        }
+    }
+}
+
+async function readDaemonPluginSecretStatus(params: Readonly<{
+    pluginId: string;
+    secretId: string;
+    canonicalOrigin?: string;
+    signal?: AbortSignal;
+    port: DeclaredDaemonPluginSecretAdministrationPort;
+}>): Promise<ReturnType<typeof DaemonPluginSecretStatusResponseSchema.parse>> {
+    const status = await params.port.status({
+        secretId: params.secretId,
+        ...(params.canonicalOrigin === undefined
+            ? {}
+            : { canonicalOrigin: params.canonicalOrigin }),
+        ...(params.signal === undefined ? {} : { signal: params.signal }),
+    });
+    return DaemonPluginSecretStatusResponseSchema.parse({
+        protocolVersion: 1,
+        pluginId: params.pluginId,
+        secretId: params.secretId,
+        state: status.state,
+        revision: status.revision,
+    });
 }
 
 async function readPluginSettingsSnapshot(params: Readonly<{
     pluginId: string;
-    service: PluginSettingsService;
-    secrets: ReturnType<typeof createPluginSecretStore>;
+    service: ScopedSettingsService;
+    secrets: SecretsService | null;
     fields: readonly PluginSettingFieldV2[];
-    storageScope: DaemonPluginSettingsSnapshot['storageScope'];
+    scope: DaemonPluginSettingsSnapshot['scope'];
 }>): Promise<DaemonPluginSettingsSnapshot> {
     const stableSnapshot = await params.service.snapshot();
-    const rawSettings = stableSnapshot.values;
-    const settings = rawSettings && typeof rawSettings === 'object' && !Array.isArray(rawSettings)
-        ? rawSettings as Readonly<Record<string, unknown>>
-        : {};
-    const values: Record<string, unknown> = {};
-    const persistedSecretNames = new Set((await params.secrets.list()).map((entry) => entry.name));
-    const redactedKeys = params.fields
-        .filter((field) => field.secret === true && persistedSecretNames.has(field.id))
-        .map((field) => field.id);
-
-    for (const field of params.fields) {
-        if (field.secret === true) continue;
-        if (!Object.prototype.hasOwnProperty.call(settings, field.id)) {
-            continue;
-        }
-        values[field.id] = settings[field.id];
+    if (stableSnapshot.scope.kind !== params.scope.kind) {
+        throw new PluginContextServiceError(
+            'PLUGIN_SETTINGS_SCOPE_UNAVAILABLE',
+            `Plugin settings scope '${params.scope.kind}' resolved a different record`,
+        );
     }
+    const redactedKeys = (await Promise.all(params.fields
+        .filter(isSecretSettingsField)
+        .map(async (field) => {
+            if (!params.secrets) return null;
+            try {
+                return (await params.secrets.status(field.id)).state === 'configured'
+                    ? field.id
+                    : null;
+            } catch {
+                return null;
+            }
+        })))
+        .filter((id): id is string => id !== null)
+        .sort((left, right) => left.localeCompare(right));
 
     return DaemonPluginSettingsGetResponseSchema.parse({
         protocolVersion: 1,
         pluginId: params.pluginId,
-        storageScope: params.storageScope,
+        scope: stableSnapshot.scope,
         revision: stableSnapshot.revision,
-        values,
-        redactedKeys: redactedKeys.sort((left, right) => left.localeCompare(right)),
+        values: stableSnapshot.values,
+        redactedKeys,
     });
 }
 
 async function acquireProjectionContributionRegistryLease(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     generation: number,
+    requireRuntimeRegistry = false,
 ): Promise<Readonly<{
     registry: ResolvedContributionRegistry;
     pluginDiagnosticsByPluginId: ResolvedExecutablePluginRuntimeRegistry['pluginDiagnosticsByPluginId'];
@@ -618,8 +1541,8 @@ async function acquireProjectionContributionRegistryLease(
     cacheToken: string;
     release: () => Promise<void>;
 }>> {
-    if (opts?.resolveRuntimeRegistry) {
-        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+    if (opts?.resolveRuntimeRegistry || requireRuntimeRegistry) {
+        const lease = await acquireProjectionRuntimeRegistryLease(opts, requireRuntimeRegistry);
         return {
             registry: lease.registry.contributes,
             pluginDiagnosticsByPluginId: lease.registry.pluginDiagnosticsByPluginId,
@@ -644,11 +1567,13 @@ async function acquireProjectionContributionRegistryLease(
     }
 
     const registry = await (opts?.resolveRegistry ?? defaultResolveRegistry)();
+    const requiresColdComposerSurfaceCatalog = listComposerSurfaceDeclarations(registry).length > 0;
     if (
         (registry.scmBackends?.length ?? 0) > 0
         || (registry.scmHostingProviders?.length ?? 0) > 0
+        || requiresColdComposerSurfaceCatalog
     ) {
-        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        const lease = await acquireProjectionRuntimeRegistryLease(opts, requiresColdComposerSurfaceCatalog);
         return {
             registry: lease.registry.contributes,
             pluginDiagnosticsByPluginId: lease.registry.pluginDiagnosticsByPluginId,
@@ -663,7 +1588,7 @@ async function acquireProjectionContributionRegistryLease(
         pluginDiagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
         targetActivationFacts: null,
         runtimeRegistry: null,
-        cacheToken: `metadata:${registry.generationId ?? 'unknown'}`,
+        cacheToken: `metadata:${generation}`,
         release: async () => {},
     };
 }
@@ -674,7 +1599,11 @@ async function resolveProjection(
 ): Promise<DaemonContributionRegistryProjectionDescribeResponse> {
     const now = Date.now();
     const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
-    const lease = await acquireProjectionContributionRegistryLease(opts, generation);
+    const lease = await acquireProjectionContributionRegistryLease(
+        opts,
+        generation,
+        request?.mountedTarget !== undefined,
+    );
     try {
         const scmRuntimeAvailability = await (async () => {
             if (!lease.runtimeRegistry) {
@@ -689,7 +1618,20 @@ async function resolveProjection(
                 hostingProviderIds: new Set(lease.runtimeRegistry.scmHostingProvidersById.keys()),
             };
         })();
-        const resolvedPluginUiHostRuntime = await resolveProjectionHostRuntimeWithCrashDisableState(opts, {
+        const mountedTargetSnapshots = request?.mountedTarget
+            ? lease.runtimeRegistry
+                ? readMountedTargetedContributionSnapshots({
+                    runtimeRegistry: lease.runtimeRegistry,
+                    mountedTarget: request.mountedTarget,
+                })
+                : (() => {
+                    throw new PluginError({
+                        code: 'plugin_targeted_contributions_unavailable',
+                        message: 'Targeted contribution projection requires the current runtime registry',
+                    });
+                })()
+            : undefined;
+        const resolvedPluginUiHostRuntime = await resolveProjectionHostRuntimeWithCrashState(opts, {
             registry: lease.registry,
             generation,
             ...(request?.reactNativeHostRuntimeIdentity
@@ -698,24 +1640,69 @@ async function resolveProjection(
             ...(request?.reactNativeWebLoaderCapability
                 ? { reactNativeWebLoaderCapability: request.reactNativeWebLoaderCapability }
                 : {}),
+            ...(request?.hostedWebFrameCapability
+                ? { hostedWebFrameCapability: request.hostedWebFrameCapability }
+                : {}),
+            ...(mountedTargetSnapshots
+                ? { targetedSurfaceSnapshots: mountedTargetSnapshots }
+                : {}),
         });
+        const preparedTargetedSurfacesByPluginId = request?.mountedTarget && mountedTargetSnapshots
+            ? readMountedPreparedTargetedSurfaceInventories({
+                mountedTarget: request.mountedTarget,
+                snapshots: mountedTargetSnapshots,
+            })
+            : undefined;
         const modelsByRendererKey = typeof lease.runtimeRegistry?.generation === 'number'
             ? resolveDeclarativeProjectionModels({
                 registry: lease.registry,
                 generation,
+                onRendererModelUnavailable({ pluginId, rendererId, error }) {
+                    logger.warn('[PLUGIN RUNTIME] Declarative renderer is unavailable: its model could not be built', {
+                        pluginId,
+                        rendererId,
+                        reason: projectPluginFailureText(
+                            error instanceof Error ? error : new Error(String(error)),
+                        ),
+                    });
+                },
                 ...(lease.runtimeRegistry.targetActionInvocations
                     ? { actionRuntime: lease.runtimeRegistry.targetActionInvocations }
+                    : {}),
+                ...(preparedTargetedSurfacesByPluginId
+                    ? { preparedTargetedSurfacesByPluginId }
                     : {}),
             })
             : Object.freeze({});
         const pluginUiHostRuntime = Object.freeze({
             ...resolvedPluginUiHostRuntime,
             declarative: Object.freeze({ modelsByRendererKey }),
+            ...(lease.runtimeRegistry?.getPluginUiResourceCapability ? {
+                resourceCapabilityForPlugin: (pluginId: string) => (
+                    lease.runtimeRegistry!.getPluginUiResourceCapability!(pluginId)
+                ),
+            } : {}),
         });
+        const brandAssetsByPluginId = readCurrentPluginBrandAssetsForProjection({
+            registry: lease.registry,
+            runtimeRegistry: lease.runtimeRegistry,
+        });
+        const pluginExecutionOriginsByPluginId = await resolvePluginExecutionOriginsForProjection(
+            opts,
+            lease.registry,
+        );
+        const pluginFinalPolicyCurrentGenerationsById = lease.runtimeRegistry
+            ?.pluginFinalPolicyCurrentGenerationsById;
         const cacheKey = createProjectionCacheKey({
             generation,
             registryCacheToken: lease.cacheToken,
             pluginUiHostRuntime,
+            brandAssetsByPluginId,
+            pluginExecutionOriginsByPluginId,
+            ...(pluginFinalPolicyCurrentGenerationsById
+                ? { pluginFinalPolicyCurrentGenerationsById }
+                : {}),
+            ...(request?.mountedTarget ? { mountedTarget: request.mountedTarget } : {}),
         });
         if (cachedProjection && cachedProjectionKey === cacheKey && now - cachedAtMs < CACHE_TTL_MS) {
             return cachedProjection;
@@ -748,12 +1735,74 @@ async function resolveProjection(
             installedPackages: await (opts?.resolveInstalledPackages ?? defaultResolveInstalledPackages)(),
             pluginDiagnosticsByPluginId: lease.pluginDiagnosticsByPluginId,
             pluginUiHostRuntime,
+            brandAssetsByPluginId,
+            pluginExecutionOriginsByPluginId,
+            ...(lease.runtimeRegistry?.resolveActionPresentUserGatePolicy
+                ? {
+                    resolveActionPresentUserGatePolicy:
+                        lease.runtimeRegistry.resolveActionPresentUserGatePolicy,
+                }
+                : {}),
+            ...(pluginFinalPolicyCurrentGenerationsById
+                ? { pluginFinalPolicyCurrentGenerationsById }
+                : {}),
             scmRuntimeAvailability,
             ...(introspectionRuntimeSnapshot ? { introspectionRuntimeSnapshot } : {}),
         });
+        const composerSurfaceCatalog = lease.runtimeRegistry
+            ? projectDaemonComposerSurfaceCatalog({
+                registry: lease.registry,
+                projection,
+                pluginUiHostRuntime,
+                modelsByRendererKey,
+                pluginExecutionOriginsByPluginId,
+                resourceCapabilityForPlugin: (pluginId) => readTargetedSurfaceResourceCapability(
+                    lease.runtimeRegistry!,
+                    pluginId,
+                ),
+                readContributorTargetedContributions: (target) => readMountedTargetedContributionsProjection({
+                    runtimeRegistry: lease.runtimeRegistry!,
+                    mountedTarget: target,
+                }),
+            })
+            : undefined;
         const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
             protocolVersion: 1,
             projection,
+            automationEligibleEvents: lease.registry.automationEligibleEvents ?? [],
+            ...(composerSurfaceCatalog ? { composerSurfaceCatalog } : {}),
+            ...(request?.mountedTarget
+                ? {
+                    targetedContributions: lease.runtimeRegistry
+                        ? readMountedTargetedContributionsProjection({
+                            runtimeRegistry: lease.runtimeRegistry,
+                            mountedTarget: request.mountedTarget,
+                            ...(mountedTargetSnapshots ? { snapshots: mountedTargetSnapshots } : {}),
+                        })
+                        : (() => {
+                            throw new PluginError({
+                                code: 'plugin_targeted_contributions_unavailable',
+                                message: 'Targeted contribution projection requires the current runtime registry',
+                            });
+                        })(),
+                    targetedSurfaceMounts: lease.runtimeRegistry && mountedTargetSnapshots
+                        ? readMountedTargetedSurfaceMountsProjection({
+                            runtimeRegistry: lease.runtimeRegistry,
+                            mountedTarget: request.mountedTarget,
+                            snapshots: mountedTargetSnapshots,
+                            projection,
+                            pluginUiHostRuntime,
+                            modelsByRendererKey,
+                            pluginExecutionOriginsByPluginId,
+                        })
+                        : (() => {
+                            throw new PluginError({
+                                code: 'plugin_targeted_surface_mount_unavailable',
+                                message: 'Targeted Surface projection requires the current runtime registry',
+                            });
+                        })(),
+                }
+                : {}),
         });
         cachedProjection = response;
         cachedAtMs = now;
@@ -765,7 +1814,7 @@ async function resolveProjection(
 }
 
 function reactNativeIdentityMatches(
-    left: ReactNativeBundleCacheIdentity,
+    left: DaemonPluginReactNativeBundleCacheIdentityV1,
     right: DaemonPluginReactNativeBundleCacheIdentityV1,
 ): boolean {
     return left.pluginId === right.pluginId
@@ -783,19 +1832,21 @@ function reactNativeIdentityMatches(
         && left.projectionGeneration === right.projectionGeneration;
 }
 
+function hostedWebIdentityMatches(
+    left: DaemonPluginHostedWebArtifactCacheIdentityV1,
+    right: DaemonPluginHostedWebArtifactCacheIdentityV1,
+): boolean {
+    return left.pluginId === right.pluginId
+        && left.contributionId === right.contributionId
+        && left.artifactDigest === right.artifactDigest
+        && left.platform === right.platform
+        && left.projectionGeneration === right.projectionGeneration;
+}
+
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? value as Readonly<Record<string, unknown>>
         : null;
-}
-
-function readProjectedReactNativeCacheIdentity(params: Readonly<{
-    registry: ResolvedContributionRegistry;
-    generation: number;
-    identity: DaemonPluginReactNativeBundleCacheIdentityV1;
-    pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
-}>): DaemonPluginReactNativeBundleCacheIdentityV1 | null {
-    return readProjectedReactNativeExecutableIdentity(params)?.cacheIdentity ?? null;
 }
 
 function readProjectedReactNativeExecutableIdentity(params: Readonly<{
@@ -834,30 +1885,108 @@ function readProjectedReactNativeExecutableIdentity(params: Readonly<{
     return parsed.success ? { cacheIdentity: parsed.data, cacheKey } : null;
 }
 
-function findReactNativeArtifactForCacheIdentity(params: Readonly<{
+type ProjectedClientActionExecution = Readonly<{
+    target: 'client';
+    client: Readonly<{
+        artifactId: string;
+        modulePath: string;
+        exportName: string;
+    }>;
+    platforms: readonly ('web' | 'ios' | 'android')[];
+}>;
+
+type ProjectedClientActionArtifact = Readonly<{
+    execution: ProjectedClientActionExecution;
+    origin: PluginMachineExecutionOriginV1;
+}>;
+
+/**
+ * Client Action bytes are authorized by the current projected Action, not by
+ * a nearby UI contribution. The projection owns the Action's execution
+ * declaration and exact producer origin; this byte route merely consumes it.
+ */
+async function readCurrentProjectedClientActionArtifact(params: Readonly<{
+    opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined;
     registry: ResolvedContributionRegistry;
-    identity: DaemonPluginReactNativeBundleCacheIdentityV1;
-}>): ResolvedUiArtifactContribution | null {
-    const channel = PluginUiChannelV1Schema.safeParse(params.identity.channel);
-    if (!channel.success) {
+    generation: number;
+    pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+    requestMachineId: string;
+    action: Readonly<{ pluginId: string; localId: string }>;
+}>): Promise<ProjectedClientActionArtifact | null> {
+    const pluginExecutionOriginsByPluginId = await resolvePluginExecutionOriginsForProjection(
+        params.opts,
+        params.registry,
+    );
+    const projection = buildPluginProjectionV2({
+        registry: params.registry,
+        generation: params.generation,
+        installedPackages: [],
+        pluginDiagnosticsByPluginId: {},
+        pluginUiHostRuntime: params.pluginUiHostRuntime,
+        pluginExecutionOriginsByPluginId,
+    });
+    const action = projection.actionsById[
+        buildQualifiedPluginContributionKey(params.action)
+    ];
+    if (
+        !action
+        || action.id !== params.action.localId
+        || action.pluginId !== params.action.pluginId
+        || action.available !== true
+        || action.execution.target !== 'client'
+        || action.serverIdentityId === undefined
+        || action.materializationRef === undefined
+    ) {
         return null;
     }
-    return (params.registry.uiArtifacts ?? []).find((artifact) => {
-        const definition = artifact.definition;
-        return artifact.pluginId === params.identity.pluginId
-            && definition.contributionId === params.identity.contributionId
-            && definition.contributionFamily === 'reactNativeBundles'
-            && definition.artifactKind === 'reactNativeBundle'
-            && definition.integrity?.digest === params.identity.artifactDigest
-            && definition.platform === params.identity.platform
-            && definition.compatibility.supportedChannels?.some(
-                (supportedChannel) => supportedChannel === channel.data,
-            );
-    }) ?? null;
+    const parsedOrigin = PluginMachineExecutionOriginV1Schema.safeParse({
+        serverIdentityId: action.serverIdentityId,
+        materializationRef: action.materializationRef,
+    });
+    if (
+        !parsedOrigin.success
+        || parsedOrigin.data.materializationRef.pluginId !== params.action.pluginId
+        || parsedOrigin.data.materializationRef.machineId !== params.requestMachineId
+    ) {
+        return null;
+    }
+    return Object.freeze({
+        execution: Object.freeze({
+            target: 'client',
+            client: Object.freeze({ ...action.execution.client }),
+            platforms: Object.freeze([...action.execution.platforms]),
+        }),
+        origin: parsedOrigin.data,
+    });
+}
+
+function readProjectedHostedWebArtifactIdentity(params: Readonly<{
+    registry: ResolvedContributionRegistry;
+    generation: number;
+    identity: DaemonPluginHostedWebArtifactCacheIdentityV1;
+    pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+}>): DaemonPluginHostedWebArtifactCacheIdentityV1 | null {
+    const projection = buildPluginProjectionV2({
+        registry: params.registry,
+        generation: params.generation,
+        installedPackages: [],
+        pluginDiagnosticsByPluginId: {},
+        pluginUiHostRuntime: params.pluginUiHostRuntime,
+    });
+    const entry = projection.familiesById.pluginUi?.entriesById[
+        `hostedWeb:${params.identity.pluginId}:${params.identity.contributionId}`
+    ];
+    const runtime = readRecord(entry?.runtime);
+    const parsed = DaemonPluginHostedWebArtifactCacheIdentityV1Schema.safeParse(
+        runtime?.artifactReadIdentity,
+    );
+    return parsed.success ? parsed.data : null;
 }
 
 function findGeneratedReactNativeArtifactGraph(params: Readonly<{
-    owner: ResolvedGeneratedReactNativeArtifactOwner;
+    owner:
+        | ResolvedGeneratedReactNativeArtifactOwner
+        | ResolvedGeneratedReactNativeClientContributionArtifactOwner;
     identity: DaemonPluginReactNativeBundleCacheIdentityV1;
 }>): PluginUiArtifactsManifestEntryV1 | null {
     const resolved = findGeneratedReactNativeArtifactEntry({
@@ -867,60 +1996,12 @@ function findGeneratedReactNativeArtifactGraph(params: Readonly<{
     return resolved.entry?.digest === params.identity.artifactDigest ? resolved.entry : null;
 }
 
-function toHostRuntimeFromCacheIdentity(
-    identity: DaemonPluginReactNativeBundleCacheIdentityV1,
-    pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>,
-): ReactNativeBundleHostRuntime | null {
-    const currentRuntime = pluginUiHostRuntime.reactNativeBundles?.hostRuntime;
-    if (!currentRuntime) {
-        return null;
-    }
-
-    const hostAppVersion = currentRuntime.hostAppVersion?.trim();
-    const hostUiApiVersion = currentRuntime.hostUiApiVersion?.trim();
-    const reactVersion = currentRuntime.reactVersion?.trim();
-    const reactNativeVersion = currentRuntime.reactNativeVersion?.trim();
-    if (!hostAppVersion || !hostUiApiVersion || !reactVersion || !reactNativeVersion) {
-        return null;
-    }
-
-    return Object.freeze({
-        hostAppVersion,
-        hostUiApiVersion,
-        reactVersion,
-        reactNativeVersion,
-        ...(currentRuntime.expoRuntimeVersion ? { expoRuntimeVersion: currentRuntime.expoRuntimeVersion } : {}),
-        ...(currentRuntime.hermesVersion ? { hermesVersion: currentRuntime.hermesVersion } : {}),
-        platform: identity.platform,
-        channel: identity.channel,
-        availableNativeCapabilities: Object.freeze([...(currentRuntime.availableNativeCapabilities ?? [])]),
-        projectionGeneration: identity.projectionGeneration,
-    });
-}
-
-function toArtifactManifest(artifact: ResolvedUiArtifactContribution): unknown {
-    return Object.freeze({
-        ...artifact.definition,
-        pluginId: artifact.pluginId,
-    });
-}
-
-function resolvePluginRootPath(artifact: ResolvedUiArtifactContribution): string | null {
-    const explicitRoot = artifact.pluginRootPath?.trim();
-    if (explicitRoot) {
-        return explicitRoot;
-    }
-
-    const manifestPath = artifact.manifestPath?.trim();
-    if (manifestPath) {
-        const normalized = manifestPath.replace(/\\/gu, '/');
-        if (normalized.endsWith('/.happier-plugin/plugin.json')) {
-            return dirname(dirname(manifestPath));
-        }
-        return dirname(manifestPath);
-    }
-
-    return artifact.sourceSpec?.kind === 'path' ? artifact.sourceSpec.locator.trim() || null : null;
+function findGeneratedHostedWebArtifactGraph(params: Readonly<{
+    owner: ResolvedGeneratedHostedWebArtifactOwner;
+    identity: DaemonPluginHostedWebArtifactCacheIdentityV1;
+}>): PluginUiArtifactsManifestEntryV1 | null {
+    const resolved = findGeneratedHostedWebArtifactEntry({ owner: params.owner });
+    return resolved.entry?.digest === params.identity.artifactDigest ? resolved.entry : null;
 }
 
 function artifactBytesError(
@@ -934,65 +2015,100 @@ function artifactBytesError(
     });
 }
 
-async function readVerifiedReactNativeArtifactFile(params: Readonly<{
-    pluginRootPath: string;
-    relativePath: string;
-    digest: string;
-    byteSize?: number;
+async function readVerifiedGeneratedPluginUiArtifactGraph(params: Readonly<{
+    pluginRootPath: string | undefined;
+    graph: PluginUiArtifactsManifestEntryV1;
     pluginId: string;
     contributionId: string;
+    artifactKind: 'reactNativeBundle' | 'hostedWebAsset';
+    diagnostics: Readonly<{
+        graphInvalid: string;
+        rootUnavailable: string;
+        pathInvalid: string;
+        fileIntegrityFailed: string;
+        readFailed: string;
+        entryMissing: string;
+    }>;
 }>): Promise<
-    | Readonly<{ ok: true; bytes: Uint8Array; digest: string; byteSize: number }>
+    | Readonly<{
+        ok: true;
+        digest: PluginUiArtifactDigestV1;
+        entry: Readonly<{ relativePath: string; bytes: Uint8Array }>;
+        files: readonly Readonly<{ relativePath: string; bytes: Uint8Array }>[];
+    }>
     | Readonly<{ ok: false; response: DaemonPluginUiArtifactBytesReadResponse }>
 > {
-    const resolved = await resolveContainedPluginResourcePath({
-        pluginRootPath: params.pluginRootPath,
-        resourcePath: params.relativePath,
-    });
-    if (!resolved) {
-        return {
+    const uniqueFiles = new Set(params.graph.files.map((file) => file.relativePath));
+    if (uniqueFiles.size !== params.graph.files.length || !uniqueFiles.has(params.graph.entry)) {
+        return Object.freeze({
             ok: false,
-            response: artifactBytesError('artifact_unavailable', ['react_native_artifact_path_invalid']),
-        };
+            response: artifactBytesError('artifact_integrity_failed', [params.diagnostics.graphInvalid]),
+        });
+    }
+    const pluginRootPath = params.pluginRootPath?.trim();
+    if (!pluginRootPath) {
+        return Object.freeze({
+            ok: false,
+            response: artifactBytesError('artifact_unavailable', [params.diagnostics.rootUnavailable]),
+        });
+    }
+    const installedRoot = join(pluginRootPath, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH);
+    const loadedFiles: Array<Readonly<{ relativePath: string; bytes: Uint8Array }>> = [];
+    for (const file of params.graph.files) {
+        const resolved = await resolveContainedPluginResourcePath({
+            pluginRootPath: installedRoot,
+            resourcePath: file.relativePath,
+        });
+        if (!resolved) {
+            return Object.freeze({
+                ok: false,
+                response: artifactBytesError('artifact_unavailable', [params.diagnostics.pathInvalid]),
+            });
+        }
+        try {
+            const bytes = await readFile(resolved.absolutePath);
+            if (bytes.byteLength !== file.byteSize || computePluginUiArtifactSha256DigestV1(bytes) !== file.digest) {
+                return Object.freeze({
+                    ok: false,
+                    response: artifactBytesError('artifact_integrity_failed', [params.diagnostics.fileIntegrityFailed]),
+                });
+            }
+            loadedFiles.push(Object.freeze({ relativePath: file.relativePath, bytes }));
+        } catch {
+            return Object.freeze({
+                ok: false,
+                response: artifactBytesError('artifact_read_failed', [params.diagnostics.readFailed]),
+            });
+        }
     }
 
-    let bytes: Uint8Array;
-    try {
-        bytes = await readFile(resolved.absolutePath);
-    } catch {
-        return {
-            ok: false,
-            response: artifactBytesError('artifact_read_failed', ['react_native_artifact_read_failed']),
-        };
-    }
-    if (params.byteSize !== undefined && bytes.byteLength !== params.byteSize) {
-        return {
-            ok: false,
-            response: artifactBytesError('artifact_integrity_failed', ['react_native_artifact_file_size_mismatch']),
-        };
-    }
-
-    const integrity = verifyPluginUiArtifactBytesIntegrityV1({
-        bytes,
+    const integrity = verifyPluginUiArtifactFileSetIntegrityV1({
+        files: loadedFiles,
         integrity: {
-            digest: params.digest,
+            digest: params.graph.digest,
             pluginId: params.pluginId,
             contributionId: params.contributionId,
-            artifactKind: 'reactNativeBundle',
+            artifactKind: params.artifactKind,
         },
     });
     if (!integrity.ok) {
-        return {
+        return Object.freeze({
             ok: false,
             response: artifactBytesError('artifact_integrity_failed', [integrity.reasonCode]),
-        };
+        });
     }
-
+    const entry = loadedFiles.find((file) => file.relativePath === params.graph.entry);
+    if (!entry) {
+        return Object.freeze({
+            ok: false,
+            response: artifactBytesError('artifact_integrity_failed', [params.diagnostics.entryMissing]),
+        });
+    }
     return Object.freeze({
         ok: true,
-        bytes,
         digest: integrity.digest,
-        byteSize: bytes.byteLength,
+        entry,
+        files: Object.freeze(loadedFiles),
     });
 }
 
@@ -1014,206 +2130,280 @@ function reactNativeCrashReportError(
     });
 }
 
-async function readGeneratedReactNativeArtifactBytesByCacheIdentity(params: Readonly<{
+/**
+ * The projected exact binding is the only currentness authority for UI crash
+ * state. A byte/report caller cannot substitute another surface which happens
+ * to share the renderer or artifact digest.
+ */
+function readCurrentReactNativeCrashStateForToken(params: Readonly<{
+    pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+    token: DaemonPluginReactNativeCrashBindingTokenV1;
+}>): ReactNativeCrashStateProjection | null {
+    const state = params.pluginUiHostRuntime.reactNativeBundles?.crashStatesByBindingKey?.[
+        createReactNativeCrashStateBindingKey(params.token)
+    ];
+    return state && isSameDaemonPluginReactNativeCrashBindingTokenV1(state.token, params.token) ? state : null;
+}
+
+/**
+ * A crash token is only a currentness claim. Its target arm can narrow the
+ * canonical admission read, but it cannot supply a synthetic snapshot or
+ * bypass exact target-generation admission.
+ */
+function readTargetedSurfaceSnapshotsForCrashToken(
+    registry: ResolvedExecutablePluginRuntimeRegistry,
+    token: DaemonPluginReactNativeCrashBindingTokenV1,
+): readonly MountedTargetedContributionSnapshot[] | undefined {
+    if (token.mount.kind !== 'targetedSurface') return undefined;
+    return readMountedTargetedContributionSnapshots({
+        runtimeRegistry: registry,
+        mountedTarget: token.mount.target,
+    });
+}
+
+type GeneratedReactNativeArtifactReadParams = Readonly<{
     registry: ResolvedContributionRegistry;
-    owner: ResolvedGeneratedReactNativeArtifactOwner;
+    owner:
+        | ResolvedGeneratedReactNativeArtifactOwner
+        | ResolvedGeneratedReactNativeClientContributionArtifactOwner;
     identity: DaemonPluginReactNativeBundleCacheIdentityV1;
     generation: number;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
-}>): Promise<DaemonPluginUiArtifactBytesReadResponse> {
-    const projected = readProjectedReactNativeExecutableIdentity(params);
+}> & (
+    | Readonly<{
+        artifactOwnerKind: 'renderer';
+        crashStateToken: DaemonPluginReactNativeCrashBindingTokenV1;
+    }>
+    | Readonly<{
+        artifactOwnerKind: 'voiceProvider';
+    }>
+    | Readonly<{
+        /**
+         * Candidate Collection migrations use the exact renderer artifact
+         * graph, but never enter renderer crash containment or Voice lifecycle.
+         */
+        artifactOwnerKind: 'collectionMigrations';
+    }>
+    | Readonly<{
+        artifactOwnerKind: 'clientContribution';
+        clientContribution: Readonly<{
+            family: 'actions';
+            action: Readonly<{ pluginId: string; localId: string }>;
+        }>;
+        projectedClientAction: ProjectedClientActionArtifact;
+    }>
+);
+
+/**
+ * The generated Artifact graph is the sole daemon byte authority for both
+ * React Native consumers. The renderer-only branch is deliberately the only
+ * place this path reads crash state; Voice and host-private candidate
+ * Collection migrations never enter that lifecycle. Candidate code additionally
+ * requires its explicit signed module declaration; a renderer graph is not
+ * candidate code merely because it shares an artifact family.
+ */
+async function readGeneratedReactNativeArtifactBytesByCacheIdentity(
+    params: GeneratedReactNativeArtifactReadParams,
+): Promise<DaemonPluginUiArtifactBytesReadResponse> {
+    if (
+        params.artifactOwnerKind === 'renderer'
+        && (
+            params.crashStateToken.renderer.pluginId !== params.identity.pluginId
+            || params.crashStateToken.renderer.localId !== params.identity.contributionId
+            || params.crashStateToken.artifactDigest !== params.identity.artifactDigest
+        )
+    ) {
+        return artifactBytesError('crash_state_token_mismatch', ['react_native_crash_state_token_mismatch']);
+    }
+    if (params.artifactOwnerKind === 'renderer') {
+        // Authorize the renderer binding before resolving its graph or opening
+        // any file. A stale or disabled crash token must never disclose or
+        // materialize executable bytes merely because the graph is otherwise
+        // current.
+        const crashState = readCurrentReactNativeCrashStateForToken({
+            pluginUiHostRuntime: params.pluginUiHostRuntime,
+            token: params.crashStateToken,
+        });
+        if (!crashState) {
+            return artifactBytesError('crash_state_token_mismatch', ['react_native_crash_state_token_mismatch']);
+        }
+        if (crashState.disabled) {
+            return artifactBytesError('artifact_unavailable', ['crash_threshold_reached']);
+        }
+    }
+    const projected = params.artifactOwnerKind === 'clientContribution'
+        ? Object.freeze({ cacheIdentity: params.identity })
+        : readProjectedReactNativeExecutableIdentity(params);
     if (!projected || !reactNativeIdentityMatches(projected.cacheIdentity, params.identity)) {
         return artifactBytesError('artifact_not_found', ['react_native_projected_identity_not_found']);
     }
-    const graph = findGeneratedReactNativeArtifactGraph(params);
+    if (
+        params.artifactOwnerKind === 'clientContribution'
+        && (
+            params.owner.kind !== 'clientContribution'
+            || params.owner.pluginId !== params.clientContribution.action.pluginId
+            || params.owner.contributionId !== params.clientContribution.action.localId
+            || params.projectedClientAction.execution.client.artifactId !== params.owner.artifactId
+            || params.projectedClientAction.execution.client.modulePath !== params.owner.expectedRepackModule.modulePath
+            || params.projectedClientAction.execution.client.exportName !== params.owner.expectedRepackModule.exportName
+            || !params.projectedClientAction.execution.platforms.includes(
+                params.identity.platform as 'web' | 'ios' | 'android',
+            )
+        )
+    ) {
+        return artifactBytesError('artifact_not_found', ['generated_react_native_client_contribution_artifact_mismatch']);
+    }
+    const collectionMigrations = params.artifactOwnerKind === 'collectionMigrations'
+        && params.owner.kind === 'renderer'
+        ? findGeneratedReactNativeCollectionMigrationsModule({
+            owner: params.owner,
+            platform: params.identity.platform,
+        })
+        : null;
+    const graph = collectionMigrations?.entry ?? findGeneratedReactNativeArtifactGraph(params);
     const expectedBundler = graph?.platform === 'web' ? 'vite' : 'repack';
     if (!graph || graph.builtWith.bundler !== expectedBundler) {
-        return artifactBytesError('artifact_not_found', ['generated_react_native_artifact_graph_not_found']);
+        return artifactBytesError('artifact_not_found', [
+            collectionMigrations?.failure ?? 'generated_react_native_artifact_graph_not_found',
+        ]);
     }
-    const uniqueFiles = new Set(graph.files.map((file) => file.relativePath));
-    if (uniqueFiles.size !== graph.files.length || !uniqueFiles.has(graph.entry)) {
-        return artifactBytesError('artifact_integrity_failed', ['generated_react_native_artifact_graph_invalid']);
-    }
-
-    const pluginRootPath = params.owner.pluginRootPath?.trim();
-    if (!pluginRootPath) {
-        return artifactBytesError('artifact_unavailable', ['generated_react_native_plugin_root_unavailable']);
-    }
-    const installedRoot = join(pluginRootPath, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH);
-    const loadedFiles: Array<Readonly<{ relativePath: string; bytes: Uint8Array }>> = [];
-    for (const file of graph.files) {
-        const relativePath = file.relativePath;
-        const resolved = await resolveContainedPluginResourcePath({
-            pluginRootPath: installedRoot,
-            resourcePath: relativePath,
-        });
-        if (!resolved) {
-            return artifactBytesError('artifact_unavailable', ['react_native_artifact_path_invalid']);
-        }
-        try {
-            const bytes = await readFile(resolved.absolutePath);
-            if (bytes.byteLength !== file.byteSize || computePluginUiArtifactSha256DigestV1(bytes) !== file.digest) {
-                return artifactBytesError('artifact_integrity_failed', ['react_native_artifact_file_integrity_failed']);
-            }
-            loadedFiles.push(Object.freeze({
-                relativePath,
-                bytes,
-            }));
-        } catch {
-            return artifactBytesError('artifact_read_failed', ['react_native_artifact_read_failed']);
-        }
-    }
-
-    const integrity = verifyPluginUiArtifactFileSetIntegrityV1({
-        files: loadedFiles,
-        integrity: {
-            digest: graph.digest,
-            pluginId: params.identity.pluginId,
-            contributionId: params.identity.contributionId,
-            artifactKind: 'reactNativeBundle',
+    const loaded = await readVerifiedGeneratedPluginUiArtifactGraph({
+        pluginRootPath: params.owner.pluginRootPath,
+        graph,
+        pluginId: params.identity.pluginId,
+        contributionId: params.identity.contributionId,
+        artifactKind: 'reactNativeBundle',
+        diagnostics: {
+            graphInvalid: 'generated_react_native_artifact_graph_invalid',
+            rootUnavailable: 'generated_react_native_plugin_root_unavailable',
+            pathInvalid: 'react_native_artifact_path_invalid',
+            fileIntegrityFailed: 'react_native_artifact_file_integrity_failed',
+            readFailed: 'react_native_artifact_read_failed',
+            entryMissing: 'generated_react_native_entry_missing',
         },
     });
-    if (!integrity.ok) {
-        return artifactBytesError('artifact_integrity_failed', [integrity.reasonCode]);
+    if (!loaded.ok) return loaded.response;
+    // The success contract pins `format: 'plainJs'`, so this authority verifies
+    // the claim instead of asserting it. Hermes bytecode is integrity-valid but
+    // unloadable by every consumer of this path, so it is refused here rather
+    // than shipped to a JS evaluator on the device.
+    if (isPluginUiHermesBytecodeArtifactV1(loaded.entry.bytes)) {
+        return artifactBytesError('unsupported_artifact_format', ['hermes_bytecode_unsupported']);
     }
-    const entry = loadedFiles.find((file) => file.relativePath === graph.entry);
-    if (!entry) {
-        return artifactBytesError('artifact_integrity_failed', ['generated_react_native_entry_missing']);
-    }
-    const files = loadedFiles.map((file) => Object.freeze({
+    const files = loaded.files.map((file) => Object.freeze({
         relativePath: file.relativePath,
         digest: computePluginUiArtifactSha256DigestV1(file.bytes),
         byteSize: file.bytes.byteLength,
         bytesBase64: Buffer.from(file.bytes).toString('base64'),
     }));
-
-    return DaemonPluginUiArtifactBytesReadResponseSchema.parse({
+    const response = {
         ok: true,
+        artifactFamily: 'reactNative',
+        artifactOwnerKind: params.artifactOwnerKind,
         cacheIdentity: projected.cacheIdentity,
         artifact: {
             pluginId: params.identity.pluginId,
             contributionId: params.identity.contributionId,
             artifactKind: 'reactNativeBundle',
             // This is the canonical complete-file-set digest, not an entry-byte digest.
-            digest: integrity.digest,
+            digest: loaded.digest,
             format: 'plainJs',
-            byteSize: entry.bytes.byteLength,
+            byteSize: loaded.entry.bytes.byteLength,
         },
-        bytesBase64: Buffer.from(entry.bytes).toString('base64'),
+        bytesBase64: Buffer.from(loaded.entry.bytes).toString('base64'),
         files,
-    });
+    };
+    if (params.artifactOwnerKind === 'renderer') {
+        return DaemonPluginUiArtifactBytesReadResponseSchema.parse({
+            ...response,
+            crashStateToken: params.crashStateToken,
+        });
+    }
+    if (params.artifactOwnerKind === 'clientContribution') {
+        return DaemonPluginUiArtifactBytesReadResponseSchema.parse({
+            ...response,
+            clientContribution: params.clientContribution,
+        });
+    }
+    return DaemonPluginUiArtifactBytesReadResponseSchema.parse(response);
 }
 
-async function readReactNativeArtifactBytesByCacheIdentity(params: Readonly<{
+async function readGeneratedHostedWebArtifactBytesByCacheIdentity(params: Readonly<{
     registry: ResolvedContributionRegistry;
-    identity: DaemonPluginReactNativeBundleCacheIdentityV1;
+    owner: ResolvedGeneratedHostedWebArtifactOwner;
+    identity: DaemonPluginHostedWebArtifactCacheIdentityV1;
     generation: number;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
 }>): Promise<DaemonPluginUiArtifactBytesReadResponse> {
-    if (params.pluginUiHostRuntime.reactNativeBundles?.featureEnabled !== true) {
+    const projected = readProjectedHostedWebArtifactIdentity(params);
+    if (!projected || !hostedWebIdentityMatches(projected, params.identity)) {
+        return artifactBytesError('artifact_not_found', ['hosted_web_projected_identity_not_found']);
+    }
+    const graph = findGeneratedHostedWebArtifactGraph(params);
+    if (!graph || graph.platform !== 'web' || graph.builtWith.bundler !== 'vite' || graph.repack) {
+        return artifactBytesError('artifact_not_found', ['generated_hosted_web_artifact_graph_not_found']);
+    }
+    const loaded = await readVerifiedGeneratedPluginUiArtifactGraph({
+        pluginRootPath: params.owner.pluginRootPath,
+        graph,
+        pluginId: params.identity.pluginId,
+        contributionId: params.identity.contributionId,
+        artifactKind: 'hostedWebAsset',
+        diagnostics: {
+            graphInvalid: 'generated_hosted_web_artifact_graph_invalid',
+            rootUnavailable: 'generated_hosted_web_plugin_root_unavailable',
+            pathInvalid: 'hosted_web_artifact_path_invalid',
+            fileIntegrityFailed: 'hosted_web_artifact_file_integrity_failed',
+            readFailed: 'hosted_web_artifact_read_failed',
+            entryMissing: 'generated_hosted_web_entry_missing',
+        },
+    });
+    if (!loaded.ok) return loaded.response;
+
+    return DaemonPluginUiArtifactBytesReadResponseSchema.parse({
+        ok: true,
+        artifactFamily: 'hostedWeb',
+        cacheIdentity: projected,
+        artifact: {
+            pluginId: params.identity.pluginId,
+            contributionId: params.identity.contributionId,
+            artifactKind: 'hostedWebAsset',
+            digest: loaded.digest,
+            byteSize: loaded.entry.bytes.byteLength,
+        },
+        bytesBase64: Buffer.from(loaded.entry.bytes).toString('base64'),
+        files: loaded.files.map((file) => Object.freeze({
+            relativePath: file.relativePath,
+            digest: computePluginUiArtifactSha256DigestV1(file.bytes),
+            byteSize: file.bytes.byteLength,
+            bytesBase64: Buffer.from(file.bytes).toString('base64'),
+        })),
+    });
+}
+
+async function readHostedWebArtifactBytesByCacheIdentity(params: Readonly<{
+    registry: ResolvedContributionRegistry;
+    identity: DaemonPluginHostedWebArtifactCacheIdentityV1;
+    generation: number;
+    pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
+}>): Promise<DaemonPluginUiArtifactBytesReadResponse> {
+    if (params.pluginUiHostRuntime.hostedWeb?.featureEnabled !== true) {
         return artifactBytesError('artifact_unavailable', ['feature_disabled']);
     }
     if (params.identity.projectionGeneration !== params.generation) {
-        return artifactBytesError('artifact_not_found', ['react_native_projection_generation_mismatch']);
+        return artifactBytesError('artifact_not_found', ['hosted_web_projection_generation_mismatch']);
     }
-
-    const generatedOwner = findResolvedGeneratedReactNativeArtifactOwner({
+    const generatedOwner = findResolvedGeneratedHostedWebArtifactOwner({
         registry: params.registry,
         pluginId: params.identity.pluginId,
         contributionId: params.identity.contributionId,
     });
-    if (generatedOwner) {
-        return await readGeneratedReactNativeArtifactBytesByCacheIdentity({
-            ...params,
-            owner: generatedOwner,
-        });
+    if (!generatedOwner) {
+        return artifactBytesError('artifact_not_found', ['hosted_web_artifact_not_found']);
     }
-
-    const artifact = findReactNativeArtifactForCacheIdentity(params);
-    if (!artifact) {
-        return artifactBytesError('artifact_not_found', ['react_native_artifact_not_found']);
-    }
-    const hostRuntime = toHostRuntimeFromCacheIdentity(params.identity, params.pluginUiHostRuntime);
-    if (!hostRuntime) {
-        return artifactBytesError('artifact_unavailable', ['host_runtime_unavailable']);
-    }
-
-    const validation = validateInstalledReactNativeBundleArtifact({
-        artifact: toArtifactManifest(artifact),
-        expectedPluginId: params.identity.pluginId,
-        expectedContributionId: params.identity.contributionId,
-        hostRuntime,
-    });
-    if (!validation.ok) {
-        return artifactBytesError(
-            validation.code === 'hermes_bytecode_unsupported' ? 'unsupported_artifact_format' : 'artifact_unavailable',
-            [validation.code],
-        );
-    }
-    if (!reactNativeIdentityMatches(validation.cacheIdentity, params.identity)) {
-        return artifactBytesError('artifact_not_found', ['react_native_cache_identity_mismatch']);
-    }
-    const projectedIdentity = readProjectedReactNativeCacheIdentity(params);
-    if (!projectedIdentity || !reactNativeIdentityMatches(projectedIdentity, params.identity)) {
-        return artifactBytesError('artifact_not_found', ['react_native_projected_identity_not_found']);
-    }
-
-    const pluginRootPath = resolvePluginRootPath(artifact);
-    const assetPath = validation.artifact.assetPath;
-    if (!pluginRootPath || !assetPath) {
-        return artifactBytesError('artifact_unavailable', ['react_native_artifact_path_invalid']);
-    }
-
-    const entry = await readVerifiedReactNativeArtifactFile({
-        pluginRootPath,
-        relativePath: assetPath,
-        digest: validation.artifact.integrity.digest,
-        pluginId: params.identity.pluginId,
-        contributionId: params.identity.contributionId,
-    });
-    if (!entry.ok) {
-        return entry.response;
-    }
-
-    const files: Array<Readonly<{
-        relativePath: string;
-        digest: string;
-        byteSize: number;
-        bytesBase64: string;
-    }>> = [];
-    for (const file of validation.artifact.files ?? []) {
-        const served = await readVerifiedReactNativeArtifactFile({
-            pluginRootPath,
-            relativePath: file.relativePath,
-            digest: file.digest,
-            byteSize: file.byteSize,
-            pluginId: params.identity.pluginId,
-            contributionId: params.identity.contributionId,
-        });
-        if (!served.ok) {
-            return served.response;
-        }
-        files.push(Object.freeze({
-            relativePath: file.relativePath,
-            digest: served.digest,
-            byteSize: served.byteSize,
-            bytesBase64: Buffer.from(served.bytes).toString('base64'),
-        }));
-    }
-
-    return DaemonPluginUiArtifactBytesReadResponseSchema.parse({
-        ok: true,
-        cacheIdentity: validation.cacheIdentity,
-        artifact: {
-            pluginId: params.identity.pluginId,
-            contributionId: params.identity.contributionId,
-            artifactKind: 'reactNativeBundle',
-            digest: entry.digest,
-            format: 'plainJs',
-            byteSize: entry.byteSize,
-        },
-        bytesBase64: Buffer.from(entry.bytes).toString('base64'),
-        ...(files.length > 0 ? { files } : {}),
+    return await readGeneratedHostedWebArtifactBytesByCacheIdentity({
+        ...params,
+        owner: generatedOwner,
     });
 }
 
@@ -1229,205 +2419,714 @@ async function recordReactNativeCrashReportFromProjection(
     const lease = await acquireProjectionRuntimeRegistryLease(opts);
     try {
         const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
-        const baseHostRuntime = await resolveProjectionHostRuntime(opts);
         const report = request.data.report;
-        const projected = readProjectedReactNativeExecutableIdentity({
+        let targetedSurfaceSnapshots: readonly MountedTargetedContributionSnapshot[] | undefined;
+        try {
+            targetedSurfaceSnapshots = readTargetedSurfaceSnapshotsForCrashToken(
+                lease.registry,
+                report.token,
+            );
+        } catch {
+            return reactNativeCrashReportError(
+                'binding_token_mismatch',
+                ['react_native_crash_report_binding_token_mismatch'],
+            );
+        }
+        const pluginUiHostRuntime = await resolveProjectionHostRuntimeWithCrashState(opts, {
             registry: lease.registry.contributes,
             generation,
-            identity: report.cacheIdentity,
-            pluginUiHostRuntime: baseHostRuntime,
+            ...(targetedSurfaceSnapshots ? { targetedSurfaceSnapshots } : {}),
         });
-        if (
-            report.cacheIdentity.projectionGeneration !== generation
-            || !projected
-            || !reactNativeIdentityMatches(projected.cacheIdentity, report.cacheIdentity)
-        ) {
+        const current = readCurrentReactNativeCrashStateForToken({
+            pluginUiHostRuntime,
+            token: report.token,
+        });
+        if (!current) {
             return reactNativeCrashReportError(
-                'projection_identity_mismatch',
-                ['react_native_crash_report_projection_identity_mismatch'],
+                'binding_token_mismatch',
+                ['react_native_crash_report_binding_token_mismatch'],
             );
         }
 
-        const contributionKey = createReactNativeCrashDisableContributionKey({
-            pluginId: report.cacheIdentity.pluginId,
-            contributionId: report.cacheIdentity.contributionId,
-        });
         try {
-            await recordReactNativeCrashDisableReport({
-                store: createReactNativeCrashDisableStateStore({ happyHomeDir: configuration.happyHomeDir }),
-                pluginId: report.cacheIdentity.pluginId,
-                contributionId: report.cacheIdentity.contributionId,
-                cacheKey: projected.cacheKey,
-                artifactDigest: report.cacheIdentity.artifactDigest,
-                disabledReason: report.disabledReason,
-                crashCount: report.crashCount,
-                startupFailureCount: report.startupFailureCount,
-                observedAtMs: report.observedAtMs,
+            const store = createReactNativeCrashStateStore({ happyHomeDir: configuration.happyHomeDir });
+            if (report.kind === 'reportFailure') {
+                const recorded = await recordReactNativeCrashFailure({
+                    store,
+                    token: report.token,
+                    failureOccurrenceId: report.failureOccurrenceId,
+                    failure: report.failure,
+                });
+                if (recorded.status === 'binding_token_mismatch') {
+                    return reactNativeCrashReportError(
+                        'binding_token_mismatch',
+                        ['react_native_crash_report_binding_token_mismatch'],
+                    );
+                }
+                if (recorded.status === 'failure_occurrence_conflict') {
+                    return reactNativeCrashReportError(
+                        'failure_occurrence_conflict',
+                        ['react_native_crash_report_failure_occurrence_conflict'],
+                    );
+                }
+                invalidateDaemonContributionRegistryProjectionCache();
+                return reactNativeCrashReportResponse({
+                    protocolVersion: 1,
+                    ok: true,
+                    token: current.token,
+                    disabled: recorded.disabled,
+                });
+            }
+
+            const reset = await resetReactNativeCrashState({
+                store,
+                token: report.token,
+            });
+            if (reset.status === 'binding_token_mismatch' || !reset.token) {
+                return reactNativeCrashReportError(
+                    'binding_token_mismatch',
+                    ['react_native_crash_report_binding_token_mismatch'],
+                );
+            }
+            invalidateDaemonContributionRegistryProjectionCache();
+            return reactNativeCrashReportResponse({
+                protocolVersion: 1,
+                ok: true,
+                token: reset.token,
+                disabled: false,
             });
         } catch {
-            return reactNativeCrashReportError('state_write_failed', ['react_native_crash_report_state_write_failed']);
+            return reactNativeCrashReportError(
+                'state_write_failed',
+                ['react_native_crash_report_state_write_failed'],
+            );
         }
-
-        invalidateDaemonContributionRegistryProjectionCache();
-        return reactNativeCrashReportResponse({
-            protocolVersion: 1,
-            ok: true,
-            contributionKey,
-            disabled: true,
-        });
     } finally {
         await lease.release();
     }
+}
+
+/**
+ * One taxonomy mapping for every live-resource call. The codes are the resource
+ * owner's own; only the coarse `reason` is transport vocabulary, and an
+ * unrecognized failure stays `unavailable` rather than being reported as a
+ * client mistake.
+ */
+function readPluginUiResourceWatchFailure(error: unknown): Readonly<{
+    ok: false;
+    code: string;
+    reason: 'invalid_payload' | 'stale_generation' | 'not_found' | 'unknown_subscription' | 'unavailable';
+}> {
+    const code = isPluginError(error) ? error.code : 'plugin_resource_unavailable';
+    const reason = code === 'plugin_resource_not_found'
+        ? 'not_found' as const
+        : code === 'plugin_generation_stale'
+            ? 'stale_generation' as const
+            : code === 'plugin_resource_subscription_unknown'
+                ? 'unknown_subscription' as const
+                : code === 'plugin_resource_declaration_invalid'
+                    || code === 'plugin_resource_options_invalid'
+                    || code === 'plugin_resource_limit_invalid'
+                    ? 'invalid_payload' as const
+                    : 'unavailable' as const;
+    return { ok: false, code, reason };
 }
 
 export function registerDaemonContributionRegistryProjectionHandler(
     rpc: RpcHandlerRegistrar,
     opts?: DaemonContributionRegistryProjectionRegistrationOptions,
 ): void {
+    registerDaemonPluginCollectionCandidatePreparationHandler(rpc, {
+        resolveCurrentTarget: async ({ signal }) => {
+            if (signal?.aborted) return null;
+            try {
+                const current = await opts?.resolvePluginProjectionExecutionOriginContext?.() ?? null;
+                return signal?.aborted ? null : current;
+            } catch {
+                return null;
+            }
+        },
+        acquireRuntimeRegistryLease: async () => {
+            const lease = await acquireProjectionRuntimeRegistryLease(opts);
+            return {
+                registry: lease.registry,
+                release: lease.release,
+            };
+        },
+    });
     rpc.registerHandler(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async (raw: unknown) => {
         // Parse input for forward compatibility and to avoid accepting accidental session-scoped payloads.
         const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(raw);
         return await resolveProjection(opts, request);
     });
-    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_GET, async (raw: unknown) => {
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_GET, async (
+        raw: unknown,
+        context?: RpcHandlerContext,
+    ) => {
         const request = DaemonPluginSettingsGetRequestSchema.parse(raw);
-        return await withPluginSettingsService(opts, request.pluginId, request.machineId, async ({
-            service,
-            secrets,
-            fields,
-            storageScope,
-        }) =>
-            await readPluginSettingsSnapshot({
-                pluginId: request.pluginId,
+        await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+        return await withPluginSettingsService(
+            opts,
+            request.pluginId,
+            request.machineId,
+            request.scope,
+            context?.signal,
+            async ({
                 service,
                 secrets,
                 fields,
-                storageScope,
-            }));
-    });
-    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET, async (raw: unknown) => {
-        const request = DaemonPluginSettingsSetRequestSchema.parse(raw);
-        return await withPluginSettingsService(opts, request.pluginId, request.machineId, async ({
-            service,
-            secrets,
-            fields,
-            storageScope,
-        }) => {
-            const field = fields.find((candidate) => candidate.id === request.fieldId);
-            if (!field) {
-                throw new PluginContextServiceError(
-                    'PLUGIN_SETTINGS_UNKNOWN_KEY',
-                    `Plugin setting '${request.fieldId}' is not declared in the manifest`,
-                );
-            }
-            if (field.secret === true) {
-                if (request.expectedRevision !== undefined) {
-                    throw new PluginContextServiceError(
-                        'PLUGIN_SETTINGS_SECRET_CAS_UNAVAILABLE',
-                        `Plugin setting '${request.fieldId}' uses the secrets revision owner`,
-                    );
-                }
-                if (typeof request.value !== 'string') {
-                    throw new PluginContextServiceError(
-                        'PLUGIN_SETTINGS_VALIDATION_FAILED',
-                        `Plugin setting '${request.fieldId}' failed schema validation`,
-                    );
-                }
-                if (request.value === '') {
-                    await secrets.delete(request.fieldId);
-                } else {
-                    assertPluginSettingFieldValue({
-                        pluginId: request.pluginId,
-                        field,
-                        value: request.value,
-                    });
-                    await secrets.set(request.fieldId, request.value);
-                }
-            } else {
-                assertPluginSettingFieldValue({
+                scope,
+            }) => {
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                const snapshot = await readPluginSettingsSnapshot({
                     pluginId: request.pluginId,
-                    field,
-                    value: request.value,
+                    service,
+                    secrets,
+                    fields,
+                    scope,
                 });
-                await service.set(request.fieldId, request.value as JsonValue, {
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                return snapshot;
+            },
+        );
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET, async (
+        raw: unknown,
+        context?: RpcHandlerContext,
+    ) => {
+        const request = DaemonPluginSettingsSetRequestSchema.parse(raw);
+        await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+        return await withPluginSettingsService(
+            opts,
+            request.pluginId,
+            request.machineId,
+            request.scope,
+            context?.signal,
+            async ({
+                service,
+                secrets,
+                fields,
+                scope,
+            }) => {
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                const field = fields.find((candidate) => candidate.id === request.fieldId);
+                if (!field) {
+                    throw new PluginContextServiceError(
+                        'PLUGIN_SETTINGS_UNKNOWN_KEY',
+                        `Plugin setting '${request.fieldId}' is not declared in the manifest`,
+                    );
+                }
+                let status: 'applied' | 'conflict' = 'applied';
+                try {
+                    if (isSecretSettingsField(field)) {
+                        if (!secrets) {
+                            throw new PluginContextServiceError(
+                                'PLUGIN_SETTINGS_SECRET_CUSTODY_UNAVAILABLE',
+                                `Plugin setting '${request.fieldId}' has no declared secret custody owner`,
+                            );
+                        }
+                        if (request.mutation.kind === 'delete') {
+                            await secrets.delete(request.fieldId, {
+                                ...(request.expectedRevision === undefined
+                                    ? {}
+                                    : { expectedRevision: request.expectedRevision }),
+                                signal: context?.signal,
+                            });
+                        } else {
+                            if (typeof request.mutation.value !== 'string') {
+                                throw new PluginContextServiceError(
+                                    'PLUGIN_SETTINGS_VALIDATION_FAILED',
+                                    `Plugin setting '${request.fieldId}' failed schema validation`,
+                                );
+                            }
+                            assertPluginSettingFieldValue({
+                                pluginId: request.pluginId,
+                                field,
+                                value: request.mutation.value,
+                            });
+                            await secrets.set(request.fieldId, request.mutation.value, {
+                                ...(request.expectedRevision === undefined
+                                    ? {}
+                                    : { expectedRevision: request.expectedRevision }),
+                                signal: context?.signal,
+                            });
+                        }
+                    } else if (request.mutation.kind === 'delete') {
+                        await service.reset(request.fieldId, {
+                            ...(request.expectedRevision === undefined
+                                ? {}
+                                : { expectedRevision: request.expectedRevision }),
+                        });
+                    } else {
+                        assertPluginSettingFieldValue({
+                            pluginId: request.pluginId,
+                            field,
+                            value: request.mutation.value,
+                        });
+                        await service.set(request.fieldId, request.mutation.value as JsonValue, {
+                            ...(request.expectedRevision === undefined
+                                ? {}
+                                : { expectedRevision: request.expectedRevision }),
+                        });
+                    }
+                } catch (error) {
+                    if (!isPluginSettingsRevisionConflict(error)) throw error;
+                    status = 'conflict';
+                }
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                const snapshot = await readPluginSettingsSnapshot({
+                    pluginId: request.pluginId,
+                    service,
+                    secrets,
+                    fields,
+                    scope,
+                });
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                return DaemonPluginSettingsSetResponseSchema.parse({ status, snapshot });
+            },
+        );
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_WATCH, async (
+        raw: unknown,
+        context?: RpcHandlerContext,
+    ) => {
+        const request = DaemonPluginSettingsWatchRequestSchema.parse(raw);
+        await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+        return await withPluginSettingsService(
+            opts,
+            request.pluginId,
+            request.machineId,
+            request.scope,
+            context?.signal,
+            async ({ service }) => {
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                const result = await waitForDaemonPluginSettingsWatch({
+                    service,
+                    ...(request.knownRevision === undefined ? {} : { knownRevision: request.knownRevision }),
+                    ...(context?.signal === undefined ? {} : { signal: context.signal }),
+                });
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                return DaemonPluginSettingsWatchResponseSchema.parse(result);
+            },
+        );
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SECRET_STATUS, async (
+        raw: unknown,
+        context?: RpcHandlerContext,
+    ) => {
+        const request = DaemonPluginSecretStatusRequestSchema.parse(raw);
+        await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+        return await withDaemonPluginSecretAdministrationPort(
+            opts,
+            request.pluginId,
+            context?.signal,
+            async ({ port, signal }) => {
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                const status = await readDaemonPluginSecretStatus({
+                    pluginId: request.pluginId,
+                    secretId: request.secretId,
+                    ...(request.canonicalOrigin === undefined
+                        ? {}
+                        : { canonicalOrigin: request.canonicalOrigin }),
+                    port,
+                    signal,
+                });
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                return status;
+            },
+        );
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SECRET_SET, async (
+        raw: unknown,
+        context?: RpcHandlerContext,
+    ) => {
+        const request = DaemonPluginSecretSetRequestSchema.parse(raw);
+        await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+        return await withDaemonPluginSecretAdministrationPort(
+            opts,
+            request.pluginId,
+            context?.signal,
+            async ({ port, signal }) => {
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                await port.set({
+                    secretId: request.secretId,
+                    value: request.value,
+                    ...(request.canonicalOrigin === undefined
+                        ? {}
+                        : { canonicalOrigin: request.canonicalOrigin }),
                     ...(request.expectedRevision === undefined
                         ? {}
                         : { expectedRevision: request.expectedRevision }),
+                    signal,
                 });
-            }
-            return DaemonPluginSettingsSetResponseSchema.parse(await readPluginSettingsSnapshot({
-                pluginId: request.pluginId,
-                service,
-                secrets,
-                fields,
-                storageScope,
-            }));
-        });
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                const status = await readDaemonPluginSecretStatus({
+                    pluginId: request.pluginId,
+                    secretId: request.secretId,
+                    ...(request.canonicalOrigin === undefined
+                        ? {}
+                        : { canonicalOrigin: request.canonicalOrigin }),
+                    port,
+                    signal,
+                });
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                return DaemonPluginSecretSetResponseSchema.parse(status);
+            },
+        );
     });
-    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_RESOLVE, async (raw: unknown) => {
-        const request = DaemonPluginStructuredMessageResolveRequestSchema.safeParse(raw);
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_SECRET_DELETE, async (
+        raw: unknown,
+        context?: RpcHandlerContext,
+    ) => {
+        const request = DaemonPluginSecretDeleteRequestSchema.parse(raw);
+        await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+        return await withDaemonPluginSecretAdministrationPort(
+            opts,
+            request.pluginId,
+            context?.signal,
+            async ({ port, signal }) => {
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                await port.delete({
+                    secretId: request.secretId,
+                    ...(request.expectedRevision === undefined
+                        ? {}
+                        : { expectedRevision: request.expectedRevision }),
+                    ...(request.canonicalOrigin === undefined
+                        ? {}
+                        : { canonicalOrigin: request.canonicalOrigin }),
+                    signal,
+                });
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                const status = await readDaemonPluginSecretStatus({
+                    pluginId: request.pluginId,
+                    secretId: request.secretId,
+                    ...(request.canonicalOrigin === undefined
+                        ? {}
+                        : { canonicalOrigin: request.canonicalOrigin }),
+                    port,
+                    signal,
+                });
+                await assertCurrentDaemonPluginSettingsTarget(opts, request, context?.signal);
+                return DaemonPluginSecretDeleteResponseSchema.parse(status);
+            },
+        );
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, async (raw: unknown, context) => {
+        const request = DaemonPluginUiResourceReadRequestSchema.safeParse(raw);
         if (!request.success) {
-            return DaemonPluginStructuredMessageResolveResponseSchema.parse({
+            return DaemonPluginUiResourceReadResponseSchema.parse({
                 ok: false,
-                code: 'plugin_structured_message_request_invalid',
+                code: 'plugin_resource_request_invalid',
                 reason: 'invalid_payload',
             });
         }
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
-            const projectionGeneration = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
-            if (String(projectionGeneration) !== request.data.expectedGeneration) {
-                return DaemonPluginStructuredMessageResolveResponseSchema.parse({
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginUiResourceReadResponseSchema.parse({
                     ok: false,
-                    code: 'plugin_structured_message_generation_retired',
+                    code: 'plugin_generation_stale',
                     reason: 'stale_generation',
                 });
             }
-            if (!lease.registry.resolveStructuredMessage) {
-                return DaemonPluginStructuredMessageResolveResponseSchema.parse({
+            if (!lease.registry.readUiResource || typeof lease.registry.generation !== 'number') {
+                return DaemonPluginUiResourceReadResponseSchema.parse({
                     ok: false,
-                    code: 'plugin_structured_message_unavailable',
+                    code: 'plugin_resource_service_unavailable',
                     reason: 'unavailable',
                 });
             }
-            if (typeof lease.registry.generation !== 'number') {
-                return DaemonPluginStructuredMessageResolveResponseSchema.parse({
+            // Caller-scoped by construction: the resource service is bound to the
+            // host-stamped calling plugin, so a reference naming another plugin
+            // is simply not declared for that bind.
+            if (request.data.resource.pluginId !== request.data.callerPluginId) {
+                return DaemonPluginUiResourceReadResponseSchema.parse({
                     ok: false,
-                    code: 'plugin_structured_message_unavailable',
-                    reason: 'unavailable',
+                    code: 'plugin_resource_not_found',
+                    reason: 'not_found',
                 });
             }
-            const resolution = await lease.registry.resolveStructuredMessage({
+            const value = await lease.registry.readUiResource({
+                // The public projection revision and retained activation
+                // generation deliberately differ after a peer reload. Resource
+                // ownership is activation-local, so translate only at this
+                // internal boundary after validating public currentness above.
                 expectedGeneration: String(lease.registry.generation),
-                kind: request.data.kind,
-                payload: request.data.payload,
-                ...(request.data.resourceRefs ? { resourceRefs: request.data.resourceRefs } : {}),
-                facts: request.data.facts,
+                callerPluginId: request.data.callerPluginId,
+                resourceId: request.data.resource.localId,
+                ...(request.data.context === undefined ? {} : { context: request.data.context }),
+                ...(context?.signal ? { signal: context.signal } : {}),
             });
-            const projectedResolution = projectStructuredMessageResolutionGeneration(
-                resolution,
-                String(projectionGeneration),
-            );
-            return DaemonPluginStructuredMessageResolveResponseSchema.parse({
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginUiResourceReadResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            return DaemonPluginUiResourceReadResponseSchema.parse({
                 ok: true,
-                model: projectedResolution.model,
-                renderer: projectedResolution.renderer,
-                resources: projectedResolution.resources.map(({ bytes, ...resource }) => ({
-                    ...resource,
-                    bytesBase64: Buffer.from(bytes).toString('base64'),
-                })),
+                resource: request.data.resource,
+                kind: value.kind,
+                contentType: value.contentType,
+                digest: value.digest,
+                bytesBase64: Buffer.from(value.bytes).toString('base64'),
             });
         } catch (error) {
-            const code = error instanceof PluginError ? error.code : 'plugin_structured_message_unavailable';
-            const reason = code === 'plugin_structured_message_payload_invalid'
-                || code === 'plugin_structured_message_value_invalid'
-                ? 'invalid_payload'
-                : code === 'plugin_structured_message_generation_retired' || code === 'plugin_generation_stale'
+            const code = isPluginError(error) ? error.code : 'plugin_resource_unavailable';
+            const reason = code === 'plugin_resource_not_found'
+                ? 'not_found'
+                : code === 'plugin_generation_stale'
                     ? 'stale_generation'
-                    : code === 'plugin_structured_message_unknown_kind'
-                        ? 'unknown_kind'
+                    : code === 'plugin_resource_declaration_invalid'
+                        || code === 'plugin_resource_options_invalid'
+                        || code === 'plugin_resource_limit_invalid'
+                        ? 'invalid_payload'
                         : 'unavailable';
-            return DaemonPluginStructuredMessageResolveResponseSchema.parse({ ok: false, code, reason });
+            return DaemonPluginUiResourceReadResponseSchema.parse({ ok: false, code, reason });
+        } finally {
+            await lease.release();
+        }
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH, async (raw: unknown, context) => {
+        const request = DaemonPluginComposerReferenceSearchRequestSchema.safeParse(raw);
+        if (!request.success) {
+            return DaemonPluginComposerReferenceSearchResponseSchema.parse({
+                ok: false,
+                code: 'composer_reference_request_invalid',
+                reason: 'invalid_payload',
+            });
+        }
+        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        try {
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginComposerReferenceSearchResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            const references = lease.registry.composerReferences;
+            if (!references) {
+                return DaemonPluginComposerReferenceSearchResponseSchema.parse({
+                    ok: false,
+                    code: 'composer_reference_unavailable',
+                    reason: 'unavailable',
+                });
+            }
+            const page = await references.search({
+                reference: request.data.reference,
+                query: request.data.query,
+                trigger: request.data.trigger,
+                signal: context?.signal ?? new AbortController().signal,
+            });
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginComposerReferenceSearchResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            return DaemonPluginComposerReferenceSearchResponseSchema.parse({
+                ok: true,
+                reference: request.data.reference,
+                page,
+            });
+        } catch (error) {
+            const code = isPluginError(error) ? error.code : 'composer_reference_unavailable';
+            const reason = code === 'plugin_generation_stale'
+                ? 'stale_generation'
+                : code === 'composer_reference_not_current'
+                    ? 'not_current'
+                    : 'unavailable';
+            return DaemonPluginComposerReferenceSearchResponseSchema.parse({ ok: false, code, reason });
+        } finally {
+            await lease.release();
+        }
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE, async (raw: unknown, context) => {
+        const request = DaemonPluginComposerAttachmentPrepareRequestSchema.safeParse(raw);
+        if (!request.success) {
+            return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
+                ok: false,
+                code: 'composer_attachment_request_invalid',
+                reason: 'invalid_payload',
+            });
+        }
+        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        try {
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            const attachments = lease.registry.composerAttachments;
+            if (!attachments) {
+                return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
+                    ok: false,
+                    code: 'composer_attachment_unavailable',
+                    reason: 'unavailable',
+                });
+            }
+            const result = await attachments.prepareForSend({
+                attachment: request.data.attachment,
+                request: request.data.request,
+                signal: context?.signal ?? new AbortController().signal,
+            });
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({
+                ok: true,
+                attachment: request.data.attachment,
+                result,
+            });
+        } catch (error) {
+            const code = isPluginError(error) ? error.code : 'composer_attachment_unavailable';
+            const reason = code === 'plugin_generation_stale'
+                ? 'stale_generation'
+                : code === 'composer_attachment_not_current'
+                    ? 'not_current'
+                    : code === 'composer_attachment_request_invalid'
+                        ? 'invalid_payload'
+                        : 'unavailable';
+            return DaemonPluginComposerAttachmentPrepareResponseSchema.parse({ ok: false, code, reason });
+        } finally {
+            await lease.release();
+        }
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, async (raw: unknown) => {
+        const request = DaemonPluginUiResourceWatchOpenRequestSchema.safeParse(raw);
+        if (!request.success) {
+            return DaemonPluginUiResourceWatchOpenResponseSchema.parse({
+                ok: false,
+                code: 'plugin_resource_request_invalid',
+                reason: 'invalid_payload',
+            });
+        }
+        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        try {
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginUiResourceWatchOpenResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            if (!lease.registry.openUiResourceWatch || typeof lease.registry.generation !== 'number') {
+                return DaemonPluginUiResourceWatchOpenResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_resource_service_unavailable',
+                    reason: 'unavailable',
+                });
+            }
+            // Caller-scoped by construction, exactly like the snapshot read: the
+            // watch owner binds the resource service to the host-stamped calling
+            // plugin, so a reference naming another plugin is not declared.
+            if (request.data.resource.pluginId !== request.data.callerPluginId) {
+                return DaemonPluginUiResourceWatchOpenResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_resource_not_found',
+                    reason: 'not_found',
+                });
+            }
+            const opened = await lease.registry.openUiResourceWatch({
+                expectedGeneration: String(lease.registry.generation),
+                callerPluginId: request.data.callerPluginId,
+                subscriptionId: request.data.subscriptionId,
+                resourceId: request.data.resource.localId,
+                ...(request.data.context === undefined ? {} : { context: request.data.context }),
+            });
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginUiResourceWatchOpenResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            return DaemonPluginUiResourceWatchOpenResponseSchema.parse({ ok: true, ...opened });
+        } catch (error) {
+            return DaemonPluginUiResourceWatchOpenResponseSchema.parse(
+                readPluginUiResourceWatchFailure(error),
+            );
+        } finally {
+            await lease.release();
+        }
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT, async (raw: unknown, context) => {
+        const request = DaemonPluginUiResourceWatchNextRequestSchema.safeParse(raw);
+        if (!request.success) {
+            return DaemonPluginUiResourceWatchNextResponseSchema.parse({
+                ok: false,
+                code: 'plugin_resource_request_invalid',
+                reason: 'invalid_payload',
+            });
+        }
+        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        try {
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginUiResourceWatchNextResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            if (!lease.registry.pollUiResourceWatch || typeof lease.registry.generation !== 'number') {
+                return DaemonPluginUiResourceWatchNextResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_resource_service_unavailable',
+                    reason: 'unavailable',
+                });
+            }
+            const polled = await lease.registry.pollUiResourceWatch({
+                expectedGeneration: String(lease.registry.generation),
+                callerPluginId: request.data.callerPluginId,
+                subscriptionId: request.data.subscriptionId,
+                ...(request.data.waitMs === undefined ? {} : { waitMs: request.data.waitMs }),
+                ...(context?.signal ? { signal: context.signal } : {}),
+            });
+            if (!(await isExpectedProjectionGenerationCurrent(opts, request.data.expectedGeneration))) {
+                return DaemonPluginUiResourceWatchNextResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                    reason: 'stale_generation',
+                });
+            }
+            return DaemonPluginUiResourceWatchNextResponseSchema.parse(
+                polled.status === 'event'
+                    ? { ok: true, status: 'event', event: polled.event }
+                    : { ok: true, status: 'idle' },
+            );
+        } catch (error) {
+            return DaemonPluginUiResourceWatchNextResponseSchema.parse(
+                readPluginUiResourceWatchFailure(error),
+            );
+        } finally {
+            await lease.release();
+        }
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, async (raw: unknown) => {
+        const request = DaemonPluginUiResourceWatchCloseRequestSchema.safeParse(raw);
+        if (!request.success) {
+            return DaemonPluginUiResourceWatchCloseResponseSchema.parse({ ok: true, closed: false });
+        }
+        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        try {
+            const closed = lease.registry.closeUiResourceWatch?.({
+                callerPluginId: request.data.callerPluginId,
+                subscriptionId: request.data.subscriptionId,
+            }) === true;
+            return DaemonPluginUiResourceWatchCloseResponseSchema.parse({ ok: true, closed });
+        } catch {
+            // Retirement is best effort: the daemon-side owner already fences a
+            // subscription whose generation or plugin consumer went away.
+            return DaemonPluginUiResourceWatchCloseResponseSchema.parse({ ok: true, closed: false });
         } finally {
             await lease.release();
         }
@@ -1449,13 +3148,155 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     code: 'plugin_generation_stale',
                 });
             }
+            const invocation = request.data.invocation;
+            // Keep the supported RPC spelling at this ingress seam. All
+            // canonical Action-domain consumers receive invocationSurface.
+            const invocationSurface = request.data.executionSurface;
+            const resolvedAction = lease.registry.contributes.actionsById?.get(
+                request.data.qualifiedActionId,
+            );
+            if (
+                invocation === undefined
+                && actionRequiresHostPresentedInvocation(resolvedAction)
+            ) {
+                return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_action_unavailable',
+                });
+            }
+            if (
+                (invocation?.kind === 'hostPresentedComposer'
+                    || invocation?.kind === 'hostPresentedMessage')
+                && !isHostPresentedActionInvocationAvailable(resolvedAction, invocation)
+            ) {
+                return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_action_unavailable',
+                });
+            }
+            let defaultSessionId = request.data.sessionId;
+            let messageAction: Extract<MessageActionResolutionV1, { status: 'available' }>['snapshot'] | undefined;
+            if (request.data.messageActionReference) {
+                const resolution = opts?.resolveMessageActionReference
+                    ? await opts.resolveMessageActionReference({
+                        reference: request.data.messageActionReference,
+                        ...(context?.signal ? { signal: context.signal } : {}),
+                    })
+                    : { status: 'unavailable' as const };
+                if (resolution.status !== 'available') {
+                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                        ok: false,
+                        code: 'plugin_message_action_unavailable',
+                    });
+                }
+                if (
+                    request.data.sessionId !== undefined
+                    && request.data.sessionId !== resolution.snapshot.sessionId
+                ) {
+                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                        ok: false,
+                        code: 'plugin_message_action_unavailable',
+                    });
+                }
+                defaultSessionId = resolution.snapshot.sessionId;
+                messageAction = resolution.snapshot;
+            }
+            const mountedCaller = await deriveMountedPluginInvocationCaller({
+                request: {
+                    machineId: request.data.machineId,
+                    invocationSurface,
+                    ...(request.data.invocation ? { invocation: request.data.invocation } : {}),
+                },
+                registry: lease.registry,
+                resolveCurrentPluginMaterializationRef:
+                    lease.resolveCurrentPluginMaterializationRef,
+                options: opts,
+            });
+            if (mountedCaller.status === 'unavailable') {
+                return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_mounted_caller_unavailable',
+                });
+            }
+            const selectedActionInputCarrier = invocation?.kind === 'mountedPluginSurface'
+                ? request.data.selectedActionInputCarrier
+                : undefined;
+            if (selectedActionInputCarrier !== undefined) {
+                const mountedPluginId = mountedCaller.status === 'available'
+                    ? mountedCaller.caller.pluginId
+                    : undefined;
+                const currentMountedGeneration = mountedPluginId === undefined
+                    ? undefined
+                    : lease.registry.contributes.immutableGenerationIdsByPluginId?.[mountedPluginId];
+                if (
+                    mountedCaller.status !== 'available'
+                    || selectedActionInputCarrier.result.selection.target.pluginId !== mountedPluginId
+                    || selectedActionInputCarrier.result.selection.target.immutableGenerationId
+                        !== currentMountedGeneration
+                ) {
+                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                        ok: false,
+                        code: 'plugin_selected_action_input_unavailable',
+                    });
+                }
+                // The relay is only for a target-owned management Action.
+                // The carrier cannot be attached to another plugin's outer
+                // Action and rely on a later nested check after that Action
+                // has already observed/effected the request.
+                const outerAction = lease.registry.contributes.actionsById?.get(
+                    request.data.qualifiedActionId,
+                );
+                if (!outerAction || outerAction.pluginId !== mountedPluginId) {
+                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                        ok: false,
+                        code: 'plugin_selected_action_input_unavailable',
+                    });
+                }
+                let mountedCallerCurrent = false;
+                try {
+                    mountedCallerCurrent = await mountedCaller.isMountedCallerCurrent();
+                } catch {
+                    // A carrier is valid only for the live mounted UI caller
+                    // that selected it. Failure to re-read cannot authorize
+                    // even the outer target-management Action.
+                }
+                if (!mountedCallerCurrent) {
+                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                        ok: false,
+                        code: 'plugin_mounted_caller_unavailable',
+                    });
+                }
+            }
             const attempt = await executePluginActionIfAvailable({
                 runtimeRegistry: lease.registry,
                 actionId: request.data.qualifiedActionId,
-                input: request.data.input,
+                ...(request.data.input === undefined ? {} : { input: request.data.input }),
+                ...(request.data.expectedContributorImmutableGenerationId === undefined
+                    ? {}
+                    : {
+                        expectedContributorImmutableGenerationId:
+                            request.data.expectedContributorImmutableGenerationId,
+                    }),
+                ...(opts?.requestCurrentIntent
+                    ? { requestCurrentIntent: opts.requestCurrentIntent }
+                    : {}),
                 context: {
-                    surface: request.data.executionSurface ?? 'agent',
-                    ...(request.data.sessionId ? { defaultSessionId: request.data.sessionId } : {}),
+                    // The canonical contributed-Action owner derives the target
+                    // plugin surface from authenticated caller identity. This
+                    // adapter supplies only the actual UI execution origin.
+                    surface: invocationSurface,
+                    invocationSurface,
+                    ...(mountedCaller.status === 'available'
+                        ? {
+                            caller: mountedCaller.caller,
+                            isMountedCallerCurrent: mountedCaller.isMountedCallerCurrent,
+                        }
+                        : {}),
+                    ...(selectedActionInputCarrier
+                        ? { selectedActionInputCarrier }
+                        : {}),
+                    ...(defaultSessionId ? { defaultSessionId } : {}),
+                    ...(messageAction ? { messageAction } : {}),
                     ...(context?.signal ? { signal: context.signal } : {}),
                 },
             });
@@ -1478,6 +3319,104 @@ export function registerDaemonContributionRegistryProjectionHandler(
             await lease.release();
         }
     });
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE, async (raw: unknown, context) => {
+        const request = DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema.safeParse(raw);
+        if (!request.success) {
+            return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
+                ok: false,
+                code: 'plugin_action_form_connected_account_options_request_invalid',
+            });
+        }
+        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        try {
+            const resolveGeneration = opts?.resolveGeneration ?? defaultResolveGeneration;
+            const beforeGeneration = await resolveGeneration();
+            if (String(beforeGeneration) !== request.data.expectedGeneration) {
+                return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                });
+            }
+            const resolveOptionalAccess = (pluginId: string) => (
+                lease.registry.resolveOptionalAccess?.(pluginId) ?? Object.freeze([])
+            );
+            const authorization = resolveRegistryConnectedAccountActionFormPurposeAuthorization({
+                registry: lease.registry.contributes,
+                qualifiedActionId: request.data.qualifiedActionId,
+                fieldPath: request.data.fieldPath,
+                resolveOptionalAccess,
+            });
+            if (
+                !authorization
+                || !isCurrentConnectedAccountActionFormTarget(
+                    lease.registry,
+                    authorization.action,
+                )
+            ) {
+                return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_action_form_connected_account_options_unavailable',
+                });
+            }
+            let runtime: Pick<DaemonConnectedAccountPurposeBindingRuntime, 'listActionFormConnectedAccountOptions'> | null;
+            try {
+                runtime = opts?.resolveConnectedAccountPurposeBindingRuntime?.() ?? null;
+            } catch {
+                runtime = null;
+            }
+            if (!runtime) {
+                return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_action_form_connected_account_options_unavailable',
+                });
+            }
+            const options = await runtime.listActionFormConnectedAccountOptions({
+                purpose: authorization.purpose,
+                serviceRefs: authorization.serviceRefs,
+                signal: context?.signal ?? new AbortController().signal,
+            });
+            const afterGeneration = await resolveGeneration();
+            const currentAuthorization = resolveRegistryConnectedAccountActionFormPurposeAuthorization({
+                registry: lease.registry.contributes,
+                qualifiedActionId: request.data.qualifiedActionId,
+                fieldPath: request.data.fieldPath,
+                resolveOptionalAccess,
+            });
+            if (
+                String(afterGeneration) !== request.data.expectedGeneration
+                || !currentAuthorization
+                || currentAuthorization.action.pluginId !== authorization.action.pluginId
+                || currentAuthorization.action.localId !== authorization.action.localId
+                || currentAuthorization.purpose.purpose !== authorization.purpose.purpose
+                || !sameConnectedAccountServiceRefs(
+                    currentAuthorization.serviceRefs,
+                    authorization.serviceRefs,
+                )
+                || !isCurrentConnectedAccountActionFormTarget(
+                    lease.registry,
+                    currentAuthorization.action,
+                )
+            ) {
+                return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
+                    ok: false,
+                    code: 'plugin_generation_stale',
+                });
+            }
+            return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
+                ok: true,
+                options,
+            });
+        } catch (error) {
+            return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
+                ok: false,
+                code: isPluginError(error)
+                    ? error.code
+                    : 'plugin_action_form_connected_account_options_unavailable',
+            });
+        } finally {
+            await lease.release();
+        }
+    });
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ, async (raw: unknown) => {
         const request = DaemonPluginUiArtifactBytesReadRequestSchema.safeParse(raw);
         if (!request.success) {
@@ -1487,22 +3426,195 @@ export function registerDaemonContributionRegistryProjectionHandler(
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
             const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
-            const pluginUiHostRuntime = await resolveProjectionHostRuntimeWithCrashDisableState(opts, {
-                registry: lease.registry.contributes,
-                generation,
-                ...(request.data.reactNativeHostRuntimeIdentity
-                    ? { reactNativeHostRuntimeIdentity: request.data.reactNativeHostRuntimeIdentity }
-                    : {}),
-                ...(request.data.reactNativeWebLoaderCapability
-                    ? { reactNativeWebLoaderCapability: request.data.reactNativeWebLoaderCapability }
-                    : {}),
-            });
-            return await readReactNativeArtifactBytesByCacheIdentity({
-                registry: lease.registry.contributes,
-                identity: request.data.cacheIdentity,
-                generation,
-                pluginUiHostRuntime,
-            });
+            if (request.data.artifactFamily === 'reactNative') {
+                let targetedSurfaceSnapshots: readonly MountedTargetedContributionSnapshot[] | undefined;
+                if (request.data.artifactOwnerKind === 'renderer') {
+                    try {
+                        targetedSurfaceSnapshots = readTargetedSurfaceSnapshotsForCrashToken(
+                            lease.registry,
+                            request.data.crashStateToken,
+                        );
+                    } catch {
+                        return artifactBytesError(
+                            'crash_state_token_mismatch',
+                            ['react_native_crash_state_token_mismatch'],
+                        );
+                    }
+                }
+                const projectionInput = {
+                    registry: lease.registry.contributes,
+                    generation,
+                    ...(request.data.reactNativeHostRuntimeIdentity
+                        ? { reactNativeHostRuntimeIdentity: request.data.reactNativeHostRuntimeIdentity }
+                        : {}),
+                    ...(request.data.reactNativeWebLoaderCapability
+                        ? { reactNativeWebLoaderCapability: request.data.reactNativeWebLoaderCapability }
+                        : {}),
+                    ...(targetedSurfaceSnapshots ? { targetedSurfaceSnapshots } : {}),
+                };
+                // Voice uses the generated Artifact graph but has no renderer
+                // crash lifecycle. Resolve its normal runtime facts without
+                // touching durable renderer crash-state reconciliation.
+                const basePluginUiHostRuntime = await resolveProjectionHostRuntime(opts, projectionInput);
+                if (basePluginUiHostRuntime.reactNativeBundles?.featureEnabled !== true) {
+                    return artifactBytesError('artifact_unavailable', ['feature_disabled']);
+                }
+                if (request.data.cacheIdentity.projectionGeneration !== generation) {
+                    return artifactBytesError('artifact_not_found', ['react_native_projection_generation_mismatch']);
+                }
+                const projectedClientAction = request.data.artifactOwnerKind === 'clientContribution'
+                    ? await readCurrentProjectedClientActionArtifact({
+                        opts,
+                        registry: lease.registry.contributes,
+                        generation,
+                        pluginUiHostRuntime: basePluginUiHostRuntime,
+                        requestMachineId: request.data.machineId,
+                        action: request.data.clientContribution.action,
+                    })
+                    : null;
+                if (request.data.artifactOwnerKind === 'clientContribution' && !projectedClientAction) {
+                    return artifactBytesError(
+                        'artifact_unavailable',
+                        ['client_contribution_execution_origin_unavailable'],
+                    );
+                }
+                const owner = request.data.artifactOwnerKind === 'clientContribution'
+                    ? findResolvedGeneratedReactNativeClientContributionArtifactOwner({
+                        registry: lease.registry.contributes,
+                        action: request.data.clientContribution.action,
+                    })
+                    : findResolvedGeneratedReactNativeArtifactOwner({
+                        registry: lease.registry.contributes,
+                        pluginId: request.data.cacheIdentity.pluginId,
+                        contributionId: request.data.cacheIdentity.contributionId,
+                    });
+                const collectionMigrations = request.data.artifactOwnerKind === 'collectionMigrations'
+                    && owner?.kind === 'renderer'
+                    ? findGeneratedReactNativeCollectionMigrationsModule({
+                        owner,
+                        platform: request.data.cacheIdentity.platform,
+                    })
+                    : null;
+                const ownerMatchesRequest = owner !== null && (
+                    request.data.artifactOwnerKind === 'clientContribution'
+                        ? owner.kind === 'clientContribution'
+                            && projectedClientAction !== null
+                            && owner.pluginId === request.data.clientContribution.action.pluginId
+                            && owner.contributionId === request.data.clientContribution.action.localId
+                            && owner.artifactId === projectedClientAction.execution.client.artifactId
+                            && owner.expectedRepackModule.modulePath
+                                === projectedClientAction.execution.client.modulePath
+                            && owner.expectedRepackModule.exportName
+                                === projectedClientAction.execution.client.exportName
+                            && projectedClientAction.execution.platforms.includes(
+                                request.data.cacheIdentity.platform as 'web' | 'ios' | 'android',
+                            )
+                        : request.data.artifactOwnerKind === 'collectionMigrations'
+                        ? collectionMigrations?.entry != null
+                        : owner.kind === request.data.artifactOwnerKind
+                );
+                if (!ownerMatchesRequest || !owner) {
+                    return artifactBytesError(
+                        'artifact_not_found',
+                        [collectionMigrations?.failure ?? 'generated_react_native_artifact_owner_not_found'],
+                    );
+                }
+                const pluginUiHostRuntime = request.data.artifactOwnerKind === 'renderer'
+                    ? await resolveProjectionHostRuntimeWithCrashState(opts, projectionInput)
+                    : basePluginUiHostRuntime;
+                const generatedRead = {
+                    registry: lease.registry.contributes,
+                    owner,
+                    identity: request.data.cacheIdentity,
+                    generation,
+                    pluginUiHostRuntime,
+                };
+                const response = request.data.artifactOwnerKind === 'renderer'
+                    ? await readGeneratedReactNativeArtifactBytesByCacheIdentity({
+                        ...generatedRead,
+                        artifactOwnerKind: 'renderer',
+                        crashStateToken: request.data.crashStateToken,
+                    })
+                    : request.data.artifactOwnerKind === 'clientContribution'
+                        ? await readGeneratedReactNativeArtifactBytesByCacheIdentity({
+                            ...generatedRead,
+                            artifactOwnerKind: 'clientContribution',
+                            clientContribution: request.data.clientContribution,
+                            projectedClientAction: projectedClientAction!,
+                        })
+                    : await readGeneratedReactNativeArtifactBytesByCacheIdentity({
+                        ...generatedRead,
+                        artifactOwnerKind: request.data.artifactOwnerKind,
+                    });
+                if (!response.ok) return response;
+
+                if (request.data.artifactOwnerKind === 'renderer') {
+                    // The bytes may have been read while another UI report crossed
+                    // the daemon lock. Reconcile and require the same exact token
+                    // again before returning executable cached bytes.
+                    const recheckedHostRuntime = await resolveProjectionHostRuntimeWithCrashState(opts, projectionInput);
+                    const rechecked = readCurrentReactNativeCrashStateForToken({
+                        pluginUiHostRuntime: recheckedHostRuntime,
+                        token: request.data.crashStateToken,
+                    });
+                    if (!rechecked) {
+                        return artifactBytesError('crash_state_token_mismatch', ['react_native_crash_state_token_mismatch']);
+                    }
+                    if (rechecked.disabled) {
+                        return artifactBytesError('artifact_unavailable', ['crash_threshold_reached']);
+                    }
+                }
+                if (request.data.artifactOwnerKind === 'clientContribution') {
+                    const currentGeneration = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
+                    if (currentGeneration !== generation) {
+                        return artifactBytesError(
+                            'artifact_unavailable',
+                            ['client_contribution_projection_generation_stale'],
+                        );
+                    }
+                    const rechecked = await readCurrentProjectedClientActionArtifact({
+                        opts,
+                        registry: lease.registry.contributes,
+                        generation,
+                        pluginUiHostRuntime: basePluginUiHostRuntime,
+                        requestMachineId: request.data.machineId,
+                        action: request.data.clientContribution.action,
+                    });
+                    if (
+                        !rechecked
+                        || rechecked.origin.serverIdentityId
+                            !== projectedClientAction!.origin.serverIdentityId
+                        || rechecked.origin.materializationRef.machineId
+                            !== projectedClientAction!.origin.materializationRef.machineId
+                        || rechecked.origin.materializationRef.materializationId
+                            !== projectedClientAction!.origin.materializationRef.materializationId
+                        || rechecked.origin.materializationRef.pluginId
+                            !== projectedClientAction!.origin.materializationRef.pluginId
+                        || rechecked.execution.client.artifactId
+                            !== projectedClientAction!.execution.client.artifactId
+                        || rechecked.execution.client.modulePath
+                            !== projectedClientAction!.execution.client.modulePath
+                        || rechecked.execution.client.exportName
+                            !== projectedClientAction!.execution.client.exportName
+                        || rechecked.execution.platforms.join('\u0000')
+                            !== projectedClientAction!.execution.platforms.join('\u0000')
+                    ) {
+                        return artifactBytesError(
+                            'artifact_unavailable',
+                            ['client_contribution_execution_origin_stale'],
+                        );
+                    }
+                }
+                return response;
+            }
+
+            const pluginUiHostRuntime = await resolveProjectionHostRuntime(opts);
+            return await readHostedWebArtifactBytesByCacheIdentity({
+                    registry: lease.registry.contributes,
+                    identity: request.data.cacheIdentity,
+                    generation,
+                    pluginUiHostRuntime,
+                });
         } finally {
             await lease.release();
         }

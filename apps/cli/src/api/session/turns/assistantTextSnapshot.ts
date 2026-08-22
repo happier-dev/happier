@@ -2,8 +2,7 @@ export type TurnAssistantTextSnapshotSource =
   | 'streaming'
   | 'ephemeral'
   | 'committed'
-  | 'socket'
-  | 'provider-dispatch';
+  | 'socket';
 
 export type TurnAssistantTextSnapshot = Readonly<{
   text: string;

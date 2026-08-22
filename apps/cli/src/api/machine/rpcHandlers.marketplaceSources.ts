@@ -67,6 +67,18 @@ export function registerMachineMarketplaceSourcesRpcHandlers(params: Readonly<{
         decision: 'cancel',
       });
     }
+    // A source-root trust decision authorizes evaluating executable code from a
+    // local development directory. It is NOT an install commit: the change
+    // service answers it with the ordinary install-and-trust review, which the
+    // caller then decides separately. Forwarding it as `installAndTrust` would
+    // be rejected with `plugin_source_trust_required`.
+    if (parsed.data.decision === 'trustSourceRoot') {
+      return await decidePluginChange({
+        pendingChangeId: parsed.data.pendingChangeId,
+        decision: 'trustSourceRoot',
+        actorEvidence: parsed.data.actorEvidence,
+      });
+    }
     return await decidePluginChange({
       pendingChangeId: parsed.data.pendingChangeId,
       decision: 'installAndTrust',

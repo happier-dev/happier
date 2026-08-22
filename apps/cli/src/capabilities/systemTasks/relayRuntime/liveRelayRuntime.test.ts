@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +12,8 @@ const trackedEnvKeys = [
   'HAPPIER_SELF_HOST_CONFIG_DIR',
   'HAPPIER_SELF_HOST_DATA_DIR',
   'HAPPIER_SELF_HOST_LOG_DIR',
+  'HAPPIER_SQLITE_CONNECTION_LIMIT',
+  'HAPPY_SQLITE_CONNECTION_LIMIT',
 ] as const;
 
 const previousEnv = new Map<string, string | undefined>();
@@ -148,6 +150,62 @@ describe('readLiveRelayRuntimeStatus', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
       globalThis.fetch = originalFetch;
+      vi.resetModules();
+      vi.clearAllMocks();
+      await rm(scopedHomeDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('startLiveRelayRuntime', () => {
+  it.each([
+    {
+      scenario: 'the canonical server-light default when no override is configured',
+      connectionLimit: undefined,
+      expectedConnectionLimit: '4',
+    },
+    {
+      scenario: 'an explicit server-light override',
+      connectionLimit: '1',
+      expectedConnectionLimit: '1',
+    },
+  ])('writes $scenario', async ({ connectionLimit, expectedConnectionLimit }) => {
+    const scopedHomeDir = await mkdtemp(path.join(tmpdir(), 'happier-relay-runtime-sqlite-default-'));
+    const installRoot = path.join(scopedHomeDir, 'self-host', 'install');
+    const configDir = path.join(scopedHomeDir, 'self-host', 'config');
+
+    try {
+      patchEnv({
+        HOME: scopedHomeDir,
+        USERPROFILE: scopedHomeDir,
+        PATH: process.env.PATH,
+        HAPPIER_SELF_HOST_INSTALL_ROOT: installRoot,
+        HAPPIER_SELF_HOST_CONFIG_DIR: configDir,
+        HAPPIER_SELF_HOST_DATA_DIR: path.join(scopedHomeDir, 'self-host', 'data'),
+        HAPPIER_SELF_HOST_LOG_DIR: path.join(scopedHomeDir, 'self-host', 'logs'),
+        HAPPIER_SQLITE_CONNECTION_LIMIT: connectionLimit,
+        HAPPY_SQLITE_CONNECTION_LIMIT: undefined,
+      });
+
+      vi.doMock('@happier-dev/cli-common/service', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@happier-dev/cli-common/service')>();
+        return {
+          ...actual,
+          applyServicePlan: vi.fn(async () => undefined),
+        };
+      });
+
+      const { startLiveRelayRuntime } = await import('./liveRelayRuntime');
+      await startLiveRelayRuntime({
+        platform: process.platform,
+        mode: 'user',
+        channel: 'stable',
+        homeDir: scopedHomeDir,
+      });
+
+      const renderedEnv = await readFile(path.join(configDir, 'server.env'), 'utf8');
+      expect(renderedEnv).toContain(`connection_limit=${expectedConnectionLimit}`);
+    } finally {
       vi.resetModules();
       vi.clearAllMocks();
       await rm(scopedHomeDir, { recursive: true, force: true });

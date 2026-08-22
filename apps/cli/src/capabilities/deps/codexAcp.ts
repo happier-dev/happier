@@ -1,12 +1,15 @@
 import { accessSync, constants as fsConstants, existsSync } from 'node:fs';
-import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { configuration } from '../../configuration';
 import { resolveExistingManagedJavaScriptRuntimeCommand } from '@/packagedRuntime/js/managedJavaScriptRuntime';
 import { readRuntimeInstallableLastCheckAtMs } from '@/packagedRuntime/installables/updateState';
-import { downloadGitHubReleaseAsset, extractGitHubReleaseAsset } from '@happier-dev/cli-common/agents';
+import {
+  createManagedToolScratchDir,
+  downloadGitHubReleaseAsset,
+  extractGitHubReleaseAsset,
+  promoteManagedCurrentInstall,
+} from '@happier-dev/cli-common/agents';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
 import { resolveCodexAcpReleaseAsset, CODEX_ACP_GITHUB_REPO } from '@/packagedRuntime/managedTools/agents/codexAcpRelease';
@@ -132,12 +135,16 @@ async function installLatestCodexAcpRelease(logPath: string): Promise<Readonly<{
   });
   const asset = resolveCodexAcpReleaseAsset(release);
 
-  const scratchDir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-'));
+  const installRoot = codexAcpInstallDir();
+  const scratchDir = await createManagedToolScratchDir({
+    installDir: installRoot,
+    prefix: 'codex-acp',
+  });
   try {
     const archivePath = join(scratchDir, basename(asset.name));
     const extractDir = join(scratchDir, 'extract');
-    const nextDir = join(codexAcpInstallDir(), 'next');
-    const nextBinPath = join(nextDir, 'bin', process.platform === 'win32' ? 'codex-acp.exe' : 'codex-acp');
+    const candidateDir = join(scratchDir, 'candidate');
+    const candidateBinPath = join(candidateDir, 'bin', process.platform === 'win32' ? 'codex-acp.exe' : 'codex-acp');
 
     await downloadGitHubReleaseAsset({
       url: asset.url,
@@ -146,13 +153,12 @@ async function installLatestCodexAcpRelease(logPath: string): Promise<Readonly<{
       userAgent: 'happier-cli',
     });
 
-    await rm(nextDir, { recursive: true, force: true });
-    await mkdir(dirname(nextBinPath), { recursive: true });
+    await mkdir(dirname(candidateBinPath), { recursive: true });
     await extractGitHubReleaseAsset({
       archivePath,
       archiveName: asset.name,
       extractDir,
-      outputPath: nextBinPath,
+      outputPath: candidateBinPath,
     });
 
     await writeInstallLog({
@@ -165,12 +171,13 @@ async function installLatestCodexAcpRelease(logPath: string): Promise<Readonly<{
         `# version: ${asset.version ?? 'unknown'}`,
       ],
     });
-    await rm(join(codexAcpInstallDir(), 'current'), { recursive: true, force: true });
-    await rm(join(codexAcpInstallDir(), 'node_modules'), { recursive: true, force: true });
-    await rm(join(codexAcpInstallDir(), 'package.json'), { force: true });
-    await rm(join(codexAcpInstallDir(), 'package-lock.json'), { force: true });
-    await mkdir(codexAcpInstallDir(), { recursive: true });
-    await rename(nextDir, join(codexAcpInstallDir(), 'current'));
+    await rm(join(installRoot, 'node_modules'), { recursive: true, force: true });
+    await rm(join(installRoot, 'package.json'), { force: true });
+    await rm(join(installRoot, 'package-lock.json'), { force: true });
+    await promoteManagedCurrentInstall({
+      installRoot,
+      candidatePath: candidateDir,
+    });
     return { version: asset.version };
   } finally {
     await rm(scratchDir, { recursive: true, force: true });

@@ -12,6 +12,8 @@ describe('resolveSessionRunnerRuntimeState', () => {
         pid: 123,
         startedBy: 'daemon',
         processCommand: 'node /work/apps/cli/src/index.ts claude --happy-starting-mode remote --started-by daemon',
+        processCommandHash: 'runner-command-hash',
+        processStartTimeMs: 12_345,
         spawnOptions: {
           directory: '/work',
           backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },

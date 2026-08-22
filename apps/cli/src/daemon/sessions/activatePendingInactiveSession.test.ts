@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  sealSessionOwnerMetadataV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
+  sealSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 
@@ -22,6 +23,10 @@ const credentials = {
     type: 'legacy' as const,
     secret: new Uint8Array(32).fill(7),
   },
+};
+const tokenOnlyCredentials = {
+  token: 'token-only',
+  encryption: null,
 };
 
 function createSession(active: boolean) {
@@ -66,7 +71,7 @@ describe('activatePendingInactiveSession', () => {
     }));
 
     await expect(activatePendingInactiveSession({
-      credentials,
+      credentials: tokenOnlyCredentials,
       machineId: 'machine-1',
       sessionId: 'session-1',
       requestId: 'pending-after-ui-death',
@@ -87,7 +92,7 @@ describe('activatePendingInactiveSession', () => {
     }));
   });
 
-  it('starts a layout-v1 inactive session from its authenticated owner metadata', async () => {
+  it('starts a plaintext layout-v1 inactive session from its plain owner envelope without account encryption material', async () => {
     const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
       v: 1,
       workspace: {
@@ -112,14 +117,8 @@ describe('activatePendingInactiveSession', () => {
         v: 1,
         agentPresentation: { agentId: 'codex' },
       }),
-      ownerMetadata: sealSessionOwnerMetadataV1({
-        material: {
-          type: 'legacy',
-          secret: credentials.encryption.secret,
-        },
-        ownerMetadata,
-        randomBytes: (length) => new Uint8Array(length).fill(3),
-      }),
+      ownerMetadata:
+        createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
       machineId: undefined,
       path: undefined,
     });
@@ -132,7 +131,7 @@ describe('activatePendingInactiveSession', () => {
     }));
 
     await expect(activatePendingInactiveSession({
-      credentials,
+      credentials: tokenOnlyCredentials,
       machineId: 'machine-1',
       sessionId: 'session-1',
       requestId: 'pending-after-ui-death',
@@ -160,7 +159,14 @@ describe('activatePendingInactiveSession', () => {
     }));
   });
 
-  it('rejects layout-v1 activation when its owner metadata is unreadable', async () => {
+  it('keeps retained encrypted layout-v1 owner metadata locked for token-only credentials', async () => {
+    const retainedOwnerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      workspace: {
+        machineId: 'machine-1',
+        path: '/repo',
+      },
+    });
     vi.mocked(fetchSessionByIdCompat).mockResolvedValue({
       ...createSession(false),
       metadataLayoutVersion: 1,
@@ -168,7 +174,15 @@ describe('activatePendingInactiveSession', () => {
         v: 1,
         agentPresentation: { agentId: 'codex' },
       }),
-      ownerMetadata: 'not-owner-ciphertext',
+      ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
+        material: {
+          type: 'legacy',
+          secret: credentials.encryption.secret,
+        },
+        ownerMetadata: retainedOwnerMetadata,
+        randomBytes: (length) =>
+          new Uint8Array(length).fill(9),
+      }),
       machineId: undefined,
       path: undefined,
     });
@@ -178,7 +192,7 @@ describe('activatePendingInactiveSession', () => {
     const spawnSession = vi.fn();
 
     await expect(activatePendingInactiveSession({
-      credentials,
+      credentials: tokenOnlyCredentials,
       machineId: 'machine-1',
       sessionId: 'session-1',
       requestId: 'pending-after-ui-death',

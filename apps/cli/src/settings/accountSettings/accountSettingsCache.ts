@@ -26,6 +26,22 @@ export type AccountSettingsCacheV2 = Readonly<{
 
 export type AccountSettingsCache = AccountSettingsCacheV1 | AccountSettingsCacheV2;
 
+export type AccountSettingsCacheWriteOptions = Readonly<{
+  shouldCommit?: () => boolean;
+}>;
+
+export const ACCOUNT_SETTINGS_PLAIN_CACHE_PERSISTENCE_REFUSED_ERROR_CODE =
+  'ACCOUNT_SETTINGS_PLAIN_CACHE_PERSISTENCE_REFUSED' as const;
+
+function assertCacheIsSafeForDurablePersistence(cache: AccountSettingsCache): void {
+  if (cache.version === 2 && cache.settingsContent?.t === 'plain') {
+    throw Object.assign(
+      new Error('Raw plain account settings cannot be persisted in the CLI cache.'),
+      { code: ACCOUNT_SETTINGS_PLAIN_CACHE_PERSISTENCE_REFUSED_ERROR_CODE },
+    );
+  }
+}
+
 function bestEffortChmod0600(path: string): Promise<void> {
   if (process.platform === 'win32') return Promise.resolve();
   return chmod(path, 0o600).catch(() => {});
@@ -85,7 +101,7 @@ export async function readAccountSettingsCache(path: string): Promise<AccountSet
         return v as AccountSettingsCacheV2;
       }
       if (content.t === 'plain') {
-        return v as AccountSettingsCacheV2;
+        return null;
       }
       return null;
     }
@@ -131,7 +147,12 @@ async function acquireLock(lockFile: string): Promise<{ close: () => Promise<voi
   throw new Error('Failed to acquire account settings cache lock');
 }
 
-export async function writeAccountSettingsCacheAtomic(path: string, cache: AccountSettingsCache): Promise<void> {
+export async function writeAccountSettingsCacheAtomic(
+  path: string,
+  cache: AccountSettingsCache,
+  options?: AccountSettingsCacheWriteOptions,
+): Promise<void> {
+  assertCacheIsSafeForDurablePersistence(cache);
   const lockFile = `${path}.lock`;
   const tmpFile = `${path}.tmp`;
   await mkdir(dirname(path), { recursive: true });
@@ -142,6 +163,7 @@ export async function writeAccountSettingsCacheAtomic(path: string, cache: Accou
     const current = await readAccountSettingsCache(path);
     if (current && current.settingsVersion >= cache.settingsVersion) return;
     await writeFile(tmpFile, JSON.stringify(cache, null, 2), { mode: 0o600 });
+    if (options?.shouldCommit?.() === false) return;
     await rename(tmpFile, path);
     await bestEffortChmod0600(path);
   } finally {

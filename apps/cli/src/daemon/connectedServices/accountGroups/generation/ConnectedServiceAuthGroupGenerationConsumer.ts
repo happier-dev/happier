@@ -54,14 +54,6 @@ type PendingInput = Readonly<{
  */
 export class ConnectedServiceAuthGroupGenerationConsumer {
   constructor(private readonly deps: Readonly<{
-    /** @deprecated Ignored. Generation deferral is runtime-local and is never persisted. */
-    recordPendingGeneration?: (input: PendingInput) => Promise<void>;
-    /** @deprecated Ignored. Unavailable-group truth is enforced only on live runtime targets. */
-    recordGroupUnavailable?: (input: Readonly<{
-      sessionId: string;
-      serviceId: ConnectedServiceId;
-      groupId: string;
-    }>) => Promise<void>;
     applyCommittedGeneration(input: Readonly<{
       sessionId: string;
       fromProfileId: string | null;
@@ -70,6 +62,21 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
       executionAuthority: ConnectedServiceGenerationExecutionAuthority;
       applicationOwnerId?: string;
       applicationCohortSessionIds?: readonly string[];
+      signal?: AbortSignal;
+    }>): Promise<Readonly<{
+      reconciliationDisposition: ConnectedServiceAuthGenerationReconciliationDisposition;
+      errorCode: string | null;
+      authoritativeGeneration?: ConnectedServiceAuthGroupCommittedGenerationFact;
+      providerAdoptedTarget?: ConnectedServiceProviderAdoptedGenerationTarget;
+      restartRequested?: boolean;
+    }>>;
+    applySharedGenerationApplication?(input: Readonly<{
+      representativeSessionId: string;
+      applicationOwnerId: string;
+      applicationCohortSessionIds: readonly string[];
+      committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
+      switchReason: ConnectedServiceSessionAuthSwitchReason;
+      executionAuthority: ConnectedServiceGenerationExecutionAuthority;
       signal?: AbortSignal;
     }>): Promise<Readonly<{
       reconciliationDisposition: ConnectedServiceAuthGenerationReconciliationDisposition;
@@ -262,6 +269,9 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
       executionAuthority: input.executionAuthority,
       ...(input.signal ? { signal: input.signal } : {}),
       applyCommittedGeneration: this.deps.applyCommittedGeneration,
+      ...(this.deps.applySharedGenerationApplication
+        ? { applySharedGenerationApplication: this.deps.applySharedGenerationApplication }
+        : {}),
       clearAdoptedGeneration: this.deps.clearAdoptedGeneration,
       verifySharedGenerationApplication: this.deps.verifySharedGenerationApplication,
     });

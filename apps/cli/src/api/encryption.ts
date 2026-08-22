@@ -192,21 +192,6 @@ export function encrypt(
   }
 }
 
-/**
- * Encrypts with a keyed, content-bound nonce derived by the caller. Never pass
- * an unkeyed or reusable nonce through this narrow idempotent-retry boundary.
- */
-export function encryptWithDerivedNonce(
-  key: Uint8Array,
-  variant: 'legacy' | 'dataKey',
-  data: any,
-  nonce: Uint8Array,
-): Uint8Array {
-  return variant === 'legacy'
-    ? encryptLegacyWithNonce(data, key, nonce)
-    : encryptWithDataKeyAndNonce(data, key, nonce);
-}
-
 export function decrypt(key: Uint8Array, variant: 'legacy' | 'dataKey', data: Uint8Array): any | null {
   if (variant === 'legacy') {
     return decryptLegacy(data, key);

@@ -1,19 +1,27 @@
 import { readFile } from 'node:fs/promises';
 
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { describe, expect, it } from 'vitest';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
+import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import {
+    createSessionLifecycleRpcActionExecutor,
+    registerPrivateSpawnSessionRpcHandlers,
+    registerSessionLifecycleRpcHandlers,
+} from './sessionLifecycle';
 
 function createRpcHarness() {
-    const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
+    const handlers = new Map<string, RpcHandler>();
+    const rpcHandlerManager: RpcHandlerRegistrar = {
+        registerHandler(method, handler) {
+            handlers.set(method, handler);
+        },
+    };
     return {
         handlers,
-        rpcHandlerManager: {
-            registerHandler(method: string, handler: (input: unknown) => Promise<unknown>) {
-                handlers.set(method, handler);
-            },
-        },
+        rpcHandlerManager,
     };
 }
 
@@ -21,14 +29,13 @@ function readExpectedDefaultSessionId(input: unknown): string | undefined {
     if (!input || typeof input !== 'object') {
         return undefined;
     }
-    const record = input as Record<string, unknown>;
-    const value = record.parentSessionId ?? record.sessionId;
+    const parentSessionId = Reflect.get(input, 'parentSessionId');
+    const sessionId = Reflect.get(input, 'sessionId');
+    const value = parentSessionId ?? sessionId;
     return typeof value === 'string' ? value : undefined;
 }
 
 const SESSION_LIFECYCLE_RPC_CASES = [
-    [RPC_METHODS.SPAWN_HAPPY_SESSION, 'session.spawn_new', { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } }],
-    [RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, 'session.spawn_new', { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } }],
     [RPC_METHODS.STOP_SESSION, 'session.stop', { sessionId: 'session-1' }],
     [RPC_METHODS.SESSION_FORK, 'session.fork', { parentSessionId: 'session-1', forkPoint: { type: 'latest' } }],
     [RPC_METHODS.SESSION_FORK_PROVIDER_SAFE, 'session.fork', { parentSessionId: 'session-1', forkPoint: { type: 'latest' } }],
@@ -72,6 +79,25 @@ const SESSION_LIFECYCLE_RPC_CASES = [
 ] as const;
 
 describe('session lifecycle RPC handlers', () => {
+    it('forwards the transport cancellation context to the handoff action handler', async () => {
+        const handoff = vi.fn(async () => ({ ok: false, errorCode: 'cancelled' }));
+        const executor = createSessionLifecycleRpcActionExecutor({
+            'session.handoff': handoff,
+        });
+        const controller = new AbortController();
+        const input = { sessionId: 'session-1' };
+
+        await executor.execute(
+            'session.handoff',
+            input,
+            { surface: 'rpc', signal: controller.signal },
+        );
+
+        expect(handoff).toHaveBeenCalledWith(input, {
+            signal: controller.signal,
+        });
+    });
+
     it('does not own a static RPC binding table', async () => {
         const source = await readFile(new URL('./sessionLifecycle.ts', import.meta.url), 'utf8');
 
@@ -111,9 +137,78 @@ describe('session lifecycle RPC handlers', () => {
                 },
             };
         }));
+        expect(handlers.has(RPC_METHODS.SPAWN_HAPPY_SESSION)).toBe(false);
+        expect(handlers.has(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)).toBe(false);
     });
 
-    it('maps action dispatch failures to the legacy RPC error envelope', async () => {
+    it('routes strict public Session creation through the ActionSpec bridge and preserves cancellation', async () => {
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        const rawSpawnLifecycleHandler = vi.fn(async () => ({ type: 'success' as const, sessionId: 'private-session-1' }));
+        const execute = vi.fn<RpcActionExecutor['execute']>(async () => ({
+                ok: true,
+                result: {
+                    type: 'success' as const,
+                    disposition: 'created' as const,
+                    sessionId: 'session-1',
+                    executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+                    organizationPlacement: { folderId: null, tagIds: [] },
+                    initialInput: { status: 'notRequested' as const },
+                },
+            }));
+        const actionExecutor: RpcActionExecutor = {
+            execute,
+        };
+        const input = {
+            creationKey: 'manual:create-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            directory: '/tmp/project',
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent' as const,
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+        };
+        const controller = new AbortController();
+
+        registerPrivateSpawnSessionRpcHandlers({
+            rpcHandlerManager,
+            spawnLifecycleHandler: rawSpawnLifecycleHandler,
+        });
+        registerSessionLifecycleRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            scopes: [{ id: 'session.spawn_new', methods: [RPC_METHODS.SESSION_SPAWN_NEW] }],
+        });
+
+        const handler = handlers.get(RPC_METHODS.SESSION_SPAWN_NEW);
+        expect(handler).toEqual(expect.any(Function));
+        if (!handler) return;
+
+        await expect(handler(input, { signal: controller.signal })).resolves.toEqual({
+            type: 'success',
+            disposition: 'created',
+            sessionId: 'session-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            initialInput: { status: 'notRequested' },
+        });
+        expect(actionExecutor.execute).toHaveBeenCalledWith(
+            'session.spawn_new',
+            input,
+            { surface: 'rpc', signal: controller.signal },
+        );
+        expect(rawSpawnLifecycleHandler).not.toHaveBeenCalled();
+
+        await expect(handler({ ...input, tag: 'legacy-label' }, { signal: controller.signal })).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_action_transport_input',
+            error: 'invalid_action_transport_input',
+        });
+        expect(actionExecutor.execute).toHaveBeenCalledTimes(1);
+        expect(rawSpawnLifecycleHandler).not.toHaveBeenCalled();
+    });
+
+  it('maps action dispatch failures to the legacy RPC error envelope', async () => {
         const module = await import('./sessionLifecycle').catch(() => null);
         expect(module).not.toBeNull();
         if (!module) return;
@@ -134,10 +229,144 @@ describe('session lifecycle RPC handlers', () => {
             ok: false,
             errorCode: 'invalid_parameters',
             error: 'invalid_parameters',
-        });
+    });
+  });
+
+  it('routes fresh raw machine spawn through its lifecycle owner and settles only the primary transport', async () => {
+    const { handlers, rpcHandlerManager } = createRpcHarness();
+    const spawnLifecycleHandler = vi.fn(async () => ({
+      type: 'success' as const,
+      spawnNonce: 'spawn-nonce-1',
+      sessionIdStatus: 'pending' as const,
+    }));
+    const resolveSpawnSessionByNonce = vi.fn(async () => ({
+      status: 'success' as const,
+      sessionId: 'session-1',
+    }));
+
+    registerPrivateSpawnSessionRpcHandlers({
+      rpcHandlerManager,
+      spawnLifecycleHandler,
+      resolveSpawnSessionByNonce,
     });
 
-    it('keeps lifecycle RPC direct registration out of legacy machine registrar files', async () => {
+    const input = {
+      type: 'spawn-in-directory' as const,
+      directory: '/tmp/project',
+      spawnNonce: 'spawn-nonce-1',
+      backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const },
+    };
+    await expect(
+      handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)?.(input),
+    ).resolves.toEqual({
+      type: 'success',
+      spawnNonce: 'spawn-nonce-1',
+      sessionIdStatus: 'pending',
+    });
+    await expect(
+      handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.(input),
+    ).resolves.toEqual({
+      type: 'success',
+      sessionId: 'session-1',
+    });
+    expect(spawnLifecycleHandler).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'spawn-in-directory',
+      directory: '/tmp/project',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+    }));
+    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith('spawn-nonce-1');
+  });
+
+  it('preserves raw resume success on both private spawn transports without nonce settlement', async () => {
+    const { handlers, rpcHandlerManager } = createRpcHarness();
+    const spawnLifecycleHandler = vi.fn(async () => ({ type: 'success' as const }));
+    const resolveSpawnSessionByNonce = vi.fn(async () => ({
+      status: 'success' as const,
+      sessionId: 'unexpected-session-id',
+    }));
+
+    registerPrivateSpawnSessionRpcHandlers({
+      rpcHandlerManager,
+      spawnLifecycleHandler,
+      resolveSpawnSessionByNonce,
+    });
+
+    const input = {
+      type: 'resume-session' as const,
+      sessionId: 'session-1',
+      directory: '/tmp/project',
+      backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const },
+    };
+    await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)?.(input)).resolves.toEqual({
+      type: 'success',
+    });
+    await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.(input)).resolves.toEqual({
+      type: 'success',
+    });
+    expect(spawnLifecycleHandler).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'resume-session',
+      sessionId: 'session-1',
+    }));
+    expect(resolveSpawnSessionByNonce).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed raw private spawn input before it reaches the lifecycle owner', async () => {
+    const { handlers, rpcHandlerManager } = createRpcHarness();
+    const spawnLifecycleHandler = vi.fn(async () => ({ type: 'success' as const }));
+
+    registerPrivateSpawnSessionRpcHandlers({
+      rpcHandlerManager,
+      spawnLifecycleHandler,
+    });
+
+    await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.({
+      type: 'not-a-real-spawn',
+      directory: '/tmp/project',
+    })).resolves.toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'Invalid session spawn request',
+    });
+    expect(spawnLifecycleHandler).not.toHaveBeenCalled();
+  });
+
+  it('rejects tag-only and synthetic V2 private spawn input before it reaches the lifecycle owner', async () => {
+    const { handlers, rpcHandlerManager } = createRpcHarness();
+    const spawnLifecycleHandler = vi.fn(async () => ({ type: 'success' as const }));
+
+    registerPrivateSpawnSessionRpcHandlers({
+      rpcHandlerManager,
+      spawnLifecycleHandler,
+    });
+
+    const privateSpawn = {
+      type: 'spawn-in-directory' as const,
+      directory: '/tmp/project',
+      backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const },
+    };
+    const handler = handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+
+    await expect(handler?.({ ...privateSpawn, tag: 'legacy-label' })).resolves.toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'Invalid session spawn request',
+    });
+    await expect(handler?.({
+      ...privateSpawn,
+      tag: 'legacy-label',
+      creationKey: 'create:feature-1',
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+      agentTarget: { kind: 'agent', agentId: 'codex' },
+    })).resolves.toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'Invalid session spawn request',
+    });
+
+    expect(spawnLifecycleHandler).not.toHaveBeenCalled();
+  });
+
+  it('keeps lifecycle RPC direct registration out of legacy machine registrar files', async () => {
         const sources = await Promise.all([
             readFile(new URL('../../api/machine/rpcHandlers.ts', import.meta.url), 'utf8'),
             readFile(new URL('../../api/machine/rpcHandlers.sessions.ts', import.meta.url), 'utf8'),

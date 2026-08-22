@@ -1,11 +1,12 @@
 import type { BackendTargetRefV2, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import {
   normalizeDaemonBackendTargetV2Input,
   resolveDaemonCatalogAgentIdFromBackendTarget,
 } from '../backendTargetRouting';
-import { readCredentials, type Credentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import {
   resolveExistingSessionAttachContext,
@@ -17,7 +18,7 @@ import {
 import { readSessionHandoffAgentId } from '@/session/handoff/metadata/sessionHandoffMetadataV1';
 
 function isConcreteBuiltInCatalogAgentId(value: string): value is CatalogAgentId {
-  return value !== 'customAcp' && (CATALOG_AGENT_IDS as readonly string[]).includes(value);
+  return value !== 'customAcp' && isCatalogAgentId(value);
 }
 
 function mapExistingSessionAttachFailureToSpawnError(reason: ExistingSessionAttachContextFailureReason): SpawnSessionResult {
@@ -120,7 +121,7 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
   existingSessionId: string;
   resume: string;
   backendTarget: BackendTargetRefV2 | undefined;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
   loadLocalHandoffMetadataByVendorResumeId: (vendorResumeId: string) => Promise<Record<string, unknown> | null>;
 }>): Promise<ResolveSpawnBackendIdentitySuccess | ResolveSpawnBackendIdentityFailure> {
   const normalizedExistingSessionId = params.existingSessionId.trim();
@@ -132,7 +133,7 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
   let existingSessionWorkspacePath: string | null = null;
 
   if (normalizedExistingSessionId) {
-    const effectiveCredentials = params.credentials ?? (await readCredentials().catch(() => null));
+    const effectiveCredentials = params.credentials ?? (await readStoredCredentials().catch(() => null));
     const tokenForFetch = effectiveCredentials?.token ?? '';
 
     const attachContext = await resolveExistingSessionAttachContext({

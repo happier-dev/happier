@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,7 +9,6 @@ const SERVER_ENV_KEYS = [
   'HAPPIER_LOCAL_SERVER_URL',
   'HAPPIER_PUBLIC_SERVER_URL',
   'HAPPIER_WEBAPP_URL',
-  'HAPPIER_STACK_ENV_FILE',
 ] as const;
 
 function stubServerEnv(values: Partial<Record<typeof SERVER_ENV_KEYS[number], string>>): void {
@@ -19,35 +18,71 @@ function stubServerEnv(values: Partial<Record<typeof SERVER_ENV_KEYS[number], st
 }
 
 describe('resolveServerHttpBaseUrl', () => {
+  const tempDirs: string[] = [];
+
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
+    for (const directory of tempDirs.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
-  it('uses the live runtime endpoint instead of stale loaded configuration', async () => {
-    stubServerEnv({ HAPPIER_SERVER_URL: 'http://127.0.0.1:41001' });
-    await import('@/configuration');
+  it('changes endpoints only after the canonical configuration selection is reloaded', async () => {
+    vi.resetModules();
+    stubServerEnv({
+      HAPPIER_ACTIVE_SERVER_ID: 'stale-stack',
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:41001',
+    });
 
-    stubServerEnv({ HAPPIER_LOCAL_SERVER_URL: 'http://127.0.0.1:52002/' });
+    const configurationModule = await import('@/configuration');
     const { resolveServerHttpBaseUrl } = await import('./serverHttpBaseUrl');
 
+    stubServerEnv({
+      HAPPIER_ACTIVE_SERVER_ID: 'live-stack',
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:52002',
+    });
+
+    expect(resolveServerHttpBaseUrl()).toBe('http://127.0.0.1:41001');
+
+    configurationModule.reloadConfiguration();
     expect(resolveServerHttpBaseUrl()).toBe('http://127.0.0.1:52002');
   });
 
-  it('prefers an explicit invocation endpoint over an inherited stack env file', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'happier-server-http-base-url-'));
-    const stackEnvFile = join(directory, 'stack.env');
-    await writeFile(stackEnvFile, 'HAPPIER_SERVER_URL=http://127.0.0.1:52753\n');
-    try {
-      stubServerEnv({
-        HAPPIER_SERVER_URL: 'http://127.0.0.1:53288',
-        HAPPIER_STACK_ENV_FILE: stackEnvFile,
-      });
-      const { resolveServerHttpBaseUrl } = await import('./serverHttpBaseUrl');
+  it('keeps HTTP and socket traffic on the persisted active profile when inherited URLs contradict it', async () => {
+    const homeDir = join(tmpdir(), `happier-server-http-selection-${process.pid}-${Date.now()}`);
+    tempDirs.push(homeDir);
+    mkdirSync(homeDir, { recursive: true });
+    writeFileSync(join(homeDir, 'settings.json'), JSON.stringify({
+      schemaVersion: 6,
+      activeServerId: 'selected-profile',
+      servers: {
+        'selected-profile': {
+          id: 'selected-profile',
+          serverUrl: 'http://127.0.0.1:52755',
+          localServerUrl: 'http://127.0.0.1:52755',
+          webappUrl: 'http://localhost:18829',
+        },
+        'other-profile': {
+          id: 'other-profile',
+          serverUrl: 'http://127.0.0.1:52753',
+          localServerUrl: 'http://127.0.0.1:52753',
+          webappUrl: 'http://localhost:18829',
+        },
+      },
+    }));
+    vi.stubEnv('HAPPIER_HOME_DIR', homeDir);
+    stubServerEnv({
+      HAPPIER_ACTIVE_SERVER_ID: 'selected-profile',
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:52753',
+      HAPPIER_WEBAPP_URL: 'http://localhost:18829',
+    });
 
-      expect(resolveServerHttpBaseUrl()).toBe('http://127.0.0.1:53288');
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    const { configuration } = await import('@/configuration');
+    const { resolveServerHttpBaseUrl } = await import('./serverHttpBaseUrl');
+
+    expect(configuration.activeServerId).toBe('selected-profile');
+    expect(configuration.apiServerUrl).toBe('http://127.0.0.1:52755');
+    expect(resolveServerHttpBaseUrl()).toBe('http://127.0.0.1:52755');
   });
 });

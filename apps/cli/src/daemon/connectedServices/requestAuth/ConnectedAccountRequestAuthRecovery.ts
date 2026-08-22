@@ -43,6 +43,7 @@ export type ConnectedAccountRequestAuthTemporaryRetryRecordResult =
 export type ConnectedAccountRequestAuthRecoveryInput = Readonly<{
     resolved: ConnectedAccountRequestAuthResolvedBinding;
     failure: ConnectedAccountConsumerFailureV1;
+    signal?: AbortSignal;
     refreshCredential: (input: Readonly<{
         account: QualifiedConnectedAccountRef;
         expectedCredentialRevision: string;
@@ -165,6 +166,7 @@ async function applySwitch(
         Readonly<{ action: 'switch_account' }>
     >,
 ): Promise<ConnectedAccountRequestAuthRecoveryResult> {
+    input.signal?.throwIfAborted();
     if (!input.resolved.group) {
         return { effect: 'none', decision };
     }
@@ -195,6 +197,7 @@ async function applySwitch(
             ? {}
             : { providerLimitId: classification.providerLimitId }),
     });
+    input.signal?.throwIfAborted();
     if (
         switchResult
         && typeof switchResult === 'object'
@@ -216,6 +219,7 @@ async function applySwitch(
 export async function applyConnectedAccountRequestAuthRecovery(
     input: ConnectedAccountRequestAuthRecoveryInput,
 ): Promise<ConnectedAccountRequestAuthRecoveryResult> {
+    input.signal?.throwIfAborted();
     const classification = buildClassification(input);
     const selection = buildSelection(input);
     let decision = decideConnectedServiceRecovery({
@@ -228,6 +232,7 @@ export async function applyConnectedAccountRequestAuthRecovery(
     });
 
     if (decision.action === 'refresh') {
+        input.signal?.throwIfAborted();
         const refreshed = await input.refreshCredential({
             account: {
                 service: input.resolved.account.service,
@@ -235,6 +240,7 @@ export async function applyConnectedAccountRequestAuthRecovery(
             },
             expectedCredentialRevision: input.resolved.credentialRevision,
         });
+        input.signal?.throwIfAborted();
         if (refreshed) return { effect: 'refresh', decision };
 
         decision = decideConnectedServiceRecovery({
@@ -250,6 +256,7 @@ export async function applyConnectedAccountRequestAuthRecovery(
         return await applySwitch(input, classification, decision);
     }
     if (decision.action === 'temporary_retry') {
+        input.signal?.throwIfAborted();
         const temporaryRetry = await input.recordTemporaryRetry({
             service: input.resolved.account.service,
             accountId: input.resolved.account.accountId,
@@ -261,6 +268,7 @@ export async function applyConnectedAccountRequestAuthRecovery(
             resetAtMs: input.failure.evidence.resetAtMs ?? null,
             providerCode: input.failure.evidence.providerCode ?? null,
         });
+        input.signal?.throwIfAborted();
         if (temporaryRetry.status === 'recorded') {
             return { effect: 'temporary_retry', decision, temporaryRetry };
         }

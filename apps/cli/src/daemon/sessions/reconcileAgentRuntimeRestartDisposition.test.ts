@@ -23,6 +23,50 @@ function tracked(overrides: Partial<TrackedSession> = {}): TrackedSession {
 }
 
 describe('reconcileAgentRuntimeRestartDisposition', () => {
+  it('keeps an exact V2 runner attach-pending until the session-control owner refreshes its authority', async () => {
+    const current = tracked({
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        '/tmp/happier/runner-authority.json',
+    });
+    const acquireRegistryLease = vi.fn(async () => ({
+      registry: {
+        contributes: { agentDefinitionsById: new Map() },
+        agentRuntimesByAgentId: new Map(),
+      },
+      release: async () => undefined,
+    }));
+
+    await reconcileAgentRuntimeRestartDisposition({
+      trackedSessions: [current],
+      deferRunnerAuthorityReattach: true,
+      acquireRegistryLease: acquireRegistryLease as never,
+    });
+
+    expect(current.agentRuntimeRunnerRestartDisposition).toBeUndefined();
+    expect(acquireRegistryLease).not.toHaveBeenCalled();
+  });
+
+  it('keeps a directly identified runner usable after the session-control owner attaches its refreshed authority', async () => {
+    const current = tracked({
+      processStartTimeMs: 1_000,
+      processCommandHash: 'f'.repeat(64),
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        '/tmp/happier/runner-authority.json',
+      agentRuntimeDaemonServiceCapabilityHash:
+        `sha256:${'a'.repeat(64)}`,
+      runnerAgentImmutableGenerationId: 'generation-1',
+    });
+    const acquireRegistryLease = vi.fn();
+
+    await reconcileAgentRuntimeRestartDisposition({
+      trackedSessions: [current],
+      acquireRegistryLease: acquireRegistryLease as never,
+    });
+
+    expect(current.agentRuntimeRunnerRestartDisposition).toBeUndefined();
+    expect(acquireRegistryLease).not.toHaveBeenCalled();
+  });
+
   it('fails closed for a catalogued native Agent before its lazy runtime registration activates', async () => {
     const current = tracked();
     await reconcileAgentRuntimeRestartDisposition({
@@ -69,8 +113,8 @@ describe('reconcileAgentRuntimeRestartDisposition', () => {
       })) as never,
     });
 
-    expect(current.agentRuntimeRestartDisposition)
-      .toBe('bridge_authority_unavailable');
+    expect(current.agentRuntimeRunnerRestartDisposition)
+      .toBe('runner_authority_unavailable');
   });
 
   it('marks only a current daemon-owned native Agent runtime unavailable after restart', async () => {
@@ -127,18 +171,18 @@ describe('reconcileAgentRuntimeRestartDisposition', () => {
       acquireRegistryLease: acquireRegistryLease as never,
     });
 
-    expect(current.agentRuntimeRestartDisposition).toBe('bridge_authority_unavailable');
+    expect(current.agentRuntimeRunnerRestartDisposition).toBe('runner_authority_unavailable');
     expect(release).toHaveBeenCalledOnce();
   });
 
   it('retires one exact stale session through the canonical stop owner after fencing every tracked pid', async () => {
     const first = tracked({
       pid: 85855,
-      agentRuntimeRestartDisposition: 'bridge_authority_unavailable',
+      agentRuntimeRunnerRestartDisposition: 'runner_authority_unavailable',
     });
     const sibling = tracked({
       pid: 85856,
-      agentRuntimeRestartDisposition: 'bridge_authority_unavailable',
+      agentRuntimeRunnerRestartDisposition: 'runner_authority_unavailable',
     });
     const trackedSessions = new Map([
       [first.pid, first],
@@ -147,10 +191,10 @@ describe('reconcileAgentRuntimeRestartDisposition', () => {
     const acquireRegistryLease = vi.fn();
     const retireSession = vi.fn(async (sessionId: string) => {
       expect(sessionId).toBe('session-restarted');
-      expect(first.agentRuntimeRestartDisposition)
-        .toBe('bridge_authority_unavailable');
-      expect(sibling.agentRuntimeRestartDisposition)
-        .toBe('bridge_authority_unavailable');
+      expect(first.agentRuntimeRunnerRestartDisposition)
+        .toBe('runner_authority_unavailable');
+      expect(sibling.agentRuntimeRunnerRestartDisposition)
+        .toBe('runner_authority_unavailable');
       trackedSessions.clear();
       return { status: 'stopped' as const };
     });
@@ -172,12 +216,12 @@ describe('reconcileAgentRuntimeRestartDisposition', () => {
     const first = tracked({
       pid: 85855,
       happySessionId: 'session-restarted-first',
-      agentRuntimeRestartDisposition: 'bridge_authority_unavailable',
+      agentRuntimeRunnerRestartDisposition: 'runner_authority_unavailable',
     });
     const second = tracked({
       pid: 85856,
       happySessionId: 'session-restarted-second',
-      agentRuntimeRestartDisposition: 'bridge_authority_unavailable',
+      agentRuntimeRunnerRestartDisposition: 'runner_authority_unavailable',
     });
     const retireSession = vi.fn(async () => {
       quiescing = true;
@@ -218,8 +262,8 @@ describe('reconcileAgentRuntimeRestartDisposition', () => {
     });
 
     expect(retireSession).toHaveBeenCalledOnce();
-    expect(current.agentRuntimeRestartDisposition)
-      .toBe('bridge_authority_unavailable');
+    expect(current.agentRuntimeRunnerRestartDisposition)
+      .toBe('runner_authority_unavailable');
   });
 
   it('fails closed from durable canonical runtime identity when the successor catalog entry is unavailable', async () => {
@@ -250,8 +294,8 @@ describe('reconcileAgentRuntimeRestartDisposition', () => {
       })) as never,
     });
 
-    expect(current.agentRuntimeRestartDisposition)
-      .toBe('bridge_authority_unavailable');
+    expect(current.agentRuntimeRunnerRestartDisposition)
+      .toBe('runner_authority_unavailable');
   });
 
   it('leaves a generic reattached runner usable when the current registry has no primary Agent runtime', async () => {
@@ -279,7 +323,7 @@ describe('reconcileAgentRuntimeRestartDisposition', () => {
       retireSession,
     });
 
-    expect(generic.agentRuntimeRestartDisposition).toBeUndefined();
+    expect(generic.agentRuntimeRunnerRestartDisposition).toBeUndefined();
     expect(retireSession).not.toHaveBeenCalled();
   });
 });

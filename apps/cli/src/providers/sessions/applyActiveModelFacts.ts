@@ -1,4 +1,7 @@
-import { applySessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import {
+  applySessionProviderBindingMetadataV1,
+  type SessionActiveModelSelectionV1,
+} from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 import type { AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';
@@ -7,6 +10,7 @@ export function applyActiveModelFacts(
   metadata: Metadata,
   target: AuthorizedSessionModelTransitionTarget,
   agentId: string,
+  activeSelectionV1: SessionActiveModelSelectionV1 | null = null,
 ): Metadata {
   const withBinding = applySessionProviderBindingMetadataV1(
     metadata,
@@ -20,6 +24,10 @@ export function applyActiveModelFacts(
     currentModelId: target.selection.modelId,
     availableModels: [],
   };
+  const {
+    activeSelectionV1: _staleActiveSelection,
+    ...stateWithoutActiveSelection
+  } = state;
 
   type SessionModel = NonNullable<Metadata['sessionModelsV1']>['availableModels'][number];
   const existing = state.availableModels.find(
@@ -61,6 +69,11 @@ export function applyActiveModelFacts(
                           : { description: value.description }),
                       })),
                     }),
+                // Producer-declared; only the authoring agent knows what its own toggle does,
+                // so this hand-enumerated projection must carry it through verbatim.
+                ...(option.overridesWhenOn === undefined
+                  ? {}
+                  : { overridesWhenOn: option.overridesWhenOn }),
               })),
             }),
       }
@@ -77,11 +90,12 @@ export function applyActiveModelFacts(
   return {
     ...withBinding,
     sessionModelsV1: {
-      ...state,
+      ...stateWithoutActiveSelection,
       agentId,
       updatedAt: Date.now(),
       currentModelId: target.selection.modelId,
       availableModels,
+      ...(activeSelectionV1 ? { activeSelectionV1 } : {}),
     },
   };
 }

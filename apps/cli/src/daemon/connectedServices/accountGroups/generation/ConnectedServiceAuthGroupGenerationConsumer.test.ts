@@ -14,7 +14,6 @@ import { ConnectedServiceAuthGroupGenerationConsumer } from './ConnectedServiceA
 
 type ConsumerDeps = ConstructorParameters<typeof ConnectedServiceAuthGroupGenerationConsumer>[0];
 type ApplyInput = Parameters<ConsumerDeps['applyCommittedGeneration']>[0];
-type PendingInput = Parameters<NonNullable<ConsumerDeps['recordPendingGeneration']>>[0];
 
 describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
   it('enforces group-unavailable on a live target before acknowledging it', async () => {
@@ -22,8 +21,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'unexpected' })),
-      recordPendingGeneration: vi.fn(async () => {}),
-      recordGroupUnavailable: vi.fn(async () => { order.push('persist'); }),
       enforceGroupUnavailable: vi.fn(async () => { order.push('enforce'); }),
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
@@ -40,8 +37,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'unexpected' })),
-      recordPendingGeneration: vi.fn(async () => {}),
-      recordGroupUnavailable: vi.fn(async () => {}),
       enforceGroupUnavailable: vi.fn(async () => { throw new Error('runner still usable'); }),
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
@@ -83,8 +78,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration,
-      recordPendingGeneration: vi.fn(async (_input: PendingInput) => {}),
-      recordGroupUnavailable: vi.fn(async () => {}),
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
 
@@ -108,6 +101,10 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
 
   it('invokes one shared provider application and records one disposition per Claude group session', async () => {
     const applyCommittedGeneration = vi.fn(async () => ({
+      reconciliationDisposition: 'failed' as const,
+      errorCode: 'per_session_runtime_must_not_apply_shared_surface',
+    }));
+    const applySharedGenerationApplication = vi.fn(async () => ({
       reconciliationDisposition: 'converged' as const,
       errorCode: null,
       providerAdoptedTarget: {
@@ -123,8 +120,7 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration,
-      recordPendingGeneration: vi.fn(async () => {}),
-      recordGroupUnavailable: vi.fn(async () => {}),
+      applySharedGenerationApplication,
       clearAdoptedGeneration,
       resolveGenerationApplicationScope: vi.fn(async () => ({
         status: 'supported' as const,
@@ -143,7 +139,8 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       })),
     });
 
-    expect(applyCommittedGeneration).toHaveBeenCalledOnce();
+    expect(applyCommittedGeneration).not.toHaveBeenCalled();
+    expect(applySharedGenerationApplication).toHaveBeenCalledOnce();
     expect(clearAdoptedGeneration).toHaveBeenCalledTimes(3);
     expect(result).toMatchObject({
       ok: true,
@@ -158,7 +155,8 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
   });
 
   it('applies one shared provider surface for all-offline members without restart work', async () => {
-    const applyCommittedGeneration = vi.fn(async () => ({
+    const applyCommittedGeneration = vi.fn();
+    const applySharedGenerationApplication = vi.fn(async () => ({
       reconciliationDisposition: 'converged' as const,
       errorCode: null,
       providerAdoptedTarget: {
@@ -166,12 +164,10 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
         proof: { ...providerAdoptedTarget.proof, sharedAuthSurfaceId: 'team' },
       },
     }));
-    const recordPendingGeneration = vi.fn(async () => {});
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration,
-      recordPendingGeneration,
-      recordGroupUnavailable: vi.fn(async () => {}),
+      applySharedGenerationApplication,
       clearAdoptedGeneration: vi.fn(async () => {}),
       resolveGenerationApplicationScope: vi.fn(async () => ({
         status: 'supported' as const,
@@ -185,8 +181,8 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       switchReason: 'manual',
       sessions: ['a', 'b', 'c'].map((sessionId) => ({ sessionId, activity: 'offline' as const })),
     });
-    expect(applyCommittedGeneration).toHaveBeenCalledOnce();
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
+    expect(applyCommittedGeneration).not.toHaveBeenCalled();
+    expect(applySharedGenerationApplication).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ appliedSessionCount: 3, restartRequestedSessionCount: 0, skippedIdleSessionCount: 0 });
   });
 
@@ -251,12 +247,9 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
 
   it('fails unavailable application scope closed with zero provider calls', async () => {
     const applyCommittedGeneration = vi.fn();
-    const recordPendingGeneration = vi.fn(async () => {});
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration,
-      recordPendingGeneration,
-      recordGroupUnavailable: vi.fn(async () => {}),
       clearAdoptedGeneration: vi.fn(async () => {}),
       resolveGenerationApplicationScope: vi.fn(async () => ({
         status: 'unavailable' as const,
@@ -270,7 +263,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       sessions: [{ sessionId: 'unknown', activity: 'live' }],
     });
     expect(applyCommittedGeneration).not.toHaveBeenCalled();
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
   });
 
   it('reports idle/offline exact generation locally and never exposes a selection callback', async () => {
@@ -279,12 +271,9 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       errorCode: null,
       providerAdoptedTarget,
     }));
-    const recordPendingGeneration = vi.fn(async (_input: PendingInput) => {});
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration,
-      recordPendingGeneration,
-      recordGroupUnavailable: vi.fn(async () => {}),
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
 
@@ -305,7 +294,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       sessionId: 'live',
       committedGeneration: { decisionId: 'decision-2', decisionCommittedTarget: { generation: 2 } },
     });
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
     expect(result.acknowledgeable).toBe(false);
     expect(result.skippedIdleSessionCount).toBe(2);
     expect(result.resultsBySessionId).toMatchObject({
@@ -321,12 +309,9 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       errorCode: null,
       providerAdoptedTarget,
     }));
-    const recordPendingGeneration = vi.fn(async (_input: PendingInput) => {});
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration,
-      recordPendingGeneration,
-      recordGroupUnavailable: vi.fn(async () => {}),
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
 
@@ -344,7 +329,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       sessionId: 'old-account',
       committedGeneration: generation,
     }));
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
     expect(result.acknowledgeable).toBe(true);
   });
 
@@ -388,8 +372,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration,
-      recordPendingGeneration: vi.fn(async (_input: PendingInput) => {}),
-      recordGroupUnavailable: vi.fn(async () => {}),
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
 
@@ -424,8 +406,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
         errorCode: null,
         providerAdoptedTarget,
       })),
-      recordPendingGeneration: vi.fn(async () => {}),
-      recordGroupUnavailable: vi.fn(async () => {}),
       clearAdoptedGeneration,
     });
 
@@ -451,7 +431,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
   });
 
   it('propagates passive projection authority and locally defers a restart-only live recipient', async () => {
-    const recordPendingGeneration = vi.fn(async () => {});
     const applyCommittedGeneration: ConsumerDeps['applyCommittedGeneration'] = vi.fn(async (input) => {
       expect(input).not.toHaveProperty('allowRestart');
       return { reconciliationDisposition: 'deferred_restart' as const, errorCode: 'restart_disallowed_by_execution_policy' };
@@ -459,8 +438,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
       ...perSessionGenerationApplicationDeps,
       applyCommittedGeneration,
-      recordPendingGeneration,
-      recordGroupUnavailable: vi.fn(async () => {}),
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
 
@@ -471,7 +448,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       sessions: [{ sessionId: 'reattached-live', activity: 'live' }],
     });
 
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
     expect(result.acknowledgeable).toBe(false);
     expect(result).toMatchObject({
       restartRequestedSessionCount: 0,
@@ -491,8 +467,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
         observed.push(input.executionAuthority);
         return { reconciliationDisposition: 'deferred_restart' as const, errorCode: null };
       }),
-      recordPendingGeneration: vi.fn(async () => {}),
-      recordGroupUnavailable: vi.fn(async () => {}),
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
 

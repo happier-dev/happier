@@ -11,11 +11,15 @@ import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 const sessionsHttp = vi.hoisted(() => ({
   fetchSessionByIdCompat: vi.fn(),
 }));
+const composerMediaStageMaintenance = vi.hoisted(() => ({
+  runActiveDaemonComposerMediaStageStartupMaintenance: vi.fn(async () => undefined),
+}));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => sessionsHttp);
-
-vi.mock('@/persistence', () => ({
-  writeDaemonState: vi.fn(),
+vi.mock('@/transfers/staging/composerMediaStageStore', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/transfers/staging/composerMediaStageStore')>(),
+  runActiveDaemonComposerMediaStageStartupMaintenance:
+    composerMediaStageMaintenance.runActiveDaemonComposerMediaStageStartupMaintenance,
 }));
 
 vi.mock('../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled', () => ({
@@ -28,19 +32,6 @@ vi.mock('@/settings/accountSettings/warmActiveAccountSettingsSnapshot', () => ({
   warmActiveAccountSettingsSnapshotBestEffort: vi.fn(async () => true),
 }));
 
-// K3: capture how the refresh restart handler is wired without standing up the real
-// refresh subsystem (network/timers). We only need to inspect the injected
-// requestRestartSignal to prove bootstrap wires the GATED adapter (not a raw signal).
-const createConnectedServicesAuthUpdatedRestartHandlerMock =
-  vi.fn((_params: {
-    requestRestartSignal?: unknown;
-  }) => vi.fn());
-vi.mock('../connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler', () => ({
-  createConnectedServicesAuthUpdatedRestartHandler: (params: {
-    requestRestartSignal?: unknown;
-  }) =>
-    createConnectedServicesAuthUpdatedRestartHandlerMock(params),
-}));
 vi.mock('../connectedServices/refresh/ConnectedServiceRefreshCoordinator', () => ({
   ConnectedServiceRefreshCoordinator: class {
     constructor(public readonly params: unknown) {}
@@ -79,6 +70,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
       controlToken: 'control-token',
+      publishDaemonState: vi.fn(() => true),
       happyHomeDir: '/tmp/happy-home',
       activeServerDir: '/tmp/happy-active-server',
       filesystemAccessPolicy: { kind: 'osUser' },
@@ -88,8 +80,8 @@ describe('startDaemonRuntimeBootstrap', () => {
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
         applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
+        applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
-      requestConnectedServiceRefreshRestartSignal: vi.fn(async () => ({ signaled: true })),
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),
       connectedServiceQuotaFetcherDescriptors: [{
@@ -100,6 +92,9 @@ describe('startDaemonRuntimeBootstrap', () => {
     expect(result.connectedServiceQuotasCoordinator).toBeNull();
     expect(startConnectedServiceRefreshLoop).not.toHaveBeenCalled();
     expect(startConnectedServiceQuotasLoop).not.toHaveBeenCalled();
+    expect(
+      composerMediaStageMaintenance.runActiveDaemonComposerMediaStageStartupMaintenance,
+    ).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('quota automation disabled'),
       expect.any(Error),
@@ -154,6 +149,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
       controlToken: 'control-token',
+      publishDaemonState: vi.fn(() => true),
       happyHomeDir: '/tmp/happy-home',
       activeServerDir: '/tmp/happy-active-server',
       filesystemAccessPolicy: { kind: 'osUser' },
@@ -168,9 +164,8 @@ describe('startDaemonRuntimeBootstrap', () => {
           status: 'session_not_found',
           generation: input.generation,
         })),
+        applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
-      requestConnectedServiceRefreshRestartSignal:
-        vi.fn(async () => ({ signaled: true })),
       connectedServiceRuntimeQuotaSnapshots:
         new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),
@@ -225,6 +220,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
       controlToken: 'control-token',
+      publishDaemonState: vi.fn(() => true),
       happyHomeDir: '/tmp/happy-home',
       activeServerDir: '/tmp/happy-active-server',
       filesystemAccessPolicy: { kind: 'osUser' },
@@ -234,8 +230,8 @@ describe('startDaemonRuntimeBootstrap', () => {
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
         applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
+        applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
-      requestConnectedServiceRefreshRestartSignal: vi.fn(async () => ({ signaled: true })),
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),
     });
@@ -281,12 +277,19 @@ describe('startDaemonRuntimeBootstrap', () => {
     );
   });
 
-  it('K3: wires the gated refresh restart adapter into the auth-updated restart handler', async () => {
+  it('routes refreshed runtime credentials through the canonical session application owner', async () => {
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
-    const requestConnectedServiceRefreshRestartSignal = vi.fn(async () => ({ signaled: true }));
+    const applyCredentialUpdate = vi.fn(async () => ({ status: 'hot_applied' as const }));
+    const authGroupCoordinator = Object.assign({
+      switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
+      applyCommittedGeneration: vi.fn(async (input: Readonly<{ generation: number }>) => ({
+        status: 'session_not_found',
+        generation: input.generation,
+      })),
+    }, { applyCredentialUpdate });
 
-    await startDaemonRuntimeBootstrap({
+    const result = await startDaemonRuntimeBootstrap({
       api: { push: () => ({}), listConnectedServiceProfiles: () => ({}) } as never,
       credentials: {
         token: 'token',
@@ -294,9 +297,8 @@ describe('startDaemonRuntimeBootstrap', () => {
       },
       logger,
       processEnv: {
-        // Refresh enabled so the auth-updated restart handler is constructed and wired.
+        // Refresh enabled so the coordinator's canonical application callback is wired.
         HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'true',
-        HAPPIER_CONNECTED_SERVICES_REFRESH_RESTART_PI_ENABLED: 'true',
       },
       controlPort: 41235,
       machineId: 'machine-1',
@@ -307,26 +309,42 @@ describe('startDaemonRuntimeBootstrap', () => {
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
       controlToken: 'control-token',
+      publishDaemonState: vi.fn(() => true),
       happyHomeDir: '/tmp/happy-home',
       activeServerDir: '/tmp/happy-active-server',
       filesystemAccessPolicy: { kind: 'osUser' },
       publicReleaseChannel: 'dev',
       connectedServicesRestartRequestedPids: new Set(),
       pidToTrackedSession: new Map(),
-      connectedServiceAuthGroupPreTurnSwitchCoordinator: {
-        switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
-        applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
-      },
-      requestConnectedServiceRefreshRestartSignal,
+      connectedServiceAuthGroupPreTurnSwitchCoordinator: authGroupCoordinator,
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),
     });
 
-    // The refresh restart handler must be wired with the GATED adapter (turn-deferral +
-    // reachability), not a raw SIGTERM signal — this is the K3 fix.
-    expect(createConnectedServicesAuthUpdatedRestartHandlerMock).toHaveBeenCalledTimes(1);
-    const handlerParams = createConnectedServicesAuthUpdatedRestartHandlerMock.mock.calls[0]?.[0];
-    expect(handlerParams?.requestRestartSignal).toBe(requestConnectedServiceRefreshRestartSignal);
+    const refreshCoordinator = result.connectedServiceRefreshCoordinator as unknown as Readonly<{
+      params: Readonly<{
+        onAuthUpdated(event: unknown): Promise<void>;
+      }>;
+    }>;
+    await refreshCoordinator.params.onAuthUpdated({
+      binding: { serviceId: 'openai-codex', profileId: 'work' },
+      affectedTargets: [{
+        pid: 42,
+        agentId: 'codex',
+        sessionId: 'session-42',
+        materializationKey: 'materialization-42',
+      }],
+      trigger: 'refresh_triggered_restart',
+      executionAuthority: 'runtime_recovery',
+    });
+
+    expect(applyCredentialUpdate).toHaveBeenCalledWith({
+      sessionId: 'session-42',
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      reason: 'account_changed',
+      executionAuthority: 'runtime_recovery',
+    });
   });
 
   it('keeps legacy-unfenced persisted identity out of same-account fanout authority', async () => {
@@ -386,6 +404,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
       controlToken: 'control-token',
+      publishDaemonState: vi.fn(() => true),
       happyHomeDir: '/tmp/happy-home',
       activeServerDir: '/tmp/happy-active-server',
       filesystemAccessPolicy: { kind: 'osUser' },
@@ -400,9 +419,8 @@ describe('startDaemonRuntimeBootstrap', () => {
           status: 'session_not_found',
           generation: input.generation,
         })),
+        applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
-      requestConnectedServiceRefreshRestartSignal:
-        vi.fn(async () => ({ signaled: true })),
       connectedServiceRuntimeQuotaSnapshots:
         new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),
@@ -464,6 +482,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
       controlToken: 'control-token',
+      publishDaemonState: vi.fn(() => true),
       happyHomeDir: '/tmp/happy-home',
       activeServerDir: '/tmp/happy-active-server',
       filesystemAccessPolicy: { kind: 'osUser' },
@@ -473,8 +492,8 @@ describe('startDaemonRuntimeBootstrap', () => {
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
         applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
+        applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
-      requestConnectedServiceRefreshRestartSignal: vi.fn(async () => ({ signaled: true })),
       connectedServiceRuntimeAuthApplyCapabilityResolver,
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore,

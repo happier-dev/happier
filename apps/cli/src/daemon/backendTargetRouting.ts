@@ -1,22 +1,22 @@
-import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
 import {
   isLegacyCustomAcpId,
   type BackendTargetRefV2,
 } from '@happier-dev/protocol';
 
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import {
+  isCatalogAgentId,
+  resolveAgentCliSubcommand,
+} from '@/agent/catalog/resolution';
 import {
   resolveConcreteBackendTargetRefV2,
   resolveConcreteCompatBackendTargetRefs,
 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 
-type CatalogAgentId = AgentId;
-
-function isKnownAgentId(value: string): value is CatalogAgentId {
-  return value !== 'customAcp' && (AGENT_IDS as readonly string[]).includes(value);
-}
-
-function resolveBuiltInCatalogAgentId(parsed: BackendTargetRefV2): CatalogAgentId | null {
-  return isKnownAgentId(parsed.backendId) ? parsed.backendId : null;
+function resolveActiveCatalogAgentId(parsed: BackendTargetRefV2): CatalogAgentId | null {
+  return parsed.backendId !== 'customAcp' && isCatalogAgentId(parsed.backendId)
+    ? parsed.backendId
+    : null;
 }
 
 function readStringField(record: Record<string, unknown>, key: string): string {
@@ -76,7 +76,7 @@ export function resolveDaemonCatalogAgentIdFromBackendTarget(
   if (parsed.sourceKind !== 'built_in') {
     return null;
   }
-  return resolveBuiltInCatalogAgentId(parsed);
+  return resolveActiveCatalogAgentId(parsed);
 }
 
 export function resolveDaemonCliSubcommandFromBackendTarget(
@@ -92,5 +92,6 @@ export function resolveDaemonCliSubcommandFromBackendTarget(
   if (parsed.sourceKind !== 'built_in') {
     return null;
   }
-  return resolveBuiltInCatalogAgentId(parsed);
+  const agentId = resolveActiveCatalogAgentId(parsed);
+  return agentId ? resolveAgentCliSubcommand(agentId) : null;
 }

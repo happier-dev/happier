@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createProviderBindingSecurityFingerprintV1,
   ProviderConnectionIdSchema,
   type ProviderBoundModelRef,
   type ProviderRuntimeBindingBasisV1,
@@ -282,64 +283,43 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
 
   it('replaces child-authored Provider authority with the daemon-tracked session facts', async () => {
     const trackedSelection = provider('pc_restarted', 'model-at-launch');
-    const activeTarget = active(
+    const runtimeBindingBasis = externalRuntimeBindingBasis(trackedSelection);
+    const activeTargetBase = active(
       trackedSelection,
-      {
-        runtimeBindingBasis: {
-          v: 1,
-          deployment: { kind: 'external' },
-          agentTargetKey: trackedSelection.agentTargetKey,
-          connectionId: trackedSelection.providerConnectionId!,
-          contributionKey: 'provider.test',
-          endpoint: {
-            endpointTemplateId: 'responses',
-            normalizedUrl: 'https://provider.example/v1',
-            protocol: 'openai-responses',
-            publicHeaders: {},
-          },
-          runtimeCredentialTransport: {
-            id: 'bearer',
-            protocols: ['openai-responses'],
-            uses: ['runtime'],
-            destination: {
-              kind: 'httpHeader',
-              name: 'authorization',
-              format: 'bearer',
-            },
-          },
-          prepared: { v: 1, materialization: 'engineConfig' },
-          adapterVersion: 1,
-          credentialAuthorization: {
-            connectionSecurityFingerprint: 'connection-security',
-            grantFingerprint: 'grant',
-            selectedSecretBindingId: 'secret-a',
-            selectedSecretRecordFingerprint: 'secret-record-a',
-          },
-          agentSupport: {
-            acceptsProtocols: ['openai-responses'],
-            required: { streaming: true },
-            credentialSupport: {
-              supportsNoAuth: false,
-              apiKeyTransports: [{
-                protocol: 'openai-responses',
-                destination: {
-                  kind: 'httpHeader',
-                  names: ['authorization'],
-                  formats: ['bearer'],
-                },
-              }],
-            },
-            authIsolation: {
-              suppressConnectedServiceIds: [],
-              ownedEnvKeys: [],
-            },
-            materialization: 'engineConfig',
-            applyPolicy: 'live',
-            supportsFreeformModelIds: true,
-          },
-        },
-      },
+      { runtimeBindingBasis },
     );
+    const activeModel = activeTargetBase.sessionBindingMetadata?.model;
+    const runtimeCredentialTransport =
+      runtimeBindingBasis.runtimeCredentialTransport;
+    if (!activeModel || !runtimeCredentialTransport) {
+      throw new Error('Expected an exact external Provider binding fixture');
+    }
+    const activeTarget = {
+      ...activeTargetBase,
+      sessionBindingMetadata: {
+        ...activeTargetBase.sessionBindingMetadata!,
+        bindingSecurityFingerprint:
+          createProviderBindingSecurityFingerprintV1({
+            agentTargetKey: runtimeBindingBasis.agentTargetKey,
+            connectionId: runtimeBindingBasis.connectionId,
+            modelId: activeModel.id,
+            modelCapabilities: {},
+            endpointTemplateId:
+              runtimeBindingBasis.endpoint.endpointTemplateId,
+            endpointUrl: runtimeBindingBasis.endpoint.normalizedUrl,
+            protocol: runtimeBindingBasis.endpoint.protocol,
+            publicHeaders: runtimeBindingBasis.endpoint.publicHeaders,
+            materialization:
+              runtimeBindingBasis.prepared.materialization,
+            credentialDestination:
+              runtimeCredentialTransport.destination,
+            compatibilityFingerprint:
+              activeTargetBase.sessionBindingMetadata!
+                .compatibilityFingerprint,
+            adapterVersion: runtimeBindingBasis.adapterVersion,
+          }),
+      },
+    } satisfies AuthorizedSessionModelTransitionTarget;
 
     const requestedSelection = {
       ...trackedSelection,
@@ -394,6 +374,88 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
       },
       requestAgentId: 'codex',
       requestedSelection,
+    })).toThrow('session_model_transition_daemon_authority_mismatch');
+  });
+
+  it('accepts an exact authorized external Agent only when catalog identity is absent', () => {
+    const externalAgentId = 'public-handoff-agent';
+    const trackedSelection = {
+      ...provider('pc_external_agent', 'model-at-launch'),
+      agentTargetKey: `backend:${externalAgentId}`,
+    };
+    const runtimeBindingBasis = {
+      ...externalRuntimeBindingBasis(trackedSelection),
+      agentTargetKey: trackedSelection.agentTargetKey,
+    };
+    const trackedSessionBindingMetadataBase = active(
+      trackedSelection,
+      { runtimeBindingBasis },
+    ).sessionBindingMetadata!;
+    const runtimeCredentialTransport =
+      runtimeBindingBasis.runtimeCredentialTransport;
+    const trackedModel = trackedSessionBindingMetadataBase.model;
+    if (!runtimeCredentialTransport || !trackedModel) {
+      throw new Error('Expected the external Provider fixture binding');
+    }
+    const trackedSessionBindingMetadata = {
+      ...trackedSessionBindingMetadataBase,
+      bindingSecurityFingerprint:
+        createProviderBindingSecurityFingerprintV1({
+          agentTargetKey: runtimeBindingBasis.agentTargetKey,
+          connectionId: runtimeBindingBasis.connectionId,
+          modelId: trackedModel.id,
+          modelCapabilities: {},
+          endpointTemplateId:
+            runtimeBindingBasis.endpoint.endpointTemplateId,
+          endpointUrl: runtimeBindingBasis.endpoint.normalizedUrl,
+          protocol: runtimeBindingBasis.endpoint.protocol,
+          publicHeaders: runtimeBindingBasis.endpoint.publicHeaders,
+          materialization:
+            runtimeBindingBasis.prepared.materialization,
+          credentialDestination:
+            runtimeCredentialTransport.destination,
+          compatibilityFingerprint:
+            trackedSessionBindingMetadataBase.compatibilityFingerprint,
+          adapterVersion: runtimeBindingBasis.adapterVersion,
+        }),
+    };
+    const requestedSelection = {
+      ...trackedSelection,
+      modelId: 'requested-next-model',
+    };
+    const resolve = (input: Readonly<{
+      trackedAgentId: string | null;
+      authorizedAgentId: string | null;
+      requestAgentId: string;
+    }>) => resolveDaemonSessionModelTransitionAuthority({
+      ...input,
+      trackedSelection,
+      trackedSessionBindingMetadata,
+      requestedSelection,
+    });
+
+    expect(resolve({
+      trackedAgentId: null,
+      authorizedAgentId: externalAgentId,
+      requestAgentId: externalAgentId,
+    })).toMatchObject({
+      agentId: externalAgentId,
+      agentTargetKey: trackedSelection.agentTargetKey,
+    });
+    expect(() => resolve({
+      trackedAgentId: 'codex',
+      authorizedAgentId: externalAgentId,
+      requestAgentId: externalAgentId,
+    })).toThrow('session_model_transition_daemon_authority_mismatch');
+    expect(() => resolve({
+      trackedAgentId: null,
+      authorizedAgentId: null,
+      requestAgentId: externalAgentId,
+    })).toThrow('session_model_transition_daemon_authority_mismatch');
+    expect(() => resolve({
+      trackedAgentId: null,
+      authorizedAgentId: 'different-external-agent',
+      requestAgentId: externalAgentId,
     })).toThrow('session_model_transition_daemon_authority_mismatch');
   });
 
@@ -595,32 +657,14 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
       v: 1,
       deployment: {
         kind: 'managedLocal',
-        securityFacts: {
-          implementationIdentity: {
-            pluginId: 'provider.test',
-            localId: 'gateway',
-          },
-          managedEndpoint: {
-            localService: {
-              id: 'gateway',
-              launch: {
-                kind: 'packaged-runtime-binary',
-                directorySegments: ['cliproxyapi'],
-                executableBaseName: 'cliproxyapi',
-                privateConfigPathFlag: '--config',
-              },
-              launchMode: {
-                kind: 'assignAndInject',
-                portPolicy: { kind: 'allocated' },
-              },
-              hostPolicy: { kind: 'loopback' },
-              name: { strategy: 'fixed', name: 'Gateway' },
-              healthCheck: { kind: 'http', path: '/health' },
-              restart: { kind: 'never' },
-              cleanup: { staleAfterMs: 60_000 },
-            },
-            protocols: ['openai-responses'],
-          },
+        implementationIdentity: {
+          pluginId: 'provider.test',
+          localId: 'gateway',
+        },
+        managedRuntime: {
+          kind: 'managed',
+          dependencies: [],
+          endpointTemplateIds: ['responses'],
           connectedAccounts: [{
             purpose: 'upstream',
             service: {

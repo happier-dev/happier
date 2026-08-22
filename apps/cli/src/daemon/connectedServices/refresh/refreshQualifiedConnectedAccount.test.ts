@@ -54,6 +54,7 @@ async function createHarness() {
   const credentialSnapshot = {
     ref: account,
     authenticationModeId: 'oauth',
+    revisionSemantics: 'revisioned' as const,
     credentialRevision,
     configurationRevision: null,
     content: sealQualifiedConnectedAccountContentEnvelope({
@@ -146,6 +147,31 @@ describe('refreshQualifiedConnectedAccount', () => {
     })).rejects.toMatchObject({
       code: 'connected_account_legacy_operation_unsupported',
     });
+
+    expect(harness.acquireRefreshLease).not.toHaveBeenCalled();
+    expect(harness.mutateCredential).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unfenced snapshot before acquiring a refresh lease', async () => {
+    const harness = await createHarness();
+    const expectedCredential = {
+      ...harness.credentialSnapshot,
+      revisionSemantics: 'legacy_unfenced' as const,
+      credentialRevision: null,
+    };
+
+    await expect(refreshQualifiedConnectedAccount({
+      account,
+      token: harness.credentials.token,
+      ownerId: 'machine-1:runtime-1',
+      leaseMs: 60_000,
+      operationId: 'refresh-unfenced',
+      expectedCredential,
+      resolveV4Support: () => 'advertised',
+      establishedRuntimeOwner: harness.owner,
+      acquireRefreshLease: harness.acquireRefreshLease,
+      mutateCredential: harness.mutateCredential,
+    })).rejects.toThrow('requires a revisioned credential snapshot');
 
     expect(harness.acquireRefreshLease).not.toHaveBeenCalled();
     expect(harness.mutateCredential).not.toHaveBeenCalled();

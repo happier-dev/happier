@@ -3,17 +3,39 @@ import type {
   SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
 
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import {
+  createAutomationAccountEncryptionMaterialSnapshotV1,
+  resolveValidatedAutomationAccountEncryptionV1,
+} from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { createAutomationAssignmentCache } from './automationAssignmentCache';
 import { classifyAutomationWorkerError, nextAutomationRetryDelayMs } from './automationBackoffPolicy';
-import { createAutomationClaimClient } from './automationClaimClient';
+import {
+  createAutomationClaimClient,
+} from './automationClaimClient';
 import { getAutomationWorkerFeatureDecision } from './automationFeatureGate';
 import { executeClaimedRun, type ClaimableRunPayload } from './automationRunExecutor';
 import { resolveAutomationPollingConfig } from './automationScheduler';
 import type { AutomationTemplateEncryption } from './automationTemplateExecution';
 import { logAutomationInfo, logAutomationWarn } from './automationTelemetry';
-import type { AutomationClaimRunResponse } from './automationTypes';
+import type {
+  AutomationClaimedRunPayload,
+  AutomationClaimRunResponse,
+} from './automationTypes';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import type { Update } from '@/api/types';
+import type { StoredCredentials } from '@/persistence';
+import type {
+  SessionInputAdmissionResultV1,
+  SessionPendingEnqueueByMachineRequestV1,
+  SessionServerStartDispatchResultV1,
+  SessionServerStartIngressRequestV1,
+} from '@happier-dev/protocol';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { invalidateActiveAutomationRun } from './automationRunInvalidation';
+
+const ASSIGNMENT_RECONCILIATION_DELAY_MS = 45_000;
+const ASSIGNMENT_RECONCILIATION_JITTER_MS = 15_000;
 
 export type AutomationWorkerHandle = Readonly<{
   stop: () => void;
@@ -24,48 +46,27 @@ export type AutomationWorkerHandle = Readonly<{
 }>;
 
 function toClaimableRunPayload(claimResult: AutomationClaimRunResponse): ClaimableRunPayload | null {
-  if (!claimResult.run || !claimResult.automation) {
+  if (claimResult.run === null || claimResult.automation === null) {
     return null;
   }
-  return {
-    run: claimResult.run,
-    automation: claimResult.automation,
-  };
-}
-
-function getStatusCode(error: unknown): number | null {
-  if (!error || typeof error !== 'object') return null;
-  const response = (error as { response?: { status?: unknown } }).response;
-  const status = response?.status;
-  return typeof status === 'number' && Number.isFinite(status) ? status : null;
-}
-
-function getErrorUrl(error: unknown): string | null {
-  if (!error || typeof error !== 'object') return null;
-  const url = (error as { config?: { url?: unknown } }).config?.url;
-  return typeof url === 'string' && url.trim().length > 0 ? url.trim() : null;
-}
-
-function isMissingAutomationEndpointError(error: unknown, expectedPathname: string): boolean {
-  const status = getStatusCode(error);
-  if (status !== 404 && status !== 405 && status !== 501) {
-    return false;
-  }
-
-  const url = getErrorUrl(error);
-  if (!url) return false;
-  try {
-    return new URL(url).pathname === expectedPathname;
-  } catch {
-    return false;
-  }
+  return claimResult as AutomationClaimedRunPayload;
 }
 
 export function startAutomationWorker(params: {
   token: string;
+  credentials?: StoredCredentials;
   machineId: string;
-  encryption: AutomationTemplateEncryption;
+  encryption?: AutomationTemplateEncryption;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+  machineAdmissionTransport?: (
+    request: SessionPendingEnqueueByMachineRequestV1,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ) => Promise<SessionInputAdmissionResultV1>;
+  /** The connected daemon's Session-owned Automation start ingress. */
+  dispatchSessionServerStart?: (
+    request: SessionServerStartIngressRequestV1,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ) => Promise<SessionServerStartDispatchResultV1>;
   budgetRegistry?: ExecutionBudgetRegistry;
   env?: NodeJS.ProcessEnv;
 }): AutomationWorkerHandle {
@@ -94,6 +95,14 @@ export function startAutomationWorker(params: {
 
   const scheduler = resolveAutomationPollingConfig(env);
   const claimClient = createAutomationClaimClient({ token: params.token });
+  const actionExecutor = params.credentials
+    ? createCliActionExecutorFromCredentials({
+        credentials: params.credentials,
+        ...(params.machineAdmissionTransport
+          ? { machineAdmissionTransport: params.machineAdmissionTransport }
+          : {}),
+      })
+    : null;
   const assignments = createAutomationAssignmentCache();
   const budgetTokenId = `automation_worker:${params.machineId}`;
 
@@ -103,11 +112,20 @@ export function startAutomationWorker(params: {
   let retryAfter = 0;
   let noWorkCooldownUntil = 0;
   let pendingQueuedWake = false;
+  let nextAssignmentReconciliationAt = 0;
+  let latestAssignmentRefreshRequest = 0;
 
   let claimTimer: NodeJS.Timeout | null = null;
   let claimTimerAt = 0;
   let claimInFlight = false;
   let refreshSoonTimer: NodeJS.Timeout | null = null;
+  // This worker executes at most one claimed Run at a time. The controller is
+  // invocation-local currentness, not a second Automation cancellation owner.
+  let activeExecution: {
+    runId: string;
+    attempt: number;
+    controller: AbortController;
+  } | null = null;
 
   const nullClaimBackoffMs = Math.min(
     60_000,
@@ -122,11 +140,11 @@ export function startAutomationWorker(params: {
     }
   }
 
-  function scheduleClaimAt(whenMs: number, reason: string) {
+  function scheduleClaimAt(whenMs: number, reason: string, force = false) {
     if (stopped) return;
     if (paused) return;
     const at = Math.max(Date.now(), Math.floor(whenMs));
-    if (claimTimer && claimTimerAt > 0 && claimTimerAt <= at) {
+    if (!force && claimTimer && claimTimerAt > 0 && claimTimerAt <= at) {
       return;
     }
     clearClaimTimer();
@@ -161,7 +179,7 @@ export function startAutomationWorker(params: {
     const rows = assignments.getAll();
     let next: number | null = null;
     for (const row of rows) {
-      const candidate = row.automation.nextRunAt;
+      const candidate = row.nextClaimAt;
       if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue;
       if (next === null || candidate < next) {
         next = candidate;
@@ -170,38 +188,36 @@ export function startAutomationWorker(params: {
     return next;
   }
 
-  function rescheduleClaim(reason: string) {
+  function scheduleNextAssignmentReconciliation(): void {
+    const jitterMs = Math.floor(Math.random() * (ASSIGNMENT_RECONCILIATION_JITTER_MS + 1));
+    nextAssignmentReconciliationAt = Date.now() + ASSIGNMENT_RECONCILIATION_DELAY_MS + jitterMs;
+  }
+
+  function rescheduleClaim(reason: string, force = false) {
     if (stopped) return;
     const rows = assignments.getAll();
-    if (rows.length === 0) {
-      clearClaimTimer();
-      return;
-    }
-
     const now = Date.now();
     const blockedUntil = Math.max(retryAfter, noWorkCooldownUntil);
-    if (blockedUntil > now) {
-      scheduleClaimAt(blockedUntil, `${reason}:blocked`);
-      return;
-    }
-
-    const nextRunAt = getNextAssignedRunAtMs();
-    if (nextRunAt === null) {
+    const claimBlocked = blockedUntil > now;
+    const nextRunAt = rows.length === 0 ? null : getNextAssignedRunAtMs();
+    const candidates = [
+      nextAssignmentReconciliationAt > 0 ? nextAssignmentReconciliationAt : null,
+      claimBlocked ? blockedUntil : null,
+      // A previously due assignment is not a reason to bypass a claim retry/no-work
+      // cooldown. The reconciliation deadline above remains independently eligible.
+      claimBlocked ? null : nextRunAt,
+    ].filter((candidate): candidate is number => candidate !== null);
+    if (candidates.length === 0) {
       clearClaimTimer();
       return;
     }
-
-    if (nextRunAt <= now) {
-      scheduleClaimSoon(`${reason}:due`);
-      return;
-    }
-
-    scheduleClaimAt(nextRunAt, `${reason}:scheduled`);
+    scheduleClaimAt(Math.min(...candidates), `${reason}:scheduled`, force);
   }
 
   const stopWorker = (reason: 'manual' | 'unsupported-endpoint') => {
     if (stopped) return;
     stopped = true;
+    activeExecution?.controller.abort();
     clearClaimTimer();
     if (refreshSoonTimer) {
       clearTimeout(refreshSoonTimer);
@@ -213,23 +229,44 @@ export function startAutomationWorker(params: {
     });
   };
 
+  const invalidateActiveExecution = (update: Update) => {
+    invalidateActiveAutomationRun({
+      update,
+      active: activeExecution,
+      machineId: params.machineId,
+    });
+  };
+
   const refreshAssignments = async () => {
     if (stopped) return;
     if (paused) return;
+    const request = ++latestAssignmentRefreshRequest;
     try {
       const response = await claimClient.fetchAssignments(params.machineId);
+      // Refreshes can overlap across startup, reconnect, resume, socket hints, and
+      // reconciliation. Only the newest request may replace the canonical cache or
+      // its wake timer; otherwise a late older snapshot can erase newer work.
+      if (request !== latestAssignmentRefreshRequest) return;
       assignments.replace(response.assignments);
+      scheduleNextAssignmentReconciliation();
       logAutomationInfo('Assignments refreshed', {
         machineId: params.machineId,
         count: response.assignments.length,
       });
-      if (pendingQueuedWake && response.assignments.length > 0) {
-        scheduleClaimSoon('queued-wake-after-assignments-refresh');
-        return;
+      if (pendingQueuedWake) {
+        if (response.assignments.length > 0) {
+          scheduleClaimSoon('queued-wake-after-assignments-refresh');
+          return;
+        }
+        pendingQueuedWake = false;
       }
-      rescheduleClaim('assignments-refreshed');
+      rescheduleClaim('assignments-refreshed', true);
     } catch (error) {
-      if (isMissingAutomationEndpointError(error, '/v2/automations/daemon/assignments')) {
+      if (request !== latestAssignmentRefreshRequest) return;
+      if (claimClient.isMissingEndpointError(error, [
+        '/v3/automations/worker/assignments',
+        '/v2/automations/daemon/assignments',
+      ])) {
         // Backwards compatibility: older servers/daemons won't have the automation routes. Treat this as
         // a feature negotiation result, not a retryable operational failure.
         stopWorker('unsupported-endpoint');
@@ -245,10 +282,34 @@ export function startAutomationWorker(params: {
     if (stopped) return;
     if (paused) return;
     if (claimInFlight) return;
+
+    if (nextAssignmentReconciliationAt > 0 && Date.now() >= nextAssignmentReconciliationAt) {
+      // Keep a bounded retry scheduled if the authoritative read fails. A successful
+      // read immediately replaces this deadline with a fresh reconciliation window.
+      scheduleNextAssignmentReconciliation();
+      await refreshAssignments();
+      if (stopped || paused) return;
+    }
+
+    if (assignments.getAll().length === 0 && pendingQueuedWake) {
+      // A queued-run hint can arrive before the assignment cache catches up. Read the
+      // canonical assignment owner before deciding that this daemon has no work.
+      await refreshAssignments();
+      if (stopped || paused) return;
+    }
+
     const assignmentCount = assignments.getAll().length;
     if (assignmentCount === 0) {
-      clearClaimTimer();
+      rescheduleClaim('empty-assignments');
       return;
+    }
+
+    if (!pendingQueuedWake) {
+      const nextRunAt = getNextAssignedRunAtMs();
+      if (nextRunAt !== null && nextRunAt > Date.now()) {
+        rescheduleClaim('next-run-not-due');
+        return;
+      }
     }
 
     if (Date.now() < retryAfter) {
@@ -291,16 +352,50 @@ export function startAutomationWorker(params: {
         return;
       }
 
-      await executeClaimedRun({
-        token: params.token,
-        machineId: params.machineId,
-        claimClient,
-        spawnSession: params.spawnSession,
-        heartbeatMs: scheduler.heartbeatMs,
-        leaseDurationMs: scheduler.leaseDurationMs,
-        encryption: params.encryption,
-        claimed,
-      });
+      const executionController = new AbortController();
+      activeExecution = {
+        runId: claimed.run.id,
+        attempt: claimed.run.attempt,
+        controller: executionController,
+      };
+      try {
+        await executeClaimedRun({
+          token: params.token,
+          ...(params.credentials ? { credentials: params.credentials } : {}),
+          machineId: params.machineId,
+          claimClient,
+          spawnSession: params.spawnSession,
+          heartbeatMs: scheduler.heartbeatMs,
+          leaseDurationMs: scheduler.leaseDurationMs,
+          encryption: params.encryption,
+          ...(params.machineAdmissionTransport
+            ? { machineAdmissionTransport: params.machineAdmissionTransport }
+            : {}),
+          ...(params.dispatchSessionServerStart
+            ? { dispatchSessionServerStart: params.dispatchSessionServerStart }
+            : {}),
+          resolveAutomationAccountEncryption: async (signal) => await resolveValidatedAutomationAccountEncryptionV1({
+            signal,
+            resolveAccountEncryptionCurrentness: async (currentnessSignal) =>
+              await fetchAccountEncryptionCurrentness({
+                token: params.token,
+                ...(currentnessSignal ? { signal: currentnessSignal } : {}),
+              }),
+            resolveAccountEncryptionMaterial: async () => (
+              params.credentials
+                ? createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials)
+                : null
+            ),
+          }),
+          ...(actionExecutor ? { executeAction: actionExecutor.execute } : {}),
+          signal: executionController.signal,
+          claimed,
+        });
+      } finally {
+        if (activeExecution?.controller === executionController) {
+          activeExecution = null;
+        }
+      }
 
       // Pull a fresh assignments snapshot so we have an updated nextRunAt after the run transitions/enqueue.
       await refreshAssignments().catch((error) => {
@@ -315,7 +410,10 @@ export function startAutomationWorker(params: {
       retryAfter = 0;
       noWorkCooldownUntil = 0;
     } catch (error) {
-      if (isMissingAutomationEndpointError(error, '/v2/automations/runs/claim')) {
+      if (claimClient.isMissingEndpointError(error, [
+        '/v3/automations/runs/claim',
+        '/v2/automations/runs/claim',
+      ])) {
         stopWorker('unsupported-endpoint');
         return;
       }
@@ -351,6 +449,10 @@ export function startAutomationWorker(params: {
     }
   };
 
+  // Seed the first bounded reconciliation before the initial read so a transient
+  // startup failure cannot leave an empty cache without another authoritative read.
+  scheduleNextAssignmentReconciliation();
+  rescheduleClaim('worker-start');
   void refreshAssignments().catch((error) => {
     logAutomationWarn('Failed to refresh automation assignments on worker start', error, {
       machineId: params.machineId,
@@ -380,10 +482,12 @@ export function startAutomationWorker(params: {
     resume: () => {
       if (stopped || !paused) return;
       paused = false;
+      void refreshAssignments();
+      rescheduleClaim('resumed');
     },
     handleServerUpdate: (update: Update) => {
       if (stopped) return;
-      const body: any = update?.body as any;
+      const body = update?.body;
       if (!body || typeof body !== 'object') return;
 
       if (body.t === 'automation-assignment-updated' && body.machineId === params.machineId) {
@@ -391,8 +495,18 @@ export function startAutomationWorker(params: {
         return;
       }
 
+      invalidateActiveExecution(update);
+
       if (body.t === 'automation-run-updated' && body.state === 'queued') {
         pendingQueuedWake = true;
+        if (assignments.getAll().length === 0) {
+          void refreshAssignments().catch((error) => {
+            logAutomationWarn('Failed to refresh automation assignments after queued wake', error, {
+              machineId: params.machineId,
+            });
+          });
+          return;
+        }
         scheduleClaimSoon('socket-run-queued');
       }
     },

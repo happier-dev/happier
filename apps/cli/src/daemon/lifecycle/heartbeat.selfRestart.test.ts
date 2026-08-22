@@ -115,6 +115,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -178,6 +179,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -267,6 +269,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         },
         currentCliVersion: '1.0.0',
         requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
       });
 
       expect(setIntervalSpy).toHaveBeenCalled();

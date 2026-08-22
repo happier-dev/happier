@@ -1,15 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol';
 
-import type { AgentRuntimeDaemonBridgeRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
 import { hashAgentRuntimeSessionBridgeToken } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 
 import {
   createForegroundAgentRuntimeAdmissionOwner,
   type PreparedForegroundAgentRuntimeAdmission,
 } from './foregroundAdmission';
-import type { ForegroundAgentRuntimeAdmissionOwnerRequestV1 } from './foregroundAdmissionContract';
-import { createAgentRuntimeSessionBridgeRoutes } from './sessionBridgeRoutes';
+import type {
+  ForegroundAgentRuntimeAdmissionOwnerRequestV1,
+  ForegroundAgentRuntimeClaimRequestV1,
+} from './foregroundAdmissionContract';
+import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import {
+  createAgentSessionRunnerFactoryBinding,
+} from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 
 const admissionRequest: ForegroundAgentRuntimeAdmissionOwnerRequestV1 = {
   v: 1,
@@ -26,6 +31,52 @@ const admissionRequest: ForegroundAgentRuntimeAdmissionOwnerRequestV1 = {
   },
 };
 
+const runner = Object.freeze({
+  pid: 1234,
+  processStartTimeMs: 1_717_171_717_000,
+  processCommandHash: 'a'.repeat(64),
+  snapshotIdentity: 'snapshot:foreground-codex',
+});
+
+function retainedAgent() {
+  return createAgentSessionRunnerFactoryBinding({
+    v: 1,
+    pluginId: 'codex-plugin',
+    pluginVersion: '1.0.0',
+    agentId: 'codex',
+    localAgentId: 'codex',
+    immutableGenerationId: 'immutable-1',
+    locator: {
+      module: './runtime.mjs',
+      export: 'createRuntime',
+      runtimeApiVersion: 1,
+    },
+    normalizedModulePath: 'runtime.mjs',
+    loadMode: 'immutable-js',
+  });
+}
+
+function claimAuthority() {
+  return {
+    retainedAgent: retainedAgent(),
+    runner,
+    capabilityDigest: 'capability-digest-1',
+    transferCleanupOwnership: vi.fn(),
+  };
+}
+
+function invocationContext(
+  environment: Readonly<Record<string, string>> = {
+    PROVIDER_SECRET: 'secret-value',
+  },
+) {
+  return {
+    cwd: '/workspace',
+    environment,
+    providerBindingActive: true,
+  };
+}
+
 function createPrepared(
   cleanup: () => Promise<void>,
   retirement: AbortController,
@@ -35,12 +86,17 @@ function createPrepared(
       environment: { PROVIDER_SECRET: 'secret-value' },
       unsetEnvironmentVariableNames: ['NATIVE_AUTH'],
       sensitiveEnvironmentVariableNames: [],
+      invocationContext: invocationContext(),
+      authority: claimAuthority(),
     })),
 ): PreparedForegroundAgentRuntimeAdmission {
   return {
     authorization: {
-      tokenHash: hashAgentRuntimeSessionBridgeToken('correct-token'),
-      tokenFilePath: '/private/token.json',
+      capabilityHash: hashAgentRuntimeSessionBridgeToken('correct-token'),
+      foregroundAdmissionFilePath:
+        '/private/foreground-admission.json',
+      bootstrapFilePath: '/private/bootstrap.json',
+      authorityFilePath: '/private/authority.json',
       descriptor: {
         v: 1,
         pluginId: 'codex-plugin',
@@ -49,12 +105,6 @@ function createPrepared(
         backendId: 'codex',
         generation: 'generation-1',
         immutableGenerationId: 'immutable-1',
-        factoryControls: {
-          continuation: false,
-          goals: false,
-          catalog: false,
-          usageLimitRecovery: false,
-        },
       },
     },
     reservedEnvironmentVariableNames: ['OPENAI_API_KEY'],
@@ -66,52 +116,20 @@ function createPrepared(
   };
 }
 
-function claimRequest(token = 'correct-token'): AgentRuntimeDaemonBridgeRequestV1 {
-  return {
-    v: 1,
-    context: {
-      token,
-      sessionId: 'session-1',
-      pluginId: 'codex-plugin',
-      agentId: 'codex',
-      generation: 'generation-1',
-    },
-    operation: {
-      kind: 'foreground.environment.claim',
-      requestId: 'request-1',
-      attemptId: 'attempt-1',
-      foregroundSatisfiedProfileSecretRequirementNames: [],
-    },
-  };
-}
-
-function factoryPrepareRequest(
-  sessionId: string,
+function claimRequest(
   token = 'correct-token',
-): AgentRuntimeDaemonBridgeRequestV1 {
-  const descriptor = createPrepared(
-    async () => undefined,
-    new AbortController(),
-  ).authorization.descriptor;
+): ForegroundAgentRuntimeClaimRequestV1 {
   return {
     v: 1,
-    context: {
-      token,
-      sessionId,
-      pluginId: descriptor.pluginId,
-      agentId: descriptor.agentId,
-      generation: descriptor.generation,
-    },
-    operation: {
-      kind: 'factory.prepare',
-      requestId: `prepare-${sessionId}`,
-      descriptor,
-      request: {
-        kind: 'create',
-        sessionId,
-        cwd: '/workspace',
-      },
-    },
+    attemptId: 'attempt-1',
+    provisionalSessionId: 'session-1',
+    canonicalSessionId: 'session-1',
+    foregroundPid: 1234,
+    pluginId: 'codex-plugin',
+    agentId: 'codex',
+    generation: 'generation-1',
+    capability: token,
+    foregroundSatisfiedProfileSecretRequirementNames: [],
   };
 }
 
@@ -216,7 +234,6 @@ describe('foreground Agent runtime admission', () => {
     await expect(lateAdmission).rejects.toThrow('disposed');
     await disposing;
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(owner.isBridgeRequestAuthorized(claimRequest())).toBe(false);
   });
 
   it('requires the exact scoped bearer and permits one immediate environment claim', async () => {
@@ -227,6 +244,8 @@ describe('foreground Agent runtime admission', () => {
       environment: { PROVIDER_SECRET: 'secret-value' },
       unsetEnvironmentVariableNames: ['NATIVE_AUTH'],
       sensitiveEnvironmentVariableNames: [],
+      invocationContext: invocationContext(),
+      authority: claimAuthority(),
     }));
     const owner = createForegroundAgentRuntimeAdmissionOwner({
       prepare: async () => ({
@@ -250,19 +269,7 @@ describe('foreground Agent runtime admission', () => {
     ).rejects.toThrow('unavailable');
     await expect(owner.claimEnvironment({
       ...claimRequest(),
-      operation: {
-        kind: 'foreground.environment.claim',
-        requestId: 'request-mismatch',
-        attemptId: 'attempt-other',
-        foregroundSatisfiedProfileSecretRequirementNames: [],
-      },
-    })).rejects.toThrow('unavailable');
-    await expect(owner.claimEnvironment({
-      ...claimRequest(),
-      context: {
-        ...claimRequest().context,
-        sessionId: 'session-other',
-      },
+      attemptId: 'attempt-other',
     })).rejects.toThrow('unavailable');
     await expect(owner.claimEnvironment(claimRequest())).resolves.toEqual({
       ok: true,
@@ -279,49 +286,115 @@ describe('foreground Agent runtime admission', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  it('binds a claimed admission to the canonical host session on first factory prepare', async () => {
+  it('binds the one-shot claim to the canonical host session', async () => {
     const cleanup = vi.fn(async () => undefined);
     const retirement = new AbortController();
     const owner = createForegroundAgentRuntimeAdmissionOwner({
       prepare: async () => ({
         ok: true,
-        prepared: createPrepared(cleanup, retirement),
+        prepared: createPrepared(
+          cleanup,
+          retirement,
+          vi.fn(async () => ({
+            ok: true as const,
+            environment: {},
+            unsetEnvironmentVariableNames: [],
+            sensitiveEnvironmentVariableNames: [],
+            invocationContext: invocationContext({}),
+            authority: claimAuthority(),
+          })),
+        ),
       }),
     });
 
     await owner.admit(admissionRequest);
-    await expect(owner.claimEnvironment(claimRequest())).resolves.toMatchObject({
+    await expect(owner.claimEnvironment({
+      v: 1,
+      attemptId: 'attempt-1',
+      provisionalSessionId: 'session-1',
+      canonicalSessionId: 'canonical-session-1',
+      foregroundPid: 1234,
+      pluginId: 'codex-plugin',
+      agentId: 'codex',
+      generation: 'generation-1',
+      capability: 'correct-token',
+      foregroundSatisfiedProfileSecretRequirementNames: [],
+    })).resolves.toMatchObject({
       ok: true,
     });
 
-    expect(
-      owner.isBridgeRequestAuthorized(
-        factoryPrepareRequest('forbidden-session', 'wrong-token'),
-      ),
-    ).toBe(false);
-    expect(
-      owner.isBridgeRequestAuthorized(
-        factoryPrepareRequest('canonical-session-1'),
-      ),
-    ).toBe(true);
-    expect(
-      owner.isBridgeRequestAuthorized(
-        factoryPrepareRequest('unrelated-session'),
-      ),
-    ).toBe(false);
-    expect(
-      owner.isBridgeRequestAuthorized(
-        factoryPrepareRequest(admissionRequest.sessionId),
-      ),
-    ).toBe(false);
-
     await owner.releaseSession('canonical-session-1');
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(
-      owner.isBridgeRequestAuthorized(
-        factoryPrepareRequest('canonical-session-1'),
-      ),
-    ).toBe(false);
+  });
+
+  it('promotes exact foreground V2 custody before relinquishing admission cleanup ownership', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const retirement = new AbortController();
+    const transferCleanupOwnership = vi.fn();
+    const retained = retainedAgent();
+    const promoteDaemonServiceAuthority = vi.fn(async () => true);
+    const owner = createForegroundAgentRuntimeAdmissionOwner({
+      prepare: async () => ({
+        ok: true,
+        prepared: createPrepared(
+          cleanup,
+          retirement,
+          vi.fn(async () => ({
+            ok: true as const,
+            environment: {},
+            unsetEnvironmentVariableNames: [],
+            sensitiveEnvironmentVariableNames: [],
+            invocationContext: {
+              cwd: '/workspace',
+              environment: {
+                PROVIDER_SECRET: 'secret-value',
+              },
+              providerBindingActive: true,
+            },
+            authority: {
+              retainedAgent: retained,
+              runner,
+              capabilityDigest: 'v2-capability-digest',
+              transferCleanupOwnership,
+            },
+          })),
+        ),
+      }),
+      getHttpPort: () => 40123,
+      promoteDaemonServiceAuthority,
+    });
+
+    await owner.admit(admissionRequest);
+    await expect(owner.claimEnvironment({
+      ...claimRequest(),
+      canonicalSessionId: 'canonical-session-promoted',
+    })).resolves.toMatchObject({ ok: true });
+    expect(promoteDaemonServiceAuthority).toHaveBeenCalledWith({
+      canonicalSessionId: 'canonical-session-promoted',
+      foregroundPid: admissionRequest.foregroundPid,
+      authorityFilePath: '/private/authority.json',
+      retainedAgent: retained,
+      runner,
+      capabilityDigest: 'v2-capability-digest',
+      invocationContext: {
+        cwd: '/workspace',
+        environment: {},
+        providerBindingActive: false,
+      },
+    });
+    expect(transferCleanupOwnership).toHaveBeenCalledOnce();
+    expect(owner.authorizeDaemonServiceRequest({
+      request: {
+        context: {
+          sessionId: 'canonical-session-promoted',
+          token: 'correct-token',
+        },
+      } as unknown as AgentRuntimeDaemonServiceRequestV1,
+      providedCapability: 'correct-token',
+    })).toBeNull();
+
+    await owner.release('attempt-1', 'session-1');
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
   it('allows only one concurrent claimant before late preparation settles', async () => {
@@ -332,12 +405,16 @@ describe('foreground Agent runtime admission', () => {
       environment: Record<string, string>;
       unsetEnvironmentVariableNames: string[];
       sensitiveEnvironmentVariableNames: string[];
+      invocationContext: ReturnType<typeof invocationContext>;
+      authority: ReturnType<typeof claimAuthority>;
     }) => void;
     const claim = vi.fn(() => new Promise<{
       ok: true;
       environment: Record<string, string>;
       unsetEnvironmentVariableNames: string[];
       sensitiveEnvironmentVariableNames: string[];
+      invocationContext: ReturnType<typeof invocationContext>;
+      authority: ReturnType<typeof claimAuthority>;
     }>((resolve) => {
       settle = resolve;
     }));
@@ -358,6 +435,8 @@ describe('foreground Agent runtime admission', () => {
       environment: { PROVIDER_SECRET: 'secret-value' },
       unsetEnvironmentVariableNames: [],
       sensitiveEnvironmentVariableNames: [],
+      invocationContext: invocationContext(),
+      authority: claimAuthority(),
     });
     await expect(winner).resolves.toMatchObject({
       ok: true,
@@ -374,12 +453,16 @@ describe('foreground Agent runtime admission', () => {
       environment: Record<string, string>;
       unsetEnvironmentVariableNames: string[];
       sensitiveEnvironmentVariableNames: string[];
+      invocationContext: ReturnType<typeof invocationContext>;
+      authority: ReturnType<typeof claimAuthority>;
     }) => void;
     const claim = vi.fn(() => new Promise<{
       ok: true;
       environment: Record<string, string>;
       unsetEnvironmentVariableNames: string[];
       sensitiveEnvironmentVariableNames: string[];
+      invocationContext: ReturnType<typeof invocationContext>;
+      authority: ReturnType<typeof claimAuthority>;
     }>((resolve) => {
       settle = resolve;
     }));
@@ -399,6 +482,10 @@ describe('foreground Agent runtime admission', () => {
       environment: { PROVIDER_SECRET: 'must-not-escape' },
       unsetEnvironmentVariableNames: [],
       sensitiveEnvironmentVariableNames: [],
+      invocationContext: invocationContext({
+        PROVIDER_SECRET: 'must-not-escape',
+      }),
+      authority: claimAuthority(),
     });
 
     await expect(claiming).rejects.toThrow('unavailable');
@@ -429,7 +516,6 @@ describe('foreground Agent runtime admission', () => {
       error,
     });
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(owner.isBridgeRequestAuthorized(claimRequest())).toBe(false);
   });
 
   it('releases an unclaimed admission when its applied generation retires', async () => {
@@ -446,7 +532,6 @@ describe('foreground Agent runtime admission', () => {
     retirement.abort();
     await vi.waitFor(() => expect(cleanup).toHaveBeenCalledTimes(1));
 
-    expect(owner.isBridgeRequestAuthorized(claimRequest())).toBe(false);
     await expect(owner.claimEnvironment(claimRequest())).rejects.toThrow(
       'unavailable',
     );
@@ -471,13 +556,12 @@ describe('foreground Agent runtime admission', () => {
       await vi.advanceTimersByTimeAsync(1_000);
 
       expect(cleanup).toHaveBeenCalledTimes(1);
-      expect(owner.isBridgeRequestAuthorized(claimRequest())).toBe(false);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('releases a claimed admission when the private session bridge is lost before open', async () => {
+  it('releases a claimed admission through the foreground owner', async () => {
     const cleanup = vi.fn(async () => undefined);
     const retirement = new AbortController();
     const owner = createForegroundAgentRuntimeAdmissionOwner({
@@ -486,25 +570,17 @@ describe('foreground Agent runtime admission', () => {
         prepared: createPrepared(cleanup, retirement),
       }),
     });
-    const bridge = createAgentRuntimeSessionBridgeRoutes({
-      foregroundAdmission: owner,
-    });
-
     await owner.admit(admissionRequest);
-    await expect(bridge.dispatch(claimRequest())).resolves.toMatchObject({
+    await expect(owner.claimEnvironment(claimRequest())).resolves.toMatchObject({
       ok: true,
-      result: {
-        ok: true,
-        environment: { PROVIDER_SECRET: 'secret-value' },
-      },
+      environment: { PROVIDER_SECRET: 'secret-value' },
     });
-    await bridge.disposeSession('session-1');
+    await owner.releaseSession('session-1');
 
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(owner.isBridgeRequestAuthorized(claimRequest())).toBe(false);
   });
 
-  it('releases a claimed admission exactly once when its successful response is lost and the bridge shuts down', async () => {
+  it('releases a claimed admission exactly once when the owner shuts down', async () => {
     const cleanup = vi.fn(async () => undefined);
     const retirement = new AbortController();
     const owner = createForegroundAgentRuntimeAdmissionOwner({
@@ -513,20 +589,15 @@ describe('foreground Agent runtime admission', () => {
         prepared: createPrepared(cleanup, retirement),
       }),
     });
-    const bridge = createAgentRuntimeSessionBridgeRoutes({
-      foregroundAdmission: owner,
-    });
-
     await owner.admit(admissionRequest);
-    await bridge.dispatch(claimRequest());
+    await owner.claimEnvironment(claimRequest());
 
-    await Promise.all([bridge.dispose(), bridge.dispose()]);
+    await Promise.all([owner.dispose(), owner.dispose()]);
 
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(owner.isBridgeRequestAuthorized(claimRequest())).toBe(false);
   });
 
-  it('withholds an in-flight claim result and waits to clean it exactly once on bridge shutdown', async () => {
+  it('withholds an in-flight claim result and waits to clean it exactly once on owner shutdown', async () => {
     const cleanup = vi.fn(async () => undefined);
     const retirement = new AbortController();
     let settle!: (result: {
@@ -534,12 +605,16 @@ describe('foreground Agent runtime admission', () => {
       environment: Record<string, string>;
       unsetEnvironmentVariableNames: string[];
       sensitiveEnvironmentVariableNames: string[];
+      invocationContext: ReturnType<typeof invocationContext>;
+      authority: ReturnType<typeof claimAuthority>;
     }) => void;
     const claim = vi.fn(() => new Promise<{
       ok: true;
       environment: Record<string, string>;
       unsetEnvironmentVariableNames: string[];
       sensitiveEnvironmentVariableNames: string[];
+      invocationContext: ReturnType<typeof invocationContext>;
+      authority: ReturnType<typeof claimAuthority>;
     }>((resolve) => {
       settle = resolve;
     }));
@@ -549,15 +624,11 @@ describe('foreground Agent runtime admission', () => {
         prepared: createPrepared(cleanup, retirement, claim),
       }),
     });
-    const bridge = createAgentRuntimeSessionBridgeRoutes({
-      foregroundAdmission: owner,
-    });
-
     await owner.admit(admissionRequest);
-    const claiming = bridge.dispatch(claimRequest());
+    const claiming = owner.claimEnvironment(claimRequest());
     await vi.waitFor(() => expect(claim).toHaveBeenCalledTimes(1));
     let disposed = false;
-    const disposing = bridge.dispose().then(() => {
+    const disposing = owner.dispose().then(() => {
       disposed = true;
     });
 
@@ -569,11 +640,15 @@ describe('foreground Agent runtime admission', () => {
       environment: { PROVIDER_SECRET: 'must-not-escape' },
       unsetEnvironmentVariableNames: [],
       sensitiveEnvironmentVariableNames: [],
+      invocationContext: invocationContext({
+        PROVIDER_SECRET: 'must-not-escape',
+      }),
+      authority: claimAuthority(),
     });
 
-    await expect(claiming).resolves.toMatchObject({
-      ok: false,
-    });
+    await expect(claiming).rejects.toThrow(
+      'Foreground Agent runtime admission is unavailable',
+    );
     await disposing;
     expect(cleanup).toHaveBeenCalledTimes(1);
   });

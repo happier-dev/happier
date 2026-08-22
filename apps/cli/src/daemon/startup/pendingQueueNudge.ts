@@ -1,5 +1,4 @@
-import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
@@ -16,14 +15,14 @@ const cancelled = (params: Cancellation) => params.abortSignal?.aborted === true
 
 export type PendingQueueNudgeResult =
   | Readonly<{ type: 'wake_published' }>
-  | Readonly<{ type: 'unavailable'; reason: 'no_token' | 'shutdown' | 'transport_unavailable' | 'runtime_upgrade_required' | 'malformed_response' | 'rpc_method_unavailable' | 'rpc_failed'; error?: unknown }>;
+  | Readonly<{ type: 'unavailable'; reason: 'no_token' | 'shutdown' | 'transport_unavailable' | 'encryption_material_unavailable' | 'runtime_upgrade_required' | 'malformed_response' | 'rpc_method_unavailable' | 'rpc_failed'; error?: unknown }>;
 
 export type ExistingSessionServiceability =
   | Readonly<{ state: 'servable' }>
-  | Readonly<{ state: 'recoverable_unservable'; reason: 'runtime_upgrade_required' | 'malformed_response' | 'rpc_method_unavailable' }>
+  | Readonly<{ state: 'recoverable_unservable'; reason: 'encryption_material_unavailable' | 'runtime_upgrade_required' | 'malformed_response' | 'rpc_method_unavailable' }>
   | Readonly<{ state: 'unknown'; reason: 'no_token' | 'shutdown' | 'transport_unavailable' | 'rpc_failed' }>;
 
-type ServiceabilityParams = Readonly<{ sessionId: string; credentials: Credentials }> & Cancellation;
+type ServiceabilityParams = Readonly<{ sessionId: string; credentials: StoredCredentials }> & Cancellation;
 type CapabilityDiscovery =
   | Readonly<{ result: Extract<ExistingSessionServiceability, { state: 'servable' }>; transport: Parameters<typeof callSessionRpc>[0] }>
   | Readonly<{ result: Exclude<ExistingSessionServiceability, { state: 'servable' }>; error?: unknown }>;
@@ -36,14 +35,36 @@ async function discoverPendingQueueCapability(params: ServiceabilityParams): Pro
     const rawSession = await fetchSessionByIdCompat({ token, sessionId: params.sessionId });
     if (!rawSession) return { result: { state: 'unknown', reason: 'transport_unavailable' } };
     if (cancelled(params)) return { result: { state: 'unknown', reason: 'shutdown' } };
-    const transport = {
-      token,
-      sessionId: params.sessionId,
-      mode: resolveSessionStoredContentEncryptionMode(rawSession),
-      ctx: resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession),
-      method: `${params.sessionId}:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1}`,
-      request: {},
-    } satisfies Parameters<typeof callSessionRpc>[0];
+    const mode = resolveSessionStoredContentEncryptionMode(rawSession);
+    const transport = mode === 'plain'
+      ? {
+          token,
+          sessionId: params.sessionId,
+          mode,
+          ctx: null,
+          method: `${params.sessionId}:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1}`,
+          request: {},
+        } satisfies Parameters<typeof callSessionRpc>[0]
+      : (() => {
+          const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession);
+          if (!ctx) return null;
+          return {
+            token,
+            sessionId: params.sessionId,
+            mode,
+            ctx,
+            method: `${params.sessionId}:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1}`,
+            request: {},
+          } satisfies Parameters<typeof callSessionRpc>[0];
+        })();
+    if (!transport) {
+      return {
+        result: {
+          state: 'recoverable_unservable',
+          reason: 'encryption_material_unavailable',
+        },
+      };
+    }
     const capabilityRaw = await callSessionRpc(transport);
     const capability = SessionPendingQueueWakeCapabilityResponseV1Schema.safeParse(capabilityRaw);
     if (!capability.success || (capability.data.ok && capability.data.method !== SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1)) {
@@ -65,7 +86,7 @@ export async function probeAlreadyRunningExistingSessionServiceability(params: S
 
 export async function nudgeAlreadyRunningExistingSessionPendingQueue(params: Readonly<{
   sessionId: string;
-  credentials: Credentials;
+  credentials: StoredCredentials;
 }> & Cancellation): Promise<PendingQueueNudgeResult> {
   const discovery = await discoverPendingQueueCapability(params);
   if (!('transport' in discovery)) {
@@ -78,14 +99,7 @@ export async function nudgeAlreadyRunningExistingSessionPendingQueue(params: Rea
     if (!wake.success) return { type: 'unavailable', reason: 'malformed_response' };
     return wake.data.ok ? { type: 'wake_published' } : { type: 'unavailable', reason: 'runtime_upgrade_required' };
   } catch (error) {
-    logger.debug('[DAEMON RUN] Failed to publish pending queue wake', { sessionId: params.sessionId, error: serializeAxiosErrorForLog(error) });
+    logger.debug('[DAEMON RUN] Failed to publish pending queue wake');
     return { type: 'unavailable', reason: isRpcMethodNotAvailableError(error) ? 'rpc_method_unavailable' : 'rpc_failed', error };
   }
-}
-
-export function startPendingQueueBackgroundNudgeLoop(params: Readonly<{ sessionId: string; credentials: Credentials; logLabel: string; processEnv?: NodeJS.ProcessEnv; maxAttempts?: number; retryDelayMs?: number }> & Cancellation): Readonly<{ done: Promise<void> }> {
-  const done = nudgeAlreadyRunningExistingSessionPendingQueue(params).then(() => undefined).catch((error) => {
-    logger.debug(`[DAEMON RUN] ${params.logLabel} pending queue wake failed`, { sessionId: params.sessionId, error: serializeAxiosErrorForLog(error) });
-  });
-  return { done };
 }

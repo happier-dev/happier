@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
+import { hostname } from 'node:os';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateVendorResumeEligibility } from '@happier-dev/agents';
 import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 import {
   readLinkedExternalSessionV1FromMetadata,
+  updateLinkedExternalSessionFollowMetadataV1,
   resolveExternalSessionsSourceKey,
   resolveExternalSessionsSourceKeysForPersistedTagLookup,
-  sealSessionOwnerMetadataV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
+  createSessionOwnerMetadataV1,
   SessionOwnerMetadataV1Schema,
   type CodexBackendMode,
   type ExternalSessionsAgentId,
@@ -18,11 +21,19 @@ import {
   buildOpenCodeAgentRuntimeDescriptorV1,
   openCodeExternalSessionsContribution,
 } from '@happier-dev/plugins-opencode';
+import type {
+  AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   createAgentExternalSessionsExecutionSurface,
 } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
+import {
+  createBoundedAgentExternalSessionsContribution,
+  createUnavailableAgentExternalSessionsManagedEndpointRead,
+} from '@/session/external/agentExternalSessionsInvocation';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import {
   resolveExternalSessionTagLookupCandidates,
 } from './externalSessionTagLookupCandidates';
@@ -36,6 +47,12 @@ const tryDecryptSessionOwnerMetadataMock = vi.fn();
 const tryDecryptSessionOwnerMetadataViewMock = vi.fn();
 const updateSessionMetadataWithRetryMock = vi.fn();
 const listSessionMarkersMock = vi.fn();
+const fetchAccountEncryptionCurrentnessMock = vi.fn();
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness: (...args: unknown[]) =>
+    fetchAccountEncryptionCurrentnessMock(...args),
+}));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionById: (...args: unknown[]) => fetchSessionByIdMock(...args),
@@ -68,9 +85,37 @@ function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+const unavailableManagedEndpointRead =
+  createUnavailableAgentExternalSessionsManagedEndpointRead();
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
+
+function bindExternalSessionsFixture(
+  contribution: AgentExternalSessionsContribution,
+  agentId: string,
+) {
+  const pluginId = `happier.agent.${agentId}`;
+  return createBoundedAgentExternalSessionsContribution({
+    contribution,
+    identity: {
+      pluginId,
+      agentId,
+      generation: 'fixture-generation',
+      contributionQualifiedId: `${pluginId}/agents/${agentId}`,
+      immutableGenerationId: null,
+    },
+    isCurrent: () => true,
+    retirementSignal: new AbortController().signal,
+    createInvocationExec: async () => unavailableInvocationExec,
+  });
+}
+
 const externalSessionSurfaces = new Map<ExternalSessionsAgentId, ExternalSessionExecutionSurface>([
-  ['codex', createAgentExternalSessionsExecutionSurface(codexExternalSessionsContribution)],
-  ['opencode', createAgentExternalSessionsExecutionSurface(openCodeExternalSessionsContribution)],
+  ['codex', createAgentExternalSessionsExecutionSurface(
+    bindExternalSessionsFixture(codexExternalSessionsContribution, 'codex'),
+  )],
+  ['opencode', createAgentExternalSessionsExecutionSurface(
+    bindExternalSessionsFixture(openCodeExternalSessionsContribution, 'opencode'),
+  )],
 ]);
 let currentAgentPluginIdOverride: string | null = null;
 
@@ -104,6 +149,40 @@ async function ensureExternalSessionLink(
   });
 }
 
+function createDivergentCodexLinkedMetadata(params: Readonly<{
+  tag: string;
+  remoteSessionId: string;
+  source: ExternalSessionsSource;
+}>): Record<string, unknown> {
+  return {
+    tag: params.tag,
+    machineId: 'machine_1',
+    flavor: 'codex',
+    codexSessionId: params.remoteSessionId,
+    externalSessionV1: {
+      v: 1,
+      agentId: 'codex',
+      machineId: 'machine_1',
+      remoteSessionId: params.remoteSessionId,
+      source: params.source,
+      linkedAtMs: 123,
+    },
+    directSessionV1: {
+      v: 1,
+      providerId: 'codex',
+      machineId: 'machine_1',
+      remoteSessionId: params.remoteSessionId,
+      source: { kind: 'codexHome', home: 'custom' },
+      linkedAtMs: 123,
+    },
+  };
+}
+
+type MutableLinkedMetadataFixture = Record<string, unknown> & {
+  externalSessionV1: Record<string, unknown>;
+  directSessionV1?: Record<string, unknown>;
+};
+
 describe('ensureExternalSessionLink', () => {
   const legacyCodexBackendMode = '  mcp_resume  ' as unknown as CodexBackendMode;
   const connectedServices = {
@@ -125,6 +204,13 @@ describe('ensureExternalSessionLink', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+      mode: 'e2ee',
+      version: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: 'content-key-fingerprint',
+      updatedAt: 1,
+    });
     listSessionMarkersMock.mockResolvedValue([]);
     fetchSessionsPageMock.mockResolvedValue({ sessions: [], hasNext: false, nextCursor: null });
     fetchSessionByIdMock.mockResolvedValue(null);
@@ -136,6 +222,97 @@ describe('ensureExternalSessionLink', () => {
     );
     updateSessionMetadataWithRetryMock.mockResolvedValue(undefined);
     currentAgentPluginIdOverride = null;
+  });
+
+  it.each([
+    {
+      name: 'same-kind source rewrite',
+      resolvedIdentity: {
+        remoteSessionId: 'remote-1',
+        source: { kind: 'codexHome', home: 'rewritten' },
+      },
+    },
+    {
+      name: 'remote-session id rewrite',
+      resolvedIdentity: {
+        remoteSessionId: 'remote-2',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+    },
+  ])('rejects a $name before tag lookup, create, or persistence', async ({
+    resolvedIdentity,
+  }) => {
+    const resolveSourceKeyOwner = vi.fn();
+
+    await expect(ensureExternalSessionLinkWithDeps({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome', home: 'user' },
+      nowMs: () => 123,
+    }, {
+      resolveExternalSessionProviderOps: async () => ({
+        resolveLinkIdentity: async () => resolvedIdentity,
+      }),
+      resolveCurrentAgent: vi.fn(),
+      resolveSourceKeyOwner,
+    })).rejects.toMatchObject({
+      name: 'ExternalSessionProviderFailureError',
+      code: 'source_invalid',
+      operation: 'resolveLinkIdentity',
+    });
+
+    expect(resolveSourceKeyOwner).not.toHaveBeenCalled();
+    expect(lookupSessionsByTagsMock).not.toHaveBeenCalled();
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+    expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+  });
+
+  it('allows link identity resolution to add source fields without rewriting admitted identity', async () => {
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: { id: 'sess_additive', metadata: {} },
+      created: true,
+    });
+
+    await expect(ensureExternalSessionLinkWithDeps({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome', home: 'user' },
+      nowMs: () => 123,
+    }, {
+      resolveExternalSessionProviderOps: async () => ({
+        resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+          remoteSessionId,
+          source: { ...source, canonicalRoot: '/resolved/root' },
+        }),
+      }),
+      resolveCurrentAgent: async () => ({
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        sourceKinds: ['codexHome'],
+      }),
+      resolveSourceKeyOwner: async (_agentId, source) => ({
+        sourceKey: JSON.stringify(source),
+        resolveSourceKey: (candidate) => JSON.stringify(candidate),
+        resolvePersistedSourceKeys: (candidate) => [JSON.stringify(candidate)],
+      }),
+    })).resolves.toMatchObject({
+      sessionId: 'sess_additive',
+    });
+
+    expect(getOrCreateSessionByTagMock).toHaveBeenCalledOnce();
+    expect(getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata).toMatchObject({
+      externalSessionV1: {
+        remoteSessionId: 'remote-1',
+        source: {
+          kind: 'codexHome',
+          home: 'user',
+          canonicalRoot: '/resolved/root',
+        },
+      },
+    });
   });
 
   it('stores the canonical codex runtime descriptor for linked direct sessions', async () => {
@@ -150,7 +327,7 @@ describe('ensureExternalSessionLink', () => {
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       agentId: 'codex',
-      remoteSessionId: 'thread_legacy',
+      remoteSessionId: 'thread_runtime',
       codexBackendMode: 'mcp',
       runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
         backendMode: 'appServer',
@@ -210,22 +387,8 @@ describe('ensureExternalSessionLink', () => {
           },
         },
       },
-      directSessionV1: {
-        v: 1,
-        providerId: 'codex',
-        machineId: 'machine_1',
-        remoteSessionId: 'thread_runtime',
-        source: { kind: 'codexHome', home: 'connectedService' },
-        agentRuntimeDescriptorV1: {
-          v: 1,
-          providerId: 'codex',
-          provider: {
-            backendMode: 'appServer',
-            providerSessionId: 'thread_runtime',
-          },
-        },
-      },
     });
+    expect(createdMetadata).not.toHaveProperty('directSessionV1');
     expect(createdMetadata).not.toHaveProperty('name');
     expect(createdMetadata).not.toHaveProperty('agentRuntimeDescriptorV1');
     expect(createdMetadata?.externalSessionV1).not.toHaveProperty('agentRuntimeDescriptorV1');
@@ -309,7 +472,7 @@ describe('ensureExternalSessionLink', () => {
     const updater = updateSessionMetadataWithRetryMock.mock.calls[0]?.[0]?.updater;
     expect(typeof updater).toBe('function');
     expect(updater(existingMetadata)).toMatchObject({
-      tag: canonicalTag,
+      tag: legacyTag,
       runtimeDescriptorV1: {
         agent: { connectedServiceGroupId: 'primary-pool' },
       },
@@ -418,6 +581,13 @@ describe('ensureExternalSessionLink', () => {
   });
 
   it('uses the split-layout owner view for indexed-absence Codex group continuity across the archived fallback scan', async () => {
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValueOnce({
+      mode: 'plain',
+      version: 2,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      updatedAt: 2,
+    });
     const credentials = {
       token: 'token',
       encryption: {
@@ -460,20 +630,14 @@ describe('ensureExternalSessionLink', () => {
         },
       },
     });
-    const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
-      material: {
-        type: 'legacy',
-        secret: credentials.encryption.secret,
-      },
-      ownerMetadata,
-      randomBytes: (length) => new Uint8Array(length).fill(5),
-    });
+    const ownerMetadataEnvelope =
+      createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
     const splitLayoutArchivedRow = {
       id: 'sess_split_group',
       metadataLayoutVersion: 1,
       encryptionMode: 'plain',
       metadata: JSON.stringify(sharedMetadata),
-      ownerMetadata: ownerMetadataCiphertext,
+      ownerMetadata: ownerMetadataEnvelope,
       currentStorageState: 'machine_only' as const,
       active: false,
       archivedAt: 1_000,
@@ -520,6 +684,7 @@ describe('ensureExternalSessionLink', () => {
     }));
     expect(tryDecryptSessionOwnerMetadataViewMock).toHaveBeenCalledWith({
       credentials: expect.objectContaining({ token: 'token' }),
+      accountEncryptionMode: 'plain',
       rawSession: splitLayoutArchivedRow,
     });
     expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
@@ -600,6 +765,7 @@ describe('ensureExternalSessionLink', () => {
 
     expect(tryDecryptSessionOwnerMetadataViewMock).toHaveBeenCalledWith({
       credentials: expect.objectContaining({ token: 'token' }),
+      accountEncryptionMode: 'e2ee',
       rawSession: splitLayoutRow,
     });
     expect(getOrCreateSessionByTagMock).toHaveBeenCalledOnce();
@@ -656,10 +822,10 @@ describe('ensureExternalSessionLink', () => {
     expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
   });
 
-  it('reuses an A13-proven persisted tag written with the legacy unescaped source key', async () => {
-    const legacyTag = `direct:v1:${sha256Hex('machine_1|opencode|oc_legacy_tag|opencodeServer:http://127.0.0.1:4096/:/tmp/repo')}`;
+  it('reuses an A13-proven persisted tag twice without rewriting its legacy lookup identity', async () => {
+    const legacyTag = `direct:v1:${sha256Hex('machine_1|opencode|oc_legacy_tag|opencodeServer:http://127.0.0.1:4096:/tmp/repo')}`;
     const canonicalTag = `direct:v1:${sha256Hex('machine_1|opencode|oc_legacy_tag|opencodeServer:http%3A//127.0.0.1%3A4096:/tmp/repo')}`;
-    const existingMetadata = {
+    let existingMetadata: Record<string, unknown> = {
       tag: legacyTag,
       externalSessionV1: {
         v: 1,
@@ -668,14 +834,13 @@ describe('ensureExternalSessionLink', () => {
         remoteSessionId: 'oc_legacy_tag',
         source: {
           kind: 'opencodeServer',
-          baseUrl: 'http://127.0.0.1:4096/',
+          baseUrl: 'http://127.0.0.1:4096',
           directory: '/tmp/repo',
         },
         linkedAtMs: 1,
       },
     };
-    lookupSessionsByTagsMock.mockImplementationOnce(async ({ tags }: { tags: string[] }) => {
-      existingMetadata.tag = tags.find((tag) => tag !== canonicalTag) ?? legacyTag;
+    lookupSessionsByTagsMock.mockImplementation(async ({ tags }: { tags: string[] }) => {
       return {
         state: 'available',
         tags,
@@ -686,39 +851,48 @@ describe('ensureExternalSessionLink', () => {
         }],
       };
     });
-    fetchSessionByIdMock.mockResolvedValueOnce({
+    fetchSessionByIdMock.mockImplementation(async () => ({
       id: 'sess_legacy_tag',
       metadata: 'encrypted-metadata-placeholder',
       currentStorageState: 'machine_only',
+    }));
+    tryDecryptSessionMetadataMock.mockImplementation(() => existingMetadata);
+    updateSessionMetadataWithRetryMock.mockImplementation(async (
+      { updater }: { updater: (metadata: Record<string, unknown>) => Record<string, unknown> },
+    ) => {
+      existingMetadata = updater(existingMetadata);
     });
-    tryDecryptSessionMetadataMock.mockReturnValue(existingMetadata);
+    getOrCreateSessionByTagMock.mockResolvedValue({
+      session: { id: 'sess_legacy_tag', metadata: 'encrypted-metadata-placeholder' },
+      created: false,
+    });
 
-    const result = await ensureExternalSessionLink({
+    const input = {
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       agentId: 'opencode',
       remoteSessionId: 'oc_legacy_tag',
       source: {
         kind: 'opencodeServer',
-        baseUrl: 'http://127.0.0.1:4096/',
+        baseUrl: 'http://127.0.0.1:4096',
         directory: '/tmp/repo',
       },
       directoryHint: '/tmp/repo',
       nowMs: () => 123,
-    });
+    } as const;
+    const firstResult = await ensureExternalSessionLink(input);
+    const secondResult = await ensureExternalSessionLink(input);
 
-    expect(result).toEqual({ sessionId: 'sess_legacy_tag', created: false, tag: canonicalTag });
-    expect(lookupSessionsByTagsMock).toHaveBeenCalledOnce();
+    expect(firstResult).toEqual({ sessionId: 'sess_legacy_tag', created: false, tag: canonicalTag });
+    expect(secondResult).toEqual(firstResult);
+    expect(lookupSessionsByTagsMock).toHaveBeenCalledTimes(2);
     expect(fetchSessionsPageMock).not.toHaveBeenCalled();
-    expect(getOrCreateSessionByTagMock).toHaveBeenCalledWith(expect.objectContaining({
-      tag: existingMetadata.tag,
-      currentStorageState: 'machine_only',
-    }));
-    const updater = updateSessionMetadataWithRetryMock.mock.calls[0]?.[0]?.updater;
-    expect(typeof updater).toBe('function');
-    const upgradedMetadata = updater(existingMetadata);
-    expect(upgradedMetadata).toMatchObject({ tag: canonicalTag });
-    expect(readLinkedExternalSessionV1FromMetadata(upgradedMetadata)).toMatchObject({
+    expect(getOrCreateSessionByTagMock).toHaveBeenCalledTimes(2);
+    expect(getOrCreateSessionByTagMock.mock.calls.every(
+      ([call]) => call.tag === legacyTag && call.currentStorageState === 'machine_only',
+    )).toBe(true);
+    expect(existingMetadata).toMatchObject({ tag: legacyTag });
+    expect(readLinkedExternalSessionV1FromMetadata(existingMetadata)).toMatchObject({
       agentId: 'opencode',
       remoteSessionId: 'oc_legacy_tag',
       source: {
@@ -784,6 +958,53 @@ describe('ensureExternalSessionLink', () => {
       connectedServiceMaterializationIdentityV1: materializationIdentity,
     });
     expect(JSON.stringify(createdMetadata)).not.toContain('must-not-copy');
+  });
+
+  it('never copies connected-service credentials from a same-directory marker owned by a different native session', async () => {
+    listSessionMarkersMock.mockResolvedValueOnce([
+      {
+        pid: 999,
+        happySessionId: 'sess_neighbour',
+        happyHomeDir: '/tmp/happier-test-home',
+        createdAt: 1,
+        updatedAt: 10,
+        flavor: 'codex',
+        cwd: '/repo',
+        metadata: {
+          flavor: 'codex',
+          codexSessionId: 'thread_neighbour',
+          connectedServices,
+          connectedServicesUpdatedAt: 456,
+        },
+        respawn: {
+          resume: 'thread_neighbour',
+          directory: '/repo',
+          connectedServiceMaterializationIdentityV1: materializationIdentity,
+        },
+      },
+    ]);
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: {
+        id: 'sess_direct_unowned',
+        metadata: {},
+      },
+    });
+
+    await ensureExternalSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_mine',
+      source: { kind: 'codexHome', home: 'user' },
+      titleHint: 'Codex linked session',
+      directoryHint: '/repo',
+      nowMs: () => 123,
+    });
+
+    const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
+    expect(createdMetadata).not.toHaveProperty('connectedServices');
+    expect(createdMetadata).not.toHaveProperty('connectedServicesUpdatedAt');
+    expect(createdMetadata).not.toHaveProperty('connectedServiceMaterializationIdentityV1');
   });
 
   it('recovers connected-service runtime identity from a catalog-backed ohMyPi tracked marker when creating a direct link', async () => {
@@ -853,7 +1074,7 @@ describe('ensureExternalSessionLink', () => {
       credentials,
       machineId: 'machine_1',
       agentId: 'codex' as const,
-      remoteSessionId: 'thread_legacy',
+      remoteSessionId: 'thread_runtime',
       codexBackendMode: 'mcp',
       runtimeDescriptor,
       source: { kind: 'codexHome' as const, home: 'connectedService' as const, connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', homePath: '/tmp/connected-codex-home' },
@@ -880,10 +1101,21 @@ describe('ensureExternalSessionLink', () => {
       observedAtMs: 120,
       expiresAtMs: 220,
     };
+    staleMetadata.externalSessionV1.followStatusV1 = {
+      v: 1,
+      status: 'active',
+      reason: 'viewer_attached',
+      updatedAtMs: 121,
+    };
+    staleMetadata.externalSessionV1.lastFollowIssueV1 = {
+      v: 1,
+      code: 'follow_refresh_failed',
+      retryable: true,
+      observedAtMs: 122,
+    };
     delete staleMetadata.runtimeDescriptorV1;
     delete staleMetadata.externalSessionV1.runtimeDescriptorV1;
     delete staleMetadata.externalSessionV1.linkData.runtimeDescriptorV1;
-    delete staleMetadata.directSessionV1.agentRuntimeDescriptorV1;
     delete staleMetadata.externalSessionV1.qualifiedIdentity;
     const existingRawSession = {
       id: 'sess_direct_existing',
@@ -967,8 +1199,179 @@ describe('ensureExternalSessionLink', () => {
         },
       },
     });
-    expect(Reflect.get(refreshedMetadata ?? {}, 'directSessionV1')).not.toHaveProperty('qualifiedIdentity');
+    expect(refreshedMetadata).not.toHaveProperty('directSessionV1');
     expect(refreshedMetadata).not.toHaveProperty('externalAgentObservationV1');
+    expect(Reflect.get(refreshedMetadata ?? {}, 'externalSessionV1')).not.toHaveProperty('followStatusV1');
+    expect(Reflect.get(refreshedMetadata ?? {}, 'externalSessionV1')).not.toHaveProperty('lastFollowIssueV1');
+  });
+
+  it.each([
+    {
+      label: 'same-declaration relink',
+      expectedError: 'linked_session_identity_mismatch',
+      mutate: (metadata: MutableLinkedMetadataFixture) => {
+        metadata.externalSessionV1 = {
+          ...metadata.externalSessionV1,
+          remoteSessionId: 'thread_refresh_relinked',
+          source: { kind: 'opencodeServer', directory: '/repo/relinked' },
+          linkedAtMs: 124,
+        };
+      },
+    },
+    {
+      label: 'reconciliation-required snapshot',
+      expectedError: 'linked_session_reconciliation_required',
+      mutate: (metadata: MutableLinkedMetadataFixture) => {
+        // This is a released row supplied by an old writer. Current link
+        // creation remains canonical-only; dual rows are reader input only.
+        metadata.directSessionV1 = {
+          v: 1,
+          providerId: 'opencode',
+          machineId: 'machine_1',
+          remoteSessionId: 'thread_refresh_original',
+          source: { kind: 'opencodeServer', directory: '/repo/original' },
+          linkedAtMs: 123,
+        };
+        metadata.externalSessionV1 = {
+          ...metadata.externalSessionV1,
+          source: { kind: 'opencodeServer', directory: '/repo/divergent' },
+        };
+      },
+    },
+    {
+      label: 'invalid linked snapshot',
+      expectedError: 'linked_session_invalid',
+      mutate: (metadata: MutableLinkedMetadataFixture) => {
+        metadata.externalSessionV1 = { v: 1, agentId: 'opencode' };
+        delete metadata.directSessionV1;
+      },
+    },
+  ])('rejects a $label that wins during metadata refresh', async ({ mutate, expectedError }) => {
+    const input = {
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'opencode' as const,
+      remoteSessionId: 'thread_refresh_original',
+      source: { kind: 'opencodeServer' as const, directory: '/repo/original' },
+      titleHint: 'Refreshed original link',
+      nowMs: () => 123,
+    };
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: { id: 'sess_refresh_race', metadata: {} },
+    });
+    await ensureExternalSessionLink({ ...input, titleHint: 'Original link' });
+    const originalMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
+    const concurrentMetadata = JSON.parse(
+      JSON.stringify(originalMetadata),
+    ) as MutableLinkedMetadataFixture;
+    mutate(concurrentMetadata);
+    const existingRawSession = {
+      id: 'sess_refresh_race',
+      metadata: 'encrypted-metadata-placeholder',
+    };
+
+    getOrCreateSessionByTagMock.mockClear();
+    fetchSessionsPageMock.mockResolvedValueOnce({
+      sessions: [existingRawSession],
+      hasNext: false,
+      nextCursor: null,
+    });
+    fetchSessionByIdMock.mockResolvedValue(existingRawSession);
+    tryDecryptSessionMetadataMock.mockImplementation(({ rawSession }: { rawSession?: unknown }) =>
+      rawSession === existingRawSession ? originalMetadata : null,
+    );
+    updateSessionMetadataWithRetryMock.mockImplementationOnce(async ({ updater }: {
+      updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
+    }) => {
+      updater(concurrentMetadata);
+    });
+
+    await expect(ensureExternalSessionLink({
+      ...input,
+      directoryHint: '/repo/presentation',
+    })).rejects.toMatchObject({
+      code: 'conflict',
+      message: expectedError,
+    });
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledOnce();
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves a newer released-row follow policy during a same-link metadata refresh', async () => {
+    const input = {
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'codex' as const,
+      remoteSessionId: 'thread_reconciled_policy',
+      source: { kind: 'codexHome' as const, home: 'user' as const },
+      nowMs: () => 123,
+    };
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: { id: 'sess_reconciled_policy', metadata: {} },
+    });
+    await ensureExternalSessionLink(input);
+    const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
+    const {
+      agentId: legacyAgentId,
+      qualifiedIdentity: _canonicalQualifiedIdentity,
+      linkData: _canonicalLinkData,
+      runtimeDescriptorV1: legacyRuntimeDescriptor,
+      ...releasedLinkFields
+    } = createdMetadata.externalSessionV1;
+    const currentMetadata = {
+      ...createdMetadata,
+      externalSessionV1: {
+        ...createdMetadata.externalSessionV1,
+        followPolicyV1: {
+          v: 1,
+          policy: 'attached_only',
+          updatedAtMs: 1,
+        },
+      },
+      directSessionV1: {
+        // A released dual-row snapshot is accepted only as reader input.
+        ...releasedLinkFields,
+        providerId: legacyAgentId,
+        ...(legacyRuntimeDescriptor === undefined
+          ? {}
+          : { agentRuntimeDescriptorV1: legacyRuntimeDescriptor }),
+        followPolicyV1: {
+          v: 1,
+          policy: 'background_follow',
+          updatedAtMs: 2,
+        },
+      },
+    };
+    delete currentMetadata.externalSessionV1.qualifiedIdentity;
+    const rawSession = {
+      id: 'sess_reconciled_policy',
+      metadata: 'encrypted-metadata-placeholder',
+    };
+    let refreshedMetadata: Record<string, unknown> | null = null;
+
+    getOrCreateSessionByTagMock.mockClear();
+    fetchSessionsPageMock.mockResolvedValueOnce({
+      sessions: [rawSession],
+      hasNext: false,
+      nextCursor: null,
+    });
+    fetchSessionByIdMock.mockResolvedValue(rawSession);
+    tryDecryptSessionMetadataMock.mockReturnValue(currentMetadata);
+    updateSessionMetadataWithRetryMock.mockImplementationOnce(async ({ updater }: {
+      updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
+    }) => {
+      refreshedMetadata = updater(currentMetadata);
+    });
+
+    await ensureExternalSessionLink(input);
+
+    expect(Reflect.get(refreshedMetadata ?? {}, 'externalSessionV1')).toMatchObject({
+      followPolicyV1: {
+        policy: 'background_follow',
+        updatedAtMs: 2,
+      },
+    });
+    expect(refreshedMetadata).not.toHaveProperty('directSessionV1');
   });
 
   it('preserves runtime.externalAgent during a same-link metadata refresh', async () => {
@@ -986,8 +1389,24 @@ describe('ensureExternalSessionLink', () => {
     });
     await ensureExternalSessionLink(input);
     const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
+    const followStatusV1 = {
+      v: 1,
+      status: 'active',
+      reason: 'viewer_attached',
+      updatedAtMs: 121,
+    } as const;
+    const lastFollowIssueV1 = {
+      v: 1,
+      code: 'follow_refresh_recovered',
+      retryable: false,
+      observedAtMs: 122,
+    } as const;
+    const metadataWithFollow = updateLinkedExternalSessionFollowMetadataV1(
+      createdMetadata,
+      { followStatusV1, lastFollowIssueV1 },
+    );
     const currentMetadata = {
-      ...createdMetadata,
+      ...metadataWithFollow,
       summary: undefined,
       externalAgentObservationV1: {
         v: 1,
@@ -1025,6 +1444,11 @@ describe('ensureExternalSessionLink', () => {
       externalSessionV1: { linkedAtMs: 123 },
       externalAgentObservationV1: currentMetadata.externalAgentObservationV1,
     });
+    expect(Reflect.get(refreshedMetadata ?? {}, 'externalSessionV1')).toMatchObject({
+      followStatusV1,
+      lastFollowIssueV1,
+    });
+    expect(refreshedMetadata).not.toHaveProperty('directSessionV1');
   });
 
   it('does not let a replacement plugin overwrite an existing qualified link during relink', async () => {
@@ -1084,7 +1508,7 @@ describe('ensureExternalSessionLink', () => {
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       agentId: 'codex',
-      remoteSessionId: 'thread_legacy',
+      remoteSessionId: 'thread_runtime',
       codexBackendMode: 'mcp',
       runtimeDescriptor: {
         v: 1,
@@ -1146,7 +1570,7 @@ describe('ensureExternalSessionLink', () => {
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       agentId: 'codex',
-      remoteSessionId: 'thread_legacy',
+      remoteSessionId: 'thread_runtime',
       runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
         backendMode: 'appServer',
         providerSessionId: 'thread_runtime',
@@ -1220,7 +1644,7 @@ describe('ensureExternalSessionLink', () => {
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       agentId: 'opencode',
-      remoteSessionId: 'oc_legacy',
+      remoteSessionId: 'oc_runtime',
       runtimeDescriptor: buildOpenCodeAgentRuntimeDescriptorV1({
         backendMode: 'server',
         providerSessionId: 'oc_runtime',
@@ -1295,7 +1719,7 @@ describe('ensureExternalSessionLink', () => {
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       agentId: 'opencode',
-      remoteSessionId: 'oc_legacy',
+      remoteSessionId: 'oc_runtime',
       runtimeDescriptor: {
         v: 1,
         agentId: 'opencode',
@@ -1341,7 +1765,7 @@ describe('ensureExternalSessionLink', () => {
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       agentId: 'opencode',
-      remoteSessionId: 'oc_legacy',
+      remoteSessionId: 'oc_runtime',
       runtimeDescriptor: {
         v: 1,
         agentId: 'opencode',
@@ -1412,6 +1836,8 @@ describe('ensureExternalSessionLink', () => {
       signal: new AbortController().signal,
       deadlineAtMs: Date.now() + 5_000,
       maxSerializedBytes: 262_144,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      exec: unavailableInvocationExec,
     });
     if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
     const source = resolvedIdentity.value.source;
@@ -1490,6 +1916,8 @@ describe('ensureExternalSessionLink', () => {
       signal: new AbortController().signal,
       deadlineAtMs: Date.now() + 5_000,
       maxSerializedBytes: 262_144,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      exec: unavailableInvocationExec,
     });
     if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
     const source = resolvedIdentity.value.source;
@@ -1619,7 +2047,10 @@ describe('ensureExternalSessionLink', () => {
         id: 'session_owner_private',
         metadataLayoutVersion: 1,
         metadata: JSON.stringify(sharedMetadata),
-        ownerMetadata: 'account-encrypted-owner-envelope',
+        ownerMetadata: {
+          t: 'encrypted',
+          c: 'account-encrypted-owner-envelope',
+        },
         currentStorageState: 'machine_only',
       }],
     });
@@ -1631,6 +2062,7 @@ describe('ensureExternalSessionLink', () => {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
       },
+      accountEncryptionMode: 'e2ee',
       machineId: 'machine_1',
       agentId: 'codex',
       remoteSessionId: 'thread_owner_private',
@@ -1802,6 +2234,28 @@ describe('ensureExternalSessionLink', () => {
     expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
   });
 
+  it('threads caller cancellation through the legacy metadata recovery scan', async () => {
+    const controller = new AbortController();
+    const aborted = new DOMException('aborted', 'AbortError');
+    lookupSessionsByTagsMock.mockResolvedValueOnce({ state: 'unavailable' });
+    fetchSessionsPageMock.mockRejectedValueOnce(aborted);
+
+    await expect(ensureExternalSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_legacy_scan_cancelled',
+      source: { kind: 'codexHome', home: 'user' },
+      signal: controller.signal,
+      nowMs: () => 123,
+    })).rejects.toBe(aborted);
+
+    expect(fetchSessionsPageMock).toHaveBeenCalledWith(expect.objectContaining({
+      signal: controller.signal,
+    }));
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+  });
+
   it('threads hook ingress currentness into the canonical session-creation commit', async () => {
     let releaseScan!: () => void;
     let creationShouldCommit: (() => boolean) | undefined;
@@ -1882,6 +2336,173 @@ describe('ensureExternalSessionLink', () => {
       created: false,
     }));
     expect(fetchSessionByIdMock).not.toHaveBeenCalled();
+    expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an indexed exact-tag row whose canonical and rollback links require reconciliation', async () => {
+    const sourceInput = { kind: 'codexHome' as const, home: 'user' as const };
+    const resolvedIdentity = await codexExternalSessionsContribution.resolveLinkIdentity({
+      source: sourceInput,
+      remoteSessionId: 'thread_indexed_reconciliation',
+      signal: new AbortController().signal,
+      deadlineAtMs: Date.now() + 5_000,
+      maxSerializedBytes: 262_144,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      exec: unavailableInvocationExec,
+    });
+    if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
+    const source = resolvedIdentity.value.source;
+    const lookupCandidates = resolveExternalSessionTagLookupCandidates({
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_indexed_reconciliation',
+      source,
+      releasedPersistedSource: sourceInput,
+      sourceKey: resolveExternalSessionsSourceKey(source),
+      releasedSourceKeys:
+        resolveExternalSessionsSourceKeysForPersistedTagLookup(sourceInput),
+    });
+    const metadata = createDivergentCodexLinkedMetadata({
+      tag: lookupCandidates[0].tag,
+      remoteSessionId: 'thread_indexed_reconciliation',
+      source,
+    });
+    lookupSessionsByTagsMock.mockResolvedValueOnce({
+      state: 'available',
+      tags: lookupCandidates.map((candidate) => candidate.tag),
+      sessions: [{
+        id: 'sess_indexed_reconciliation',
+        metadata,
+        currentStorageState: 'hosted',
+      }],
+    });
+    tryDecryptSessionMetadataMock.mockReturnValue(metadata);
+
+    await expect(ensureExternalSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_indexed_reconciliation',
+      source: sourceInput,
+      nowMs: () => 123,
+    })).rejects.toMatchObject({
+      code: 'conflict',
+      operation: 'externalSession.lookupByTags',
+    });
+
+    expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an indexed exact-tag row whose linked-session metadata is invalid', async () => {
+    const sourceInput = { kind: 'codexHome' as const, home: 'user' as const };
+    const resolvedIdentity = await codexExternalSessionsContribution.resolveLinkIdentity({
+      source: sourceInput,
+      remoteSessionId: 'thread_indexed_invalid',
+      signal: new AbortController().signal,
+      deadlineAtMs: Date.now() + 5_000,
+      maxSerializedBytes: 262_144,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      exec: unavailableInvocationExec,
+    });
+    if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
+    const source = resolvedIdentity.value.source;
+    const lookupCandidates = resolveExternalSessionTagLookupCandidates({
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_indexed_invalid',
+      source,
+      releasedPersistedSource: sourceInput,
+      sourceKey: resolveExternalSessionsSourceKey(source),
+      releasedSourceKeys:
+        resolveExternalSessionsSourceKeysForPersistedTagLookup(sourceInput),
+    });
+    const metadata = {
+      tag: lookupCandidates[0].tag,
+      machineId: 'machine_1',
+      flavor: 'codex',
+      codexSessionId: 'thread_indexed_invalid',
+      externalSessionV1: { v: 1, agentId: 'codex' },
+    };
+    lookupSessionsByTagsMock.mockResolvedValueOnce({
+      state: 'available',
+      tags: lookupCandidates.map((candidate) => candidate.tag),
+      sessions: [{
+        id: 'sess_indexed_invalid',
+        metadata,
+        currentStorageState: 'hosted',
+      }],
+    });
+    tryDecryptSessionMetadataMock.mockReturnValue(metadata);
+
+    await expect(ensureExternalSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_indexed_invalid',
+      source: sourceInput,
+      nowMs: () => 123,
+    })).rejects.toMatchObject({
+      code: 'conflict',
+      operation: 'externalSession.lookupByTags',
+    });
+
+    expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bounded-scan hosted identity whose canonical and rollback links require reconciliation', async () => {
+    const sourceInput = { kind: 'codexHome' as const, home: 'user' as const };
+    const resolvedIdentity = await codexExternalSessionsContribution.resolveLinkIdentity({
+      source: sourceInput,
+      remoteSessionId: 'thread_scanned_reconciliation',
+      signal: new AbortController().signal,
+      deadlineAtMs: Date.now() + 5_000,
+      maxSerializedBytes: 262_144,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      exec: unavailableInvocationExec,
+    });
+    if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
+    const source = resolvedIdentity.value.source;
+    const lookupCandidates = resolveExternalSessionTagLookupCandidates({
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_scanned_reconciliation',
+      source,
+      releasedPersistedSource: sourceInput,
+      sourceKey: resolveExternalSessionsSourceKey(source),
+      releasedSourceKeys:
+        resolveExternalSessionsSourceKeysForPersistedTagLookup(sourceInput),
+    });
+    const metadata = createDivergentCodexLinkedMetadata({
+      tag: lookupCandidates[0].tag,
+      remoteSessionId: 'thread_scanned_reconciliation',
+      source,
+    });
+    fetchSessionsPageMock.mockResolvedValueOnce({
+      sessions: [{
+        id: 'sess_scanned_reconciliation',
+        metadata,
+        currentStorageState: 'hosted',
+      }],
+      hasNext: false,
+      nextCursor: null,
+    });
+    tryDecryptSessionMetadataMock.mockReturnValue(metadata);
+
+    await expect(ensureExternalSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_scanned_reconciliation',
+      source: sourceInput,
+      nowMs: () => 123,
+    })).rejects.toMatchObject({
+      code: 'conflict',
+      operation: 'externalSession.lookupByTags',
+    });
+
     expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
   });
@@ -1979,7 +2600,50 @@ describe('ensureExternalSessionLink', () => {
     expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
   });
 
-  it('reopens a converted import tombstone without restoring link metadata or machine-only storage', async () => {
+  it('rejects a malformed present import tombstone before hosted lookup reuse or link effects', async () => {
+    const metadata = {
+      tag: 'direct:v1:malformed-import-tombstone',
+      machineId: 'machine_1',
+      flavor: 'codex',
+      codexSessionId: 'thread_malformed_tombstone',
+      externalHistoryImportV1: {
+        v: 1,
+        providerId: 'codex',
+        remoteSessionId: 'thread_malformed_tombstone',
+        importedAtMs: 100,
+        source: { kind: 'codexHome', home: 'user' },
+        linkData: { projectId: 'canonical-only' },
+      },
+    };
+    fetchSessionsPageMock.mockResolvedValueOnce({
+      sessions: [{ id: 'sess_malformed_tombstone', metadata }],
+      hasNext: false,
+      nextCursor: null,
+    });
+    tryDecryptSessionMetadataMock.mockImplementation(
+      ({ rawSession }: { rawSession: { metadata?: unknown } }) => rawSession.metadata,
+    );
+
+    await expect(ensureExternalSessionLink({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      machineId: 'machine_1',
+      agentId: 'codex',
+      remoteSessionId: 'thread_malformed_tombstone',
+      source: { kind: 'codexHome', home: 'user' },
+      nowMs: () => 123,
+    })).rejects.toMatchObject({
+      code: 'conflict',
+      message: 'external_history_import_invalid',
+    });
+    expect(fetchSessionByIdMock).not.toHaveBeenCalled();
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+    expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+  });
+
+  it('reopens a released converted import tombstone without restoring link metadata or machine-only storage', async () => {
     const source = {
       kind: 'codexHome' as const,
       home: 'connectedService' as const,
@@ -1995,7 +2659,7 @@ describe('ensureExternalSessionLink', () => {
       machineId: 'machine_1',
       externalHistoryImportV1: {
         v: 1,
-        agentId: 'codex',
+        providerId: 'codex',
         remoteSessionId: 'thread_imported',
         importedAtMs: 456,
         source,
@@ -2027,6 +2691,108 @@ describe('ensureExternalSessionLink', () => {
     expect(fetchSessionByIdMock).not.toHaveBeenCalled();
     expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps host identity and custody authoritative when an Agent link payload collides with owner metadata', async () => {
+    const source = { kind: 'syntheticExternal', root: '/synthetic' } as const;
+    const hostileLinkData = {
+      tag: 'attacker-tag',
+      path: '/attacker/path',
+      host: 'attacker-host',
+      machineId: 'attacker-machine',
+      flavor: 'attacker-flavor',
+      agentId: 'attacker-agent',
+      remoteSessionId: 'attacker-remote',
+      // Same source kind as the admitted source: a shadowed identity a strict
+      // schema cannot reject, unlike an obviously foreign kind.
+      source: { kind: 'syntheticExternal', root: '/attacker' },
+      linkedAtMs: 1,
+      claudeSessionId: 'attacker-session',
+      syntheticSessionId: 'attacker-session',
+      projectId: 'attacker-project',
+      qualifiedIdentity: {
+        v: 1,
+        agent: { pluginId: 'happier.agent.attacker', localId: 'attacker' },
+        source: { kind: 'syntheticExternal', contractVersion: 1 },
+      },
+    };
+    const contribution: AgentExternalSessionsContribution = {
+      resolveSource: async ({ source: requested }) => ({ ok: true, value: { source: requested } }),
+      listCandidates: async () => ({ ok: true, value: { candidates: [], nextCursor: null } }),
+      resolveLinkIdentity: async ({ source: requested, remoteSessionId }) => ({
+        ok: true,
+        value: { source: requested, remoteSessionId, linkData: hostileLinkData },
+      }),
+      resolveLinkedIdentity: async ({ source: requested, remoteSessionId }) => ({
+        ok: true,
+        value: { source: requested, remoteSessionId, linkData: hostileLinkData },
+      }),
+      pageTranscript: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readAfterTranscript: async () => ({ ok: true, value: { outcome: 'already_current' } }),
+    };
+    const surface = createAgentExternalSessionsExecutionSurface(
+      bindExternalSessionsFixture(contribution, 'synthetic'),
+    );
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: { id: 'sess_synthetic_link', metadata: {} },
+      created: true,
+    });
+
+    const { tag } = await ensureExternalSessionLinkWithDeps({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      agentId: 'synthetic',
+      remoteSessionId: 'remote-1',
+      source,
+      directoryHint: '/host/path',
+      nowMs: () => 123,
+    }, {
+      resolveExternalSessionProviderOps: async () => surface,
+      resolveCurrentAgent: async () => ({
+        identity: { pluginId: 'happier.agent.synthetic', localId: 'synthetic' },
+        sourceKinds: ['syntheticExternal'],
+      }),
+      // A third-party Agent's source kind is not in the built-in catalog, so the
+      // owner is resolved from the contributed source itself.
+      resolveSourceKeyOwner: async (_agentId, candidateSource) => ({
+        sourceKey: JSON.stringify(candidateSource),
+        resolveSourceKey: (candidate: ExternalSessionsSource) => JSON.stringify(candidate),
+        resolvePersistedSourceKeys: (candidate: ExternalSessionsSource) => [JSON.stringify(candidate)],
+      }),
+    });
+
+    const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata as Record<string, unknown>;
+    expect(createdMetadata).toMatchObject({
+      tag,
+      path: '/host/path',
+      host: hostname(),
+      machineId: 'machine_1',
+      flavor: 'synthetic',
+    });
+    expect(createdMetadata.externalSessionV1).toMatchObject({
+      v: 1,
+      agentId: 'synthetic',
+      machineId: 'machine_1',
+      remoteSessionId: 'remote-1',
+      source,
+      linkedAtMs: 123,
+      qualifiedIdentity: {
+        v: 1,
+        agent: { pluginId: 'happier.agent.synthetic', localId: 'synthetic' },
+      },
+      linkData: hostileLinkData,
+    });
+    // The Agent payload survives only inside its own nested carrier: nothing
+    // else in the persisted envelope may carry an Agent-authored value.
+    const persistedWithoutLinkData = JSON.parse(JSON.stringify(createdMetadata)) as Record<string, unknown>;
+    delete (persistedWithoutLinkData.externalSessionV1 as Record<string, unknown>).linkData;
+    delete (persistedWithoutLinkData.directSessionV1 as Record<string, unknown> | undefined)?.linkData;
+    expect(JSON.stringify(persistedWithoutLinkData)).not.toContain('attacker');
+
+    expect(createSessionOwnerMetadataV1({ metadata: createdMetadata })).toMatchObject({
+      ok: true,
+      ownerMetadata: { nativeSession: { tag } },
+    });
   });
 
   it('persists Antigravity linked identity through the generic vendor-resume contract', async () => {

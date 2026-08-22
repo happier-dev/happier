@@ -9,7 +9,8 @@ import {
   type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
+import { AccountStoredContentClientUpgradeRequiredError } from '@/api/clientCompatibility/accountStoredContentActivation';
 
 import {
   hydrateProviderAccountUsageStoreFromCurrentSources,
@@ -97,7 +98,10 @@ describe('hydrateProviderAccountUsageStoreFromCurrentSources', () => {
           sources: [groupMemberSource],
         })),
       },
-      credentials: createCredentials(),
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      } satisfies StoredCredentials,
       store,
       nowMs: snapshot.fetchedAtMs + 1,
     });
@@ -396,6 +400,174 @@ describe('hydrateProviderAccountUsageStoreFromCurrentSources', () => {
       status: 'missing',
     }]);
     expect(result.refreshSources).toEqual([groupMemberSource]);
+    expect(store.listSnapshots()).toEqual([]);
+  });
+
+  it('keeps an authoritative malformed plain usage snapshot typed corrupt without scheduling replacement', async () => {
+    const snapshot = createUsageSnapshot();
+    const store = createProviderAccountUsageStore();
+
+    await expect(hydrateProviderAccountUsageStoreFromCurrentSources({
+      sources: [groupMemberSource],
+      resolveRecordIdForSource: async () => createSourceResolution(snapshot),
+      api: {
+        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+        getProviderAccountUsageSnapshotPlain: vi.fn(async () => ({
+          content: { t: 'plain' as const, v: { ...snapshot, v: 999 } as unknown as ProviderAccountUsageSnapshotV1 },
+          sources: [groupMemberSource],
+        })),
+      },
+      credentials: { token: 'token-only', encryption: null },
+      store,
+      nowMs: snapshot.fetchedAtMs + 1,
+    })).rejects.toMatchObject({
+      code: 'connected_service_stored_content_unavailable',
+      reason: 'stored_content_corrupt',
+      contentKind: 'provider_account_usage_snapshot',
+    });
+    expect(store.listSnapshots()).toEqual([]);
+  });
+
+  it('fails closed on unknown Account mode before selecting usage storage', async () => {
+    const snapshot = createUsageSnapshot();
+    const store = createProviderAccountUsageStore();
+    const getPlain = vi.fn(async () => null);
+    const getSealed = vi.fn(async () => null);
+
+    await expect(hydrateProviderAccountUsageStoreFromCurrentSources({
+      sources: [groupMemberSource],
+      resolveRecordIdForSource: async () => createSourceResolution(snapshot),
+      api: {
+        getAccountEncryptionMode: vi.fn(async () => 'unknown' as const),
+        getProviderAccountUsageSnapshotPlain: getPlain,
+        getProviderAccountUsageSnapshotSealed: getSealed,
+      },
+      credentials: createCredentials(),
+      store,
+      nowMs: snapshot.fetchedAtMs + 1,
+    })).rejects.toMatchObject({
+      code: 'connected_service_stored_content_unavailable',
+      reason: 'account_mode_unavailable',
+      contentKind: 'provider_account_usage_snapshot',
+      recordId: snapshot.recordId,
+    });
+    expect(getPlain).not.toHaveBeenCalled();
+    expect(getSealed).not.toHaveBeenCalled();
+    expect(store.listSnapshots()).toEqual([]);
+  });
+
+  it('preserves stored-content upgrade-required before selecting usage storage', async () => {
+    const snapshot = createUsageSnapshot();
+    const store = createProviderAccountUsageStore();
+    const upgradeRequired = new AccountStoredContentClientUpgradeRequiredError(
+      'server-too-old',
+    );
+    const resolveRecordIdForSource = vi.fn(async () =>
+      createSourceResolution(snapshot));
+    const getPlain = vi.fn(async () => null);
+    const getSealed = vi.fn(async () => null);
+
+    await expect(hydrateProviderAccountUsageStoreFromCurrentSources({
+      sources: [groupMemberSource],
+      resolveRecordIdForSource,
+      api: {
+        getAccountEncryptionMode: vi.fn(async () => {
+          throw upgradeRequired;
+        }),
+        getProviderAccountUsageSnapshotPlain: getPlain,
+        getProviderAccountUsageSnapshotSealed: getSealed,
+      },
+      credentials: createCredentials(),
+      store,
+      nowMs: snapshot.fetchedAtMs + 1,
+    })).rejects.toBe(upgradeRequired);
+
+    expect(resolveRecordIdForSource).not.toHaveBeenCalled();
+    expect(getPlain).not.toHaveBeenCalled();
+    expect(getSealed).not.toHaveBeenCalled();
+    expect(store.listSnapshots()).toEqual([]);
+  });
+
+  it('keeps an authoritative authentication-failed usage snapshot typed corrupt without resealing it', async () => {
+    const snapshot = createUsageSnapshot();
+    const store = createProviderAccountUsageStore();
+    const register = vi.fn(async (_write: HydrationSealedUsageWrite) => {});
+
+    await expect(hydrateProviderAccountUsageStoreFromCurrentSources({
+      sources: [groupMemberSource],
+      resolveRecordIdForSource: async () => createSourceResolution(snapshot),
+      api: {
+        getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
+        getProviderAccountUsageSnapshotSealed: vi.fn(async () => ({
+          sealed: {
+            format: 'account_scoped_v1' as const,
+            ciphertext: 'authoritative-corrupt-ciphertext',
+          },
+          sources: [groupMemberSource],
+        })),
+        registerProviderAccountUsageSnapshotSealed: register,
+      },
+      credentials: createCredentials(),
+      store,
+      nowMs: snapshot.fetchedAtMs + 1,
+      randomBytes: (length) => new Uint8Array(length).fill(3),
+    })).rejects.toMatchObject({
+      code: 'connected_service_stored_content_unavailable',
+      reason: 'stored_content_corrupt',
+      contentKind: 'provider_account_usage_snapshot',
+    });
+    expect(register).not.toHaveBeenCalled();
+    expect(store.listSnapshots()).toEqual([]);
+  });
+
+  it('keeps a retained encrypted usage snapshot typed locked when account material is unavailable', async () => {
+    const snapshot = createUsageSnapshot();
+    const store = createProviderAccountUsageStore();
+
+    await expect(hydrateProviderAccountUsageStoreFromCurrentSources({
+      sources: [groupMemberSource],
+      resolveRecordIdForSource: async () => createSourceResolution(snapshot),
+      api: {
+        getAccountEncryptionMode: vi.fn(async () => 'e2ee' as const),
+        getProviderAccountUsageSnapshotSealed: vi.fn(async () => ({
+          sealed: {
+            format: 'account_scoped_v1' as const,
+            ciphertext: 'retained-e2ee-ciphertext',
+          },
+          sources: [groupMemberSource],
+        })),
+      },
+      credentials: { token: 'token-only', encryption: null },
+      store,
+      nowMs: snapshot.fetchedAtMs + 1,
+    })).rejects.toMatchObject({
+      code: 'connected_service_stored_content_unavailable',
+      reason: 'encryption_material_unavailable',
+      contentKind: 'provider_account_usage_snapshot',
+    });
+    expect(store.listSnapshots()).toEqual([]);
+  });
+
+  it('keeps an absent authoritative usage row missing and eligible for refresh', async () => {
+    const snapshot = createUsageSnapshot();
+    const store = createProviderAccountUsageStore();
+
+    const result = await hydrateProviderAccountUsageStoreFromCurrentSources({
+      sources: [groupMemberSource],
+      resolveRecordIdForSource: async () => createSourceResolution(snapshot),
+      api: {
+        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+        getProviderAccountUsageSnapshotPlain: vi.fn(async () => null),
+      },
+      credentials: { token: 'token-only', encryption: null },
+      store,
+      nowMs: snapshot.fetchedAtMs + 1,
+    });
+
+    expect(result).toMatchObject({
+      dispositions: [{ source: groupMemberSource, status: 'missing' }],
+      refreshSources: [groupMemberSource],
+    });
     expect(store.listSnapshots()).toEqual([]);
   });
 });

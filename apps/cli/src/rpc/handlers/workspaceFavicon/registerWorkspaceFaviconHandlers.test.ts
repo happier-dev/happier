@@ -108,6 +108,33 @@ describe('registerWorkspaceFaviconHandlers', () => {
     });
   });
 
+  it('finds a later object icon declaration regardless of property order', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-workspace-favicon-'));
+    tempDirs.push(root);
+    mkdirSync(join(root, 'assets'), { recursive: true });
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(
+      join(root, 'src', 'root.tsx'),
+      "export const links = () => [{ rel: 'icon' }, { href: '/assets/reversed.png', rel: 'shortcut icon' }];",
+    );
+    writeFileSync(join(root, 'assets', 'reversed.png'), 'png');
+
+    const { handlers, registrar } = createRegistrar();
+    registerWorkspaceFaviconHandlers(registrar, {
+      defaultDirectory: root,
+      accessPolicy: { kind: 'restrictedRoots', roots: [root] },
+    });
+
+    const response = await handlers.get(RPC_METHODS.WORKSPACE_FAVICON_RESOLVE)?.({ workspacePath: root }) as WorkspaceFaviconResolveResponseV1;
+
+    expect(response).toMatchObject({
+      success: true,
+      found: true,
+      relativePath: 'assets/reversed.png',
+      mimeType: 'image/png',
+    });
+  });
+
   it('returns missing for workspaces without a supported icon and fails closed for disallowed roots', async () => {
     const allowedRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-favicon-'));
     const outsideRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-favicon-outside-'));

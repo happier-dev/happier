@@ -71,6 +71,7 @@ async function createHarness() {
     readCredential: vi.fn(async () => ({
       ref: account,
       authenticationModeId: 'api-key',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision,
       configurationRevision: null,
       content: sealQualifiedConnectedAccountContentEnvelope({
@@ -143,6 +144,48 @@ describe('revokeQualifiedConnectedAccount', () => {
         cleanupGroupReferences: true,
       },
     });
+  });
+
+  it('settles as revoked when the plugin generation rolls after the deletion commits', async () => {
+    const harness = await createHarness();
+    let generationCurrent = true;
+    const deleteCredential = vi.fn(async () => {
+      generationCurrent = false;
+      return { success: true as const };
+    });
+    const establishedRuntimeOwner = {
+      invokeWithReceipt: vi.fn(async () => ({
+        result: { status: 'remoteRevoked' as const },
+        basis: {
+          credentialRevision,
+          credentialConfigurationRevision: null,
+          runtimeConfigurationRevision: 'unconfigured',
+          generation: 'generation-1',
+          immutableGenerationId: 'artifact-1',
+          isCurrent: () => generationCurrent,
+          prepareCredentialReplacement: () => {
+            throw new Error('not used by revoke');
+          },
+        },
+      })),
+    } as unknown as Pick<
+      QualifiedConnectedAccountEstablishedRuntimeOwner,
+      'invokeWithReceipt'
+    >;
+
+    await expect(revokeQualifiedConnectedAccount({
+      account,
+      cleanupGroupReferences: false,
+      token: harness.credentials.token,
+      resolveV4Support: () => 'advertised',
+      establishedRuntimeOwner,
+      deleteCredential,
+    })).resolves.toEqual({
+      status: 'deleted',
+      remoteStatus: 'remoteRevoked',
+    });
+
+    expect(deleteCredential).toHaveBeenCalledOnce();
   });
 
   it('does not delete after the plugin generation becomes stale', async () => {

@@ -1,9 +1,12 @@
 import { AsyncTtlCache } from '@happier-dev/protocol';
+import { AccountStoredContentClientUpgradeRequiredError } from '@/api/clientCompatibility/accountStoredContentActivation';
 
 export type ConnectedServiceAccountMode = 'e2ee' | 'plain' | 'unknown';
 
 export type ConnectedServiceAccountModeApi = Readonly<{
-  getAccountEncryptionMode?: () => Promise<ConnectedServiceAccountMode>;
+  getAccountEncryptionMode?: (
+    options?: Readonly<{ refresh?: boolean }>,
+  ) => Promise<ConnectedServiceAccountMode>;
 }>;
 
 const DEFAULT_ACCOUNT_MODE_SUCCESS_TTL_MS = 5_000;
@@ -54,23 +57,35 @@ export function createConnectedServiceAccountModeCache(params?: Readonly<{
     cache.clear();
   }
 
-  async function loadMode(api: ConnectedServiceAccountModeApi, key: string, generation: number): Promise<ConnectedServiceAccountMode> {
+  async function loadMode(
+    api: ConnectedServiceAccountModeApi,
+    key: string,
+    generation: number,
+    options?: Readonly<{ refresh?: boolean }>,
+  ): Promise<ConnectedServiceAccountMode> {
     try {
-      const mode = normalizeAccountMode(await api.getAccountEncryptionMode?.());
+      const mode = normalizeAccountMode(
+        await (options?.refresh
+          ? api.getAccountEncryptionMode?.({ refresh: true })
+          : api.getAccountEncryptionMode?.()),
+      );
       if (mode === 'unknown') {
         if (readGeneration(key) === generation) cache.setError(key, { nowMs: nowMs() });
         return 'unknown';
       }
       if (readGeneration(key) === generation) cache.setSuccess(key, mode, { nowMs: nowMs() });
       return mode;
-    } catch {
+    } catch (error) {
+      if (error instanceof AccountStoredContentClientUpgradeRequiredError) {
+        throw error;
+      }
       if (readGeneration(key) === generation) cache.setError(key, { nowMs: nowMs() });
       return 'unknown';
     }
   }
 
   async function resolve(api: ConnectedServiceAccountModeApi): Promise<ConnectedServiceAccountMode> {
-    if (typeof api.getAccountEncryptionMode !== 'function') return 'e2ee';
+    if (typeof api.getAccountEncryptionMode !== 'function') return 'unknown';
     const key = cacheKeyForApi(api);
     const cached = cache.get(key);
     const now = nowMs();
@@ -87,7 +102,7 @@ export function createConnectedServiceAccountModeCache(params?: Readonly<{
   }
 
   async function refresh(api: ConnectedServiceAccountModeApi): Promise<ConnectedServiceAccountMode> {
-    if (typeof api.getAccountEncryptionMode !== 'function') return 'e2ee';
+    if (typeof api.getAccountEncryptionMode !== 'function') return 'unknown';
     const key = cacheKeyForApi(api);
     const cached = cache.get(key);
     const now = nowMs();
@@ -96,7 +111,7 @@ export function createConnectedServiceAccountModeCache(params?: Readonly<{
     if (existing) return await existing;
     invalidate(api);
     const generation = readGeneration(key);
-    const refreshed = loadMode(api, key, generation).finally(() => {
+    const refreshed = loadMode(api, key, generation, { refresh: true }).finally(() => {
       if (refreshInflightByKey.get(key) === refreshed) refreshInflightByKey.delete(key);
     });
     refreshInflightByKey.set(key, refreshed);

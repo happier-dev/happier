@@ -62,34 +62,14 @@ function contribution(baseUrl?: string): ResolvedProviderContribution {
 }
 
 function managedContribution(
-  executableBaseName = 'gateway-managed',
+  dependency = 'gateway-managed',
 ): ResolvedProviderContribution {
-  return {
-    ...contribution(),
-    provenance: 'first_party',
-    source: { kind: 'bundled' },
-    managed: {
-      managedEndpoint: {
-        localService: {
-          id: 'gateway',
-          launch: {
-            kind: 'packaged-runtime-binary',
-            directorySegments: ['tools', 'unpacked'],
-            executableBaseName,
-            privateConfigPathFlag: '--config',
-          },
-          launchMode: {
-            kind: 'assignAndInject',
-            portPolicy: { kind: 'allocated' },
-          },
-          hostPolicy: { kind: 'loopback' },
-          name: { strategy: 'fixed', name: 'Gateway' },
-          healthCheck: { kind: 'http', path: '/healthz' },
-          restart: { kind: 'never' },
-          cleanup: { staleAfterMs: 60_000 },
-        },
-        protocols: ['openai-chat', 'openai-responses'],
-      },
+  const definition = ProviderContributionV1Schema.parse({
+    ...providerDefinition(),
+    managedRuntime: {
+      kind: 'managed',
+      dependencies: [dependency],
+      endpointTemplateIds: ['responses'],
       connectedAccounts: [{
         purpose: 'upstream',
         service: {
@@ -108,6 +88,25 @@ function managedContribution(
         },
       }],
     },
+  });
+  return {
+    ...contribution(),
+    provenance: 'first_party',
+    source: { kind: 'bundled' },
+    definition,
+  };
+}
+
+function externalManagedContribution(
+  source: 'path' | 'package',
+): ResolvedProviderContribution {
+  const bundled = managedContribution();
+  return {
+    ...bundled,
+    provenance: 'external',
+    source: source === 'path'
+      ? { kind: 'path' }
+      : { kind: 'package' },
   };
 }
 
@@ -264,11 +263,21 @@ describe('machine-aware provider connection resolver', () => {
       },
     });
 
+    const changedContribution = managedContribution('gateway-managed-v2');
     const changed = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
       accountSettings: { providerSettingsV1: grantedSettings },
-      registry: registry(managedContribution('gateway-managed-v2')),
+      registry: registry({
+        ...changedContribution,
+        definition: ProviderContributionV1Schema.parse({
+          ...changedContribution.definition,
+          managedRuntime: {
+            ...changedContribution.definition.managedRuntime,
+            dependencies: ['gateway-managed-v2'],
+          },
+        }),
+      }),
       dnsEvidenceByEndpointUrl: new Map(),
     });
     expect(changed).toMatchObject({
@@ -336,7 +345,7 @@ describe('machine-aware provider connection resolver', () => {
     );
   });
 
-  it('rejects managed deployment when the contribution is not a bundled first-party managed Provider', () => {
+  it('resolves one public managed declaration across bundled, development, and installed provenance', () => {
     const configured = connection('pc_managed_invalid', {
       deployment: { kind: 'managedLocal' },
       purposeBindingDefaults: {
@@ -366,13 +375,33 @@ describe('machine-aware provider connection resolver', () => {
       status: 'invalid',
       reason: 'managed_deployment_unavailable',
     });
-    expect(resolveProviderConnectionForMachine({
-      ...input,
-      registry: registry({ ...managedContribution(), managed: undefined }),
-    })).toMatchObject({
-      status: 'invalid',
-      reason: 'managed_deployment_unavailable',
-    });
+    for (const candidate of [
+      managedContribution(),
+      externalManagedContribution('path'),
+      externalManagedContribution('package'),
+    ]) {
+      const resolution = resolveProviderConnectionForMachine({
+        ...input,
+        registry: registry(candidate),
+      });
+      expect(resolution).toMatchObject({
+        status: 'resolved',
+        record: {
+          source: { provenance: candidate.provenance },
+          deployment: {
+            kind: 'managedLocal',
+            managedRuntime: {
+              kind: 'managed',
+              endpointTemplateIds: ['responses'],
+            },
+          },
+        },
+      });
+      if (resolution.status !== 'resolved') {
+        throw new Error('Expected public managed declaration to resolve');
+      }
+      expect(resolution.record.deployment).not.toHaveProperty('facet');
+    }
   });
 
   it('rejects managed purpose defaults outside the declared facet purpose and service', () => {

@@ -102,10 +102,6 @@ export function createCurrentSessionTranscriptPort(
     get turnAssistantTextSnapshotStore() {
       return getSession().turnAssistantTextSnapshotStore;
     },
-    sendAgentMessage: (provider, body, opts) => {
-      const session = getSession();
-      return session.sendAgentMessage?.call(session, provider, body, opts);
-    },
     sendAgentMessageEphemeral: (provider, body, opts) => {
       const selected = selectCurrent();
       if (!selected.epochAvailable) {
@@ -167,10 +163,6 @@ export function createCurrentSessionTranscriptPort(
         throw new Error('Current session does not support durable committed transcript enqueue');
       }
       return enqueueAgentMessageCommitted.call(session, provider, body, opts);
-    },
-    sendAgentMessageCommitted: (provider, body, opts) => {
-      const session = getSession();
-      return session.sendAgentMessageCommitted.call(session, provider, body, opts);
     },
     sendAgentSessionMediaCommitted: async (provider, request) => {
       const session = getSession();

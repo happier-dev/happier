@@ -29,6 +29,7 @@ import {
 import {
     updateConnectedServiceAuthGroupRuntimeStateWithRetry,
 } from '../accountGroups/runtimeState/updateConnectedServiceAuthGroupRuntimeStateWithRetry';
+import type { ConnectedServiceAuthGroupCandidatePreparationResult } from '../refresh/ConnectedServiceRefreshCoordinator';
 
 type QualifiedConnectedAccountAuthGroupApi = Readonly<{
     readGroup: typeof readQualifiedConnectedAccountGroupV4;
@@ -124,6 +125,12 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 QualifiedConnectedAccountServiceRef
             >,
         ) => Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
+        prepareCandidateForSwitch?: (input: Readonly<{
+            serviceId: QualifiedConnectedAccountServiceRef;
+            groupId: string;
+            profileId: string;
+            reason: string;
+        }>) => Promise<ConnectedServiceAuthGroupCandidatePreparationResult>;
         emitEvent?: (
             event: ConnectedServiceAuthGroupSwitchEvent<
                 QualifiedConnectedAccountServiceRef
@@ -194,6 +201,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 );
             if (
                 !input.fromProfileId
+                || !input.expectedIncarnation
                 || input.expectedRuntimeStateRevision === undefined
                 || input.expectedCredentialRevision == null
                 || input.expectedConfigurationRevision === undefined
@@ -211,6 +219,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                     },
                     connectedAccountId: input.toProfileId,
                     expectedGeneration: input.expectedGeneration,
+                    expectedIncarnation: input.expectedIncarnation,
                     expectedRuntimeStateRevision:
                         input.expectedRuntimeStateRevision,
                     expectedSource: {
@@ -234,6 +243,12 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 profiles: listed.accounts,
             });
         },
+        ...(params.prepareCandidateForSwitch
+            ? {
+                prepareCandidateForSwitch:
+                    params.prepareCandidateForSwitch,
+            }
+            : {}),
         recordObservedFailureState: async (input) => {
             const service =
                 QualifiedConnectedAccountServiceRefSchema.parse(
@@ -247,6 +262,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 QualifiedConnectedAccountServiceRef,
                 QualifiedConnectedAccountGroupV4,
                 Readonly<{
+                    expectedIncarnation: string;
                     runtimeState: Readonly<{
                         memberStates: ReadonlyArray<Readonly<{
                             connectedAccountId: string;
@@ -288,6 +304,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                     if (!member) return null;
                     const observedAtMs = params.nowMs();
                     return {
+                        expectedIncarnation: group.incarnation,
                         runtimeState: {
                             memberStates: [{
                                 connectedAccountId:
@@ -321,6 +338,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 update: async ({
                     serviceId,
                     groupId,
+                    expectedIncarnation,
                     expectedRuntimeStateRevision,
                     runtimeState,
                 }) => await api.updateRuntimeState({
@@ -328,6 +346,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                     patch: {
                         service: serviceId,
                         groupId,
+                        expectedIncarnation,
                         expectedRuntimeStateRevision,
                         runtimeState,
                     },

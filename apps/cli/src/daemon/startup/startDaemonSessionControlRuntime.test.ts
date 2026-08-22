@@ -1,21 +1,37 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
-import type { AgentSessionRuntimeFactory } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+    ManagedDependenciesService,
+    ManagedServiceSpec,
+    ManagedServices,
+} from '@happier-dev/plugin-sdk/managed-services';
+import { PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
 import {
     CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     resolveConnectedAccountRequestAuthCapabilityPath,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { materializeNextPendingQueueV2MessageViaHttp } from '@/api/session/pendingQueueV2Transport';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
+import {
+    RUNNER_MANAGED_SERVICES_CUSTODY_RPC_METHOD,
+    RunnerManagedServicesCustodyRequestV1Schema,
+} from '@/agent/runtime/session/process/runnerManagedServicesCustody';
+import type {
+    ResolvedExecutablePluginRuntimeRegistry,
+} from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createTargetComposerAttachmentRegistry } from '@/plugins/runtime/lifecycle/contributions/targetComposerAttachments';
+import type { ResolvedPluginHookHandler } from '@/plugins/runtime/types';
+import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
@@ -23,30 +39,49 @@ import {
     buildBackendTargetKeyV2,
     buildConnectedServiceCredentialRecord,
     buildProviderAccountUsageRecordId,
+    ConnectedServiceBindingsV1Schema,
+    createProviderBindingSecurityFingerprintV1,
+    createProviderMachineGrantFingerprintV1,
+    AccountSettingsSchema,
+    DEFAULT_PROVIDER_SETTINGS_V1,
     FeaturesResponseSchema,
-    sealSessionOwnerMetadataV1,
+    createPlainSessionOwnerMetadataEnvelopeV1,
+    ProviderConnectionIdSchema,
+    ProviderRuntimeBindingBasisV1Schema,
+    ProviderSettingsV1Schema,
+    SessionProviderBindingMetadataV1Schema,
     SessionOwnerMetadataV1Schema,
+    type SessionOwnerMetadataEnvelopeV1,
     type BrowserCommandV1,
     type BrowserRecordingCapabilities,
     DEFAULT_SIMULATOR_STREAM_CONTROLS_V1,
     type SimulatorDeviceResourceV1,
     type ConnectedServiceBindingsV1,
     type ProviderAccountUsageSnapshotV1,
+    type AccountSettings,
+    type SessionPendingEnqueueByMachineRequestV1,
+    type HookEventEnvelopeV1,
 } from '@happier-dev/protocol';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { ProviderAccountUsageAdoptionV1 } from '../connectedServices/accountUsage/adoption';
 import type {
     ConnectedAccountRequestAuthServiceDependencies,
+    ConnectedAccountRequestAuthSubject,
 } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import type { ConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import {
     computePluginUiArtifactFileSetSha256DigestV1,
-    type PluginHostedWebSecurityPolicyV1,
+    type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     createResolvedContributionRegistry,
+    getResolvedContributionRegistry,
 } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import type {
+    ResolvedComposerAttachmentContribution,
+    ResolvedContributionRegistry,
+} from '@/plugins/projection/registry/types';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import {
@@ -55,26 +90,34 @@ import {
     writeTerminalHostAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
 import type { TrackedSession } from '../types';
+import type { StopSessionOptions } from '../sessions/stopSession';
 import type {
     ApplyConnectedServiceAuthGenerationToTrackedSessionInput,
     SessionConnectedServiceAuthSwitchResult,
 } from '../connectedServices/sessionAuthSwitch/switchSessionConnectedServiceAuth';
-import type { ConnectedServiceSessionRestartSignalResult } from '../connectedServices/sessionAuthSwitch/requestConnectedServiceSessionRestartSignal';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServices/connectedServiceChildEnvironment';
 import {
     commitConnectedServiceHotApplyRuntimeTarget,
     resolveConnectedServiceContinuationInterruptionForSwitch,
     resolveConnectedServiceContinuationOriginId,
     resolveContinuationResumePromptMode,
-    startDaemonSessionControlRuntime,
+    isManagedProviderSessionInvocationCurrent,
+    isRetainedManagedProviderInvocationCurrent,
+    startDaemonSessionControlRuntime as startDaemonSessionControlRuntimeRaw,
 } from './startDaemonSessionControlRuntime';
 import { executeSpawnSessionRequest } from './executeSpawnSessionRequest';
 import { startDaemonControlServer } from '../controlServer';
+import type { ExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import * as sessionRunnerRespawnModule from '../processSupervision/sessionRunnerRespawn';
+import { resolveSessionRunnerRestartEligibility } from '../sessionRunnerRuntime/resolveRestartEligibility';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
+import { materializeConnectedServicesForSpawn } from '../connectedServices/materialize/materializeConnectedServicesForSpawn';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
+import { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import { authorizeConnectedServiceRuntimeAuthFailureSource } from '../connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
+import { RuntimeAuthRecoveryScheduler } from '../connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { ConnectedServiceTemporaryThrottleRetryScheduler } from '../connectedServices/runtimeAuth/temporaryThrottleRetryScheduler';
 import { computeConnectedServiceAccessTokenFingerprint } from '../connectedServices/refresh/credentialFreshness/tokenFingerprint';
 import { resolveQuotaProbeFreshProof } from '../connectedServices/quotas/proof/quotaProbeFreshProof';
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../connectedServices/sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
@@ -84,6 +127,41 @@ import {
 import {
     readConnectedAccountRequestAuthCapabilityFile,
 } from '../connectedServices/requestAuth/capabilityFile';
+import {
+    createAgentRuntimeDaemonServiceAuthorityPath,
+    publishAgentRuntimeDaemonServiceAuthority,
+} from '../agentRuntime/sessionBridgeAuthorization';
+import {
+    resolveQualifiedPurposeBindingSnapshotForAgentSpawn,
+} from '../connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import {
+    AgentRuntimeDaemonServiceRequestV1Schema,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import {
+    createUnavailablePluginServices,
+} from '@/plugins/runtime/invocation/services/unavailable';
+import {
+    createPluginInvocationActionsService,
+} from '@/plugins/runtime/invocation/services/actions';
+import {
+    createPluginActionCallerMaterializationFixture,
+} from '@/plugins/runtime/invocation/services/actionCaller.testkit';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import {
+    createImmutablePluginGenerationRecordFromSource,
+    persistValidatedAgentSessionRunnerFactories,
+    persistInstallationStateRevision,
+    prepareImmutablePluginGeneration,
+    readCurrentPluginImmutableGenerationIntegrityCurrentness,
+    readInstallationStateRevision,
+} from '@/plugins/store/registry/generationStore';
+import {
+    isRetainedManagedProviderSettingsGrantCurrent,
+} from '@/providers/sessions/retainedManagedProviderPolicy';
+import {
+    readPluginRegistryCommitRecord,
+    replacePluginRegistryCommitRecord,
+} from '@/plugins/store/registry/commitRecord';
 
 const providerAccountUsageV4ServerFeatures = {
     status: 'ready',
@@ -403,7 +481,12 @@ const dispatchActivityNotificationAsyncMock = vi.hoisted(() => vi.fn(async () =>
     sent: true,
     deliveries: [],
 })));
-const getActiveAccountSettingsSnapshotMock = vi.hoisted(() => vi.fn(() => ({
+const getActiveAccountSettingsSnapshotMock = vi.hoisted(() => vi.fn<
+    () => Readonly<{
+        settings: AccountSettings | null;
+        settingsSecretsReadKeys: readonly Uint8Array[];
+    }>
+>(() => ({
     settings: null,
     settingsSecretsReadKeys: [],
 })));
@@ -413,13 +496,22 @@ type FetchSessionByIdCompatMockResult = {
     metadataVersion: number;
     encryptionMode: string;
     metadataLayoutVersion?: number;
-    ownerMetadata?: string;
+    ownerMetadata?: SessionOwnerMetadataEnvelopeV1;
     dataEncryptionKey?: string;
 } | null;
 const fetchSessionByIdMock = vi.hoisted(() => vi.fn(async () => ({
     id: 'sess-runtime',
     encryptionMode: 'plain',
 })));
+const fetchAccountEncryptionCurrentnessMock = vi.hoisted(() => vi.fn(
+    async () => ({
+        mode: 'plain' as const,
+        version: 1,
+        signingKeyFingerprint: null,
+        contentKeyFingerprint: null,
+        updatedAt: 1,
+    }),
+));
 const fetchSessionsPageMock = vi.hoisted(() => vi.fn(async () => ({
     sessions: [],
     nextCursor: null,
@@ -437,7 +529,11 @@ const updateSessionMetadataWithRetryMock = vi.hoisted(() => vi.fn(async ({ updat
     version: 2,
     metadata: updater({}),
 })));
-const commitSessionStoredMessageMock = vi.hoisted(() => vi.fn<(input: { localId?: string }) => Promise<{
+const commitSessionStoredMessageMock = vi.hoisted(() => vi.fn<(input: {
+    token?: string;
+    sessionId?: string;
+    localId?: string;
+}) => Promise<{
     didWrite: true;
     messageId: string;
     seq: number;
@@ -448,16 +544,62 @@ const commitSessionStoredMessageMock = vi.hoisted(() => vi.fn<(input: { localId?
     seq: 1,
     createdAt: 1_000,
 })));
-const commitRuntimeAuthRecoveryVisibleEventDeliveryMock = vi.hoisted(() => vi.fn(async (_input: unknown) => {}));
-const requestConnectedServiceSessionRestartSignalMock = vi.hoisted(() => vi.fn<() => Promise<ConnectedServiceSessionRestartSignalResult>>(async () => ({ status: 'requested' })));
+type StartDaemonSessionControlRuntimeTestParams = Omit<
+    Parameters<typeof startDaemonSessionControlRuntimeRaw>[0],
+    'daemonSessionMutationCustody' | 'cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop'
+> & Readonly<{
+    daemonSessionMutationCustody?: Pick<Parameters<
+        typeof startDaemonSessionControlRuntimeRaw
+    >[0]['daemonSessionMutationCustody'], 'stageTranscriptEvent'> & Partial<Pick<Parameters<
+        typeof startDaemonSessionControlRuntimeRaw
+    >[0]['daemonSessionMutationCustody'], 'stage'>>;
+    cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop?: Parameters<
+        typeof startDaemonSessionControlRuntimeRaw
+    >[0]['cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop'];
+}>;
+const startDaemonSessionControlRuntime = async (
+    params: StartDaemonSessionControlRuntimeTestParams,
+): ReturnType<typeof startDaemonSessionControlRuntimeRaw> => (
+    await startDaemonSessionControlRuntimeRaw({
+        ...params,
+        cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop:
+            params.cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop ?? (async () => null),
+        daemonSessionMutationCustody: {
+            async stage() {},
+            ...params.daemonSessionMutationCustody,
+            async stageTranscriptEvent(input) {
+                if (params.daemonSessionMutationCustody) {
+                    return await params.daemonSessionMutationCustody.stageTranscriptEvent(input);
+                }
+                await commitSessionStoredMessageMock({
+                    token: params.credentials.token,
+                    sessionId: input.sessionId,
+                    localId: input.eventId,
+                });
+                return { persisted: true, delivered: true };
+            },
+        },
+    })
+);
+type RequestConnectedServiceSessionRestartSignal =
+    typeof import('../connectedServices/sessionAuthSwitch/requestConnectedServiceSessionRestartSignal')['requestConnectedServiceSessionRestartSignal'];
+const requestConnectedServiceSessionRestartSignalMock = vi.hoisted(() => vi.fn<RequestConnectedServiceSessionRestartSignal>(async () => ({ status: 'requested' })));
 const markSessionMarkerConnectedServiceRestartIntentMock = vi.hoisted(() => vi.fn(async () => true));
 const clearSessionMarkerConnectedServiceRestartIntentMock = vi.hoisted(() => vi.fn(async () => {}));
 const removeSessionMarkerMock = vi.hoisted(() => vi.fn(async () => {}));
 const removeSessionMarkerIfOwnedMock = vi.hoisted(() => (
     vi.fn<(input: { pid: number }) => Promise<boolean>>(async () => true)
 ));
+type ReadSessionMarkerForPid =
+    typeof import('../sessionRegistry')['readSessionMarkerForPid'];
+const readSessionMarkerForPidMock = vi.hoisted(() => (
+    vi.fn<ReadSessionMarkerForPid>(async () => null)
+));
 const updateSessionMarkerActiveTurnMock = vi.hoisted(() => vi.fn(async () => true));
 const updateSessionMarkerAgentSessionStartupInstructionsMarkerMock = vi.hoisted(
+    () => vi.fn(async () => true),
+);
+const updateSessionMarkerAgentRuntimeSessionOpenAttestationMock = vi.hoisted(
     () => vi.fn(async () => true),
 );
 const drainRuntimeAuthFailureReportOutboxToDaemonMock = vi.hoisted(() => vi.fn(async () => ({
@@ -506,12 +648,25 @@ const refreshAccountSettingsForMinimumVersionMock = vi.hoisted(() => vi.fn(async
     settingsSecretsReadKeys: [],
 })));
 const acquireAuthoritativePluginRuntimeRegistryLeaseMock = vi.hoisted(() => vi.fn());
+const authorizeSessionModelTransitionProviderTargetWithLeaseMock =
+    vi.hoisted(() => vi.fn());
 const listExecutionRunMarkersForRehydrationMock = vi.hoisted(
     () => vi.fn(async () => []),
 );
 const isRuntimeRegistryCurrentMock = vi.hoisted(
     () => vi.fn(() => true),
 );
+const pluginReloadListenersMock = vi.hoisted(
+    () => new Set<(result: unknown) => void>(),
+);
+const pluginRunningSessionDispositionListenersMock = vi.hoisted(
+    () => new Set<(result: unknown) => void>(),
+);
+const pluginReloadStateMock = vi.hoisted(() => ({
+    activeRegistry: null as null | Readonly<{
+        agentRuntimesByAgentId: ReadonlyMap<string, unknown>;
+    }>,
+}));
 const resolveConnectedServiceSwitchContinuityMock = vi.hoisted(() => vi.fn());
 const simulatorPreviewAdapterStopMock = vi.hoisted(() => vi.fn(async () => {}));
 const createIosSimulatorPlatformAdapterMock = vi.hoisted(() => vi.fn(() => ({
@@ -697,6 +852,7 @@ vi.mock('@/configuration', () => ({
         daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
         daemonStopSessionWaitForExitMs: 0,
         daemonStopSessionWaitForExitPollIntervalMs: 50,
+        apiServerUrl: 'http://127.0.0.1:41001',
         happyHomeDir: '/tmp/happier-test-home',
         activeServerDir: '/tmp/happier-test-home/servers/default',
         daemonStateFile: '/tmp/happier-test-home/servers/default/daemon.state.json',
@@ -815,10 +971,6 @@ vi.mock(
     },
 );
 
-vi.mock('../connectedServices/runtimeAuth/commitConnectedServiceRuntimeAuthRecoverySessionEvent', () => ({
-    commitRuntimeAuthRecoveryVisibleEventDelivery: commitRuntimeAuthRecoveryVisibleEventDeliveryMock,
-}));
-
 vi.mock('../connectedServices/recoveryScheduler/recoveryIntentFileStore', () => ({
     createRecoveryIntentFileStore: vi.fn((path: string) => {
         const store = recoveryIntentFileStoresMock.storesByPath.get(path) ?? new Map<string, unknown>();
@@ -929,6 +1081,7 @@ vi.mock('../sessionRegistry', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../sessionRegistry')>();
     return {
         ...actual,
+        readSessionMarkerForPid: readSessionMarkerForPidMock,
         markSessionMarkerConnectedServiceRestartIntent: markSessionMarkerConnectedServiceRestartIntentMock,
         clearSessionMarkerConnectedServiceRestartIntent: clearSessionMarkerConnectedServiceRestartIntentMock,
         removeSessionMarker: removeSessionMarkerMock,
@@ -936,6 +1089,8 @@ vi.mock('../sessionRegistry', async (importOriginal) => {
         updateSessionMarkerActiveTurn: updateSessionMarkerActiveTurnMock,
         updateSessionMarkerAgentSessionStartupInstructionsMarker:
             updateSessionMarkerAgentSessionStartupInstructionsMarkerMock,
+        updateSessionMarkerAgentRuntimeSessionOpenAttestation:
+            updateSessionMarkerAgentRuntimeSessionOpenAttestationMock,
     };
 });
 
@@ -991,6 +1146,17 @@ vi.mock('@/session/transport/http/sessionsHttp', () => ({
     commitSessionStoredMessage: commitSessionStoredMessageMock,
 }));
 
+vi.mock(
+    '@/api/client/connectedServiceCredentialApi',
+    async (importOriginal) => ({
+        ...await importOriginal<
+            typeof import('@/api/client/connectedServiceCredentialApi')
+        >(),
+        fetchAccountEncryptionCurrentness:
+            fetchAccountEncryptionCurrentnessMock,
+    }),
+);
+
 vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
     updateSessionMetadataWithRetry: updateSessionMetadataWithRetryMock,
 }));
@@ -998,6 +1164,24 @@ vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
 vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
     acquireAuthoritativePluginRuntimeRegistryLease: acquireAuthoritativePluginRuntimeRegistryLeaseMock,
 }));
+
+vi.mock(
+    '@/providers/sessions/authorizeSessionModelTransitionTarget',
+    async (importOriginal) => {
+        const actual = await importOriginal<
+            typeof import('@/providers/sessions/authorizeSessionModelTransitionTarget')
+        >();
+        authorizeSessionModelTransitionProviderTargetWithLeaseMock
+            .mockImplementation(
+                actual.authorizeSessionModelTransitionProviderTargetWithLease,
+            );
+        return {
+            ...actual,
+            authorizeSessionModelTransitionProviderTargetWithLease:
+                authorizeSessionModelTransitionProviderTargetWithLeaseMock,
+        };
+    },
+);
 
 vi.mock('../executionRunRegistry', async (importOriginal) => {
     const actual = await importOriginal<
@@ -1020,100 +1204,84 @@ vi.mock('@/plugins/runtime/reload/singleton', async (importOriginal) => {
             ...actual.pluginReloadController,
             isRuntimeRegistryCurrent:
                 isRuntimeRegistryCurrentMock,
+            subscribe: (listener: (result: unknown) => void) => {
+                pluginReloadListenersMock.add(listener);
+                return () => {
+                    pluginReloadListenersMock.delete(listener);
+                };
+            },
+            subscribeRunningSessionDisposition: (
+                listener: (result: unknown) => void,
+            ) => {
+                pluginRunningSessionDispositionListenersMock.add(listener);
+                return () => {
+                    pluginRunningSessionDispositionListenersMock.delete(listener);
+                };
+            },
+            getState: () => pluginReloadStateMock,
         },
     };
 });
 
-const hostedWebSecurity: PluginHostedWebSecurityPolicyV1 = {
-    allowedNavigationOrigins: [],
-    allowedCallbackOrigins: [],
-    allowedConnectOrigins: [],
-    csp: {
-        scriptSrc: 'selfOnly',
-        styleSrc: 'selfOnly',
-        imgSrc: 'selfOnly',
-        fontSrc: 'selfOnly',
-        connectSrc: 'selfOnly',
-        allowDataUrls: false,
-        allowBlobUrls: false,
-        allowInlineStyles: false,
-        allowEval: false,
-    },
-    sourceMaps: 'disabled',
-    mixedContent: 'deny',
-};
-
 function createHostedWebStaticAssetsRegistry(input: Readonly<{
     pluginRoot: string;
-    digest: string;
+    digest: PluginUiArtifactDigestV1;
     byteSize: number;
 }>): ResolvedContributionRegistry {
+    const base = {
+        provenance: 'external' as const,
+        source: { kind: 'path' as const },
+        pluginId: 'acme.preview',
+        pluginRootPath: input.pluginRoot,
+        manifestPath: join(input.pluginRoot, '.happier-plugin/plugin.json'),
+        daemonEntryPath: null,
+        sourceSpec: {
+            kind: 'path' as const,
+            locator: input.pluginRoot,
+            trustPolicy: 'local_trusted' as const,
+            installPolicy: 'link' as const,
+        },
+    };
     return createResolvedContributionRegistry({
         agents: [],
-                hostedWeb: [{
-            provenance: 'external',
-            source: { kind: 'path' },
-            pluginId: 'acme.preview',
-            pluginRootPath: input.pluginRoot,
-            manifestPath: join(input.pluginRoot, '.happier-plugin/plugin.json'),
-            manifestDigest: 'sha256:manifest',
-            daemonEntryPath: null,
-            sourceSpec: {
-                kind: 'path',
-                locator: input.pluginRoot,
-                trustPolicy: 'local_trusted',
-                installPolicy: 'link',
+        uiViewsV2: [{
+            ...base,
+            identity: { pluginId: base.pluginId, localId: 'preview-web-view' },
+            definition: {
+                id: 'preview-web-view',
+                container: 'rightPane',
+                target: { kind: 'session' },
+                renderer: 'preview-web',
+                title: 'Preview web',
+                instancePolicy: 'singleton',
+                headerActions: [],
+            },
+        }],
+        uiRenderersV2: [{
+            ...base,
+            identity: { pluginId: base.pluginId, localId: 'preview-web' },
+            generatedUiArtifactsManifest: {
+                version: 1,
+                entries: [{
+                    contributionId: 'preview-web',
+                    tier: 'hostedWeb',
+                    platform: 'web',
+                    entry: 'hosted-web/preview-web/index.html',
+                    files: [{
+                        relativePath: 'hosted-web/preview-web/index.html',
+                        digest: input.digest,
+                        byteSize: input.byteSize,
+                    }],
+                    digest: input.digest,
+                    builtWith: { bundler: 'vite', version: '6.0.0' },
+                    hostUiApiVersion: '1.0.0',
+                    compat: {},
+                }],
             },
             definition: {
                 id: 'preview-web',
-                service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
-                entry: { routeMode: 'pathFallback', path: '/' },
-                bridge: { allowedMessages: ['ready'] },
-                sandbox: {
-                    scripts: true,
-                    sameOrigin: false,
-                    popups: false,
-                    topNavigation: false,
-                    mixedContent: false,
-                },
-                security: hostedWebSecurity,
-                fallback: { kind: 'unavailable' },
-                display: {
-                    titleKey: 'plugin.preview.title',
-                    developerFallback: 'Preview web',
-                },
-            },
-        }],
-        uiArtifacts: [{
-            provenance: 'external',
-            source: { kind: 'path' },
-            pluginId: 'acme.preview',
-            pluginRootPath: input.pluginRoot,
-            manifestPath: join(input.pluginRoot, '.happier-plugin/plugin.json'),
-            manifestDigest: 'sha256:manifest',
-            daemonEntryPath: null,
-            sourceSpec: {
-                kind: 'path',
-                locator: input.pluginRoot,
-                trustPolicy: 'local_trusted',
-                installPolicy: 'link',
-            },
-            definition: {
-                id: 'preview-web-static',
-                contributionId: 'preview-web',
-                contributionFamily: 'hostedWeb',
-                artifactKind: 'hostedWebAsset',
-                platform: 'web',
-                channel: 'internal',
-                integrity: { digest: input.digest },
-                compatibility: {
-                    hostAppVersion: '1.0.0',
-                    hostUiApiVersion: '1.0.0',
-                    reactVersion: '19.0.0',
-                    nativeCapabilities: [],
-                },
-                byteSize: input.byteSize,
-                contentType: 'text/html',
+                kind: 'hostedWeb',
+                source: { kind: 'artifact', artifact: 'preview-web' },
             },
         }],
     });
@@ -1122,7 +1290,7 @@ function createHostedWebStaticAssetsRegistry(input: Readonly<{
 async function writeHostedWebStaticAssetsFixture(input: Readonly<{
     pluginRoot: string;
     html: string;
-    digest: string;
+    digest: PluginUiArtifactDigestV1;
 }>): Promise<void> {
     const installedRoot = join(input.pluginRoot, 'dist/happier-plugin-ui');
     await mkdir(join(installedRoot, 'hosted-web/preview-web'), { recursive: true });
@@ -1142,13 +1310,368 @@ async function writeHostedWebStaticAssetsFixture(input: Readonly<{
             digest: input.digest,
             builtWith: { bundler: 'vite', version: '6.0.0' },
             hostUiApiVersion: '1.0.0',
-            compat: { react: '19.0.0' },
+            compat: {},
         }],
     }), 'utf8');
 }
 
 describe('startDaemonSessionControlRuntime', () => {
-    it('fails closed on missing or conflicting required startup identity and opens a matching raw carrier once', async () => {
+    it('composes runner custody from a direct retained binding instead of an execution grant', () => {
+        const source = readFileSync(
+            new URL('./startDaemonSessionControlRuntime.ts', import.meta.url),
+            'utf8',
+        );
+
+        expect(source).toContain('verifyRunnerAgentBindingAgainstGeneration');
+        expect(source).toContain('retainedAgent');
+        expect(source).not.toContain('RunnerAgentExecutionGrant');
+        expect(source).not.toContain('grantDigest');
+        expect(source).not.toContain('runtimeBindingDigest');
+    });
+
+    it('does not restore legacy-unfenced one-shot materialization as an ongoing runtime target', async () => {
+        const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+        const createTracked = (
+            pid: number,
+            profileId: string,
+            credentialRevision?: string,
+        ): TrackedSession => ({
+            pid,
+            startedBy: 'daemon',
+            happySessionId: `session-${profileId}`,
+            spawnOptions: {
+                directory: '/tmp/project',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'codex',
+                    sourceKind: 'built_in',
+                },
+                connectedServices: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        'openai-codex': {
+                            source: 'connected',
+                            selection: 'profile',
+                            profileId,
+                        },
+                    },
+                },
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: `csm-${profileId}`,
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+                environmentVariables: {
+                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]:
+                        JSON.stringify([{
+                            kind: 'profile',
+                            serviceId: 'openai-codex',
+                            profileId,
+                            ...(credentialRevision
+                                ? { credentialRevision }
+                                : {}),
+                        }]),
+                },
+            },
+        });
+        const legacyTracked = createTracked(101, 'legacy');
+        const fabricatedRevisionTracked = createTracked(
+            103,
+            'legacy-with-fabricated-revision',
+            revision,
+        );
+        const revisionedTracked = createTracked(
+            102,
+            'revisioned',
+            revision,
+        );
+        const credentialRecord = (profileId: string) =>
+            buildConnectedServiceCredentialRecord({
+                now: 1_000,
+                serviceId: 'openai-codex',
+                profileId,
+                kind: 'oauth',
+                expiresAt: null,
+                oauth: {
+                    accessToken: `${profileId}-access`,
+                    refreshToken: `${profileId}-refresh`,
+                    idToken: null,
+                    scope: null,
+                    tokenType: null,
+                    providerAccountId: null,
+                    providerEmail: null,
+                },
+            });
+        const getConnectedServiceCredentialPlain = vi.fn(
+            async ({ profileId }: { profileId: string }) => ({
+                content: {
+                    t: 'plain' as const,
+                    v: credentialRecord(profileId),
+                },
+                ...(profileId !== 'revisioned'
+                    ? {
+                        revisionSemantics: 'legacy_unfenced' as const,
+                        credentialRevision: null,
+                    }
+                    : {
+                        revisionSemantics: 'revisioned' as const,
+                        credentialRevision: revision,
+                    }),
+            }),
+        );
+        const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+        // Server-observed credential revisions are the bootstrap fencing authority: only the
+        // revisioned profile carries one, so the legacy profiles read back as legacy-unfenced
+        // even though one of them fabricates a revision in its own spawn environment.
+        const fetchAccountProfile = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                id: 'account-bootstrap-unfenced',
+                connectedServicesV2: [{
+                    serviceId: 'openai-codex',
+                    profiles: [
+                        { profileId: 'legacy', status: 'connected', kind: 'oauth' },
+                        {
+                            profileId: 'legacy-with-fabricated-revision',
+                            status: 'connected',
+                            kind: 'oauth',
+                        },
+                        { profileId: 'revisioned', status: 'connected', kind: 'oauth' },
+                    ],
+                    groups: [],
+                }],
+                connectedServiceCredentialRevisionsV1: [{
+                    serviceId: 'openai-codex',
+                    profileId: 'revisioned',
+                    credentialRevision: revision,
+                }],
+            },
+        });
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-bootstrap-unfenced',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {
+                getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+                getConnectedServiceCredentialPlain,
+            } as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir:
+                '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            connectedServiceRuntimeRegistry: runtimeRegistry,
+            pidToTrackedSession: new Map([
+                [legacyTracked.pid, legacyTracked],
+                [fabricatedRevisionTracked.pid,
+                    fabricatedRevisionTracked],
+                [revisionedTracked.pid, revisionedTracked],
+            ]),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            expect(runtimeRegistry.getByPid(legacyTracked.pid)).toBeNull();
+            expect(runtimeRegistry.getByPid(fabricatedRevisionTracked.pid))
+                .toBeNull();
+            expect(runtimeRegistry.getByPid(revisionedTracked.pid))
+                .not.toBeNull();
+            // Bootstrap fencing reads server-observed revisions, never credential material.
+            expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
+        } finally {
+            fetchAccountProfile.mockRestore();
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('switches a fresh managed Provider from current-Q admission to Q-free exact-P policy after adoption', async () => {
+        let adopted = false;
+        let exactPPolicyCurrent = true;
+        const revalidateCurrentQ = vi.fn(async () => true);
+        const revalidateExactPPolicy = vi.fn(
+            async () => exactPPolicyCurrent,
+        );
+        const fenceRetainedPolicy = vi.fn(async () => undefined);
+
+        const readCurrent = async () =>
+            await isManagedProviderSessionInvocationCurrent({
+                adoptionCommitted: () => adopted,
+                revalidateInitialPolicy: revalidateCurrentQ,
+                readsRetainedAuthorityCurrent: () => true,
+                revalidateRetainedPolicy: revalidateExactPPolicy,
+                fenceRetainedPolicy,
+                readHardRevocationRevision: async () => 7,
+                readGenerationIntegrityCurrentness: async () => true,
+                hardRevocationRevisionAtAdmission: 7,
+            });
+
+        await expect(readCurrent()).resolves.toBe(true);
+        expect(revalidateCurrentQ).toHaveBeenCalledOnce();
+        expect(revalidateExactPPolicy).not.toHaveBeenCalled();
+
+        adopted = true;
+        await expect(readCurrent()).resolves.toBe(true);
+        expect(revalidateCurrentQ).toHaveBeenCalledOnce();
+        expect(revalidateExactPPolicy).toHaveBeenCalledOnce();
+
+        exactPPolicyCurrent = false;
+        await expect(readCurrent()).resolves.toBe(false);
+        expect(revalidateCurrentQ).toHaveBeenCalledOnce();
+        expect(revalidateExactPPolicy).toHaveBeenCalledTimes(2);
+        expect(fenceRetainedPolicy).toHaveBeenCalledOnce();
+    });
+
+    it('rejects exact P after hard revocation advances during retained integrity currentness', async () => {
+        let hardRevocationRevision = 7;
+        const readHardRevocationRevision = vi.fn(
+            async () => hardRevocationRevision,
+        );
+        const readGenerationIntegrityCurrentness = vi.fn(async () => {
+            await Promise.resolve();
+            hardRevocationRevision = 8;
+            return true;
+        });
+        const revalidateInitialPolicy = vi.fn(async () => true);
+        const revalidateRetainedPolicy = vi.fn(async () => true);
+        const fenceRetainedPolicy = vi.fn(async () => undefined);
+
+        await expect(isManagedProviderSessionInvocationCurrent({
+            adoptionCommitted: () => true,
+            revalidateInitialPolicy,
+            readsRetainedAuthorityCurrent: () => true,
+            revalidateRetainedPolicy,
+            fenceRetainedPolicy,
+            readHardRevocationRevision,
+            readGenerationIntegrityCurrentness,
+            hardRevocationRevisionAtAdmission: 7,
+        })).resolves.toBe(false);
+
+        expect(revalidateInitialPolicy).not.toHaveBeenCalled();
+        expect(revalidateRetainedPolicy).toHaveBeenCalledOnce();
+        expect(readGenerationIntegrityCurrentness).toHaveBeenCalledOnce();
+        expect(readHardRevocationRevision).toHaveBeenCalledTimes(2);
+        expect(fenceRetainedPolicy).not.toHaveBeenCalled();
+    });
+
+    it('fences retained Provider policy failures but not stale daemon authority', async () => {
+        const fenceRetainedPolicy = vi.fn(async () => undefined);
+        const revalidatePolicy = vi.fn(async () => {
+            throw new Error('policy owner unavailable');
+        });
+
+        await expect(isRetainedManagedProviderInvocationCurrent({
+            readsRetainedAuthorityCurrent: () => true,
+            revalidatePolicy,
+            fenceRetainedPolicy,
+            readHardRevocationRevision: async () => 7,
+            hardRevocationRevisionAtAdmission: 7,
+            readGenerationIntegrityCurrentness: async () => true,
+        })).resolves.toBe(false);
+        expect(fenceRetainedPolicy).toHaveBeenCalledOnce();
+
+        revalidatePolicy.mockClear();
+        fenceRetainedPolicy.mockClear();
+        await expect(isRetainedManagedProviderInvocationCurrent({
+            readsRetainedAuthorityCurrent: () => false,
+            revalidatePolicy,
+            fenceRetainedPolicy,
+            readHardRevocationRevision: async () => 7,
+            hardRevocationRevisionAtAdmission: 7,
+            readGenerationIntegrityCurrentness: async () => true,
+        })).resolves.toBe(false);
+        expect(revalidatePolicy).not.toHaveBeenCalled();
+        expect(fenceRetainedPolicy).not.toHaveBeenCalled();
+
+        let authorityReadCount = 0;
+        await expect(isRetainedManagedProviderInvocationCurrent({
+            readsRetainedAuthorityCurrent: () =>
+                ++authorityReadCount === 1,
+            revalidatePolicy: async () => true,
+            fenceRetainedPolicy,
+            readHardRevocationRevision: async () => 7,
+            hardRevocationRevisionAtAdmission: 7,
+            readGenerationIntegrityCurrentness: async () => true,
+        })).resolves.toBe(false);
+        expect(fenceRetainedPolicy).not.toHaveBeenCalled();
+
+        authorityReadCount = 0;
+        await expect(isRetainedManagedProviderInvocationCurrent({
+            readsRetainedAuthorityCurrent: () =>
+                ++authorityReadCount === 1,
+            revalidatePolicy: async () => false,
+            fenceRetainedPolicy,
+            readHardRevocationRevision: async () => 7,
+            hardRevocationRevisionAtAdmission: 7,
+            readGenerationIntegrityCurrentness: async () => true,
+        })).resolves.toBe(false);
+        expect(fenceRetainedPolicy).not.toHaveBeenCalled();
+    });
+
+    it('revalidates retained Provider policy on every post-prepare currentness read', async () => {
+        let policyCurrent = true;
+        let generationIntegrityCurrent = true;
+        const revalidatePolicy = vi.fn(async () => policyCurrent);
+        const readHardRevocationRevision = vi.fn(async () => 7);
+        const readGenerationIntegrityCurrentness = vi.fn(
+            async () => generationIntegrityCurrent,
+        );
+        const fenceRetainedPolicy = vi.fn(async () => undefined);
+
+        await expect(isRetainedManagedProviderInvocationCurrent({
+            readsRetainedAuthorityCurrent: () => true,
+            revalidatePolicy,
+            fenceRetainedPolicy,
+            readHardRevocationRevision,
+            hardRevocationRevisionAtAdmission: 7,
+            readGenerationIntegrityCurrentness,
+        })).resolves.toBe(true);
+
+        // Connection/grant removal after daemon-B prepare must revoke P on
+        // the next managed operation without consulting desired Q.
+        policyCurrent = false;
+        await expect(isRetainedManagedProviderInvocationCurrent({
+            readsRetainedAuthorityCurrent: () => true,
+            revalidatePolicy,
+            fenceRetainedPolicy,
+            readHardRevocationRevision,
+            hardRevocationRevisionAtAdmission: 7,
+            readGenerationIntegrityCurrentness,
+        })).resolves.toBe(false);
+        expect(revalidatePolicy).toHaveBeenCalledTimes(2);
+        expect(readHardRevocationRevision).toHaveBeenCalledTimes(2);
+        expect(fenceRetainedPolicy).toHaveBeenCalledOnce();
+
+        policyCurrent = true;
+        generationIntegrityCurrent = false;
+        await expect(isRetainedManagedProviderInvocationCurrent({
+            readsRetainedAuthorityCurrent: () => true,
+            revalidatePolicy,
+            fenceRetainedPolicy,
+            readHardRevocationRevision,
+            hardRevocationRevisionAtAdmission: 7,
+            readGenerationIntegrityCurrentness,
+        })).resolves.toBe(false);
+        expect(readHardRevocationRevision).toHaveBeenCalledTimes(3);
+        expect(readGenerationIntegrityCurrentness).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not treat tracked startup metadata as Runner Agent session-open attestation', async () => {
         const startupInstructionsSentinel =
             'PRIV-R01 startup instructions must not survive Agent session open';
         const startupInstructions = {
@@ -1170,14 +1693,7 @@ describe('startDaemonSessionControlRuntime', () => {
             backendId: 'codex',
             generation: 'generation-startup-custody',
             runtimeAuthority: {
-                permissions: [],
                 runtimeCapabilities: [],
-            },
-            factoryControls: {
-                continuation: false,
-                goals: false,
-                catalog: false,
-                usageLimitRecovery: false,
             },
         };
         const context = {
@@ -1214,10 +1730,6 @@ describe('startDaemonSessionControlRuntime', () => {
                     retirementSignal: new AbortController().signal,
                     createRuntime,
                 }]]),
-                permissionsByPluginId: new Map([[
-                    descriptor.pluginId,
-                    new Set(descriptor.runtimeAuthority.permissions),
-                ]]),
                 runtimeCapabilitiesByPluginId: new Map([[
                     descriptor.pluginId,
                     new Set(descriptor.runtimeAuthority.runtimeCapabilities),
@@ -1301,72 +1813,16 @@ describe('startDaemonSessionControlRuntime', () => {
         });
 
         try {
-            const bridge = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0]
-                .agentRuntimeSessionBridge;
-            expect(bridge).toBeDefined();
-            if (!bridge) return;
-
-            for (const [failureContext, requestId] of [
-                [markerOnlyContext, 'prepare-startup-marker-only'],
-                [mismatchedContext, 'prepare-startup-marker-mismatch'],
-            ] as const) {
-                await expect(bridge.dispatch({
-                    v: 1,
-                    context: failureContext,
-                    operation: {
-                        kind: 'factory.prepare',
-                        requestId,
-                        descriptor,
-                        request: {
-                            ...request,
-                            sessionId: failureContext.sessionId,
-                        },
-                    },
-                })).resolves.toMatchObject({
-                    ok: false,
-                    error: {
-                        message:
-                            'Agent startup instructions could not be resolved',
-                    },
-                });
-            }
             expect(createRuntime).not.toHaveBeenCalled();
             expect(open).not.toHaveBeenCalled();
-
-            await expect(bridge.dispatch({
-                v: 1,
-                context,
-                operation: {
-                    kind: 'factory.prepare',
-                    requestId: 'prepare-startup-custody',
-                    descriptor,
-                    request,
-                },
-            })).resolves.toMatchObject({ ok: true });
-            await expect(bridge.dispatch({
-                v: 1,
-                context,
-                operation: {
-                    kind: 'session.open',
-                    requestId: 'open-startup-custody',
-                    descriptor,
-                    request,
-                    featureDecisions: {},
-                },
-            })).resolves.toMatchObject({ ok: true });
-
-            expect(open).toHaveBeenCalledTimes(1);
-            expect(open).toHaveBeenCalledWith(
-                { ...request, startupInstructions },
-                expect.any(Object),
-            );
 
             const attestation = await runtime.awaitAgentSessionOpen({
                 sessionId: context.sessionId,
                 timeoutMs: 0,
             });
-            expect.soft(tracked.spawnOptions).not.toHaveProperty(
+            expect.soft(tracked.spawnOptions).toHaveProperty(
                 'agentSessionStartupInstructionsV1',
+                startupInstructions,
             );
             expect.soft(tracked).toHaveProperty(
                 'agentSessionStartupInstructionsMarkerV1',
@@ -1374,18 +1830,11 @@ describe('startDaemonSessionControlRuntime', () => {
             );
             expect.soft(
                 updateSessionMarkerAgentSessionStartupInstructionsMarkerMock,
-            ).toHaveBeenCalledWith({
-                pid: tracked.pid,
-                sessionId: context.sessionId,
-                marker: startupInstructionsMarker,
-            });
-            expect.soft(JSON.stringify(tracked.spawnOptions)).not.toContain(
+            ).not.toHaveBeenCalled();
+            expect.soft(JSON.stringify(tracked.spawnOptions)).toContain(
                 startupInstructionsSentinel,
             );
-            expect.soft(attestation).toEqual({
-                status: 'opened',
-                request,
-            });
+            expect.soft(attestation).toEqual({ status: 'timeout' });
             expect.soft(JSON.stringify(attestation)).not.toContain(
                 startupInstructionsSentinel,
             );
@@ -1394,10 +1843,219 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
+    it('keeps session-open prepare out of tracked currentness until commit', async () => {
+        const sessionId = 'session-open-phase-custody';
+        const binding = createAgentSessionRunnerFactoryBinding({
+            v: 1,
+            pluginId: 'acme.plugin',
+            pluginVersion: '1.2.3',
+            agentId: 'acme-agent',
+            localAgentId: 'acme-agent',
+            immutableGenerationId: `sha256:${'1'.repeat(64)}`,
+            locator: {
+                module: './runtime.mjs',
+                export: 'createRuntime',
+                runtimeApiVersion: 1,
+            },
+            normalizedModulePath: '/immutable/acme/runtime.mjs',
+            loadMode: 'immutable-js',
+        });
+        const runner = Object.freeze({
+            pid: 4321,
+            processStartTimeMs: 1_717_171_717_000,
+            processCommandHash: 'a'.repeat(64),
+            snapshotIdentity: 'snapshot:runner-open',
+        });
+        const tracked: TrackedSession = {
+            startedBy: 'daemon',
+            pid: runner.pid,
+            happySessionId: sessionId,
+            runnerAgentImmutableGenerationId: binding.immutableGenerationId,
+            processStartTimeMs: runner.processStartTimeMs,
+            processCommandHash: runner.processCommandHash,
+            agentRuntimeDaemonServiceAuthorityFilePath:
+                '/private/current-authority.json',
+        };
+        const openRequest = {
+            kind: 'create' as const,
+            sessionId,
+            cwd: '/workspace',
+        };
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-session-open-phase-custody',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map([[runner.pid, tracked]]),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            const dispatch = vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0].agentRuntimeDaemonServices?.dispatch;
+            if (!dispatch) {
+                throw new Error('Expected runner Agent daemon-service dispatcher');
+            }
+            const context = {
+                sessionId,
+                runner,
+                retainedAgent: binding,
+                trackedSession: tracked,
+                invocationContext: {
+                    cwd: '/workspace',
+                    environment: {},
+                    providerBindingActive: false,
+                },
+                signal: new AbortController().signal,
+            };
+            const attest = async (phase: 'prepare' | 'commit') => await dispatch(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'session.open.attest',
+                        requestId: `attest-open-${phase}`,
+                        phase,
+                        request: openRequest,
+                        providerSessionId: null,
+                    },
+                }),
+                context,
+            );
+
+            await expect(attest('prepare')).resolves.toEqual({
+                ok: true,
+                result: {
+                    kind: 'session.open.attestation',
+                    status: 'accepted',
+                },
+            });
+            expect(
+                updateSessionMarkerAgentRuntimeSessionOpenAttestationMock,
+            ).not.toHaveBeenCalled();
+            await expect(runtime.awaitAgentSessionOpen({
+                sessionId,
+                timeoutMs: 0,
+            })).resolves.toEqual({ status: 'timeout' });
+
+            await expect(attest('commit')).resolves.toEqual({
+                ok: true,
+                result: {
+                    kind: 'session.open.attestation',
+                    status: 'recorded',
+                },
+            });
+            expect(
+                updateSessionMarkerAgentRuntimeSessionOpenAttestationMock,
+            ).toHaveBeenCalledWith({
+                pid: runner.pid,
+                sessionId,
+                authorityFilePath: '/private/current-authority.json',
+                attestation: {
+                    request: openRequest,
+                    providerSessionId: null,
+                },
+            });
+            await expect(runtime.awaitAgentSessionOpen({
+                sessionId,
+                timeoutMs: 0,
+            })).resolves.toEqual({
+                status: 'opened',
+                request: openRequest,
+            });
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('attempts every independent control-runtime shutdown phase when an earlier one rejects', async () => {
+        // Daemon shutdown runs these phases in one chain. A single `await` sequence
+        // meant one rejecting runner/External-Sessions cleanup silently skipped the
+        // remaining phases — control-runtime resources were never disposed and the
+        // control server was never stopped, for a shutdown that reports itself done.
+        const retireExternalSessionHostOperations = vi.fn(async (): Promise<void> => {
+            throw new Error('external-session-retirement-failed');
+        });
+        const externalSessionHostOperationOwner: ExternalSessionHostOperationOwner = {
+            bind: () => {
+                throw new Error('not bound in this test');
+            },
+            install: async () => Object.freeze({ dispose: async () => {} }),
+            canFollowNow: () => false,
+            retire: retireExternalSessionHostOperations,
+        };
+        const beforeShutdown = vi.fn(async () => {});
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-shutdown-phases',
+            credentials: {
+                token: 'token-daemon',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            externalSessionHostOperationOwner,
+            beforeShutdown,
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+        const controlServerStarted = await vi.mocked(startDaemonControlServer)
+            .mock.results.at(-1)?.value as
+            Awaited<ReturnType<typeof startDaemonControlServer>>;
+        const controlInput = vi.mocked(startDaemonControlServer)
+            .mock.calls.at(-1)?.[0];
+
+        // The control-server drain path: a rejecting phase still reaches the
+        // daemon-owned drain that runs after it.
+        await expect(controlInput?.beforeShutdown?.())
+            .rejects.toThrow('external-session-retirement-failed');
+        expect(retireExternalSessionHostOperations).toHaveBeenCalledTimes(1);
+        expect(beforeShutdown).toHaveBeenCalledTimes(1);
+
+        // The daemon cleanup path: the control socket is stopped even though an
+        // earlier phase rejected, and the failure is still reported to the caller.
+        await expect(runtime.stopControlServer())
+            .rejects.toThrow('external-session-retirement-failed');
+        expect(controlServerStarted.stop).toHaveBeenCalledTimes(1);
+    });
+
     it('reactivates a reattached Agent through the canonical session lease and rotates its exact request-auth capability', async () => {
         const materializationBaseDir = await mkdtemp(
             join(tmpdir(), 'happier-request-auth-reattach-'),
         );
+        let plannedRestartPidSafetySpy: Readonly<{
+            mockRestore: () => void;
+        }> | null = null;
         const materializationId = 'csm_request_auth_reattach';
         const materializedRootDir =
             resolveConnectedServiceMaterializedRootDir({
@@ -1437,6 +2095,62 @@ describe('startDaemonSessionControlRuntime', () => {
                 headerNames: ['authorization', 'chatgpt-account-id'],
             },
         } as const;
+        const piPurpose = {
+            consumer: {
+                pluginId: 'happier.agent.pi',
+                localId: 'pi',
+            },
+            purpose: 'openai-codex-model-request',
+        } as const;
+        const piBinding = {
+            purpose: piPurpose,
+            target: binding.target,
+        } as const;
+        const piUse = {
+            purpose: piPurpose,
+            materialization: use.materialization,
+        } as const;
+        const piMaterializationId =
+            'csm_pi_request_auth_reattach';
+        const piCredential =
+            buildConnectedServiceCredentialRecord({
+                now: 1_000,
+                serviceId: 'openai-codex',
+                profileId: 'primary',
+                kind: 'oauth',
+                expiresAt: null,
+                oauth: {
+                    accessToken: 'pi-old-daemon-access-token',
+                    refreshToken: 'pi-refresh-token',
+                    idToken: 'pi-id-token',
+                    scope: null,
+                    tokenType: null,
+                    providerAccountId: 'account-primary',
+                    providerEmail: null,
+                },
+            });
+        const piMaterialization =
+            await materializeConnectedServicesForSpawn({
+                agentId: 'pi',
+                materializationKey: piMaterializationId,
+                activeServerDir: materializationBaseDir,
+                baseDir: materializationBaseDir,
+                recordsByServiceId: new Map([
+                    ['openai-codex', piCredential],
+                ]),
+                connectedAccountMaterializationAuthority: {
+                    kind: 'qualified',
+                    purposeBindings: [piBinding],
+                    requestAuthPurposeBindings: [piBinding],
+                },
+            });
+        expect(piMaterialization).not.toBeNull();
+        const piCapabilityPath =
+            piMaterialization!.env[
+                CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV
+            ]!;
+        const piMaterializedRootDir =
+            resolve(piCapabilityPath, '..', '..');
         const oldRegistry =
             createConnectedAccountRequestAuthSubjectRegistry();
         const oldDescriptor = await oldRegistry.activate({
@@ -1445,7 +2159,7 @@ describe('startDaemonSessionControlRuntime', () => {
             httpPort: 43210,
             subject: {
                 subjectId:
-                    'agent-session:session-request-auth-reattach/agent:opencode',
+                    'agent-session:session-request-auth-reattach',
                 isCurrent: () => true,
                 registerRedaction: () => undefined,
                 resolvePurposeUse: (candidate) => (
@@ -1462,6 +2176,34 @@ describe('startDaemonSessionControlRuntime', () => {
             )
         )?.capability;
         expect(oldRegistry.authenticate(oldCapability)).not.toBeNull();
+        const oldPiDescriptor = await oldRegistry.activate({
+            materializedRootDir: piMaterializedRootDir,
+            materializationId: piMaterializationId,
+            httpPort: 43210,
+            subject: {
+                subjectId:
+                    'agent-session:session-pi-request-auth-reattach',
+                isCurrent: () => true,
+                registerRedaction: () => undefined,
+                resolvePurposeUse: (candidate) => (
+                    JSON.stringify(candidate)
+                        === JSON.stringify(piPurpose)
+                        ? { binding: piBinding, use: piUse }
+                        : null
+                ),
+                listPurposeUses: () => [{
+                    binding: piBinding,
+                    use: piUse,
+                }],
+            },
+        });
+        const oldPiCapability = (
+            await readConnectedAccountRequestAuthCapabilityFile(
+                oldPiDescriptor.path,
+            )
+        )?.capability;
+        expect(oldRegistry.authenticate(oldPiCapability))
+            .not.toBeNull();
         const unprovableMaterializationId =
             'csm_request_auth_unprovable';
         const unprovableMaterializedRootDir =
@@ -1482,7 +2224,7 @@ describe('startDaemonSessionControlRuntime', () => {
             httpPort: 43210,
             subject: {
                 subjectId:
-                    'agent-session:session-request-auth-unprovable/agent:opencode',
+                    'agent-session:session-request-auth-unprovable',
                 isCurrent: () => true,
                 registerRedaction: () => undefined,
                 resolvePurposeUse: () => ({ binding, use }),
@@ -1512,7 +2254,7 @@ describe('startDaemonSessionControlRuntime', () => {
             httpPort: 43210,
             subject: {
                 subjectId:
-                    'agent-session:session-request-auth-reused-pid/agent:opencode',
+                    'agent-session:session-request-auth-reused-pid',
                 isCurrent: () => true,
                 registerRedaction: () => undefined,
                 resolvePurposeUse: () => ({ binding, use }),
@@ -1546,7 +2288,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 httpPort: 43210,
                 subject: {
                     subjectId:
-                        'agent-session:session-request-auth-changed-identity/agent:opencode',
+                        'agent-session:session-request-auth-changed-identity',
                     isCurrent: () => true,
                     registerRedaction: () => undefined,
                     resolvePurposeUse: () => ({ binding, use }),
@@ -1556,6 +2298,53 @@ describe('startDaemonSessionControlRuntime', () => {
         const changedIdentityOldCapability = (
             await readConnectedAccountRequestAuthCapabilityFile(
                 changedIdentityDescriptor.path,
+            )
+        )?.capability;
+        const scopeChangedMaterializationId =
+            'csm_request_auth_scope_changed';
+        const scopeChangedMaterializedRootDir =
+            resolveConnectedServiceMaterializedRootDir({
+                baseDir: materializationBaseDir,
+                agentId: 'opencode',
+                materializationKey: scopeChangedMaterializationId,
+            });
+        await mkdir(scopeChangedMaterializedRootDir, {
+            recursive: true,
+            mode: 0o700,
+        });
+        // The predecessor daemon launched this exact running child under a
+        // narrower request-auth use than the Agent contributes today, so the
+        // replacement's subject scope no longer equals the recovered one.
+        const scopeChangedUse = {
+            purpose,
+            materialization: {
+                kind: 'httpHeaders',
+                origin: 'https://chatgpt.com',
+                headerNames: ['authorization'],
+            },
+        } as const;
+        const scopeChangedDescriptor = await oldRegistry.activate({
+            materializedRootDir: scopeChangedMaterializedRootDir,
+            materializationId: scopeChangedMaterializationId,
+            httpPort: 43210,
+            subject: {
+                subjectId:
+                    'agent-session:session-request-auth-scope-changed',
+                isCurrent: () => true,
+                registerRedaction: () => undefined,
+                resolvePurposeUse: () => ({
+                    binding,
+                    use: scopeChangedUse,
+                }),
+                listPurposeUses: () => [{
+                    binding,
+                    use: scopeChangedUse,
+                }],
+            },
+        });
+        const scopeChangedOldCapability = (
+            await readConnectedAccountRequestAuthCapabilityFile(
+                scopeChangedDescriptor.path,
             )
         )?.capability;
 
@@ -1603,25 +2392,72 @@ describe('startDaemonSessionControlRuntime', () => {
             .mockImplementation(async () => ({
                 registry: {
                     contributes: {
-                        agentDefinitionsById: new Map([['opencode', {
-                            identity: purpose.consumer,
-                            richDefinition: {
-                                definition: {
-                                    connectedAccounts: [{
-                                        purpose: purpose.purpose,
-                                        service:
-                                            binding.target.account.service,
+                        agentDefinitionsById: new Map([
+                            ['opencode', {
+                                identity: purpose.consumer,
+                                richDefinition: {
+                                    definition: {
+                                        connectedAccounts: [{
+                                            purpose: purpose.purpose,
+                                            service:
+                                                binding.target.account.service,
+                                            materializationKinds:
+                                                ['httpHeaders'],
+                                        }],
+                                    },
+                                },
+                                catalogEntry: {
+                                    connectedAccountRequestAuthUses: [{
+                                        purpose: use.purpose.purpose,
+                                        materialization:
+                                            use.materialization,
                                     }],
                                 },
+                            }],
+                            ['pi', {
+                                identity: piPurpose.consumer,
+                                richDefinition: {
+                                    definition: {
+                                        connectedAccounts: [{
+                                            purpose:
+                                                piPurpose.purpose,
+                                            service:
+                                                piBinding.target.account.service,
+                                            materializationKinds:
+                                                ['httpHeaders'],
+                                        }],
+                                    },
+                                },
+                                catalogEntry: {
+                                    connectedAccountRequestAuthUses: [{
+                                        purpose:
+                                            piUse.purpose.purpose,
+                                        materialization:
+                                            piUse.materialization,
+                                    }],
+                                },
+                            }],
+                        ]),
+                        // Both shipped Agents declare legacy service-keyed Connected Services,
+                        // which is what grants the recovered subject legacy compatibility.
+                        catalogEntriesById: {
+                            opencode: {
+                                connectedServiceIds: [
+                                    'openai-codex',
+                                    'openai',
+                                    'claude-subscription',
+                                    'anthropic',
+                                ],
                             },
-                            catalogEntry: {
-                                connectedAccountRequestAuthUses: [{
-                                    purpose: use.purpose.purpose,
-                                    materialization:
-                                        use.materialization,
-                                }],
+                            pi: {
+                                connectedServiceIds: [
+                                    'openai-codex',
+                                    'openai',
+                                    'claude-subscription',
+                                    'anthropic',
+                                ],
                             },
-                        }]]),
+                        },
                     },
                 },
                 source: 'active',
@@ -1636,8 +2472,8 @@ describe('startDaemonSessionControlRuntime', () => {
         const activateSessionPurposeBindings = vi.fn(
             (input: Readonly<{
                 sessionId: string;
-                purposes: readonly typeof purpose[];
-                bindings: readonly typeof binding[];
+                purposes: readonly (typeof purpose | typeof piPurpose)[];
+                bindings: readonly (typeof binding | typeof piBinding)[];
             }>) => {
                 purposeLeaseCurrentBySessionId.set(
                     input.sessionId,
@@ -1651,15 +2487,21 @@ describe('startDaemonSessionControlRuntime', () => {
                     subjectId: `agent-session:${input.sessionId}`,
                     isCurrent,
                     resolvePurposeBinding:
-                        (candidate: typeof purpose) => (
-                            isCurrent()
-                            && JSON.stringify(candidate)
-                                === JSON.stringify(purpose)
-                                ? binding
-                                : null
-                        ),
+                        (candidate: typeof purpose | typeof piPurpose) => {
+                            if (!isCurrent()) return null;
+                            const candidateKey =
+                                JSON.stringify(candidate);
+                            const index = input.purposes.findIndex(
+                                (item) =>
+                                    JSON.stringify(item)
+                                    === candidateKey,
+                            );
+                            return index < 0
+                                ? null
+                                : input.bindings[index] ?? null;
+                        },
                     listPurposeBindings: () => (
-                        isCurrent() ? [binding] : []
+                        isCurrent() ? input.bindings : []
                     ),
                     dispose: () => {
                         disposePurposeLease(input.sessionId);
@@ -1669,9 +2511,12 @@ describe('startDaemonSessionControlRuntime', () => {
         );
         const beforeShutdown = vi.fn(async () => {});
         const previousAttachCleanup = vi.fn(async () => {});
+        const piPreviousAttachCleanup = vi.fn(async () => {});
         const reusedPreviousAttachCleanup =
             vi.fn(async () => {});
         const changedIdentityPreviousAttachCleanup =
+            vi.fn(async () => {});
+        const scopeChangedPreviousAttachCleanup =
             vi.fn(async () => {});
         const reattachedProcessCommand =
             'happier session --existing-session session-request-auth-reattach';
@@ -1735,7 +2580,8 @@ describe('startDaemonSessionControlRuntime', () => {
                 }
                 return {
                     pid,
-                    processStartTimeMs: 1_000,
+                    processStartTimeMs:
+                        pid === piTracked.pid ? 15_000 : 1_000,
                     command: reattachedProcessCommand,
                 };
             },
@@ -1747,6 +2593,8 @@ describe('startDaemonSessionControlRuntime', () => {
             [41, previousAttachCleanup],
             [43, reusedPreviousAttachCleanup],
             [45, changedIdentityPreviousAttachCleanup],
+            [54, piPreviousAttachCleanup],
+            [57, scopeChangedPreviousAttachCleanup],
         ]);
         const tracked: TrackedSession = {
             startedBy: 'daemon',
@@ -1783,6 +2631,32 @@ describe('startDaemonSessionControlRuntime', () => {
                 environmentVariables: {
                     [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]:
                         oldDescriptor.path,
+                },
+            },
+        };
+        const piTracked: TrackedSession = {
+            ...tracked,
+            pid: 54,
+            happySessionId:
+                'session-pi-request-auth-reattach',
+            processStartTimeMs: 15_000,
+            spawnOptions: {
+                ...tracked.spawnOptions!,
+                existingSessionId:
+                    'session-pi-request-auth-reattach',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'pi',
+                    sourceKind: 'built_in',
+                },
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: piMaterializationId,
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+                environmentVariables: {
+                    ...piMaterialization!.env,
                 },
             },
         };
@@ -1858,15 +2732,225 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
             },
         };
+        const scopeChangedTracked: TrackedSession = {
+            ...tracked,
+            pid: 57,
+            happySessionId:
+                'session-request-auth-scope-changed',
+            spawnOptions: {
+                ...tracked.spawnOptions!,
+                existingSessionId:
+                    'session-request-auth-scope-changed',
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: scopeChangedMaterializationId,
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+                environmentVariables: {
+                    [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]:
+                        scopeChangedDescriptor.path,
+                },
+            },
+        };
+        const cutoverProcessCommand =
+            'node /Users/alice/.happier/cli-dev/versions/0.2.10/package-dist/index.mjs opencode --happy-starting-mode remote --started-by daemon';
+        const cutoverTracked: TrackedSession = {
+            ...tracked,
+            pid: 46,
+            happySessionId:
+                'session-request-auth-source-cutover',
+            reattachedInterruptedTurnId:
+                'turn-request-auth-source-cutover',
+            processCommand: cutoverProcessCommand,
+            processCommandHash: createHash('sha256')
+                .update(cutoverProcessCommand)
+                .digest('hex'),
+            processStartTimeMs: 6_000,
+            spawnOptions: {
+                ...tracked.spawnOptions!,
+                existingSessionId:
+                    'session-request-auth-source-cutover',
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: 'csm_request_auth_source_cutover',
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+                environmentVariables: {
+                    HAPPIER_OPENCODE_BROKER_STATE_PATH:
+                        '/tmp/connected-service-broker.state.json',
+                },
+            },
+        };
+        const idlePromptCutoverTracked: TrackedSession = {
+            ...cutoverTracked,
+            pid: 48,
+            happySessionId:
+                'session-request-auth-idle-prompt-cutover',
+            reattachedInterruptedTurnId:
+                'turn-stale-before-idle-witness',
+            processStartTimeMs: 8_000,
+            spawnOptions: {
+                ...cutoverTracked.spawnOptions!,
+                existingSessionId:
+                    'session-request-auth-idle-prompt-cutover',
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: 'csm_request_auth_idle_prompt_cutover',
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+            },
+        };
+        const absentMarkerCutoverTracked: TrackedSession = {
+            ...cutoverTracked,
+            pid: 55,
+            happySessionId:
+                'session-request-auth-absent-marker-cutover',
+            processStartTimeMs: 1_000,
+            spawnOptions: {
+                ...cutoverTracked.spawnOptions!,
+                existingSessionId:
+                    'session-request-auth-absent-marker-cutover',
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: 'csm_request_auth_absent_marker_cutover',
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+            },
+        };
+        delete absentMarkerCutoverTracked.activeTurnId;
+        delete absentMarkerCutoverTracked
+            .reattachedInterruptedTurnId;
+        const failedRespawnCutoverTracked: TrackedSession = {
+            ...cutoverTracked,
+            pid: 50,
+            happySessionId:
+                'session-request-auth-failed-respawn-cutover',
+            reattachedInterruptedTurnId:
+                'turn-request-auth-failed-respawn-cutover',
+            processStartTimeMs: 10_000,
+            spawnOptions: {
+                ...cutoverTracked.spawnOptions!,
+                existingSessionId:
+                    'session-request-auth-failed-respawn-cutover',
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: 'csm_request_auth_failed_respawn_cutover',
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+            },
+        };
+        const racingTurnCutoverTracked: TrackedSession = {
+            ...cutoverTracked,
+            pid: 56,
+            happySessionId:
+                'session-request-auth-racing-turn-cutover',
+            reattachedInterruptedTurnId:
+                'turn-request-auth-racing-turn-cutover',
+            processStartTimeMs: 16_000,
+            spawnOptions: {
+                ...cutoverTracked.spawnOptions!,
+                existingSessionId:
+                    'session-request-auth-racing-turn-cutover',
+                resume: 'remote-predecessor-resume-id',
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: 'csm_request_auth_racing_turn_cutover',
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+            },
+        };
+        const windowsCutoverTracked: TrackedSession = {
+            ...cutoverTracked,
+            pid: 51,
+            happySessionId:
+                'session-request-auth-windows-cutover',
+            reattachedInterruptedTurnId:
+                'turn-request-auth-windows-cutover',
+            processStartTimeMs: 11_000,
+            spawnOptions: {
+                ...cutoverTracked.spawnOptions!,
+                existingSessionId:
+                    'session-request-auth-windows-cutover',
+                windowsRemoteSessionLaunchMode:
+                    'windows_terminal',
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: 'csm_request_auth_windows_cutover',
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+            },
+        };
+        const coldResumeCutoverTracked: TrackedSession = {
+            ...cutoverTracked,
+            pid: 52,
+            happySessionId:
+                'session-request-auth-cold-resume-cutover',
+            reattachedInterruptedTurnId:
+                'turn-request-auth-cold-resume-cutover',
+            processStartTimeMs: 12_000,
+            agentSessionStartupInstructionsMarkerV1: {
+                v: 1,
+                id: 'happier.global_voice_agent',
+                revision: 7,
+            },
+            spawnOptions: {
+                ...cutoverTracked.spawnOptions!,
+                existingSessionId:
+                    'session-request-auth-cold-resume-cutover',
+                connectedServiceMaterializationIdentityV1: {
+                    v: 1,
+                    id: 'csm_request_auth_cold_resume_cutover',
+                    createdAt: 1_000,
+                    source: 'first_spawn',
+                },
+            },
+        };
 
         const pidToTrackedSession =
             new Map<number, TrackedSession>([
                 [tracked.pid, tracked],
+                [piTracked.pid, piTracked],
                 [unprovableTracked.pid, unprovableTracked],
                 [reusedTracked.pid, reusedTracked],
                 [
                     changedIdentityTracked.pid,
                     changedIdentityTracked,
+                ],
+                [
+                    scopeChangedTracked.pid,
+                    scopeChangedTracked,
+                ],
+                [cutoverTracked.pid, cutoverTracked],
+                [
+                    idlePromptCutoverTracked.pid,
+                    idlePromptCutoverTracked,
+                ],
+                [
+                    absentMarkerCutoverTracked.pid,
+                    absentMarkerCutoverTracked,
+                ],
+                [
+                    failedRespawnCutoverTracked.pid,
+                    failedRespawnCutoverTracked,
+                ],
+                [
+                    racingTurnCutoverTracked.pid,
+                    racingTurnCutoverTracked,
+                ],
+                [
+                    windowsCutoverTracked.pid,
+                    windowsCutoverTracked,
+                ],
+                [
+                    coldResumeCutoverTracked.pid,
+                    coldResumeCutoverTracked,
                 ],
             ]);
         const getConnectedServiceCredentialPlain =
@@ -1878,6 +2962,22 @@ describe('startDaemonSessionControlRuntime', () => {
                     v: credential,
                 },
             }));
+        type RespawnOwnerParams =
+            Parameters<
+                typeof sessionRunnerRespawnModule
+                    .createSessionRunnerRespawnManager
+            >[0];
+        const respawnOwnerInputs: RespawnOwnerParams[] = [];
+        const createSessionRunnerRespawnManager =
+            sessionRunnerRespawnModule
+                .createSessionRunnerRespawnManager;
+        const respawnOwnerSpy = vi.spyOn(
+            sessionRunnerRespawnModule,
+            'createSessionRunnerRespawnManager',
+        ).mockImplementation((input) => {
+            respawnOwnerInputs.push(input);
+            return createSessionRunnerRespawnManager(input);
+        });
         try {
             const runtimePromise = startDaemonSessionControlRuntime({
                 machineId: 'machine-1',
@@ -1967,14 +3067,538 @@ describe('startDaemonSessionControlRuntime', () => {
                 command: reattachedProcessCommand,
             });
             const runtime = await runtimePromise;
+            const pidSafetyModule = await import('../pidSafety');
+            plannedRestartPidSafetySpy = vi.spyOn(
+                pidSafetyModule,
+                'isPidSafeHappySessionProcess',
+            ).mockResolvedValue(true);
 
             expect(startDaemonControlServer).toHaveBeenCalledOnce();
             const controlInput = vi
                 .mocked(startDaemonControlServer)
                 .mock.calls.at(-1)?.[0];
+            // Persisted marker absence is ambiguous: daemon A may have crashed
+            // after Provider work began but before recording task_started. Only
+            // the runner-local lifecycle witness may prove a safe boundary.
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).not.toHaveBeenCalled();
+            await expect(
+                controlInput?.handleConnectedServiceTurnLifecycle?.({
+                    sessionId:
+                        'session-request-auth-source-cutover',
+                    event: 'prompt_or_steer',
+                }),
+            ).resolves.toEqual({
+                status: 'input_blocked',
+                reason: 'request_auth_source_cutover',
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).not.toHaveBeenCalled();
+            await expect(
+                controlInput?.handleConnectedServiceTurnLifecycle?.({
+                    sessionId:
+                        'session-request-auth-source-cutover',
+                    event: 'prompt_or_steer',
+                    requestedAction: {
+                        v: 1,
+                        kind: 'steer_now',
+                    },
+                    activeTurnId:
+                        'turn-request-auth-source-cutover',
+                }),
+            ).resolves.toEqual({
+                status: 'continue',
+                turnCustody: {
+                    status: 'recorded',
+                    activeTurnId:
+                        'turn-request-auth-source-cutover',
+                },
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).not.toHaveBeenCalled();
+            expect(
+                resolveSessionRunnerRestartEligibility(
+                    cutoverTracked,
+                ),
+            ).toEqual({
+                eligible: true,
+                disabledReason: null,
+            });
+
+            const terminalCutover =
+                controlInput?.handleConnectedServiceTurnLifecycle?.({
+                    sessionId:
+                        'session-request-auth-source-cutover',
+                    event: 'assistant_message_end',
+                    turnId:
+                        'turn-request-auth-source-cutover',
+                });
+            await vi.waitFor(() => {
+                expect(
+                    requestConnectedServiceSessionRestartSignalMock,
+                ).toHaveBeenCalledOnce();
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).toHaveBeenCalledWith(expect.objectContaining({
+                pid: cutoverTracked.pid,
+                delayMs: 0,
+            }));
+            await expect(Promise.race([
+                Promise.resolve(terminalCutover)
+                    .then(() => 'settled' as const),
+                new Promise<'pending'>((resolve) => {
+                    setImmediate(() => resolve('pending'));
+                }),
+            ])).resolves.toBe('pending');
+
+            const replacementCutoverTracked: TrackedSession = {
+                ...cutoverTracked,
+                pid: 47,
+                processStartTimeMs: 7_000,
+                spawnOptions: {
+                    ...cutoverTracked.spawnOptions!,
+                    environmentVariables: {
+                        [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]:
+                            resolveConnectedAccountRequestAuthCapabilityPath(
+                                resolveConnectedServiceMaterializedRootDir({
+                                    baseDir:
+                                        materializationBaseDir,
+                                    agentId: 'opencode',
+                                    materializationKey:
+                                        'csm_request_auth_source_cutover',
+                                }),
+                            ),
+                    },
+                },
+            };
+            delete replacementCutoverTracked.activeTurnId;
+            delete replacementCutoverTracked
+                .reattachedInterruptedTurnId;
+            pidToTrackedSession.delete(cutoverTracked.pid);
+            pidToTrackedSession.set(
+                replacementCutoverTracked.pid,
+                replacementCutoverTracked,
+            );
+            respawnOwnerInputs.at(-1)?.onRespawnSuccess?.({
+                sessionId:
+                    'session-request-auth-source-cutover',
+                previousPid: cutoverTracked.pid,
+                result: {
+                    type: 'success',
+                    sessionId:
+                        'session-request-auth-source-cutover',
+                },
+            });
+            await expect(terminalCutover).resolves.toEqual({
+                status: 'continue',
+                turnCustody: {
+                    status: 'recorded',
+                    activeTurnId: null,
+                },
+            });
+
+            await expect(
+                controlInput?.handleConnectedServiceTurnLifecycle?.({
+                    sessionId:
+                        'session-request-auth-idle-prompt-cutover',
+                    event: 'task_started',
+                    turnId:
+                        'turn-stale-before-idle-witness',
+                }),
+            ).resolves.toEqual({
+                status: 'continue',
+                turnCustody: {
+                    status: 'recorded',
+                    activeTurnId:
+                        'turn-stale-before-idle-witness',
+                },
+            });
+            const idlePromptCutover =
+                controlInput?.handleConnectedServiceTurnLifecycle?.({
+                    sessionId:
+                        'session-request-auth-idle-prompt-cutover',
+                    event: 'prompt_or_steer',
+                    requestedAction: {
+                        v: 1,
+                        kind: 'enqueue',
+                    },
+                    activeTurnId: null,
+                });
+            await vi.waitFor(() => {
+                expect(
+                    requestConnectedServiceSessionRestartSignalMock,
+                ).toHaveBeenCalledTimes(2);
+            });
+            const idlePromptSignalRequest =
+                requestConnectedServiceSessionRestartSignalMock
+                    .mock.calls.at(-1)?.[0];
+            expect(idlePromptSignalRequest).toBeDefined();
+            expect(
+                await idlePromptSignalRequest?.shouldSignal?.(),
+            ).toBe(true);
+            await expect(Promise.race([
+                Promise.resolve(idlePromptCutover)
+                    .then(() => 'settled' as const),
+                new Promise<'pending'>((resolve) => {
+                    setImmediate(() => resolve('pending'));
+                }),
+            ])).resolves.toBe('pending');
+
+            const replacementIdlePromptTracked: TrackedSession = {
+                ...idlePromptCutoverTracked,
+                pid: 49,
+                processStartTimeMs: 9_000,
+                spawnOptions: {
+                    ...idlePromptCutoverTracked.spawnOptions!,
+                    environmentVariables: {
+                        [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]:
+                            resolveConnectedAccountRequestAuthCapabilityPath(
+                                resolveConnectedServiceMaterializedRootDir({
+                                    baseDir:
+                                        materializationBaseDir,
+                                    agentId: 'opencode',
+                                    materializationKey:
+                                        'csm_request_auth_idle_prompt_cutover',
+                                }),
+                            ),
+                    },
+                },
+            };
+            delete replacementIdlePromptTracked.activeTurnId;
+            delete replacementIdlePromptTracked
+                .reattachedInterruptedTurnId;
+            pidToTrackedSession.delete(
+                idlePromptCutoverTracked.pid,
+            );
+            pidToTrackedSession.set(
+                replacementIdlePromptTracked.pid,
+                replacementIdlePromptTracked,
+            );
+            respawnOwnerInputs.at(-1)?.onRespawnSuccess?.({
+                sessionId:
+                    'session-request-auth-idle-prompt-cutover',
+                previousPid:
+                    idlePromptCutoverTracked.pid,
+                result: {
+                    type: 'success',
+                    sessionId:
+                        'session-request-auth-idle-prompt-cutover',
+                },
+            });
+            await expect(idlePromptCutover).resolves.toEqual({
+                status: 'input_blocked',
+                reason: 'request_auth_source_cutover',
+            });
+
+            for (const blockedTracked of [
+                windowsCutoverTracked,
+                coldResumeCutoverTracked,
+            ]) {
+                await expect(
+                    controlInput
+                        ?.handleConnectedServiceTurnLifecycle?.({
+                            sessionId:
+                                blockedTracked.happySessionId!,
+                            event: 'prompt_or_steer',
+                            requestedAction: {
+                                v: 1,
+                                kind: 'enqueue',
+                            },
+                            activeTurnId: null,
+                        }),
+                ).resolves.toEqual({
+                    status: 'input_blocked',
+                    reason:
+                        'request_auth_source_cutover',
+                });
+            }
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).toHaveBeenCalledTimes(2);
+            expect(
+                windowsCutoverTracked.spawnOptions
+                    ?.windowsRemoteSessionLaunchMode,
+            ).toBe('windows_terminal');
+
+            const failedRespawnCutover =
+                controlInput
+                    ?.handleConnectedServiceTurnLifecycle?.({
+                        sessionId:
+                            failedRespawnCutoverTracked
+                                .happySessionId!,
+                        event: 'prompt_or_steer',
+                        requestedAction: {
+                            v: 1,
+                            kind: 'enqueue',
+                        },
+                        activeTurnId: null,
+                    });
+            await vi.waitFor(() => {
+                expect(
+                    requestConnectedServiceSessionRestartSignalMock,
+                ).toHaveBeenCalledTimes(3);
+            });
+            respawnOwnerInputs.at(-1)?.onRespawnSuccess?.({
+                sessionId:
+                    failedRespawnCutoverTracked.happySessionId!,
+                previousPid:
+                    failedRespawnCutoverTracked.pid,
+                result: {
+                    type: 'success',
+                    sessionId:
+                        failedRespawnCutoverTracked
+                            .happySessionId!,
+                },
+            });
+            await expect(failedRespawnCutover).resolves.toEqual({
+                status: 'input_blocked',
+                reason: 'request_auth_source_cutover',
+            });
+
+            const failedRespawnRetry =
+                controlInput
+                    ?.handleConnectedServiceTurnLifecycle?.({
+                        sessionId:
+                            failedRespawnCutoverTracked
+                                .happySessionId!,
+                        event: 'prompt_or_steer',
+                        requestedAction: {
+                            v: 1,
+                            kind: 'enqueue',
+                        },
+                        activeTurnId: null,
+                    });
+            await new Promise<void>((resolve) => {
+                setImmediate(resolve);
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).toHaveBeenCalledTimes(3);
+
+            requestConnectedServiceSessionRestartSignalMock
+                .mockImplementationOnce(async (input) => {
+                    racingTurnCutoverTracked.activeTurnId =
+                        'turn-started-during-final-signal-gate';
+                    const shouldSignal =
+                        await input.shouldSignal?.();
+                    return shouldSignal === false
+                        ? { status: 'skipped_stale_owner' as const }
+                        : { status: 'requested' as const };
+                });
+            await expect(
+                controlInput
+                    ?.handleConnectedServiceTurnLifecycle?.({
+                        sessionId:
+                            racingTurnCutoverTracked
+                                .happySessionId!,
+                        event: 'assistant_message_end',
+                        turnId:
+                            'turn-request-auth-racing-turn-cutover',
+                    }),
+            ).resolves.toEqual({
+                status: 'continue',
+                turnCustody: {
+                    status: 'recorded',
+                    activeTurnId: null,
+                },
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).toHaveBeenCalledTimes(4);
+            expect(
+                pidToTrackedSession.get(
+                    racingTurnCutoverTracked.pid,
+                ),
+            ).toBe(racingTurnCutoverTracked);
+
+            await expect(
+                controlInput
+                    ?.handleConnectedServiceTurnLifecycle?.({
+                        sessionId:
+                            racingTurnCutoverTracked
+                                .happySessionId!,
+                        event: 'assistant_message_end',
+                        turnId:
+                            'turn-request-auth-racing-turn-cutover',
+                    }),
+            ).resolves.toEqual({
+                status: 'continue',
+                turnCustody: {
+                    status: 'ignored_turn_mismatch',
+                    activeTurnId:
+                        'turn-started-during-final-signal-gate',
+                },
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).toHaveBeenCalledTimes(4);
+
+            const racingTurnTerminal =
+                controlInput
+                    ?.handleConnectedServiceTurnLifecycle?.({
+                        sessionId:
+                            racingTurnCutoverTracked
+                                .happySessionId!,
+                        event: 'assistant_message_end',
+                        turnId:
+                            'turn-started-during-final-signal-gate',
+                    });
+            await new Promise<void>((resolve) => {
+                setImmediate(resolve);
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).toHaveBeenCalledTimes(5);
+            const racingTurnSuccessor: TrackedSession = {
+                ...racingTurnCutoverTracked,
+                pid: 57,
+                processStartTimeMs: 17_000,
+                spawnOptions: {
+                    ...racingTurnCutoverTracked.spawnOptions!,
+                    environmentVariables: {
+                        [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]:
+                            resolveConnectedAccountRequestAuthCapabilityPath(
+                                resolveConnectedServiceMaterializedRootDir({
+                                    baseDir:
+                                        materializationBaseDir,
+                                    agentId: 'opencode',
+                                    materializationKey:
+                                        'csm_request_auth_racing_turn_cutover',
+                                }),
+                            ),
+                    },
+                },
+            };
+            delete racingTurnSuccessor.activeTurnId;
+            delete racingTurnSuccessor
+                .reattachedInterruptedTurnId;
+            pidToTrackedSession.delete(
+                racingTurnCutoverTracked.pid,
+            );
+            pidToTrackedSession.set(
+                racingTurnSuccessor.pid,
+                racingTurnSuccessor,
+            );
+            respawnOwnerInputs.at(-1)?.onRespawnSuccess?.({
+                sessionId:
+                    racingTurnCutoverTracked.happySessionId!,
+                previousPid:
+                    racingTurnCutoverTracked.pid,
+                result: {
+                    type: 'success',
+                    sessionId:
+                        racingTurnCutoverTracked.happySessionId!,
+                },
+            });
+            await expect(racingTurnTerminal).resolves.toEqual({
+                status: 'continue',
+                turnCustody: {
+                    status: 'recorded',
+                    activeTurnId: null,
+                },
+            });
+            expect(
+                racingTurnSuccessor.happySessionId,
+            ).toBe(
+                racingTurnCutoverTracked.happySessionId,
+            );
+            expect(
+                racingTurnSuccessor.spawnOptions?.resume,
+            ).toBe('remote-predecessor-resume-id');
+            expect(executeSpawnSessionRequest)
+                .not.toHaveBeenCalled();
+            await expect(failedRespawnRetry).resolves.toEqual({
+                status: 'input_blocked',
+                reason: 'request_auth_source_cutover',
+            });
+            await expect(
+                controlInput
+                    ?.handleConnectedServiceTurnLifecycle?.({
+                        sessionId:
+                            failedRespawnCutoverTracked
+                                .happySessionId!,
+                        event: 'prompt_or_steer',
+                        requestedAction: {
+                            v: 1,
+                            kind: 'enqueue',
+                        },
+                        activeTurnId: null,
+                    }),
+            ).resolves.toEqual({
+                status: 'input_blocked',
+                reason: 'request_auth_source_cutover',
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).toHaveBeenCalledTimes(5);
+
+            pidToTrackedSession.delete(
+                failedRespawnCutoverTracked.pid,
+            );
+            const failedRespawnSuccessor: TrackedSession = {
+                ...failedRespawnCutoverTracked,
+                pid: 53,
+                processStartTimeMs: 13_000,
+                spawnOptions: {
+                    ...failedRespawnCutoverTracked
+                        .spawnOptions!,
+                    environmentVariables: {
+                        [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]:
+                            resolveConnectedAccountRequestAuthCapabilityPath(
+                                resolveConnectedServiceMaterializedRootDir({
+                                    baseDir:
+                                        materializationBaseDir,
+                                    agentId: 'opencode',
+                                    materializationKey:
+                                        'csm_request_auth_failed_respawn_cutover',
+                                }),
+                            ),
+                    },
+                },
+            };
+            delete failedRespawnSuccessor.activeTurnId;
+            delete failedRespawnSuccessor
+                .reattachedInterruptedTurnId;
+            pidToTrackedSession.set(
+                failedRespawnSuccessor.pid,
+                failedRespawnSuccessor,
+            );
+            await expect(
+                controlInput
+                    ?.handleConnectedServiceTurnLifecycle?.({
+                        sessionId:
+                            failedRespawnSuccessor
+                                .happySessionId!,
+                        event: 'prompt_or_steer',
+                        requestedAction: {
+                            v: 1,
+                            kind: 'enqueue',
+                        },
+                        activeTurnId: null,
+                    }),
+            ).resolves.toEqual({
+                status: 'continue',
+                turnCustody: {
+                    status:
+                        'ignored_missing_exact_turn',
+                    activeTurnId: null,
+                },
+            });
+            expect(
+                requestConnectedServiceSessionRestartSignalMock,
+            ).toHaveBeenCalledTimes(5);
+
             const replacementDocument =
                 await readConnectedAccountRequestAuthCapabilityFile(
                     oldDescriptor.path,
+                );
+            const replacementPiDocument =
+                await readConnectedAccountRequestAuthCapabilityFile(
+                    oldPiDescriptor.path,
                 );
             expect(oldDescriptor.path).toBe(
                 resolveConnectedAccountRequestAuthCapabilityPath(
@@ -1983,8 +3607,13 @@ describe('startDaemonSessionControlRuntime', () => {
             );
             expect(replacementDocument?.capability)
                 .not.toBe(oldCapability);
+            expect(oldPiDescriptor.path).toBe(piCapabilityPath);
+            expect(replacementPiDocument?.capability)
+                .not.toBe(oldPiCapability);
             expect(controlInput?.connectedAccountRequestAuth
                 ?.authenticate(oldCapability)).toBeNull();
+            expect(controlInput?.connectedAccountRequestAuth
+                ?.authenticate(oldPiCapability)).toBeNull();
             expect(controlInput?.connectedAccountRequestAuth
                 ?.authenticate(
                     unprovableOldCapability,
@@ -2004,6 +3633,26 @@ describe('startDaemonSessionControlRuntime', () => {
                     changedIdentityDescriptor.path,
                 ),
             ).toBeNull();
+            // Recovering an authority whose subject scope no longer equals the
+            // one the running child was launched under must refuse instead of
+            // committing credentials across the changed scope.
+            expect(
+                await readConnectedAccountRequestAuthCapabilityFile(
+                    scopeChangedDescriptor.path,
+                ),
+            ).toBeNull();
+            expect(controlInput?.connectedAccountRequestAuth
+                ?.authenticate(
+                    scopeChangedOldCapability,
+                )).toBeNull();
+            expect(
+                sessionAttachCleanupByPid.get(
+                    scopeChangedTracked.pid,
+                ),
+            ).toBe(scopeChangedPreviousAttachCleanup);
+            expect(disposePurposeLease).toHaveBeenCalledWith(
+                'session-request-auth-scope-changed',
+            );
             const replacementPrincipal =
                 controlInput?.connectedAccountRequestAuth
                     ?.authenticate(
@@ -2011,19 +3660,28 @@ describe('startDaemonSessionControlRuntime', () => {
                     );
             expect(replacementPrincipal).toMatchObject({
                 subjectId:
-                    'agent-session:session-request-auth-reattach/agent:opencode',
+                    'agent-session:session-request-auth-reattach',
+                legacyServiceKeyedCompatibility: true,
+            });
+            expect(controlInput?.connectedAccountRequestAuth
+                ?.authenticate(
+                    replacementPiDocument?.capability,
+                )).toMatchObject({
+                subjectId:
+                    'agent-session:session-pi-request-auth-reattach',
+                legacyServiceKeyedCompatibility: true,
             });
             expect(getConnectedServiceCredentialPlain)
                 .not.toHaveBeenCalled();
             const profileFetchesBeforeLookup =
                 fetchAccountProfile.mock.calls.length;
-            await expect(
-                controlInput?.connectedAccountRequestAuth
+            const replacementRequestAuthLease =
+                await controlInput?.connectedAccountRequestAuth
                     ?.lookupRequestAuth({
                         subject: replacementPrincipal!,
                         purpose,
-                    }),
-            ).resolves.toMatchObject({
+                    });
+            expect(replacementRequestAuthLease).toMatchObject({
                 accessToken: 'rotated-daemon-access-token',
                 requiredHeaders: {
                     'chatgpt-account-id': 'account-primary',
@@ -2035,6 +3693,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     credentialRevision,
                 },
             });
+            expect(replacementRequestAuthLease)
+                .not.toHaveProperty('legacyServiceKeyedCompatibility');
             expect(fetchAccountProfile.mock.calls.length)
                 .toBeGreaterThanOrEqual(
                     Math.max(1, profileFetchesBeforeLookup),
@@ -2056,27 +3716,32 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             expect(
                 activateSessionPurposeBindings,
-            ).toHaveBeenCalledTimes(3);
-            expect(findHappyProcessByPidFn)
-                .toHaveBeenCalledTimes(3);
+            ).toHaveBeenCalledWith({
+                sessionId:
+                    'session-pi-request-auth-reattach',
+                purposes: [piPurpose],
+                bindings: [piBinding],
+            });
+            expect(
+                activateSessionPurposeBindings,
+            ).toHaveBeenCalledTimes(5);
             expect(readProcessIdentityByPidFn)
-                .toHaveBeenCalledTimes(3);
-            expect(findHappyProcessByPidFn)
+                .toHaveBeenCalledTimes(5);
+            // Every reattached record carries a process birth, so exact process generation is the
+            // safety linearization point and the command-classification lookup must stay unused.
+            expect(findHappyProcessByPidFn).not.toHaveBeenCalled();
+            expect(readProcessIdentityByPidFn)
                 .toHaveBeenCalledWith(tracked.pid);
-            expect(findHappyProcessByPidFn)
+            expect(readProcessIdentityByPidFn)
                 .toHaveBeenCalledWith(reusedInitialPid);
             expect(readProcessIdentityByPidFn)
-                .toHaveBeenCalledWith(tracked.pid);
+                .toHaveBeenCalledWith(piTracked.pid);
             expect(readProcessIdentityByPidFn)
-                .toHaveBeenCalledWith(reusedInitialPid);
-            expect(findHappyProcessByPidFn)
                 .toHaveBeenCalledWith(
                     changedIdentityTracked.pid,
                 );
             expect(readProcessIdentityByPidFn)
-                .toHaveBeenCalledWith(
-                    changedIdentityTracked.pid,
-                );
+                .toHaveBeenCalledWith(scopeChangedTracked.pid);
             expect(controlInput?.connectedAccountRequestAuth
                 ?.authenticate(
                     stagedReusedDocument?.capability,
@@ -2120,20 +3785,34 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(pidToTrackedSession.get(tracked.pid))
                 .toBe(tracked);
             expect(tracked.pid).toBe(41);
+            expect(pidToTrackedSession.get(piTracked.pid))
+                .toBe(piTracked);
+            expect(piTracked.pid).toBe(54);
+            expect(piTracked.processStartTimeMs).toBe(15_000);
             expect(executeSpawnSessionRequest)
                 .not.toHaveBeenCalled();
 
             const replacementCleanup =
                 sessionAttachCleanupByPid.get(tracked.pid);
+            const piReplacementCleanup =
+                sessionAttachCleanupByPid.get(piTracked.pid);
             expect(replacementCleanup)
                 .not.toBe(previousAttachCleanup);
-            expect(sessionAttachCleanupByPid.size).toBe(3);
+            expect(piReplacementCleanup)
+                .not.toBe(piPreviousAttachCleanup);
+            expect(sessionAttachCleanupByPid.size).toBe(5);
             await replacementCleanup?.();
             await replacementCleanup?.();
+            await piReplacementCleanup?.();
+            await piReplacementCleanup?.();
             expect(previousAttachCleanup).toHaveBeenCalledOnce();
-            expect(disposePurposeLease).toHaveBeenCalledTimes(3);
+            expect(piPreviousAttachCleanup).toHaveBeenCalledOnce();
+            expect(disposePurposeLease).toHaveBeenCalledTimes(5);
             expect(disposePurposeLease).toHaveBeenCalledWith(
                 'session-request-auth-reattach',
+            );
+            expect(disposePurposeLease).toHaveBeenCalledWith(
+                'session-pi-request-auth-reattach',
             );
             expect(
                 purposeLeaseCurrentBySessionId.get(
@@ -2144,82 +3823,24 @@ describe('startDaemonSessionControlRuntime', () => {
                 ?.authenticate(
                     replacementDocument?.capability,
                 )).toBeNull();
+            expect(controlInput?.connectedAccountRequestAuth
+                ?.authenticate(
+                    replacementPiDocument?.capability,
+                )).toBeNull();
             expect(pidToTrackedSession.get(tracked.pid))
                 .toBe(tracked);
 
-            await controlInput?.beforeShutdown?.({
-                managedLocalServicesDisposition: 'transfer',
-            });
-            expect(beforeShutdown).toHaveBeenCalledWith({
-                managedLocalServicesDisposition: 'transfer',
-            });
+            await controlInput?.beforeShutdown?.();
+            expect(beforeShutdown).toHaveBeenCalledOnce();
             await runtime.stopControlServer();
         } finally {
+            plannedRestartPidSafetySpy?.mockRestore();
+            respawnOwnerSpy.mockRestore();
             fetchAccountProfile.mockRestore();
             await rm(materializationBaseDir, {
                 recursive: true,
                 force: true,
             });
-        }
-    });
-
-    it('threads one request-auth registry through control routes and managed Provider launch', async () => {
-        const runtime = await startDaemonSessionControlRuntime({
-            machineId: 'machine-1',
-            credentials: {
-                token: 'token-daemon',
-                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
-            },
-            api: {} as never,
-            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
-            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
-            getConnectedServiceRefreshCoordinator: () => null,
-            getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
-            beforeShutdown: vi.fn(),
-            onHappySessionWebhook: vi.fn(),
-            requestShutdown: vi.fn(),
-            processEnv: {},
-        });
-
-        try {
-            const controlInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
-            expect(controlInput?.connectedAccountRequestAuth).toEqual(expect.objectContaining({
-                authenticate: expect.any(Function),
-                lookupRequestAuth: expect.any(Function),
-                refreshAfterAuthFailure: expect.any(Function),
-                reportQuotaFailure: expect.any(Function),
-            }));
-
-            await runtime.spawnSession({
-                directory: '/tmp/project',
-                backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            });
-            const spawnInput = vi.mocked(executeSpawnSessionRequest).mock.calls.at(-1)?.[0];
-            const managedRuntime = spawnInput?.managedProviderEndpointRuntime;
-            expect(managedRuntime).toEqual(expect.objectContaining({
-                materializationBaseDir:
-                    '/tmp/happier-test-home/providers/managed',
-                requestAuthRegistry: expect.objectContaining({
-                    activate: expect.any(Function),
-                    retire: expect.any(Function),
-                }),
-            }));
-            const registry = managedRuntime?.requestAuthRegistry as Readonly<{
-                authenticate?: unknown;
-            }> | undefined;
-            expect(registry?.authenticate).toBe(
-                controlInput?.connectedAccountRequestAuth?.authenticate,
-            );
-        } finally {
-            await runtime.stopControlServer();
         }
     });
 
@@ -2266,6 +3887,7 @@ describe('startDaemonSessionControlRuntime', () => {
                             accountId: 'primary',
                         },
                         credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+                        legacyServiceKeyedCompatibility: true,
                     },
                     failure: {
                         class: 'authentication',
@@ -2276,6 +3898,7 @@ describe('startDaemonSessionControlRuntime', () => {
                             evidenceSource: { kind: 'structured' },
                         },
                     },
+                    signal: new AbortController().signal,
                 });
 
             expect(refreshConnectedServiceCredentialForQuota).toHaveBeenCalledOnce();
@@ -2289,6 +3912,627 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(requestAuthSwitchAfterClassifiedFailureMock).not.toHaveBeenCalled();
             expect(handleConnectedServiceRuntimeAuthFailureForSessionMock).not.toHaveBeenCalled();
             expect(sendSessionMessageMock).not.toHaveBeenCalled();
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('routes a manifest-qualified external group through the qualified 401 and quota recovery owner', async () => {
+        const binding = {
+            purpose: {
+                consumer: {
+                    pluginId: 'acme.agent',
+                    localId: 'external-agent',
+                },
+                purpose: 'upstream-request',
+            },
+            target: {
+                kind: 'group' as const,
+                service: {
+                    pluginId: 'acme.connected-accounts',
+                    localId: 'subscription',
+                },
+                groupId: 'fallbacks',
+            },
+        };
+        const primary = {
+            account: {
+                service: binding.target.service,
+                accountId: 'external-primary',
+            },
+            group: {
+                groupId: 'fallbacks',
+                generation: 7,
+            },
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        } as const;
+        const firstRecoverySuccessor = {
+            account: {
+                service: binding.target.service,
+                accountId: 'external-backup',
+            },
+            group: {
+                groupId: 'fallbacks',
+                generation: 8,
+            },
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        } as const;
+        const quotaRecoverySuccessor = {
+            account: {
+                service: binding.target.service,
+                accountId: 'external-tertiary',
+            },
+            group: {
+                groupId: 'fallbacks',
+                generation: 9,
+            },
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        } as const;
+        let current:
+            | typeof primary
+            | typeof firstRecoverySuccessor
+            | typeof quotaRecoverySuccessor = primary;
+        const use = {
+            purpose: binding.purpose,
+            materialization: {
+                kind: 'httpHeaders' as const,
+                origin: 'https://api.example.test',
+                headerNames: ['authorization'],
+            },
+        };
+        const resolveCurrentRequestAuthBinding = vi.fn(async () => ({
+            ...current,
+            legacyServiceKeyedCompatibility: true as const,
+        }));
+        const materializeRequestAuthBearer = vi.fn<
+            ConnectedAccountPurposeBindingOwner['materializeRequestAuthBearer']
+        >(async ({ resolved }) => ({ accessToken: `qualified-${resolved.account.accountId}` }));
+        const refreshConnectedServiceCredentialForQuota = vi.fn();
+        const refreshQualifiedConnectedAccountCredentialForRequestAuth = vi.fn(
+            async () => false,
+        );
+        qualifiedRequestAuthSwitchAfterClassifiedFailureMock
+            .mockImplementationOnce(async () => {
+                current = firstRecoverySuccessor;
+                return { status: 'switched' };
+            })
+            .mockImplementationOnce(async () => {
+                current = quotaRecoverySuccessor;
+                return { status: 'switched' };
+            });
+        const fetchAccountProfile = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: { id: 'external-request-auth-account' },
+        });
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: {
+                token: 'token-daemon',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => ({
+                refreshConnectedServiceCredentialForQuota,
+                refreshQualifiedConnectedAccountCredentialForRequestAuth,
+            }) as never,
+            getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+            resolveCurrentRequestAuthBinding,
+            materializeRequestAuthBearer,
+        });
+
+        try {
+            const dependencies = connectedAccountRequestAuthServiceDependenciesCapture.current;
+            if (!dependencies) throw new Error('Expected request-auth broker dependencies');
+            const externalSubject = {
+                subjectId: 'agent-session:external',
+                isCurrent: () => true,
+                registerRedaction: () => undefined,
+                resolvePurposeUse: (candidate) => (
+                    JSON.stringify(candidate) === JSON.stringify(binding.purpose)
+                        ? { binding, use }
+                        : null
+                ),
+                listPurposeUses: () => [{ binding, use }],
+            } satisfies ConnectedAccountRequestAuthSubject;
+            await expect(dependencies.resolveCurrentBinding({
+                subject: externalSubject,
+                binding,
+                signal: new AbortController().signal,
+            })).resolves.toEqual(primary);
+            expect(resolveCurrentRequestAuthBinding).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    subjectId: 'agent-session:external',
+                    binding,
+                }),
+            );
+            const controlInput = vi
+                .mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0];
+            const requestAuth = controlInput?.connectedAccountRequestAuth;
+            if (!requestAuth) {
+                throw new Error('Expected request-auth control service');
+            }
+            const publicLease = await requestAuth.lookupRequestAuth({
+                subject: externalSubject,
+                purpose: binding.purpose,
+            });
+            expect(publicLease).toMatchObject({
+                accessToken: 'qualified-external-primary',
+                credentialContext: primary,
+            });
+            expect(publicLease).not.toHaveProperty(
+                'legacyServiceKeyedCompatibility',
+            );
+            expect(publicLease.credentialContext).not.toHaveProperty(
+                'legacyServiceKeyedCompatibility',
+            );
+            expect(materializeRequestAuthBearer).toHaveBeenCalledWith(
+                expect.objectContaining({ binding }),
+            );
+            expect(
+                materializeRequestAuthBearer.mock.calls.at(-1)?.[0]?.resolved,
+            ).toEqual(primary);
+            await expect(requestAuth.refreshAfterAuthFailure({
+                subject: externalSubject,
+                request: {
+                    credentialContext: publicLease.credentialContext,
+                    normalizedFailure: {
+                        class: 'authentication',
+                        evidence: {
+                            httpStatus: 401,
+                            limitCategory: 'auth_invalid',
+                            quotaScope: 'unknown',
+                            evidenceSource: { kind: 'structured' },
+                        },
+                    },
+                },
+            })).resolves.toEqual({ status: 'stale_context' });
+            const quotaLease = await requestAuth.lookupRequestAuth({
+                subject: externalSubject,
+                purpose: binding.purpose,
+            });
+            expect(quotaLease).toMatchObject({
+                accessToken: 'qualified-external-backup',
+                credentialContext: firstRecoverySuccessor,
+            });
+            await expect(requestAuth.reportQuotaFailure({
+                subject: externalSubject,
+                request: {
+                    credentialContext: quotaLease.credentialContext,
+                    normalizedFailure: {
+                        class: 'quota',
+                        evidence: {
+                            httpStatus: 429,
+                            limitCategory: 'usage_limit',
+                            quotaScope: 'account',
+                            evidenceSource: { kind: 'structured' },
+                        },
+                    },
+                },
+            })).resolves.toEqual({ status: 'stale_context' });
+            expect(qualifiedRequestAuthSwitchAfterClassifiedFailureMock)
+                .toHaveBeenCalledTimes(2);
+            for (const callIndex of [1, 2] as const) {
+                expect(qualifiedRequestAuthSwitchAfterClassifiedFailureMock)
+                    .toHaveBeenNthCalledWith(callIndex, expect.objectContaining({
+                        serviceId: binding.target.service,
+                        groupId: 'fallbacks',
+                    }));
+            }
+            expect(refreshConnectedServiceCredentialForQuota).not.toHaveBeenCalled();
+            expect(refreshQualifiedConnectedAccountCredentialForRequestAuth)
+                .toHaveBeenCalledWith({
+                    account: primary.account,
+                    expectedCredentialRevision: primary.credentialRevision,
+                });
+            expect(requestAuthSwitchAfterClassifiedFailureMock).not.toHaveBeenCalled();
+            expect(fetchAccountProfile).not.toHaveBeenCalled();
+        } finally {
+            fetchAccountProfile.mockRestore();
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('keeps a genuine qualified currentness change replayable but rejects an operational resolver failure', async () => {
+        const binding = {
+            purpose: {
+                consumer: {
+                    pluginId: 'acme.agent',
+                    localId: 'external-agent',
+                },
+                purpose: 'upstream-request',
+            },
+            target: {
+                kind: 'account' as const,
+                account: {
+                    service: {
+                        pluginId: 'acme.connected-accounts',
+                        localId: 'subscription',
+                    },
+                    accountId: 'external-primary',
+                },
+            },
+        };
+        const initial = {
+            account: binding.target.account,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        } as const;
+        const replaced = {
+            account: binding.target.account,
+            credentialRevision: 'csr_123456789ABCDEFGHJKMNPQRS',
+        } as const;
+        let current: typeof initial | typeof replaced = initial;
+        let resolverOperational = true;
+        const resolveCurrentRequestAuthBinding = vi.fn(async () => {
+            if (!resolverOperational) {
+                throw new Error('temporary request-auth currentness resolver outage');
+            }
+            return current;
+        });
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: {
+                token: 'token-daemon',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+            resolveCurrentRequestAuthBinding,
+            materializeRequestAuthBearer: vi.fn(async () => ({
+                accessToken: 'qualified-primary',
+            })),
+        });
+
+        try {
+            const controlInput = vi
+                .mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0];
+            const requestAuth = controlInput?.connectedAccountRequestAuth;
+            if (!requestAuth) throw new Error('Expected request-auth control service');
+            const use = {
+                purpose: binding.purpose,
+                materialization: {
+                    kind: 'httpHeaders' as const,
+                    origin: 'https://api.example.test',
+                    headerNames: ['authorization'],
+                },
+            };
+            const subject = {
+                subjectId: 'agent-session:external-resolver-currentness',
+                isCurrent: () => true,
+                registerRedaction: () => undefined,
+                resolvePurposeUse: (candidate) => (
+                    JSON.stringify(candidate) === JSON.stringify(binding.purpose)
+                        ? { binding, use }
+                        : null
+                ),
+                listPurposeUses: () => [{ binding, use }],
+            } satisfies ConnectedAccountRequestAuthSubject;
+            const lease = await requestAuth.lookupRequestAuth({
+                subject,
+                purpose: binding.purpose,
+            });
+            const request = {
+                credentialContext: lease.credentialContext,
+                normalizedFailure: {
+                    class: 'authentication' as const,
+                    evidence: {
+                        httpStatus: 401,
+                        limitCategory: 'auth_invalid' as const,
+                        quotaScope: 'unknown' as const,
+                        evidenceSource: { kind: 'structured' as const },
+                    },
+                },
+            };
+
+            current = replaced;
+            await expect(requestAuth.refreshAfterAuthFailure({ subject, request }))
+                .resolves.toEqual({ status: 'stale_context' });
+
+            current = initial;
+            resolverOperational = false;
+            await expect(requestAuth.refreshAfterAuthFailure({ subject, request }))
+                .rejects.toMatchObject({ code: 'request_auth_binding_unavailable' });
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('refreshes a novel manifest-qualified direct account at its exact credential revision after a 401', async () => {
+        const binding = {
+            purpose: {
+                consumer: {
+                    pluginId: 'acme.agent',
+                    localId: 'external-agent',
+                },
+                purpose: 'upstream-request',
+            },
+            target: {
+                kind: 'account' as const,
+                account: {
+                    service: {
+                        pluginId: 'acme.connected-accounts',
+                        localId: 'subscription',
+                    },
+                    accountId: 'external-primary',
+                },
+            },
+        };
+        const initial = {
+            account: binding.target.account,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        } as const;
+        const refreshed = {
+            account: binding.target.account,
+            credentialRevision: 'csr_123456789ABCDEFGHJKMNPQRS',
+        } as const;
+        let current: typeof initial | typeof refreshed = initial;
+        const refreshQualifiedConnectedAccountCredentialForRequestAuth = vi.fn(
+            async (input: Readonly<{
+                account: typeof binding.target.account;
+                expectedCredentialRevision: string;
+            }>) => {
+                expect(input).toEqual({
+                    account: initial.account,
+                    expectedCredentialRevision: initial.credentialRevision,
+                });
+                current = refreshed;
+                return true;
+            },
+        );
+        const resolveCurrentRequestAuthBinding = vi.fn(async () => current);
+        const materializeRequestAuthBearer = vi.fn<
+            ConnectedAccountPurposeBindingOwner['materializeRequestAuthBearer']
+        >(async ({ resolved }) => ({
+            accessToken: `qualified-${resolved.credentialRevision}`,
+        }));
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: {
+                token: 'token-daemon',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => ({
+                refreshQualifiedConnectedAccountCredentialForRequestAuth,
+            }) as never,
+            getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+            resolveCurrentRequestAuthBinding,
+            materializeRequestAuthBearer,
+        });
+
+        try {
+            const controlInput = vi
+                .mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0];
+            const requestAuth = controlInput?.connectedAccountRequestAuth;
+            if (!requestAuth) throw new Error('Expected request-auth control service');
+            const use = {
+                purpose: binding.purpose,
+                materialization: {
+                    kind: 'httpHeaders' as const,
+                    origin: 'https://api.example.test',
+                    headerNames: ['authorization'],
+                },
+            };
+            const subject = {
+                subjectId: 'agent-session:external-direct-refresh',
+                isCurrent: () => true,
+                registerRedaction: () => undefined,
+                resolvePurposeUse: (candidate) => (
+                    JSON.stringify(candidate) === JSON.stringify(binding.purpose)
+                        ? { binding, use }
+                        : null
+                ),
+                listPurposeUses: () => [{ binding, use }],
+            } satisfies ConnectedAccountRequestAuthSubject;
+            const initialLease = await requestAuth.lookupRequestAuth({
+                subject,
+                purpose: binding.purpose,
+            });
+            expect(initialLease.credentialContext).toMatchObject(initial);
+
+            await expect(requestAuth.refreshAfterAuthFailure({
+                subject,
+                request: {
+                    credentialContext: initialLease.credentialContext,
+                    normalizedFailure: {
+                        class: 'authentication',
+                        evidence: {
+                            httpStatus: 401,
+                            limitCategory: 'auth_invalid',
+                            quotaScope: 'unknown',
+                            evidenceSource: { kind: 'structured' },
+                        },
+                    },
+                },
+            })).resolves.toEqual({ status: 'stale_context' });
+            expect(refreshQualifiedConnectedAccountCredentialForRequestAuth)
+                .toHaveBeenCalledOnce();
+            expect(qualifiedRequestAuthSwitchAfterClassifiedFailureMock)
+                .not.toHaveBeenCalled();
+            expect(requestAuthSwitchAfterClassifiedFailureMock)
+                .not.toHaveBeenCalled();
+
+            await expect(requestAuth.lookupRequestAuth({
+                subject,
+                purpose: binding.purpose,
+            })).resolves.toMatchObject({
+                accessToken: `qualified-${refreshed.credentialRevision}`,
+                credentialContext: refreshed,
+            });
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('records a provider-scoped rate limit for a novel manifest-qualified direct account without switching it', async () => {
+        const binding = {
+            purpose: {
+                consumer: {
+                    pluginId: 'acme.agent',
+                    localId: 'external-agent',
+                },
+                purpose: 'upstream-request',
+            },
+            target: {
+                kind: 'account' as const,
+                account: {
+                    service: {
+                        pluginId: 'acme.connected-accounts',
+                        localId: 'subscription',
+                    },
+                    accountId: 'external-primary',
+                },
+            },
+        };
+        const resolved = {
+            account: binding.target.account,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        } as const;
+        const recordQualifiedRequestAuthProviderBackoff = vi.fn(() => ({
+            status: 'recorded' as const,
+            consecutiveFailures: 1,
+            nextAllowedAtMs: 10_500,
+        }));
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: {
+                token: 'token-daemon',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => ({
+                recordQualifiedRequestAuthProviderBackoff,
+            }) as never,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+            resolveCurrentRequestAuthBinding: vi.fn(async () => resolved),
+            materializeRequestAuthBearer: vi.fn(async () => ({
+                accessToken: 'qualified-primary',
+            })),
+        });
+
+        try {
+            const controlInput = vi
+                .mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0];
+            const requestAuth = controlInput?.connectedAccountRequestAuth;
+            if (!requestAuth) throw new Error('Expected request-auth control service');
+            const use = {
+                purpose: binding.purpose,
+                materialization: {
+                    kind: 'httpHeaders' as const,
+                    origin: 'https://api.example.test',
+                    headerNames: ['authorization'],
+                },
+            };
+            const subject = {
+                subjectId: 'agent-session:external-direct-backoff',
+                isCurrent: () => true,
+                registerRedaction: () => undefined,
+                resolvePurposeUse: (candidate) => (
+                    JSON.stringify(candidate) === JSON.stringify(binding.purpose)
+                        ? { binding, use }
+                        : null
+                ),
+                listPurposeUses: () => [{ binding, use }],
+            } satisfies ConnectedAccountRequestAuthSubject;
+            const lease = await requestAuth.lookupRequestAuth({
+                subject,
+                purpose: binding.purpose,
+            });
+
+            await expect(requestAuth.reportQuotaFailure({
+                subject,
+                request: {
+                    credentialContext: lease.credentialContext,
+                    normalizedFailure: {
+                        class: 'quota',
+                        evidence: {
+                            httpStatus: 429,
+                            retryAfterMs: 500,
+                            limitCategory: 'rate_limit',
+                            quotaScope: 'provider',
+                            evidenceSource: { kind: 'structured' },
+                        },
+                    },
+                },
+            })).resolves.toEqual({ status: 'current_unchanged' });
+            expect(recordQualifiedRequestAuthProviderBackoff).toHaveBeenCalledWith({
+                account: resolved.account,
+                groupId: null,
+                groupGeneration: null,
+                limitCategory: 'rate_limit',
+                quotaScope: 'provider',
+                retryAfterMs: 500,
+                resetAtMs: null,
+                providerCode: null,
+            });
+            expect(qualifiedRequestAuthSwitchAfterClassifiedFailureMock)
+                .not.toHaveBeenCalled();
+            expect(requestAuthSwitchAfterClassifiedFailureMock)
+                .not.toHaveBeenCalled();
         } finally {
             await runtime.stopControlServer();
         }
@@ -2387,6 +4631,7 @@ describe('startDaemonSessionControlRuntime', () => {
                         },
                         credentialRevision:
                             'csr_0123456789ABCDEFGHJKMNPQRS',
+                        legacyServiceKeyedCompatibility: true,
                     },
                     failure: {
                         class: 'quota',
@@ -2399,6 +4644,7 @@ describe('startDaemonSessionControlRuntime', () => {
                             },
                         },
                     },
+                    signal: new AbortController().signal,
                 });
 
             expect(
@@ -2425,6 +4671,119 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(
                 requestAuthSwitchAfterClassifiedFailureMock,
             ).toHaveBeenCalledTimes(legacyCalls);
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('routes a legacy-classified runtime failure through the qualified V4 group owner when V4 is advertised', async () => {
+        // This dispatch assertion deliberately has no persisted session context: the
+        // coordinator choice is made from the classified runtime failure and V4 support,
+        // not from an Agent catalog lookup.
+        fetchSessionByIdCompatMock.mockResolvedValue(null);
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {
+                getConnectedServiceAuthGroup: vi.fn(async () => null),
+                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
+            } as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir:
+                '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            resolveQualifiedConnectedAccountV4Support: () =>
+                'advertised',
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock
+                .mockClear();
+            createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock
+                .mockClear();
+            qualifiedRequestAuthSwitchAfterClassifiedFailureMock.mockClear();
+            handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
+
+            const controlServerInput = vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0];
+            await controlServerInput?.handleConnectedServiceRuntimeAuthFailure?.({
+                sessionId: 'sess-qualified-runtime-recovery',
+                switchesThisTurn: 0,
+                classification: {
+                    kind: 'usage_limit',
+                    serviceId: 'openai-codex',
+                    profileId: 'primary',
+                    groupId: 'fallbacks',
+                    resetsAtMs: null,
+                    planType: null,
+                    rateLimits: null,
+                    source: 'structured_provider_error',
+                },
+            });
+
+            expect(
+                createDaemonConnectedServiceAuthGroupSwitchCoordinatorMock,
+            ).not.toHaveBeenCalled();
+            expect(
+                createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock,
+            ).toHaveBeenCalledOnce();
+            const qualifiedCoordinator =
+                createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinatorMock
+                    .mock.results.at(-1)?.value;
+            const runtimeHandlerInput =
+                handleConnectedServiceRuntimeAuthFailureForSessionMock
+                    .mock.calls.at(-1)?.[0] as {
+                        switchCoordinator?: {
+                            switchAfterClassifiedFailure(input: Readonly<{
+                                serviceId: string;
+                                groupId: string;
+                                observedProfileId: string;
+                                reason: string;
+                                switchesThisTurn: number;
+                            }>): Promise<unknown>;
+                        } | null;
+                    } | undefined;
+            expect(runtimeHandlerInput?.switchCoordinator).toBeDefined();
+            expect(runtimeHandlerInput?.switchCoordinator).not.toBe(
+                qualifiedCoordinator,
+            );
+            await runtimeHandlerInput?.switchCoordinator
+                ?.switchAfterClassifiedFailure({
+                    serviceId: 'openai-codex',
+                    groupId: 'fallbacks',
+                    observedProfileId: 'primary',
+                    reason: 'usage_limit',
+                    switchesThisTurn: 0,
+                });
+            expect(
+                qualifiedRequestAuthSwitchAfterClassifiedFailureMock,
+            ).toHaveBeenLastCalledWith(expect.objectContaining({
+                serviceId: {
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                },
+                groupId: 'fallbacks',
+                observedProfileId: 'primary',
+            }));
         } finally {
             await runtime.stopControlServer();
         }
@@ -2484,6 +4843,7 @@ describe('startDaemonSessionControlRuntime', () => {
                         generation: 7,
                     },
                     credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+                    legacyServiceKeyedCompatibility: true,
                 },
                 failure: {
                     class: 'quota',
@@ -2495,6 +4855,7 @@ describe('startDaemonSessionControlRuntime', () => {
                         evidenceSource: { kind: 'structured' },
                     },
                 },
+                signal: new AbortController().signal,
             } as const;
 
             await expect(
@@ -2699,6 +5060,14 @@ describe('startDaemonSessionControlRuntime', () => {
             id: 'sess-runtime',
             encryptionMode: 'plain',
         }));
+        fetchAccountEncryptionCurrentnessMock.mockReset();
+        fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+            mode: 'plain',
+            version: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: null,
+            updatedAt: 1,
+        });
         resetFetchSessionByIdCompatMock();
         updateSessionMetadataWithRetryMock.mockReset();
         updateSessionMetadataWithRetryMock.mockImplementation(async ({ updater }: {
@@ -2721,8 +5090,10 @@ describe('startDaemonSessionControlRuntime', () => {
         listExecutionRunMarkersForRehydrationMock.mockResolvedValue([]);
         isRuntimeRegistryCurrentMock.mockReset();
         isRuntimeRegistryCurrentMock.mockReturnValue(true);
+        pluginReloadListenersMock.clear();
+        pluginRunningSessionDispositionListenersMock.clear();
+        pluginReloadStateMock.activeRegistry = null;
         commitSessionStoredMessageMock.mockClear();
-        commitRuntimeAuthRecoveryVisibleEventDeliveryMock.mockClear();
         requestConnectedServiceSessionRestartSignalMock.mockReset();
         requestConnectedServiceSessionRestartSignalMock.mockImplementation(async () => ({ status: 'requested' as const }));
         markSessionMarkerConnectedServiceRestartIntentMock.mockReset();
@@ -2731,10 +5102,14 @@ describe('startDaemonSessionControlRuntime', () => {
         clearSessionMarkerConnectedServiceRestartIntentMock.mockImplementation(async () => {});
         updateSessionMarkerAgentSessionStartupInstructionsMarkerMock.mockReset();
         updateSessionMarkerAgentSessionStartupInstructionsMarkerMock.mockImplementation(async () => true);
+        updateSessionMarkerAgentRuntimeSessionOpenAttestationMock.mockReset();
+        updateSessionMarkerAgentRuntimeSessionOpenAttestationMock.mockImplementation(async () => true);
         removeSessionMarkerMock.mockReset();
         removeSessionMarkerMock.mockImplementation(async () => {});
         removeSessionMarkerIfOwnedMock.mockReset();
         removeSessionMarkerIfOwnedMock.mockImplementation(async () => true);
+        readSessionMarkerForPidMock.mockReset();
+        readSessionMarkerForPidMock.mockImplementation(async () => null);
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockReset();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockImplementation(async () => ({
             ok: true,
@@ -2770,6 +5145,3597 @@ describe('startDaemonSessionControlRuntime', () => {
         vi.mocked(logger.debug).mockClear();
         vi.mocked(logger.info).mockClear();
         vi.mocked(logger.warn).mockClear();
+    });
+
+    it('resolves Composer attachments through the current daemon registry using the stable admission identity', async () => {
+        const sessionId = 'session-composer-attachment-dispatch';
+        const binding = createAgentSessionRunnerFactoryBinding({
+            v: 1,
+            pluginId: 'plugin.runner',
+            pluginVersion: '1.0.0',
+            agentId: 'claude',
+            localAgentId: 'claude',
+            immutableGenerationId: 'generation-composer-attachment',
+            locator: {
+                module: './runtime.mjs',
+                export: 'createRuntime',
+                runtimeApiVersion: 1,
+            },
+            normalizedModulePath: '/immutable/runtime.mjs',
+            loadMode: 'immutable-js',
+        });
+        const runner = Object.freeze({
+            pid: 23123,
+            processStartTimeMs: 1,
+            processCommandHash: 'a'.repeat(64),
+            snapshotIdentity: 'snapshot:composer-attachment',
+        });
+        const resolveForDispatch = vi.fn(async () => ({
+            attachments: [{
+                instanceId: 'review-1',
+                status: 'ready' as const,
+                context: 'Current review context.',
+                data: { refreshed: true },
+            }],
+        }));
+        const afterMessageAccepted = vi.fn(async () => {});
+        const release = vi.fn(async () => {});
+        const enqueueSessionPendingByMachine = vi.fn(async (
+            request: SessionPendingEnqueueByMachineRequestV1,
+        ) => ({
+            status: 'accepted' as const,
+            localId: request.localId,
+        }));
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
+            registry: {
+                composerAttachments: {
+                    isDeclared: vi.fn(() => true),
+                    requires: vi.fn(() => true),
+                    supports: vi.fn(() => true),
+                    resolveForDispatch,
+                    afterMessageAccepted,
+                },
+            },
+            source: 'active',
+            release,
+        });
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-composer-attachment',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => ({
+                enqueueSessionPendingByMachine,
+                registerLocalServicesRoutes: vi.fn(),
+                registerSimulatorPreviewRoutes: vi.fn(),
+            } as never),
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            const dispatch = vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0].agentRuntimeDaemonServices?.dispatch;
+            const signal = new AbortController().signal;
+            const machineAdmissionRequest = {
+                v: 1 as const,
+                sessionId,
+                targetMachineId: 'machine-composer-attachment',
+                localId: 'local-1',
+                content: {
+                    t: 'plain' as const,
+                    v: {
+                        role: 'user' as const,
+                        content: { type: 'text' as const, text: 'hello' },
+                    },
+                },
+                requestedAction: { v: 1 as const, kind: 'enqueue' as const },
+            };
+            const admissionResponse = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'session.input.admit',
+                        requestId: 'admit-session-input',
+                        request: machineAdmissionRequest,
+                    },
+                }),
+                {
+                    sessionId,
+                    runner,
+                    retainedAgent: binding,
+                    invocationContext: {
+                        cwd: '/workspace',
+                        environment: {},
+                        providerBindingActive: false,
+                    },
+                    signal,
+                },
+            );
+            expect(admissionResponse).toEqual({
+                ok: true,
+                result: {
+                    kind: 'session.input.admission',
+                    status: 'resolved',
+                    admission: { status: 'accepted', localId: 'local-1' },
+                },
+            });
+            expect(enqueueSessionPendingByMachine).toHaveBeenCalledWith(
+                machineAdmissionRequest,
+                { signal },
+            );
+            const wrongTargetResponse = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'session.input.admit',
+                        requestId: 'admit-session-input-wrong-target',
+                        request: {
+                            ...machineAdmissionRequest,
+                            targetMachineId: 'machine-stale',
+                        },
+                    },
+                }),
+                {
+                    sessionId,
+                    runner,
+                    retainedAgent: binding,
+                    invocationContext: {
+                        cwd: '/workspace',
+                        environment: {},
+                        providerBindingActive: false,
+                    },
+                    signal,
+                },
+            );
+            expect(wrongTargetResponse).toEqual({
+                ok: true,
+                result: {
+                    kind: 'session.input.admission',
+                    status: 'resolved',
+                    admission: {
+                        status: 'rejected',
+                        code: 'session_input_target_update_required',
+                    },
+                },
+            });
+            expect(enqueueSessionPendingByMachine).toHaveBeenCalledOnce();
+            const response = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'turn_contributions.resolve',
+                        requestId: 'resolve-composer-attachment',
+                        request: {
+                            kind: 'composerAttachment',
+                            attachment: {
+                                pluginId: 'acme.review',
+                                localId: 'review-comment',
+                            },
+                            request: {
+                                sessionId,
+                                localId: 'local-1',
+                                attachments: [{
+                                    instanceId: 'review-1',
+                                    key: 'review-1',
+                                    value: { reviewId: '42' },
+                                }],
+                            },
+                        },
+                    },
+                }),
+                {
+                    sessionId,
+                    runner,
+                    retainedAgent: binding,
+                    invocationContext: {
+                        cwd: '/workspace',
+                        environment: {},
+                        providerBindingActive: false,
+                    },
+                    signal,
+                },
+            );
+
+            expect(response).toEqual({
+                ok: true,
+                result: {
+                    kind: 'turn_contributions',
+                    status: 'resolved',
+                    contributions: {
+                        kind: 'composerAttachment',
+                        result: {
+                            attachments: [{
+                                instanceId: 'review-1',
+                                status: 'ready',
+                                context: 'Current review context.',
+                                data: { refreshed: true },
+                            }],
+                        },
+                    },
+                },
+            });
+            expect(resolveForDispatch).toHaveBeenCalledWith({
+                attachment: {
+                    pluginId: 'acme.review',
+                    localId: 'review-comment',
+                },
+                request: {
+                    sessionId,
+                    localId: 'local-1',
+                    attachments: [{
+                        instanceId: 'review-1',
+                        key: 'review-1',
+                        value: { reviewId: '42' },
+                    }],
+                },
+                signal,
+            });
+            expect(release).toHaveBeenCalledOnce();
+
+            const acceptedResponse = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'turn_contributions.resolve',
+                        requestId: 'notify-composer-attachment-accepted',
+                        request: {
+                            kind: 'composerAttachmentAccepted',
+                            attachment: {
+                                pluginId: 'acme.review',
+                                localId: 'review-comment',
+                            },
+                            event: {
+                                sessionId,
+                                localId: 'local-1',
+                                attachments: [{
+                                    instanceId: 'review-1',
+                                    key: 'review-1',
+                                    value: { reviewId: '42' },
+                                }],
+                            },
+                        },
+                    },
+                }),
+                {
+                    sessionId,
+                    runner,
+                    retainedAgent: binding,
+                    invocationContext: {
+                        cwd: '/workspace',
+                        environment: {},
+                        providerBindingActive: false,
+                    },
+                    signal,
+                },
+            );
+
+            expect(acceptedResponse).toEqual({
+                ok: true,
+                result: {
+                    kind: 'turn_contributions',
+                    status: 'resolved',
+                    contributions: {
+                        kind: 'composerAttachmentAccepted',
+                    },
+                },
+            });
+            expect(afterMessageAccepted).toHaveBeenCalledWith({
+                attachment: {
+                    pluginId: 'acme.review',
+                    localId: 'review-comment',
+                },
+                event: {
+                    sessionId,
+                    localId: 'local-1',
+                    attachments: [{
+                        instanceId: 'review-1',
+                        key: 'review-1',
+                        value: { reviewId: '42' },
+                    }],
+                },
+                signal,
+            });
+            expect(release).toHaveBeenCalledTimes(2);
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('admits selected Composer attachments through current daemon transforms before persistence', async () => {
+        const sessionId = 'session-composer-attachment-prepare';
+        const binding = createAgentSessionRunnerFactoryBinding({
+            v: 1,
+            pluginId: 'plugin.runner',
+            pluginVersion: '1.0.0',
+            agentId: 'claude',
+            localAgentId: 'claude',
+            immutableGenerationId: 'generation-composer-attachment',
+            locator: {
+                module: './runtime.mjs',
+                export: 'createRuntime',
+                runtimeApiVersion: 1,
+            },
+            normalizedModulePath: '/immutable/runtime.mjs',
+            loadMode: 'immutable-js',
+        });
+        const runner = Object.freeze({
+            pid: 23124,
+            processStartTimeMs: 1,
+            processCommandHash: 'b'.repeat(64),
+            snapshotIdentity: 'snapshot:composer-attachment-prepare',
+        });
+        const attachment = {
+            v: 1 as const,
+            instanceId: 'review-1',
+            attachment: {
+                pluginId: 'acme.review',
+                localId: 'review-comment',
+            },
+            key: 'review-1',
+            value: { reviewId: '42' },
+            presentation: {
+                label: 'Review #42',
+                typeLabel: 'Forged review type label',
+            },
+        };
+        const prepareForSend = vi.fn(async (input: {
+            request: Readonly<{
+                sessionId: string;
+                localId: string;
+                attachments: readonly Readonly<{
+                    instanceId: string;
+                    key: string;
+                    value: unknown;
+                }>[];
+            }>;
+        }) => ({
+            attachments: input.request.attachments.map((candidate) => {
+                const draftValue = candidate.value as Record<string, unknown>;
+                if (draftValue.reviewId === 'blocked') {
+                    return {
+                        instanceId: candidate.instanceId,
+                        status: 'unavailable' as const,
+                        retryable: true,
+                        message: 'Review service is unavailable',
+                    };
+                }
+                return {
+                    instanceId: candidate.instanceId,
+                    status: 'ready' as const,
+                    value: {
+                        ...draftValue,
+                        prepared: draftValue.reviewId !== 'prepared-invalid',
+                    },
+                };
+            }),
+        }));
+        const transformSessionInput = vi.fn(async (rawEvent: unknown) => {
+            const event = rawEvent as HookEventEnvelopeV1;
+            return {
+                ...(event.payload as Record<string, unknown>),
+                text: `${event.payload.text} [transformed]`,
+                meta: { transformedBy: 'fixture.plugin' },
+            };
+        });
+        const transformAgentRequest = vi.fn(async (rawEvent: unknown) => {
+            const event = rawEvent as HookEventEnvelopeV1;
+            return {
+                ...(event.payload as Record<string, unknown>),
+                request: {
+                    ...(event.payload.request as Record<string, unknown>),
+                    prompt: [{ type: 'text', text: 'request transformed by fixture.plugin' }],
+                },
+            };
+        });
+        const release = vi.fn(async () => {});
+        const reviewCommentAttachment = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: 'acme.review',
+            pluginVersion: '1.0.0',
+            identity: attachment.attachment,
+            manifestPath: '/fixtures/acme.review/plugin.json',
+            definition: {
+                id: 'review-comment',
+                title: {
+                    key: 'composer.attachment.review-comment',
+                    fallback: 'Canonical review comment',
+                },
+                icon: 'info',
+                cardinality: 'one',
+                valueSchema: {
+                    type: 'object',
+                    properties: { reviewId: { type: 'string' } },
+                    required: ['reviewId'],
+                    additionalProperties: false,
+                },
+                preparedValueSchema: {
+                    type: 'object',
+                    properties: {
+                        reviewId: { type: 'string' },
+                        prepared: { const: true },
+                    },
+                    required: ['reviewId', 'prepared'],
+                    additionalProperties: false,
+                },
+                runtime: { prepareForSend: true },
+            },
+        } satisfies ResolvedComposerAttachmentContribution;
+        // A second contribution with `many` cardinality so one preparation group can
+        // legitimately carry two instances: the only shape that can prove a mixed
+        // ready/blocked result is rejected whole instead of partially admitted.
+        const reviewNoteAttachment = {
+            ...reviewCommentAttachment,
+            identity: { pluginId: 'acme.review', localId: 'review-note' },
+            definition: {
+                ...reviewCommentAttachment.definition,
+                id: 'review-note',
+                title: {
+                    key: 'composer.attachment.review-note',
+                    fallback: 'Canonical review note',
+                },
+                cardinality: 'many',
+            },
+        } satisfies ResolvedComposerAttachmentContribution;
+        const noteAttachment = {
+            ...attachment,
+            attachment: reviewNoteAttachment.identity,
+        };
+        const admissionRegistry = createTargetComposerAttachmentRegistry({
+            targetRegistrations: [],
+            activateAttachmentOnDemand: async () => {
+                throw new Error('direct attachment admission must not activate a plugin');
+            },
+            declaredAttachments: [reviewCommentAttachment, reviewNoteAttachment].map((contribution) => ({
+                attachment: contribution.identity,
+                title: contribution.definition.title,
+                cardinality: contribution.definition.cardinality,
+                valueSchema: contribution.definition.valueSchema,
+                preparedValueSchema: contribution.definition.preparedValueSchema,
+            })),
+            resolveGenerationLifecycle: () => ({
+                isCurrent: () => true,
+                retirementSignal: new AbortController().signal,
+            }),
+            createInvocationContext: () => {
+                throw new Error('direct attachment admission must not invoke a plugin callback');
+            },
+        });
+        const admit = vi.fn((input: Parameters<typeof admissionRegistry.admit>[0]) => (
+            admissionRegistry.admit(input)
+        ));
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
+            registry: {
+                contributes: createResolvedContributionRegistry({
+                    agents: [],
+                    composerAttachments: [reviewCommentAttachment, reviewNoteAttachment],
+                }),
+                hookHandlersByHookId: new Map<string, readonly ResolvedPluginHookHandler[]>([
+                    ['session.input.transform', Object.freeze([{
+                        pluginId: 'fixture.transform',
+                        hookId: 'session.input.transform',
+                        priority: 0,
+                        registrationIndex: 0,
+                        manifestPath: '/fixtures/fixture.transform/plugin.json',
+                        daemonEntryPath: '/fixtures/fixture.transform/daemon.mjs',
+                        exportName: 'transform',
+                        registration: {
+                            provenance: 'external',
+                            source: { kind: 'path' },
+                            pluginId: 'fixture.transform',
+                            manifestPath: '/fixtures/fixture.transform/plugin.json',
+                            daemonEntryPath: '/fixtures/fixture.transform/daemon.mjs',
+                            sourceSpec: {
+                                kind: 'path',
+                                locator: '/fixtures/fixture.transform',
+                                trustPolicy: 'local_trusted',
+                                installPolicy: 'link',
+                            },
+                            definition: {
+                                hookApiVersion: 1,
+                                id: 'session.input.transform',
+                                category: 'augmentation',
+                                scope: 'session',
+                                executionKind: 'augment',
+                            },
+                        },
+                        handler: transformSessionInput,
+                    }])],
+                    ['agent.request.before', Object.freeze([{
+                        pluginId: 'fixture.transform',
+                        hookId: 'agent.request.before',
+                        priority: 0,
+                        registrationIndex: 1,
+                        manifestPath: '/fixtures/fixture.transform/plugin.json',
+                        daemonEntryPath: '/fixtures/fixture.transform/daemon.mjs',
+                        exportName: 'transformAgentRequest',
+                        registration: {
+                            provenance: 'external',
+                            source: { kind: 'path' },
+                            pluginId: 'fixture.transform',
+                            manifestPath: '/fixtures/fixture.transform/plugin.json',
+                            daemonEntryPath: '/fixtures/fixture.transform/daemon.mjs',
+                            sourceSpec: {
+                                kind: 'path',
+                                locator: '/fixtures/fixture.transform',
+                                trustPolicy: 'local_trusted',
+                                installPolicy: 'link',
+                            },
+                            definition: {
+                                hookApiVersion: 1,
+                                id: 'agent.request.before',
+                                category: 'augmentation',
+                                scope: 'agent',
+                                executionKind: 'augment',
+                            },
+                        },
+                        handler: transformAgentRequest,
+                    }])],
+                ]),
+                composerAttachments: {
+                    admit,
+                    isDeclared: vi.fn(() => true),
+                    requires: vi.fn(() => true),
+                    supports: vi.fn(() => true),
+                    prepareForSend,
+                },
+            },
+            source: 'active',
+            release,
+        });
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-composer-attachment',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            const dispatch = vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0].agentRuntimeDaemonServices?.dispatch;
+            const signal = new AbortController().signal;
+            const response = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'turn_contributions.resolve',
+                        requestId: 'prepare-composer-attachment',
+                        request: {
+                            kind: 'transformSessionInput',
+                            payload: {
+                                sessionId,
+                                localId: 'local-prepare-1',
+                                text: 'Review this comment.',
+                                meta: {
+                                    happierStructuredInputV1: {
+                                        v: 1,
+                                        composerAttachments: [attachment],
+                                    },
+                                },
+                                timestampMs: 1,
+                            },
+                        },
+                    },
+                }),
+                {
+                    sessionId,
+                    runner,
+                    retainedAgent: binding,
+                    invocationContext: {
+                        cwd: '/workspace',
+                        environment: {},
+                        providerBindingActive: false,
+                    },
+                    signal,
+                },
+            );
+
+            expect(prepareForSend).toHaveBeenCalledWith({
+                attachment: attachment.attachment,
+                request: {
+                    sessionId,
+                    localId: 'local-prepare-1',
+                    attachments: [{
+                        instanceId: 'review-1',
+                        key: 'review-1',
+                        value: { reviewId: '42' },
+                    }],
+                },
+                signal,
+            });
+            expect(admit).toHaveBeenNthCalledWith(1, {
+                phase: 'draft',
+                attachments: [attachment],
+            });
+            expect(admit).toHaveBeenNthCalledWith(2, {
+                phase: 'prepared',
+                attachments: [{
+                    ...attachment,
+                    value: { reviewId: '42', prepared: true },
+                    presentation: {
+                        ...attachment.presentation,
+                        typeLabel: 'Canonical review comment',
+                    },
+                }],
+            });
+            expect(transformSessionInput).toHaveBeenCalledOnce();
+            expect(response).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'turn_contributions',
+                    status: 'resolved',
+                    contributions: {
+                        kind: 'transformSessionInput',
+                        payload: expect.objectContaining({
+                            text: 'Review this comment. [transformed]',
+                            meta: {
+                                transformedBy: 'fixture.plugin',
+                                happierStructuredInputV1: {
+                                    v: 1,
+                                    composerAttachments: [attachment],
+                                },
+                            },
+                            preparedComposerAttachments: [{
+                                ...attachment,
+                                value: { reviewId: '42', prepared: true },
+                                presentation: {
+                                    label: 'Review #42',
+                                    typeLabel: 'Canonical review comment',
+                                },
+                            }],
+                        }),
+                    },
+                },
+            });
+            const dispatchComposerAdmission = async (input: Readonly<{
+                requestId: string;
+                localId: string;
+                attachments: readonly unknown[];
+            }>) => await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'turn_contributions.resolve',
+                        requestId: input.requestId,
+                        request: {
+                            kind: 'transformSessionInput',
+                            payload: {
+                                sessionId,
+                                localId: input.localId,
+                                text: 'Review this comment.',
+                                meta: {
+                                    happierStructuredInputV1: {
+                                        v: 1,
+                                        composerAttachments: input.attachments,
+                                    },
+                                },
+                                timestampMs: 1,
+                            },
+                        },
+                    },
+                }),
+                {
+                    sessionId,
+                    runner,
+                    retainedAgent: binding,
+                    invocationContext: {
+                        cwd: '/workspace',
+                        environment: {},
+                        providerBindingActive: false,
+                    },
+                    signal,
+                },
+            );
+            await expect(dispatchComposerAdmission({
+                requestId: 'reject-invalid-draft-composer-attachment',
+                localId: 'local-invalid-draft-1',
+                attachments: [{
+                    ...attachment,
+                    instanceId: 'review-invalid-draft-1',
+                    key: 'review-invalid-draft-1',
+                    value: { reviewId: 42 },
+                }],
+            })).rejects.toMatchObject({ code: 'composer_attachment_value_invalid' });
+            await expect(dispatchComposerAdmission({
+                requestId: 'reject-cardinality-composer-attachment',
+                localId: 'local-cardinality-1',
+                attachments: [
+                    attachment,
+                    {
+                        ...attachment,
+                        instanceId: 'review-cardinality-2',
+                        key: 'review-cardinality-2',
+                    },
+                ],
+            })).rejects.toMatchObject({ code: 'composer_attachment_cardinality_invalid' });
+            await expect(dispatchComposerAdmission({
+                requestId: 'reject-invalid-prepared-composer-attachment',
+                localId: 'local-invalid-prepared-1',
+                attachments: [{
+                    ...attachment,
+                    instanceId: 'review-invalid-prepared-1',
+                    key: 'review-invalid-prepared-1',
+                    value: { reviewId: 'prepared-invalid' },
+                }],
+            })).rejects.toMatchObject({ code: 'composer_attachment_value_invalid' });
+            // All-or-none preparation: one blocked outcome rejects the whole Message
+            // preparation and preserves the plugin's typed reason, exactly as the
+            // dispatch-phase resolution owner already does.
+            await expect(dispatchComposerAdmission({
+                requestId: 'reject-partially-prepared-composer-attachment',
+                localId: 'local-partially-prepared-1',
+                attachments: [
+                    {
+                        ...noteAttachment,
+                        instanceId: 'review-note-ready-1',
+                        key: 'review-note-ready-1',
+                        value: { reviewId: '43' },
+                    },
+                    {
+                        ...noteAttachment,
+                        instanceId: 'review-note-blocked-1',
+                        key: 'review-note-blocked-1',
+                        value: { reviewId: 'blocked' },
+                    },
+                ],
+            })).rejects.toMatchObject({
+                code: 'composer_attachment_prepare_unavailable',
+                retryable: true,
+                message: 'Review service is unavailable',
+            });
+            const retryResponse = await dispatchComposerAdmission({
+                requestId: 'retry-invalid-draft-composer-attachment',
+                localId: 'local-invalid-draft-1',
+                attachments: [{
+                    ...attachment,
+                    instanceId: 'review-invalid-draft-1',
+                    key: 'review-invalid-draft-1',
+                }],
+            });
+            expect(retryResponse).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'turn_contributions',
+                    status: 'resolved',
+                },
+            });
+            expect(release).toHaveBeenCalledTimes(6);
+
+            const requestTransformResponse = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'turn_contributions.resolve',
+                        requestId: 'transform-agent-request',
+                        request: {
+                            kind: 'transformAgentRequest',
+                            payload: {
+                                sessionId: 'spoofed-session',
+                                agentId: 'spoofed-agent',
+                                runtimeFamily: 'hostSession',
+                                method: 'session/new',
+                                request: {
+                                    sessionId: 'provider-session-1',
+                                    prompt: [{ type: 'text', text: 'original request' }],
+                                },
+                                timestampMs: 1,
+                            },
+                        },
+                    },
+                }),
+                {
+                    sessionId,
+                    runner,
+                    retainedAgent: binding,
+                    invocationContext: {
+                        cwd: '/workspace',
+                        environment: {},
+                        providerBindingActive: false,
+                    },
+                    signal,
+                },
+            );
+
+            expect(transformAgentRequest).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    eventId: 'agent.request.before',
+                    happySessionId: sessionId,
+                    agentId: 'claude',
+                    payload: expect.objectContaining({
+                        sessionId,
+                        agentId: 'claude',
+                        runtimeFamily: 'acpSession',
+                        method: 'session/prompt',
+                        request: {
+                            sessionId: 'provider-session-1',
+                            prompt: [{ type: 'text', text: 'original request' }],
+                        },
+                    }),
+                }),
+                expect.objectContaining({ signal: expect.any(AbortSignal) }),
+            );
+            expect(requestTransformResponse).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'turn_contributions',
+                    status: 'resolved',
+                    contributions: {
+                        kind: 'transformAgentRequest',
+                        payload: {
+                            sessionId,
+                            agentId: 'claude',
+                            runtimeFamily: 'acpSession',
+                            method: 'session/prompt',
+                            request: {
+                                sessionId: 'provider-session-1',
+                                prompt: [{ type: 'text', text: 'request transformed by fixture.plugin' }],
+                            },
+                        },
+                    },
+                },
+            });
+            expect(release).toHaveBeenCalledTimes(7);
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('does not publish canonical runner readiness before daemon-service authority refresh succeeds and leaves non-runner readiness unchanged', async () => {
+        const sessionId = 'session-runner-authority-readiness';
+        const tracked: TrackedSession = {
+            pid: 2_147_483_000,
+            startedBy: 'daemon',
+            happySessionId: sessionId,
+            agentRuntimeDaemonServiceAuthorityFilePath:
+                '/tmp/runner-authority-readiness.json',
+        };
+        let spawnSuccessPublished = false;
+        const onHappySessionWebhook = vi.fn(async (
+            _reportedSessionId: string,
+            _metadata: unknown,
+            reconcileCanonicalReadiness?: (
+                candidate: TrackedSession,
+            ) => Promise<void>,
+        ) => {
+            await reconcileCanonicalReadiness?.(tracked);
+            spawnSuccessPublished = true;
+        });
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-runner-authority-readiness',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir:
+                '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook,
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            const controlServerInput =
+                vi.mocked(startDaemonControlServer)
+                    .mock.calls.at(-1)?.[0];
+            await expect(
+                controlServerInput?.onHappySessionWebhook(
+                    sessionId,
+                    {} as never,
+                ),
+            ).rejects.toThrow(
+                'Runner Agent daemon-service authority process identity is unavailable',
+            );
+            expect(spawnSuccessPublished).toBe(false);
+
+            delete tracked.agentRuntimeDaemonServiceAuthorityFilePath;
+            await expect(
+                controlServerInput?.onHappySessionWebhook(
+                    sessionId,
+                    {} as never,
+                ),
+            ).resolves.toBeUndefined();
+            expect(spawnSuccessPublished).toBe(true);
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('retains ordinary updates and removals but stops a hard-revoked runner without resurrection', async () => {
+        const priorPluginStoreConfiguration = {
+            happyHomeDir: configuration.happyHomeDir,
+            activeServerDir: configuration.activeServerDir,
+            daemonStateFile: configuration.daemonStateFile,
+        };
+        const retainedProviderHappyHomeDir = await mkdtemp(join(
+            tmpdir(),
+            'happier-retained-provider-home-',
+        ));
+        Object.assign(configuration, {
+            happyHomeDir: retainedProviderHappyHomeDir,
+            activeServerDir: join(
+                retainedProviderHappyHomeDir,
+                'servers',
+                'default',
+            ),
+            daemonStateFile: join(
+                retainedProviderHappyHomeDir,
+                'servers',
+                'default',
+                'daemon.state.json',
+            ),
+        });
+        onTestFinished(async () => {
+            Object.assign(
+                configuration,
+                priorPluginStoreConfiguration,
+            );
+            await rm(retainedProviderHappyHomeDir, {
+                recursive: true,
+                force: true,
+            });
+        });
+        const tracked: TrackedSession = {
+            pid: 91,
+            sessionRunnerPid: 92,
+            startedBy: 'daemon' as const,
+            happySessionId: 'session-runner-admission',
+        };
+        const pidToTrackedSession =
+            new Map([[tracked.pid, tracked]]);
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir:
+                '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession,
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        const controlServerInput =
+            vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0];
+        const admission = {
+            turnId: 'turn-exact',
+            inputId: 'input-exact',
+            userMessageSeq: 19,
+            userMessageSeqs: [18, 19],
+        };
+        await expect(
+            controlServerInput
+                ?.recordAgentRuntimeDaemonServiceAdmission?.(
+                    tracked,
+                    admission,
+                ),
+        ).resolves.toBe(true);
+        expect(updateSessionMarkerActiveTurnMock)
+            .toHaveBeenCalledWith({
+                pid: 92,
+                sessionId: 'session-runner-admission',
+                activeTurnId: 'turn-exact',
+                agentRuntimeDaemonServiceActiveAdmission:
+                    admission,
+            });
+        await expect(
+            controlServerInput
+                ?.clearAgentRuntimeDaemonServiceAdmission?.(
+                    tracked,
+                    admission,
+                ),
+        ).resolves.toBe(true);
+        expect(updateSessionMarkerActiveTurnMock)
+            .toHaveBeenCalledWith({
+                pid: 92,
+                sessionId: 'session-runner-admission',
+                activeTurnId: null,
+                expectedAgentRuntimeDaemonServiceActiveAdmission:
+                    admission,
+            });
+
+        const binding =
+            createAgentSessionRunnerFactoryBinding({
+                v: 1,
+                pluginId: 'plugin.runner',
+                pluginVersion: '1.0.0',
+                agentId: 'claude',
+                localAgentId: 'claude',
+                immutableGenerationId: 'generation-g',
+                locator: {
+                    module: './runtime.mjs',
+                    export: 'createRuntime',
+                    runtimeApiVersion: 1,
+                },
+                normalizedModulePath:
+                    '/immutable/runtime.mjs',
+                loadMode: 'immutable-js',
+            });
+        const runner = Object.freeze({
+            pid: 92,
+            processStartTimeMs: 123,
+            processCommandHash: '5'.repeat(64),
+            snapshotIdentity: 'snapshot:runner',
+        });
+        tracked.agentRuntimeDaemonServiceCapabilityHash =
+            'capability-digest';
+        tracked.processStartTimeMs = 123;
+        tracked.processCommandHash = '5'.repeat(64);
+        tracked.runnerAgentInvocationContext = {
+            cwd: '/workspace',
+            environment: {
+                PROVIDER_SECRET: 'must-not-become-daemon-authority',
+            },
+            providerBindingActive: true,
+        };
+        tracked.runnerAgentImmutableGenerationId =
+            binding.immutableGenerationId;
+        tracked.agentRuntimeDaemonServiceAdmittedTurnId =
+            admission.turnId;
+        tracked.agentRuntimeDaemonServiceAdmittedInputId =
+            admission.inputId;
+        tracked.agentRuntimeDaemonServiceAdmittedUserMessageSeq =
+            admission.userMessageSeq;
+        tracked.agentRuntimeDaemonServiceAdmittedUserMessageSeqs =
+            [...admission.userMessageSeqs];
+        const daemonServiceContext = Object.freeze({
+            sessionId: 'session-runner-admission',
+            runner,
+            retainedAgent: binding,
+            invocationContext: tracked.runnerAgentInvocationContext,
+            trackedSession: tracked,
+        });
+        const releasePluginServicesLease =
+            vi.fn(async () => {});
+        const invocationServices =
+            createUnavailablePluginServices();
+        const createInitialRetainedRunnerAgentInvocationServices =
+            vi.fn(async () => ({
+                services: invocationServices,
+                resourceDescriptors: {},
+                subscriptionCapabilities: {
+                    settingsWatch: false,
+                    eventSubscriptions: [],
+                    resourceWatches: [],
+                    notificationPreferencesWatch: false,
+                },
+            }));
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock
+            .mockResolvedValue({
+                registry: {
+                    contributes: {
+                        resources: [],
+                        agentDefinitionsById: new Map(),
+                    },
+                    agentRuntimesByAgentId: new Map([
+                        ['claude', {
+                            hasPrimaryRuntime: true,
+                            pluginId: 'plugin.runner',
+                            pluginVersion: '1.0.0',
+                            agentId: 'claude',
+                            generation:
+                                'runtime-generation-g',
+                            immutableGenerationId:
+                                'generation-g',
+                            retirementSignal:
+                                new AbortController().signal,
+                            sessionRunnerFactoryBinding:
+                                binding,
+                            createRuntime: vi.fn(),
+                            isCurrent: () => true,
+                        }],
+                    ]),
+                    eventDeclarationsByPluginId:
+                        new Map(),
+                    createRetainedRunnerAgentInvocationServices:
+                        createInitialRetainedRunnerAgentInvocationServices,
+                },
+                source: 'active',
+                release:
+                    releasePluginServicesLease,
+            });
+        const preparedPluginServices =
+            await controlServerInput
+                ?.agentRuntimeDaemonServices?.dispatch(
+                    AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                        v: 1,
+                        context: {
+                            token: 'c'.repeat(43),
+                            sessionId:
+                                'session-runner-admission',
+                        },
+                        operation: {
+                            kind:
+                                'plugin_services.prepare_v1',
+                            requestId:
+                                'plugin-services-prepare',
+                            invocationId:
+                                'invocation-g',
+                            witness: {
+                                turnId:
+                                    admission.turnId,
+                                inputId:
+                                    admission.inputId,
+                                userMessageSeq:
+                                    admission.userMessageSeq,
+                                userMessageSeqs:
+                                    admission.userMessageSeqs,
+                            },
+                        },
+                    }),
+                    daemonServiceContext,
+                );
+        expect(preparedPluginServices).toMatchObject({
+            ok: true,
+            result: {
+                kind:
+                    'plugin_services.result_v1',
+                requestId:
+                    'plugin-services-prepare',
+            },
+        });
+        expect(
+            createInitialRetainedRunnerAgentInvocationServices,
+        )
+            .toHaveBeenCalledWith({
+                binding,
+                sessionId: 'session-runner-admission',
+                managedDependencyRetention: {
+                    v: 1,
+                    sourceGenerationIds: [],
+                    qualifiedDependencyIds: [],
+                },
+                correlationId:
+                    'invocation-g',
+                cwd: '/workspace',
+                environment: {},
+                providerBindingActive: false,
+                signal: expect.any(AbortSignal),
+                isGenerationCurrent:
+                    expect.any(Function),
+            });
+        const closedPluginServices =
+            await controlServerInput
+                ?.agentRuntimeDaemonServices?.dispatch(
+                    AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                        v: 1,
+                        context: {
+                            token: 'c'.repeat(43),
+                            sessionId:
+                                'session-runner-admission',
+                        },
+                        operation: {
+                            kind:
+                                'plugin_services.close_v1',
+                            requestId:
+                                'plugin-services-close',
+                            invocationId:
+                                'invocation-g',
+                        },
+                    }),
+                    daemonServiceContext,
+                );
+        expect(closedPluginServices).toMatchObject({
+            ok: true,
+            result: {
+                kind:
+                    'plugin_services.result_v1',
+                requestId:
+                    'plugin-services-close',
+            },
+        });
+        expect(releasePluginServicesLease)
+            .toHaveBeenCalledOnce();
+
+        const retainedConnectionId = ProviderConnectionIdSchema.parse(
+            'pc_retained_provider_post_open',
+        );
+        const retainedMachineGrant = Object.freeze({
+            v: 1 as const,
+            machineId: 'machine-1',
+            connectionId: retainedConnectionId,
+            endpointSetFingerprint:
+                'endpoint-set:retained-provider-post-open',
+            connectionSecurityFingerprint:
+                'connection-security:retained-provider-post-open',
+            confirmedAt: 1,
+        });
+        const retainedRuntimeBindingBasis =
+            ProviderRuntimeBindingBasisV1Schema.parse({
+                v: 1,
+                agentTargetKey: 'backend:claude',
+                connectionId: retainedConnectionId,
+                contributionKey: 'plugin.provider/gateway',
+                runtimeCredentialTransport: null,
+                prepared: {
+                    v: 1,
+                    materialization: 'spawnEnv',
+                },
+                adapterVersion: 1,
+                agentSupport: {
+                    acceptsProtocols: ['openai-responses'],
+                    required: { streaming: true },
+                    credentialSupport: {
+                        supportsNoAuth: true,
+                        apiKeyTransports: [],
+                    },
+                    authIsolation: {
+                        suppressConnectedServiceIds: [],
+                        ownedEnvKeys: [],
+                    },
+                    materialization: 'spawnEnv',
+                    applyPolicy: 'restart_session',
+                    supportsFreeformModelIds: true,
+                },
+                deployment: {
+                    kind: 'managedLocal',
+                    implementationIdentity: {
+                        pluginId: 'plugin.provider',
+                        localId: 'gateway',
+                    },
+                    managedRuntime: {
+                        kind: 'managed',
+                        endpointTemplateIds: ['responses'],
+                        connectedAccounts: [],
+                        requestAuthUses: [],
+                    },
+                    purposeBindings: {
+                        v: 1,
+                        bindings: [],
+                    },
+                },
+                endpoint: {
+                    endpointTemplateId: 'responses',
+                    protocol: 'openai-responses',
+                    publicHeaders: {},
+                },
+                credentialAuthorization: {
+                    connectionSecurityFingerprint:
+                        retainedMachineGrant
+                            .connectionSecurityFingerprint,
+                    grantFingerprint:
+                        createProviderMachineGrantFingerprintV1(
+                            retainedMachineGrant,
+                        ),
+                },
+            });
+        if (
+            retainedRuntimeBindingBasis.deployment.kind
+                !== 'managedLocal'
+        ) {
+            throw new Error('Expected retained managed Provider basis');
+        }
+        const retainedModel = Object.freeze({
+            id: 'model-p',
+            name: 'Model P',
+        });
+        const retainedCompatibilityFingerprint =
+            'compatibility:retained-provider-post-open';
+        tracked.spawnOptions = {
+            directory: '/workspace',
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'claude',
+                sourceKind: 'built_in',
+            },
+            modelSelection: {
+                v: 1,
+                updatedAt: 1,
+                ref: {
+                    agentTargetKey:
+                        retainedRuntimeBindingBasis.agentTargetKey,
+                    providerConnectionId:
+                        retainedRuntimeBindingBasis.connectionId,
+                    modelId: retainedModel.id,
+                },
+            },
+            providerBindingMetadataV1:
+                SessionProviderBindingMetadataV1Schema.parse({
+                    v: 1,
+                    connectionId:
+                        retainedRuntimeBindingBasis.connectionId,
+                    contributionKey:
+                        retainedRuntimeBindingBasis.contributionKey,
+                    connectionRevision: 1,
+                    model: retainedModel,
+                    protocol:
+                        retainedRuntimeBindingBasis.endpoint.protocol,
+                    materialization:
+                        retainedRuntimeBindingBasis.prepared
+                            .materialization,
+                    compatibilityFingerprint:
+                        retainedCompatibilityFingerprint,
+                    bindingSecurityFingerprint:
+                        createProviderBindingSecurityFingerprintV1({
+                            agentTargetKey:
+                                retainedRuntimeBindingBasis
+                                    .agentTargetKey,
+                            connectionId:
+                                retainedRuntimeBindingBasis.connectionId,
+                            modelId: retainedModel.id,
+                            modelCapabilities: {},
+                            endpointTemplateId:
+                                retainedRuntimeBindingBasis.endpoint
+                                    .endpointTemplateId,
+                            protocol:
+                                retainedRuntimeBindingBasis.endpoint
+                                    .protocol,
+                            publicHeaders:
+                                retainedRuntimeBindingBasis.endpoint
+                                    .publicHeaders,
+                            materialization:
+                                retainedRuntimeBindingBasis.prepared
+                                    .materialization,
+                            compatibilityFingerprint:
+                                retainedCompatibilityFingerprint,
+                            adapterVersion:
+                                retainedRuntimeBindingBasis.adapterVersion,
+                            deployment: {
+                                kind: 'managedLocal',
+                                implementationIdentity:
+                                    retainedRuntimeBindingBasis
+                                        .deployment
+                                        .implementationIdentity,
+                                managedRuntime:
+                                    retainedRuntimeBindingBasis
+                                        .deployment.managedRuntime,
+                            },
+                        }),
+                    managedPurposeBindings:
+                        retainedRuntimeBindingBasis.deployment
+                            .purposeBindings,
+                    runtimeBindingBasis:
+                        retainedRuntimeBindingBasis,
+                    displaySnapshot: {
+                        providerName: 'Gateway',
+                        connectionName: 'Retained P',
+                        connectionRole: 'named',
+                        connectionDisplayNameMode: 'custom',
+                    },
+                }),
+        };
+        getActiveAccountSettingsSnapshotMock.mockReturnValue({
+            settings: AccountSettingsSchema.parse({
+                schemaVersion: 2,
+                providerSettingsV1: {
+                    ...DEFAULT_PROVIDER_SETTINGS_V1,
+                    connections: [{
+                        v: 1,
+                        id: retainedConnectionId,
+                        source: {
+                            kind: 'contribution',
+                            contributionKey:
+                                retainedRuntimeBindingBasis
+                                    .contributionKey,
+                        },
+                        role: 'default',
+                        displayName: 'Retained P',
+                        displayNameMode: 'automatic',
+                        deployment: { kind: 'managedLocal' },
+                        revision: 1,
+                        createdAt: 1,
+                        updatedAt: 1,
+                    }],
+                    machineGrants: [retainedMachineGrant],
+                },
+            }),
+            settingsSecretsReadKeys: [],
+        });
+        const retainedProviderSourceRoot = await mkdtemp(join(
+            tmpdir(),
+            'happier-retained-provider-fixture-',
+        ));
+        const retainedProviderManifestContents = JSON.stringify({
+            schemaVersion: 2,
+            id: 'plugin.provider',
+            version: '1.0.0',
+            displayName: 'Retained managed Provider fixture',
+            engines: { happier: '^0.2.0' },
+            runtime: { apiVersion: 1 },
+            entrypoints: { daemon: './daemon.mjs' },
+            contributes: {
+                providers: [{
+                    v: 1,
+                    id: 'gateway',
+                    name: 'Gateway',
+                    kind: 'aggregator',
+                    endpointTemplates: [{
+                        id: 'responses',
+                        protocol: 'openai-responses',
+                        baseUrl: 'http://127.0.0.1:4312/v1',
+                        capabilities: {
+                            streaming: 'supported',
+                            toolRoundTrips: 'supported',
+                            statefulResponses: 'unknown',
+                            reasoningControls: 'supported',
+                        },
+                    }],
+                    catalog: {
+                        source: 'static',
+                        manualModelPolicy: 'allowed',
+                        staticModels: [{
+                            id: retainedModel.id,
+                            name: retainedModel.name,
+                        }],
+                    },
+                    managedRuntime: {
+                        kind: 'managed',
+                        endpointTemplateIds: ['responses'],
+                        connectedAccounts: [],
+                        requestAuthUses: [],
+                    },
+                }],
+            },
+        });
+        const retainedProviderImmutableGenerationId =
+            `provider-immutable-p-${createHash('sha256')
+                .update(retainedProviderSourceRoot)
+                .digest('hex')
+                .slice(0, 16)}`;
+        const retainedProviderOperationClaimId = JSON.stringify([
+            'managed-provider-session-demand',
+            'session-runner-admission',
+            'plugin.provider',
+            'gateway',
+            'provider-generation-p',
+            retainedProviderImmutableGenerationId,
+            'external',
+        ]);
+        const retainedScope = Object.freeze({
+            v: 1 as const,
+            sessionId: 'session-runner-admission',
+            runtimeBindingBasis: retainedRuntimeBindingBasis,
+            pluginId: 'plugin.provider',
+            providerLocalId: 'gateway',
+            activationGeneration: 'provider-generation-p',
+            immutableGenerationId:
+                retainedProviderImmutableGenerationId,
+            manifestAuthority: 'external',
+            operationClaimId: retainedProviderOperationClaimId,
+        });
+        const retainedAuthority = Object.freeze({
+            v: 1 as const,
+            scope: retainedScope,
+            providerPluginHardRevocationRevisionAtAdmission: 0,
+        });
+        tracked.runnerManagedDependencyRetentionV1 = {
+            v: 1,
+            adoptedManagedProviderAuthority: {
+                pluginId: retainedScope.pluginId,
+                immutableGenerationId:
+                    retainedScope.immutableGenerationId,
+                manifestAuthority:
+                    retainedScope.manifestAuthority,
+                hardRevocationRevisionAtAdmission: 0,
+            },
+            sourceGenerationIds: [],
+            qualifiedDependencyIds: [],
+        };
+        const packagedProviderSpec = Object.freeze({
+            id: 'provider-wrapper',
+            mode: Object.freeze({
+                kind: 'spawn' as const,
+                launch: Object.freeze({
+                    executable: Object.freeze({
+                        kind: 'packaged-runtime-binary' as const,
+                        directorySegments: Object.freeze([
+                            'tools',
+                            'unpacked',
+                        ]),
+                        executableBaseName:
+                            'provider-runtime',
+                    }),
+                    env: Object.freeze({
+                        PROVIDER_MODE: 'session',
+                    }),
+                }),
+                endpoint: Object.freeze({
+                    kind: 'assignAndInject' as const,
+                    port: Object.freeze({
+                        kind: 'fixed' as const,
+                        port: 4312,
+                    }),
+                }),
+            }),
+            healthCheck: Object.freeze({
+                kind: 'none' as const,
+            }),
+        }) satisfies ManagedServiceSpec;
+        const conflictingPackagedProviderSpec = Object.freeze({
+            ...packagedProviderSpec,
+            mode: Object.freeze({
+                ...packagedProviderSpec.mode,
+                launch: Object.freeze({
+                    ...packagedProviderSpec.mode.launch,
+                    executable: Object.freeze({
+                        ...packagedProviderSpec.mode.launch.executable,
+                        executableBaseName:
+                            'provider-runtime-replacement',
+                    }),
+                }),
+            }),
+        }) satisfies ManagedServiceSpec;
+        const repeatedPackagedProviderSpec = Object.freeze({
+            ...packagedProviderSpec,
+            mode: Object.freeze({
+                ...packagedProviderSpec.mode,
+                launch: Object.freeze({
+                    ...packagedProviderSpec.mode.launch,
+                    executable: Object.freeze({
+                        ...packagedProviderSpec.mode.launch.executable,
+                        directorySegments: Object.freeze([
+                            ...packagedProviderSpec.mode.launch
+                                .executable.directorySegments,
+                        ]),
+                    }),
+                    env: Object.freeze({
+                        ...packagedProviderSpec.mode.launch.env,
+                    }),
+                }),
+            }),
+        }) satisfies ManagedServiceSpec;
+        const unavailableManagedDependency =
+            async (): Promise<never> => {
+                throw new Error(
+                    'Managed dependency access is not part of launch correspondence',
+                );
+            };
+        const custodyDependencies = Object.freeze({
+            status: unavailableManagedDependency,
+            ensure: unavailableManagedDependency,
+            update: unavailableManagedDependency,
+            remove: unavailableManagedDependency,
+        }) satisfies ManagedDependenciesService;
+        const wrappedManagedServices: ManagedServices[] = [];
+        const freshManagedProviderCleanup = vi.fn(async () => {});
+        const createManagedProviderRuntimeInvocationServices:
+            NonNullable<
+                ResolvedExecutablePluginRuntimeRegistry[
+                    'createManagedProviderRuntimeInvocationServices'
+                ]
+            > = vi.fn(async (input) => {
+                if (
+                    input.operationClaim?.kind
+                        !== 'sessionDemand'
+                ) {
+                    throw new Error(
+                        'Expected Session-demand managed Provider custody',
+                    );
+                }
+                const custody = await input.operationClaim
+                    .bindSessionCustody(
+                        {
+                            sessionId:
+                                input.operationClaim.sessionId,
+                            runtimeBindingBasis:
+                                input.operationClaim
+                                    .runtimeBindingBasis,
+                            identity: input.identity,
+                            activationGeneration:
+                                retainedScope.activationGeneration,
+                            immutableGenerationId:
+                                retainedScope.immutableGenerationId,
+                            manifestAuthority:
+                                retainedScope.manifestAuthority,
+                            operationClaimId:
+                                retainedScope.operationClaimId,
+                        },
+                        custodyDependencies,
+                    );
+                wrappedManagedServices.push(
+                    custody.managedServices,
+                );
+                return Object.freeze({
+                    bootstrap: Object.freeze({
+                        identity: input.identity,
+                        activationGeneration:
+                            retainedScope.activationGeneration,
+                        immutableGenerationId:
+                            retainedScope.immutableGenerationId,
+                        manifestAuthority:
+                            retainedScope.manifestAuthority,
+                        operationClaimId:
+                            retainedScope.operationClaimId,
+                        requestAuth: null,
+                    }),
+                    connectedAccounts:
+                        createUnavailablePluginServices()
+                            .connectedAccounts,
+                    managedServices:
+                        custody.managedServices,
+                    projectEndpointAccess:
+                        custody.projectEndpointAccess,
+                    cleanup: freshManagedProviderCleanup,
+                });
+            });
+        const retainedProviderCleanup = vi.fn(async () => {});
+        let retainedAuthorityCurrentAtCreation = false;
+        let retainedPolicyCurrentAtCreation = false;
+        const createRetainedManagedProviderRuntimeInvocationServices:
+            NonNullable<
+                ResolvedExecutablePluginRuntimeRegistry[
+                    'createRetainedManagedProviderRuntimeInvocationServices'
+                ]
+            > = vi.fn(async (input) => {
+                expect(input.scope).toEqual({
+                    sessionId: retainedScope.sessionId,
+                    runtimeBindingBasis:
+                        retainedScope.runtimeBindingBasis,
+                    identity: {
+                        pluginId: retainedScope.pluginId,
+                        localId:
+                            retainedScope.providerLocalId,
+                    },
+                    activationGeneration:
+                        retainedScope.activationGeneration,
+                    immutableGenerationId:
+                        retainedScope.immutableGenerationId,
+                    manifestAuthority:
+                        retainedScope.manifestAuthority,
+                    operationClaimId:
+                        retainedScope.operationClaimId,
+                });
+                retainedAuthorityCurrentAtCreation = input.isCurrent();
+                retainedPolicyCurrentAtCreation =
+                    await input.revalidatePolicy();
+                const unavailableServices =
+                    createUnavailablePluginServices();
+                return {
+                    bootstrap: {
+                        identity: {
+                            pluginId: retainedScope.pluginId,
+                            localId: retainedScope.providerLocalId,
+                        },
+                        activationGeneration:
+                            retainedScope.activationGeneration,
+                        immutableGenerationId:
+                            retainedScope.immutableGenerationId,
+                        manifestAuthority:
+                            retainedScope.manifestAuthority,
+                        operationClaimId:
+                            retainedScope.operationClaimId,
+                        requestAuth: null,
+                    },
+                    connectedAccounts:
+                        unavailableServices.connectedAccounts,
+                    managedServices:
+                        unavailableServices.managedServices,
+                    async projectEndpointAccess() {
+                        throw new Error(
+                            'Retained endpoint projection is not used by this fixture',
+                        );
+                    },
+                    cleanup: retainedProviderCleanup,
+                };
+            });
+        const createSuccessorRetainedRunnerAgentInvocationServices =
+            vi.fn(async () => ({
+                services: createUnavailablePluginServices(),
+                resourceDescriptors: {},
+                subscriptionCapabilities: {
+                    settingsWatch: false,
+                    eventSubscriptions: [],
+                    resourceWatches: [],
+                    notificationPreferencesWatch: false,
+                },
+            }));
+        const successorBinding =
+            createAgentSessionRunnerFactoryBinding({
+                ...binding,
+                immutableGenerationId: 'generation-h',
+            });
+        const releaseRetainedPluginServicesLease =
+            vi.fn(async () => {});
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock
+            .mockResolvedValue({
+                registry: {
+                    contributes: {
+                        resources: [],
+                        agentDefinitionsById: new Map(),
+                        providers: [{
+                            identity: {
+                                pluginId:
+                                    retainedScope.pluginId,
+                                localId:
+                                    retainedScope.providerLocalId,
+                            },
+                            definition: {
+                                managedRuntime:
+                                    retainedRuntimeBindingBasis
+                                        .deployment
+                                        .managedRuntime,
+                            },
+                        }],
+                    },
+                    agentRuntimesByAgentId: new Map([
+                        ['claude', {
+                            hasPrimaryRuntime: true,
+                            pluginId: 'plugin.runner',
+                            pluginVersion: '1.0.0',
+                            agentId: 'claude',
+                            generation:
+                                'runtime-generation-h',
+                            immutableGenerationId:
+                                'generation-h',
+                            retirementSignal:
+                                new AbortController().signal,
+                            sessionRunnerFactoryBinding:
+                                successorBinding,
+                            createRuntime: vi.fn(),
+                            isCurrent: () => true,
+                        }],
+                    ]),
+                    eventDeclarationsByPluginId: new Map(),
+                    createRetainedRunnerAgentInvocationServices:
+                        createSuccessorRetainedRunnerAgentInvocationServices,
+                    createManagedProviderRuntimeInvocationServices,
+                    createRetainedManagedProviderRuntimeInvocationServices,
+                    acquireManagedProviderRuntime: vi.fn(),
+                },
+                source: 'active',
+                release: releaseRetainedPluginServicesLease,
+            });
+        vi.mocked(callSessionRpc).mockResolvedValue({
+            v: 1,
+            kind: 'adoptedPublicOutcome',
+            outcome: {
+                operationClaimId:
+                    retainedScope.operationClaimId,
+                serviceId: 'provider-wrapper',
+                endpointTemplateIds: ['responses'],
+                endpoints: [{
+                    endpointTemplateId: 'responses',
+                    servicePath: '/v1',
+                    endpointUrl: 'http://127.0.0.1:4312/v1',
+                }],
+                endpointAccess: 'runnerProjected',
+            },
+        });
+
+        const pluginStorePaths = resolvePluginStorePaths({
+            happyHomeDir: configuration.happyHomeDir,
+        });
+        const priorCommit =
+            await readPluginRegistryCommitRecord(pluginStorePaths);
+        const priorInstallationState = priorCommit
+            ? await readInstallationStateRevision({
+                paths: pluginStorePaths,
+                reference: priorCommit.installationState,
+            })
+            : null;
+        try {
+            const manifestRelativePath =
+                '.happier-plugin/plugin.json';
+            await mkdir(join(
+                retainedProviderSourceRoot,
+                '.happier-plugin',
+            ), { recursive: true });
+            await writeFile(
+                join(
+                    retainedProviderSourceRoot,
+                    manifestRelativePath,
+                ),
+                retainedProviderManifestContents,
+                'utf8',
+            );
+            await writeFile(
+                join(retainedProviderSourceRoot, 'daemon.mjs'),
+                'export function activate() {}\n',
+                'utf8',
+            );
+            const retainedProviderRecord =
+                await createImmutablePluginGenerationRecordFromSource({
+                    pluginId: retainedScope.pluginId,
+                    sourceRootPath: retainedProviderSourceRoot,
+                    manifestRelativePath,
+                    distribution: {
+                        kind: 'localPath',
+                        canonicalPath: retainedProviderSourceRoot,
+                    },
+                    updatePolicy: 'manual',
+                    createdAtMs: 1,
+                    immutableGenerationId:
+                        retainedScope.immutableGenerationId,
+                });
+            await prepareImmutablePluginGeneration({
+                paths: pluginStorePaths,
+                sourceRootPath: retainedProviderSourceRoot,
+                record: retainedProviderRecord,
+            });
+        } finally {
+            await rm(retainedProviderSourceRoot, {
+                recursive: true,
+                force: true,
+            });
+        }
+        const retainedProviderState = {
+            ...(priorInstallationState ?? {
+                t: 'happier_plugin_installations_v1' as const,
+                schemaVersion: 1 as const,
+                createdAtMs: 1,
+                plugins: {},
+                rollbackRetention: [],
+            }),
+            revisionId:
+                `retained-provider-state-${process.pid}-${Date.now()}`,
+            plugins: {
+                ...(priorInstallationState?.plugins ?? {}),
+                [retainedScope.pluginId]: {
+                    enabled: true,
+                    source: {
+                        distribution: {
+                            kind: 'localPath' as const,
+                            canonicalPath:
+                                retainedProviderSourceRoot,
+                        },
+                    },
+                    updatePolicy: 'manual' as const,
+                    optionalAccess: [],
+                },
+            },
+            hardRevocationRevisions: {
+                ...(priorInstallationState
+                    ?.hardRevocationRevisions ?? {}),
+                [retainedScope.pluginId]: 0,
+            },
+        };
+        const retainedProviderStateReference =
+            await persistInstallationStateRevision({
+                paths: pluginStorePaths,
+                state: retainedProviderState,
+            });
+        await replacePluginRegistryCommitRecord({
+            paths: pluginStorePaths,
+            expectedCurrent: priorCommit ?? null,
+            next: {
+                t: 'happier_plugin_registry_commit_v1',
+                schemaVersion: 1,
+                revision: (priorCommit?.revision ?? -1) + 1,
+                transactionId:
+                    `retained-provider-commit-${process.pid}-${Date.now()}`,
+                baseRevision: priorCommit?.revision ?? null,
+                installationState:
+                    retainedProviderStateReference,
+                pluginGenerations:
+                    priorCommit?.pluginGenerations ?? {},
+                createdAtMs: Date.now(),
+                creator: {
+                    pid: process.pid,
+                    instanceId:
+                        `retained-provider-fixture-${process.pid}`,
+                },
+            },
+        });
+        await expect(
+            readCurrentPluginImmutableGenerationIntegrityCurrentness({
+                paths: pluginStorePaths,
+                pluginId: retainedScope.pluginId,
+                immutableGenerationId:
+                    retainedScope.immutableGenerationId,
+            }),
+        ).resolves.toBe(true);
+        const activeRetainedProviderSettings =
+            getActiveAccountSettingsSnapshotMock().settings
+                ?.providerSettingsV1;
+        if (!activeRetainedProviderSettings) {
+            throw new Error(
+                'Expected active retained Provider settings',
+            );
+        }
+        expect(isRetainedManagedProviderSettingsGrantCurrent({
+            machineId: 'machine-1',
+            providerSettings: ProviderSettingsV1Schema.parse(
+                activeRetainedProviderSettings,
+            ),
+            runtimeBindingBasis: retainedRuntimeBindingBasis,
+        })).toBe(true);
+
+        const retainedSessionBindingMetadata =
+            tracked.spawnOptions
+                .providerBindingMetadataV1;
+        if (!retainedSessionBindingMetadata) {
+            throw new Error(
+                'Expected managed Provider Session binding metadata',
+            );
+        }
+        authorizeSessionModelTransitionProviderTargetWithLeaseMock
+            .mockResolvedValue({
+                selection: {
+                    agentTargetKey:
+                        retainedRuntimeBindingBasis.agentTargetKey,
+                    providerConnectionId:
+                        retainedRuntimeBindingBasis.connectionId,
+                    modelId: retainedModel.id,
+                },
+                policy: 'restart_session',
+                model: retainedModel,
+                sessionBindingMetadata:
+                    retainedSessionBindingMetadata,
+                runtimeBindingBasis:
+                    retainedRuntimeBindingBasis,
+            });
+        const superviseCustodyRequests: unknown[] = [];
+        vi.mocked(callSessionRpc).mockImplementation(
+            async (input) => {
+                const request =
+                    RunnerManagedServicesCustodyRequestV1Schema
+                        .parse(input.request);
+                if (request.kind !== 'supervise') {
+                    throw new Error(
+                        `Unexpected custody request ${request.kind}`,
+                    );
+                }
+                superviseCustodyRequests.push(request);
+                return {
+                    v: 1,
+                    kind: 'handle',
+                    custodyScope: request.scope,
+                    snapshot: {
+                        id: request.spec.id,
+                        state: 'healthy',
+                        mode: 'spawn',
+                        baseUrl:
+                            'http://127.0.0.1:4312',
+                        startedAtMs: 1,
+                        lastHealthyAtMs: 1,
+                        diagnostics: [],
+                        diagnosticsTruncated: false,
+                    },
+                };
+            },
+        );
+        const freshProviderInvocationId =
+            'invocation-provider-launch';
+        const prepareFreshProvider = async (
+            requestId: string,
+            invocationId: string = freshProviderInvocationId,
+        ) => await controlServerInput
+            ?.agentRuntimeDaemonServices?.dispatch(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: {
+                        token: 'd'.repeat(43),
+                        sessionId:
+                            'session-runner-admission',
+                    },
+                    operation: {
+                        kind: 'plugin_services.prepare_v1',
+                        requestId,
+                        invocationId,
+                    },
+                }),
+                daemonServiceContext,
+            );
+        const closeFreshProvider = async (
+            requestId: string,
+        ) => await controlServerInput
+            ?.agentRuntimeDaemonServices?.dispatch(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: {
+                        token: 'd'.repeat(43),
+                        sessionId:
+                            'session-runner-admission',
+                    },
+                    operation: {
+                        kind: 'plugin_services.close_v1',
+                        requestId,
+                        invocationId:
+                            freshProviderInvocationId,
+                    },
+                }),
+                daemonServiceContext,
+            );
+
+        authorizeSessionModelTransitionProviderTargetWithLeaseMock
+            .mockResolvedValueOnce({
+                selection: {
+                    agentTargetKey:
+                        retainedRuntimeBindingBasis.agentTargetKey,
+                    providerConnectionId:
+                        retainedRuntimeBindingBasis.connectionId,
+                    modelId: retainedModel.id,
+                },
+                policy: 'restart_session',
+                model: retainedModel,
+                sessionBindingMetadata:
+                    retainedSessionBindingMetadata,
+                runtimeBindingBasis: {
+                    ...retainedRuntimeBindingBasis,
+                    adapterVersion:
+                        retainedRuntimeBindingBasis.adapterVersion + 1,
+                },
+            });
+        await expect(prepareFreshProvider(
+            'fresh-provider-changed-basis-prepare',
+            'invocation-provider-changed-basis',
+        )).resolves.toMatchObject({
+            ok: false,
+            error: {
+                code:
+                    'plugin_services_managed_provider_authority_unavailable',
+            },
+        });
+        await expect(prepareFreshProvider(
+            'fresh-provider-prepare',
+        )).resolves.toMatchObject({ ok: true });
+        expect(wrappedManagedServices).toHaveLength(1);
+        await expect(
+            wrappedManagedServices[0]!.supervise(
+                repeatedPackagedProviderSpec,
+            ),
+        ).resolves.toMatchObject({
+            snapshot: expect.any(Function),
+        });
+        await expect(
+            wrappedManagedServices[0]!.supervise(
+                packagedProviderSpec,
+            ),
+        ).resolves.toMatchObject({
+            snapshot: expect.any(Function),
+        });
+        expect(superviseCustodyRequests).toHaveLength(2);
+        expect(() => wrappedManagedServices[0]!.supervise(
+            conflictingPackagedProviderSpec,
+        )).toThrowError(expect.objectContaining({
+            code: 'plugin_managed_service_spec_conflict',
+        }));
+        expect(superviseCustodyRequests).toHaveLength(2);
+        await expect(closeFreshProvider(
+            'fresh-provider-close',
+        )).resolves.toMatchObject({ ok: true });
+
+        await expect(prepareFreshProvider(
+            'fresh-provider-reuse-prepare',
+        )).resolves.toMatchObject({ ok: true });
+        expect(wrappedManagedServices).toHaveLength(2);
+        await expect(
+            wrappedManagedServices[1]!.supervise(
+                conflictingPackagedProviderSpec,
+            ),
+        ).resolves.toMatchObject({
+            snapshot: expect.any(Function),
+        });
+        expect(superviseCustodyRequests).toHaveLength(3);
+        await expect(closeFreshProvider(
+            'fresh-provider-reuse-close',
+        )).resolves.toMatchObject({ ok: true });
+        expect(freshManagedProviderCleanup)
+            .toHaveBeenCalledTimes(2);
+        vi.mocked(callSessionRpc).mockResolvedValue({
+            v: 1,
+            kind: 'adoptedPublicOutcome',
+            outcome: {
+                operationClaimId:
+                    retainedScope.operationClaimId,
+                serviceId: 'provider-wrapper',
+                endpointTemplateIds: ['responses'],
+                endpoints: [{
+                    endpointTemplateId: 'responses',
+                    servicePath: '/v1',
+                    endpointUrl:
+                        'http://127.0.0.1:4312/v1',
+                }],
+                endpointAccess: 'runnerProjected',
+            },
+        });
+        expect(
+            createRetainedManagedProviderRuntimeInvocationServices,
+        ).not.toHaveBeenCalled();
+
+        const retainedPrepared = await controlServerInput
+            ?.agentRuntimeDaemonServices?.dispatch(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: {
+                        token: 'd'.repeat(43),
+                        sessionId: 'session-runner-admission',
+                    },
+                    operation: {
+                        kind: 'plugin_services.prepare_v1',
+                        requestId: 'retained-provider-prepare',
+                        invocationId: 'invocation-p',
+                        managedProviderRetention:
+                            retainedAuthority,
+                    },
+                }),
+                    daemonServiceContext,
+                );
+        expect(
+            createRetainedManagedProviderRuntimeInvocationServices,
+        ).toHaveBeenCalledOnce();
+        expect(retainedAuthorityCurrentAtCreation).toBe(true);
+        expect(retainedPolicyCurrentAtCreation).toBe(true);
+        expect(retainedPrepared).toMatchObject({ ok: true });
+
+        await expect(
+            controlServerInput
+                ?.agentRuntimeDaemonServices?.dispatch(
+                    AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                        v: 1,
+                        context: {
+                            token: 'd'.repeat(43),
+                            sessionId:
+                                'session-runner-admission',
+                        },
+                        operation: {
+                            kind:
+                                'managed_server.supervision.authorize',
+                            requestId:
+                                'retained-provider-missing-stamp',
+                            contributionId:
+                                'plugin.provider/providers/gateway',
+                            operationClaimId:
+                                retainedScope.operationClaimId,
+                            serverId:
+                                'retained-provider-runtime',
+                            executable: {
+                                kind:
+                                    'packaged-runtime-binary',
+                                directorySegments: ['tools'],
+                                executableBaseName:
+                                    'retained-provider-runtime',
+                            },
+                            environmentKeys: [],
+                        },
+                    }),
+                    daemonServiceContext,
+                ),
+        ).rejects.toMatchObject({
+            code: 'plugin_managed_server_launch_denied',
+        });
+
+        const retainedStarted = await controlServerInput
+            ?.agentRuntimeDaemonServices?.dispatch(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: {
+                        token: 'd'.repeat(43),
+                        sessionId: 'session-runner-admission',
+                    },
+                    operation: {
+                        kind:
+                            'plugin_services.managed_provider.start_v1',
+                        requestId: 'retained-provider-start',
+                        invocationId: 'invocation-p',
+                        retained: retainedAuthority,
+                    },
+                }),
+                daemonServiceContext,
+            );
+        expect(retainedStarted).toMatchObject({ ok: true });
+        expect(
+            createRetainedManagedProviderRuntimeInvocationServices,
+        ).toHaveBeenCalledOnce();
+
+        const retainedMaterialized = await controlServerInput
+            ?.agentRuntimeDaemonServices?.dispatch(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: {
+                        token: 'd'.repeat(43),
+                        sessionId: 'session-runner-admission',
+                    },
+                    operation: {
+                        kind:
+                            'plugin_services.managed_provider.materialize_agent_binding_v1',
+                        requestId:
+                            'retained-provider-materialize',
+                        invocationId: 'invocation-p',
+                        retained: retainedAuthority,
+                        endpointUrl:
+                            'http://127.0.0.1:4312/v1',
+                        credentialPlaceholder:
+                            'provider-placeholder-aaaaaaaaaaaaaaaa',
+                    },
+                }),
+                daemonServiceContext,
+            );
+        expect(retainedMaterialized).toMatchObject({
+            ok: false,
+            error: {
+                code:
+                    'plugin_services_turn_authority_unavailable',
+            },
+        });
+
+        await controlServerInput
+            ?.agentRuntimeDaemonServices?.dispatch(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: {
+                        token: 'd'.repeat(43),
+                        sessionId: 'session-runner-admission',
+                    },
+                    operation: {
+                        kind: 'plugin_services.close_v1',
+                        requestId: 'retained-provider-close',
+                        invocationId: 'invocation-p',
+                    },
+                }),
+                daemonServiceContext,
+            );
+        expect(releaseRetainedPluginServicesLease)
+            .toHaveBeenCalledTimes(4);
+        expect(retainedProviderCleanup).toHaveBeenCalledOnce();
+
+        const listener = [
+            ...pluginRunningSessionDispositionListenersMock,
+        ][0];
+        expect(listener).toBeDefined();
+        listener?.({
+            durableRevision: 7,
+            changedPluginIds: ['plugin.runner'],
+            runningSessionDisposition:
+                'retainRunningSessions',
+        });
+        expect(tracked.agentRuntimeDaemonServiceCapabilityHash)
+            .toBe('capability-digest');
+        expect(tracked.agentRuntimeDaemonServiceAdmittedTurnId)
+            .toBe('turn-exact');
+
+        listener?.({
+            durableRevision: 8,
+            changedPluginIds: ['plugin.runner'],
+            runningSessionDisposition:
+                'retainRunningSessions',
+        });
+        const ordinaryRemovalState = {
+            capabilityHash:
+                tracked
+                    .agentRuntimeDaemonServiceCapabilityHash,
+            retainedAgentGeneration:
+                tracked
+                    .runnerAgentImmutableGenerationId,
+            admittedTurnId:
+                tracked
+                    .agentRuntimeDaemonServiceAdmittedTurnId,
+        };
+        const successor: TrackedSession = {
+            pid: 91,
+            sessionRunnerPid: 93,
+            startedBy: 'daemon',
+            happySessionId:
+                'session-runner-admission',
+            processStartTimeMs: 456,
+            processCommandHash: '6'.repeat(64),
+        };
+        // A stale asynchronous callback from the observed ordinary
+        // removal must never acquire authority over replacement custody.
+        pidToTrackedSession.set(successor.pid, successor);
+
+        const revokedPid = 94;
+        const revokedChildProcess = {
+            pid: revokedPid,
+            exitCode: null as number | null,
+            signalCode: null as NodeJS.Signals | null,
+            kill: vi.fn(() => true),
+        };
+        const revokedTracked: TrackedSession = {
+            pid: revokedPid,
+            sessionRunnerPid: 95,
+            startedBy: 'daemon',
+            happySessionId: 'session-hard-revoked',
+            childProcess: revokedChildProcess as never,
+            processStartTimeMs: 789,
+            processCommandHash: '7'.repeat(64),
+        };
+        const revokedRunner = Object.freeze({
+            pid: 95,
+            processStartTimeMs: 789,
+            processCommandHash: '7'.repeat(64),
+            snapshotIdentity: 'snapshot:runner',
+        });
+        const revokedAuthorityPath =
+            await createAgentRuntimeDaemonServiceAuthorityPath({
+                happyHomeDir: configuration.happyHomeDir,
+                publicReleaseRing: configuration.publicReleaseRing,
+            });
+        const revokedAuthority =
+            await publishAgentRuntimeDaemonServiceAuthority({
+                happyHomeDir: configuration.happyHomeDir,
+                publicReleaseRing: configuration.publicReleaseRing,
+                path: revokedAuthorityPath,
+                sessionId: 'session-hard-revoked',
+                runner: revokedRunner,
+                retainedAgent: binding,
+                httpPort: 3210,
+                expectedPluginHardRevocationRevision: 0,
+                readPluginHardRevocationRevision: async () => 0,
+            });
+        revokedTracked.agentRuntimeDaemonServiceCapabilityHash =
+            revokedAuthority.capabilityDigest;
+        revokedTracked.agentRuntimeDaemonServiceAuthorityFilePath =
+            revokedAuthority.path;
+        revokedTracked.runnerAgentImmutableGenerationId =
+            binding.immutableGenerationId;
+        revokedTracked.activeTurnId = 'turn-hard-revoked';
+        revokedTracked.agentRuntimeDaemonServiceAdmittedTurnId =
+            'turn-hard-revoked';
+        revokedTracked.agentRuntimeDaemonServiceAdmittedInputId =
+            'input-hard-revoked';
+        revokedTracked.agentRuntimeDaemonServiceAdmittedUserMessageSeq = 22;
+        revokedTracked.agentRuntimeDaemonServiceAdmittedUserMessageSeqs = [22];
+        pidToTrackedSession.set(revokedPid, revokedTracked);
+        const nonTargetBinding =
+            createAgentSessionRunnerFactoryBinding({
+                v: 1,
+                pluginId: 'plugin.runner',
+                pluginVersion: '1.0.0',
+                agentId: 'claude',
+                localAgentId: 'claude',
+                immutableGenerationId: 'generation-h',
+                locator: {
+                    module: './runtime.mjs',
+                    export: 'createRuntime',
+                    runtimeApiVersion: 1,
+                },
+                normalizedModulePath:
+                    '/immutable/runtime.mjs',
+                loadMode: 'immutable-js',
+            });
+        const nonTargetTracked: TrackedSession = {
+            pid: 96,
+            sessionRunnerPid: 97,
+            startedBy: 'daemon',
+            happySessionId: 'session-non-target-generation',
+            processStartTimeMs: 790,
+            processCommandHash: '8'.repeat(64),
+            agentRuntimeDaemonServiceCapabilityHash:
+                'non-target-capability-digest',
+            runnerAgentImmutableGenerationId:
+                nonTargetBinding.immutableGenerationId,
+            agentRuntimeDaemonServiceAdmittedTurnId:
+                'turn-non-target',
+            agentRuntimeDaemonServiceAdmittedInputId:
+                'input-non-target',
+            agentRuntimeDaemonServiceAdmittedUserMessageSeq: 20,
+            agentRuntimeDaemonServiceAdmittedUserMessageSeqs: [20],
+        };
+        pidToTrackedSession.set(nonTargetTracked.pid, nonTargetTracked);
+        // The revocation lifecycle is under test here; PID inspection is
+        // the genuine OS boundary covered by the stop-session owner.
+        const pidSafetyModule = await import('../pidSafety');
+        const pidSafetySpy = vi.spyOn(
+            pidSafetyModule,
+            'isPidSafeHappySessionProcess',
+        ).mockResolvedValue(true);
+        const processKill = vi.spyOn(process, 'kill')
+            .mockImplementation(((targetPid: number, signal?: number | NodeJS.Signals) => {
+                if (
+                    targetPid === -revokedPid
+                    && signal === 'SIGTERM'
+                ) {
+                    pidToTrackedSession.delete(revokedPid);
+                    return true;
+                }
+                if (targetPid === revokedPid && signal === 0) {
+                    if (pidToTrackedSession.has(revokedPid)) {
+                        return true;
+                    }
+                    throw Object.assign(
+                        new Error('process exited'),
+                        { code: 'ESRCH' },
+                    );
+                }
+                return true;
+            }) as typeof process.kill);
+
+        let resolvePendingMarkerRead: () => void = () => undefined;
+        const pendingMarkerRead = new Promise<null>((resolve) => {
+            resolvePendingMarkerRead = () => resolve(null);
+        });
+        readSessionMarkerForPidMock.mockReturnValue(pendingMarkerRead);
+        listener?.({
+            durableRevision: 9,
+            changedPluginIds: ['plugin.runner'],
+            runningSessionDisposition:
+                'revokeRunningSessions',
+            runningSessionRevocationScope: {
+                pluginId: 'plugin.runner',
+                immutableGenerationId: 'generation-g',
+            },
+        });
+        await vi.waitFor(() => {
+            expect(revokedTracked.agentRuntimeRunnerRestartDisposition)
+                .toBe('runner_authority_unavailable');
+            expect(
+                revokedTracked.agentRuntimeDaemonServiceCapabilityHash,
+            ).toBeUndefined();
+            expect(
+                revokedTracked.agentRuntimeDaemonServiceAdmittedTurnId,
+            ).toBeUndefined();
+            expect(
+                revokedTracked.agentRuntimeDaemonServiceAdmittedInputId,
+            ).toBeUndefined();
+        });
+        expect.soft(
+            nonTargetTracked.agentRuntimeRunnerRestartDisposition,
+        ).toBeUndefined();
+        expect.soft(
+            nonTargetTracked.agentRuntimeDaemonServiceCapabilityHash,
+        ).toBe('non-target-capability-digest');
+        expect.soft(
+            nonTargetTracked.runnerAgentImmutableGenerationId,
+        ).toBe(nonTargetBinding.immutableGenerationId);
+        expect.soft(
+            nonTargetTracked.agentRuntimeDaemonServiceAdmittedTurnId,
+        ).toBe('turn-non-target');
+        resolvePendingMarkerRead();
+        pluginReloadStateMock.activeRegistry = {
+            agentRuntimesByAgentId: new Map([
+                ['runner-agent', {
+                    hasPrimaryRuntime: true,
+                    pluginId: 'plugin.runner',
+                }],
+            ]),
+        };
+        let hardRevocationStopped = false;
+        try {
+            await vi.waitFor(() => {
+                expect(processKill).toHaveBeenCalledWith(
+                    -revokedPid,
+                    'SIGTERM',
+                );
+                expect(pidToTrackedSession.has(revokedPid))
+                    .toBe(false);
+                expect(revokedTracked.stopRequestedAtMs)
+                    .toEqual(expect.any(Number));
+            }, { timeout: 2_000 });
+            hardRevocationStopped = true;
+        } catch {
+            hardRevocationStopped = false;
+        }
+        expect.soft(processKill).not.toHaveBeenCalledWith(
+            -nonTargetTracked.pid,
+            'SIGTERM',
+        );
+        pidSafetySpy.mockRestore();
+        processKill.mockRestore();
+        await runtime.stopControlServer();
+
+        expect.soft(ordinaryRemovalState).toEqual({
+            capabilityHash: 'capability-digest',
+            retainedAgentGeneration: binding.immutableGenerationId,
+            admittedTurnId: 'turn-exact',
+        });
+        expect.soft(pidToTrackedSession.get(successor.pid))
+            .toBe(successor);
+        expect.soft(revokedTracked.agentRuntimeDaemonServiceCapabilityHash)
+            .toBeUndefined();
+        expect.soft(nonTargetTracked.agentRuntimeRunnerRestartDisposition)
+            .toBeUndefined();
+        expect.soft(nonTargetTracked.agentRuntimeDaemonServiceCapabilityHash)
+            .toBe('non-target-capability-digest');
+        expect.soft(nonTargetTracked.runnerAgentImmutableGenerationId)
+            .toBe(nonTargetBinding.immutableGenerationId);
+        expect.soft(nonTargetTracked.agentRuntimeDaemonServiceAdmittedTurnId)
+            .toBe('turn-non-target');
+        expect.soft(hardRevocationStopped).toBe(true);
+    });
+
+    it('authorizes and publishes an exact Agent managed server with a nonempty correlation claim while rejecting unmatched Provider claims', async () => {
+        const sourceRootPath = await mkdtemp(join(
+            tmpdir(),
+            'happier-agent-claim-source-',
+        ));
+        const toolRootPath = await mkdtemp(join(
+            tmpdir(),
+            'happier-agent-claim-tool-',
+        ));
+        const immutableGenerationId = `agent-claim-${createHash('sha256')
+            .update(sourceRootPath)
+            .digest('hex')
+            .slice(0, 16)}`;
+        const storePaths = resolvePluginStorePaths({
+            happyHomeDir: configuration.happyHomeDir,
+        });
+        const immutableGenerationRoot = join(
+            storePaths.generationsDir,
+            immutableGenerationId,
+        );
+        const previousPath = process.env.PATH;
+        let runtime: Awaited<
+            ReturnType<typeof startDaemonSessionControlRuntime>
+        > | null = null;
+        try {
+            const manifest = OPENCODE_PLUGIN_MANIFEST;
+            const moduleBytes =
+                'export function createRuntime() { throw new Error("unused"); }';
+            await mkdir(join(sourceRootPath, '.happier-plugin'), {
+                recursive: true,
+            });
+            await mkdir(join(sourceRootPath, 'agent'), {
+                recursive: true,
+            });
+            await writeFile(
+                join(
+                    sourceRootPath,
+                    '.happier-plugin',
+                    'plugin.json',
+                ),
+                JSON.stringify(manifest),
+                'utf8',
+            );
+            await writeFile(
+                join(sourceRootPath, 'agent', 'runtime.mjs'),
+                moduleBytes,
+                'utf8',
+            );
+            const record =
+                await createImmutablePluginGenerationRecordFromSource({
+                    pluginId: manifest.id,
+                    sourceRootPath,
+                    manifestRelativePath:
+                        '.happier-plugin/plugin.json',
+                    distribution: {
+                        kind: 'localPath',
+                        canonicalPath: sourceRootPath,
+                    },
+                    updatePolicy: 'manual',
+                    createdAtMs: 1,
+                    immutableGenerationId,
+                });
+            await prepareImmutablePluginGeneration({
+                paths: storePaths,
+                sourceRootPath,
+                record,
+            });
+            const locator = {
+                module: './agent/runtime',
+                export: 'createRuntime',
+                runtimeApiVersion: 1 as const,
+            };
+            await persistValidatedAgentSessionRunnerFactories({
+                paths: storePaths,
+                record,
+                manifestAuthority: 'bundled_first_party',
+                factories: [{
+                    localAgentId: 'opencode',
+                    locator,
+                    normalizedModulePath: 'agent/runtime.mjs',
+                    loadMode: 'immutable-js',
+                }],
+            });
+            const executablePath = join(toolRootPath, 'opencode');
+            await writeFile(executablePath, '', 'utf8');
+            await chmod(executablePath, 0o700);
+            process.env.PATH = toolRootPath;
+
+            const binding = createAgentSessionRunnerFactoryBinding({
+                v: 1,
+                pluginId: manifest.id,
+                pluginVersion: manifest.version,
+                agentId: 'opencode',
+                localAgentId: 'opencode',
+                immutableGenerationId,
+                locator,
+                normalizedModulePath: 'agent/runtime.mjs',
+                loadMode: 'immutable-js',
+            });
+            const sessionId = 'session-agent-correlation-claim';
+            const runner = Object.freeze({
+                pid: 43120,
+                processStartTimeMs: 1,
+                processCommandHash: '2'.repeat(64),
+                snapshotIdentity: 'snapshot:agent-correlation-claim',
+            });
+            runtime = await startDaemonSessionControlRuntime({
+                machineId: 'machine-agent-correlation-claim',
+                credentials: {
+                    token: 'token-daemon',
+                    encryption: {
+                        type: 'legacy',
+                        secret: new Uint8Array(32).fill(1),
+                    },
+                },
+                api: {} as never,
+                loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+                connectedServicesMaterializationBaseDir:
+                    '/tmp/connected-services',
+                getConnectedServiceRefreshCoordinator: () => null,
+                getConnectedServiceQuotasCoordinator: () => null,
+                pidToTrackedSession: new Map(),
+                pidToAwaiter: new Map(),
+                pidToSpawnResultResolver: new Map(),
+                pidToSpawnWebhookTimeout: new Map(),
+                getApiMachineForSessions: () => null,
+                spawnResourceCleanupByPid: new Map(),
+                sessionAttachCleanupByPid: new Map(),
+                connectedServicesRestartRequestedPids: new Set(),
+                beforeShutdown: vi.fn(),
+                onHappySessionWebhook: vi.fn(),
+                requestShutdown: vi.fn(),
+                processEnv: { PATH: toolRootPath },
+            });
+            const dispatch = vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0]
+                .agentRuntimeDaemonServices?.dispatch;
+            expect(dispatch).toBeDefined();
+            const context = {
+                sessionId,
+                runner,
+                retainedAgent: binding,
+                invocationContext: {
+                    cwd: '/workspace',
+                    environment: {},
+                    providerBindingActive: false,
+                },
+            };
+            const requestContext = {
+                token: 'e'.repeat(43),
+                sessionId,
+            };
+            const contributionId =
+                `${manifest.id}/agents/opencode`;
+            const operationClaimId = sessionId;
+            const supervision = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: requestContext,
+                    operation: {
+                        kind:
+                            'managed_server.supervision.authorize',
+                        requestId: 'authorize-agent-claim',
+                        contributionId,
+                        operationClaimId,
+                        serverId: 'opencode-server',
+                        executable: {
+                            kind: 'systemTool',
+                            id: 'opencode-cli',
+                        },
+                        environmentKeys: [],
+                    },
+                }),
+                context,
+            );
+            expect(supervision).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'managed_server.supervision',
+                    status: 'authorized',
+                    launch: {
+                        kind: 'daemonResolved',
+                        value: { command: executablePath },
+                    },
+                },
+            });
+            if (
+                !supervision?.ok
+                || supervision.result.kind
+                    !== 'managed_server.supervision'
+                || supervision.result.status !== 'authorized'
+            ) {
+                throw new Error(
+                    'Expected Agent managed-server supervision authorization',
+                );
+            }
+
+            const projection = {
+                sessionId,
+                pluginId: manifest.id,
+                contributionId,
+                operationClaimId,
+                serverId: 'opencode-server',
+                instanceId: 'opencode-agent-claim-instance',
+                immutableGenerationId,
+                custodyOwner: 'sessionRunner' as const,
+                mode: 'externalAttach' as const,
+                endpoint: {
+                    baseUrl: 'http://127.0.0.1:43120',
+                    host: '127.0.0.1' as const,
+                    port: 43120,
+                },
+                process: null,
+                createdAtMs: 1,
+            };
+            const published = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: requestContext,
+                    operation: {
+                        kind: 'managed_server.endpoint.publish',
+                        requestId: 'publish-agent-claim',
+                        projection,
+                    },
+                }),
+                context,
+            );
+            expect(published).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'managed_server.endpoint',
+                    status: 'published',
+                },
+            });
+
+            const providerContributionId =
+                `${manifest.id}/providers/gateway`;
+            await expect(dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: requestContext,
+                    operation: {
+                        kind:
+                            'managed_server.supervision.authorize',
+                        requestId:
+                            'authorize-unmatched-provider-claim',
+                        contributionId: providerContributionId,
+                        operationClaimId:
+                            'unknown-provider-operation-claim',
+                        serverId: 'provider-server',
+                        executable: {
+                            kind: 'packaged-runtime-binary',
+                            directorySegments: ['tools'],
+                            executableBaseName: 'provider-server',
+                        },
+                        environmentKeys: [],
+                    },
+                }),
+                context,
+            )).rejects.toMatchObject({
+                code: 'plugin_managed_server_contribution_denied',
+            });
+            const mismatchedProviderPublish = await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: requestContext,
+                    operation: {
+                        kind: 'managed_server.endpoint.publish',
+                        requestId:
+                            'publish-unmatched-provider-claim',
+                        projection: {
+                            ...projection,
+                            contributionId: providerContributionId,
+                            operationClaimId:
+                                'unknown-provider-operation-claim',
+                            instanceId:
+                                'unmatched-provider-claim-instance',
+                        },
+                    },
+                }),
+                context,
+            );
+            expect(mismatchedProviderPublish).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'managed_server.endpoint',
+                    status: 'unavailable',
+                },
+            });
+
+            if (
+                published?.ok
+                && published.result.kind
+                    === 'managed_server.endpoint'
+                && published.result.status === 'published'
+            ) {
+                await expect(dispatch?.(
+                    AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                        v: 1,
+                        context: requestContext,
+                        operation: {
+                            kind:
+                                'managed_server.endpoint.release',
+                            requestId: 'release-agent-claim',
+                            pluginId: manifest.id,
+                            instanceId: projection.instanceId,
+                            projectionToken:
+                                published.result.projectionToken,
+                        },
+                    }),
+                    context,
+                )).resolves.toMatchObject({
+                    ok: true,
+                    result: {
+                        kind: 'managed_server.endpoint',
+                        status: 'released',
+                        released: true,
+                    },
+                });
+            }
+        } finally {
+            if (previousPath === undefined) {
+                delete process.env.PATH;
+            } else {
+                process.env.PATH = previousPath;
+            }
+            await runtime?.stopControlServer();
+            await rm(immutableGenerationRoot, {
+                recursive: true,
+                force: true,
+            });
+            await rm(sourceRootPath, { recursive: true, force: true });
+            await rm(toolRootPath, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        ['idle', false, 'success', false, false],
+        ['idle before tracked projection refresh', false, 'success', false, true],
+        ['active', true, 'success', false, false],
+        [
+            'active with an Agent and Provider from the same plugin',
+            true,
+            'success',
+            true,
+            false,
+        ],
+        ['active with an unavailable custody channel', true, 'stop', false, false],
+        ['active with an invalid custody response', true, 'wrong', false, false],
+        [
+            'active after replacement custody took ownership',
+            true,
+            'stale',
+            false,
+            false,
+        ],
+    ] as const)(
+        'proactively fences a distinct adopted Provider through the existing authenticated runner channel while the Agent is %s',
+        async (_activity, active, fenceOutcome, combinedPlugin, markerOnly) => {
+        const sessionId =
+            `session-provider-hard-revocation-${fenceOutcome}-${active ? 'active' : 'idle'}`;
+        const runtimeBindingBasis = ProviderRuntimeBindingBasisV1Schema.parse({
+            v: 1,
+            deployment: {
+                kind: 'managedLocal',
+                implementationIdentity: {
+                    pluginId: 'plugin.provider',
+                    localId: 'gateway',
+                },
+                managedRuntime: {
+                    kind: 'managed',
+                    endpointTemplateIds: ['messages'],
+                    connectedAccounts: [],
+                    requestAuthUses: [],
+                },
+                purposeBindings: { v: 1, bindings: [] },
+            },
+            agentTargetKey: 'backend:claude',
+            connectionId: 'pc_provider_hard_revocation',
+            contributionKey: 'plugin.provider/gateway',
+            endpoint: {
+                endpointTemplateId: 'messages',
+                protocol: 'anthropic',
+                publicHeaders: {},
+            },
+            runtimeCredentialTransport: null,
+            prepared: { v: 1, materialization: 'spawnEnv' },
+            adapterVersion: 1,
+            credentialAuthorization: {
+                connectionSecurityFingerprint: 'connection-security',
+                grantFingerprint: 'grant',
+            },
+            agentSupport: {
+                acceptsProtocols: ['anthropic'],
+                required: { streaming: true },
+                credentialSupport: {
+                    supportsNoAuth: true,
+                    apiKeyTransports: [],
+                },
+                authIsolation: {
+                    suppressConnectedServiceIds: [],
+                    ownedEnvKeys: [],
+                },
+                materialization: 'spawnEnv',
+                applyPolicy: 'restart_session',
+                supportsFreeformModelIds: true,
+            },
+        });
+        const tracked: TrackedSession = {
+            pid: 196,
+            sessionRunnerPid: 197,
+            startedBy: 'daemon',
+            happySessionId: sessionId,
+            processStartTimeMs: 789,
+            processCommandHash: '7'.repeat(64),
+            ...(markerOnly
+                ? {}
+                : {
+                    runnerManagedDependencyRetentionV1: {
+                        v: 1 as const,
+                        adoptedManagedProviderAuthority: {
+                            pluginId: 'plugin.provider',
+                            immutableGenerationId: 'generation-provider',
+                            manifestAuthority: 'external',
+                            hardRevocationRevisionAtAdmission: 7,
+                        },
+                        sourceGenerationIds: [],
+                        qualifiedDependencyIds: [],
+                    },
+                }),
+            spawnOptions: {
+                directory: '/workspace',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'claude',
+                    sourceKind: 'built_in',
+                },
+                providerBindingMetadataV1:
+                    SessionProviderBindingMetadataV1Schema.parse({
+                        v: 1,
+                        connectionId:
+                            runtimeBindingBasis.connectionId,
+                        contributionKey:
+                            runtimeBindingBasis.contributionKey,
+                        connectionRevision: 3,
+                        protocol: 'anthropic',
+                        materialization: 'spawnEnv',
+                        compatibilityFingerprint: 'compatibility',
+                        bindingSecurityFingerprint: 'binding-security',
+                        runtimeBindingBasis,
+                        displaySnapshot: {
+                            providerName: 'Gateway',
+                            connectionName: 'Local',
+                            connectionRole: 'named',
+                            connectionDisplayNameMode: 'custom',
+                        },
+                    }),
+            },
+        };
+        const agentBinding = createAgentSessionRunnerFactoryBinding({
+            v: 1,
+            pluginId: combinedPlugin
+                ? 'plugin.provider'
+                : 'plugin.runner',
+            pluginVersion: '1.0.0',
+            agentId: 'runner-agent',
+            localAgentId: 'runner-agent',
+            immutableGenerationId: 'generation-g',
+            locator: {
+                module: './runtime.mjs',
+                export: 'createRuntime',
+                runtimeApiVersion: 1,
+            },
+            normalizedModulePath: '/immutable/runtime.mjs',
+            loadMode: 'immutable-js',
+        });
+        const agentRunner = Object.freeze({
+            pid: 197,
+            processStartTimeMs: 789,
+            processCommandHash: '7'.repeat(64),
+            snapshotIdentity: 'snapshot:runner',
+        });
+        if (active) {
+            tracked.activeTurnId = 'turn-active';
+            tracked.runnerAgentImmutableGenerationId =
+                agentBinding.immutableGenerationId;
+            tracked.agentRuntimeDaemonServiceAdmittedTurnId =
+                'turn-active';
+            tracked.agentRuntimeDaemonServiceAdmittedInputId =
+                'input-active';
+            tracked.agentRuntimeDaemonServiceAdmittedUserMessageSeq = 21;
+            tracked.agentRuntimeDaemonServiceAdmittedUserMessageSeqs = [21];
+            tracked.agentRuntimeDaemonServiceCapabilityHash =
+                'active-agent-capability';
+        }
+        if (combinedPlugin) {
+            const authorityPath =
+                await createAgentRuntimeDaemonServiceAuthorityPath({
+                    happyHomeDir: configuration.happyHomeDir,
+                    publicReleaseRing: configuration.publicReleaseRing,
+                });
+            const authority =
+                await publishAgentRuntimeDaemonServiceAuthority({
+                    happyHomeDir: configuration.happyHomeDir,
+                    publicReleaseRing: configuration.publicReleaseRing,
+                    path: authorityPath,
+                    sessionId,
+                    runner: agentRunner,
+                    retainedAgent: agentBinding,
+                    httpPort: 3210,
+                    expectedPluginHardRevocationRevision: 0,
+                    readPluginHardRevocationRevision: async () => 0,
+                });
+            tracked.agentRuntimeDaemonServiceAuthorityFilePath =
+                authority.path;
+            tracked.agentRuntimeDaemonServiceCapabilityHash =
+                authority.capabilityDigest;
+        }
+        if (markerOnly) {
+            readSessionMarkerForPidMock.mockImplementation(async (pid) => (
+                pid === tracked.sessionRunnerPid
+                    ? {
+                        pid,
+                        happySessionId: sessionId,
+                        startedBy: 'daemon',
+                        happyHomeDir: '/tmp/happier-test-home',
+                        processStartTimeMs:
+                            tracked.processStartTimeMs,
+                        processCommandHash:
+                            tracked.processCommandHash,
+                        runnerManagedDependencyRetentionV1: {
+                            v: 1,
+                            adoptedManagedProviderAuthority: {
+                                pluginId: 'plugin.provider',
+                                immutableGenerationId:
+                                    'generation-provider',
+                                manifestAuthority: 'external',
+                                hardRevocationRevisionAtAdmission: 7,
+                            },
+                            sourceGenerationIds: [],
+                            qualifiedDependencyIds: [],
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    }
+                    : null
+            ));
+        }
+        const runnerMustStop = combinedPlugin
+            || fenceOutcome === 'stop'
+            || fenceOutcome === 'wrong';
+        if (runnerMustStop) {
+            tracked.childProcess = {
+                pid: tracked.pid,
+                exitCode: null,
+                signalCode: null,
+                kill: vi.fn(() => true),
+            } as never;
+        }
+        fetchSessionByIdMock.mockResolvedValue({
+            id: sessionId,
+            encryptionMode: 'plain',
+        } as never);
+        const fenceError = new Error(
+            'runner custody channel unavailable',
+        );
+        let rejectFence: (reason?: unknown) => void = () => undefined;
+        if (fenceOutcome === 'success') {
+            vi.mocked(callSessionRpc).mockResolvedValue({
+                v: 1,
+                kind: 'hardRevocationFenced',
+                fencedServiceCount: 1,
+            });
+        } else if (fenceOutcome === 'wrong') {
+            vi.mocked(callSessionRpc).mockResolvedValue({
+                v: 1,
+                kind: 'disposed',
+            });
+        } else {
+            const pendingFence = new Promise<never>((_resolve, reject) => {
+                rejectFence = reject;
+            });
+            vi.mocked(callSessionRpc).mockImplementation(
+                async () => await pendingFence,
+            );
+        }
+        const coexistingTracked = fenceOutcome === 'stale'
+            ? {
+                ...tracked,
+                pid: 198,
+                sessionRunnerPid: 199,
+                processStartTimeMs: 791,
+                processCommandHash: '9'.repeat(64),
+            }
+            : null;
+        const pidToTrackedSession = new Map([
+            [tracked.pid, tracked],
+            ...(coexistingTracked
+                ? [[coexistingTracked.pid, coexistingTracked] as const]
+                : []),
+        ]);
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir:
+                '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession,
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+        const listener = [
+            ...pluginRunningSessionDispositionListenersMock,
+        ][0];
+        expect(listener).toBeDefined();
+        const processKill = runnerMustStop || fenceOutcome === 'stale'
+            ? vi.spyOn(process, 'kill').mockImplementation((
+                (targetPid: number, signal?: number | NodeJS.Signals) => {
+                    if (
+                        targetPid === -tracked.pid
+                        && signal === 'SIGTERM'
+                    ) {
+                        pidToTrackedSession.delete(tracked.pid);
+                        return true;
+                    }
+                    if (targetPid === tracked.pid && signal === 0) {
+                        if (pidToTrackedSession.has(tracked.pid)) {
+                            return true;
+                        }
+                        throw Object.assign(
+                            new Error('process exited'),
+                            { code: 'ESRCH' },
+                        );
+                    }
+                    return true;
+                }
+            ) as typeof process.kill)
+            : null;
+        const pidSafetyModule =
+            runnerMustStop
+                ? await import('../pidSafety')
+                : null;
+        const pidSafetySpy = pidSafetyModule
+            ? vi.spyOn(
+                pidSafetyModule,
+                'isPidSafeHappySessionProcess',
+            ).mockResolvedValue(true)
+            : null;
+
+        listener?.({
+            durableRevision: 10,
+            changedPluginIds: ['plugin.provider'],
+            runningSessionDisposition: 'retainRunningSessions',
+        });
+        await Promise.resolve();
+        expect(callSessionRpc).not.toHaveBeenCalled();
+
+        listener?.({
+            durableRevision: 11,
+            changedPluginIds: ['plugin.provider'],
+            runningSessionDisposition: 'revokeRunningSessions',
+        });
+        const expectAgentAuthorityPreserved = (
+            candidate: TrackedSession,
+        ) => {
+            expect(candidate.agentRuntimeRunnerRestartDisposition)
+                .toBeUndefined();
+            if (!active) return;
+            expect(candidate.agentRuntimeDaemonServiceCapabilityHash)
+                .toBe(combinedPlugin
+                    ? tracked.agentRuntimeDaemonServiceCapabilityHash
+                    : 'active-agent-capability');
+            expect(candidate.runnerAgentImmutableGenerationId)
+                .toBe(agentBinding.immutableGenerationId);
+            expect(candidate.agentRuntimeDaemonServiceAdmittedTurnId)
+                .toBe('turn-active');
+            expect(candidate.agentRuntimeDaemonServiceAdmittedInputId)
+                .toBe('input-active');
+        };
+        if (combinedPlugin) {
+            await vi.waitFor(() => {
+                expect(tracked.agentRuntimeRunnerRestartDisposition)
+                    .toBe('runner_authority_unavailable');
+                expect(tracked).toMatchObject({
+                    activeTurnId: 'turn-active',
+                });
+                expect(tracked.agentRuntimeDaemonServiceCapabilityHash)
+                    .toBeUndefined();
+                expect(tracked.agentRuntimeDaemonServiceAdmittedTurnId)
+                    .toBeUndefined();
+            });
+        } else {
+            expectAgentAuthorityPreserved(tracked);
+            if (coexistingTracked) {
+                expectAgentAuthorityPreserved(coexistingTracked);
+            }
+        }
+        await vi.waitFor(() => {
+            expect(callSessionRpc).toHaveBeenCalledWith({
+                token: 'token-daemon',
+                sessionId,
+                method:
+                    `${sessionId}:${RUNNER_MANAGED_SERVICES_CUSTODY_RPC_METHOD}`,
+                request: {
+                    v: 1,
+                    kind: 'fenceHardRevocation',
+                    pluginId: 'plugin.provider',
+                },
+                mode: 'plain',
+            });
+        });
+        expect(callSessionRpc).toHaveBeenCalledTimes(1);
+        if (!combinedPlugin) {
+            expectAgentAuthorityPreserved(tracked);
+            if (coexistingTracked) {
+                expectAgentAuthorityPreserved(coexistingTracked);
+            }
+        }
+        if (fenceOutcome !== 'success') {
+            const successor: TrackedSession | null =
+                fenceOutcome === 'stale'
+                    ? {
+                        ...tracked,
+                        processStartTimeMs: 790,
+                        processCommandHash: '8'.repeat(64),
+                    }
+                    : null;
+            if (successor) {
+                pidToTrackedSession.set(tracked.pid, successor);
+            }
+            rejectFence(fenceError);
+            if (runnerMustStop) {
+                await vi.waitFor(() => {
+                    expect(processKill).toHaveBeenCalledWith(
+                        -tracked.pid,
+                        'SIGTERM',
+                    );
+                    expect(tracked.stopRequestedAtMs)
+                        .toEqual(expect.any(Number));
+                    expect(pidToTrackedSession.has(tracked.pid))
+                        .toBe(false);
+                });
+            } else {
+                await vi.waitFor(() => {
+                    expect(logger.debug).toHaveBeenCalledWith(
+                        '[DAEMON RUN] Failed to fence hard-revoked managed Provider custody',
+                        fenceError,
+                    );
+                });
+                expect(processKill).not.toHaveBeenCalledWith(
+                    -tracked.pid,
+                    'SIGTERM',
+                );
+                expect(pidToTrackedSession.get(tracked.pid))
+                    .toBe(successor);
+            }
+        } else if (runnerMustStop) {
+            await vi.waitFor(() => {
+                expect(processKill).toHaveBeenCalledWith(
+                    -tracked.pid,
+                    'SIGTERM',
+                );
+                expect(tracked.stopRequestedAtMs)
+                    .toEqual(expect.any(Number));
+                expect(pidToTrackedSession.has(tracked.pid))
+                    .toBe(false);
+            });
+        } else if (active) {
+            expect(tracked.stopRequestedAtMs).toBeUndefined();
+        }
+        listener?.({
+            durableRevision: 12,
+            changedPluginIds: ['plugin.provider'],
+            runningSessionDisposition: 'retainRunningSessions',
+        });
+        await Promise.resolve();
+        expect(callSessionRpc).toHaveBeenCalledTimes(1);
+        if (combinedPlugin) {
+            expect(tracked.agentRuntimeRunnerRestartDisposition)
+                .toBe('runner_authority_unavailable');
+        } else {
+            expectAgentAuthorityPreserved(tracked);
+        }
+        processKill?.mockRestore();
+        pidSafetySpy?.mockRestore();
+        await runtime.stopControlServer();
+    });
+
+    it('keeps a validated Action bound to witness A when registry acquisition races with admission B', async () => {
+        const tracked: TrackedSession = {
+            pid: 94,
+            sessionRunnerPid: 95,
+            startedBy: 'daemon',
+            happySessionId: 'session-action-witness-race',
+        };
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-action-witness-race',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir:
+                '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+        const controlServerInput =
+            vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0];
+        const binding = createAgentSessionRunnerFactoryBinding({
+            v: 1,
+            pluginId: 'plugin.runner',
+            pluginVersion: '1.0.0',
+            agentId: 'claude',
+            localAgentId: 'claude',
+            immutableGenerationId: 'generation-action-g',
+            locator: {
+                module: './runtime.mjs',
+                export: 'createRuntime',
+                runtimeApiVersion: 1,
+            },
+            normalizedModulePath: '/immutable/runtime.mjs',
+            loadMode: 'immutable-js',
+        });
+        const runner = Object.freeze({
+            pid: tracked.sessionRunnerPid!,
+            processStartTimeMs: 123,
+            processCommandHash: '5'.repeat(64),
+            snapshotIdentity: 'snapshot:action-witness-race',
+        });
+        const witnessA = Object.freeze({
+            turnId: 'turn-a',
+            inputId: 'input-a',
+            userMessageSeq: 1,
+            userMessageSeqs: Object.freeze([1]),
+        });
+        const witnessB = Object.freeze({
+            turnId: 'turn-b',
+            inputId: 'input-b',
+            userMessageSeq: 2,
+            userMessageSeqs: Object.freeze([2]),
+        });
+        Object.assign(tracked, {
+            processStartTimeMs: runner.processStartTimeMs,
+            processCommandHash: runner.processCommandHash,
+            runnerAgentImmutableGenerationId:
+                binding.immutableGenerationId,
+            runnerAgentInvocationContext: {
+                cwd: '/workspace',
+                environment: {},
+                providerBindingActive: false,
+            },
+            agentRuntimeDaemonServiceAdmittedTurnId: witnessA.turnId,
+            agentRuntimeDaemonServiceAdmittedInputId: witnessA.inputId,
+            agentRuntimeDaemonServiceAdmittedUserMessageSeq:
+                witnessA.userMessageSeq,
+            agentRuntimeDaemonServiceAdmittedUserMessageSeqs:
+                [...witnessA.userMessageSeqs],
+        });
+        const daemonServiceContext = {
+            sessionId: tracked.happySessionId!,
+            runner,
+            retainedAgent: binding,
+            invocationContext: tracked.runnerAgentInvocationContext!,
+            trackedSession: tracked,
+        };
+        const actionEffect = vi.fn(async () => ({
+            ok: true as const,
+            result: [],
+        }));
+        const runnerMaterialization = createPluginActionCallerMaterializationFixture(
+            'plugin.runner',
+        );
+        const createCurrentActions = vi.fn(async (input: Readonly<{
+            isGenerationCurrent(): boolean;
+        }>) => createPluginInvocationActionsService({
+            seed: {
+                plugin: {
+                    id: 'plugin.runner',
+                    version: '1.0.0',
+                },
+                resolveCurrentPluginMaterializationRef:
+                    runnerMaterialization.resolveCurrentPluginMaterializationRef,
+                generation: 'generation-current',
+                surface: 'agent',
+                session: { id: tracked.happySessionId! },
+                signal: new AbortController().signal,
+                isGenerationCurrent:
+                    input.isGenerationCurrent,
+            },
+            actionExecutor: { execute: actionEffect },
+            invokeContributedAction: async () => {
+                throw new Error('generation-private action was not expected');
+            },
+        }));
+        const registry = {
+            contributes: {
+                resources: [],
+                agentDefinitionsById: new Map(),
+            },
+            agentRuntimesByAgentId: new Map(),
+            createRetainedRunnerAgentInvocationServices:
+                vi.fn(async () => ({
+                    services: createUnavailablePluginServices(),
+                    resourceDescriptors: {},
+                    subscriptionCapabilities: {
+                        settingsWatch: false,
+                        eventSubscriptions: [],
+                        resourceWatches: [],
+                        notificationPreferencesWatch: false,
+                    },
+                })),
+            createRetainedRunnerAgentCurrentGlobalActionsService:
+                createCurrentActions,
+        };
+        let releaseActionLease!: () => void;
+        const actionLeaseGate = new Promise<void>((resolve) => {
+            releaseActionLease = resolve;
+        });
+        let actionLeaseRequested!: () => void;
+        const actionLeaseEntered = new Promise<void>((resolve) => {
+            actionLeaseRequested = resolve;
+        });
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock
+            .mockReset();
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock
+            .mockResolvedValue({
+                registry,
+                source: 'active',
+                release: vi.fn(async () => {}),
+            });
+        try {
+            await expect(controlServerInput
+                ?.agentRuntimeDaemonServices?.dispatch(
+                    AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                        v: 1,
+                        context: {
+                            token: 'e'.repeat(43),
+                            sessionId: tracked.happySessionId!,
+                        },
+                        operation: {
+                            kind: 'plugin_services.prepare_v1',
+                            requestId: 'prepare-action-race',
+                            invocationId: 'invocation-action-race',
+                            witness: witnessA,
+                        },
+                    }),
+                    daemonServiceContext,
+                )).resolves.toMatchObject({ ok: true });
+
+            acquireAuthoritativePluginRuntimeRegistryLeaseMock
+                .mockReset();
+            acquireAuthoritativePluginRuntimeRegistryLeaseMock
+                .mockImplementation(async () => {
+                    actionLeaseRequested();
+                    await actionLeaseGate;
+                    return {
+                        registry,
+                        source: 'active',
+                        release: vi.fn(async () => {}),
+                    };
+                });
+
+            const action = controlServerInput
+                ?.agentRuntimeDaemonServices?.dispatch(
+                    AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                        v: 1,
+                        context: {
+                            token: 'e'.repeat(43),
+                            sessionId: tracked.happySessionId!,
+                        },
+                        operation: {
+                            kind: 'plugin_actions.execute_v1',
+                            requestId: 'execute-action-race',
+                            invocationId: 'invocation-action-race',
+                            witness: witnessA,
+                            actionId: 'session.list',
+                            input: { t: 'object', value: {} },
+                        },
+                    }),
+                    daemonServiceContext,
+                );
+            await actionLeaseEntered;
+            Object.assign(tracked, {
+                agentRuntimeDaemonServiceAdmittedTurnId:
+                    witnessB.turnId,
+                agentRuntimeDaemonServiceAdmittedInputId:
+                    witnessB.inputId,
+                agentRuntimeDaemonServiceAdmittedUserMessageSeq:
+                    witnessB.userMessageSeq,
+                agentRuntimeDaemonServiceAdmittedUserMessageSeqs:
+                    [...witnessB.userMessageSeqs],
+            });
+            releaseActionLease();
+
+            await expect(action).resolves.toMatchObject({
+                ok: false,
+                error: {
+                    code:
+                        'plugin_services_turn_authority_unavailable',
+                },
+            });
+            expect(actionEffect).not.toHaveBeenCalled();
+        } finally {
+            releaseActionLease();
+            await runtime.stopControlServer();
+        }
     });
 
     it('rotates live execution-run request authority with the exact current control port after startup', async () => {
@@ -2889,6 +8855,8 @@ describe('startDaemonSessionControlRuntime', () => {
                                     connectedAccounts: [{
                                         purpose: purpose.purpose,
                                         service: 'openai-codex',
+                                        materializationKinds:
+                                            ['httpHeaders'],
                                     }],
                                 },
                             },
@@ -2989,7 +8957,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     replacementDocument?.capability,
                 )).toMatchObject({
                     subjectId:
-                        `execution-run:${runId}/runner:${runnerPid}/agent:codex/agent:codex`,
+                        `execution-run:${runId}/runner:${runnerPid}/agent:codex`,
                 });
             expect(activatePurposeBindings).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -3154,170 +9122,6 @@ describe('startDaemonSessionControlRuntime', () => {
         },
     );
 
-    it('starts the request-auth control server before non-blocking retained managed Provider recovery', async () => {
-        const sessionId = 'session-managed-provider-startup-nonblocking';
-        const fetchAccountProfile = vi.spyOn(axios, 'get').mockResolvedValue({
-            status: 200,
-            data: {
-                id: 'account-managed-provider-startup',
-                connectedServicesV2: [],
-                connectedServiceCredentialRevisionsV1: [],
-            },
-        });
-        let resolveServerFeaturesSnapshot!: (
-            snapshot: CliServerFeaturesSnapshot | undefined,
-        ) => void;
-        const serverFeaturesSnapshotPromise =
-            new Promise<CliServerFeaturesSnapshot | undefined>((resolve) => {
-                resolveServerFeaturesSnapshot = resolve;
-            });
-        const readServerFeaturesSnapshot = vi.fn(async () =>
-            await serverFeaturesSnapshotPromise,
-        );
-        const tracked: TrackedSession = {
-            pid: 5101,
-            startedBy: 'daemon',
-            happySessionId: sessionId,
-        };
-
-        const runtimePromise = startDaemonSessionControlRuntime({
-            machineId: 'machine-managed-provider-startup-nonblocking',
-            credentials: {
-                token: 'token-daemon',
-                encryption: {
-                    type: 'legacy',
-                    secret: new Uint8Array(32).fill(1),
-                },
-            },
-            api: {} as never,
-            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
-            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
-            getConnectedServiceRefreshCoordinator: () => null,
-            getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
-            startupManagedProviderRecoveryCandidates: [{
-                pid: tracked.pid,
-                sessionId,
-                attachment: {
-                    v: 1,
-                    process: {
-                        pid: 5102,
-                        processStartTimeMs: 1_717_171_717_654,
-                        processCommandHash: 'c'.repeat(64),
-                    },
-                    endpoint: {
-                        host: '127.0.0.1',
-                        port: 45_321,
-                    },
-                    materialization: {
-                        rootDir:
-                            '/tmp/managed-provider-startup-nonblocking',
-                        materializationId:
-                            'managed-provider-startup-nonblocking',
-                    },
-                },
-                markerOwnership: {
-                    happySessionId: sessionId,
-                    processCommandHash: 'b'.repeat(64),
-                    processStartTimeMs: 1_717_171_717_321,
-                },
-            }],
-            beforeShutdown: vi.fn(),
-            onHappySessionWebhook: vi.fn(),
-            requestShutdown: vi.fn(),
-            processEnv: {},
-            resolveServerFeaturesSnapshot: readServerFeaturesSnapshot,
-            browserDaemonFeatureGate: fakeBrowserGate({}),
-        });
-
-        let controlServerStartedBeforeRecoveryReadiness = false;
-        let connectedServiceProjectionLoadedBeforeRecoveryReadiness = false;
-        let fetchAccountProfileCall:
-            | Parameters<typeof axios.get>
-            | undefined;
-        let fetchAccountProfileInvocationOrder: number | undefined;
-        try {
-            await waitForStartupCondition(
-                () => vi.mocked(startDaemonControlServer).mock.calls.length > 0,
-            );
-            controlServerStartedBeforeRecoveryReadiness = true;
-            try {
-                await waitForStartupCondition(
-                    () => fetchAccountProfile.mock.calls.length > 0,
-                );
-                connectedServiceProjectionLoadedBeforeRecoveryReadiness = true;
-            } catch {
-                // The assertions below record the missing startup projection boundary.
-            }
-        } catch {
-            // The assertion below records the daemon-startup barrier directly.
-        } finally {
-            if (controlServerStartedBeforeRecoveryReadiness) {
-                const runtime = await runtimePromise;
-                await runtime.stopControlServer();
-                resolveServerFeaturesSnapshot(undefined);
-                await Promise.resolve();
-                await Promise.resolve();
-            } else {
-                resolveServerFeaturesSnapshot(undefined);
-                const runtime = await runtimePromise;
-                await runtime.stopControlServer();
-            }
-            fetchAccountProfileCall = fetchAccountProfile.mock.calls[0];
-            fetchAccountProfileInvocationOrder =
-                fetchAccountProfile.mock.invocationCallOrder[0];
-            fetchAccountProfile.mockRestore();
-        }
-
-        expect(controlServerStartedBeforeRecoveryReadiness).toBe(true);
-        expect(
-            connectedServiceProjectionLoadedBeforeRecoveryReadiness,
-        ).toBe(true);
-        expect(
-            refreshAccountSettingsForMinimumVersionMock,
-        ).toHaveBeenCalledTimes(1);
-        expect(fetchAccountProfileCall).toEqual([
-            expect.stringContaining('/v1/account/profile'),
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer token-daemon',
-                }),
-            }),
-        ]);
-        expect(readServerFeaturesSnapshot).toHaveBeenCalledTimes(1);
-        expect(
-            vi.mocked(startDaemonControlServer)
-                .mock.invocationCallOrder.at(-1),
-        ).toBeLessThan(
-            refreshAccountSettingsForMinimumVersionMock
-                .mock.invocationCallOrder[0]!,
-        );
-        expect(
-            refreshAccountSettingsForMinimumVersionMock
-                .mock.invocationCallOrder[0],
-        ).toBeLessThan(
-            fetchAccountProfileInvocationOrder!,
-        );
-        expect(
-            fetchAccountProfileInvocationOrder,
-        ).toBeLessThan(
-            readServerFeaturesSnapshot.mock.invocationCallOrder[0]!,
-        );
-        expect(logger.debug).not.toHaveBeenCalledWith(
-            '[DAEMON RUN] Managed Provider startup recovery left request-auth unavailable',
-            expect.objectContaining({
-                sessionId: tracked.happySessionId,
-            }),
-        );
-    });
-
     it('rejects internal spawn requests once daemon shutdown is quiescing new work', async () => {
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-1',
@@ -3444,10 +9248,39 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
-    it('keeps internal resumes stop-fenced while real child-exit cleanup still respawns an unstopped crash', async () => {
+    it('makes explicit Stop supersede automatic recovery while keeping later internal resumes stop-fenced', async () => {
         const stoppedSessionId = 'session-internal-resume-stop-fence';
         const crashedSessionId = 'session-unstopped-crash';
         const pidToTrackedSession = new Map<number, TrackedSession>();
+        const cancelInactiveUsageLimitRecovery = vi.fn(async () => null);
+        const stageUsageLimitRecoveryMutation = vi.fn(async () => undefined);
+        const cancelRuntimeAuthRecovery = vi
+            .spyOn(RuntimeAuthRecoveryScheduler.prototype, 'cancel')
+            .mockResolvedValue(null);
+        const cancelTemporaryThrottleRecovery = vi
+            .spyOn(ConnectedServiceTemporaryThrottleRetryScheduler.prototype, 'cancel')
+            .mockResolvedValue(null);
+        fetchSessionByIdCompatMock.mockResolvedValue({
+            id: stoppedSessionId,
+            metadata: JSON.stringify({
+                sessionUsageLimitRecoveryV1: {
+                    v: 1,
+                    status: 'waiting',
+                    resumePromptMode: 'standard',
+                    issueFingerprint: 'replacement',
+                    armedAtMs: 2_000,
+                    runtimeAuthRecoveryAttemptId: 'runtime-b',
+                    resetAtMs: 5_000,
+                    nextCheckAtMs: 5_000,
+                    attemptCount: 1,
+                    maxAttempts: 3,
+                    lastProbeError: null,
+                    selectedAuth: { kind: 'native' },
+                },
+            }),
+            metadataVersion: 1,
+            encryptionMode: 'plain',
+        });
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-1',
             credentials: {
@@ -3459,6 +9292,13 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
+            cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop: cancelInactiveUsageLimitRecovery,
+            daemonSessionMutationCustody: {
+                stage: stageUsageLimitRecoveryMutation,
+                async stageTranscriptEvent() {
+                    return { persisted: true, delivered: true };
+                },
+            } as never,
             pidToTrackedSession,
             pidToAwaiter: new Map(),
             pidToSpawnResultResolver: new Map(),
@@ -3490,6 +9330,29 @@ describe('startDaemonSessionControlRuntime', () => {
 
         try {
             await runtime.stopSession(stoppedSessionId);
+            expect(cancelInactiveUsageLimitRecovery).toHaveBeenCalledWith({ sessionId: stoppedSessionId });
+            expect(cancelRuntimeAuthRecovery).toHaveBeenCalledWith({ sessionId: stoppedSessionId });
+            expect(cancelTemporaryThrottleRecovery).toHaveBeenCalledWith({ sessionId: stoppedSessionId });
+            expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledWith(expect.objectContaining({
+                mutation: expect.objectContaining({
+                    sessionId: stoppedSessionId,
+                    fieldId: 'runtime.usageLimitRecovery',
+                    op: expect.objectContaining({
+                        kind: 'set',
+                        value: expect.objectContaining({
+                            issueFingerprint: 'replacement',
+                            runtimeAuthRecoveryAttemptId: 'runtime-b',
+                            status: 'cancelled',
+                            nextCheckAtMs: null,
+                        }),
+                    }),
+                }),
+                rawSession: expect.objectContaining({ id: stoppedSessionId }),
+            }));
+            cancelInactiveUsageLimitRecovery.mockRejectedValueOnce(
+                new Error('durable recovery store unavailable'),
+            );
+            await expect(runtime.stopSession(stoppedSessionId)).resolves.toEqual({ status: 'not_found' });
             await expect(runtime.spawnSession(stoppedResumeOptions)).resolves.toEqual(
                 expect.objectContaining({ type: 'success' }),
             );
@@ -3534,6 +9397,118 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(pidToTrackedSession.has(8802)).toBe(false);
         } finally {
             await runtime.stopControlServer();
+            cancelRuntimeAuthRecovery.mockRestore();
+            cancelTemporaryThrottleRecovery.mockRestore();
+        }
+    });
+
+    it('threads an exact hard-revocation runner witness through asynchronous logical-stop cleanup', async () => {
+        const sessionId = 'session-hard-revocation-cleanup-race';
+        const pid = 8_803;
+        const originalChildKill = vi.fn(() => true);
+        const successorChildKill = vi.fn(() => true);
+        const original: TrackedSession = {
+            pid,
+            sessionRunnerPid: 8_804,
+            startedBy: 'daemon',
+            happySessionId: sessionId,
+            childProcess: {
+                pid,
+                exitCode: null,
+                signalCode: null,
+                kill: originalChildKill,
+            } as never,
+            processStartTimeMs: 1_000,
+            processCommandHash: 'original-command',
+        };
+        const successor: TrackedSession = {
+            ...original,
+            sessionRunnerPid: 8_805,
+            childProcess: {
+                pid,
+                exitCode: null,
+                signalCode: null,
+                kill: successorChildKill,
+            } as never,
+            processStartTimeMs: 2_000,
+            processCommandHash: 'successor-command',
+        };
+        const pidToTrackedSession = new Map([[pid, original]]);
+        removeRuntimeAuthFailureReportOutboxItemsForSessionMock
+            .mockImplementationOnce(async (input) => {
+                expect(input.sessionId).toBe(sessionId);
+                pidToTrackedSession.set(pid, successor);
+            });
+        const pidSafetyModule = await import('../pidSafety');
+        const pidSafetySpy = vi.spyOn(
+            pidSafetyModule,
+            'isPidSafeHappySessionProcess',
+        ).mockResolvedValue(true);
+        const killSpy = vi.spyOn(process, 'kill')
+            .mockImplementation(((targetPid: number, signal?: number | NodeJS.Signals) => {
+                if (targetPid === -pid && signal === 'SIGTERM') {
+                    pidToTrackedSession.delete(pid);
+                }
+                if (targetPid === pid && signal === 0) {
+                    if (pidToTrackedSession.has(pid)) return true;
+                    throw Object.assign(new Error('process exited'), {
+                        code: 'ESRCH',
+                    });
+                }
+                return true;
+            }) as typeof process.kill);
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-hard-revocation-cleanup-race',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir:
+                '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession,
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        try {
+            const stopSessionWithExpectedRunner: (
+                sessionId: string,
+                options: StopSessionOptions,
+            ) => ReturnType<typeof runtime.stopSession> =
+                runtime.stopSession;
+            await expect(stopSessionWithExpectedRunner(sessionId, {
+                expectedTrackedRunner: {
+                    tracked: original,
+                    sessionRunnerPid: original.sessionRunnerPid,
+                    processStartTimeMs: original.processStartTimeMs,
+                    processCommandHash: original.processCommandHash,
+                },
+            })).resolves.toEqual({ status: 'not_found' });
+            expect(pidToTrackedSession.get(pid)).toBe(successor);
+            expect(killSpy).not.toHaveBeenCalledWith(-pid, 'SIGTERM');
+            expect(originalChildKill).not.toHaveBeenCalled();
+            expect(successorChildKill).not.toHaveBeenCalled();
+            expect(successor.stopRequestedAtMs).toBeUndefined();
+        } finally {
+            pidSafetySpy.mockRestore();
+            killSpy.mockRestore();
+            await runtime.stopControlServer();
         }
     });
 
@@ -3569,7 +9544,7 @@ describe('startDaemonSessionControlRuntime', () => {
             v: 1 as const,
             status: 'captured' as const,
             sessionId,
-            committedFenceMs: 12,
+            authority: { kind: 'generation' as const, publisherGeneration: '12' },
         }));
         const finalizeMachineSessionTerminal = vi.fn(async (target: { sessionId: string }) => ({
             v: 1 as const,
@@ -3670,7 +9645,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 v: 1,
                 status: 'captured',
                 sessionId: 'session-immutable-fence',
-                committedFenceMs: 31,
+                authority: { kind: 'generation' as const, publisherGeneration: '31' },
             });
             enqueueDaemonTerminalExactTurnEnd.mockRejectedValueOnce(new Error('stage unavailable'));
             await runtime.onChildExited(8915, { reason: 'process-exited', code: 1, signal: null });
@@ -3684,7 +9659,7 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             await vi.waitFor(() => expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
                 sessionId: 'session-immutable-fence',
-                committedFenceMs: 31,
+                authority: { kind: 'generation', publisherGeneration: '31' },
             }));
 
             removeSessionMarkerIfOwnedMock.mockClear();
@@ -3693,13 +9668,13 @@ describe('startDaemonSessionControlRuntime', () => {
                     v: 1,
                     status: 'captured',
                     sessionId: 'session-pre-webhook-cycle',
-                    committedFenceMs: 21,
+                    authority: { kind: 'generation' as const, publisherGeneration: '21' },
                 })
                 .mockResolvedValueOnce({
                     v: 1,
                     status: 'captured',
                     sessionId: 'session-pre-webhook-cycle',
-                    committedFenceMs: 22,
+                    authority: { kind: 'generation' as const, publisherGeneration: '22' },
                 });
             for (const pid of [8913, 8914]) {
                 pidToTrackedSession.set(pid, {
@@ -3724,7 +9699,7 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             await vi.waitFor(() => expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
                 sessionId: 'session-pre-webhook-cycle',
-                committedFenceMs: 22,
+                authority: { kind: 'generation', publisherGeneration: '22' },
             }));
             await vi.waitFor(() => {
                 expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
@@ -3741,13 +9716,13 @@ describe('startDaemonSessionControlRuntime', () => {
                     v: 1,
                     status: 'captured',
                     sessionId: 'session-pre-webhook-success',
-                    committedFenceMs: 61,
+                    authority: { kind: 'generation' as const, publisherGeneration: '61' },
                 })
                 .mockResolvedValueOnce({
                     v: 1,
                     status: 'captured',
                     sessionId: 'session-pre-webhook-success',
-                    committedFenceMs: 62,
+                    authority: { kind: 'generation' as const, publisherGeneration: '62' },
                 });
             for (const pid of [8922, 8923]) {
                 pidToTrackedSession.set(pid, {
@@ -3797,13 +9772,13 @@ describe('startDaemonSessionControlRuntime', () => {
                     v: 1,
                     status: 'captured',
                     sessionId: 'session-late-success',
-                    committedFenceMs: 41,
+                    authority: { kind: 'generation' as const, publisherGeneration: '41' },
                 })
                 .mockResolvedValueOnce({
                     v: 1,
                     status: 'captured',
                     sessionId: 'session-late-success',
-                    committedFenceMs: 42,
+                    authority: { kind: 'generation' as const, publisherGeneration: '42' },
                 });
             pidToTrackedSession.set(8916, {
                 pid: 8916,
@@ -3840,7 +9815,7 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             await vi.waitFor(() => expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
                 sessionId: 'session-late-success',
-                committedFenceMs: 42,
+                authority: { kind: 'generation', publisherGeneration: '42' },
             }));
             await vi.waitFor(() => expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
                 expect.objectContaining({ pid: 8917 }),
@@ -4133,6 +10108,104 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
+    it('routes a same-daemon final runner exit through exact terminal-host retirement', async () => {
+        const sessionId = 'session-same-daemon-runner-exit';
+        const trackedPid = 2_147_482_998;
+        const attachment = await writeTerminalHostAttachmentInfo({
+            happyHomeDir: configuration.happyHomeDir,
+            sessionId,
+            handle: {
+                kind: 'tmux',
+                sessionName: 'happier-same-daemon-runner-exit',
+                paneId: 'pane-runner-exit',
+                attachMetadata: {
+                    attachStrategy: 'terminal_host',
+                    topology: 'shared',
+                    locality: 'same_machine',
+                    liveProbe: 'required',
+                },
+            },
+        });
+        const dispose = vi.fn(async () => undefined);
+        const trackedSessions = new Map<number, TrackedSession>([[
+            trackedPid,
+            {
+                startedBy: 'daemon',
+                happySessionId: sessionId,
+                pid: trackedPid,
+                happySessionMetadataFromLocalWebhook: {
+                    path: '/tmp/project',
+                    host: 'daemon',
+                    name: 'same-daemon-runner-exit',
+                    homeDir: '/tmp/home',
+                    happyHomeDir: configuration.happyHomeDir,
+                    happyLibDir: '/tmp/home/.happier/lib',
+                    happyToolsDir: '/tmp/home/.happier/tools',
+                    terminal: {
+                        mode: 'tmux',
+                        tmux: { target: 'happier-same-daemon-runner-exit:pane-runner-exit' },
+                    },
+                },
+            },
+        ]]);
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-same-daemon-runner-exit',
+            credentials: {
+                token: 'token-daemon',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: trackedSessions,
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            loadTerminalHostAdapters: async () => ({
+                tmux: {
+                    kind: 'tmux',
+                    createOrAttachHost: vi.fn(),
+                    injectUserPrompt: vi.fn(),
+                    interruptTurn: vi.fn(),
+                    evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: 1 })),
+                    dispose,
+                },
+            }),
+            startupTerminalRecovery: {
+                disconnectedTerminalHostCandidates: [],
+                unresolvedTerminalHostSessionIds: [],
+            },
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+        try {
+            await runtime.onChildExited(trackedPid, {
+                reason: 'process-exited',
+                code: 0,
+                signal: null,
+            });
+            expect(trackedSessions.has(trackedPid)).toBe(false);
+
+            await expect(runtime.stopSession(sessionId)).resolves.toEqual({ status: 'stopped' });
+            expect(dispose).toHaveBeenCalledWith(attachment.handle);
+        } finally {
+            await runtime.stopControlServer();
+            await removeTerminalHostAttachmentInfo({
+                happyHomeDir: configuration.happyHomeDir,
+                sessionId,
+                expectedAttachmentId: attachment.attachmentId,
+            });
+        }
+    });
+
     it('allows Resume after the tracked-runner stop path retires the cached exact host candidate', async () => {
         const sessionId = 'session-exact-live-terminal-tracked-stop';
         const trackedPid = 2_147_483_001;
@@ -4224,9 +10297,9 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
-    it('summarizes managed-server claims through catalog descriptors instead of OpenCode host branches', () => {
+    it('does not retain Agent catalog managed-server claim ownership', () => {
         const source = readStartDaemonSessionControlRuntimeSource();
-        expect(source).toMatch(/listManagedServerClaimDescriptors/);
+        expect(source).not.toMatch(/listManagedServerClaimDescriptors/);
         expect(source).not.toMatch(/OpenCodeManagedServerClaimSnapshot/);
         expect(source).not.toMatch(/isTrackedOpenCodeSession/);
         expect(source).not.toMatch(/opencode/);
@@ -4295,29 +10368,33 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
         });
 
-        const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
-        expect(controlServerInput?.handleProviderAccountUsageSnapshot).toEqual(expect.any(Function));
-        await expect(controlServerInput?.handleProviderAccountUsageSnapshot?.({
-            sessionId: 'sess_usage',
-            snapshot,
-        })).resolves.toEqual({
-            status: 'snapshot_advanced',
-            recordId: snapshot.recordId,
-            persisted: true,
-        });
-        for (let attempt = 0; attempt < 20 && registerProviderAccountUsageSnapshotPlain.mock.calls.length === 0; attempt += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 5));
+        try {
+            const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
+            expect(controlServerInput?.handleProviderAccountUsageSnapshot).toEqual(expect.any(Function));
+            await expect(controlServerInput?.handleProviderAccountUsageSnapshot?.({
+                sessionId: 'sess_usage',
+                snapshot,
+            })).resolves.toEqual({
+                status: 'snapshot_advanced',
+                recordId: snapshot.recordId,
+                persisted: true,
+            });
+            for (let attempt = 0; attempt < 20 && registerProviderAccountUsageSnapshotPlain.mock.calls.length === 0; attempt += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 5));
+            }
+            expect(registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledWith(expect.objectContaining({
+                recordId: snapshot.recordId,
+                content: {
+                    t: 'plain',
+                    v: expect.objectContaining({
+                        recordId: snapshot.recordId,
+                        accountSubject: { kind: 'providerSubject', id: 'acct_123' },
+                    }),
+                },
+            }));
+        } finally {
+            await runtime.stopControlServer();
         }
-        expect(registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledWith(expect.objectContaining({
-            recordId: snapshot.recordId,
-            content: {
-                t: 'plain',
-                v: expect.objectContaining({
-                    recordId: snapshot.recordId,
-                    accountSubject: { kind: 'providerSubject', id: 'acct_123' },
-                }),
-            },
-        }));
     });
 
     it('normalizes qualified account usage to the current registered generation before persistence and quota policy', async () => {
@@ -4392,7 +10469,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 }),
         }));
 
-        await startDaemonSessionControlRuntime({
+        const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-usage-policy',
             credentials: {
                 token: 'token-daemon',
@@ -4496,7 +10573,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 groupId: 'team',
                 groupGeneration: 7,
             },
-            credentialFingerprint: computeConnectedServiceAccessTokenFingerprint('current-access-token'),
+            deriveCredentialFingerprintFromSource: true,
         });
         await expect(Promise.race([
             intake,
@@ -4506,6 +10583,21 @@ describe('startDaemonSessionControlRuntime', () => {
             recordId: snapshot.recordId,
             persisted: true,
         });
+        expect(runtimeRegistry.getBySessionId('sess_usage_group')?.activeBindings).toContainEqual(
+            expect.objectContaining({
+                serviceId: 'openai-codex',
+                profileId: 'primary',
+                groupId: 'team',
+                groupGeneration: 7,
+            }),
+        );
+        expect(runtime.providerAccountUsageStore.resolveBySource({
+            serviceId: 'openai-codex',
+            profileId: 'primary',
+            bindingKind: 'group_member',
+            groupId: 'team',
+            groupGeneration: 7,
+        })?.recordId).toBe(snapshot.recordId);
         releasePolicy();
         await vi.waitFor(() => expect(handleAccountUsageChanged).toHaveBeenCalledWith({
             sessionId: 'sess_usage_group',
@@ -7176,6 +13268,16 @@ describe('startDaemonSessionControlRuntime', () => {
                 directory: '/tmp/workspace-quota-switch',
                 backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
                 approvedNewDirectoryCreation: true,
+                environmentVariables: {
+                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+                        kind: 'group',
+                        serviceId: 'openai-codex',
+                        groupId: 'codex-main',
+                        activeProfileId: 'primary',
+                        fallbackProfileId: 'primary',
+                        generation: 6,
+                    }]),
+                },
                 connectedServices: {
                     v: 1,
                     bindingsByServiceId: {
@@ -7220,6 +13322,23 @@ describe('startDaemonSessionControlRuntime', () => {
             requestShutdown: vi.fn(),
             processEnv: {},
         });
+
+        applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
+        await expect(runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator.applyCredentialUpdate({
+            sessionId: 'sess-quota-switch',
+            serviceId: 'openai-codex',
+            profileId: 'primary',
+            reason: 'account_changed',
+            executionAuthority: 'runtime_recovery',
+        })).resolves.toEqual({ status: 'hot_applied' });
+        expect(applyConnectedServiceAuthGenerationToTrackedSessionMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                request: expect.objectContaining({
+                    sessionId: 'sess-quota-switch',
+                    expectedGroupGenerationByServiceId: { 'openai-codex': 6 },
+                }),
+            }),
+        );
 
         await runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator.switchBeforeTurn({
             sessionId: 'sess-quota-switch',
@@ -7639,6 +13758,244 @@ describe('startDaemonSessionControlRuntime', () => {
         await runtime.stopControlServer();
     });
 
+    it('reconciles a reattached direct profile only after the canonical materialization owner is ready without daemon secret projection', async () => {
+        const materializationBaseDir = await mkdtemp(
+            join(tmpdir(), 'happier-reattached-direct-projection-'),
+        );
+        const activeServerDir = await mkdtemp(
+            join(tmpdir(), 'happier-reattached-direct-server-'),
+        );
+        const serviceId = 'openai-codex' as const;
+        const profileId = 'primary';
+        const oldCredentialRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
+        const currentCredentialRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
+        const currentCredential = buildConnectedServiceCredentialRecord({
+            now: 1_000,
+            serviceId,
+            profileId,
+            kind: 'oauth',
+            expiresAt: null,
+            oauth: {
+                accessToken: 'current-reattached-access',
+                refreshToken: 'current-reattached-refresh',
+                idToken: 'current-reattached-id',
+                scope: null,
+                tokenType: null,
+                providerAccountId: 'current-reattached-account',
+                providerEmail: null,
+            },
+        });
+        const connectedServices = {
+            v: 1,
+            bindingsByServiceId: {
+                [serviceId]: {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId,
+                },
+            },
+        } satisfies ConnectedServiceBindingsV1;
+        const environmentVariables = {
+            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+                kind: 'profile',
+                serviceId,
+                profileId,
+                credentialRevision: oldCredentialRevision,
+            }]),
+        };
+        const trackedSessions = new Map<number, TrackedSession>([
+            [7811, {
+                startedBy: 'daemon',
+                happySessionId: 'sess-reattached-direct-a',
+                pid: 7811,
+                reattachedFromDiskMarker: true,
+                spawnOptions: {
+                    directory: '/tmp/reattached-direct-a',
+                    backendTarget: {
+                        kind: 'backend',
+                        backendId: 'codex',
+                        sourceKind: 'built_in',
+                    },
+                    connectedServiceMaterializationIdentityV1: {
+                        v: 1,
+                        id: 'csm_reattached_direct_a',
+                        createdAt: 1,
+                    },
+                    connectedServices,
+                    environmentVariables,
+                },
+            }],
+            [7812, {
+                startedBy: 'daemon',
+                happySessionId: 'sess-reattached-direct-b',
+                pid: 7812,
+                reattachedFromDiskMarker: true,
+                spawnOptions: {
+                    directory: '/tmp/reattached-direct-b',
+                    backendTarget: {
+                        kind: 'backend',
+                        backendId: 'codex',
+                        sourceKind: 'built_in',
+                    },
+                    connectedServiceMaterializationIdentityV1: {
+                        v: 1,
+                        id: 'csm_reattached_direct_b',
+                        createdAt: 1,
+                    },
+                    connectedServices,
+                    environmentVariables,
+                },
+            }],
+        ]);
+        const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
+        const getConnectedServiceCredentialPlain = vi.fn(async () => ({
+            revisionSemantics: 'revisioned' as const,
+            credentialRevision: currentCredentialRevision,
+            content: { t: 'plain' as const, v: currentCredential },
+        }));
+        const api = {
+            getAccountEncryptionMode: vi.fn(async () => 'plain'),
+            getConnectedServiceCredentialPlain,
+            getConnectedServiceAuthGroup: vi.fn(async () => null),
+            listConnectedServiceProfiles: vi.fn(async () => ({
+                serviceId,
+                profiles: [{ profileId, status: 'connected' as const }],
+            })),
+            push: vi.fn(() => ({ sendPushNotification: vi.fn() })),
+        };
+        let refreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
+        const accountProfileGet = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                id: 'account-reattached-direct',
+                connectedServicesV2: [{
+                    serviceId,
+                    profiles: [{
+                        profileId,
+                        status: 'connected',
+                        kind: 'oauth',
+                    }],
+                    groups: [],
+                }],
+                connectedServiceCredentialRevisionsV1: [{
+                    serviceId,
+                    profileId,
+                    credentialRevision: currentCredentialRevision,
+                }],
+            },
+        });
+        fetchSessionByIdCompatMock.mockResolvedValue(null);
+
+        let runtime: Awaited<ReturnType<typeof startDaemonSessionControlRuntime>> | null = null;
+        try {
+            runtime = await startDaemonSessionControlRuntime({
+                machineId: 'machine-reattached-direct',
+                credentials: {
+                    token: 'token-daemon',
+                    encryption: {
+                        type: 'legacy',
+                        secret: new Uint8Array(32).fill(1),
+                    },
+                },
+                api: api as never,
+                loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+                connectedServicesMaterializationBaseDir: materializationBaseDir,
+                getConnectedServiceRefreshCoordinator: () => refreshCoordinator,
+                getConnectedServiceQuotasCoordinator: () => null,
+                connectedServiceRuntimeRegistry,
+                pidToTrackedSession: trackedSessions,
+                pidToAwaiter: new Map(),
+                pidToSpawnResultResolver: new Map(),
+                pidToSpawnWebhookTimeout: new Map(),
+                getApiMachineForSessions: () => null,
+                spawnResourceCleanupByPid: new Map(),
+                sessionAttachCleanupByPid: new Map(),
+                connectedServicesRestartRequestedPids: new Set(),
+                beforeShutdown: vi.fn(),
+                onHappySessionWebhook: vi.fn(),
+                requestShutdown: vi.fn(),
+                processEnv: {},
+            });
+
+            await waitForStartupCondition(
+                () => fetchSessionByIdCompatMock.mock.calls.length >= 2,
+            );
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
+            expect(vi.mocked(logger.debug).mock.calls.filter(([message]) =>
+                message === '[DAEMON RUN] Failed to reconcile connected-service provider adoption after daemon replacement',
+            )).toHaveLength(0);
+
+            const resolveQualifiedPurposeBindingSnapshot: NonNullable<
+                ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['resolveQualifiedPurposeBindingSnapshot']
+            > = async (input) => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+                agentId: input.agentId,
+                bindings: ConnectedServiceBindingsV1Schema.parse(
+                    input.connectedServicesBindingsRaw,
+                ),
+                contributions: getResolvedContributionRegistry(),
+            });
+            await expect(resolveQualifiedPurposeBindingSnapshot({
+                agentId: 'codex',
+                connectedServicesBindingsRaw: connectedServices,
+            })).resolves.toMatchObject({
+                bindings: [expect.objectContaining({
+                    target: expect.objectContaining({
+                        account: expect.objectContaining({
+                            accountId: profileId,
+                        }),
+                    }),
+                })],
+            });
+            refreshCoordinator = new ConnectedServiceRefreshCoordinator({
+                api: api as never,
+                credentials: {
+                    token: 'token-daemon',
+                    encryption: {
+                        type: 'legacy',
+                        secret: new Uint8Array(32).fill(1),
+                    },
+                },
+                machineIdProvider: () => 'machine-reattached-direct',
+                activeServerDir,
+                baseDir: materializationBaseDir,
+                refreshWindowMs: 60_000,
+                refreshLeaseMs: 30_000,
+                now: () => 1_000,
+                runtimeRegistry: connectedServiceRuntimeRegistry,
+                resolveQualifiedPurposeBindingSnapshot,
+            });
+            await runtime.reconcileReattachedConnectedServiceCredentialProjection();
+
+            expect(getConnectedServiceCredentialPlain).toHaveBeenCalledTimes(2);
+            const codexAuthPath = join(
+                activeServerDir,
+                'daemon',
+                'connected-services',
+                'homes',
+                serviceId,
+                profileId,
+                'codex',
+                'codex-home',
+                'auth.json',
+            );
+            await expect(readFile(codexAuthPath, 'utf8')).rejects.toMatchObject({
+                code: 'ENOENT',
+            });
+            expect(requestConnectedServiceSessionRestartSignalMock)
+                .not.toHaveBeenCalled();
+            expect(trackedSessions.size).toBe(2);
+            expect(connectedServiceRuntimeRegistry.listRefreshTargets())
+                .toHaveLength(2);
+        } finally {
+            accountProfileGet.mockRestore();
+            await runtime?.stopControlServer();
+            await rm(materializationBaseDir, { recursive: true, force: true });
+            await rm(activeServerDir, { recursive: true, force: true });
+        }
+    });
+
     it('reconciles a daemon-replacement runtime from layout-v1 provider adoption without admission or restart', async () => {
         const sessionId = 'sess-late-current-truth';
         const pid = 7799;
@@ -7692,11 +14049,9 @@ describe('startDaemonSessionControlRuntime', () => {
             encryptionMode: 'plain',
             metadataLayoutVersion: 1,
             metadata: JSON.stringify({ v: 1 }),
-            ownerMetadata: sealSessionOwnerMetadataV1({
-                material: { type: 'legacy', secret },
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
                 ownerMetadata,
-                randomBytes: (length) => new Uint8Array(length).fill(7),
-            }),
+            ),
             metadataVersion: 7,
         });
         const runtime = await startDaemonSessionControlRuntime({
@@ -8007,6 +14362,8 @@ describe('startDaemonSessionControlRuntime', () => {
                 startedBy: 'daemon',
                 happySessionId: sessionId,
                 pid,
+                processCommandHash: 'hash-direct-run-deletion',
+                processStartTimeMs: 12_345,
                 childProcess: childProcess as never,
                 spawnOptions: {
                     directory: '/tmp/workspace-direct-run-deletion',
@@ -8017,7 +14374,7 @@ describe('startDaemonSessionControlRuntime', () => {
                             'openai-codex': {
                                 source: 'connected',
                                 selection: 'profile',
-                                profileId: 'primary',
+                                profileId: 'direct-run-primary',
                             },
                         },
                     },
@@ -8028,7 +14385,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const credential = buildConnectedServiceCredentialRecord({
             now: 1,
             serviceId: 'openai-codex',
-            profileId: 'primary',
+            profileId: 'direct-run-primary',
             kind: 'oauth',
             expiresAt: null,
             oauth: {
@@ -8041,6 +14398,35 @@ describe('startDaemonSessionControlRuntime', () => {
                 providerEmail: null,
             },
         });
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockImplementation(
+            async () => ({
+                registry: {
+                    contributes: getResolvedContributionRegistry(),
+                },
+                source: 'active',
+                release: vi.fn(async () => {}),
+            }),
+        );
+        const activatePurposeBindings = vi.fn((input: Readonly<{
+            subject: Readonly<{ isCurrent(): boolean }>;
+            bindings: readonly unknown[];
+        }>) => ({
+            subjectId: `execution-run:${runId}/runner:${pid}/agent:codex`,
+            isCurrent: input.subject.isCurrent,
+            resolvePurposeBinding: (purpose: unknown) => (
+                input.bindings.find((binding) => (
+                    JSON.stringify((binding as Readonly<{ purpose: unknown }>).purpose)
+                    === JSON.stringify(purpose)
+                )) ?? null
+            ),
+            listPurposeBindings: () => input.bindings,
+            dispose: vi.fn(),
+        }));
+        const pidSafetyModule = await import('../pidSafety');
+        const pidSafetySpy = vi.spyOn(
+            pidSafetyModule,
+            'isPidSafeHappySessionProcess',
+        ).mockResolvedValue(true);
         const processKill = vi.spyOn(process, 'kill').mockImplementation(((targetPid: number, signal?: any) => {
             if (targetPid === -pid && signal === 'SIGTERM') {
                 throw Object.assign(new Error('missing process group'), { code: 'ESRCH' });
@@ -8058,12 +14444,12 @@ describe('startDaemonSessionControlRuntime', () => {
             signal: new AbortController().signal,
             connectedServicesV2: [{
                 serviceId: 'openai-codex' as const,
-                profiles: [{ profileId: 'primary', status: 'connected' as const, kind: 'oauth' as const }],
+                profiles: [{ profileId: 'direct-run-primary', status: 'connected' as const, kind: 'oauth' as const }],
                 groups: [],
             }],
             connectedServiceCredentialRevisionsV1: [{
                 serviceId: 'openai-codex' as const,
-                profileId: 'primary',
+                profileId: 'direct-run-primary',
                 credentialRevision,
             }],
         };
@@ -8088,7 +14474,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 api: {
                     listConnectedServiceProfiles: vi.fn(async () => ({
                         serviceId: 'openai-codex',
-                        profiles: [{ profileId: 'primary', status: 'connected' }],
+                        profiles: [{ profileId: 'direct-run-primary', status: 'connected' }],
                     })),
                     getAccountEncryptionMode: vi.fn(async () => 'plain'),
                     getConnectedServiceCredentialPlain: vi.fn(async () => ({
@@ -8114,6 +14500,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
+                activatePurposeBindings: activatePurposeBindings as never,
                 processEnv: {},
             });
             const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
@@ -8127,7 +14514,7 @@ describe('startDaemonSessionControlRuntime', () => {
                         'openai-codex': {
                             source: 'connected',
                             selection: 'profile',
-                            profileId: 'primary',
+                            profileId: 'direct-run-primary',
                         },
                     },
                 },
@@ -8144,7 +14531,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 activeBindings: [{
                     serviceId: 'openai-codex',
                     groupId: null,
-                    profileId: 'primary',
+                    profileId: 'direct-run-primary',
                     groupGeneration: null,
                     credentialRevision,
                 }],
@@ -8195,6 +14582,7 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             await runtime.stopControlServer();
         } finally {
+            pidSafetySpy.mockRestore();
             processKill.mockRestore();
             await rm(materializationBaseDir, { recursive: true, force: true });
         }
@@ -8359,85 +14747,26 @@ describe('startDaemonSessionControlRuntime', () => {
         await runtime.stopControlServer();
     });
 
-    it('routes session runtime-auth refresh through the plugin runtime registry bridge', async () => {
+    it('routes session runtime-auth refresh through the exact catalog service hook', async () => {
         vi.mocked(startDaemonControlServer).mockClear();
         const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
         registerRuntimeAuthRefreshTarget(runtimeRegistry, runtimeAuthRefreshRequest.sessionId);
-        const bridge = Object.freeze({
-            pluginId: 'acme.oauth',
-            registration: {
-                serviceId: 'openai-codex',
-                refresh: vi.fn(async () => ({
-                    status: 'refreshed' as const,
-                    result: { accessToken: 'plugin-access' },
-                })),
+        const unsupportedSelection = {
+            kind: 'profile',
+            serviceId: 'openai',
+            profileId: 'unsupported-profile',
+        } as const;
+        runtimeRegistry.registerTarget({
+            pid: 778,
+            agentId: 'codex',
+            sessionId: 'sess-unsupported-catalog-service',
+            connectedServiceSelectionsEnv: {
+                [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+                    ...unsupportedSelection,
+                    credentialRevision: runtimeAuthRefreshRequest.expectedCredentialRevision,
+                }]),
             },
         });
-        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockImplementationOnce(async () => ({
-            registry: {
-                contributes: createResolvedContributionRegistry({
-                    agents: [],
-                                    }),
-                daemonAuthBridgesByServiceId: new Map([
-                    ['openai-codex', bridge],
-                ]),
-            },
-            source: 'active',
-            release: vi.fn(async () => {}),
-        }));
-
-        await startDaemonSessionControlRuntime({
-            machineId: 'machine-1',
-            credentials: {
-                token: 'token-daemon',
-                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
-            },
-            api: {} as never,
-            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
-            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
-            getConnectedServiceRefreshCoordinator: () => null,
-            getConnectedServiceQuotasCoordinator: () => null,
-            connectedServiceRuntimeRegistry: runtimeRegistry,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
-            beforeShutdown: vi.fn(),
-            onHappySessionWebhook: vi.fn(),
-            requestShutdown: vi.fn(),
-            processEnv: {},
-        });
-
-        const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
-        await expect(controlServerInput?.handleSessionConnectedServiceRuntimeAuthRefresh?.(
-            runtimeAuthRefreshRequest,
-        )).resolves.toEqual({
-            ok: true,
-            result: {
-                status: 'refreshed',
-                result: { accessToken: 'plugin-access' },
-            },
-        });
-        expect(bridge.registration.refresh).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: runtimeAuthRefreshRequest.sessionId,
-            selection: runtimeAuthRefreshSelection,
-            expectedCredentialRevision: runtimeAuthRefreshRequest.expectedCredentialRevision,
-            forceRefresh: true,
-        }));
-    });
-
-    it('binds daemon auth bridge refresh through the registering agent catalog hook', async () => {
-        vi.mocked(startDaemonControlServer).mockClear();
-        const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
-        registerRuntimeAuthRefreshTarget(runtimeRegistry, runtimeAuthRefreshRequest.sessionId);
-        const placeholderRefresh = vi.fn(async () => ({
-            status: 'refreshed' as const,
-            result: { source: 'placeholder' },
-        }));
         const catalogRefresh = vi.fn(async (input: Readonly<{
             serviceId: string;
             request: Readonly<Record<string, unknown>>;
@@ -8449,26 +14778,29 @@ describe('startDaemonSessionControlRuntime', () => {
                 selection: input.request.selection,
             },
         }));
+        const catalogBridgeForService = vi.fn(async (serviceId?: string) => (
+            serviceId === 'openai-codex' ? catalogRefresh : null
+        ));
         acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockImplementation(async () => ({
             registry: {
                 contributes: createResolvedContributionRegistry({
                     agents: [],
-                                        catalogEntries: [{
-                        id: 'fixture-agent',
-                        cliSubcommand: 'fixture-agent',
-                        vendorResumeSupport: 'unsupported',
-                        getConnectedServiceDaemonAuthBridgeRefresh: async () => catalogRefresh,
-                    }],
+                catalogEntries: [{
+                    id: 'fixture-agent',
+                    cliSubcommand: 'fixture-agent',
+                    vendorResumeSupport: 'unsupported',
+                    connectedServiceIds: ['openai-codex', 'openai'],
+                    getConnectedServiceDaemonAuthBridgeRefresh: catalogBridgeForService,
+                }, {
+                    id: 'other-agent',
+                    cliSubcommand: 'other-agent',
+                    vendorResumeSupport: 'unsupported',
+                    connectedServiceIds: ['claude-subscription'],
+                    getConnectedServiceDaemonAuthBridgeRefresh: async () => {
+                        throw new Error('the resolver must not invoke a different service hook');
+                    },
+                }],
                 }),
-                daemonAuthBridgesByServiceId: new Map([
-                    ['openai-codex', Object.freeze({
-                        pluginId: 'fixture-agent',
-                        registration: {
-                            serviceId: 'openai-codex',
-                            refresh: placeholderRefresh,
-                        },
-                    })],
-                ]),
             },
             source: 'active',
             release: vi.fn(async () => {}),
@@ -8514,28 +14846,172 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
             },
         });
-        expect(catalogRefresh).toHaveBeenCalledTimes(1);
-        expect(placeholderRefresh).not.toHaveBeenCalled();
+        expect(catalogRefresh).toHaveBeenCalledWith(expect.objectContaining({
+            serviceId: 'openai-codex',
+            request: expect.objectContaining({
+                sessionId: runtimeAuthRefreshRequest.sessionId,
+                selection: runtimeAuthRefreshSelection,
+                expectedCredentialRevision: runtimeAuthRefreshRequest.expectedCredentialRevision,
+                forceRefresh: true,
+            }),
+        }));
+        await expect(controlServerInput?.handleSessionConnectedServiceRuntimeAuthRefresh?.({
+            sessionId: 'sess-unsupported-catalog-service',
+            refreshAttemptId: 'unsupported-catalog-refresh-attempt',
+            selection: unsupportedSelection,
+            expectedCredentialRevision: runtimeAuthRefreshRequest.expectedCredentialRevision,
+        })).resolves.toEqual({
+            ok: false,
+            errorCode: 'connected_service_daemon_auth_bridge_unavailable',
+        });
+        expect(catalogBridgeForService).toHaveBeenNthCalledWith(1, 'openai-codex');
+        expect(catalogBridgeForService).toHaveBeenNthCalledWith(2, 'openai');
+    });
+
+    it('routes the real Codex and Claude daemon-auth refresh hooks from the active catalog', async () => {
+        vi.mocked(startDaemonControlServer).mockClear();
+        const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+        const codexSessionId = 'sess-codex-catalog-refresh';
+        const claudeSessionId = 'sess-claude-catalog-refresh';
+        const codexSelection = {
+            kind: 'profile',
+            serviceId: 'openai-codex',
+            profileId: 'codex-profile',
+        } as const;
+        const claudeSelection = {
+            kind: 'profile',
+            serviceId: 'claude-subscription',
+            profileId: 'claude-profile',
+        } as const;
+        const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+        runtimeRegistry.registerTarget({
+            pid: 778,
+            agentId: 'codex',
+            sessionId: codexSessionId,
+            connectedServiceSelectionsEnv: {
+                [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+                    ...codexSelection,
+                    credentialRevision,
+                }]),
+            },
+        });
+        runtimeRegistry.registerTarget({
+            pid: 779,
+            agentId: 'claude',
+            sessionId: claudeSessionId,
+            connectedServiceSelectionsEnv: {
+                [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+                    ...claudeSelection,
+                    credentialRevision,
+                }]),
+            },
+        });
+        const refreshOpenAiCodexChatGptTokensForBridge = vi.fn(async () => ({
+            accessToken: 'codex-access',
+            chatgptAccountId: 'codex-account',
+            chatgptPlanType: 'plus',
+            credentialRevision,
+        }));
+        const refreshClaudeSubscriptionTokensForBridge = vi.fn(async () => ({
+            accessToken: 'claude-access',
+            anthropicAccountId: 'claude-account',
+            expiresAt: null,
+        }));
+        const release = vi.fn(async () => {});
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockImplementation(async () => ({
+            registry: { contributes: getResolvedContributionRegistry() },
+            source: 'active',
+            release,
+        }));
+
+        await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: {
+                token: 'token-daemon',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => ({
+                refreshOpenAiCodexChatGptTokensForBridge,
+                refreshClaudeSubscriptionTokensForBridge,
+            }) as never,
+            getConnectedServiceQuotasCoordinator: () => null,
+            connectedServiceRuntimeRegistry: runtimeRegistry,
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+
+        const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
+        await expect(controlServerInput?.handleSessionConnectedServiceRuntimeAuthRefresh?.({
+            sessionId: codexSessionId,
+            refreshAttemptId: 'codex-catalog-refresh-attempt',
+            selection: codexSelection,
+            expectedCredentialRevision: credentialRevision,
+        })).resolves.toEqual({
+            ok: true,
+            result: {
+                status: 'refreshed',
+                result: {
+                    accessToken: 'codex-access',
+                    chatgptAccountId: 'codex-account',
+                    chatgptPlanType: 'plus',
+                    credentialRevision,
+                },
+            },
+        });
+        await expect(controlServerInput?.handleSessionConnectedServiceRuntimeAuthRefresh?.({
+            sessionId: claudeSessionId,
+            refreshAttemptId: 'claude-catalog-refresh-attempt',
+            selection: claudeSelection,
+            expectedCredentialRevision: credentialRevision,
+        })).resolves.toEqual({
+            ok: true,
+            result: {
+                status: 'refreshed',
+                result: {
+                    accessToken: 'claude-access',
+                    anthropicAccountId: 'claude-account',
+                    expiresAt: null,
+                },
+            },
+        });
+        expect(refreshOpenAiCodexChatGptTokensForBridge).toHaveBeenCalledWith(expect.objectContaining({
+            selection: codexSelection,
+            forceRefresh: true,
+            expectedCredentialRevision: credentialRevision,
+        }));
+        expect(refreshClaudeSubscriptionTokensForBridge).toHaveBeenCalledWith(expect.objectContaining({
+            selection: claudeSelection,
+            forceRefresh: true,
+            expectedCredentialRevision: credentialRevision,
+        }));
+        expect(release).toHaveBeenCalledTimes(2);
     });
 
     it('resolves daemon auth bridges from the current plugin runtime registry on each lookup', async () => {
         vi.mocked(startDaemonControlServer).mockClear();
         const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
         registerRuntimeAuthRefreshTarget(runtimeRegistry, runtimeAuthRefreshRequest.sessionId);
-        const firstBridge = Object.freeze({
-            pluginId: 'codex.first',
-            registration: {
-                serviceId: 'openai-codex',
-                refresh: vi.fn(async () => ({ status: 'refreshed' as const, result: { accessToken: 'first-access' } })),
-            },
-        });
-        const secondBridge = Object.freeze({
-            pluginId: 'codex.second',
-            registration: {
-                serviceId: 'openai-codex',
-                refresh: vi.fn(async () => ({ status: 'refreshed' as const, result: { accessToken: 'second-access' } })),
-            },
-        });
+        const firstRefresh = vi.fn(async () => ({
+            status: 'refreshed' as const,
+            result: { accessToken: 'first-access' },
+        }));
+        const secondRefresh = vi.fn(async () => ({
+            status: 'refreshed' as const,
+            result: { accessToken: 'second-access' },
+        }));
         const releaseFirst = vi.fn(async () => {});
         const releaseSecond = vi.fn(async () => {});
         await startDaemonSessionControlRuntime({
@@ -8547,7 +15023,7 @@ describe('startDaemonSessionControlRuntime', () => {
             api: {} as never,
             loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
-            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceRefreshCoordinator: () => ({ marker: 'refresh-coordinator' }) as never,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry: runtimeRegistry,
             pidToTrackedSession: new Map(),
@@ -8569,10 +15045,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 registry: {
                     contributes: createResolvedContributionRegistry({
                         agents: [],
-                                            }),
-                    daemonAuthBridgesByServiceId: new Map([
-                        ['openai-codex', firstBridge],
-                    ]),
+                        catalogEntries: [{
+                            id: 'codex.first',
+                            cliSubcommand: 'codex.first',
+                            vendorResumeSupport: 'unsupported',
+                            connectedServiceIds: ['openai-codex'],
+                            getConnectedServiceDaemonAuthBridgeRefresh: async () => firstRefresh,
+                        }],
+                    }),
                 },
                 source: 'active',
                 release: releaseFirst,
@@ -8581,10 +15061,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 registry: {
                     contributes: createResolvedContributionRegistry({
                         agents: [],
-                                            }),
-                    daemonAuthBridgesByServiceId: new Map([
-                        ['openai-codex', secondBridge],
-                    ]),
+                        catalogEntries: [{
+                            id: 'codex.second',
+                            cliSubcommand: 'codex.second',
+                            vendorResumeSupport: 'unsupported',
+                            connectedServiceIds: ['openai-codex'],
+                            getConnectedServiceDaemonAuthBridgeRefresh: async () => secondRefresh,
+                        }],
+                    }),
                 },
                 source: 'active',
                 release: releaseSecond,
@@ -8679,7 +15163,7 @@ describe('startDaemonSessionControlRuntime', () => {
             sessionId: 'sess-cancelled',
             event: 'turn_cancelled',
         })).resolves.toEqual({
-            status: 'ignored_missing_exact_turn',
+            status: 'continue',
             turnCustody: {
                 status: 'ignored_missing_exact_turn',
                 activeTurnId: null,
@@ -8735,9 +15219,12 @@ describe('startDaemonSessionControlRuntime', () => {
             sessionId: 'sess-stale-terminal',
             turnId: 'session-turn:current',
             event: 'prompt_or_steer',
-        })).resolves.toMatchObject({
-            status: 'recorded',
-            turnCustody: { status: 'recorded' },
+        })).resolves.toEqual({
+            status: 'continue',
+            turnCustody: {
+                status: 'recorded',
+                activeTurnId: 'session-turn:current',
+            },
         });
         await vi.waitFor(() => {
             expect(removeRuntimeAuthFailureReportOutboxItemsForSessionMock).toHaveBeenCalledOnce();
@@ -8752,7 +15239,7 @@ describe('startDaemonSessionControlRuntime', () => {
             turnId: 'session-turn:stale',
             event: 'turn_cancelled',
         })).resolves.toEqual({
-            status: 'ignored_turn_mismatch',
+            status: 'continue',
             turnCustody: {
                 status: 'ignored_turn_mismatch',
                 activeTurnId: 'session-turn:current',
@@ -8808,7 +15295,7 @@ describe('startDaemonSessionControlRuntime', () => {
             turnId: 'session-turn:exact-1',
             event: 'prompt_or_steer',
         })).resolves.toEqual({
-            status: 'ignored_marker_not_updated',
+            status: 'continue',
             turnCustody: {
                 status: 'ignored_marker_not_updated',
                 activeTurnId: null,
@@ -8940,7 +15427,7 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(observedTerminal).toEqual({
             status: 'resolved',
             value: {
-                status: 'recorded',
+                status: 'continue',
                 turnCustody: {
                     status: 'recorded',
                     activeTurnId: null,
@@ -8969,7 +15456,7 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(observedPrompt).toEqual({
             status: 'resolved',
             value: {
-                status: 'recorded',
+                status: 'continue',
                 turnCustody: {
                     status: 'recorded',
                     activeTurnId: 'session-turn:exact-2',
@@ -8979,9 +15466,7 @@ describe('startDaemonSessionControlRuntime', () => {
         await downstreamSettlementStartedPromise;
         expect(downstreamSettlementStarted).toHaveBeenCalledOnce();
 
-        const shutdown = controlServerInput!.beforeShutdown!({
-            managedLocalServicesDisposition: 'permanent',
-        });
+        const shutdown = controlServerInput!.beforeShutdown!();
         await expect(Promise.race([
             shutdown.then(() => 'settled' as const),
             new Promise<'pending'>((resolve) => setImmediate(() => resolve('pending'))),
@@ -9067,13 +15552,17 @@ describe('startDaemonSessionControlRuntime', () => {
             event: 'assistant_message_end',
             terminalStatus: 'completed',
             connectedServiceSelectionsEnvRaw: runtimeSelectionRaw,
-        })).resolves.toMatchObject({ status: 'recorded' });
+        })).resolves.toEqual({
+            status: 'continue',
+            turnCustody: {
+                status: 'recorded',
+                activeTurnId: null,
+            },
+        });
         await providerVerificationStarted;
 
         await expect(Promise.race([
-            controlServerInput!.beforeShutdown!({
-                managedLocalServicesDisposition: 'permanent',
-            }).then(() => 'settled' as const),
+            controlServerInput!.beforeShutdown!().then(() => 'settled' as const),
             new Promise<'pending'>((resolve) => setImmediate(() => resolve('pending'))),
         ])).resolves.toBe('settled');
         expect(removeRuntimeAuthFailureReportOutboxItemsForSessionMock).not.toHaveBeenCalled();
@@ -9272,12 +15761,15 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(quotaCoordinator.flushInBandQuotaPersistence).toHaveBeenCalledWith(0);
     });
 
-    it('repairs missing connected-service materialization identity only through provider-certified continuity and CAS metadata', async () => {
+    it('prepares a missing connected-service materialization identity without treating pre-materialization continuity as proof', async () => {
         vi.mocked(executeSpawnSessionRequest).mockClear();
         fetchSessionByIdCompatMock.mockClear();
         updateSessionMetadataWithRetryMock.mockClear();
         resolveConnectedServiceSwitchContinuityMock.mockClear();
-        resolveConnectedServiceSwitchContinuityMock.mockResolvedValueOnce({ mode: 'restart_same_home' });
+        resolveConnectedServiceSwitchContinuityMock.mockResolvedValueOnce({
+            mode: 'unsupported',
+            reason: 'provider_session_state_unavailable_for_resume',
+        });
 
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-1',
@@ -9325,32 +15817,23 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
             },
         } satisfies ConnectedServiceBindingsV1;
-        const repairedIdentity = await repairMissingConnectedServiceMaterializationIdentityForSpawn?.({
+        const repair = await repairMissingConnectedServiceMaterializationIdentityForSpawn?.({
             sessionId: 'sess-claude-repair',
             agentId: 'claude',
             connectedServices,
             vendorResumeId: 'claude-vendor-session-1',
         });
 
-        expect(repairedIdentity).toEqual(expect.objectContaining({
+        expect(repair?.identity).toEqual(expect.objectContaining({
             v: 1,
             id: expect.stringMatching(/^csm_/),
         }));
-        expect(resolveConnectedServiceSwitchContinuityMock).toHaveBeenCalledWith('claude', expect.objectContaining({
-            sessionId: 'sess-claude-repair',
-            serviceId: 'claude-subscription',
-            previousBinding: expect.objectContaining({
-                source: 'connected',
-                selection: 'profile',
-                profileId: 'claude-work',
-            }),
-            nextBinding: expect.objectContaining({
-                source: 'connected',
-                selection: 'profile',
-                profileId: 'claude-work',
-            }),
-            vendorResumeId: 'claude-vendor-session-1',
-        }));
+        expect(resolveConnectedServiceSwitchContinuityMock).not.toHaveBeenCalled();
+        expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
+        expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+
+        await repair?.persistAfterMaterialization();
+
         expect(fetchSessionByIdCompatMock).toHaveBeenCalledWith({
             token: 'token-daemon',
             sessionId: 'sess-claude-repair',
@@ -9488,20 +15971,40 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('discovers and publishes the fixed pending wake when an existing session is already active', async () => {
+        const privateSessionId = 'private-active-session-sentinel';
+        const privatePublicationError = 'private-publication-error-sentinel';
+        const privateNudgeError = 'private-nudge-error-sentinel';
         vi.mocked(callSessionRpc)
             .mockResolvedValueOnce({ ok: true, capability: 'pending_queue_wake_v1', protocolVersion: 1, method: 'session.pendingQueue.wake.v1' })
             .mockResolvedValueOnce({ ok: true, capability: 'pending_queue_wake_v1', protocolVersion: 1, method: 'session.pendingQueue.wake.v1' })
-            .mockResolvedValueOnce({ ok: true, result: 'wake_published' });
+            .mockRejectedValueOnce(new Error(privateNudgeError));
+        updateSessionMetadataWithRetryMock.mockRejectedValueOnce(new Error(privatePublicationError));
+        const attachment = await writeTerminalHostAttachmentInfo({
+            happyHomeDir: configuration.happyHomeDir,
+            sessionId: privateSessionId,
+            handle: {
+                kind: 'tmux',
+                sessionName: 'private-active-tmux-session',
+                paneId: 'private-pane',
+                attachMetadata: {
+                    attachStrategy: 'terminal_host',
+                    topology: 'shared',
+                    locality: 'same_machine',
+                    liveProbe: 'required',
+                },
+            },
+        });
+        const killSpy = vi.spyOn(process, 'kill');
         const pidToTrackedSession = new Map<number, TrackedSession>([
             [
                 process.pid,
                 {
                     startedBy: 'daemon',
-                    happySessionId: 'sess-live',
+                    happySessionId: privateSessionId,
                     pid: process.pid,
                     spawnOptions: {
                         directory: '/tmp/project',
-                        existingSessionId: 'sess-live',
+                        existingSessionId: privateSessionId,
                     },
                 },
             ],
@@ -9536,34 +16039,50 @@ describe('startDaemonSessionControlRuntime', () => {
         const optionsWithUnexpectedToken: SpawnSessionOptions & { token: string } = {
             directory: '/tmp/project',
             backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-            existingSessionId: 'sess-live',
+            existingSessionId: privateSessionId,
             token: 'token-from-spawn-options',
         };
 
-        await expect(runtime.spawnSession(optionsWithUnexpectedToken)).resolves.toEqual({
-            type: 'success',
-            sessionId: 'sess-live',
-        });
+        try {
+            await expect(runtime.spawnSession(optionsWithUnexpectedToken)).resolves.toEqual({
+                type: 'success',
+                sessionId: privateSessionId,
+            });
 
-        expect(callSessionRpc).toHaveBeenNthCalledWith(1, {
-            token: 'token-daemon',
-            sessionId: 'sess-live',
-            mode: 'plain',
-            method: `sess-live:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1}`,
-            request: {},
-            ctx: {
-                encryptionKey: new Uint8Array(32).fill(1),
-                encryptionVariant: 'legacy',
-            },
-        });
-        expect(callSessionRpc).toHaveBeenNthCalledWith(3, expect.objectContaining({
-            method: `sess-live:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1}`,
-            request: { protocolVersion: 1 },
-        }));
-        expect(materializeNextPendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
-        expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
+            expect(callSessionRpc).toHaveBeenNthCalledWith(1, {
+                token: 'token-daemon',
+                sessionId: privateSessionId,
+                mode: 'plain',
+                method: `${privateSessionId}:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1}`,
+                request: {},
+                ctx: null,
+            });
+            expect(callSessionRpc).toHaveBeenNthCalledWith(3, expect.objectContaining({
+                method: `${privateSessionId}:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1}`,
+                request: { protocolVersion: 1 },
+            }));
+            expect(materializeNextPendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+            expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
+            expect(killSpy.mock.calls.filter(([, signal]) => signal !== 0)).toEqual([]);
 
-        await runtime.stopControlServer();
+            const serializedLogs = JSON.stringify(
+                [vi.mocked(logger.debug).mock.calls, vi.mocked(logger.warn).mock.calls],
+                (_key, value) => value instanceof Error
+                    ? { name: value.name, message: value.message, stack: value.stack }
+                    : value,
+            );
+            expect(serializedLogs).not.toContain(privateSessionId);
+            expect(serializedLogs).not.toContain(privatePublicationError);
+            expect(serializedLogs).not.toContain(privateNudgeError);
+        } finally {
+            await runtime.stopControlServer();
+            killSpy.mockRestore();
+            await removeTerminalHostAttachmentInfo({
+                happyHomeDir: configuration.happyHomeDir,
+                sessionId: privateSessionId,
+                expectedAttachmentId: attachment.attachmentId,
+            });
+        }
     });
 
     it('fences an active existing session when exact-session controls are unavailable', async () => {
@@ -9957,7 +16476,23 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('wires connected-service runtime-auth and quota handlers into the control server', async () => {
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
-        commitRuntimeAuthRecoveryVisibleEventDeliveryMock.mockClear();
+        let admitRuntimeAuthRecoveryTranscriptEvents!: () => void;
+        const runtimeAuthRecoveryTranscriptAdmission = new Promise<Readonly<{
+            persisted: true;
+            delivered: boolean;
+        }>>((resolveAdmission) => {
+            admitRuntimeAuthRecoveryTranscriptEvents = () => resolveAdmission({
+                persisted: true,
+                delivered: false,
+            });
+        });
+        const stageRuntimeAuthRecoveryTranscriptEvent = vi.fn<
+            Parameters<typeof startDaemonSessionControlRuntimeRaw>[0][
+                'daemonSessionMutationCustody'
+            ]['stageTranscriptEvent']
+        >(
+            async () => await runtimeAuthRecoveryTranscriptAdmission,
+        );
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockResolvedValue({
             status: 'switch_attempted',
             result: {
@@ -9980,7 +16515,13 @@ describe('startDaemonSessionControlRuntime', () => {
             encryptionMode: 'plain',
             metadata: JSON.stringify({
                 flavor: 'codex',
-                path: '/tmp/runtime-inactive-project',
+                path: '/home/coder/runtime-inactive-project',
+                sessionWorkspaceLocationV1: {
+                    v: 1,
+                    machineId: 'machine-1',
+                    agentPath: '/home/coder/runtime-inactive-project',
+                    machinePath: '/tmp/runtime-inactive-project',
+                },
                 codexSessionId: 'codex-thread-runtime-inactive',
                 connectedServices: {
                     v: 1,
@@ -10072,6 +16613,9 @@ describe('startDaemonSessionControlRuntime', () => {
                 token: 'token-daemon',
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
             },
+            daemonSessionMutationCustody: {
+                stageTranscriptEvent: stageRuntimeAuthRecoveryTranscriptEvent,
+            },
             api: {
                 getConnectedServiceAuthGroup: vi.fn(),
                 updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
@@ -10155,13 +16699,27 @@ describe('startDaemonSessionControlRuntime', () => {
         // Keep this test alive through that real scheduling boundary before observing it.
         await new Promise<void>((resolve) => setTimeout(resolve, 2_100));
         await vi.waitFor(() => {
-            expect(commitRuntimeAuthRecoveryVisibleEventDeliveryMock).toHaveBeenCalledWith(expect.objectContaining({
-                credentials: expect.objectContaining({ token: 'token-daemon' }),
-                delivery: expect.objectContaining({
+            expect(stageRuntimeAuthRecoveryTranscriptEvent).toHaveBeenCalled();
+        });
+        const durableIntentStore = recoveryIntentFileStoresMock.storesByPath.get(
+            '/tmp/happier-test-home/servers/default/connected-services/runtime-auth-recovery.json',
+        );
+        expect(Array.from(durableIntentStore?.values() ?? [])).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                pendingVisibleEvents: expect.arrayContaining([
+                    expect.objectContaining({
+                        attemptId: 'runtime-auth-attempt:control-runtime-visible-delivery',
+                    }),
+                ]),
+            }),
+        ]));
+
+        admitRuntimeAuthRecoveryTranscriptEvents();
+        await vi.waitFor(() => {
+            expect(stageRuntimeAuthRecoveryTranscriptEvent).toHaveBeenCalledWith(expect.objectContaining({
                     sessionId: 'sess-runtime-inactive',
-                    attemptId: 'runtime-auth-attempt:control-runtime-visible-delivery',
-                    transition: 'scheduled',
-                    transcriptEvent: expect.objectContaining({
+                    eventId: expect.any(String),
+                    data: expect.objectContaining({
                         type: 'connected-service-runtime-auth-recovery',
                         status: 'retry_scheduled',
                         serviceId: 'openai-codex',
@@ -10172,16 +16730,33 @@ describe('startDaemonSessionControlRuntime', () => {
                             failurePhase: 'runtime_auth_recovery',
                         }),
                     }),
-                }),
             }));
-            expect(commitRuntimeAuthRecoveryVisibleEventDeliveryMock).toHaveBeenCalledWith(expect.objectContaining({
-                delivery: expect.objectContaining({
+            expect(stageRuntimeAuthRecoveryTranscriptEvent).toHaveBeenCalledWith(expect.objectContaining({
                     sessionId: 'sess-runtime-predecessor',
-                    attemptId: 'runtime-auth-attempt:predecessor-startup',
-                    transition: 'scheduled',
-                }),
+                    eventId: expect.any(String),
             }));
+            expect(Array.from(durableIntentStore?.values() ?? [])).not.toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    pendingVisibleEvents: expect.arrayContaining([
+                        expect.objectContaining({
+                            attemptId: 'runtime-auth-attempt:control-runtime-visible-delivery',
+                        }),
+                    ]),
+                }),
+            ]));
         });
+        const stagedRuntimeAuthRecoveryEvents = stageRuntimeAuthRecoveryTranscriptEvent.mock.calls
+            .map(([input]) => input);
+        expect(stagedRuntimeAuthRecoveryEvents.filter((input) => (
+            input.sessionId === 'sess-runtime-inactive'
+            && input.data.status === 'retry_scheduled'
+        ))).toHaveLength(1);
+        expect(stagedRuntimeAuthRecoveryEvents.filter((input) => (
+            input.sessionId === 'sess-runtime-predecessor'
+            && input.data.status === 'retry_scheduled'
+        ))).toHaveLength(1);
+        expect(new Set(stagedRuntimeAuthRecoveryEvents.map((input) => input.eventId)).size)
+            .toBe(stagedRuntimeAuthRecoveryEvents.length);
         await new Promise<void>((resolve) => setTimeout(resolve, 25));
         expect(handleConnectedServiceRuntimeAuthFailureForSessionMock).not.toHaveBeenCalledWith(
             expect.objectContaining({ sessionId: 'sess-runtime-predecessor' }),
@@ -10327,6 +16902,10 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('keeps provider limit recovery work out of the local server storm gate', async () => {
+        const stageRuntimeAuthRecoveryTranscriptEvent = vi.fn(async () => ({
+            persisted: true as const,
+            delivered: false,
+        }));
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockImplementation(async () => ({
             handled: false,
@@ -10337,6 +16916,9 @@ describe('startDaemonSessionControlRuntime', () => {
             credentials: {
                 token: 'token-daemon',
                 encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            daemonSessionMutationCustody: {
+                stageTranscriptEvent: stageRuntimeAuthRecoveryTranscriptEvent,
             },
             api: {
                 getConnectedServiceAuthGroup: vi.fn(),
@@ -10429,16 +17011,14 @@ describe('startDaemonSessionControlRuntime', () => {
 
         expect(wakeResult.status).not.toBe('waiting');
         expect(handleConnectedServiceRuntimeAuthFailureForSessionMock).toHaveBeenCalledTimes(1);
-        expect(commitRuntimeAuthRecoveryVisibleEventDeliveryMock).not.toHaveBeenCalledWith(expect.objectContaining({
-            delivery: expect.objectContaining({
+        expect(stageRuntimeAuthRecoveryTranscriptEvent).not.toHaveBeenCalledWith(expect.objectContaining({
                 sessionId: 'sess-provider-limit-target',
-                transcriptEvent: expect.objectContaining({
+                data: expect.objectContaining({
                     status: 'retry_scheduled',
                     diagnostic: expect.objectContaining({
                         reason: 'local_server_storm',
                     }),
                 }),
-            }),
         }));
     });
 
@@ -11387,6 +17967,8 @@ describe('startDaemonSessionControlRuntime', () => {
             startedBy: 'daemon',
             happySessionId: 'sess-runtime',
             pid: 4242,
+            processCommandHash: 'hash-sess-runtime',
+            processStartTimeMs: 12_345,
             spawnOptions: {
                 directory: '/tmp/project',
                 backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
@@ -11394,9 +17976,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     v: 1,
                     bindingsByServiceId: {
                         'openai-codex': {
-                            source: 'connected',
-                            selection: 'profile',
-                            profileId: 'primary',
+                            source: 'native',
                         },
                     },
                 },
@@ -12364,6 +18944,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     startedBy: 'daemon',
                     happySessionId: 'sess-gemini-connected',
                     pid: 8888,
+                    processCommandHash: 'hash-sess-gemini-connected',
+                    processStartTimeMs: 12_345,
                     spawnOptions: {
                         directory: '/tmp/project',
                         backendTarget: { kind: 'backend', backendId: 'gemini', sourceKind: 'built_in' },
@@ -12491,11 +19073,9 @@ describe('startDaemonSessionControlRuntime', () => {
             encryptionMode: 'plain' as const,
             metadataLayoutVersion: 1,
             metadata: JSON.stringify({ v: 1 }),
-            ownerMetadata: sealSessionOwnerMetadataV1({
-                material: { type: 'legacy', secret },
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
                 ownerMetadata,
-                randomBytes: (length) => new Uint8Array(length).fill(7),
-            }),
+            ),
             metadataVersion: 7,
         };
         fetchSessionByIdCompatMock

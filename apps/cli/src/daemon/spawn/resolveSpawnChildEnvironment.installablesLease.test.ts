@@ -55,7 +55,6 @@ describe('resolveSpawnHookInstallablesRegistry', () => {
           source: { kind: 'bundled' },
           pluginId: 'antigravity',
           manifestPath: '/plugins/antigravity/plugin.json',
-          manifestDigest: 'sha256:antigravity',
           daemonEntryPath: '/plugins/antigravity/daemon.mjs',
           sourceSpec: {
             kind: 'path',

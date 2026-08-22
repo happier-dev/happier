@@ -9,7 +9,12 @@ describe('publishOrphanedStartupSessionEnds', () => {
       enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => { calls.push('persisted'); }),
       captureMachineSessionTerminal: vi.fn(async () => {
         calls.push('captured');
-        return { v: 1 as const, status: 'captured' as const, sessionId: 'sess-orphaned-6480', committedFenceMs: 7 };
+        return {
+          v: 1 as const,
+          status: 'captured' as const,
+          sessionId: 'sess-orphaned-6480',
+          authority: { kind: 'generation' as const, publisherGeneration: '7' },
+        };
       }),
       finalizeMachineSessionTerminal: vi.fn(async () => {
         calls.push('finalized');
@@ -41,7 +46,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     expect(removeSessionMarkerFn).toHaveBeenCalledWith(6480);
   });
 
-  it('finalizes the pre-staging fence when a successor advances presence during durable turn staging', async () => {
+  it('finalizes the pre-staging authority when a successor advances presence during durable turn staging', async () => {
     const calls: string[] = [];
     let releaseStage!: () => void;
     const stageGate = new Promise<void>((resolve) => { releaseStage = resolve; });
@@ -58,7 +63,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
             v: 1 as const,
             status: 'captured' as const,
             sessionId: 'sess-fence-race',
-            committedFenceMs: 10,
+            authority: { kind: 'generation' as const, publisherGeneration: '10' },
           };
         }),
         enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => {
@@ -82,7 +87,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     await observation;
     expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
       sessionId: 'sess-fence-race',
-      committedFenceMs: 10,
+      authority: { kind: 'generation', publisherGeneration: '10' },
     });
     expect(calls).toEqual(['captured', 'staging', 'persisted', 'finalized', 'removed']);
   });
@@ -98,7 +103,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
         v: 1 as const,
         status: 'captured' as const,
         sessionId: 'sess-quiesced-capture',
-        committedFenceMs: 12,
+        authority: { kind: 'generation' as const, publisherGeneration: '12' },
       };
     });
     const finalizeMachineSessionTerminal = vi.fn(async () => ({
@@ -152,7 +157,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
           v: 1 as const,
           status: 'captured' as const,
           sessionId: 'sess-quiesced-staging',
-          committedFenceMs: 13,
+          authority: { kind: 'generation' as const, publisherGeneration: '13' },
         })),
         finalizeMachineSessionTerminal,
       },
@@ -194,7 +199,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
           v: 1 as const,
           status: 'captured' as const,
           sessionId: 'sess-quiesced-finalize',
-          committedFenceMs: 14,
+          authority: { kind: 'generation' as const, publisherGeneration: '14' },
         })),
         finalizeMachineSessionTerminal,
       },
@@ -222,7 +227,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
         v: 1 as const,
         status: 'captured' as const,
         sessionId: 'sess-orphaned-no-turn',
-        committedFenceMs: 8,
+        authority: { kind: 'generation' as const, publisherGeneration: '8' },
       })),
       finalizeMachineSessionTerminal: vi.fn(async () => ({
         v: 1 as const,
@@ -242,7 +247,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     expect(apiMachine.captureMachineSessionTerminal).toHaveBeenCalledWith('sess-orphaned-no-turn');
     expect(apiMachine.finalizeMachineSessionTerminal).toHaveBeenCalledWith({
       sessionId: 'sess-orphaned-no-turn',
-      committedFenceMs: 8,
+      authority: { kind: 'generation', publisherGeneration: '8' },
     });
     expect(removeSessionMarkerFn).toHaveBeenCalledWith(6481);
   });
@@ -253,7 +258,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
       v: 1 as const,
       status: 'captured' as const,
       sessionId: 'sess-orphaned-failed',
-      committedFenceMs: 11,
+      authority: { kind: 'generation' as const, publisherGeneration: '11' },
     }));
     await expect(publishOrphanedStartupSessionEnds({
       apiMachine: {
@@ -281,7 +286,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
           v: 1 as const,
           status: 'captured' as const,
           sessionId: 'sess-successor',
-          committedFenceMs: 9,
+          authority: { kind: 'generation' as const, publisherGeneration: '9' },
         })),
         finalizeMachineSessionTerminal: vi.fn(async () => ({
           v: 1 as const,
@@ -358,7 +363,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
         v: 1 as const,
         status: 'captured' as const,
         sessionId: 'sess-retry-chain',
-        committedFenceMs: 51,
+        authority: { kind: 'generation' as const, publisherGeneration: '51' },
       })),
       finalizeMachineSessionTerminal: vi.fn(async () => ({
         v: 1 as const,

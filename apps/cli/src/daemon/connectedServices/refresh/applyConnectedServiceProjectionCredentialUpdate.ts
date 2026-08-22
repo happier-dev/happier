@@ -6,7 +6,7 @@ import type {
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
 import type { ConnectedServiceRuntimeRefreshTarget } from '../runtimeRegistry/registry';
 import type { ConnectedServiceProjectedCredentialPresence } from '../accountGroups/generation/connectedServiceProjectionSnapshot';
-import { settleConnectedServiceCredentialDeletion } from './createConnectedServicesAuthUpdatedRestartHandler';
+import { settleConnectedServiceCredentialDeletion } from './settleConnectedServiceCredentialDeletion';
 
 type PresentCredentialProjection = Extract<
   ConnectedServiceProjectedCredentialPresence,

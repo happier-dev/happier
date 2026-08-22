@@ -1,9 +1,10 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { listPendingQueueV2LocalIdsFromServer } from '@/api/session/pendingQueueV2Transport';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
 type PendingInactiveSessionActivationResult =
   | Readonly<{ status: 'activated' }>
@@ -17,18 +18,21 @@ type PendingInactiveSessionActivationResult =
     }>;
 
 export async function activatePendingInactiveSession(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   machineId: string;
   sessionId: string;
   requestId: string;
   pendingVersion: number;
   spawnSession: (options: NonNullable<ReturnType<typeof buildInactiveSessionResumeSpawnOptions>>) => Promise<SpawnSessionResult>;
 }>): Promise<PendingInactiveSessionActivationResult> {
-  const rawSession = await fetchSessionByIdCompat({
-    token: params.credentials.token,
-    sessionId: params.sessionId,
-    reason: 'manual-recovery',
-  });
+  const [rawSession, accountEncryptionCurrentness] = await Promise.all([
+    fetchSessionByIdCompat({
+      token: params.credentials.token,
+      sessionId: params.sessionId,
+      reason: 'manual-recovery',
+    }),
+    fetchAccountEncryptionCurrentness({ token: params.credentials.token }),
+  ]);
   if (!rawSession || rawSession.id !== params.sessionId) {
     return { status: 'rejected', reason: 'session-unavailable' };
   }
@@ -56,6 +60,7 @@ export async function activatePendingInactiveSession(params: Readonly<{
   const metadata = tryDecryptSessionOwnerMetadataView({
     credentials: params.credentials,
     rawSession,
+    accountEncryptionMode: accountEncryptionCurrentness.mode,
   });
   if (!metadata) {
     return { status: 'rejected', reason: 'identity-unavailable' };

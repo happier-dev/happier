@@ -9,9 +9,13 @@ import {
   type ProviderAccountUsageSnapshotV1,
   type SealedProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
-import { AGENTS_CORE } from '@happier-dev/agents';
+import { isConnectedServiceUsageProviderCompatible } from '@happier-dev/agents';
 
-import type { Credentials } from '@/persistence';
+import {
+  ConnectedServiceStoredContentUnavailableError,
+} from '@/cloud/connectedServices/connectedServiceStoredContentUnavailable';
+import { AccountStoredContentClientUpgradeRequiredError } from '@/api/clientCompatibility/accountStoredContentActivation';
+import type { StoredCredentials } from '@/persistence';
 
 import type { ProviderAccountUsageStore } from './store';
 
@@ -51,7 +55,10 @@ type ProviderAccountUsageHydrationApi = Readonly<{
   }>) => Promise<void>;
 }>;
 
-function accountScopedMaterial(credentials: Credentials): Parameters<typeof openProviderAccountUsageSnapshotCiphertext>[0]['material'] {
+function accountScopedMaterial(
+  credentials: StoredCredentials,
+): Parameters<typeof openProviderAccountUsageSnapshotCiphertext>[0]['material'] | null {
+  if (!credentials.encryption) return null;
   return credentials.encryption.type === 'legacy'
     ? { type: 'legacy', secret: credentials.encryption.secret }
     : { type: 'dataKey', machineKey: credentials.encryption.machineKey };
@@ -68,9 +75,16 @@ function parseProviderAccountUsageSnapshot(value: unknown): ProviderAccountUsage
 function parseProviderAccountUsageSnapshotForRecordId(input: Readonly<{
   value: unknown;
   recordId: ProviderAccountUsageRecordId;
-}>): ProviderAccountUsageSnapshotV1 | null {
+}>): ProviderAccountUsageSnapshotV1 {
   const snapshot = parseProviderAccountUsageSnapshot(input.value);
-  return snapshot?.recordId === input.recordId ? snapshot : null;
+  if (!snapshot || snapshot.recordId !== input.recordId) {
+    throw new ConnectedServiceStoredContentUnavailableError(
+      'provider_account_usage_snapshot',
+      'stored_content_corrupt',
+      { recordId: input.recordId },
+    );
+  }
+  return snapshot;
 }
 
 function parseConnectedServiceUsageSources(value: unknown): readonly ConnectedServiceUsageSourceV1[] {
@@ -91,6 +105,20 @@ type HydratedProviderAccountUsageSnapshot = Readonly<{
     };
   }>;
 }>;
+
+async function resolveAccountEncryptionModeForHydration(
+  api: ProviderAccountUsageHydrationApi,
+): Promise<'plain' | 'e2ee' | 'unknown'> {
+  if (!api.getAccountEncryptionMode) return 'unknown';
+  try {
+    return await api.getAccountEncryptionMode();
+  } catch (error) {
+    if (error instanceof AccountStoredContentClientUpgradeRequiredError) {
+      throw error;
+    }
+    return 'unknown';
+  }
+}
 
 export type ProviderAccountUsageCurrentSourceHydrationDisposition = Readonly<{
   source: ConnectedServiceUsageSourceV1;
@@ -115,13 +143,10 @@ function isProviderCompatibleWithConnectedServiceSource(input: Readonly<{
   providerId: string;
   source: ConnectedServiceUsageSourceV1;
 }>): boolean {
-  const providerId = input.providerId.trim();
-  if (!providerId) return false;
-  if (providerId === input.source.serviceId) return true;
-  const provider = (AGENTS_CORE as Readonly<Record<string, Readonly<{
-    connectedServices?: Readonly<{ supportedServiceIds: readonly string[] }> | null;
-  }>>>)[providerId];
-  return provider?.connectedServices?.supportedServiceIds.includes(input.source.serviceId) === true;
+  return isConnectedServiceUsageProviderCompatible({
+    providerId: input.providerId,
+    serviceId: input.source.serviceId,
+  });
 }
 
 async function openPlainProviderAccountUsageSnapshot(input: Readonly<{
@@ -129,13 +154,21 @@ async function openPlainProviderAccountUsageSnapshot(input: Readonly<{
   recordId: ProviderAccountUsageRecordId;
 }>): Promise<HydratedProviderAccountUsageSnapshot | null> {
   if (!input.api.getProviderAccountUsageSnapshotPlain) return null;
-  const response = await input.api.getProviderAccountUsageSnapshotPlain({ recordId: input.recordId }).catch(() => null);
-  if (response?.content?.t !== 'plain') return null;
+  const response = await input.api.getProviderAccountUsageSnapshotPlain({
+    recordId: input.recordId,
+  });
+  if (!response) return null;
+  if (response.content?.t !== 'plain') {
+    throw new ConnectedServiceStoredContentUnavailableError(
+      'provider_account_usage_snapshot',
+      'stored_content_corrupt',
+      { recordId: input.recordId },
+    );
+  }
   const snapshot = parseProviderAccountUsageSnapshotForRecordId({
     value: response.content.v,
     recordId: input.recordId,
   });
-  if (!snapshot) return null;
   return {
     snapshot,
     sources: parseConnectedServiceUsageSources(response.sources),
@@ -144,33 +177,67 @@ async function openPlainProviderAccountUsageSnapshot(input: Readonly<{
 
 async function openSealedProviderAccountUsageSnapshot(input: Readonly<{
   api: ProviderAccountUsageHydrationApi;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   recordId: ProviderAccountUsageRecordId;
   randomBytes?: (length: number) => Uint8Array;
 }>): Promise<HydratedProviderAccountUsageSnapshot | null> {
   if (!input.api.getProviderAccountUsageSnapshotSealed) return null;
-  const response = await input.api.getProviderAccountUsageSnapshotSealed({ recordId: input.recordId }).catch(() => null);
-  const ciphertext = response?.sealed?.ciphertext;
-  if (!ciphertext) return null;
-  const material = accountScopedMaterial(input.credentials);
-  const resealed = input.randomBytes
-    ? resealProviderAccountUsageSnapshotCiphertextIfHistoricalAlias({
-        material,
-        ciphertext,
-        randomBytes: input.randomBytes,
-      })
-    : null;
-  const opened = resealed
-    ? { value: resealed.snapshot }
-    : openProviderAccountUsageSnapshotCiphertext({
-        material,
-        ciphertext,
-      });
-  const snapshot = parseProviderAccountUsageSnapshotForRecordId({
-    value: opened?.value,
+  const response = await input.api.getProviderAccountUsageSnapshotSealed({
     recordId: input.recordId,
   });
-  if (!snapshot) return null;
+  if (!response) return null;
+  const ciphertext = response?.sealed?.ciphertext;
+  if (!ciphertext) {
+    throw new ConnectedServiceStoredContentUnavailableError(
+      'provider_account_usage_snapshot',
+      'stored_content_corrupt',
+      { recordId: input.recordId },
+    );
+  }
+  const material = accountScopedMaterial(input.credentials);
+  if (!material) {
+    throw new ConnectedServiceStoredContentUnavailableError(
+      'provider_account_usage_snapshot',
+      'encryption_material_unavailable',
+      { recordId: input.recordId },
+    );
+  }
+  let resealed: ReturnType<
+    typeof resealProviderAccountUsageSnapshotCiphertextIfHistoricalAlias
+  > = null;
+  let openedValue: unknown = null;
+  try {
+    resealed = input.randomBytes
+      ? resealProviderAccountUsageSnapshotCiphertextIfHistoricalAlias({
+          material,
+          ciphertext,
+          randomBytes: input.randomBytes,
+        })
+      : null;
+    openedValue = resealed
+      ? resealed.snapshot
+      : openProviderAccountUsageSnapshotCiphertext({
+          material,
+          ciphertext,
+        })?.value;
+  } catch {
+    throw new ConnectedServiceStoredContentUnavailableError(
+      'provider_account_usage_snapshot',
+      'stored_content_corrupt',
+      { recordId: input.recordId },
+    );
+  }
+  if (!openedValue) {
+    throw new ConnectedServiceStoredContentUnavailableError(
+      'provider_account_usage_snapshot',
+      'stored_content_corrupt',
+      { recordId: input.recordId },
+    );
+  }
+  const snapshot = parseProviderAccountUsageSnapshotForRecordId({
+    value: openedValue,
+    recordId: input.recordId,
+  });
   return {
     snapshot,
     sources: parseConnectedServiceUsageSources(response.sources),
@@ -197,22 +264,24 @@ async function openSealedProviderAccountUsageSnapshot(input: Readonly<{
 
 async function openProviderAccountUsageSnapshotForHydration(input: Readonly<{
   api: ProviderAccountUsageHydrationApi;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   recordId: ProviderAccountUsageRecordId;
   accountEncryptionMode?: 'plain' | 'e2ee' | 'unknown';
   randomBytes?: (length: number) => Uint8Array;
 }>): Promise<HydratedProviderAccountUsageSnapshot | null> {
-  const mode = input.accountEncryptionMode ?? (input.api.getAccountEncryptionMode
-    ? await input.api.getAccountEncryptionMode().catch(() => 'unknown' as const)
-    : 'unknown');
+  const mode = input.accountEncryptionMode
+    ?? await resolveAccountEncryptionModeForHydration(input.api);
   if (mode === 'plain') {
     return await openPlainProviderAccountUsageSnapshot(input);
   }
   if (mode === 'e2ee') {
     return await openSealedProviderAccountUsageSnapshot(input);
   }
-  return await openPlainProviderAccountUsageSnapshot(input)
-    ?? await openSealedProviderAccountUsageSnapshot(input);
+  throw new ConnectedServiceStoredContentUnavailableError(
+    'provider_account_usage_snapshot',
+    'account_mode_unavailable',
+    { recordId: input.recordId },
+  );
 }
 
 /**
@@ -235,7 +304,7 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
     staleAfterMs: number | null;
   }> | null>;
   api: ProviderAccountUsageHydrationApi;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   store: Pick<ProviderAccountUsageStore, 'recordSnapshot'>;
   nowMs: number;
   randomBytes?: (length: number) => Uint8Array;
@@ -257,9 +326,9 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
   const snapshotsByRecordId = new Map<ProviderAccountUsageRecordId, HydratedProviderAccountUsageSnapshot | null>();
   const resealedRecordIds = new Set<ProviderAccountUsageRecordId>();
   const nowMs = Number.isFinite(input.nowMs) ? Math.max(0, Math.trunc(input.nowMs)) : 0;
-  const accountEncryptionMode = input.api.getAccountEncryptionMode
-    ? await input.api.getAccountEncryptionMode().catch(() => 'unknown' as const)
-    : 'unknown';
+  const accountEncryptionMode = await resolveAccountEncryptionModeForHydration(
+    input.api,
+  );
 
   for (const source of sourcesByKey.values()) {
     const resolved = await input.resolveRecordIdForSource(source).catch(() => null);

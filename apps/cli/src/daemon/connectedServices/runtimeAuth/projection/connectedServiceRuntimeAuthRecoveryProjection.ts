@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
+
 import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   ConnectedServiceIdSchema,
   TranscriptRawAgentEventV1Schema,
+  buildAgentEventLocalId,
   normalizeConnectedServiceUxDiagnosticV1,
   type ConnectedServiceUxDiagnosticV1,
   type TranscriptRawAgentEventV1,
@@ -25,6 +28,14 @@ export type ConnectedServiceRuntimeAuthRecoveryProjection = Readonly<{
   nextRetryAtMs?: number | null;
   terminal?: boolean;
 }>;
+
+export function buildRuntimeAuthRecoveryAttemptTransitionLocalId(input: Readonly<{
+  attemptId: string;
+  transition: string;
+}>): string {
+  const attemptDigest = createHash('sha256').update(input.attemptId).digest('base64url');
+  return buildAgentEventLocalId('connected-service-runtime-auth-recovery', [attemptDigest, input.transition]);
+}
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -47,7 +47,7 @@ export function createSpawnLifecycleCallbacks<
   connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
   connectedServiceSelectionsEnv?: Readonly<Record<string, string>>;
   connectedServiceSelectionsEnvRaw?: string;
-  catalogAgentId: CatalogAgentId;
+  catalogAgentId: CatalogAgentId | null;
   sessionId?: string;
   sessionDirectory?: string;
   materializationKey: string;
@@ -58,7 +58,7 @@ export function createSpawnLifecycleCallbacks<
   ) => Promise<DaemonSpawnStartupReadinessFailure | null>;
   registerConnectedServiceRefreshTarget?: (target: Readonly<{
     pid: number;
-    agentId: CatalogAgentId;
+    agentId: CatalogAgentId | null;
     sessionId?: string;
     connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
     materializationKey: string;
@@ -71,7 +71,7 @@ export function createSpawnLifecycleCallbacks<
   }>) => void;
   registerConnectedServiceRuntimeTarget?: (target: Readonly<{
     pid: number;
-    agentId: CatalogAgentId;
+    agentId: CatalogAgentId | null;
     sessionId?: string;
     sessionDirectory?: string;
     connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;

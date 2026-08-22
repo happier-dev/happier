@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol';
 
 import type { LocalServiceWorkspaceFact } from './provenance';
 
@@ -29,14 +30,25 @@ function normalizeWorkspacePath(value: unknown): string | null {
         : normalized;
 }
 
-function readMarkerWorkspacePathCandidates(marker: LocalServiceWorkspaceSessionMarker): readonly string[] {
+function readMarkerWorkspacePathCandidates(
+    marker: LocalServiceWorkspaceSessionMarker,
+    currentMachineId?: string,
+): readonly string[] {
     const metadata = readRecord(marker.metadata);
     const respawn = readRecord(marker.respawn);
     return [
         readTrimmedString(marker.cwd),
         readTrimmedString(metadata?.path),
         readTrimmedString(respawn?.directory),
-    ].filter((candidate) => candidate.length > 0);
+    ]
+        .filter((candidate) => candidate.length > 0)
+        .map((candidate) => metadata && currentMachineId
+            ? resolveSessionWorkspaceRootForMachine({
+                metadata,
+                machineId: currentMachineId,
+                candidatePath: candidate,
+            }).machinePath
+            : candidate);
 }
 
 export function mergeLocalServiceWorkspaceFacts(
@@ -58,10 +70,11 @@ export function mergeLocalServiceWorkspaceFacts(
 
 export function resolveLocalServiceWorkspaceFactsFromSessionMarkers(
     markers: readonly LocalServiceWorkspaceSessionMarker[],
+    currentMachineId?: string,
 ): readonly LocalServiceWorkspaceFact[] {
     const facts: LocalServiceWorkspaceFact[] = [];
     for (const marker of markers) {
-        for (const candidate of readMarkerWorkspacePathCandidates(marker)) {
+        for (const candidate of readMarkerWorkspacePathCandidates(marker, currentMachineId)) {
             const normalized = normalizeWorkspacePath(candidate);
             if (!normalized) continue;
             facts.push({ path: normalized });
@@ -79,13 +92,14 @@ export function resolveLocalServiceWorkspaceFactsFromSessionMarkers(
 export function resolveSessionWorkspacePathsFromSessionMarkers(
     markers: readonly LocalServiceWorkspaceSessionMarker[],
     sessionId: string,
+    currentMachineId?: string,
 ): readonly string[] {
     const target = readTrimmedString(sessionId);
     if (!target) return [];
     const paths = new Set<string>();
     for (const marker of markers) {
         if (readTrimmedString(marker.happySessionId) !== target) continue;
-        for (const candidate of readMarkerWorkspacePathCandidates(marker)) {
+        for (const candidate of readMarkerWorkspacePathCandidates(marker, currentMachineId)) {
             const normalized = normalizeWorkspacePath(candidate);
             if (normalized) {
                 paths.add(normalized);

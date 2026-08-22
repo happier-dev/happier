@@ -542,7 +542,7 @@ describe('createExternalSessionObservationReconciler', () => {
         }
     });
 
-    it('owns one coalesced bounded-backoff topology reacquisition and catches up only after recovery', async () => {
+    it('re-enters failed topology watch demand only when the current link is reconciled again', async () => {
         vi.useFakeTimers({
             toFake: ['setTimeout', 'clearTimeout'],
         });
@@ -605,19 +605,21 @@ describe('createExternalSessionObservationReconciler', () => {
         lifecycles[0]?.onUnavailable(descriptorLimit);
         lifecycles[0]?.onUnavailable(descriptorLimit);
         expect(disposers[0]).toHaveBeenCalledOnce();
-        expect(vi.getTimerCount()).toBe(1);
+        expect(vi.getTimerCount()).toBe(0);
         expect(reconcileResource).not.toHaveBeenCalled();
 
-        await vi.runOnlyPendingTimersAsync();
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(watchTopologyDirectories).toHaveBeenCalledOnce();
+        expect(reconcileResource).not.toHaveBeenCalled();
+
+        await reconciler.reconcileLink({
+            resource: resource({ resourceKey: 'codex-home-generation-a' }),
+            link: watchedLink,
+            demand: demanded(),
+            onFacts: () => {},
+        });
         expect(watchTopologyDirectories).toHaveBeenCalledTimes(2);
-        lifecycles[1]?.onUnavailable(descriptorLimit);
-        expect(disposers[1]).toHaveBeenCalledOnce();
-        expect(vi.getTimerCount()).toBe(1);
-        expect(reconcileResource).not.toHaveBeenCalled();
-
-        await vi.runOnlyPendingTimersAsync();
-        expect(watchTopologyDirectories).toHaveBeenCalledTimes(3);
-        lifecycles[2]?.onReady();
+        lifecycles[1]?.onReady();
         await Promise.resolve();
         await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -629,11 +631,11 @@ describe('createExternalSessionObservationReconciler', () => {
         expect(vi.getTimerCount()).toBe(0);
 
         await reconciler.dispose();
-        expect(disposers[2]).toHaveBeenCalledOnce();
+        expect(disposers[1]).toHaveBeenCalledOnce();
     });
 
     it.each(['disposal', 'generation retirement'] as const)(
-        'cancels a pending topology reacquisition on %s',
+        'does not recreate a failed topology watcher after %s',
         async (stopKind) => {
             vi.useFakeTimers({
                 toFake: ['setTimeout', 'clearTimeout'],
@@ -682,7 +684,7 @@ describe('createExternalSessionObservationReconciler', () => {
                     code: 'EMFILE',
                 }),
             );
-            expect(vi.getTimerCount()).toBe(1);
+            expect(vi.getTimerCount()).toBe(0);
 
             if (stopKind === 'disposal') {
                 await reconciler.dispose();
@@ -1589,6 +1591,54 @@ describe('createExternalSessionObservationReconciler', () => {
         });
 
         await reconciler.dispose();
+    });
+
+    it('owns abort-triggered resource retirement and retries the exact same observer cleanup', async () => {
+        // Generation retirement is owner-driven cleanup, not a caller promise. An
+        // unhandled rejection here reaches the daemon's process handler, which turns
+        // it into `requestShutdown('exception')` — one plugin observer whose disposal
+        // failed must not take the daemon down. The failure is still not discarded:
+        // a rejected deactivation keeps the resource under this reconciler, so the
+        // disposal owner retries the exact same cleanup and surfaces it there.
+        const retirement = new AbortController();
+        const dispose = vi.fn<() => Promise<void>>()
+            .mockRejectedValueOnce(new Error('observer cleanup failed'))
+            .mockResolvedValue(undefined);
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver: vi.fn(async () => ({ dispose })),
+            reconcileResource: vi.fn(async (): Promise<TestReconcileResult> => ({
+                purpose: 'observation_evidence',
+                outcomes: [],
+            })),
+        });
+
+        await reconciler.reconcileLink({
+            resource: resource({ retirementSignal: retirement.signal }),
+            link: {
+                ...link(1),
+                changeObservation: 'observe_resource',
+            },
+            demand: demanded(),
+            onFacts: () => {},
+        });
+
+        const unhandled: unknown[] = [];
+        const onUnhandledRejection = (reason: unknown): void => {
+            unhandled.push(reason);
+        };
+        process.on('unhandledRejection', onUnhandledRejection);
+        try {
+            retirement.abort();
+            // Let Node run its unhandled-rejection detection for this turn.
+            await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+            expect(dispose).toHaveBeenCalledTimes(1);
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off('unhandledRejection', onUnhandledRejection);
+        }
+
+        await reconciler.dispose();
+        expect(dispose).toHaveBeenCalledTimes(2);
     });
 
     it('drops late file callbacks and retires the watcher exactly once with its Agent generation', async () => {
@@ -2663,6 +2713,83 @@ describe('createExternalSessionObservationReconciler', () => {
             fact('still-current'),
         ]);
         expect(release).not.toHaveBeenCalled();
+    });
+
+    it('retains the exact observer until a failed replacement cleanup retries successfully', async () => {
+        const cleanupFailure = new Error('observer cleanup rejected');
+        const oldDispose = vi.fn()
+            .mockRejectedValueOnce(cleanupFailure)
+            .mockResolvedValueOnce(undefined);
+        const newDispose = vi.fn(async () => {});
+        const acquireObserver = vi.fn(async () => ({
+            dispose: acquireObserver.mock.calls.length === 1
+                ? oldDispose
+                : newDispose,
+        }));
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver,
+        });
+        const retiringResource = resource({ resourceKey: 'retiring-resource' });
+        const replacementResource = resource({ resourceKey: 'replacement-resource' });
+        const retiringLink = link(1, {
+            linkGeneration: 'link-retiring',
+            linkKey: 'native-retiring',
+        });
+        const replacementLink = link(1, {
+            linkGeneration: 'link-replacement',
+            linkKey: 'native-replacement',
+        });
+
+        await reconciler.reconcileLink({
+            resource: retiringResource,
+            link: retiringLink,
+            demand: demanded(),
+            onFacts: () => {},
+        });
+
+        await expect(reconciler.reconcileLink({
+            resource: replacementResource,
+            link: replacementLink,
+            demand: demanded(),
+            onFacts: () => {},
+        })).rejects.toBe(cleanupFailure);
+        expect(oldDispose).toHaveBeenCalledTimes(1);
+        expect(acquireObserver).toHaveBeenCalledTimes(1);
+
+        await expect(reconciler.reconcileLink({
+            resource: replacementResource,
+            link: replacementLink,
+            demand: demanded(),
+            onFacts: () => {},
+        })).resolves.toEqual({ state: 'observing' });
+        expect(oldDispose).toHaveBeenCalledTimes(2);
+        expect(acquireObserver).toHaveBeenCalledTimes(2);
+
+        await reconciler.dispose();
+        expect(newDispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries the exact observer cleanup when terminal disposal is retried', async () => {
+        const cleanupFailure = new Error('observer cleanup rejected');
+        const disposeObserver = vi.fn()
+            .mockRejectedValueOnce(cleanupFailure)
+            .mockResolvedValueOnce(undefined);
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver: vi.fn(async () => ({ dispose: disposeObserver })),
+        });
+
+        await reconciler.reconcileLink({
+            resource: resource(),
+            link: link(1),
+            demand: demanded(),
+            onFacts: () => {},
+        });
+
+        await expect(reconciler.dispose()).rejects.toBe(cleanupFailure);
+        expect(disposeObserver).toHaveBeenCalledTimes(1);
+
+        await expect(reconciler.dispose()).resolves.toBeUndefined();
+        expect(disposeObserver).toHaveBeenCalledTimes(2);
     });
 
     it('does no observer or reconciliation work at zero demand and cleans up once at zero links', async () => {

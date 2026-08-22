@@ -1,4 +1,4 @@
-import type { SqliteDatabaseSync } from '../sqliteSync';
+import type { SqliteDatabaseSync } from '../../persistence/sqliteSync';
 import type {
   MemoryIndexQueueDbHandle,
   MemorySessionIndexStateUpdate,

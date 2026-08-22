@@ -10,15 +10,15 @@ import {
   createVoiceDiagnosticStore,
   type VoiceDiagnosticArtifact,
   type VoiceDiagnosticCapture,
+  type VoiceDiagnosticFileCapture,
   VoiceDiagnosticCleanupError,
 } from './store';
-import { readFile } from 'node:fs/promises';
 
 export type VoiceDiagnosticsController = Readonly<{
   root: string;
   configure(settings: VoiceSpeechDiagnosticsSettingsV1): Promise<void>;
   capture(capture: VoiceDiagnosticCapture): Promise<VoiceDiagnosticArtifact | null>;
-  captureFile(capture: Omit<VoiceDiagnosticCapture, 'bytes'> & Readonly<{ filePath: string }>): Promise<VoiceDiagnosticArtifact | null>;
+  captureFile(capture: VoiceDiagnosticFileCapture): Promise<VoiceDiagnosticArtifact | null>;
   status(): Promise<Readonly<{
     settings: VoiceSpeechDiagnosticsSettingsV1;
     artifacts: readonly VoiceSpeechDiagnosticArtifactSummaryV1[];
@@ -120,9 +120,11 @@ export function createVoiceDiagnosticsController(input: Readonly<{
     captureFailureLatched = true;
   }
 
-  async function captureWithHealth(capture: VoiceDiagnosticCapture): Promise<VoiceDiagnosticArtifact | null> {
+  async function captureWithHealth(
+    capture: () => Promise<VoiceDiagnosticArtifact | null>,
+  ): Promise<VoiceDiagnosticArtifact | null> {
     try {
-      const artifact = await store.capture(capture);
+      const artifact = await capture();
       if (artifact) {
         captureFailureLatched = false;
         await inspectStore({ acknowledgeOperationalCleanup: 'retention' });
@@ -153,21 +155,14 @@ export function createVoiceDiagnosticsController(input: Readonly<{
     }),
     capture: (capture) => enqueue(async () => {
       if (!capture.authorizationId || denyAllCaptureAuthorizations || revokedCaptureAuthorizations.has(capture.authorizationId)) return null;
-      return await captureWithHealth(capture);
+      return await captureWithHealth(async () => await store.capture(capture));
     }),
     captureFile: (capture) => enqueue(async () => {
       if (!capture.authorizationId || denyAllCaptureAuthorizations || revokedCaptureAuthorizations.has(capture.authorizationId)) return null;
       if (!settings.enabled || settings.consentVersion !== 1) return null;
       if (capture.direction === 'stt_input' && !settings.captureSttInput) return null;
       if (capture.direction === 'tts_output' && !settings.captureTtsOutput) return null;
-      let bytes: Uint8Array;
-      try {
-        bytes = await readFile(capture.filePath);
-      } catch {
-        await latchCaptureFailure();
-        return null;
-      }
-      return await captureWithHealth({ ...capture, bytes });
+      return await captureWithHealth(async () => await store.captureFile(capture));
     }),
     status: () => enqueue(async () => ({
       settings,

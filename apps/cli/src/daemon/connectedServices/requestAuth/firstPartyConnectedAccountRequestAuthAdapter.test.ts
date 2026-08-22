@@ -53,11 +53,11 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
             localId: 'openai',
         })).toBeNull();
         expect(resolveFirstPartyConnectedAccountServiceId({
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         })).toBeNull();
         expect(resolveFirstPartyConnectedAccountServiceId({
-            pluginId: 'happier.scm.hosting.bitbucket',
+            pluginId: 'happier.scm.forge.bitbucket',
             localId: 'bitbucket-account',
         })).toBeNull();
     });
@@ -507,6 +507,59 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
         await expect(materializeFirstPartyConnectedAccountBearer(base)).resolves.toEqual({
             accessToken: 'rotated-v4-access',
         });
+    });
+
+    it('forwards request-auth cancellation to the established materializer and refuses pre-aborted legacy reads', async () => {
+        const signal = new AbortController().signal;
+        const invokeWithReceipt = vi.fn(async () => ({
+            result: {
+                kind: 'httpHeaders' as const,
+                headers: { Authorization: 'Bearer v4-access' },
+            },
+            basis: {
+                credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+                isCurrent: () => true,
+            },
+        }));
+        await expect(materializeFirstPartyConnectedAccountBearer({
+            resolved: {
+                account: { service: codexService, accountId: 'member-a' },
+                credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+            },
+            materialization: {
+                kind: 'httpHeaders',
+                origin: 'https://api.openai.com',
+                headerNames: ['authorization'],
+            },
+            transport: { kind: 'v4' },
+            signal,
+            establishedRuntimeOwner: { invokeWithReceipt },
+            resolveCredential: vi.fn(),
+        })).resolves.toEqual({ accessToken: 'v4-access' });
+        expect(invokeWithReceipt).toHaveBeenCalledWith(expect.objectContaining({ signal }));
+
+        const aborted = new AbortController();
+        aborted.abort();
+        const resolveCredential = vi.fn();
+        await expect(materializeFirstPartyConnectedAccountBearer({
+            resolved: {
+                account: { service: codexService, accountId: 'member-a' },
+                credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+            },
+            materialization: {
+                kind: 'httpHeaders',
+                origin: 'https://api.openai.com',
+                headerNames: ['authorization'],
+            },
+            transport: {
+                kind: 'legacy',
+                peerClass: 'revisioned_v2_v3',
+                serviceId: 'openai-codex',
+            },
+            signal: aborted.signal,
+            resolveCredential,
+        })).rejects.toBeDefined();
+        expect(resolveCredential).not.toHaveBeenCalled();
     });
 
     it.each([

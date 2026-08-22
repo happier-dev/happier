@@ -7,7 +7,6 @@ import {
 } from '@happier-dev/protocol';
 
 import { prepareDirectProviderLaunch } from './prepareDirectLaunch';
-import { ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_direct');
 const bindingMetadata: SessionProviderBindingMetadataV1 = {
@@ -29,10 +28,9 @@ const bindingMetadata: SessionProviderBindingMetadataV1 = {
 };
 
 describe('direct Provider launch lifecycle', () => {
-  it('returns the managed-daemon discriminant before prerequisites, Connected Services, or endpoint materialization', async () => {
+  it('returns the managed-daemon discriminant before prerequisites or endpoint materialization', async () => {
     const cleanupOnFailure = vi.fn();
     const resolvePrerequisites = vi.fn(async () => ({ ok: true as const }));
-    const resolveConnectedServices = vi.fn(async () => null);
     const materializeManagedEndpoint = vi.fn();
     const attempt = {
       deployment: { kind: 'managedLocal' as const },
@@ -63,7 +61,6 @@ describe('direct Provider launch lifecycle', () => {
     }, {
       resolvePrerequisites,
       createAuthorizationAttempt: async () => ({ ok: true, attempt: attempt as never }),
-      resolveConnectedServices,
     });
 
     expect(result).toEqual({
@@ -71,7 +68,6 @@ describe('direct Provider launch lifecycle', () => {
       kind: 'managed_provider_requires_daemon',
     });
     expect(resolvePrerequisites).not.toHaveBeenCalled();
-    expect(resolveConnectedServices).not.toHaveBeenCalled();
     expect(materializeManagedEndpoint).not.toHaveBeenCalled();
     expect(cleanupOnFailure).toHaveBeenCalledOnce();
   });
@@ -80,6 +76,7 @@ describe('direct Provider launch lifecycle', () => {
     const events: string[] = [];
     const cleanupOnFailure = vi.fn(() => events.push('failure-cleanup'));
     const cleanupOnExit = vi.fn(() => events.push('exit-cleanup'));
+    const transferLaunchMaterializationCleanupOwnership = vi.fn();
     const attempt = {
       deployment: { kind: 'external' as const },
       authorization: {
@@ -121,6 +118,7 @@ describe('direct Provider launch lifecycle', () => {
       }),
       cleanupOnFailure,
       takeCleanupOnExit: vi.fn(() => cleanupOnExit),
+      transferLaunchMaterializationCleanupOwnership,
     };
 
     const result = await prepareDirectProviderLaunch({
@@ -165,6 +163,9 @@ describe('direct Provider launch lifecycle', () => {
       'commit-check',
     ]);
     if (!result.ok || result.kind !== 'provider') throw new Error('Expected Provider launch');
+    result.transferLaunchMaterializationCleanupOwnership();
+    result.transferLaunchMaterializationCleanupOwnership();
+    expect(transferLaunchMaterializationCleanupOwnership).toHaveBeenCalledOnce();
     await result.cleanupOnExit?.();
     await result.cleanupOnExit?.();
     expect(cleanupOnExit).toHaveBeenCalledTimes(1);
@@ -236,7 +237,6 @@ describe('direct Provider launch lifecycle', () => {
 
   it('refuses before prerequisites, authorization, materialization, or fallback when the feature is disabled', async () => {
     const resolvePrerequisites = vi.fn(async () => ({ ok: true as const }));
-    const resolveConnectedServices = vi.fn(async () => null);
     const createAuthorizationAttempt = vi.fn(async () => ({
       ok: false as const,
       error: createProviderErrorV1('provider_connection_not_found', { connectionId }),
@@ -256,7 +256,7 @@ describe('direct Provider launch lifecycle', () => {
       confirmation: null,
       connectedServices: null,
       featureEnabled: false,
-    }, { resolvePrerequisites, createAuthorizationAttempt, resolveConnectedServices });
+    }, { resolvePrerequisites, createAuthorizationAttempt });
 
     expect(result).toEqual({
       ok: false,
@@ -267,12 +267,10 @@ describe('direct Provider launch lifecycle', () => {
     });
     expect(resolvePrerequisites).not.toHaveBeenCalled();
     expect(createAuthorizationAttempt).not.toHaveBeenCalled();
-    expect(resolveConnectedServices).not.toHaveBeenCalled();
   });
 
-  it('suppresses native auth before connected-service materialization and transfers all scoped resources together', async () => {
+  it('suppresses native auth before returning the Provider launch', async () => {
     const events: string[] = [];
-    const cleanupConnectedServices = vi.fn(async () => undefined);
     const attempt = {
       deployment: { kind: 'external' as const },
       authorization: {
@@ -328,128 +326,27 @@ describe('direct Provider launch lifecycle', () => {
     }, {
       resolvePrerequisites: async () => ({ ok: true }),
       createAuthorizationAttempt: async () => ({ ok: true, attempt: attempt as never }),
-      resolveConnectedServices: async (bindings) => {
-        events.push('connected-services');
-        expect(bindings).toEqual({
-          v: 1,
-          bindingsByServiceId: {
-            github: { source: 'connected', selection: 'profile', profileId: 'github' },
-          },
-        });
-        return {
-          environment: { SHARED_KEY: 'connected-value', CONNECTED_ONLY: 'connected-only' },
-          unsetEnvKeys: ['NATIVE_AUTH_KEY'],
-          cleanupOnFailure: cleanupConnectedServices,
-          cleanupOnExit: cleanupConnectedServices,
-        };
-      },
     });
 
-    expect(events).toEqual(['connected-services', 'provider-materialize']);
+    expect(events).toEqual(['provider-materialize']);
     expect(result).toMatchObject({
       ok: true,
       kind: 'provider',
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          github: {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'github',
+          },
+        },
+      },
       environment: {
         SHARED_KEY: 'provider-value',
-        CONNECTED_ONLY: 'connected-only',
         PROVIDER_ONLY: 'provider-only',
       },
-      unsetEnvKeys: ['NATIVE_AUTH_KEY'],
     });
-    if (!result.ok) throw new Error('Expected direct launch');
-    await result.cleanupOnExit?.();
-    expect(cleanupConnectedServices).toHaveBeenCalledTimes(1);
-  });
-
-  it('releases the authorized Provider attempt when deferred connected-service resolution throws', async () => {
-    const cleanupOnFailure = vi.fn();
-    const attempt = {
-      deployment: { kind: 'external' as const },
-      authorization: {
-        sessionBindingMetadata: bindingMetadata,
-        support: { authIsolation: { suppressConnectedServiceIds: [] } },
-      },
-      materializeAfterHooks: vi.fn(),
-      revalidateBeforeCommit: vi.fn(),
-      cleanupOnFailure,
-      takeCleanupOnExit: vi.fn(),
-    };
-
-    const result = await prepareDirectProviderLaunch({
-      selection: {
-        v: 1,
-        updatedAt: 1,
-        ref: { agentTargetKey: 'backend:codex', providerConnectionId: connectionId, modelId: 'model-a' },
-      },
-      backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
-      machineId: 'machine-a',
-      agentId: 'codex',
-      sessionId: 'session-a',
-      previousBinding: null,
-      confirmation: null,
-      connectedServices: null,
-      featureEnabled: true,
-    }, {
-      resolvePrerequisites: async () => ({ ok: true }),
-      createAuthorizationAttempt: async () => ({ ok: true, attempt: attempt as never }),
-      resolveConnectedServices: async () => {
-        throw new Error('connected-service materialization failed');
-      },
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: { code: 'provider_agent_runtime_unsupported' },
-    });
-    expect(cleanupOnFailure).toHaveBeenCalledTimes(1);
-    expect(attempt.materializeAfterHooks).not.toHaveBeenCalled();
-  });
-
-  it('releases the authorized Provider attempt and preserves typed coordinator-unavailable resolution', async () => {
-    const cleanupOnFailure = vi.fn();
-    const attempt = {
-      deployment: { kind: 'external' as const },
-      authorization: {
-        sessionBindingMetadata: bindingMetadata,
-        support: { authIsolation: { suppressConnectedServiceIds: [] } },
-      },
-      materializeAfterHooks: vi.fn(),
-      revalidateBeforeCommit: vi.fn(),
-      cleanupOnFailure,
-      takeCleanupOnExit: vi.fn(),
-    };
-    const error = new ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError({
-      serviceId: 'openai-codex',
-      groupId: 'codex-main',
-      activeProfileId: 'primary',
-      selectedProfileId: 'backup',
-      reason: 'usage_limit',
-    });
-
-    await expect(prepareDirectProviderLaunch({
-      selection: {
-        v: 1,
-        updatedAt: 1,
-        ref: { agentTargetKey: 'backend:codex', providerConnectionId: connectionId, modelId: 'model-a' },
-      },
-      backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
-      machineId: 'machine-a',
-      agentId: 'codex',
-      sessionId: 'session-a',
-      previousBinding: null,
-      confirmation: null,
-      connectedServices: null,
-      featureEnabled: true,
-    }, {
-      resolvePrerequisites: async () => ({ ok: true }),
-      createAuthorizationAttempt: async () => ({ ok: true, attempt: attempt as never }),
-      resolveConnectedServices: async () => {
-        throw error;
-      },
-    })).rejects.toBe(error);
-
-    expect(cleanupOnFailure).toHaveBeenCalledTimes(1);
-    expect(attempt.materializeAfterHooks).not.toHaveBeenCalled();
   });
 
   it('releases caller-owned initial resources when a native selection reaches the shared helper', async () => {
@@ -488,44 +385,4 @@ describe('direct Provider launch lifecycle', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it('carries native connected-service materialization without mutating ambient environment', async () => {
-    const previous = process.env.CONNECTED_SCOPED_KEY;
-    const cleanup = vi.fn(async () => undefined);
-    const result = await prepareDirectProviderLaunch({
-      selection: {
-        v: 1,
-        updatedAt: 1,
-        ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'native-model' },
-      },
-      backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
-      machineId: 'machine-a',
-      agentId: 'codex',
-      sessionId: 'session-native-connected',
-      previousBinding: null,
-      confirmation: null,
-      connectedServices: null,
-      featureEnabled: true,
-    }, {
-      resolvePrerequisites: vi.fn(async () => ({ ok: true as const })),
-      createAuthorizationAttempt: vi.fn(async () => ({
-        ok: false as const,
-        error: createProviderErrorV1('provider_connection_not_found'),
-      })),
-      resolveConnectedServices: async () => ({
-        environment: { CONNECTED_SCOPED_KEY: 'scoped-value' },
-        cleanupOnFailure: cleanup,
-        cleanupOnExit: cleanup,
-      }),
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      kind: 'native',
-      environment: { CONNECTED_SCOPED_KEY: 'scoped-value' },
-    });
-    expect(process.env.CONNECTED_SCOPED_KEY).toBe(previous);
-    if (!result.ok) throw new Error('Expected native direct launch');
-    await result.cleanupOnExit?.();
-    expect(cleanup).toHaveBeenCalledTimes(1);
-  });
 });

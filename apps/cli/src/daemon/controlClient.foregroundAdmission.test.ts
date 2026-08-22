@@ -6,7 +6,10 @@ import { reloadConfiguration } from '@/configuration';
 import {
   admitDaemonForegroundAgentRuntime,
 } from '@/daemon/controlClient';
-import { clearDaemonState, writeDaemonState } from '@/persistence';
+import {
+  ForegroundAgentRuntimeAdmissionRequestV1Schema,
+} from '@/daemon/agentRuntime/foregroundAdmissionContract';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
@@ -29,7 +32,7 @@ describe('daemon control client: foreground Agent runtime admission', () => {
   let tmpHomeDir: string | null = null;
 
   afterEach(async () => {
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     reloadConfiguration();
@@ -37,6 +40,42 @@ describe('daemon control client: foreground Agent runtime admission', () => {
       await removeTempDir(tmpHomeDir);
       tmpHomeDir = null;
     }
+  });
+
+  it('accepts only legacy service-keyed Connected Services intent and rejects client-qualified purpose authority', () => {
+    const request = {
+      v: 1 as const,
+      attemptId: 'attempt-1',
+      sessionId: 'session-1',
+      foregroundPid: process.pid,
+      directory: '/workspace',
+      agentId: 'codex',
+      backendTarget: {
+        kind: 'backend' as const,
+        backendId: 'codex',
+        sourceKind: 'built_in' as const,
+      },
+      connectedServices: {
+        v: 1 as const,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected' as const,
+            selection: 'profile' as const,
+            profileId: 'work',
+          },
+        },
+      },
+    };
+
+    expect(ForegroundAgentRuntimeAdmissionRequestV1Schema.parse(request))
+      .toEqual(request);
+    expect(ForegroundAgentRuntimeAdmissionRequestV1Schema.safeParse({
+      ...request,
+      qualifiedPurposeBindingSnapshot: {
+        purposes: [],
+        bindings: [],
+      },
+    }).success).toBe(false);
   });
 
   it('normalizes an older daemon without the admission route to a typed refusal', async () => {

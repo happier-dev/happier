@@ -6,6 +6,52 @@ import {
 } from './connectedServiceProjectionSnapshot';
 
 describe('parseConnectedServiceProjectionSnapshot', () => {
+  it('retains novel qualified Account V4 truth without downconverting it into the legacy service projection', () => {
+    const service = {
+      pluginId: 'acme.connected-accounts',
+      localId: 'external-service',
+    } as const;
+    const account = {
+      ref: { service, accountId: 'external-account' },
+      status: 'connected',
+      authenticationModeId: 'manual',
+      revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+      configurationReady: false,
+      configurationRevision: null,
+      displayName: 'External account',
+      scopes: [],
+    } as const;
+    const group = {
+      v: 1,
+      ref: { service, groupId: 'external-fallbacks' },
+      incarnation: 'qualified-group-row-external-fallbacks',
+      displayName: null,
+      policy: {},
+      activeConnectedAccountId: 'external-account',
+      generation: 4,
+      runtimeStateRevision: 2,
+      state: {},
+      createdAt: 1,
+      updatedAt: 1,
+      members: [],
+    } as const;
+    const projection = {
+      connectedServicesV2: [],
+      connectedServiceCredentialRevisionsV1: [],
+      connectedAccountsV4: [account],
+      connectedAccountGroupsV4: [group],
+    };
+
+    const snapshot = parseConnectedServiceProjectionSnapshot(projection);
+
+    expect(snapshot.groups).toEqual([]);
+    expect(snapshot).toMatchObject({
+      qualifiedAccounts: [account],
+      qualifiedGroups: [group],
+    });
+  });
+
   it('keeps credential revision separate from group generation and distinguishes absent from legacy unfenced credentials', () => {
     const snapshot = parseConnectedServiceProjectionSnapshot({
       connectedServicesV2: [{

@@ -89,12 +89,8 @@ import {
     runScmRoute,
 } from '@/scm/rpc/dispatch';
 import {
-    runScmHostingRepositoryDescribePublishTargetsRoute,
-    runScmHostingRepositoryPublishRoute,
-    runScmRepositoryCloneRoute,
-    runScmRepositoryInitRoute,
-    runScmRepositoryRemoveIndexLockRoute,
-} from '@/scm/rpc/repositoryProvisioningDispatch';
+    executeScmActionOperation,
+} from '@/scm/actions/executeScmActionOperation';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 type MutatingScmRouteRequest = {
@@ -543,153 +539,118 @@ export function registerScmHandlers(
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestListRequest, ScmPullRequestListResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_LIST,
-        async (request) =>
-            runScmRoute<ScmPullRequestListRequest, ScmPullRequestListResponse>({
-                request,
-                ...routeBase,
-                onNonRepository: async () => notRepositoryResponse<ScmPullRequestListResponse>(),
-                runWithBackend: async ({ context, selection }) =>
-                    selection.backend.pullRequestList
-                        ? selection.backend.pullRequestList({ context, request })
-                        : notRepositoryResponse<ScmPullRequestListResponse>(),
-            })
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.pullRequest.list',
+            input: request,
+            ...routeBase,
+        }) as ScmPullRequestListResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestGetRequest, ScmPullRequestGetResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_GET,
-        async (request) =>
-            runScmRoute<ScmPullRequestGetRequest, ScmPullRequestGetResponse>({
-                request,
-                ...routeBase,
-                onNonRepository: async () => notRepositoryResponse<ScmPullRequestGetResponse>(),
-                runWithBackend: async ({ context, selection }) =>
-                    selection.backend.pullRequestGet
-                        ? selection.backend.pullRequestGet({ context, request })
-                        : notRepositoryResponse<ScmPullRequestGetResponse>(),
-            })
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.pullRequest.get',
+            input: request,
+            ...routeBase,
+        }) as ScmPullRequestGetResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
-        async (request) =>
-            runScmRoute<ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse>({
-                request,
-                ...routeBase,
-                onNonRepository: async () => notRepositoryResponse<ScmPullRequestOpenComposeResponse>(),
-                runWithBackend: async ({ context, selection }) =>
-                    selection.backend.pullRequestOpenCompose
-                        ? selection.backend.pullRequestOpenCompose({ context, request })
-                        : notRepositoryResponse<ScmPullRequestOpenComposeResponse>(),
-            })
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.pullRequest.openCompose',
+            input: request,
+            ...routeBase,
+        }) as ScmPullRequestOpenComposeResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
-        async (request) =>
-            runMutatingScmRoute<ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse>({
-                request,
-                ...routeBase,
-                onNonRepository: async () => notRepositoryResponse<ScmPullRequestOpenOrReuseResponse>(),
-                runWithBackend: async ({ context, selection }) =>
-                    selection.backend.pullRequestOpenOrReuse
-                        ? selection.backend.pullRequestOpenOrReuse({ context, request })
-                        : notRepositoryResponse<ScmPullRequestOpenOrReuseResponse>(),
-            })
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.pullRequest.openOrReuse',
+            input: request,
+            ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmPullRequestOpenOrReuseResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_CHECKOUT,
-        async (request) =>
-            runMutatingScmRoute<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>({
-                request,
-                ...routeBase,
-                onNonRepository: async () => notRepositoryResponse<ScmPullRequestCheckoutResponse>(),
-                runWithBackend: async ({ context, selection }) =>
-                    selection.backend.pullRequestCheckout
-                        ? selection.backend.pullRequestCheckout({ context, request })
-                        : notRepositoryResponse<ScmPullRequestCheckoutResponse>(),
-            })
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.pullRequest.checkout',
+            input: request,
+            ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmPullRequestCheckoutResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_PREPARE_WORKTREE,
-        async (request) =>
-            runMutatingScmRoute<ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse>({
-                request,
-                ...routeBase,
-                onNonRepository: async () => notRepositoryResponse<ScmPullRequestPrepareWorktreeResponse>(),
-                runWithBackend: async ({ context, selection }) =>
-                    selection.backend.pullRequestPrepareWorktree
-                        ? selection.backend.pullRequestPrepareWorktree({ context, request })
-                        : notRepositoryResponse<ScmPullRequestPrepareWorktreeResponse>(),
-            })
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.pullRequest.prepareWorktree',
+            input: request,
+            ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmPullRequestPrepareWorktreeResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_RUN_STACKED,
-        async (request) =>
-            runMutatingScmRoute<ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse>({
-                request,
-                ...routeBase,
-                onNonRepository: async () => notRepositoryResponse<ScmPullRequestRunStackedResponse>(),
-                runWithBackend: async ({ context, selection }) =>
-                    selection.backend.pullRequestRunStacked
-                        ? selection.backend.pullRequestRunStacked({ context, request })
-                        : notRepositoryResponse<ScmPullRequestRunStackedResponse>(),
-            })
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.pullRequest.runStacked',
+            input: request,
+            ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmPullRequestRunStackedResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmRepositoryInitRequest, ScmRepositoryInitResponse>(
         RPC_METHODS.SCM_REPOSITORY_INIT,
-        async (request) =>
-            runWithStatusSnapshotCacheInvalidation(() =>
-                runScmRepositoryInitRoute({
-                    request,
-                    ...routeBase,
-                }),
-            )
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.repository.init',
+            input: request,
+            ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmRepositoryInitResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmRepositoryCloneInput, ScmRepositoryCloneOutput>(
         RPC_METHODS.SCM_REPOSITORY_CLONE,
-        async (request) =>
-            runWithStatusSnapshotCacheInvalidation(() =>
-                runScmRepositoryCloneRoute({
-                    request,
-                    ...routeBase,
-                }),
-            )
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.repository.clone',
+            input: request,
+            ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmRepositoryCloneOutput,
     );
 
     scmRpcHandlerManager.registerHandler<ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse>(
         RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
-        async (request) =>
-            runScmHostingRepositoryDescribePublishTargetsRoute({
-                request,
-                ...routeBase,
-            })
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.hostingRepository.describePublishTargets',
+            input: request,
+            ...routeBase,
+        }) as ScmHostingRepositoryDescribePublishTargetsResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse>(
         RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH,
-        async (request) =>
-            runWithStatusSnapshotCacheInvalidation(() =>
-                runScmHostingRepositoryPublishRoute({
-                    request,
-                    ...routeBase,
-                }),
-            )
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.hostingRepository.publish',
+            input: request,
+            ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmHostingRepositoryPublishResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse>(
         RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK,
-        async (request) =>
-            runWithStatusSnapshotCacheInvalidation(() =>
-                runScmRepositoryRemoveIndexLockRoute({
-                    request,
-                    ...routeBase,
-                }),
-            )
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.repository.removeIndexLock',
+            input: request,
+            ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmRepositoryRemoveIndexLockResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmStashListRequest, ScmStashListResponse>(

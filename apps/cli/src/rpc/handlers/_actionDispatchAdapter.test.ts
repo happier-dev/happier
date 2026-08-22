@@ -44,4 +44,25 @@ describe('RPC action dispatch adapter', () => {
             serverId: null,
         })).toEqual({ surface: 'rpc' });
     });
+
+    it('preserves host-only active-turn authority for a local agent dispatch', () => {
+        const causalPermissionAuthority = {
+            kind: 'admittedSessionInputV1',
+            admittedPermissionCeiling: 'default',
+        };
+
+        expect(buildActionExecutorContextForRpc({
+            defaultSessionId: 'session-1',
+            localActionContext: {
+                surface: 'agent',
+                callerPermissionMode: 'yolo',
+                causalPermissionAuthority,
+            },
+        })).toEqual({
+            defaultSessionId: 'session-1',
+            surface: 'agent',
+            callerPermissionMode: 'yolo',
+            causalPermissionAuthority,
+        });
+    });
 });

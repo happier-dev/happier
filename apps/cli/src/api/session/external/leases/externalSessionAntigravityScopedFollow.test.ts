@@ -5,17 +5,27 @@ import { dirname, join } from 'node:path';
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+    AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { expect, it, vi } from 'vitest';
 
 import { createExternalSessionFollowLeaseManager } from './createExternalSessionFollowLeaseManager';
 import { createExternalSessionObservationReconciler } from './createExternalSessionObservationReconciler';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
+    async () => {
+        throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
+    };
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
 
 function invocation() {
     return {
         signal: new AbortController().signal,
         deadlineAtMs: Date.now() + 30_000,
         maxSerializedBytes: 524_288,
+        managedEndpointRead: unavailableManagedEndpointRead,
+        exec: unavailableInvocationExec,
     };
 }
 
@@ -97,6 +107,7 @@ it('delivers one watched Antigravity append to the scoped follow listener', asyn
             linkedSource: identity,
         }],
         signal: new AbortController().signal,
+        managedEndpointRead: unavailableManagedEndpointRead,
     });
     const descriptor = descriptorResult.purpose === 'resource_descriptors'
         ? descriptorResult.outcomes[0]
@@ -183,6 +194,7 @@ it('delivers one watched Antigravity append to the scoped follow listener', asyn
                     resourceKey: input.resource.resourceKey,
                     links: input.links,
                     signal: input.signal,
+                    managedEndpointRead: unavailableManagedEndpointRead,
                 }),
         });
         await reconciler.reconcileLink({
@@ -223,7 +235,14 @@ it('delivers one watched Antigravity append to the scoped follow listener', asyn
         await vi.waitFor(() => {
             expect(deliveredItems).toContainEqual(expect.objectContaining({
                 messageRole: 'agent',
-                raw: { type: 'text', text: marker },
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'antigravity',
+                        data: { type: 'message', message: marker },
+                    },
+                },
             }));
         }, { timeout: 10_000 });
         await new Promise((resolve) => setTimeout(resolve, 100));

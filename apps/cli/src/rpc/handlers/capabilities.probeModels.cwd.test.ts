@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { AgentProviderCatalogObservationInput } from '@/providers/probe/agentCatalogObservation';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 
@@ -21,7 +22,10 @@ vi.mock('@/agent/catalog/registry', () => ({
     opencode: { id: 'opencode' },
     codex: { id: 'codex', needsAccountSettingsForProbes: true },
     claude: { id: 'claude' },
-    customAcp: { id: 'customAcp' },
+    customAcp: {
+      id: 'customAcp',
+      getPreflightSessionControlsProbeAdapter: async () => ({ connectedServiceAuth: 'materialized-env' }),
+    },
   },
 }));
 
@@ -90,7 +94,6 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
 
     expect(mocks.probeModels).toHaveBeenCalledWith(expect.objectContaining({ connectedServices }));
   });
-
 
   it('uses a long enough default timeout when timeoutMs is omitted', async () => {
     mocks.probeModels.mockResolvedValue({
@@ -163,6 +166,31 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     }));
   });
 
+  it('does not materialize connected-service auth for the legacy configured ACP lookup id', async () => {
+    mocks.probeModels.mockResolvedValue({
+      provider: 'customAcp',
+      availableModels: [{ id: 'default', name: 'Default' }],
+      supportsFreeform: false,
+      source: 'static',
+    });
+
+    const result = await createCall()(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.configuredAcp',
+      method: 'probeModels',
+      params: {
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            example: { source: 'connected', selection: 'profile', profileId: 'account-selected' },
+          },
+        },
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, result: { provider: 'customAcp' } });
+    expect(mocks.probeModels).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'customAcp' }));
+  });
+
   it('forwards resolved account settings and credentials to the probe once', async () => {
     mocks.probeModels.mockResolvedValue({
       provider: 'opencode',
@@ -172,7 +200,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     });
     mocks.resolveProbeBackendContext.mockResolvedValue({
       backendTarget: undefined,
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
       accountSettings: { example: true },
     });
 
@@ -187,7 +215,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     expect(mocks.probeModels).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'opencode',
       accountSettings: { example: true },
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
     }));
   });
 
@@ -200,7 +228,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     });
     mocks.resolveProbeBackendContext.mockResolvedValue({
       backendTarget: undefined,
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
       accountSettings: { codexBackendMode: 'appServer' },
     });
 
@@ -214,7 +242,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     expect(mocks.probeModels).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
       accountSettings: { codexBackendMode: 'appServer' },
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
     }));
   });
 
@@ -227,7 +255,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     });
     mocks.resolveProbeBackendContext.mockResolvedValue({
       backendTarget: undefined,
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
       accountSettings: { codexBackendMode: 'appServer' },
     });
 
@@ -244,9 +272,10 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     expect(mocks.probeModels).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
       accountSettings: { codexBackendMode: 'appServer' },
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
     }));
   });
+
   it('uses only the selected Claude binding for the injected native model observation', async () => {
     const observe = vi.fn(async () => ({
       source: 'dynamic' as const,
@@ -295,22 +324,21 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     expect(mocks.probeModels).not.toHaveBeenCalled();
   });
 
-
   it('threads exact RPC request currentness into the native model observation', async () => {
-    const started = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    let captured: Readonly<{ isCurrent(): boolean; signal?: AbortSignal }> | null = null;
-    const observe = vi.fn(async (request) => {
-      captured = request;
-      started.resolve();
-      await release.promise;
-      if (!request.isCurrent()) throw new Error('cancelled');
-      return { source: 'dynamic' as const, stale: false, models: [] };
+    let markStarted: (() => void) | null = null;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const observedRequests: AgentProviderCatalogObservationInput[] = [];
+    const controller = new AbortController();
+    const observe = vi.fn(async (request: AgentProviderCatalogObservationInput) => {
+      observedRequests.push(request);
+      markStarted?.();
+      return await new Promise<never>((_resolve, reject) => {
+        request.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+      });
     });
     const client = createClient({
       getAgentCatalogObservation: () => ({ machineId: 'machine-test', service: { observe } }),
     });
-    const controller = new AbortController();
     const pending = client.manager.invokeLocal(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.claude', method: 'probeModels',
       params: {
@@ -323,13 +351,13 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
       },
     }, { signal: controller.signal });
 
-    await started.promise;
-    expect(captured?.isCurrent()).toBe(true);
-    expect(captured?.signal).toBe(controller.signal);
+    await started;
+    const captured = observedRequests[0];
+    if (!captured) throw new Error('Expected an observation request');
+    expect(captured.isCurrent()).toBe(true);
+    expect(captured.signal).toBe(controller.signal);
     controller.abort();
-    expect(captured?.isCurrent()).toBe(false);
-    release.resolve();
+    expect(captured.isCurrent()).toBe(false);
     await expect(pending).resolves.toMatchObject({ ok: false });
   });
-
 });

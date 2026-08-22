@@ -2,7 +2,7 @@ import http from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
-import { clearDaemonState, writeDaemonState } from '@/persistence';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { createPluginInstallationReviewFixture } from '@/plugins/testkit/pluginInstallationReviewFixture';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -23,7 +23,7 @@ describe('daemon control client plugin changes', () => {
   let home: string | null = null;
 
   afterEach(async () => {
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     reloadConfiguration();
@@ -62,6 +62,8 @@ describe('daemon control client plugin changes', () => {
                   pendingChangeId: 'pending-1',
                   review: createPluginInstallationReviewFixture(),
                 }
+            : request.url?.endsWith('/status')
+              ? { kind: 'applying', pendingChangeId: parsedBody.pendingChangeId }
             : request.url?.endsWith('/execute')
               ? { matched: true, result: { ok: true, result: { stored: 'hello' } } }
               : { kind: 'cancelled' },
@@ -103,6 +105,12 @@ describe('daemon control client plugin changes', () => {
         pendingChangeId: 'pending-1',
         decision: 'cancel',
       });
+      await expect(client.readDaemonPluginChangeStatus({
+        pendingChangeId: 'pending-1',
+      })).resolves.toEqual({
+        kind: 'applying',
+        pendingChangeId: 'pending-1',
+      });
       await client.requestDaemonPluginActionExecution({
         actionId: 'acme.notes/store',
         input: { value: 'hello' },
@@ -141,6 +149,11 @@ describe('daemon control client plugin changes', () => {
           },
         },
         {
+          url: '/plugins/change/status',
+          token: 'control-token',
+          body: { pendingChangeId: 'pending-1' },
+        },
+        {
           url: '/plugins/actions/execute',
           token: 'control-token',
           body: {
@@ -159,6 +172,135 @@ describe('daemon control client plugin changes', () => {
           },
         },
       ]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('degrades a missing predecessor status route without resubmitting a plugin change', async () => {
+    const observed: Array<{ url: string; token: string; body: unknown }> = [];
+    const server = http.createServer((request, response) => {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        observed.push({
+          url: request.url ?? '',
+          token: String(request.headers['x-happier-daemon-token'] ?? ''),
+          body: JSON.parse(body),
+        });
+        response.statusCode = 404;
+        response.end();
+      });
+    });
+    try {
+      const { port } = await listen(server);
+      home = await createTempDir('happier-plugin-control-client-');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: port,
+        startedAt: Date.now(),
+        startedWithCliVersion: 'test',
+        controlToken: 'control-token',
+      });
+      const client = await import('./controlClient');
+
+      await expect(client.readDaemonPluginChangeStatus({
+        pendingChangeId: 'pending-1',
+      })).resolves.toEqual({ kind: 'daemonUnavailable' });
+      expect(observed).toEqual([
+        {
+          url: '/plugins/change/status',
+          token: 'control-token',
+          body: { pendingChangeId: 'pending-1' },
+        },
+      ]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reads the outstanding pending changes and drops entries it cannot type', async () => {
+    const review = createPluginInstallationReviewFixture();
+    const observed: Array<{ url: string; body: unknown }> = [];
+    const server = http.createServer((request, response) => {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        observed.push({ url: request.url ?? '', body: JSON.parse(body) });
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          changes: [
+            {
+              kind: 'sourceRootReviewRequired',
+              pendingChangeId: 'pending-1',
+              review: { source: { kind: 'path', locator: '/tmp/agent-authored' } },
+            },
+            { kind: 'reviewRequired', pendingChangeId: 'pending-2', review },
+            { kind: 'applying', pendingChangeId: 'pending-3' },
+            // A malformed review is dropped rather than shown to a user who
+            // would be asked to approve a payload the client cannot read.
+            { kind: 'reviewRequired', pendingChangeId: 'pending-4', review: {} },
+            { kind: 'terminal', pendingChangeId: 'pending-5' },
+          ],
+        }));
+      });
+    });
+    try {
+      const { port } = await listen(server);
+      home = await createTempDir('happier-plugin-change-list-client-');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: port,
+        startedAt: Date.now(),
+        startedWithCliVersion: 'test',
+        controlToken: 'control-token',
+      });
+      const client = await import('./controlClient');
+
+      const listed = await client.listDaemonPluginChanges();
+      expect(listed.changes.map((entry) => [entry.kind, entry.pendingChangeId])).toEqual([
+        ['sourceRootReviewRequired', 'pending-1'],
+        ['reviewRequired', 'pending-2'],
+        ['applying', 'pending-3'],
+      ]);
+      expect(observed).toEqual([{ url: '/plugins/change/list', body: {} }]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reports no outstanding pending changes when the daemon cannot answer', async () => {
+    // Pending changes are in-memory daemon-lifetime state. An unreachable
+    // daemon holds none, so enumeration degrades to "nothing to decide" rather
+    // than to an error a settings screen would have to model.
+    const server = http.createServer((request, response) => {
+      request.resume();
+      request.on('end', () => {
+        response.statusCode = 404;
+        response.end();
+      });
+    });
+    try {
+      const { port } = await listen(server);
+      home = await createTempDir('happier-plugin-change-list-client-');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: port,
+        startedAt: Date.now(),
+        startedWithCliVersion: 'test',
+        controlToken: 'control-token',
+      });
+      const client = await import('./controlClient');
+
+      await expect(client.listDaemonPluginChanges()).resolves.toEqual({ changes: [] });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -227,4 +369,5 @@ describe('daemon control client plugin changes', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
 });

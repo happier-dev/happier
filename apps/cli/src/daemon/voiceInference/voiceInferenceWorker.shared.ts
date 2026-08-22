@@ -73,6 +73,7 @@ export function shouldPreserveHealthyDiagnostics(error: unknown): boolean {
     errorCode === 'cancelled'
     || errorCode === 'invalid_audio_input'
     || errorCode === 'model_not_installed'
+    || errorCode === 'output_too_large'
     || errorCode === 'unsupported_codec'
   );
 }

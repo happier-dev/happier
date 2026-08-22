@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol';
 import type { RuntimeOutboundTranscriptDispatchFacetV1 } from '@happier-dev/agents';
@@ -24,12 +25,14 @@ vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
 import {
   applyRuntimeOutboundTranscriptPostSendEffects,
   prepareAcpTranscriptDispatch,
+  recordRuntimeOutboundTranscriptToolTraceEvents,
   readRuntimeOutboundTranscriptDispatchBackendId,
   resolveRuntimeOutboundTranscriptDispatchFacet,
 } from './transcriptDispatch';
 import type { PostSendReactionPort } from '../client/reactions/providers/postSendReactionPort';
 import type { Metadata } from '../../types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 
 function createPostSendReactionPort(metadataOverrides?: Partial<Metadata>): Readonly<{
   port: PostSendReactionPort;
@@ -62,6 +65,27 @@ describe('transcriptDispatch', () => {
   beforeEach(() => {
     resolveBackendEngineAdapterResolutionMock.mockReset();
     resolveOutboundTranscriptDispatchFacetMock.mockReset();
+  });
+
+  it('records only provider-projected outbound tool trace events', async () => {
+    await withToolTraceFile('runtime-outbound-trace-', async (filePath) => {
+      recordRuntimeOutboundTranscriptToolTraceEvents('session-1', [{
+        protocol: 'acp',
+        provider: 'codex',
+        kind: 'tool-call',
+        payload: { type: 'tool-call' },
+        localId: 'tool-local-1',
+      }]);
+
+      expect(JSON.parse(readFileSync(filePath, 'utf8').trim())).toMatchObject({
+        direction: 'outbound',
+        sessionId: 'session-1',
+        protocol: 'acp',
+        provider: 'codex',
+        kind: 'tool-call',
+        localId: 'tool-local-1',
+      });
+    });
   });
 
   it('reads the active backend id from runtime descriptor providerExtra runtimeHandle', () => {

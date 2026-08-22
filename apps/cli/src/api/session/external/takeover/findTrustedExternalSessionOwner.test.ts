@@ -3,6 +3,27 @@ import { describe, expect, it } from 'vitest';
 import { findTrustedExternalSessionOwner } from './findTrustedExternalSessionOwner';
 
 describe('findTrustedExternalSessionOwner', () => {
+    it('matches Pi markers through the canonical vendor resume-id reader', () => {
+        const marker = findTrustedExternalSessionOwner({
+            markers: [{
+                pid: 4343,
+                happySessionId: 'happy-pi-1',
+                happyHomeDir: '/tmp/happy-home',
+                createdAt: 1,
+                updatedAt: 2,
+                flavor: 'pi',
+                metadata: {
+                    flavor: 'pi',
+                    piSessionId: 'pi-session-1',
+                },
+            }],
+            agentId: 'pi',
+            remoteSessionId: 'pi-session-1',
+        });
+
+        expect(marker?.happySessionId).toBe('happy-pi-1');
+    });
+
     it('matches ohMyPi markers using the provider resume id field from metadata', () => {
         const marker = findTrustedExternalSessionOwner({
             markers: [{

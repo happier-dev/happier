@@ -1,6 +1,7 @@
 import type { ACPProvider } from './sessionMessageTypes';
 import {
   createStreamedTranscriptWriter,
+  type StreamedTranscriptFlushSummary,
   type StreamedTranscriptWriter,
   type StreamedTranscriptWriterSession,
 } from './streamedTranscriptWriter';
@@ -74,8 +75,11 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
     },
 
     async flushAll(args: Readonly<{ reason: FlushReason; interruptedReason?: string }>) {
-      await Promise.all(Array.from(writerByStreamKey.values(), (writer) => writer.flushAll(args)));
+      const summaries: readonly StreamedTranscriptFlushSummary[] = await Promise.all(
+        Array.from(writerByStreamKey.values(), (writer) => writer.flushAll(args)),
+      );
       writerByStreamKey.clear();
+      return summaries;
     },
 
     clear() {

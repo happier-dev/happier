@@ -5,6 +5,11 @@ import { MessageAckResponseSchema, type ClientToServerEvents, type ServerToClien
 import type { Socket } from 'socket.io-client';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { deliverRequiredDirectSessionMessageViaHttp } from './deliverRequiredDirectSessionMessageViaHttp';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
+import {
+    createSerializedWorkQueueDiagnostics,
+    type SerializedWorkDiagnosticContext,
+} from '@/utils/serializedWorkQueueDiagnostics';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
@@ -63,7 +68,7 @@ export function isDefinitiveSessionMessageCommitError(
 export type SessionClientCommitQueueRuntime = Readonly<{
     readonly queuedDisconnectedSessionMessages: ReadonlyMap<string, QueuedDisconnectedSessionMessage>;
     getMessageCommitQueueTail: () => Promise<unknown>;
-    enqueueMessageCommit: <T>(fn: () => Promise<T>) => Promise<T>;
+    enqueueMessageCommit: <T>(context: SerializedWorkDiagnosticContext, fn: () => Promise<T>) => Promise<T>;
     queueSessionMessageUntilReconnect: (params: QueuedDisconnectedSessionMessage) => void;
     flushQueuedSessionMessagesOnReconnect: () => Promise<void>;
     buildOutboundSessionMessagePayload: (content: unknown) => PlainOrEncryptedPayload;
@@ -86,9 +91,6 @@ export function createSessionClientCommitQueueRuntime(
         token: string;
         sessionId: string;
         transcriptStorage: 'persisted' | 'direct';
-        sessionEncryptionMode: 'e2ee' | 'plain';
-        encryptionKey: Uint8Array;
-        encryptionVariant: 'legacy' | 'dataKey';
         getSocket: () => Socket<ServerToClientEvents, ClientToServerEvents>;
         getClosed: () => boolean;
         addPendingMaterializedLocalId: (localId: string) => void;
@@ -97,13 +99,23 @@ export function createSessionClientCommitQueueRuntime(
         deleteMaterializedLocalId: (localId: string) => void;
         observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean; refreshAgentQueueEchoSuppression?: boolean }) => void;
         requestReconnect?: (localId: string) => void;
-    }>,
+    }> & SessionStoredContentCryptoContext,
 ): SessionClientCommitQueueRuntime {
     const queuedDisconnectedSessionMessages = new Map<string, QueuedDisconnectedSessionMessage>();
     const commitRetryByLocalId = new Map<string, CommitRetryRecord>();
     let nextRetryGeneration = 1;
     let retryDisposed = false;
     let messageCommitQueueTail: Promise<unknown> = Promise.resolve();
+    const messageCommitQueueDiagnostics = createSerializedWorkQueueDiagnostics({
+        queueName: 'session-message-commit',
+        slowAfterMs: 30_000,
+        report: (report) => {
+            logger.infoFile('[SOCKET] Serialized message commit queue diagnostic', {
+                sessionId: deps.sessionId,
+                ...report,
+            });
+        },
+    });
 
     const emitSessionMessageWithAck = async (
         params: Readonly<{
@@ -142,8 +154,15 @@ export function createSessionClientCommitQueueRuntime(
         deps.requestReconnect?.(params.localId);
     };
 
-    const enqueueMessageCommit = <T>(fn: () => Promise<T>): Promise<T> => {
-        const queued = messageCommitQueueTail.then(fn, fn);
+    const enqueueMessageCommit = <T>(
+        context: SerializedWorkDiagnosticContext,
+        fn: () => Promise<T>,
+    ): Promise<T> => {
+        const tracked = messageCommitQueueDiagnostics.track(context);
+        const queued = messageCommitQueueTail.then(
+            () => tracked.run(fn),
+            () => tracked.run(fn),
+        );
         messageCommitQueueTail = queued.then(
             () => undefined,
             () => undefined,
@@ -217,7 +236,13 @@ export function createSessionClientCommitQueueRuntime(
                 completeRetryIntent(token);
                 return;
             }
-            void enqueueMessageCommit(async () => {
+            void enqueueMessageCommit({
+                operation: 'best-effort-retry',
+                details: {
+                    localId: token.localId,
+                    messageRole: record.params.messageRole,
+                },
+            }, async () => {
                 const latest = readRetryRecord(token);
                 if (!latest) return;
                 try {
@@ -431,7 +456,13 @@ export function createSessionClientCommitQueueRuntime(
             if (retryToken) {
                 const current = readRetryRecord(retryToken);
                 if (!current) continue;
-                await enqueueMessageCommit(async () => {
+                await enqueueMessageCommit({
+                    operation: 'reconnect-retry',
+                    details: {
+                        localId: retryToken.localId,
+                        messageRole: current.params.messageRole,
+                    },
+                }, async () => {
                     try {
                         await commitSessionMessageAttempt(current.params, retryToken);
                     } finally {
@@ -443,7 +474,13 @@ export function createSessionClientCommitQueueRuntime(
                 });
                 continue;
             }
-            await enqueueMessageCommit(() => commitSessionMessage({
+            await enqueueMessageCommit({
+                operation: 'reconnect-commit',
+                details: {
+                    localId: params.localId,
+                    messageRole: params.messageRole,
+                },
+            }, () => commitSessionMessage({
                     message: params.message,
                     localId: params.localId,
                     sidechainId: params.sidechainId,
@@ -468,16 +505,26 @@ export function createSessionClientCommitQueueRuntime(
         flushQueuedSessionMessagesOnReconnect,
 
         buildOutboundSessionMessagePayload(content) {
-            if (deps.sessionEncryptionMode === 'plain') {
+            if (deps.mode === 'plain') {
                 return { t: 'plain', v: content };
             }
-            return encodeBase64(encrypt(deps.encryptionKey, deps.encryptionVariant, content));
+            return encodeBase64(encrypt(
+                deps.ctx.encryptionKey,
+                deps.ctx.encryptionVariant,
+                content,
+            ));
         },
 
         commitSessionMessage,
 
         commitSessionMessageBestEffort(params) {
-            return enqueueMessageCommit(() =>
+            return enqueueMessageCommit({
+                operation: 'best-effort-commit',
+                details: {
+                    localId: params.localId,
+                    messageRole: params.messageRole,
+                },
+            }, () =>
                 commitSessionMessage({
                     message: params.message,
                     localId: params.localId,

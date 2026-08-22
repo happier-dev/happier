@@ -1,5 +1,8 @@
 import type { TrackedSession } from '@/daemon/types';
 
+import {
+  isSessionRunnerColdResumeSupported,
+} from '../processSupervision/sessionRunnerRespawn';
 import { readSessionRunnerStartingModeFromProcessCommand } from './readSessionRunnerStartingMode';
 import type { SessionRunnerRestartDisabledReason } from './types';
 
@@ -13,6 +16,12 @@ function normalizeString(value: unknown): string {
 
 function isActiveTrackedRunner(tracked: TrackedSession): boolean {
   return Number.isInteger(tracked.pid) && tracked.pid > 0;
+}
+
+function hasExactProcessWitness(tracked: TrackedSession): boolean {
+  return !!normalizeString(tracked.processCommandHash)
+    && Number.isInteger(tracked.processStartTimeMs)
+    && (tracked.processStartTimeMs ?? -1) >= 0;
 }
 
 function hasSpawnOptions(tracked: TrackedSession): boolean {
@@ -38,12 +47,26 @@ export function resolveSessionRunnerRestartEligibility(
 ): SessionRunnerRestartEligibility {
   if (!tracked) return { eligible: false, disabledReason: 'no_tracked_process' };
   if (tracked.startedBy !== 'daemon') return { eligible: false, disabledReason: 'not_daemon_started' };
-    if (readSessionRunnerStartingModeFromProcessCommand(tracked.processCommand) !== 'remote') {
-        return { eligible: false, disabledReason: 'not_remote_started' };
-    }
+  if (readSessionRunnerStartingModeFromProcessCommand(tracked.processCommand) !== 'remote') {
+    return { eligible: false, disabledReason: 'not_remote_started' };
+  }
   if (!isActiveTrackedRunner(tracked)) return { eligible: false, disabledReason: 'not_active' };
+  if (!hasExactProcessWitness(tracked)) {
+    return {
+      eligible: false,
+      disabledReason: 'non_destructive_refresh_unsupported',
+    };
+  }
   if (!hasSpawnOptions(tracked)) return { eligible: false, disabledReason: 'missing_spawn_options' };
   if (!hasResumeContext(tracked)) return { eligible: false, disabledReason: 'missing_resume_identity' };
+  if (!isSessionRunnerColdResumeSupported({
+    trackedSession: tracked,
+  })) {
+    return {
+      eligible: false,
+      disabledReason: 'missing_resume_identity',
+    };
+  }
   if (isWindowsHostedRunner(tracked)) return { eligible: false, disabledReason: 'windows_hosted_runner' };
   return { eligible: true, disabledReason: null };
 }

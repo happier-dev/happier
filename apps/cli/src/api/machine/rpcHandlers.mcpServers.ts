@@ -18,7 +18,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { McpServerConfig } from '@/agent';
-import { readCredentials, type Credentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { resolveEffectiveMcpServersForDirectory } from '@/mcp/servers/resolveEffectiveMcpServersForDirectory';
@@ -134,7 +134,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
   deps?: Readonly<{
     env?: NodeJS.ProcessEnv;
     nowMs?: () => number;
-    readCredentials?: () => Promise<Credentials | null>;
+    readCredentials?: () => Promise<StoredCredentials | null>;
     bootstrapAccountSettingsContext?: typeof bootstrapAccountSettingsContext;
     detectProviderMcpServers?: typeof detectProviderMcpServers;
     probeMcpStdioServerTools?: typeof probeMcpStdioServerTools;
@@ -142,7 +142,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
 }>): void {
   const { rpcHandlerManager } = params;
   const depsEnv = params.deps?.env ?? process.env;
-  const readCredentialsImpl = params.deps?.readCredentials ?? readCredentials;
+  const readCredentialsImpl = params.deps?.readCredentials ?? readStoredCredentials;
   const bootstrapAccountSettingsContextImpl = params.deps?.bootstrapAccountSettingsContext ?? bootstrapAccountSettingsContext;
   const detectProviderMcpServersImpl = params.deps?.detectProviderMcpServers ?? detectProviderMcpServers;
   const probeMcpStdioServerToolsImpl = params.deps?.probeMcpStdioServerTools ?? probeMcpStdioServerTools;
@@ -179,7 +179,9 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
       }
 
       const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(settingsObj);
-      const settingsSecretsKey = deriveSettingsSecretsKeyForCredentials(credentials);
+      const settingsSecretsKey = credentials.encryption
+        ? deriveSettingsSecretsKeyForCredentials(credentials)
+        : null;
       const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(credentials);
 
       let mcpConfig: { serverName: string; config: McpServerConfig };

@@ -3,35 +3,6 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { createCurrentSessionTranscriptPort } from './createCurrentSessionTranscriptPort';
 
 describe('createCurrentSessionTranscriptPort', () => {
-  it('routes transcript-vNext writes through the latest swapped session', async () => {
-    const firstSession = {
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-    };
-    const secondSession = {
-      sendAgentMessage: vi.fn(),
-      sendAgentMessageCommitted: vi.fn(async () => {}),
-    };
-
-    let currentSession = firstSession;
-    const port = createCurrentSessionTranscriptPort(() => currentSession as any);
-
-    currentSession = secondSession;
-
-    await port.sendAgentMessageCommitted(
-      'gemini' as any,
-      { type: 'thinking', text: 'final' } as any,
-      { localId: 'commit_1' },
-    );
-
-    expect(firstSession.sendAgentMessageCommitted).not.toHaveBeenCalled();
-    expect(secondSession.sendAgentMessageCommitted).toHaveBeenCalledWith(
-      'gemini',
-      { type: 'thinking', text: 'final' },
-      { localId: 'commit_1' },
-    );
-  });
-
   it('routes durable enqueue hooks through the latest swapped session', async () => {
     const firstSession = {
       sendAgentMessageCommitted: vi.fn(async () => {}),
@@ -83,17 +54,9 @@ describe('createCurrentSessionTranscriptPort', () => {
     class SessionWithDurableQueue {
       readonly calls: unknown[] = [];
 
-      async sendAgentMessage(provider: string, body: unknown, opts: unknown) {
-        this.calls.push({ method: 'sendAgentMessage', provider, body, opts });
-      }
-
       async sendAgentMessageEphemeral(provider: string, body: unknown, opts: unknown) {
         this.calls.push({ method: 'sendAgentMessageEphemeral', provider, body, opts });
         return { accepted: true as const, epoch: 1 };
-      }
-
-      async sendAgentMessageCommitted(provider: string, body: unknown, opts: unknown) {
-        this.calls.push({ method: 'sendAgentMessageCommitted', provider, body, opts });
       }
 
       async enqueueAgentMessageCommitted(provider: string, body: unknown, opts: unknown) {
@@ -109,21 +72,11 @@ describe('createCurrentSessionTranscriptPort', () => {
     const currentSession = new SessionWithDurableQueue();
     const port = createCurrentSessionTranscriptPort(() => currentSession as any);
 
-    await expect(port.sendAgentMessage?.(
-      'gemini' as any,
-      { type: 'message', message: 'live' } as any,
-      { localId: 'live_bound' },
-    )).resolves.toBeUndefined();
     await expect(port.sendAgentMessageEphemeral?.(
       'gemini' as any,
       { type: 'message', message: 'ephemeral' } as any,
       { localId: 'ephemeral_bound', createdAt: 123 },
     )).resolves.toEqual({ accepted: true, epoch: 1 });
-    await expect(port.sendAgentMessageCommitted(
-      'gemini' as any,
-      { type: 'message', message: 'committed' } as any,
-      { localId: 'committed_bound' },
-    )).resolves.toBeUndefined();
     await expect((port as any).enqueueAgentMessageCommitted(
       'gemini',
       { type: 'message', message: 'bound' },
@@ -136,22 +89,10 @@ describe('createCurrentSessionTranscriptPort', () => {
 
     expect(currentSession.calls).toEqual([
       {
-        method: 'sendAgentMessage',
-        provider: 'gemini',
-        body: { type: 'message', message: 'live' },
-        opts: { localId: 'live_bound' },
-      },
-      {
         method: 'sendAgentMessageEphemeral',
         provider: 'gemini',
         body: { type: 'message', message: 'ephemeral' },
         opts: { localId: 'ephemeral_bound', createdAt: 123 },
-      },
-      {
-        method: 'sendAgentMessageCommitted',
-        provider: 'gemini',
-        body: { type: 'message', message: 'committed' },
-        opts: { localId: 'committed_bound' },
       },
       {
         method: 'enqueueAgentMessageCommitted',

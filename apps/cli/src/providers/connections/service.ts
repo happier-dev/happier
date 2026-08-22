@@ -25,6 +25,7 @@ export type {
   ProviderConnectionCreateInput,
   ProviderConnectionRuntimeProjection,
   ProviderConnectionRuntimeSummary,
+  ProviderConnectionRuntimeSummaryInput,
   ProviderConnectionServiceResult,
   ProviderConnectionView,
   ProviderDetectedEnableInput,
@@ -112,7 +113,7 @@ export function createProviderConnectionService(deps: ProviderConnectionServiceD
     enableDetected: (input: Parameters<typeof local.enableDetected>[0]) =>
       normalizeMutationResult(input.connectionId, () => local.enableDetected(input)),
     startLocal: (input: Parameters<typeof local.startLocal>[0]) =>
-      normalizeMutationResult(input.connectionId, () => local.startLocal(input)),
+      normalizeMutationResult(input.connectionId ?? '', () => local.startLocal(input)),
     update: (input: Parameters<typeof authoring.update>[0]) =>
       normalizeMutationResult(input.connectionId, () => authoring.update(input)),
     setEndpointOverride: (input: Parameters<typeof authoring.setEndpointOverride>[0]) =>

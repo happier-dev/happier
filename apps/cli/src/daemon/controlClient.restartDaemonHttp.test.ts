@@ -3,7 +3,7 @@ import http from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
-import { clearDaemonState, writeDaemonState } from '@/persistence';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
@@ -38,7 +38,7 @@ describe('daemon control client: restartDaemonHttp', () => {
   let tmpHomeDir: string | null = null;
 
   afterEach(async () => {
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     reloadConfiguration();

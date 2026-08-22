@@ -37,6 +37,7 @@ function takeoverRecord(): ExternalSessionOperationRecordV1 {
     },
     plan: 'takeover' as const,
     targetStorageMode: 'persisted' as const,
+    targetDirectory: '/local/selected/workspace',
     targetRuntimeMode: 'terminal' as const,
   };
   return {

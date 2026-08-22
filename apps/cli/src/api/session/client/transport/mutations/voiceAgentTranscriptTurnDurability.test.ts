@@ -34,6 +34,18 @@ async function readQueued(sessionId: string): Promise<unknown[]> {
     }
 }
 
+function currentConnectionContract(socket: Readonly<{ connected: boolean }>, epoch: number) {
+    return {
+        mode: 'session_sync_v2_pending_input_v1',
+        runtimeActivity: 'v2',
+        pendingInput: 'v1',
+        publisherAuthority: 'indeterminate',
+        sessionConnectionEpoch: epoch,
+        socket,
+        transcriptTransport: { mode: 'session_transcript_observation_v1' },
+    } as const;
+}
+
 describe('voice-agent transcript turn durability', () => {
     beforeAll(async () => {
         tempHomeDir = await mkdtemp(join(tmpdir(), 'happier-voice-turn-outbox-'));
@@ -131,7 +143,9 @@ describe('voice-agent transcript turn durability', () => {
         ]);
 
         firstSocket.connected = true;
-        await first.flush('connect');
+        await first.setSessionSyncPendingInputServerContract(
+            currentConnectionContract(firstSocket, 1),
+        );
         expect(delivered).toEqual([user.localId, assistant.localId]);
         await expect.poll(() => readQueued(sessionId)).toHaveLength(1);
 
@@ -170,6 +184,9 @@ describe('voice-agent transcript turn durability', () => {
             getSocket: () => restartedSocket,
             requestReconnect: () => {},
         });
+        await restarted.setSessionSyncPendingInputServerContract(
+            currentConnectionContract(restartedSocket, 2),
+        );
 
         await expect.poll(() => delivered).toEqual([user.localId, assistant.localId]);
         await expect.poll(() => readQueued(sessionId)).toEqual([]);

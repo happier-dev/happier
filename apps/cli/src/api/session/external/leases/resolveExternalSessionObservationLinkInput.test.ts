@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
     AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     createBoundedAgentExternalSessionsContribution,
 } from '@/session/external/agentExternalSessionsInvocation';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 const mocks = vi.hoisted(() => ({
     acquireRuntimeRegistryLease: vi.fn(),
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
     release: vi.fn(async () => {}),
     resolveLinkedIdentity: vi.fn(),
 }));
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
 
 vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
     acquireAuthoritativePluginRuntimeRegistryLease: mocks.acquireRuntimeRegistryLease,
@@ -310,6 +312,63 @@ describe('resolveExternalSessionObservationLinkInput', () => {
         expect(mocks.release).toHaveBeenCalledOnce();
     });
 
+    it('fails closed when linked-identity rehydration rejects a no-longer-current configured source', async () => {
+        mocks.resolveLinkedIdentity.mockResolvedValueOnce({
+            ok: false,
+            code: 'source_invalid',
+            retryable: false,
+        });
+
+        await expect(resolveExternalSessionObservationLinkInput({
+            linked,
+            sessionId: 'session-1',
+        })).resolves.toBeNull();
+
+        expect(mocks.resolveLinkedIdentity).toHaveBeenCalledOnce();
+        expect(mocks.describeResource).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when linked-identity hydration rewrites the current same-kind source', async () => {
+        mocks.resolveLinkedIdentity.mockResolvedValueOnce({
+            ok: true,
+            value: {
+                source: {
+                    ...linked.source,
+                    directory: '/different-project',
+                },
+                remoteSessionId: linked.remoteSessionId,
+                linkData: { endpoint: 'default' },
+            },
+        });
+
+        await expect(resolveExternalSessionObservationLinkInput({
+            linked,
+            sessionId: 'session-1',
+        })).resolves.toBeNull();
+
+        expect(mocks.resolveLinkedIdentity).toHaveBeenCalledOnce();
+        expect(mocks.describeResource).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when linked-identity hydration rewrites the remote session', async () => {
+        mocks.resolveLinkedIdentity.mockResolvedValueOnce({
+            ok: true,
+            value: {
+                source: linked.source,
+                remoteSessionId: 'remote-other',
+                linkData: { endpoint: 'default' },
+            },
+        });
+
+        await expect(resolveExternalSessionObservationLinkInput({
+            linked,
+            sessionId: 'session-1',
+        })).resolves.toBeNull();
+
+        expect(mocks.resolveLinkedIdentity).toHaveBeenCalledOnce();
+        expect(mocks.describeResource).not.toHaveBeenCalled();
+    });
+
     it('fails closed and releases registry custody when Agent activation fails', async () => {
         mocks.activateContributionsOnDemand.mockRejectedValueOnce(
             new Error('activation unavailable'),
@@ -347,6 +406,14 @@ describe('resolveExternalSessionObservationLinkInput', () => {
 
     it('rejects a declaration-owned connected profile when the current account projection is disconnected', async () => {
         installConnectedRuntime();
+        mocks.resolveLinkedIdentity.mockResolvedValueOnce({
+            ok: true,
+            value: {
+                source: connectedLinked.source,
+                remoteSessionId: connectedLinked.remoteSessionId,
+                linkData: {},
+            },
+        });
 
         await expect(resolveExternalSessionObservationLinkInput({
             linked: connectedLinked,
@@ -362,12 +429,12 @@ describe('resolveExternalSessionObservationLinkInput', () => {
             },
         })).resolves.toBeNull();
 
-        expect(mocks.resolveLinkedIdentity).not.toHaveBeenCalled();
+        expect(mocks.resolveLinkedIdentity).toHaveBeenCalledOnce();
         expect(mocks.describeResource).not.toHaveBeenCalled();
         expect(mocks.release).toHaveBeenCalledOnce();
     });
 
-    it('fails closed before leaf invocation when an applicable connected-profile source mismatches its declared service', async () => {
+    it('fails closed before observation grouping when a rehydrated connected-profile source mismatches its declared service', async () => {
         installConnectedRuntime();
         const mismatchedConnectedLinked = {
             ...connectedLinked,
@@ -385,6 +452,14 @@ describe('resolveExternalSessionObservationLinkInput', () => {
                 },
             },
         } as ExternalSessionObservationLinkedSession;
+        mocks.resolveLinkedIdentity.mockResolvedValueOnce({
+            ok: true,
+            value: {
+                source: mismatchedConnectedLinked.source,
+                remoteSessionId: mismatchedConnectedLinked.remoteSessionId,
+                linkData: {},
+            },
+        });
 
         await expect(resolveExternalSessionObservationLinkInput({
             linked: mismatchedConnectedLinked,
@@ -400,7 +475,7 @@ describe('resolveExternalSessionObservationLinkInput', () => {
             },
         })).resolves.toBeNull();
 
-        expect(mocks.resolveLinkedIdentity).not.toHaveBeenCalled();
+        expect(mocks.resolveLinkedIdentity).toHaveBeenCalledOnce();
         expect(mocks.describeResource).not.toHaveBeenCalled();
         expect(mocks.release).toHaveBeenCalledOnce();
     });
@@ -437,9 +512,13 @@ describe('resolveExternalSessionObservationLinkInput', () => {
                 pluginId: 'happier.opencode',
                 agentId: 'opencode',
                 generation: 'plugin-generation-1',
+                contributionQualifiedId:
+                    'happier.opencode/agents/opencode',
+                immutableGenerationId: 'immutable-generation-1',
             },
             isCurrent: () => active,
             retirementSignal: retirement.signal,
+            createInvocationExec: async () => unavailableInvocationExec,
         });
         installRuntime({ externalSessions: bounded });
         mocks.release.mockImplementationOnce(async () => {

@@ -22,6 +22,28 @@ describe('fetchChanges', () => {
     expect(result.response.changes).toHaveLength(1);
   });
 
+  it('rejects a widened pluginDomain change hint before it reaches recovery', async () => {
+    (axios.get as any).mockResolvedValue({
+      status: 200,
+      data: {
+        changes: [{
+          cursor: 1,
+          kind: 'pluginDomain',
+          entityId: 'pluginDomain/example.tasks/availability',
+          changedAt: Date.now(),
+          hint: {
+            pluginDomain: 'availability',
+            pluginId: 'example.tasks',
+            revision: 1,
+          },
+        }],
+        nextCursor: 1,
+      },
+    });
+
+    await expect(fetchChanges({ token: 't', after: 0 })).resolves.toMatchObject({ status: 'error' });
+  });
+
   it('parses cursor-gone (410)', async () => {
     (axios.get as any).mockResolvedValue({
       status: 410,
@@ -40,6 +62,45 @@ describe('fetchChanges', () => {
 
     const result = await fetchChanges({ token: 't', after: 0 });
     expect(result.status).toBe('error');
+  });
+
+  it('requests and parses one exact Session access probe without changing the feed cursor', async () => {
+    (axios.get as any).mockResolvedValue({
+      status: 200,
+      data: {
+        changes: [],
+        nextCursor: 37,
+        sessionAccessProbe: {
+          v: 1,
+          sessionId: 'session-current',
+          throughCursor: 37,
+          status: 'available',
+        },
+      },
+    });
+
+    const result = await fetchChanges({
+      token: 't',
+      after: 0,
+      sessionAccessSessionId: 'session-current',
+    });
+
+    expect(axios.get).toHaveBeenCalledWith(
+      expect.stringContaining('/v2/changes'),
+      expect.objectContaining({
+        params: { after: 0, limit: 200, sessionAccessSessionId: 'session-current' },
+      }),
+    );
+    expect(result).toMatchObject({
+      status: 'ok',
+      response: {
+        sessionAccessProbe: {
+          sessionId: 'session-current',
+          throughCursor: 37,
+          status: 'available',
+        },
+      },
+    });
   });
 
   it.each([401, 403] as const)('returns canonical not_authenticated error for auth status %i', async (status) => {

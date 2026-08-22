@@ -130,7 +130,6 @@ describe('createBeforeShutdownDrain', () => {
         const launchResourceScope =
             createProviderLaunchResourceScope();
         const activation = activateConnectedAccountRequestAuthForSpawn({
-            agentId: 'pi',
             materializationId: 'session-late',
             materializedRootDir: '/materialized',
             subject: {

@@ -14,6 +14,12 @@ describe('Provider CLI refusal presentation', () => {
       expect(presentation.join('\n'), code).toContain(code);
       expect(presentation).toHaveLength(2);
       expect(presentation.every((line) => line.length > 0 && line.length <= 512), code).toBe(true);
+      // A code missing from the summary table still renders two bounded lines that contain
+      // the code, so the assertions above cannot tell a real sentence from `undefined`.
+      // Both lines must be sentences the user can act on.
+      expect(presentation[0], code).toMatch(/^[A-Z].*\.\s\(/);
+      expect(presentation[0], code).not.toContain('undefined');
+      expect(presentation[1], code).toMatch(/^[A-Z].*\.$/);
     }
   });
 

@@ -1,6 +1,6 @@
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { createUsageObservationPublisher } from '@/usage/createUsageObservationPublisher';
 import { logger } from '@/ui/logger';
 
@@ -13,7 +13,7 @@ export function createSessionClientUsageObservationPublisher(
     return createUsageObservationPublisher({
         token: params.token,
         apiServerUrl: resolveServerHttpBaseUrl(),
-        resolveToken: async () => (await readCredentials())?.token ?? null,
+        resolveToken: async () => (await readStoredCredentials())?.token ?? null,
         emitLegacyUsageReport: (report) => {
             const socket = params.getSocket();
             if (!socket.connected) {

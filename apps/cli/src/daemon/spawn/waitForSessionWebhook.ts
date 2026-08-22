@@ -168,6 +168,9 @@ export function waitForSessionWebhook(
       resolve({
         type: 'success',
         sessionId,
+        ...(completedSession.sessionCreationOutcome
+          ? { sessionCreationOutcome: completedSession.sessionCreationOutcome }
+          : {}),
       });
     };
     params.pidToAwaiter.set(params.pid, requestAwaiter);

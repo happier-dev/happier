@@ -272,7 +272,7 @@ describe('resolveSessionRuntimeSnapshot', () => {
     expect(result.spawnOptions.resume).toBeUndefined();
   });
 
-  it('does not turn observed Claude identity into resume without durable transcript proof', async () => {
+  it('resumes an observed Claude identity from the persisted id alone', async () => {
     const runtimeSnapshot = await loadRuntimeSnapshotModule();
     expect(runtimeSnapshot).not.toBeNull();
     if (!runtimeSnapshot) return;
@@ -290,11 +290,16 @@ describe('resolveSessionRuntimeSnapshot', () => {
       trackedVendorResumeId: 'observed-claude-session',
     });
 
-    expect(result.snapshot.vendorResumeId).toBeNull();
+    // `AM-24`: the transcript-path gate is gone, and Claude now follows the same
+    // rule as every other Agent — the persisted current view is the authority.
+    expect(result.snapshot.vendorResumeId).toEqual({
+      value: 'observed-claude-session',
+      updatedAt: null,
+    });
     expect(result.spawnOptions.resume).toBeUndefined();
   });
 
-  it('restores observed Claude identity with transcript proof without persisting explicit resume', async () => {
+  it('restores observed Claude identity without persisting explicit resume', async () => {
     const runtimeSnapshot = await loadRuntimeSnapshotModule();
     expect(runtimeSnapshot).not.toBeNull();
     if (!runtimeSnapshot) return;
@@ -320,7 +325,7 @@ describe('resolveSessionRuntimeSnapshot', () => {
     expect(result.spawnOptions.resume).toBeUndefined();
   });
 
-  it('does not persist transcript-proven observed Claude identity as explicit resume authority', async () => {
+  it('does not persist an observed Claude identity as explicit resume authority', async () => {
     const runtimeSnapshot = await loadRuntimeSnapshotModule();
     expect(runtimeSnapshot).not.toBeNull();
     if (!runtimeSnapshot) return;
@@ -350,11 +355,16 @@ describe('resolveSessionRuntimeSnapshot', () => {
       trackedVendorResumeId: observedVendorResumeId,
     });
 
-    expect(second.snapshot.vendorResumeId).toBeNull();
+    // Still resumable from the persisted view, but never promoted into
+    // `spawnOptions.resume`: an observation is not an explicit user instruction.
+    expect(second.snapshot.vendorResumeId).toEqual({
+      value: observedVendorResumeId,
+      updatedAt: null,
+    });
     expect(second.spawnOptions.resume).toBeUndefined();
   });
 
-  it('does not resume a newer observed Claude id against older durable transcript proof', async () => {
+  it('prefers the persisted Claude id over a diverging tracked observation', async () => {
     const runtimeSnapshot = await loadRuntimeSnapshotModule();
     expect(runtimeSnapshot).not.toBeNull();
     if (!runtimeSnapshot) return;
@@ -373,7 +383,14 @@ describe('resolveSessionRuntimeSnapshot', () => {
       trackedVendorResumeId: 'newer-observed-session',
     });
 
-    expect(result.snapshot.vendorResumeId).toBeNull();
+    // One rule for every Agent (`AM-24`): the persisted current view wins over a
+    // tracked runtime observation. The Claude-only divergence gate that used to
+    // refuse the resume outright existed to protect an id/proof pairing that no
+    // longer exists, and Codex already behaved exactly this way.
+    expect(result.snapshot.vendorResumeId).toEqual({
+      value: 'durably-proven-session',
+      updatedAt: null,
+    });
     expect(result.spawnOptions.resume).toBeUndefined();
   });
 
@@ -406,5 +423,29 @@ describe('resolveSessionRuntimeSnapshot', () => {
 
     expect(incoming.spawnOptions.resume).toBe('explicit-incoming-resume');
     expect(tracked.spawnOptions.resume).toBe('explicit-tracked-resume');
+  });
+
+  it('retains an external Agent’s observed resume identity without consulting built-in policy', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-external-1',
+        backendTarget: { kind: 'backend', backendId: 'acme.review-agent', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'acme.review-agent',
+          agent: {},
+        },
+      },
+      trackedVendorResumeId: 'acme-session-1',
+    });
+
+    expect(result.snapshot.vendorResumeId).toEqual({ value: 'acme-session-1', updatedAt: null });
   });
 });

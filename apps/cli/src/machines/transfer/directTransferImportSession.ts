@@ -10,6 +10,7 @@ import {
 } from '@/transfers/core/transferSessionLifecycle';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/resolveComposerMediaStageUploadTarget';
 import {
   resolveTransferUploadInitTarget,
   type TransferUploadInitPromptAssetDeps,
@@ -92,7 +93,17 @@ function fingerprintImportOpenAuthorizationScope(input: DirectTransferImportOpen
   return JSON.stringify({
     workingDirectory: input.workingDirectory,
     t: 't' in input ? input.t : 'session_file_upload_v1',
-    ...('t' in input && input.t === 'session_attachment_upload_v1'
+    ...('t' in input && input.t === 'composer_media_stage_upload_v1'
+      ? {
+          executionTarget: input.executionTarget ?? null,
+          owner: input.owner ?? null,
+          mediaKind: input.mediaKind ?? null,
+          mimeType: input.mimeType ?? null,
+          name: input.name ?? null,
+          sizeBytes: input.sizeBytes ?? null,
+          sha256: input.sha256 ?? null,
+        }
+      : ('t' in input && input.t === 'session_attachment_upload_v1'
       ? {
           messageLocalId: input.messageLocalId ?? null,
           fileName: input.fileName ?? null,
@@ -112,7 +123,7 @@ function fingerprintImportOpenAuthorizationScope(input: DirectTransferImportOpen
             sizeBytes: input.sizeBytes ?? null,
             overwrite: input.overwrite ?? null,
             sha256: input.sha256 ?? null,
-          })),
+          }))),
     additionalAllowedWriteDirs: input.additionalAllowedWriteDirs ? [...input.additionalAllowedWriteDirs] : null,
     sessionRpcTransferMaxBytes: input.sessionRpcTransferMaxBytes ?? null,
   });
@@ -127,6 +138,7 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
   attachmentUpload?: Readonly<{
     pathAllowanceRegistry: TransferPathAllowanceRegistry;
   }>;
+  composerMediaStage?: ComposerMediaStageUploadTargetDeps;
   promptAssetUpload?: TransferUploadInitPromptAssetDeps;
   finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): DirectTransferImportSessionManager {
@@ -223,14 +235,23 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     | Readonly<{ success: false; error: string }>
   > => {
     store.cleanupExpiredBestEffort();
+    const {
+      workingDirectory,
+      additionalAllowedWriteDirs,
+      sessionRpcTransferMaxBytes,
+      authorizationToken: _authorizationToken,
+      ...transferRequest
+    } = input as DirectTransferImportOpenRequest & Readonly<{ authorizationToken?: unknown }>;
+    void _authorizationToken;
     const resolvedTarget = await resolveTransferUploadInitTarget({
-      workingDirectory: input.workingDirectory,
+      workingDirectory,
       accessPolicy: params?.accessPolicy,
-      request: input,
+      request: transferRequest as TransferUploadInitRequest,
       tempUploadRoot: attachmentTempUploadRoot,
-      additionalAllowedWriteDirs: input.additionalAllowedWriteDirs,
-      sessionRpcTransferMaxBytes: input.sessionRpcTransferMaxBytes,
+      additionalAllowedWriteDirs,
+      sessionRpcTransferMaxBytes,
       ...(params?.attachmentUpload ? { attachmentUpload: params.attachmentUpload } : {}),
+      ...(params?.composerMediaStage ? { composerMediaStage: params.composerMediaStage } : {}),
       ...(params?.promptAssetUpload ? { promptAssetUpload: params.promptAssetUpload } : {}),
       ...(params?.finalizeFileOperations
         ? { finalizeFileOperations: params.finalizeFileOperations }
@@ -242,7 +263,7 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     }
 
     const recipientKeyPair = createTransferRecipientKeyPair();
-    const session = await openUploadTransferSession({
+    const session = await openUploadTransferSession<unknown>({
       lifecycle,
       target: resolvedTarget.target,
       sha256Expected: resolvedTarget.sha256Expected,

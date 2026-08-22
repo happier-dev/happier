@@ -62,29 +62,29 @@ describe('inferenceWarmupCoordinator', () => {
     expect(coordinator.isWarm('m1')).toBe(false);
   });
 
-  it('evicts the least-recently-used warm model when the resident memory budget is exceeded', async () => {
+  it('evicts the least-recently-used warm model when the loaded-byte budget is exceeded', async () => {
     const onRelease = vi.fn(async () => {});
     const bytesByModel: Record<string, number> = { a: 100, b: 200 };
     const coordinator = createInferenceWarmupCoordinator<{ id: string }>({
-      maxResidentBytes: 250,
-      resolveResidentBytes: (modelId) => bytesByModel[modelId] ?? 0,
+      maxLoadedBytes: 250,
+      resolveLoadedBytes: (modelId) => bytesByModel[modelId] ?? 0,
       onRelease,
     });
 
-    await coordinator.warm('a', async () => ({ id: 'a' })); // 100 resident
+    await coordinator.warm('a', async () => ({ id: 'a' })); // 100 loaded bytes
     await coordinator.warm('b', async () => ({ id: 'b' })); // total 300 > 250, evict LRU 'a'
 
     expect(onRelease).toHaveBeenCalledWith('a', { id: 'a' });
     expect(coordinator.isWarm('a')).toBe(false);
     expect(coordinator.isWarm('b')).toBe(true);
-    expect(coordinator.residentBytes()).toBe(200);
+    expect(coordinator.loadedBytes()).toBe(200);
   });
 
   it('treats a fresh warm/touch as most-recently-used so the older model is evicted first', async () => {
     const onRelease = vi.fn(async () => {});
     const coordinator = createInferenceWarmupCoordinator<{ id: string }>({
-      maxResidentBytes: 250,
-      resolveResidentBytes: () => 100,
+      maxLoadedBytes: 250,
+      resolveLoadedBytes: () => 100,
       onRelease,
     });
 
@@ -92,7 +92,7 @@ describe('inferenceWarmupCoordinator', () => {
     await coordinator.warm('b', async () => ({ id: 'b' }));
     // Touch 'a' so it becomes most-recently-used.
     await coordinator.warm('a', async () => ({ id: 'a' }));
-    // Loading 'c' pushes resident to 300 > 250, LRU is now 'b'.
+    // Loading 'c' pushes loaded bytes to 300 > 250, LRU is now 'b'.
     await coordinator.warm('c', async () => ({ id: 'c' }));
 
     expect(onRelease).toHaveBeenCalledWith('b', { id: 'b' });
@@ -105,8 +105,8 @@ describe('inferenceWarmupCoordinator', () => {
     const onRelease = vi.fn(async () => {});
     const inUse = new Set<string>(['a']);
     const coordinator = createInferenceWarmupCoordinator<{ id: string }>({
-      maxResidentBytes: 250,
-      resolveResidentBytes: () => 100,
+      maxLoadedBytes: 250,
+      resolveLoadedBytes: () => 100,
       isInUse: (modelId) => inUse.has(modelId),
       onRelease,
     });

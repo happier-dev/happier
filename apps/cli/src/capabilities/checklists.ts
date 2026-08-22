@@ -10,8 +10,6 @@ import { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklistI
 import type { CapabilityDetectRequest } from './types';
 import { createInstallableCapabilityRequests } from './registry/installables';
 
-let cachedChecklists: Record<ChecklistId, CapabilityDetectRequest[]> | null = null;
-
 function createCliAgentRequests(): CapabilityDetectRequest[] {
     return (Object.values(AGENTS) as AgentCatalogEntry[]).map((entry) => ({
         id: `cli.${entry.id}`,
@@ -74,10 +72,14 @@ export function createCapabilityChecklists(
     return mergeChecklistContributions(baseChecklists);
 }
 
+/**
+ * Built fresh on every access. `AGENTS` is a live projection of the current Agent
+ * catalog (`readAgentCatalogSnapshot`), so an Agent contributed by a plugin that
+ * activated after the first read must still appear here; memoizing this table
+ * froze the checklist set to whichever catalog happened to exist first.
+ */
 function resolveChecklists(): Record<ChecklistId, CapabilityDetectRequest[]> {
-    if (cachedChecklists) return cachedChecklists;
-    cachedChecklists = createCapabilityChecklists();
-    return cachedChecklists;
+    return createCapabilityChecklists();
 }
 
 export const checklists: Record<ChecklistId, CapabilityDetectRequest[]> = new Proxy(

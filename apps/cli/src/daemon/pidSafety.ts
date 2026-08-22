@@ -1,5 +1,5 @@
 import { findHappyProcessByPid } from './doctor';
-import { readProcessIdentityByPid } from './processIdentity';
+import { processGenerationMatches, readProcessIdentityByPid } from './processIdentity';
 import { hashProcessCommand } from './sessionRegistry';
 
 // IMPORTANT: keep this strict. A false positive here could cause us to adopt/kill an unrelated process.
@@ -18,33 +18,29 @@ export async function isPidSafeHappySessionProcess(params: {
   findHappyProcessByPidFn?: typeof findHappyProcessByPid;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
 }> = {}): Promise<boolean> {
-  const proc = await (
-    dependencies.findHappyProcessByPidFn ?? findHappyProcessByPid
-  )(params.pid);
-  if (!proc || !ALLOWED_HAPPY_SESSION_PROCESS_TYPES.has(proc.type)) return false;
+  const expectedProcessCommandHash =
+    params.expectedProcessCommandHash?.trim() ?? '';
+  const expectedProcessStartTimeMs = params.expectedProcessStartTimeMs;
+  if (!Number.isInteger(params.pid) || params.pid <= 0) {
+    return false;
+  }
 
-  if (params.expectedProcessStartTimeMs !== undefined) {
+  if (Number.isInteger(expectedProcessStartTimeMs) && (expectedProcessStartTimeMs ?? -1) >= 0) {
     const processIdentity = await (
       dependencies.readProcessIdentityByPidFn ?? readProcessIdentityByPid
     )(params.pid);
-    if (
-      !processIdentity
-      || processIdentity.processStartTimeMs !== params.expectedProcessStartTimeMs
-      || (
-        params.expectedProcessCommandHash !== undefined
-        && hashProcessCommand(processIdentity.command) !== params.expectedProcessCommandHash
-      )
-    ) {
-      return false;
-    }
+    return processGenerationMatches(
+      expectedProcessStartTimeMs,
+      processIdentity?.processStartTimeMs,
+    );
   }
 
-  if (
-    params.expectedProcessCommandHash
-    && params.expectedProcessStartTimeMs === undefined
-  ) {
-    return hashProcessCommand(proc.command) === params.expectedProcessCommandHash;
-  }
+  if (!/^[a-f0-9]{64}$/.test(expectedProcessCommandHash)) return false;
 
-  return true;
+  const proc = await (
+    dependencies.findHappyProcessByPidFn ?? findHappyProcessByPid
+  )(params.pid);
+  return !!proc
+    && ALLOWED_HAPPY_SESSION_PROCESS_TYPES.has(proc.type)
+    && hashProcessCommand(proc.command) === expectedProcessCommandHash;
 }

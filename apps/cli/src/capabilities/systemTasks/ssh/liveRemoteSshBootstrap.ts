@@ -14,6 +14,7 @@ import { redactBugReportSensitiveText, sanitizeBugReportArtifactPath } from '@ha
 import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from '@/cloud/loopbackPort';
 import { configuration, reloadConfiguration } from '@/configuration';
+import { isLoopbackServerHost } from '@/server/serverUrlClassification';
 
 import { buildRemoteBootstrapCommand } from './remoteBootstrapCommandBuilder';
 import {
@@ -88,27 +89,6 @@ function parseSshTarget(target: string): Readonly<{ host: string; port?: number 
   return { host: withoutUser };
 }
 
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = String(hostname ?? '').trim().toLowerCase();
-  if (!normalized) return false;
-  if (normalized === 'localhost') return true;
-  if (normalized === '127.0.0.1') return true;
-  if (normalized === '0.0.0.0') return true;
-  if (normalized === '::1') return true;
-  return false;
-}
-
-function isLoopbackUrl(url: string | undefined): boolean {
-  const normalized = String(url ?? '').trim();
-  if (!normalized) return false;
-  try {
-    const parsed = new URL(normalized);
-    return isLoopbackHostname(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
 function formatKnownHostsHostToken(params: Readonly<{ host: string; port?: number }>): string {
   const host = String(params.host ?? '').trim();
   const port = params.port;
@@ -122,7 +102,7 @@ function parseLoopbackPort(url: string | undefined): number | null {
   if (!normalized) return null;
   try {
     const parsed = new URL(normalized);
-    if (!isLoopbackHostname(parsed.hostname)) return null;
+    if (!isLoopbackServerHost(normalized)) return null;
     if (parsed.port) {
       const port = Number(parsed.port);
       if (Number.isFinite(port) && port > 0 && port <= 65535) return Math.floor(port);
@@ -889,7 +869,9 @@ export function createLiveRemoteSshBootstrapTaskKind() {
             channel: parsed.channel,
             serverUrl: parsed.relay.relayUrl,
             localServerUrl: localServerUrl || undefined,
-            webappUrl: isLoopbackUrl(parsed.relay.webappUrl) ? undefined : parsed.relay.webappUrl,
+            webappUrl: parsed.relay.webappUrl && isLoopbackServerHost(parsed.relay.webappUrl)
+              ? undefined
+              : parsed.relay.webappUrl,
             daemonServiceMode: parsed.serviceMode,
             data: label === 'auth.wait'
               ? { publicKey: data?.publicKey }

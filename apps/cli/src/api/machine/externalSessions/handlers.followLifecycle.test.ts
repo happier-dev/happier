@@ -23,6 +23,7 @@ const {
   dispatchActivityNotificationAsyncMock,
   getActiveAccountSettingsSnapshotMock,
   resolveTranscriptRefreshBindingMock,
+  fetchAccountEncryptionCurrentnessMock,
 } = vi.hoisted(() => ({
   readCredentialsMock: vi.fn(),
   fetchSessionByIdMock: vi.fn(),
@@ -34,6 +35,7 @@ const {
   })),
   getActiveAccountSettingsSnapshotMock: vi.fn(),
   resolveTranscriptRefreshBindingMock: vi.fn(),
+  fetchAccountEncryptionCurrentnessMock: vi.fn(),
 }));
 
 vi.mock('@/api/session/external/secureRefresh/resolveExternalSessionTranscriptRefreshBinding', () => ({
@@ -50,8 +52,13 @@ vi.mock('@/configuration', () => ({
   },
 }));
 
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness: fetchAccountEncryptionCurrentnessMock,
+}));
+
 vi.mock('@/persistence', () => ({
   readCredentials: readCredentialsMock,
+  readStoredCredentials: readCredentialsMock,
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', async () => {
@@ -116,7 +123,7 @@ function createClaudeLinkedSessionV1(input: Readonly<{
     linkData: {
       projectId: input.projectId,
     },
-    linkedAtMs: input.linkedAtMs ?? Date.now(),
+    linkedAtMs: input.linkedAtMs ?? 1_700_000_000_000,
     ...(input.followPolicyV1 ? { followPolicyV1: input.followPolicyV1 } : {}),
   };
 }
@@ -151,6 +158,13 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
         happyHomeDir: '/tmp/happier-test-home',
         contributes,
         pluginIds,
+        generationAuthority: {
+          commit: null,
+          generations: new Map(),
+          rejectedGenerations: new Map(),
+          unavailableBundledPackageNames: new Set(),
+          isCurrent: async () => true,
+        },
       }),
     });
     for (const agentId of externalSessionAgentIds) {
@@ -196,10 +210,17 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       },
       settingsSecretsReadKeys: [],
     });
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+      mode: 'plain',
+      version: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      updatedAt: 1,
+    });
   });
 
   it('registers direct-session attach leases and detaches them', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-attach-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-attach-')));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-attach', 'sess-attach.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-attach'), { recursive: true });
@@ -213,7 +234,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       token: 'token-direct',
       encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
     });
-    fetchSessionByIdMock.mockResolvedValueOnce({
+    fetchSessionByIdMock.mockResolvedValue({
       id: 'happy-session-1',
       metadataVersion: 1,
       encryptionMode: 'plain',
@@ -265,7 +286,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('writes lightweight background-follow policy metadata without transcript bodies', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-follow-policy-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-follow-policy-')));
     const configDir = join(root, '.claude');
     const sessionDir = join(configDir, 'projects', 'proj-policy');
     const sessionFile = join(sessionDir, 'sess-claude-policy.jsonl');
@@ -280,7 +301,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       token: 'token-direct',
       encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
     });
-    fetchSessionByIdMock.mockResolvedValueOnce({
+    fetchSessionByIdMock.mockResolvedValue({
       id: 'sess_happy_policy',
       metadataVersion: 7,
       encryptionMode: 'plain',
@@ -354,7 +375,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('persists archived background-follow intent without acquiring live follow', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-follow-policy-archived-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-follow-policy-archived-')));
     const configDir = join(root, '.claude');
     const sessionDir = join(configDir, 'projects', 'proj-policy-archived');
     const sessionFile = join(sessionDir, 'sess-claude-policy-archived.jsonl');
@@ -369,7 +390,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       token: 'token-direct',
       encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
     });
-    fetchSessionByIdMock.mockResolvedValueOnce({
+    fetchSessionByIdMock.mockResolvedValue({
       id: 'sess_happy_policy_archived',
       archivedAt: 1_000,
       metadataVersion: 7,
@@ -454,7 +475,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('returns an error and does not keep background follow enabled when follow-policy persistence fails', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-follow-policy-fail-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-follow-policy-fail-')));
     const configDir = join(root, '.claude');
     const sessionDir = join(configDir, 'projects', 'proj-policy-fail');
     const sessionFile = join(sessionDir, 'sess-claude-policy-fail.jsonl');
@@ -470,7 +491,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       token: 'token-direct',
       encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
     });
-    fetchSessionByIdMock.mockResolvedValueOnce({
+    fetchSessionByIdMock.mockResolvedValue({
       id: 'sess_happy_policy_fail',
       metadataVersion: 7,
       encryptionMode: 'plain',
@@ -514,12 +535,12 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 	    expect(res.error).not.toContain('token=abc123');
 	  });
 
-  it('returns an error without persisting follow policy when the provider does not support background follow leases', async () => {
+  it('returns an error without persisting follow policy when provider admission is unavailable', async () => {
     readCredentialsMock.mockResolvedValueOnce({
       token: 'token-direct',
       encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
     });
-    fetchSessionByIdMock.mockResolvedValueOnce({
+    fetchSessionByIdMock.mockResolvedValue({
       id: 'sess_happy_opencode_policy',
       metadataVersion: 3,
       encryptionMode: 'plain',
@@ -559,16 +580,17 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       enabled: true,
     });
 
-    expect(res).toEqual({
+    expect(res).toEqual(expect.objectContaining({
       ok: false,
       errorCode: 'agent_unavailable',
-      error: 'background_follow_not_supported',
-    });
+      error: 'agent_unavailable',
+      retryable: true,
+    }));
     expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
   });
 
   it('fails the follow-policy RPC when persisted metadata update fails', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-follow-policy-fail-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-follow-policy-fail-')));
     const configDir = join(root, '.claude');
     const sessionDir = join(configDir, 'projects', 'proj-policy-fail');
     const sessionFile = join(sessionDir, 'sess-claude-policy-fail.jsonl');
@@ -584,7 +606,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       token: 'token-direct',
       encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
     });
-    fetchSessionByIdMock.mockResolvedValueOnce({
+    fetchSessionByIdMock.mockResolvedValue({
       id: 'sess_happy_policy_fail',
       metadataVersion: 7,
       encryptionMode: 'plain',
@@ -628,7 +650,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('persists lightweight progress markers for detached background-follow sessions when transcript updates arrive', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-background-follow-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-background-follow-')));
     const configDir = join(root, '.claude');
     const sessionDir = join(configDir, 'projects', 'proj-background');
     const sessionFile = join(sessionDir, 'sess-background.jsonl');
@@ -732,7 +754,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('persists lightweight progress markers after an attached viewer lease expires into background follow', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-background-expiry-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-background-expiry-')));
     const configDir = join(root, '.claude');
     const sessionDir = join(configDir, 'projects', 'proj-background-expiry');
     const sessionFile = join(sessionDir, 'sess-background-expiry.jsonl');
@@ -848,7 +870,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('continues detached background-follow updates after an attached lease expires naturally', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-background-follow-expiry-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-background-follow-expiry-')));
     const configDir = join(root, '.claude');
     const sessionDir = join(configDir, 'projects', 'proj-background-expiry');
     const sessionFile = join(sessionDir, 'sess-background-expiry.jsonl');
@@ -972,7 +994,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('pushes content-free transcript invalidations for attached external sessions and stops after detach', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-push-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-push-')));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-push', 'sess-push.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-push'), { recursive: true });
@@ -1068,7 +1090,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('suppresses detached background-follow metadata writes and ready notifications while a viewer is attached', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-attached-suppression-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-attached-suppression-')));
     const configDir = join(root, '.claude');
     const sessionDir = join(configDir, 'projects', 'proj-attached-suppression');
     const sessionFile = join(sessionDir, 'sess-attached-suppression.jsonl');

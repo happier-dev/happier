@@ -21,8 +21,9 @@ import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult
 import { waitForVisibleConsoleSessionWebhook } from '../sessions/visibleConsoleSpawnWaiter';
 import { waitForSessionWebhook } from './waitForSessionWebhook';
 import type { TrackedSession } from '../types';
-import type { PluginLocalServicesBridgeAuthorization } from '../local/services/pluginBridgeAuthorization';
-import type { AgentRuntimeSessionBridgeAuthorization } from '../agentRuntime/sessionBridgeAuthorization';
+import type {
+    RunnerAgentSessionBootstrapAuthorization,
+} from '../agentRuntime/sessionBridgeAuthorization';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
 import type { SpawnCommitRevalidation } from './spawnCommitRevalidation';
@@ -48,8 +49,8 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
     directoryCreated: boolean;
     extraEnvForChildWithMessage: Record<string, string>;
     unsetEnvKeys?: readonly string[];
-    localServicesBridgeAuthorization: PluginLocalServicesBridgeAuthorization;
-    agentRuntimeSessionBridgeAuthorization?: AgentRuntimeSessionBridgeAuthorization | null;
+    runnerAgentSessionBootstrapAuthorization?:
+        RunnerAgentSessionBootstrapAuthorization | null;
     processEnv: NodeJS.ProcessEnv;
     happyHomeDir: string;
     pidToTrackedSession: Map<number, TrackedSession>;
@@ -105,20 +106,18 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
                         waitParams.windowsTerminalLaunchCustody,
                 }
                 : {}),
-            localServicesBridgeTokenHash: params.localServicesBridgeAuthorization.tokenHash,
-            localServicesBridgePluginId: params.localServicesBridgeAuthorization.pluginId,
-            localServicesBridgeContributionId: params.localServicesBridgeAuthorization.contributionId,
-            localServicesBridgeTokenFilePath: params.localServicesBridgeAuthorization.tokenFilePath,
-            ...(params.agentRuntimeSessionBridgeAuthorization ? {
-                agentRuntimeBridgeTokenHash: params.agentRuntimeSessionBridgeAuthorization.tokenHash,
-                agentRuntimeBridgePluginId:
-                    params.agentRuntimeSessionBridgeAuthorization.descriptor.pluginId,
-                agentRuntimeBridgeAgentId:
-                    params.agentRuntimeSessionBridgeAuthorization.descriptor.agentId,
-                agentRuntimeBridgeBackendId:
-                    params.agentRuntimeSessionBridgeAuthorization.descriptor.backendId,
-                agentRuntimeBridgeGeneration:
-                    params.agentRuntimeSessionBridgeAuthorization.descriptor.generation,
+            ...(params.runnerAgentSessionBootstrapAuthorization ? {
+                agentRuntimeDaemonServiceAuthorityFilePath:
+                    params.runnerAgentSessionBootstrapAuthorization
+                        .authorityFilePath,
+                runnerAgentBootstrapIdentity: {
+                    agentId:
+                        params.runnerAgentSessionBootstrapAuthorization
+                            .descriptor.agentId,
+                    backendId:
+                        params.runnerAgentSessionBootstrapAuthorization
+                            .descriptor.backendId,
+                },
             } : {}),
             vendorResumeId: params.effectiveResume || undefined,
             directoryCreated: params.directoryCreated,

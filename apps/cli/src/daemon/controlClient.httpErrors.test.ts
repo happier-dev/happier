@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reloadConfiguration } from '@/configuration';
-import { writeDaemonState, clearDaemonState } from '@/persistence';
+import { writeDaemonState, clearDaemonStateForTestTeardown } from '@/persistence';
 import { resolveDaemonSpawnSessionByNonce, spawnDaemonSession } from '@/daemon/controlClient';
 import * as controlClient from '@/daemon/controlClient';
 import {
@@ -61,30 +61,12 @@ function listen(server: http.Server): Promise<{ port: number }> {
   });
 }
 
-function createAgentRuntimeBridgeRequest() {
-  return {
-    v: 1 as const,
-    context: {
-      token: 'bridge-token',
-      sessionId: 'session-1',
-      pluginId: 'grok',
-      agentId: 'grok',
-      generation: 'generation-1',
-    },
-    operation: {
-      kind: 'request.cancel' as const,
-      requestId: 'cancel-1',
-      targetRequestId: 'request-1',
-    },
-  };
-}
-
 describe('daemon control client (HTTP error responses)', () => {
   let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
   let tmpHomeDir: string | null = null;
 
   afterEach(async () => {
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     reloadConfiguration();
@@ -178,158 +160,6 @@ describe('daemon control client (HTTP error responses)', () => {
         error: 'Failed to spawn session: boom',
         errorCode: 'SPAWN_FAILED',
       });
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  });
-
-  it('preserves the bounded Agent runtime bridge error envelope from HTTP 403', async () => {
-    const server = http.createServer((req, res) => {
-      if (req.method === 'POST' && req.url === '/agent-runtime/session/bridge') {
-        res.statusCode = 403;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({
-          ok: false,
-          error: {
-            code: 'agent_runtime_daemon_bridge_forbidden',
-            message: 'Agent runtime daemon bridge request is forbidden',
-          },
-        }));
-        return;
-      }
-      res.statusCode = 404;
-      res.end();
-    });
-
-    try {
-      const { port } = await listen(server);
-
-      tmpHomeDir = await createTempDir('happier-daemon-client-test-');
-      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
-      reloadConfiguration();
-      writeDaemonState({
-        pid: process.pid,
-        httpPort: port,
-        startedAt: Date.now(),
-        startedWithCliVersion: 'test',
-        controlToken: 'test-token',
-      });
-
-      await expect(controlClient.dispatchDaemonAgentRuntimeBridgeRequest(
-        createAgentRuntimeBridgeRequest(),
-      )).resolves.toEqual({
-        ok: false,
-        error: {
-          code: 'agent_runtime_daemon_bridge_forbidden',
-          message: 'Agent runtime daemon bridge request is forbidden',
-        },
-      });
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  });
-
-  it('does not impose a daemon HTTP deadline on a caller-cancellable Agent runtime request', async () => {
-    const server = http.createServer((req, res) => {
-      if (req.method === 'POST' && req.url === '/agent-runtime/session/bridge') {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ ok: true, result: null }));
-        return;
-      }
-      res.statusCode = 404;
-      res.end();
-    });
-    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
-
-    try {
-      const { port } = await listen(server);
-
-      tmpHomeDir = await createTempDir('happier-daemon-client-test-');
-      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
-      reloadConfiguration();
-      writeDaemonState({
-        pid: process.pid,
-        httpPort: port,
-        startedAt: Date.now(),
-        startedWithCliVersion: 'test',
-        controlToken: 'test-token',
-      });
-
-      await expect(controlClient.dispatchDaemonAgentRuntimeBridgeRequest(
-        createAgentRuntimeBridgeRequest(),
-        { timeoutMs: null },
-      )).resolves.toEqual({ ok: true, result: null });
-      expect(timeoutSpy).not.toHaveBeenCalled();
-    } finally {
-      timeoutSpy.mockRestore();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  });
-
-  it('normalizes local Agent runtime bridge transport loss into its bounded error envelope', async () => {
-    tmpHomeDir = await createTempDir('happier-daemon-client-test-');
-    envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
-    reloadConfiguration();
-
-    await expect(controlClient.dispatchDaemonAgentRuntimeBridgeRequest(
-      createAgentRuntimeBridgeRequest(),
-    )).resolves.toEqual({
-      ok: false,
-      error: {
-        code: 'agent_runtime_daemon_bridge_unavailable',
-        message: 'Agent runtime daemon bridge is unavailable',
-      },
-    });
-  });
-
-  it.each([
-    {
-      name: 'a schema-valid success envelope on HTTP 500',
-      status: 500,
-      body: { ok: true, result: null },
-    },
-    {
-      name: 'an HTTP 403 error envelope with an unknown field',
-      status: 403,
-      body: {
-        ok: false,
-        error: {
-          code: 'agent_runtime_daemon_bridge_forbidden',
-          message: 'Agent runtime daemon bridge request is forbidden',
-        },
-        unexpected: true,
-      },
-    },
-  ])('rejects $name instead of unwrapping it', async ({ status, body }) => {
-    const server = http.createServer((req, res) => {
-      if (req.method === 'POST' && req.url === '/agent-runtime/session/bridge') {
-        res.statusCode = status;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify(body));
-        return;
-      }
-      res.statusCode = 404;
-      res.end();
-    });
-
-    try {
-      const { port } = await listen(server);
-
-      tmpHomeDir = await createTempDir('happier-daemon-client-test-');
-      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
-      reloadConfiguration();
-      writeDaemonState({
-        pid: process.pid,
-        httpPort: port,
-        startedAt: Date.now(),
-        startedWithCliVersion: 'test',
-        controlToken: 'test-token',
-      });
-
-      await expect(controlClient.dispatchDaemonAgentRuntimeBridgeRequest(
-        createAgentRuntimeBridgeRequest(),
-      )).rejects.toThrow();
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -462,10 +292,10 @@ describe('daemon control client (HTTP error responses)', () => {
         res.end(JSON.stringify({
           ok: true,
           result: {
-            status: 'recorded',
+            status: 'continue',
             turnCustody: {
               status: 'recorded',
-              activeTurnId: null,
+              activeTurnId: 'session-turn:exact-1',
             },
           },
         }));
@@ -488,25 +318,23 @@ describe('daemon control client (HTTP error responses)', () => {
 
       await expect(controlClient.notifyDaemonConnectedServiceTurnLifecycle({
         sessionId: 'sess_1',
-        turnId: 'session-turn:exact-1',
-        event: 'assistant_message_end',
-        terminalStatus: 'failed',
-        connectedServiceSelectionsEnvRaw: '[{"kind":"profile","serviceId":"gemini","profileId":"work"}]',
+        event: 'prompt_or_steer',
+        requestedAction: { v: 1, kind: 'steer_now' },
+        activeTurnId: 'session-turn:exact-1',
       })).resolves.toEqual({
-        status: 'recorded',
+        status: 'continue',
         turnCustody: {
           status: 'recorded',
-          activeTurnId: null,
+          activeTurnId: 'session-turn:exact-1',
         },
       });
 
       expect(observedUrl).toBe('/connected-service-turn-lifecycle');
       expect(observedBody).toEqual({
         sessionId: 'sess_1',
-        turnId: 'session-turn:exact-1',
-        event: 'assistant_message_end',
-        terminalStatus: 'failed',
-        connectedServiceSelectionsEnvRaw: '[{"kind":"profile","serviceId":"gemini","profileId":"work"}]',
+        event: 'prompt_or_steer',
+        requestedAction: { v: 1, kind: 'steer_now' },
+        activeTurnId: 'session-turn:exact-1',
       });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -572,6 +400,7 @@ describe('daemon control client (HTTP error responses)', () => {
       await expect(controlClient.notifyDaemonProviderAccountUsageSnapshot({
         sessionId: 'sess_1',
         snapshot,
+        deriveCredentialFingerprintFromSource: true,
         credentialFingerprint: 'sha256:deadbeef',
       })).resolves.toEqual({
         ok: true,
@@ -582,6 +411,7 @@ describe('daemon control client (HTTP error responses)', () => {
       expect(observedBody).toEqual({
         sessionId: 'sess_1',
         snapshot,
+        deriveCredentialFingerprintFromSource: true,
         credentialFingerprint: 'sha256:deadbeef',
       });
     } finally {

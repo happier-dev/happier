@@ -23,6 +23,7 @@ import {
   ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_PLUGIN_ID,
 } from '@/plugins/testkit/voiceModelPackPackage';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createObservedForkedWorkerProcessTracker } from '../forkedWorker/processTracker.testkit';
 import { createNodeModelPackInstallerHost } from '../modelPackInstallerHost.node';
 import { resolveVoiceInferencePaths } from '../voiceInferencePaths';
 import type { VoiceInferenceWorkerHandle } from '../voiceInferenceWorker';
@@ -46,8 +47,8 @@ function createDaemonPublicVoiceModelPackRuntime(
       if (!committed) return null;
       return new Map([...committed.generations].map(([pluginId, generation]) => [pluginId, {
         immutableGenerationId: generation.immutableGenerationId,
-        manifestDigest: generation.record.manifestDigest,
-        packageDigest: generation.record.packageDigest,
+        desiredImmutableGenerationId: generation.immutableGenerationId,
+        appliedImmutableGenerationId: generation.immutableGenerationId,
         distribution: generation.installation?.source.distribution ?? 'bundled',
         applied: true,
         selectedAccess: generation.installation?.optionalAccess ?? [],
@@ -122,105 +123,31 @@ async function sha256File(filePath: string): Promise<string> {
   return createHash('sha256').update(await readFile(filePath)).digest('hex');
 }
 
-type ProcessSnapshotEntry = Readonly<{
-  pid: number;
-  parentPid: number;
-  rssBytes: number;
-  command: string;
-}>;
-
-async function readProcessSnapshot(): Promise<readonly ProcessSnapshotEntry[]> {
-  if (process.platform === 'win32') return [];
-  const stdout = await new Promise<string>((resolve, reject) => {
-    execFile(
-      'ps',
-      ['-axo', 'pid=,ppid=,rss=,command='],
-      { encoding: 'utf8' },
-      (error, output) => error ? reject(error) : resolve(String(output)),
-    );
-  });
-  return stdout.split('\n').flatMap((line) => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
-    if (!match) return [];
-    const pid = Number.parseInt(match[1]!, 10);
-    const parentPid = Number.parseInt(match[2]!, 10);
-    const rssKiB = Number.parseInt(match[3]!, 10);
-    if (!Number.isInteger(pid) || !Number.isInteger(parentPid) || !Number.isInteger(rssKiB)) return [];
-    return [{ pid, parentPid, rssBytes: rssKiB * 1024, command: match[4]! }];
-  });
-}
-
-function collectDescendantProcessIds(
-  rootPid: number,
-  snapshot: readonly ProcessSnapshotEntry[],
-): ReadonlySet<number> {
-  const childrenByParent = new Map<number, number[]>();
-  for (const entry of snapshot) {
-    const children = childrenByParent.get(entry.parentPid) ?? [];
-    children.push(entry.pid);
-    childrenByParent.set(entry.parentPid, children);
-  }
-  const descendants = new Set<number>();
-  const pending = [...(childrenByParent.get(rootPid) ?? [])];
-  while (pending.length > 0) {
-    const pid = pending.shift()!;
-    if (descendants.has(pid)) continue;
-    descendants.add(pid);
-    pending.push(...(childrenByParent.get(pid) ?? []));
-  }
-  return descendants;
-}
-
-function isProcessAlive(pid: number): boolean {
+async function readKnownProcessRssBytes(processIds: readonly number[]): Promise<number | null> {
+  // RSS is optional measurement evidence. Worker identity and lifecycle come only from the
+  // canonical observer, so a sandbox that rejects `ps` must not block this canary.
+  if (process.platform === 'win32') return null;
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile(
+        'ps',
+        ['-o', 'pid=,rss=', '-p', processIds.join(',')],
+        { encoding: 'utf8' },
+        (error, output) => error ? reject(error) : resolve(String(output)),
+      );
+    });
+    const rssByPid = new Map(stdout.split('\n').flatMap((line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+      if (!match) return [];
+      return [[Number.parseInt(match[1]!, 10), Number.parseInt(match[2]!, 10) * 1024] as const];
+    }));
+    const values = processIds.map((pid) => rssByPid.get(pid));
+    return values.every((value): value is number => typeof value === 'number')
+      ? values.reduce((total, value) => total + value, 0)
+      : null;
+  } catch {
+    return null;
   }
-}
-
-async function readForkedWorkerProcesses(): Promise<readonly ProcessSnapshotEntry[]> {
-  const snapshot = await readProcessSnapshot();
-  const descendants = collectDescendantProcessIds(process.pid, snapshot);
-  return snapshot.filter((entry) => (
-    descendants.has(entry.pid)
-    && entry.command.includes('voice-inference-worker')
-  ));
-}
-
-async function waitForForkedWorkerProcess(timeoutMs = 10_000): Promise<ProcessSnapshotEntry> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const workers = await readForkedWorkerProcesses();
-    if (workers.length === 1) return workers[0]!;
-    if (workers.length > 1) {
-      throw new Error(`multiple_voice_inference_worker_descendants:${workers.map((entry) => entry.pid).join(',')}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('voice_inference_worker_descendant_not_found');
-}
-
-async function readProcessTreeRssBytes(processIds: readonly number[]): Promise<number> {
-  const snapshot = await readProcessSnapshot();
-  const byPid = new Map(snapshot.map((entry) => [entry.pid, entry] as const));
-  let total = 0;
-  for (const pid of processIds) {
-    const entry = byPid.get(pid);
-    if (!entry) throw new Error(`process_rss_unavailable:${pid}`);
-    total += entry.rssBytes;
-  }
-  return total;
-}
-
-async function waitForProcessExit(pid: number, timeoutMs = 10_000): Promise<number> {
-  const startedAt = performance.now();
-  while (performance.now() - startedAt < timeoutMs) {
-    if (!isProcessAlive(pid)) return performance.now() - startedAt;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`voice_inference_worker_process_still_alive:${pid}`);
 }
 
 type VoiceFixturePcm = Readonly<{
@@ -299,8 +226,8 @@ async function materializePackedExternalPlugin(params: Readonly<{
   roots: string[];
 }>): Promise<Readonly<{
   archiveSha256: string;
-  pluginManifestDigest: string;
-  pluginPackageDigest: string;
+  sourceIntegrity: string;
+  immutableGenerationId: string;
   pluginJson: FixturePluginJson;
   assetPathByUrl: ReadonlyMap<string, string>;
   publishedManifestSha256: string;
@@ -381,8 +308,8 @@ async function materializePackedExternalPlugin(params: Readonly<{
 
   return {
     archiveSha256: installed.archiveSha256,
-    pluginManifestDigest: installed.manifestDigest,
-    pluginPackageDigest: installed.packageDigest,
+    sourceIntegrity: installed.sourceIntegrity,
+    immutableGenerationId: installed.immutableGenerationId,
     pluginJson,
     assetPathByUrl,
     publishedManifestSha256,
@@ -392,6 +319,7 @@ async function materializePackedExternalPlugin(params: Readonly<{
 describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycle', () => {
   const roots: string[] = [];
   const workers: VoiceInferenceWorkerHandle[] = [];
+  const observedForkedWorkers = createObservedForkedWorkerProcessTracker();
   const envScope = createEnvKeyScope([
     'HAPPIER_HOME_DIR',
     'HAPPIER_CLI_SUBPROCESS_PREFER_TSX',
@@ -422,7 +350,7 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
     reloadConfiguration();
 
     const packed = await materializePackedExternalPlugin({ happyHomeDir, roots });
-    expect(packed.pluginPackageDigest).not.toBe(packed.pluginManifestDigest);
+    expect(packed.sourceIntegrity).toMatch(/^sha256-/);
     const paths = resolveVoiceInferencePaths();
     const qualifiedPackId = `${ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_PLUGIN_ID}/${ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_LOCAL_ID}`;
     const isolationModes = resolveMeasurementIsolationModes();
@@ -437,6 +365,7 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
     const initialWorker = await startVoiceInferenceWorker({
       publicModelPacks: initialPublicRuntime,
       isolationMode: firstIsolationMode,
+      onForkedWorkerProcess: observedForkedWorkers.observe,
     });
     workers.push(initialWorker);
     const [blockedStatus] = await initialWorker.listModels();
@@ -453,7 +382,10 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
         packVersion: '2023.2.17',
         licenseId: 'Apache-2.0',
         licenseSourceUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
-        artifactDigest: packed.pluginPackageDigest,
+        artifactBinding: {
+          kind: 'sourceIntegrity',
+          integrity: packed.sourceIntegrity,
+        },
         accepted: false,
       },
     });
@@ -473,7 +405,7 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
       licenseId: licenseReview.licenseId,
       licenseSourceUrl: licenseReview.licenseSourceUrl,
       licenseTextDigest: licenseReview.licenseTextDigest,
-      artifactDigest: licenseReview.artifactDigest,
+      artifactBinding: licenseReview.artifactBinding,
     });
     await expect(initialPublicRuntime.resolve(qualifiedPackId)).resolves.toMatchObject({
       descriptor: expect.objectContaining({
@@ -496,7 +428,10 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
     const installedEntry = await initialPublicRuntime.resolve(qualifiedPackId);
     expect(installedEntry?.installedMetadata).toMatchObject({
       pluginVersion: '0.1.0',
-      pluginSourceDigest: packed.pluginPackageDigest,
+      artifactBinding: {
+        kind: 'sourceIntegrity',
+        integrity: packed.sourceIntegrity,
+      },
       packVersion: '2023.2.17',
       manifestDigest: deriveVoiceModelPackManifestDigestV1(
         packed.pluginJson.contributes.voiceModelPacks[0]!.manifest as Parameters<typeof deriveVoiceModelPackManifestDigestV1>[0],
@@ -524,6 +459,7 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
             paths,
           }),
           isolationMode,
+          onForkedWorkerProcess: observedForkedWorkers.observe,
         });
       if (modeIndex > 0) workers.push(firstWorker);
 
@@ -531,27 +467,25 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
       // Re-stage it at the mode boundary so a multi-mode measurement compares runtimes
       // instead of inheriting the previous mode's cleanup.
       await copyFile(fixtureWavPath, uploadPath);
-      const parentRssBeforeWarm = process.platform === 'win32'
-        ? process.memoryUsage().rss
-        : await readProcessTreeRssBytes([process.pid]);
+      const parentRssBeforeWarm = await readKnownProcessRssBytes([process.pid])
+        ?? process.memoryUsage().rss;
       const firstWarmStartedAt = performance.now();
       await firstWorker.warmModelPack(qualifiedPackId);
       const firstWarmMs = performance.now() - firstWarmStartedAt;
-      const firstForkedWorkerProcess = isolationMode === 'forked' && process.platform !== 'win32'
-        ? await waitForForkedWorkerProcess()
+      const firstForkedWorkerPid = isolationMode === 'forked'
+        ? await observedForkedWorkers.waitForNewPid()
         : null;
-      if (isolationMode === 'in_process' && process.platform !== 'win32') {
-        expect(await readForkedWorkerProcesses()).toEqual([]);
+      if (isolationMode === 'in_process') {
+        expect(observedForkedWorkers.activePids()).toEqual([]);
       }
-      const parentRssAfterWarm = process.platform === 'win32'
-        ? process.memoryUsage().rss
-        : await readProcessTreeRssBytes([process.pid]);
-      const firstProcessTreeRssAfterWarm = process.platform === 'win32'
+      const parentRssAfterWarm = await readKnownProcessRssBytes([process.pid])
+        ?? process.memoryUsage().rss;
+      const firstProcessTreeRssAfterWarm = firstForkedWorkerPid === null
         ? null
-        : await readProcessTreeRssBytes([
-          process.pid,
-          ...(firstForkedWorkerProcess ? [firstForkedWorkerProcess.pid] : []),
-        ]);
+        : await readKnownProcessRssBytes([process.pid, firstForkedWorkerPid]);
+      const firstForkedWorkerRssAfterWarm = firstForkedWorkerPid === null
+        ? null
+        : await readKnownProcessRssBytes([firstForkedWorkerPid]);
       const [warmedModelStatus] = await firstWorker.listModels();
       const firstInferenceStartedAt = performance.now();
       const firstTranscript = await firstWorker.transcribeAudio({
@@ -604,8 +538,8 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
       await firstWorker.stop();
       workers.splice(workers.indexOf(firstWorker), 1);
       const firstStopMs = performance.now() - firstStopStartedAt;
-      const firstForkedCleanupMs = firstForkedWorkerProcess
-        ? await waitForProcessExit(firstForkedWorkerProcess.pid)
+      const firstForkedCleanupMs = firstForkedWorkerPid !== null
+        ? (await observedForkedWorkers.waitForTermination(firstForkedWorkerPid), performance.now() - firstStopStartedAt)
         : null;
       const restartedWorker = await startVoiceInferenceWorker({
         publicModelPacks: createDaemonPublicVoiceModelPackRuntime({
@@ -615,30 +549,29 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
           paths,
         }),
         isolationMode,
+        onForkedWorkerProcess: observedForkedWorkers.observe,
       });
       workers.push(restartedWorker);
 
-      const restartParentRssBeforeWarm = process.platform === 'win32'
-        ? process.memoryUsage().rss
-        : await readProcessTreeRssBytes([process.pid]);
+      const restartParentRssBeforeWarm = await readKnownProcessRssBytes([process.pid])
+        ?? process.memoryUsage().rss;
       const restartWarmStartedAt = performance.now();
       await restartedWorker.warmModelPack(qualifiedPackId);
       const restartWarmMs = performance.now() - restartWarmStartedAt;
-      const restartedForkedWorkerProcess = isolationMode === 'forked' && process.platform !== 'win32'
-        ? await waitForForkedWorkerProcess()
+      const restartedForkedWorkerPid = isolationMode === 'forked'
+        ? await observedForkedWorkers.waitForNewPid(firstForkedWorkerPid === null ? [] : [firstForkedWorkerPid])
         : null;
-      if (firstForkedWorkerProcess && restartedForkedWorkerProcess) {
-        expect(restartedForkedWorkerProcess.pid).not.toBe(firstForkedWorkerProcess.pid);
+      if (firstForkedWorkerPid !== null && restartedForkedWorkerPid !== null) {
+        expect(restartedForkedWorkerPid).not.toBe(firstForkedWorkerPid);
       }
-      const restartParentRssAfterWarm = process.platform === 'win32'
-        ? process.memoryUsage().rss
-        : await readProcessTreeRssBytes([process.pid]);
-      const restartProcessTreeRssAfterWarm = process.platform === 'win32'
+      const restartParentRssAfterWarm = await readKnownProcessRssBytes([process.pid])
+        ?? process.memoryUsage().rss;
+      const restartProcessTreeRssAfterWarm = restartedForkedWorkerPid === null
         ? null
-        : await readProcessTreeRssBytes([
-          process.pid,
-          ...(restartedForkedWorkerProcess ? [restartedForkedWorkerProcess.pid] : []),
-        ]);
+        : await readKnownProcessRssBytes([process.pid, restartedForkedWorkerPid]);
+      const restartedForkedWorkerRssAfterWarm = restartedForkedWorkerPid === null
+        ? null
+        : await readKnownProcessRssBytes([restartedForkedWorkerPid]);
       const [restartWarmedModelStatus] = await restartedWorker.listModels();
       await copyFile(fixtureWavPath, uploadPath);
       const restartInferenceStartedAt = performance.now();
@@ -664,11 +597,11 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
       let crashIsolation: Readonly<Record<string, unknown>> = {
         applicable: false,
         reason: isolationMode === 'forked'
-          ? 'process_tree_measurement_unavailable_on_win32'
+          ? 'forked_worker_not_observed'
           : 'in_process_has_no_crash_boundary',
       };
-      let activeForkedWorkerPid = restartedForkedWorkerProcess?.pid ?? null;
-      if (restartedForkedWorkerProcess) {
+      let activeForkedWorkerPid = restartedForkedWorkerPid;
+      if (restartedForkedWorkerPid !== null) {
         const crashRequestId = `f34-real-${isolationMode}-crash-containment`;
         const crashSession = await restartedWorker.createStreamingTranscriptionSession({
           requestId: crashRequestId,
@@ -689,11 +622,11 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
         await new Promise((resolve) => setTimeout(resolve, 75));
         expect(crashAppendSettled).toBe(false);
         const crashStartedAt = performance.now();
-        process.kill(restartedForkedWorkerProcess.pid, 'SIGKILL');
+        process.kill(restartedForkedWorkerPid, 'SIGKILL');
         const crashOutcome = await crashAppendOutcome;
         const crashSettlementMs = performance.now() - crashStartedAt;
         expect(crashOutcome).toMatchObject({ ok: false, error: { code: 'runtime_unavailable' } });
-        await waitForProcessExit(restartedForkedWorkerProcess.pid);
+        await observedForkedWorkers.waitForTermination(restartedForkedWorkerPid);
         await restartedWorker.cancelStt(crashRequestId);
         await crashSession.close().catch(() => undefined);
 
@@ -712,15 +645,15 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
             systemFfmpegAllowed: false,
           },
         });
-        const recoveredForkedWorkerProcess = await waitForForkedWorkerProcess();
-        expect(recoveredForkedWorkerProcess.pid).not.toBe(restartedForkedWorkerProcess.pid);
+        const recoveredForkedWorkerPid = await observedForkedWorkers.waitForNewPid([restartedForkedWorkerPid]);
+        expect(recoveredForkedWorkerPid).not.toBe(restartedForkedWorkerPid);
         const recoveredTranscript = await recoveredTranscriptPromise;
         const recoveryInferenceMs = performance.now() - recoveryStartedAt;
         const normalizedRecoveredTranscript = recoveredTranscript.text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
         for (const expected of expectedTranscriptSubstrings) {
           expect(normalizedRecoveredTranscript).toContain(expected);
         }
-        activeForkedWorkerPid = recoveredForkedWorkerProcess.pid;
+        activeForkedWorkerPid = recoveredForkedWorkerPid;
         crashIsolation = {
           applicable: true,
           activeRequestRejected: 'runtime_unavailable',
@@ -747,16 +680,16 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
         parentRssBeforeWarm,
         parentRssAfterWarm,
         processTreeRssAfterWarm: firstProcessTreeRssAfterWarm,
-        forkChildRssAfterWarm: firstForkedWorkerProcess?.rssBytes ?? null,
+        forkChildRssAfterWarm: firstForkedWorkerRssAfterWarm,
         restartParentRssBeforeWarm,
         restartParentRssAfterWarm,
         restartProcessTreeRssAfterWarm,
-        restartForkChildRssAfterWarm: restartedForkedWorkerProcess?.rssBytes ?? null,
-        residentMemoryBytes: warmedModelStatus?.residentMemoryBytes ?? null,
-        restartResidentMemoryBytes: restartWarmedModelStatus?.residentMemoryBytes ?? null,
+        restartForkChildRssAfterWarm: restartedForkedWorkerRssAfterWarm,
+        loadedArtifactBytes: warmedModelStatus?.loadedArtifactBytes ?? null,
+        restartLoadedArtifactBytes: restartWarmedModelStatus?.loadedArtifactBytes ?? null,
         firstStopMs: Math.round(firstStopMs),
         firstForkedCleanupMs: firstForkedCleanupMs === null ? null : Math.round(firstForkedCleanupMs),
-        restartUsedDistinctProcess: firstForkedWorkerProcess && restartedForkedWorkerProcess ? true : null,
+        restartUsedDistinctProcess: firstForkedWorkerPid !== null && restartedForkedWorkerPid !== null ? true : null,
         crashIsolation,
       });
       finalWorker = restartedWorker;
@@ -765,7 +698,7 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
       if (modeIndex < isolationModes.length - 1) {
         await restartedWorker.stop();
         workers.splice(workers.indexOf(restartedWorker), 1);
-        if (activeForkedWorkerPid) await waitForProcessExit(activeForkedWorkerPid);
+        if (activeForkedWorkerPid !== null) await observedForkedWorkers.waitForTermination(activeForkedWorkerPid);
       }
     }
 
@@ -811,20 +744,18 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
     await finalWorker.stop();
     workers.splice(workers.indexOf(finalWorker), 1);
     const finalStopMs = performance.now() - finalStopStartedAt;
-    const finalForkedCleanupMs = finalForkedWorkerPid
-      ? await waitForProcessExit(finalForkedWorkerPid)
+    const finalForkedCleanupMs = finalForkedWorkerPid !== null
+      ? (await observedForkedWorkers.waitForTermination(finalForkedWorkerPid), performance.now() - finalStopStartedAt)
       : null;
-    if (process.platform !== 'win32') {
-      expect(await readForkedWorkerProcesses()).toEqual([]);
-    }
+    expect(observedForkedWorkers.activePids()).toEqual([]);
 
     console.info('F34_REAL_DAEMON_EVIDENCE', JSON.stringify({
       pluginId: ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_PLUGIN_ID,
       pluginVersion: '0.1.0',
       packId: ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_LOCAL_ID,
       packVersion: '2023.2.17',
-      pluginManifestDigest: packed.pluginManifestDigest,
-      pluginPackageDigest: packed.pluginPackageDigest,
+      sourceIntegrity: packed.sourceIntegrity,
+      immutableGenerationId: packed.immutableGenerationId,
       archiveSha256: packed.archiveSha256,
       publishedManifestSha256: packed.publishedManifestSha256,
       fixtureSha256: expectedFixtureSha256,
@@ -832,9 +763,7 @@ describe.runIf(integrationEnabled)('real daemon public Voice model-pack lifecycl
       modeEvidence,
       finalStopMs: Math.round(finalStopMs),
       finalForkedCleanupMs: finalForkedCleanupMs === null ? null : Math.round(finalForkedCleanupMs),
-      orphanCheck: process.platform === 'win32'
-        ? 'process_tree_measurement_unavailable_on_win32'
-        : 'no_voice_inference_worker_descendant_alive_after_final_stop',
+      orphanCheck: 'no_observed_voice_inference_worker_alive_after_final_stop',
       removal: 'plugin uninstalled and model directory absent',
     }));
   }, 600_000);

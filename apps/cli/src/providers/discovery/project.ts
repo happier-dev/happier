@@ -119,11 +119,6 @@ export function projectProviderDiscoveryCandidates(input: Readonly<{
   snapshot: NormalizedLocalServiceInventorySnapshot;
   registry: ProviderContributionRegistryView;
   connections?: readonly ProviderDiscoveryConnectionView[];
-  managedServices?: readonly Readonly<{
-    inventoryId?: string;
-    phase: string;
-    supportedActions: readonly string[];
-  }>[];
 }>): readonly ProviderDiscoveryCandidateV1[] {
   const connections = input.connections ?? [];
   const candidates: ProviderDiscoveryCandidateV1[] = [];
@@ -172,12 +167,7 @@ export function projectProviderDiscoveryCandidates(input: Readonly<{
           normalizedEndpointUrl,
         }),
         evidence,
-        ownership: input.managedServices?.some((service) =>
-          service.inventoryId === entry.id
-            && (service.phase === 'running' || service.phase === 'unhealthy')
-            && service.supportedActions.includes('stop_managed'))
-          ? 'owned'
-          : 'adopted',
+        ownership: 'adopted',
         connection: connectionState({
           contributionKey,
           endpointTemplateId: endpointTemplate.id,

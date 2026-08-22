@@ -27,7 +27,7 @@ const MAX_MEMORY_TOOL_SUMMARY_CHARS = 500;
 type MemorySemanticExtractionContext = Readonly<{
   encryptionKey: Uint8Array;
   encryptionVariant: 'legacy' | 'dataKey';
-}>;
+}> | null;
 
 function normalizeSeq(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;

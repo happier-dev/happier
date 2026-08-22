@@ -3,7 +3,7 @@ import { resolveCliFeatureDecision } from '../../features/featureDecisionService
 import {
   AGENT_IDS,
   hasBuiltInAcpConfig,
-  isAgentId,
+  isBundledAgentId,
   resolveAgentRuntimeControlSurfaceForSession,
 } from '@happier-dev/agents';
 import {
@@ -47,7 +47,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
     return true;
   }
 
-  if (params.isKnownBuiltInAgentId && isAgentId(params.backendId) && hasBuiltInAcpConfig(params.backendId)) {
+  if (params.isKnownBuiltInAgentId && hasBuiltInAcpConfig(params.backendId)) {
     // Built-in ACP backends are catalog-defined and do not rely on CLI snapshot probing for
     // UI discovery in this wave.
     return true;
@@ -79,9 +79,21 @@ export const executionRunsCapability: Capability = {
     const voiceAgentEnabled = voiceAgentDecision.state === 'enabled';
 
     const cliEngineRegistry = await resolveCliEngineRegistry();
+    const profileInputs = await Promise.all(
+      (cliEngineRegistry.contributions.executionRunProfiles ?? []).map(async (
+        profile,
+      ): Promise<ExecutionRunProfileContributionCatalogInput | null> => {
+        if (!profile.pluginId) return profile.definition;
+        const immutableGenerationId = await cliEngineRegistry.resolveCurrentPluginGeneration(profile.pluginId);
+        return immutableGenerationId
+          ? { pluginId: profile.pluginId, immutableGenerationId, definition: profile.definition }
+          : null;
+      }),
+    );
     const executionRunProfileCatalog = buildExecutionRunProfileCatalog(
-      (cliEngineRegistry.contributions.executionRunProfiles ?? []).flatMap<ExecutionRunProfileContributionCatalogInput>((profile) =>
-        profile.pluginId ? [{ pluginId: profile.pluginId, definition: profile.definition }] : [profile.definition]),
+      profileInputs.flatMap<ExecutionRunProfileContributionCatalogInput>((profile) => (
+        profile ? [profile] : []
+      )),
     );
     const sessionId = typeof request.params?.sessionId === 'string' ? request.params.sessionId.trim() : '';
     const executionRunProfiles = listExecutionRunProfileContributionDescriptors(executionRunProfileCatalog)
@@ -104,7 +116,6 @@ export const executionRunsCapability: Capability = {
         return [{
           ...profile,
           compatibleAgents: compatibleAgentIds,
-          generationId: cliEngineRegistry.contributions.generationId ?? null,
           available: decision.outcome === 'visible',
           ...(decision.outcome === 'visible' ? {} : { unavailableCode: decision.code }),
         }];
@@ -123,29 +134,28 @@ export const executionRunsCapability: Capability = {
     ]));
 
     const supportsVendorResumeByBackend = Object.fromEntries(
+      // An installed external Agent answers here exactly like a bundled one: its
+      // own registered session-control adapter decides the runtime surface, and
+      // an Agent that registers none has no vendor resume.
       await Promise.all(backendIds.map(async (backendId) => {
-        const isKnownBuiltInAgentId = isAgentId(backendId);
-        if (isKnownBuiltInAgentId) {
-          const runtimePreferences = await resolveProviderSessionRuntimePreferences(backendId, {
-            settings: {},
-            processEnv: process.env,
-            startedBy: 'daemon',
-          });
-          const surface = resolveAgentRuntimeControlSurfaceForSession({
-            agentId: backendId,
-            metadata: {},
-            accountSettings: runtimePreferences,
-          });
-          return [backendId, surface?.resume.vendorResume !== 'unsupported'] as const;
-        }
-        return [backendId, false] as const;
+        const runtimePreferences = await resolveProviderSessionRuntimePreferences(backendId, {
+          settings: {},
+          processEnv: process.env,
+          startedBy: 'daemon',
+        });
+        const surface = resolveAgentRuntimeControlSurfaceForSession({
+          agentId: backendId,
+          metadata: {},
+          accountSettings: runtimePreferences,
+        });
+        return [backendId, surface !== null && surface.resume.vendorResume !== 'unsupported'] as const;
       })),
     ) as Record<string, boolean>;
 
     const backends = Object.fromEntries(
       backendIds.map((backendId) => {
         const agentContribution = cliEngineRegistry.contributions.agentDefinitionsById.get(backendId);
-        const isKnownBuiltInAgentId = isAgentId(backendId);
+        const isKnownBuiltInAgentId = isBundledAgentId(backendId);
         const available = resolveExecutionRunBackendAvailability({
           context,
           backendId,
@@ -165,6 +175,11 @@ export const executionRunsCapability: Capability = {
 
     return {
       available: true,
+      // V2 is a capability-local contract. Callers must observe these exact
+      // facts from their selected daemon before they send detached scope or
+      // start-and-wait fields; the outer capabilities protocol remains V1.
+      protocolVersion: 2,
+      features: { detachedScope: true, startAndWait: true },
       intents,
       ...(voiceAgentEnabled
         ? {}

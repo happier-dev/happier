@@ -7,7 +7,7 @@ vi.mock('@/projectPath', () => ({
 }));
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { clearDaemonState, writeDaemonState } from '@/persistence';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { isDaemonRunningCurrentlyInstalledHappyVersion } from '@/daemon/controlClient';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -30,7 +30,7 @@ describe('daemon control client version check', () => {
   const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
 
   afterEach(async () => {
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
     envScope.restore();
     reloadConfiguration();
     vi.restoreAllMocks();

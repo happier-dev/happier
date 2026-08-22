@@ -8,6 +8,8 @@ import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
+  createSessionTurnMutationAppliedHttpResponse,
+  createSessionTurnMutationAppliedSocketAck,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import type { createSessionSocketTransport } from './connection/createSessionSocketTransport';
@@ -17,8 +19,25 @@ import type { createUserScopedSocket } from './sockets';
 type SessionSocketTransportResult = ReturnType<typeof createSessionSocketTransport>;
 type UserScopedSocket = ReturnType<typeof createUserScopedSocket>;
 
-function serverContract(mode: 'session_sync_v2_pending_input_v1' | 'released_server_v0_2_1') {
-  return { mode, sessionConnectionEpoch: 1, socket: {} } as const;
+function serverContract(
+  mode:
+    | 'session_sync_v3_publisher_authority_check_v1'
+    | 'session_sync_v2_pending_input_v1'
+    | 'released_server_v0_2_1',
+) {
+  return {
+    mode,
+    runtimeActivity: mode === 'released_server_v0_2_1' ? 'legacy' : 'v2',
+    pendingInput: mode === 'released_server_v0_2_1' ? 'released_server_v0_2_1' : 'v1',
+    publisherAuthority: mode === 'session_sync_v3_publisher_authority_check_v1'
+      ? 'v1'
+      : 'indeterminate',
+    sessionConnectionEpoch: 1,
+    socket: {},
+    transcriptTransport: mode === 'released_server_v0_2_1'
+      ? { mode: 'released_server_v0_2_1' as const }
+      : { mode: 'session_transcript_observation_v1' as const },
+  } as const;
 }
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
@@ -482,8 +501,11 @@ describe('ApiSessionClient durable mutation outbox', () => {
     const deliveredEvents: string[] = [];
     sessionSocketStub = createApiSessionSocketStub({
       connected: false,
-      emitWithAck: async (event: string) => {
+      emitWithAck: async (event: string, payload: unknown) => {
         deliveredEvents.push(event);
+        if (event === 'session-turn-mutation') {
+          return createSessionTurnMutationAppliedSocketAck(payload as SessionTurnMutationV1);
+        }
         return { ok: true };
       },
     });
@@ -512,6 +534,108 @@ describe('ApiSessionClient durable mutation outbox', () => {
     expect(deliveredEvents).toContain('session-turn-mutation');
     await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
     await outbox.close();
+  });
+
+  it('retains ordinary session turn custody after generic socket and HTTP success', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockResolvedValue({ status: 200, data: { success: true } } as never);
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async () => ({ result: 'success' }),
+    });
+
+    const { createRuntimeSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox');
+    const outbox = createRuntimeSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+    await outbox.enqueueSessionTurnMutation({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'mutation-generic-ack',
+      action: 'complete',
+      turnId: 'turn-1',
+      observedAt: 124,
+    });
+
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'session_turn_mutation',
+        mutationId: 'mutation-generic-ack',
+        attempts: 1,
+        lastAttempt: expect.objectContaining({ reason: 'delivery_not_confirmed' }),
+      }),
+    ]);
+    await outbox.close();
+  });
+
+  it('keeps transport disposal distinct from semantic session termination', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 'transport-disposal' }));
+
+    await client.close();
+
+    await expect(readPersistedOutboxMutationCount('transport-disposal')).resolves.toBe(0);
+  });
+
+  it('persists one semantic session end before close and replays it after restart', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 'semantic-session-end' }));
+
+    await Promise.all([
+      client.endSessionAndClose(),
+      client.endSessionAndClose(),
+    ]);
+
+    const { loadSessionClientDurableMutationOutbox } = await import(
+      './client/transport/mutations/sessionClientDurableMutationPersistence'
+    );
+    const persisted = await loadSessionClientDurableMutationOutbox('semantic-session-end');
+    expect(persisted).toEqual([
+      expect.objectContaining({
+        kind: 'session_end',
+        mutationId: expect.stringMatching(/^session-end:/),
+        payload: expect.objectContaining({
+          sessionId: 'semantic-session-end',
+          source: 'session_end',
+        }),
+      }),
+    ]);
+    const persistedSessionEnd = persisted[0];
+    if (persistedSessionEnd?.kind !== 'session_end') {
+      throw new Error('Expected a persisted semantic session-end mutation');
+    }
+    expect(persistedSessionEnd.payload).toEqual(expect.objectContaining({
+      mutationId: persistedSessionEnd.mutationId,
+    }));
+
+    axiosPost.mockResolvedValue({ status: 200, data: { ok: true } } as never);
+    const { createRuntimeSessionClientDurableMutationOutbox } = await import(
+      './client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox'
+    );
+    const restarted = createRuntimeSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 'semantic-session-end',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => undefined,
+    });
+    await restarted.awaitReady();
+    await restarted.flush('startup');
+
+    await expect.poll(() => readPersistedOutboxMutationCount('semantic-session-end')).toBe(0);
+    await restarted.close();
   });
 
   it('persists disconnected transcript commits and flushes them through socket ack on reconnect', async () => {
@@ -551,6 +675,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
     ]);
 
     sessionSocketStub.connected = true;
+    await outbox.setSessionSyncPendingInputServerContract(
+      serverContract('released_server_v0_2_1'),
+    );
     await outbox.flush('flush');
 
     expect(deliveredMessages).toEqual([
@@ -1011,17 +1138,32 @@ describe('ApiSessionClient durable mutation outbox', () => {
     process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '10';
     process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS = '10';
     process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
-    const axiosPost = await getAxiosPostMock();
-    const firstAttempt = createDeferred<{ status: number; data: { ok: true } }>();
+    const firstAttempt = createDeferred<unknown>();
     const deliveredBodies: unknown[] = [];
-    axiosPost.mockImplementation(async (_url, body) => {
-      deliveredBodies.push(body);
-      if (deliveredBodies.length === 1) {
-        return await firstAttempt.promise as never;
-      }
-      return { status: 200, data: { ok: true } } as never;
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (_event, body) => {
+        deliveredBodies.push(body);
+        if (deliveredBodies.length === 1) {
+          return await firstAttempt.promise;
+        }
+        const localId = typeof body === 'object'
+          && body !== null
+          && 'localId' in body
+          && typeof body.localId === 'string'
+          ? body.localId
+          : null;
+        return {
+          ok: true,
+          status: 'observed',
+          id: `message-${deliveredBodies.length}`,
+          seq: deliveredBodies.length,
+          localId,
+          didWrite: true,
+          ingestedAt: Date.now(),
+        };
+      },
     });
-    sessionSocketStub = createApiSessionSocketStub({ connected: false });
 
     const { createRuntimeSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox');
     const outbox = createRuntimeSessionClientDurableMutationOutbox({
@@ -1030,6 +1172,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
       getSocket: () => sessionSocketStub,
       requestReconnect: () => {},
     });
+    await outbox.setSessionSyncPendingInputServerContract(
+      serverContract('session_sync_v2_pending_input_v1'),
+    );
 
     const oldEnqueue = (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
       localId: 'stream-1',
@@ -1066,9 +1211,12 @@ describe('ApiSessionClient durable mutation outbox', () => {
         deliveredLocalIds.push(String(payload?.localId ?? ''));
         return {
           ok: true,
+          status: 'observed',
           id: `message-${deliveredLocalIds.length}`,
           seq: deliveredLocalIds.length,
           localId: String(payload?.localId ?? ''),
+          didWrite: true,
+          ingestedAt: 400,
         };
       },
     });
@@ -1091,9 +1239,13 @@ describe('ApiSessionClient durable mutation outbox', () => {
     const outbox = createRuntimeSessionClientDurableMutationOutbox({
       token: 'tok',
       sessionId: 's1',
+      flushOnReady: false,
       getSocket: () => sessionSocketStub,
       requestReconnect: () => {},
     });
+    await outbox.setSessionSyncPendingInputServerContract(
+      serverContract('session_sync_v2_pending_input_v1'),
+    );
 
     await expect.poll(() => deliveredLocalIds).toEqual(['stream-1']);
     await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
@@ -1105,7 +1257,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
 
   it('drains in-flight durable session mutations before close returns', async () => {
     const axiosPost = await getAxiosPostMock();
-    const httpDelivery = createDeferred<{ status: number; data: { ok: true } }>();
+    const httpDelivery = createDeferred<unknown>();
     const httpActions: string[] = [];
     let closeSettled = false;
     axiosPost.mockImplementation(async (_url, body) => {
@@ -1142,7 +1294,14 @@ describe('ApiSessionClient durable mutation outbox', () => {
     });
     await expect.poll(() => closeSettled, { timeout: 50 }).toBe(false);
 
-    httpDelivery.resolve({ status: 200, data: { ok: true } });
+    httpDelivery.resolve(createSessionTurnMutationAppliedHttpResponse({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'mutation-turn-1',
+      action: 'begin',
+      turnId: 'turn-1',
+      observedAt: 123,
+    }));
     await closePromise;
 
     await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
@@ -1323,6 +1482,12 @@ describe('ApiSessionClient durable mutation outbox', () => {
         kind: 'session_turn_mutation',
         payload: expect.objectContaining({ action: 'fail' }),
         attempts: 1,
+        firstFailedAt: expect.any(Number),
+        lastAttempt: {
+          v: 1,
+          reason: 'delivery_not_confirmed',
+          attemptedAt: expect.any(Number),
+        },
       }),
     ]);
     expect(sessionSocketStub.emitWithAck).not.toHaveBeenCalledWith(
@@ -1361,6 +1526,12 @@ describe('ApiSessionClient durable mutation outbox', () => {
         kind: 'session_turn_mutation',
         mutationId: 'mutation-fail',
         attempts: 1,
+        firstFailedAt: expect.any(Number),
+        lastAttempt: {
+          v: 1,
+          reason: 'delivery_not_confirmed',
+          attemptedAt: expect.any(Number),
+        },
       }),
     ]);
     await expect(readPersistedOutboxDeadLetters('s1')).resolves.toEqual([]);
@@ -1377,7 +1548,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
         if (event === 'session-turn-mutation') {
           deliveredMutationIds.push((payload as { mutationId: string }).mutationId);
         }
-        return { ok: true };
+        return event === 'session-turn-mutation'
+          ? createSessionTurnMutationAppliedSocketAck(payload as SessionTurnMutationV1)
+          : { ok: true };
       },
     });
     const mutation = createFailTurnMutation({ mutationId: 'redrive-after-connect' });
@@ -1417,7 +1590,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
         if (event === 'session-turn-mutation') {
           deliveredActions.push((payload as { action: string }).action);
         }
-        return { ok: true };
+        return event === 'session-turn-mutation'
+          ? createSessionTurnMutationAppliedSocketAck(payload as SessionTurnMutationV1)
+          : { ok: true };
       },
     });
     const { resolveSessionClientDurableMutationDeadLetterPath } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
@@ -1502,7 +1677,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
         if (event === 'session-turn-mutation') {
           deliveredMutationIds.push((payload as { mutationId: string }).mutationId);
         }
-        return { ok: true };
+        return event === 'session-turn-mutation'
+          ? createSessionTurnMutationAppliedSocketAck(payload as SessionTurnMutationV1)
+          : { ok: true };
       },
     });
     const { createRuntimeSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox');
@@ -1652,7 +1829,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
         isFirstHttpAttempt = false;
         return await firstHttpAttempt.promise;
       }
-      return { status: 200, data: { ok: true } } as never;
+      return createSessionTurnMutationAppliedHttpResponse(body as SessionTurnMutationV1) as never;
     });
     sessionSocketStub = createApiSessionSocketStub({
       connected: false,
@@ -1720,6 +1897,12 @@ describe('ApiSessionClient durable mutation outbox', () => {
       expect.objectContaining({
         attempts: 1,
         nextAttemptAt: 200,
+        firstFailedAt: 0,
+        lastAttempt: {
+          v: 1,
+          reason: 'delivery_not_confirmed',
+          attemptedAt: 0,
+        },
         kind: 'session_turn_mutation',
         payload: expect.objectContaining({ action: 'begin' }),
       }),
@@ -1789,7 +1972,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
       if (action === 'touch_active') {
         throw { response: { status: 400 } };
       }
-      return { status: 200, data: { ok: true } } as never;
+      return createSessionTurnMutationAppliedHttpResponse(body as SessionTurnMutationV1) as never;
     });
     sessionSocketStub = createApiSessionSocketStub({
       connected: false,
@@ -1891,21 +2074,38 @@ describe('ApiSessionClient durable mutation outbox', () => {
   it('routes durable runtime activity field mutations through the public projection socket event', async () => {
     const deliveredEvents: Array<{ event: string; payload: unknown }> = [];
     sessionSocketStub = createApiSessionSocketStub({
-      connected: true,
+      connected: false,
       emitWithAck: async (event: string, payload: unknown) => {
         deliveredEvents.push({ event, payload });
-        if (event === 'runtime-activity-snapshot') {
+        if (event === 'session-runtime-activity-snapshot') {
+          const request = payload as {
+            sessionId: string;
+            mutationId: string;
+            snapshot: {
+              state: 'active' | 'idle' | 'unknown';
+              activeCount: number;
+            };
+          };
           return {
-            result: 'success',
-            didWrite: true,
-            runtimeActivityState: 'active',
-            runtimeActivityActiveCount: 1,
-            runtimeActivityObservedAt: 1_000,
-            runtimeActivityRevision: 2,
+            status: 'applied',
+            sessionId: request.sessionId,
+            mutationId: request.mutationId,
+            projection: {
+              state: request.snapshot.state,
+              activeCount: request.snapshot.activeCount,
+              observedAt: 1_000,
+              revision: 2,
+            },
           };
         }
         if (event === 'update-metadata') {
           throw new Error('runtime.activity must not be delivered through metadata');
+        }
+        if (event === 'session-runtime-activity-close') {
+          return {
+            status: 'closed',
+            sessionId: 's-runtime-activity',
+          };
         }
         return { ok: true };
       },
@@ -1915,13 +2115,19 @@ describe('ApiSessionClient durable mutation outbox', () => {
     const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-runtime-activity' }));
     await drainAsyncWork();
-    await (
-      client as unknown as {
-        durableMutationOutbox: {
-          setSessionSyncPendingInputServerContract: (result: ReturnType<typeof serverContract>) => Promise<void>;
-        };
-      }
-    ).durableMutationOutbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+    sessionSocketStub.connected = true;
+    const currentServerContract = {
+      ...serverContract('session_sync_v3_publisher_authority_check_v1'),
+      socket: sessionSocketStub,
+    };
+    const clientInternals = client as unknown as {
+      sessionSyncPendingInputServerContractResult: typeof currentServerContract;
+      durableMutationOutbox: {
+        setSessionSyncPendingInputServerContract: (result: typeof currentServerContract) => Promise<void>;
+      };
+    };
+    clientInternals.sessionSyncPendingInputServerContractResult = currentServerContract;
+    await clientInternals.durableMutationOutbox.setSessionSyncPendingInputServerContract(currentServerContract);
 
     await client.enqueueRegisteredSessionStateFieldMutation({
       v: 1,
@@ -1940,7 +2146,6 @@ describe('ApiSessionClient durable mutation outbox', () => {
       observedAt: 1_000,
     });
 
-    await expect.poll(() => deliveredEvents.map((entry) => entry.event)).toContain('runtime-activity-snapshot');
     await expect.poll(() => client.readRuntimeActivitySnapshotTail()).toMatchObject({
       sequence: 2,
       custody: null,
@@ -1961,18 +2166,18 @@ describe('ApiSessionClient durable mutation outbox', () => {
       },
     });
     expect(deliveredEvents).toContainEqual({
-      event: 'runtime-activity-snapshot',
+      event: 'session-runtime-activity-snapshot',
       payload: {
-        sid: 's-runtime-activity',
-        state: 'active',
-        runtimeActivityActiveCount: 1,
+        sessionId: 's-runtime-activity',
+        mutationId: 'runtime-activity-snapshot:s-runtime-activity',
+        snapshot: { state: 'active', activeCount: 1 },
       },
     });
     expect(deliveredEvents.map((entry) => entry.event)).not.toContain('update-metadata');
 
+    await client.close();
     sessionSocketStub?.close();
     userSocketStub?.close();
-    await client.close();
   });
 
   it('runs terminal turn pending drain even when the durable flush rejects', async () => {
@@ -2034,14 +2239,14 @@ describe('ApiSessionClient durable mutation outbox', () => {
     }
   });
 
-  it('quarantines a provenance-pinned legacy session-end row while delivering a newer normal turn', async () => {
+  it('retains an undelivered semantic session end despite a later local turn begin', async () => {
     const axiosPost = await getAxiosPostMock();
     const postCalls: string[] = [];
     axiosPost.mockImplementation(async (url) => {
       const requestUrl = String(url);
       postCalls.push(requestUrl);
       if (requestUrl.includes('/end')) {
-        throw new Error('superseded session-end should not be delivered');
+        throw new Error('session-end delivery unavailable');
       }
       return { status: 200, data: { ok: true } } as never;
     });
@@ -2057,7 +2262,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
     const staleEnd = {
       v: 1 as const,
       sessionId: 's1',
-      mutationId: 'legacy-session-end',
+      mutationId: 'pending-session-end',
       source: 'session_end' as const,
       observedAt: 1_000,
     };
@@ -2096,15 +2301,29 @@ describe('ApiSessionClient durable mutation outbox', () => {
       requestReconnect: () => {},
     });
 
-    await expect.poll(() => postCalls.some((url) => url.includes('/turns/mutations'))).toBe(true);
-    expect(postCalls.some((url) => url.includes('/end'))).toBe(false);
-    await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
-    await expect.poll(() => readPersistedOutboxDeadLetters('s1')).toEqual([
-      expect.objectContaining({
-        mutationId: 'legacy-session-end',
-        reason: 'invalid_runtime_custody_mutation',
-      }),
+    await expect.poll(() => postCalls.some((url) => url.includes('/end'))).toBe(true);
+    await outbox.enqueueSessionEnd({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'later-session-end',
+      source: 'session_end',
+      observedAt: 3_000,
+    });
+    await expect.poll(async () => (
+      await readPersistedOutboxMutations('s1')
+    ).map((mutation) => (
+      typeof mutation === 'object'
+      && mutation !== null
+      && 'mutationId' in mutation
+      && typeof mutation.mutationId === 'string'
+        ? mutation.mutationId
+        : null
+    ))).toEqual([
+      'pending-session-end',
+      'begin-new',
+      'later-session-end',
     ]);
+    await expect(readPersistedOutboxDeadLetters('s1')).resolves.toEqual([]);
     await outbox.close();
   });
 
@@ -2112,25 +2331,35 @@ describe('ApiSessionClient durable mutation outbox', () => {
     process.env.HAPPIER_SESSION_MUTATION_OUTBOX_DELIVERY_CONCURRENCY = '1';
     process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
     process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
-    const axiosPost = await getAxiosPostMock();
     const releases: Array<() => void> = [];
     const startedUrls: string[] = [];
     let activeDeliveries = 0;
     let maxActiveDeliveries = 0;
-    axiosPost.mockImplementation(async (url) => {
-      startedUrls.push(String(url));
-      activeDeliveries += 1;
-      maxActiveDeliveries = Math.max(maxActiveDeliveries, activeDeliveries);
-      await new Promise<void>((resolve) => {
-        releases.push(resolve);
-      });
-      activeDeliveries -= 1;
-      return { status: 200, data: { ok: true } } as never;
-    });
     sessionSocketStub = createApiSessionSocketStub({
-      connected: false,
-      emitWithAck: async () => {
-        throw new Error('socket emit should not be reached while disconnected');
+      connected: true,
+      emitWithAck: async (event, payload) => {
+        startedUrls.push(event);
+        activeDeliveries += 1;
+        maxActiveDeliveries = Math.max(maxActiveDeliveries, activeDeliveries);
+        await new Promise<void>((resolve) => {
+          releases.push(resolve);
+        });
+        activeDeliveries -= 1;
+        const localId = typeof payload === 'object'
+          && payload !== null
+          && 'localId' in payload
+          && typeof payload.localId === 'string'
+          ? payload.localId
+          : null;
+        return {
+          ok: true,
+          status: 'observed',
+          id: `message-${startedUrls.length}`,
+          seq: startedUrls.length,
+          localId,
+          didWrite: true,
+          ingestedAt: Date.now(),
+        };
       },
     });
 
@@ -2151,16 +2380,24 @@ describe('ApiSessionClient durable mutation outbox', () => {
     const outbox1 = createRuntimeSessionClientDurableMutationOutbox({
       token: 'tok',
       sessionId: 's1',
+      flushOnReady: false,
+      initiallyActive: false,
       getSocket: () => sessionSocketStub,
       requestReconnect: () => {},
     });
     const outbox2 = createRuntimeSessionClientDurableMutationOutbox({
       token: 'tok',
       sessionId: 's2',
+      flushOnReady: false,
+      initiallyActive: false,
       getSocket: () => sessionSocketStub,
       requestReconnect: () => {},
     });
-    const flushes = [outbox1.flush('connect'), outbox2.flush('connect')];
+    await Promise.all([
+      outbox1.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1')),
+      outbox2.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1')),
+    ]);
+    const flushes = [outbox1.activateDelivery(), outbox2.activateDelivery()];
 
     try {
       await waitForAsyncCondition(async () => startedUrls.length >= 1);
@@ -2247,9 +2484,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
           v: 1,
           sessionId: 's1',
           mutationId: 'mutation-begin',
-          fieldId: 'runtime.workState',
-          deliveryClass: 'durable_required',
-          op: { kind: 'set', value: { v: 1, backendId: 'codex-app-server', updatedAt: 100, items: [] } },
+          fieldId: 'display.title',
+          deliveryClass: 'durable_best_effort',
+          op: { kind: 'set', value: 'Retry-exhaustible prerequisite' },
           source: 'runtime',
           observedAt: 100,
         },
@@ -2340,9 +2577,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
         v: 1,
         sessionId: 's1',
         mutationId: 'mutation-prerequisite',
-        fieldId: 'runtime.workState',
-        deliveryClass: 'durable_required',
-        op: { kind: 'set', value: { v: 1, backendId: 'codex-app-server', updatedAt: 100, items: [] } },
+        fieldId: 'display.title',
+        deliveryClass: 'durable_best_effort',
+        op: { kind: 'set', value: 'Retry-exhaustible prerequisite' },
         source: 'runtime',
         observedAt: 100,
       },
@@ -2416,15 +2653,24 @@ describe('ApiSessionClient durable mutation outbox', () => {
       },
     });
 
-    await waitForAsyncCondition(async () => (
-      (await readPersistedOutboxDeadLetters('s1'))
-        .some((entry) => (
+    await expect.poll(async () => {
+      const [deadLetters, queuedMutationCount] = await Promise.all([
+        readPersistedOutboxDeadLetters('s1'),
+        readPersistedOutboxMutationCount('s1'),
+      ]);
+      return {
+        queuedMutationCount,
+        hasFailedPrerequisiteDeadLetter: deadLetters.some((entry) => (
           Boolean(entry)
           && typeof entry === 'object'
           && (entry as Record<string, unknown>).mutationId === 'field-after-dead-prerequisite'
           && (entry as Record<string, unknown>).reason === 'failed_prerequisite'
-        ))
-    ));
+        )),
+      };
+    }, { timeout: 10_000 }).toEqual({
+      queuedMutationCount: 0,
+      hasFailedPrerequisiteDeadLetter: true,
+    });
 
     expect(deliveredFields).toEqual([]);
     await expect(readPersistedOutboxMutationCount('s1')).resolves.toBe(0);
@@ -2561,9 +2807,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
           v: 1,
           sessionId: 's1',
           mutationId: 'terminal-prerequisite',
-          fieldId: 'runtime.workState',
-          deliveryClass: 'durable_required',
-          op: { kind: 'set', value: { v: 1, backendId: 'codex-app-server', updatedAt: 100, items: [] } },
+          fieldId: 'display.title',
+          deliveryClass: 'durable_best_effort',
+          op: { kind: 'set', value: 'Retry-exhaustible prerequisite' },
           source: 'runtime',
           observedAt: 100,
         },

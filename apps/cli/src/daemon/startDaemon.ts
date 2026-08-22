@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
+import { ensureSessionMachineAccessKeyBinding } from '@/api/session/ensureSessionMachineAccessKeyBinding';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { TrackedSession } from './types';
@@ -13,16 +14,22 @@ import { configuration } from '@/configuration';
 import { stopCaffeinate } from '@/integrations/caffeinate';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
-import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
+import {
+  buildHappyCliSubprocessLaunchSpec,
+  pruneHappyCliRunnerSnapshots,
+} from '@/utils/spawnHappyCLI';
 import { projectPath } from '@/projectPath';
 import {
-  writeDaemonState,
   acquireDaemonLock,
+  clearDaemonStateForLockOwner,
   releaseDaemonLock,
-  readCredentials,
+  readStoredCredentials,
+  type DaemonStateOwner,
+  writeDaemonStateForLockOwner,
 } from '@/persistence';
 
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
+import { resolveLiveRunnerSnapshotFingerprints } from './sessionRunnerRuntime/resolveLiveRunnerSnapshotFingerprints';
 import { createDefaultTerminalHostAdapterInventory } from '@/integrations/terminal/host/defaultAdapters';
 import { publishOrphanedStartupSessionEnds } from './sessions/publishOrphanedStartupSessionEnds';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
@@ -34,6 +41,7 @@ import { initialMachineMetadata } from './machine/metadata';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
 import { createBeforeShutdownDrain } from './lifecycle/createBeforeShutdownDrain';
 import { startDaemonRuntimeBootstrap } from './startup/startDaemonRuntimeBootstrap';
+import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { migrateTrackedSessionProcessesOutOfDaemonServiceCgroup } from './platform/linux/migrateTrackedSessionsOutOfDaemonServiceCgroup';
 import { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 export { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
@@ -41,9 +49,11 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract
 import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
 import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
 import { resolveDaemonDiagnosticSubsystemGates } from './startup/diagnosticSubsystemGates';
+import { createDaemonEventLoopStallMonitor } from './diagnostics/daemonEventLoopStallMonitor';
 import { ensureDaemonStartupOwnership } from './startup/ensureDaemonStartupOwnership';
 import { startDaemonMachineRegistrationRuntime } from './startup/startDaemonMachineRegistrationRuntime';
 import { createDaemonCleanupAndShutdown } from './startup/createDaemonCleanupAndShutdown';
+import { releaseDaemonOwnershipAfterFatal } from './lifecycle/cleanupAndShutdown';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
 import { startVoiceInferenceWorker, type VoiceInferenceWorkerHandle } from './voiceInference/voiceInferenceWorker';
@@ -55,19 +65,25 @@ import type { DaemonServerWorkScheduler } from './serverWork';
 import type { ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
 import {
+  ConnectedServiceBindingsV1Schema,
   createProviderErrorV1,
+  readServerEnabledBit,
 } from '@happier-dev/protocol';
+import { readOrCreateInstallationIdentity } from './identity/store';
+import {
+  startPluginWebhookDaemonWorkerV1,
+  type PluginWebhookDaemonWorkerHandleV1,
+} from '@/plugins/runtime/webhooks/pluginWebhookDaemonWorker';
+import { attachPluginWebhookDaemonWakeV1 } from '@/plugins/runtime/webhooks/pluginWebhookDaemonWake';
 import { resolveDaemonServiceLabelFromEnv, resolveDaemonTakeoverRequestedFromEnv, resolveDaemonStartupSourceFromEnv } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { DaemonOwnershipConflictError } from '@/daemon/ownership/DaemonOwnershipConflictError';
 import { resolveDaemonOwnershipConflictExitCode } from '@/daemon/ownership/resolveDaemonOwnershipConflictExitCode';
-import { setRespawnDescriptorEncryptionMaterialForRestore } from './reattach';
 import {
   startDaemonSessionControlRuntime,
-  type ProviderManagedLocalServicesOwner,
+  type ProviderManagedCatalogRuntimeOwner,
 } from './startup/startDaemonSessionControlRuntime';
 import { prepareDaemonBootstrapContext } from './startup/prepareDaemonBootstrapContext';
 import { createDaemonMachineBootstrapRuntime } from './startup/createDaemonMachineBootstrapRuntime';
-import { stopManagedServersOnDaemonShutdownBestEffort } from './managedServers/stopManagedServersOnDaemonShutdown';
 import { createSshTunnelSupervisor } from './ssh/tunnels';
 import { createConnectedServiceGroupHomeCleanupScheduler } from './connectedServices/homes/createConnectedServiceGroupHomeCleanupScheduler';
 import { createConnectedServiceMaterializedHomeCleanupScheduler } from './connectedServices/materialize/cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
@@ -79,11 +95,19 @@ import { createPersistedTakeoverAdmissionWaiter } from './spawn/persistedTakeove
 import type {
   ExternalSessionPersistedTakeoverAdmissionOwner,
 } from '@/session/actions/externalSessions/persistedTakeoverAdmission';
+import type {
+  ExternalSessionPluginAdmissionOwner,
+} from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
 import type { LocalServiceInventoryRoutes } from './local/services/inventory/routes';
 import { createMachineLiveStreamCaptureRegistry } from './peer/mediation/stream';
 import { createSimulatorInputLeaseManager } from './devices/simulator/lease';
+import type {
+  AgentExternalSessionsManagedEndpointReadHost,
+} from '@/session/external/agentExternalSessionsInvocation';
+import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createServerUrlServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
 import { createDaemonPeerMediationObservabilityRuntime } from './machine/peerMediationObservabilityRuntime';
+import { createDaemonSessionMutationCustody } from './connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import { installPeerMediationObservabilityRuntimeActionContextProvider } from './peer/mediation/observability/runtimeActionContextProvider';
 import {
   requestDaemonSelfRestartWithLockHandoff,
@@ -91,11 +115,24 @@ import {
 } from './lifecycle/requestDaemonSelfRestartWithLockHandoff';
 import { readDaemonRestartVerifyPollMs, readDaemonRestartVerifyTimeoutMs } from './startupWaitDefaults';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { DaemonPluginChangeOwner } from '@/plugins/daemon/changeService';
 import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
+import { DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY } from '@/plugins/runtime/context/daemonDatabaseLimitsPolicy';
+import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
+import { createDaemonPluginRegistryProjectionInvalidation } from './pluginRegistryProjectionInvalidation';
+import { createExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import { resolveConnectedServiceQuotaFetcherDescriptors } from '@/plugins/projection/registry/connectedServiceQuotaFetchers';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
+import { createManagedProviderOperationAuthority } from './connectedServices/purposeBindings/managedProviderOperationAuthority';
+import { createConnectedAccountRequestAuthSubjectRegistry } from './connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import {
+  createCurrentRuntimeProviderOperationsSource,
+  type RuntimeProviderOperationsProducer,
+} from '@/providers/runtimeServices';
 import { createConnectedAccountDaemonRuntime } from './connectedServices/ConnectedAccountDaemonRuntime';
 import {
   createActiveAccountSettingsConnectedAccountSecrets,
@@ -133,7 +170,15 @@ export function resolveDaemonRuntimeId(processEnv: NodeJS.ProcessEnv = process.e
   return inheritedRuntimeId || randomUUID();
 }
 
-export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}): Promise<void> {
+function resolveDaemonPluginRecoveryRequestedFromEnv(
+  processEnv: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return String(processEnv.HAPPIER_DAEMON_PLUGIN_RECOVERY ?? '').trim() === '1';
+}
+
+export async function startDaemon(
+  options: Readonly<{ takeover?: boolean; pluginRecovery?: boolean }> = {},
+): Promise<void> {
   // We don't have cleanup function at the time of server construction
   // Control flow is:
   // 1. Create promise that will resolve when shutdown is requested
@@ -151,10 +196,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
   const { waitForAuthEnabled, waitForAuthTimeoutMs } = resolveWaitForAuthConfig(process.env);
 
   let daemonLockHandle: Awaited<ReturnType<typeof acquireDaemonLock>> = null;
+  let daemonStateOwner: DaemonStateOwner | null = null;
   const runtimeId = resolveDaemonRuntimeId(process.env);
   const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
   const serviceLabel = resolveDaemonServiceLabelFromEnv(process.env);
   const takeoverRequested = options.takeover ?? resolveDaemonTakeoverRequestedFromEnv(process.env);
+  const pluginRecoveryRequested = options.pluginRecovery
+    ?? resolveDaemonPluginRecoveryRequestedFromEnv(process.env);
+  if (pluginRecoveryRequested) {
+    logger.warn(
+      '[PLUGIN RUNTIME] Recovery startup is skipping externally installed plugin activation; disable, remove, or repair the faulty plugin before a normal restart.',
+    );
+  }
   const publicReleaseChannel = getReleaseRingCatalogEntry(configuration.publicReleaseRing)
     .publicLabel as NonNullable<DaemonState['publicReleaseChannel']>;
 
@@ -173,7 +226,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       waitForAuthEnabled,
       waitForAuthTimeoutMs,
       credentialsPath: configuration.privateKeyFile,
-      readCredentials,
+      readCredentials: readStoredCredentials,
       acquireDaemonLock: () => acquireDaemonLock(5, 200),
       releaseDaemonLock,
       resolvesWhenShutdownRequested,
@@ -200,6 +253,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     const metadataForRegistration: MachineMetadata = bootstrapContext.metadataForRegistration;
     let preflightMachineRegistration = bootstrapContext.preflightMachineRegistration;
     let machineId = bootstrapContext.machineId;
+    const deviceLocalSecretStorage = bootstrapContext.deviceLocalSecretStorage;
 
     let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
     let connectedServiceRefreshLoopHandle: Readonly<{
@@ -211,8 +265,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
     let daemonServerWorkScheduler: DaemonServerWorkScheduler | null = null;
     let apiMachineForSessions: ApiMachineClient | null = null;
+    const eventLoopStallMonitor = createDaemonEventLoopStallMonitor({
+      getActiveRpcOperations: () =>
+        apiMachineForSessions?.getActiveRpcHandlerExecutions() ?? [],
+      warn: (message, data) => logger.warn(message, data),
+    });
+    eventLoopStallMonitor.start();
     let localServiceInventoryRoutes: Pick<LocalServiceInventoryRoutes, 'getSnapshot'> | null = null;
-    let providerManagedLocalServicesOwner: ProviderManagedLocalServicesOwner | null = null;
+    let providerManagedCatalogRuntimeOwner: ProviderManagedCatalogRuntimeOwner | null = null;
     const persistedTakeoverAdmissionWaiter =
       createPersistedTakeoverAdmissionWaiter();
     let persistedTakeoverAdmissionOwner:
@@ -280,14 +340,69 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     let automationWorker: AutomationWorkerHandle | null = null;
     let memoryWorker: MemoryWorkerHandle | null = null;
     let voiceInferenceWorker: VoiceInferenceWorkerHandle | null = null;
+    let pluginWebhookWorker: PluginWebhookDaemonWorkerHandleV1 | null = null;
+    let pluginWebhookWakeCleanup: (() => void) | null = null;
     let apiMachine: ApiMachineClient | null = null;
-    let daemonUsageLimitRecoveryMutationCustody: Readonly<{
-      bindRecoveredJournals(sessionIds: readonly string[]): Promise<Readonly<{
-        boundSessionIds: readonly string[];
-        retainedSessionIds: readonly string[];
-      }>>;
-      close(): Promise<void>;
-    }> | null = null;
+    let providerOperationsProducer: RuntimeProviderOperationsProducer | null = null;
+    let externalSessionPluginAdmissionOwner:
+      ExternalSessionPluginAdmissionOwner | null = null;
+    const pluginAdmissionOwner: ExternalSessionPluginAdmissionOwner =
+      Object.freeze({
+        async materializeStart(input) {
+          const start = externalSessionPluginAdmissionOwner?.materializeStart;
+          if (!start) {
+            return {
+              ok: false,
+              error: {
+                code: 'source_unavailable',
+                message: 'External-session materialization is unavailable.',
+              },
+            };
+          }
+          return await start(input);
+        },
+        async takeoverStart(input, context) {
+          const start = externalSessionPluginAdmissionOwner?.takeoverStart;
+          if (!start) {
+            return {
+              ok: false,
+              error: {
+                code: 'source_unavailable',
+                message: 'External-session takeover is unavailable.',
+              },
+            };
+          }
+          return await start(input, context);
+        },
+        async hookManagementAction(actionId, input, options) {
+          const execute =
+            externalSessionPluginAdmissionOwner?.hookManagementAction;
+          if (!execute) {
+            return {
+              ok: false,
+              errorCode: 'unsupported_action',
+              error: `unsupported_action:${actionId}`,
+            };
+          }
+          return await execute(actionId, input, options);
+        },
+      });
+    const providerOperationsSource =
+      createCurrentRuntimeProviderOperationsSource(
+        () => providerOperationsProducer,
+      );
+    let resolveInitialPluginRegistryPublished!: () => void;
+    const initialPluginRegistryPublished = new Promise<void>((resolve) => {
+      resolveInitialPluginRegistryPublished = resolve;
+    });
+    let resolveMachineProviderBindingSettled!: () => void;
+    const machineProviderBindingSettled = new Promise<void>((resolve) => {
+      resolveMachineProviderBindingSettled = resolve;
+    });
+    const daemonSessionMutationCustody = createDaemonSessionMutationCustody({ credentials });
+    let cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop = async (
+      _input: Readonly<{ sessionId: string }>,
+    ): Promise<unknown> => null;
     let machineConnectionStateCleanup: (() => void) | null = null;
     let stopPeerMediationLoopbackServer: () => Promise<void> = async () => {};
     let shutdownInitiated = false;
@@ -296,6 +411,25 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     const isDaemonQuiescing = (): boolean => (
       shutdownInitiated || pluginChangeService?.isQuiescing() === true
     );
+    const pluginRegistryProjectionInvalidation =
+      createDaemonPluginRegistryProjectionInvalidation({
+        getApiMachine: () => apiMachine,
+        isDaemonQuiescing,
+        onPublicationFailure: (error) => {
+          logger.warn('[DAEMON RUN] Failed to publish durable plugin registry invalidation', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
+      });
+    const publishDaemonStateForCurrentOwner = (
+      state: Parameters<typeof writeDaemonStateForLockOwner>[1],
+    ): boolean => {
+      const published = !isDaemonQuiescing()
+      && daemonLockHandle !== null
+      && writeDaemonStateForLockOwner(daemonLockHandle, state);
+      if (published) daemonStateOwner = state;
+      return published;
+    };
     let resumeQuiescedMachineRegistration = (): void => {};
     let resumeQuiescedMachineConnectionPublications = async (): Promise<void> => {};
     let resumeQuiescedMachineSyncStartup = async (): Promise<void> => {};
@@ -308,6 +442,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       return {
         resume: async () => {
           await quiescence.resume();
+          pluginRegistryProjectionInvalidation.resume();
           resumeQuiescedMachineRegistration();
           await resumeQuiescedMachineConnectionPublications();
           try {
@@ -357,6 +492,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           'startup_retirement_incomplete:exit_cleanup_incomplete',
       }),
       drainBackgroundServerWork: async () => {
+        pluginWebhookWakeCleanup?.();
+        pluginWebhookWakeCleanup = null;
+        await pluginWebhookWorker?.stop();
+        pluginWebhookWorker = null;
         await pluginChangeService?.shutdown();
         pluginChangeService = null;
         if (connectedServiceMaterializedHomeCleanupInterval) {
@@ -392,7 +531,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     const sshTunnelSupervisor = createSshTunnelSupervisor();
     await sshTunnelSupervisor.adoptPersistedTunnels();
 
-    setRespawnDescriptorEncryptionMaterialForRestore(credentials.encryption ?? null);
     let orphanedDeadDaemonSessions: Awaited<
       ReturnType<typeof reattachTrackedSessionsFromMarkers>
     >['orphanedDeadDaemonSessions'] = [];
@@ -400,9 +538,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       Awaited<ReturnType<typeof reattachTrackedSessionsFromMarkers>>['disconnectedTerminalHostCandidates']
     > = [];
     let unresolvedTerminalHostSessionIds: ReadonlyArray<string> = [];
-    let managedProviderRecoveryCandidates: NonNullable<
-      Awaited<ReturnType<typeof reattachTrackedSessionsFromMarkers>>['managedProviderRecoveryCandidates']
-    > = [];
     let terminalHostAdapterInventoryPromise: ReturnType<typeof createDefaultTerminalHostAdapterInventory> | null = null;
     const loadTerminalHostAdapters = async () => {
       terminalHostAdapterInventoryPromise ??= createDefaultTerminalHostAdapterInventory({
@@ -411,30 +546,69 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       });
       return (await terminalHostAdapterInventoryPromise).adapters;
     };
-    try {
-      const startupReattachResult = await reattachTrackedSessionsFromMarkers({
-        pidToTrackedSession,
-        credentials,
-        loadTerminalHostAdapters,
-      });
-      orphanedDeadDaemonSessions = startupReattachResult.orphanedDeadDaemonSessions;
-      disconnectedTerminalHostCandidates = startupReattachResult.disconnectedTerminalHostCandidates ?? [];
-      unresolvedTerminalHostSessionIds = startupReattachResult.unresolvedTerminalHostSessionIds ?? [];
-      managedProviderRecoveryCandidates =
-        startupReattachResult.managedProviderRecoveryCandidates ?? [];
-      if (process.platform === 'linux' && startupSource === 'background-service') {
-        const migratedTrackedSessionProcesses = await migrateTrackedSessionProcessesOutOfDaemonServiceCgroup({
-          trackedSessions: pidToTrackedSession.values(),
-          daemonPid: process.pid,
-        });
-        if (migratedTrackedSessionProcesses.length > 0) {
-          logger.debug('[DAEMON RUN] Moved reattached session runner process(es) out of the daemon service cgroup', {
-            migrations: migratedTrackedSessionProcesses,
-          });
-        }
+    const startupReattachResult = await reattachTrackedSessionsFromMarkers({
+      pidToTrackedSession,
+      credentials,
+      deviceLocalSecretStorage,
+      loadTerminalHostAdapters,
+    });
+    orphanedDeadDaemonSessions = startupReattachResult.orphanedDeadDaemonSessions;
+    disconnectedTerminalHostCandidates = startupReattachResult.disconnectedTerminalHostCandidates ?? [];
+    unresolvedTerminalHostSessionIds = startupReattachResult.unresolvedTerminalHostSessionIds ?? [];
+    const pendingSessionMachineAccessBindingIds = new Set(startupReattachResult.recoveredLiveSessionIds ?? []);
+    let sessionMachineAccessBindingReconcileInFlight: Promise<void> | null = null;
+    const reconcileSessionMachineAccessBindings = async (): Promise<void> => {
+      if (!apiMachineForSessions || pendingSessionMachineAccessBindingIds.size === 0) return;
+      if (sessionMachineAccessBindingReconcileInFlight) {
+        await sessionMachineAccessBindingReconcileInFlight;
+        if (!apiMachineForSessions || pendingSessionMachineAccessBindingIds.size === 0) return;
       }
-    } finally {
-      setRespawnDescriptorEncryptionMaterialForRestore(null);
+
+      sessionMachineAccessBindingReconcileInFlight = (async () => {
+        const liveSessionIds = new Set(
+          Array.from(pidToTrackedSession.values())
+            .map((tracked) => tracked.happySessionId?.trim())
+            .filter((sessionId): sessionId is string => Boolean(sessionId)),
+        );
+        for (const sessionId of pendingSessionMachineAccessBindingIds) {
+          if (!liveSessionIds.has(sessionId)) {
+            pendingSessionMachineAccessBindingIds.delete(sessionId);
+            continue;
+          }
+          try {
+            await ensureSessionMachineAccessKeyBinding({
+              serverUrl: configuration.apiServerUrl,
+              token: credentials.token,
+              sessionId,
+              machineId,
+            });
+            pendingSessionMachineAccessBindingIds.delete(sessionId);
+          } catch (error) {
+            logger.warn('[DAEMON RUN] Failed to reconcile recovered session machine control; will retry on reconnect', {
+              sessionId,
+              machineId,
+              error: serializeAxiosErrorForLog(error),
+            });
+          }
+        }
+      })().finally(() => {
+        sessionMachineAccessBindingReconcileInFlight = null;
+      });
+      await sessionMachineAccessBindingReconcileInFlight;
+    };
+    pruneHappyCliRunnerSnapshots(
+      resolveLiveRunnerSnapshotFingerprints(pidToTrackedSession.values()),
+    );
+    if (process.platform === 'linux' && startupSource === 'background-service') {
+      const migratedTrackedSessionProcesses = await migrateTrackedSessionProcessesOutOfDaemonServiceCgroup({
+        trackedSessions: pidToTrackedSession.values(),
+        daemonPid: process.pid,
+      });
+      if (migratedTrackedSessionProcesses.length > 0) {
+        logger.debug('[DAEMON RUN] Moved reattached session runner process(es) out of the daemon service cgroup', {
+          migrations: migratedTrackedSessionProcesses,
+        });
+      }
     }
 
     const connectedServiceGroupHomeCleanupScheduler = createConnectedServiceGroupHomeCleanupScheduler({
@@ -519,6 +693,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       pidToAwaiter,
       spawnResourceCleanupByPid,
       sessionAttachCleanupByPid,
+      deviceLocalSecretStorage,
       onTrackedSessionReady: async (tracked) => {
         const sessionId = typeof tracked.happySessionId === 'string' ? tracked.happySessionId.trim() : '';
         if (!sessionId) return;
@@ -579,16 +754,20 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             ?? null,
         legacyCredentialApi: api,
         secrets: createActiveAccountSettingsConnectedAccountSecrets(),
-        attemptTransactions:
-          createQualifiedConnectedAccountAttemptTransactionAdapters({
-            credentials,
-          }),
+        ...(credentials.encryption
+          ? {
+            attemptTransactions:
+              createQualifiedConnectedAccountAttemptTransactionAdapters({
+                credentials,
+              }),
+          }
+          : {}),
       });
     const establishedConnectedAccountRuntimeOwner =
       createQualifiedConnectedAccountEstablishedRuntimeOwner({
         reloadController: pluginReloadController,
         credentials,
-        getAccountEncryptionMode: () => api.getAccountEncryptionMode(),
+        getAccountEncryptionMode: (signal) => api.getAccountEncryptionMode({ signal }),
         configuration: connectedAccountPersistence.configuration,
       });
     const revisionedLegacyConnectedAccountMaterializationOwner =
@@ -618,12 +797,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         resolveQualifiedConnectedAccountAtomicV4Negotiation(
           serverFeaturesSnapshotStore.getSnapshot(),
         ),
+      resolveConnectedAccountEndpoints: async ({ account, signal }) =>
+        await establishedConnectedAccountRuntimeOwner.readConfiguredEndpoints({
+          account,
+          signal,
+        }),
       qualifiedApi: {
         async listAccounts(service, signal) {
           signal.throwIfAborted();
           const result = await listQualifiedConnectedAccountsV4({
             token: credentials.token,
             service,
+            signal,
           });
           signal.throwIfAborted();
           return result;
@@ -633,6 +818,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           const result = await listQualifiedConnectedAccountGroupsV4({
             token: credentials.token,
             service,
+            signal,
           });
           signal.throwIfAborted();
           return result;
@@ -642,6 +828,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           const result = await readQualifiedConnectedAccountGroupV4({
             token: credentials.token,
             group,
+            signal,
           });
           signal.throwIfAborted();
           return result;
@@ -649,28 +836,136 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       },
       reloadController: pluginReloadController,
     });
+    const connectedAccountRequestAuthRegistry =
+      createConnectedAccountRequestAuthSubjectRegistry();
+    let connectedAccountRequestAuthHttpPort: number | null = null;
+    let managedServiceEndpointReadHost:
+      AgentExternalSessionsManagedEndpointReadHost | null = null;
+    const managedProviderOperationAuthority =
+      createManagedProviderOperationAuthority({
+        materializationBaseDir: join(
+          configuration.happyHomeDir,
+          'providers',
+          'managed-operation-auth',
+        ),
+        purposeBindingOwner: {
+          activatePurposeBindings:
+            connectedAccountPurposeBindingRuntime.activatePurposeBindings,
+        },
+        requestAuthRegistry: connectedAccountRequestAuthRegistry,
+        resolveRequestAuthHttpPort() {
+          if (connectedAccountRequestAuthHttpPort === null) {
+            throw new Error(
+              'connected_account_request_auth_http_port_unavailable',
+            );
+          }
+          return connectedAccountRequestAuthHttpPort;
+        },
+        createRedactionLease: () =>
+          createProviderRedactionLease({ values: [] }),
+      });
     if (!daemonLockHandle) {
       throw new Error('Plugin runtime startup requires exclusive daemon ownership');
     }
+    await warmActiveAccountSettingsSnapshotBestEffort({
+      credentials,
+      logger,
+    });
+    const externalSessionHostOperationOwner =
+      createExternalSessionHostOperationOwner();
+    const resolveCurrentMachineExecutionOriginContext =
+      createCurrentMachineExecutionOriginContextResolver({
+        serverUrl: configuration.serverUrl,
+        resolveCurrentMachineId: () => machineId,
+        timeoutMs: 1_500,
+      });
     const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       happyHomeDir: configuration.happyHomeDir,
+      daemonDatabaseLimits: DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY,
+      resolveCurrentMachineId: () => machineId,
+      resolveComposerMediaStageTransferRpcHandler: () => (
+        apiMachineForSessions?.getPeerMediationMachineRpcHandlerManager() ?? null
+      ),
+      resolveCurrentMachineExecutionOriginContext,
+      resolveSessionResourceAccess: async (input) => {
+        const currentApiMachine = apiMachineForSessions;
+        if (!currentApiMachine) {
+          throw new Error('plugin_resource_session_access_unavailable');
+        }
+        return await currentApiMachine.resolvePluginResourceSessionAccess(input);
+      },
+      // Account Collection client preflight and plugin-facing feature decisions are
+      // both advisory reads of this existing daemon-owned snapshot. Supplying it once
+      // here keeps a single cache/currentness path; the resolved runtime fans it out.
+      resolveServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.getSnapshot(),
       staleCandidateCleanup: 'exclusiveHome',
       reloadController: pluginReloadController,
-      daemonInstanceId: runtimeId,
-      daemonUptimeMs: () => Math.max(0, Math.trunc(process.uptime() * 1_000)),
+      availabilityReporter: createDaemonPluginAvailabilityReporter({
+        credentials,
+        serverFeaturesSnapshotStore,
+        getMachineId: () => machineId,
+      }),
       connectedAccounts: connectedAccountPurposeBindingRuntime.owner,
+      actionFormConnectedAccounts: Object.freeze({
+        resolveBindingIntent:
+          connectedAccountPurposeBindingRuntime.resolveBindingIntent,
+        activatePurposeBindings:
+          connectedAccountPurposeBindingRuntime.activatePurposeBindings,
+      }),
+      providers: providerOperationsSource,
+      onInitialRegistryPublished: resolveInitialPluginRegistryPublished,
+      awaitInitialRuntimeActivation: async () => {
+        await Promise.race([
+          machineProviderBindingSettled,
+          resolvesWhenShutdownRequested.then(() => undefined),
+        ]);
+      },
+      onDurableRegistryApplied:
+        pluginRegistryProjectionInvalidation.onDurableRegistryApplied,
+      managedProviderOperationAuthority,
       qualifiedConnectedAccountEstablishedRuntimeOwner:
         establishedConnectedAccountRuntimeOwner,
       reconcileConnectedAccountPurposePublication:
         connectedAccountPurposeBindingRuntime.reconcileRegistryPublication,
+      runtimeActionExecute: api.createBrowserRuntimeActionExecutor(),
+      managedEndpointRead: async (input) => {
+        const host = managedServiceEndpointReadHost;
+        if (!host) {
+          throw new Error(
+            'Managed server endpoint read owner is unavailable',
+          );
+        }
+        return await host(input);
+      },
+      externalSessionPluginAdmissionOwner: pluginAdmissionOwner,
+      resolveExternalSessionCurrentMachineId: () => machineId,
+      externalSessionHostOperationOwner,
+      externalSessionsActiveServerDir: configuration.activeServerDir,
+      externalSessionsActiveServerId: configuration.activeServerId,
+      ...(pluginRecoveryRequested ? { startupMode: 'pluginRecovery' as const } : {}),
     });
     pluginChangeService = pluginRuntimeOwner.changeService;
-    await pluginRuntimeOwner.initialize();
+    const pluginRuntimeInitialization = pluginRuntimeOwner.initialize();
+    void pluginRuntimeInitialization.catch((error) => {
+      requestShutdown(
+        'exception',
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+    await Promise.race([
+      initialPluginRegistryPublished,
+      pluginRuntimeInitialization.then(() => {
+        throw new Error(
+          'Plugin runtime initialization completed without publishing its initial registry',
+        );
+      }),
+    ]);
     // Publish the restart fence before any spawn admission can reuse a stale
     // process. Physical retirement waits for machine mutation custody below.
     await reconcileAgentRuntimeRestartDisposition({
       trackedSessions: pidToTrackedSession.values(),
       isShuttingDown: isDaemonQuiescing,
+      deferRunnerAuthorityReattach: true,
     });
     const connectedAccountDaemonRuntime = createConnectedAccountDaemonRuntime({
       reloadController: pluginReloadController,
@@ -729,6 +1024,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     machineRpcRouteAttachments.attachConnectedAccountDaemonRuntime(
       connectedAccountDaemonRuntime,
     );
+    machineRpcRouteAttachments.attachConnectedAccountPurposeBindingRuntime(
+      connectedAccountPurposeBindingRuntime,
+    );
     const {
       spawnSession,
       stopSession,
@@ -744,6 +1042,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       requestConnectedServiceRefreshRestartSignal,
       cancelConnectedServiceRuntimeAuthRecovery,
       retryTemporaryThrottleNow,
+      reconcileReattachedConnectedServiceCredentialProjection,
       reconcileConnectedServicesProjection,
       awaitAgentSessionOpen,
       installExternalSessionHostOperations,
@@ -753,8 +1052,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
     } = await startDaemonSessionControlRuntime({
       machineId,
+      externalSessionHostOperationOwner,
       runtimeId,
       credentials,
+      daemonSessionMutationCustody,
+      cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop: async (input) =>
+        await cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop(input),
+      deviceLocalSecretStorage,
       api,
       loadLocalHandoffMetadataByVendorResumeId,
       connectedServicesMaterializationBaseDir,
@@ -775,6 +1079,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           operation: 'request_auth',
         }),
       establishedConnectedAccountRuntimeOwner,
+      connectedAccountRequestAuthRegistry,
+      onConnectedAccountRequestAuthHttpPortReady(port) {
+        connectedAccountRequestAuthHttpPort = port;
+      },
       connectedServiceRuntimeRegistry,
       pidToTrackedSession,
       pidToAwaiter,
@@ -785,8 +1093,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         localServiceInventoryRoutes = routes.localServicesInventory ?? null;
         machineRpcRouteAttachments.attachLocalServicesRoutes(routes);
       },
-      onProviderManagedLocalServicesOwnerReady: (owner) => {
-        providerManagedLocalServicesOwner = owner;
+      onProviderManagedCatalogRuntimeOwnerReady: (owner) => {
+        providerManagedCatalogRuntimeOwner = owner;
+      },
+      onManagedServiceEndpointReadHostReady: (host) => {
+        managedServiceEndpointReadHost = host;
       },
       onLocalServicesPreviewRoutesReady: machineRpcRouteAttachments.attachLocalServicesPreviewRoutes,
       onBrowserControlRoutesReady: machineRpcRouteAttachments.attachBrowserControlRoutes,
@@ -805,8 +1116,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         disconnectedTerminalHostCandidates,
         unresolvedTerminalHostSessionIds,
       },
-      startupManagedProviderRecoveryCandidates:
-        managedProviderRecoveryCandidates,
+      onAlreadyRunningSessionAdopted: async (sessionId) => {
+        pendingSessionMachineAccessBindingIds.add(sessionId);
+        await reconcileSessionMachineAccessBindings();
+      },
       connectedServiceGroupHomeCleanupScheduler,
       connectedServiceMaterializedHomeCleanupScheduler,
       beforeShutdown,
@@ -829,10 +1142,21 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       requestShutdown,
       requestSelfRestart: requestControlServerSelfRestart,
       pluginChangeService,
+      hardRevokeRunningSessionsForGenerationIntegrityFailure:
+        pluginRuntimeOwner
+          .hardRevokeRunningSessionsForGenerationIntegrityFailure,
       resolveManagedPurposeBindingIntent:
         connectedAccountPurposeBindingRuntime.resolveBindingIntent,
       activateSessionPurposeBindings:
         connectedAccountPurposeBindingRuntime.activateSessionPurposeBindings,
+      resolveCurrentSessionPurposeBindingSnapshot:
+        connectedAccountPurposeBindingRuntime
+          .resolveCurrentSessionPurposeBindingSnapshot,
+      resolveCurrentRequestAuthBinding:
+        connectedAccountPurposeBindingRuntime
+          .resolveCurrentRequestAuthBinding,
+      materializeRequestAuthBearer:
+        connectedAccountPurposeBindingRuntime.materializeRequestAuthBearer,
       activatePurposeBindings:
         connectedAccountPurposeBindingRuntime.activatePurposeBindings,
       isShuttingDown: isDaemonQuiescing,
@@ -887,6 +1211,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     const runtimeBootstrap = await startDaemonRuntimeBootstrap({
       api,
       credentials,
+      daemonSessionMutationCustody,
       logger,
       processEnv: process.env,
       controlPort,
@@ -898,6 +1223,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       serviceLabel,
       daemonLogPath: logger.logFilePath,
       controlToken,
+      publishDaemonState: publishDaemonStateForCurrentOwner,
       happyHomeDir: configuration.happyHomeDir,
       activeServerDir: configuration.activeServerDir,
       filesystemAccessPolicy,
@@ -909,6 +1235,30 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         establishedConnectedAccountRuntimeOwner,
       listScheduledQualifiedConnectedAccounts:
         connectedAccountPurposeBindingRuntime.listCoordinatorAccounts,
+      listQualifiedConnectedAccountGroupQuotaTargets:
+        connectedAccountPurposeBindingRuntime.listGroupQuotaTargets,
+      resolveConnectedServiceQualifiedPurposeBindingSnapshot: async ({
+        agentId,
+        connectedServicesBindingsRaw,
+      }) => {
+        const bindings = ConnectedServiceBindingsV1Schema.safeParse(
+          connectedServicesBindingsRaw,
+        );
+        if (!bindings.success) return null;
+        const lease =
+          await acquireAuthoritativePluginRuntimeRegistryLease({
+            happyHomeDir: configuration.happyHomeDir,
+          });
+        try {
+          return resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+            agentId,
+            bindings: bindings.data,
+            contributions: lease.registry.contributes,
+          });
+        } finally {
+          await lease.release();
+        }
+      },
       onQualifiedConnectedAccountCredentialUpdated: () => {
         connectedAccountPurposeBindingRuntime.invalidate();
       },
@@ -943,8 +1293,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       connectedServicePredictiveSwitchGuard,
       connectedServiceRuntimeAuthApplyCapabilityResolver,
       consumeCommittedAuthGroupGeneration,
-      // K3: gated credential-refresh / reconnect restart adapter.
-      requestConnectedServiceRefreshRestartSignal,
       // K2: shared single runtime quota-snapshot store (proactive selection + quotas coordinator).
       connectedServiceRuntimeQuotaSnapshots,
       // Canonical provider-account usage source of truth for quota switching/fanout policy.
@@ -969,6 +1317,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     connectedServiceQuotasCoordinator = runtimeBootstrap.connectedServiceQuotasCoordinator;
     connectedServiceQuotasLoopHandle = runtimeBootstrap.connectedServiceQuotasLoopHandle;
     daemonServerWorkScheduler = runtimeBootstrap.daemonServerWorkScheduler;
+    await reconcileReattachedConnectedServiceCredentialProjection().catch((error) => {
+      logger.debug(
+        '[DAEMON RUN] Failed to reconcile connected-service credential projection after daemon replacement',
+        { error: serializeAxiosErrorForLog(error) },
+      );
+    });
 
     const machineRegistrationRuntime = startDaemonMachineRegistrationRuntime({
       api,
@@ -982,17 +1336,31 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       resolveMachineId: () => machineId,
       setMachineId: (resolvedMachineId) => {
         if (isDaemonQuiescing()) return;
-        machineId = resolvedMachineId;
-        if (fileState.machineId !== resolvedMachineId) {
-          fileState.machineId = resolvedMachineId;
-          writeDaemonState(fileState);
+        if (fileState.machineId === resolvedMachineId) {
+          machineId = resolvedMachineId;
+          return;
         }
+        const nextFileState = {
+          ...fileState,
+          machineId: resolvedMachineId,
+        };
+        if (!publishDaemonStateForCurrentOwner(nextFileState)) {
+          requestShutdown(
+            'exception',
+            'daemon_state_publication_ownership_lost',
+          );
+          return;
+        }
+        fileState.machineId = resolvedMachineId;
+        machineId = resolvedMachineId;
       },
       isShuttingDown: () => shutdownInitiated,
       isQuiescing: isDaemonQuiescing,
       bootstrapRuntime: createDaemonMachineBootstrapRuntime({
         api,
         credentials,
+        daemonSessionMutationCustody,
+        deviceLocalSecretStorage,
         diagnosticSubsystemGates,
         runtimeId,
         publicReleaseChannel,
@@ -1019,7 +1387,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         peerMediationObservabilityEmitter: peerMediationObservabilityRuntime.emitter,
         setDaemonServerWorkOnline: runtimeBootstrap.setDaemonServerWorkOnline,
         onMachineConnectionOnline: async () => {
+          await reconcileSessionMachineAccessBindings();
           await refreshServerFeaturesAndBrowserRouteOwners();
+          pluginRuntimeOwner.reportCurrentAvailability();
           await connectedServiceQuotasCoordinator?.flushInBandQuotaPersistence(0);
         },
         reconcileConnectedServicesProjection: reconcileConnectedServicesProjectionForPluginConsumers,
@@ -1028,14 +1398,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         isShuttingDown: isDaemonQuiescing,
         getServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.getSnapshot(),
         readLocalServiceInventorySnapshot: async () => localServiceInventoryRoutes?.getSnapshot() ?? null,
-        dispatchProviderLocalServicesBridge: async (request) => {
-          if (!providerManagedLocalServicesOwner) return { ok: false, errorCode: 'managed_service_unavailable' };
-          return providerManagedLocalServicesOwner.dispatch(request);
-        },
         managedCatalogRuntime: {
           launch: async (input) => {
-            if (providerManagedLocalServicesOwner) {
-              return providerManagedLocalServicesOwner.managedCatalogRuntime.launch(input);
+            if (providerManagedCatalogRuntimeOwner) {
+              return providerManagedCatalogRuntimeOwner.managedCatalogRuntime.launch(input);
             }
             return {
               ok: false,
@@ -1049,25 +1415,17 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         resolveManagedPurposeBindingIntent:
           connectedAccountPurposeBindingRuntime.resolveBindingIntent,
         createAgentCatalogObservation,
-        readManagedLocalServicesSnapshot: async () => providerManagedLocalServicesOwner?.getManagedSnapshot() ?? null,
+        onAutomationWorkerStarted: (worker: AutomationWorkerHandle) => {
+          automationWorker = worker;
+        },
         prepareApiMachineForSessions:
           machineRpcRouteAttachments.prepareApiMachineForSessions,
         persistedTakeoverAdmissionWaiter,
         attachPersistedTakeoverAdmissionOwner,
       }),
       onMachineSyncRuntime: async (machineSyncRuntime) => {
-        apiMachine = machineSyncRuntime.apiMachine;
-        apiMachineForSessions = machineSyncRuntime.apiMachineForSessions;
-        machineRpcRouteAttachments.attachApiMachineForSessions(apiMachineForSessions);
-        automationWorker = machineSyncRuntime.automationWorker;
-        memoryWorker = machineSyncRuntime.memoryWorker;
-        voiceInferenceWorker = machineSyncRuntime.voiceInferenceWorker;
-        daemonConnectivityCoordinator = machineSyncRuntime.daemonConnectivityCoordinator;
-        machineConnectionStateCleanup = machineSyncRuntime.machineConnectionStateCleanup;
-        stopPeerMediationLoopbackServer = machineSyncRuntime.stopPeerMediationLoopbackServer;
-        resumeQuiescedMachineConnectionPublications =
-          machineSyncRuntime.resumeMachineConnectionPublications;
-        daemonUsageLimitRecoveryMutationCustody = machineSyncRuntime.daemonUsageLimitRecoveryMutationCustody;
+        cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop =
+          machineSyncRuntime.cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop;
         let didCompleteMachineSyncStartup = false;
         let machineSyncStartupInFlight: Promise<void> | null = null;
         const completeMachineSyncStartup = async (): Promise<void> => {
@@ -1087,12 +1445,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 
           const operation = (async () => {
             if (machineSyncRuntime.apiMachine) {
-              if (!machineSyncRuntime.daemonUsageLimitRecoveryMutationCustody) {
-                throw new Error('Daemon usage-limit mutation custody is unavailable during journal recovery');
+              const mutationCustody = machineSyncRuntime.daemonSessionMutationCustody;
+              if (!mutationCustody) {
+                throw new Error('Daemon session mutation custody is unavailable during journal recovery');
               }
               const recovery = await machineSyncRuntime.apiMachine.recoverDaemonTerminalSessionMutationJournals({
                 bindUsageLimitRecoveryJournals: (sessionIds) =>
-                  machineSyncRuntime.daemonUsageLimitRecoveryMutationCustody!.bindRecoveredJournals(sessionIds),
+                  mutationCustody.bindRecoveredJournals(sessionIds),
                 isShuttingDown: isDaemonQuiescing,
               });
               if (isDaemonQuiescing()) return;
@@ -1144,8 +1503,82 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }
           }
         };
+        const previousResumeQuiescedMachineSyncStartup = resumeQuiescedMachineSyncStartup;
         resumeQuiescedMachineSyncStartup = completeMachineSyncStartup;
-        await completeMachineSyncStartup();
+        try {
+          await completeMachineSyncStartup();
+        } catch (error) {
+          // This continuation must be present while a lock handoff interrupts
+          // recovery, but a rejected attempt must not remain resumable after
+          // its registration owner retires it.
+          if (resumeQuiescedMachineSyncStartup === completeMachineSyncStartup) {
+            resumeQuiescedMachineSyncStartup = previousResumeQuiescedMachineSyncStartup;
+          }
+          throw error;
+        }
+
+        const attemptedApiMachine = machineSyncRuntime.apiMachine;
+        const attemptedApiMachineForSessions = machineSyncRuntime.apiMachineForSessions;
+        const attemptedProviderOperationsProducer =
+          machineSyncRuntime.providerOperationsProducer;
+        const attemptedExternalSessionPluginAdmissionOwner =
+          machineSyncRuntime.externalSessionPluginAdmissionOwner ?? null;
+        try {
+          apiMachine = attemptedApiMachine;
+          apiMachineForSessions = attemptedApiMachineForSessions;
+          await reconcileSessionMachineAccessBindings();
+          providerOperationsProducer = attemptedProviderOperationsProducer;
+          externalSessionPluginAdmissionOwner =
+            attemptedExternalSessionPluginAdmissionOwner;
+          resolveMachineProviderBindingSettled();
+          await pluginRuntimeInitialization;
+          if (!pluginWebhookWorker) {
+            const installationIdentity = await readOrCreateInstallationIdentity();
+            pluginWebhookWorker = startPluginWebhookDaemonWorkerV1({
+              credentials,
+              machineId: () => machineId,
+              machineInstallationId: installationIdentity.installationId,
+              enabled: () => {
+                const snapshot = serverFeaturesSnapshotStore.getSnapshot();
+                return snapshot?.status === 'ready'
+                  ? readServerEnabledBit(snapshot.features, 'plugins.webhooks') === true
+                  : false;
+              },
+              logger,
+            });
+          }
+          pluginWebhookWakeCleanup?.();
+          pluginWebhookWakeCleanup = attemptedApiMachine
+            ? attachPluginWebhookDaemonWakeV1({
+                apiMachine: attemptedApiMachine,
+                getWorker: () => pluginWebhookWorker,
+              })
+            : null;
+          machineRpcRouteAttachments.attachApiMachineForSessions(apiMachineForSessions);
+          automationWorker = machineSyncRuntime.automationWorker;
+          memoryWorker = machineSyncRuntime.memoryWorker;
+          voiceInferenceWorker = machineSyncRuntime.voiceInferenceWorker;
+          daemonConnectivityCoordinator = machineSyncRuntime.daemonConnectivityCoordinator;
+          machineConnectionStateCleanup = machineSyncRuntime.machineConnectionStateCleanup;
+          stopPeerMediationLoopbackServer = machineSyncRuntime.stopPeerMediationLoopbackServer;
+          resumeQuiescedMachineConnectionPublications =
+            machineSyncRuntime.resumeMachineConnectionPublications;
+        } catch (error) {
+          if (apiMachine === attemptedApiMachine) apiMachine = null;
+          if (apiMachineForSessions === attemptedApiMachineForSessions) {
+            apiMachineForSessions = null;
+          }
+          if (providerOperationsProducer === attemptedProviderOperationsProducer) {
+            providerOperationsProducer = null;
+          }
+          if (
+            externalSessionPluginAdmissionOwner
+            === attemptedExternalSessionPluginAdmissionOwner
+          ) {
+            externalSessionPluginAdmissionOwner = null;
+          }
+          throw error;
+        }
       },
       filesystemAccessPolicy,
       takeoverRequested,
@@ -1173,6 +1606,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       currentCliVersion: configuration.currentCliVersion,
       requestShutdown,
       isShuttingDown: isDaemonQuiescing,
+      writeDaemonStateForCurrentOwner: publishDaemonStateForCurrentOwner,
       requestSelfRestart: async (selfRestartParams) =>
         await requestDaemonSelfRestartWithLockHandoff({
           getCurrentDaemonLockHandle: () => daemonLockHandle,
@@ -1194,6 +1628,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     const cleanupAndShutdown = createDaemonCleanupAndShutdown({
       markShutdownInitiated: () => {
         shutdownInitiated = true;
+        eventLoopStallMonitor.stop();
       },
       processEnv: process.env,
       resolvePositiveIntEnv,
@@ -1203,7 +1638,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       beforeShutdown,
       apiMachine,
       closeDaemonMutationCustody: async () => {
-        await daemonUsageLimitRecoveryMutationCustody?.close();
+        await daemonSessionMutationCustody.close();
       },
       machineConnectionStateCleanup,
       automationWorker,
@@ -1215,18 +1650,19 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         await stopDirectPeerServer();
       },
       stopTailscaleTransferServeLifecycle,
-      stopManagedServersOnShutdown: stopManagedServersOnDaemonShutdownBestEffort,
       stopSshTunnelsOnShutdown: sshTunnelSupervisor.stopAllTunnels,
       stopControlServer,
+      daemonStateOwner: fileState,
       daemonLockHandle,
       releaseDaemonLock,
     });
     await cleanupAndShutdown(shutdownRequest.source, shutdownRequest.errorMessage);
   } catch (error) {
     try {
-      if (daemonLockHandle) {
-        await releaseDaemonLock(daemonLockHandle);
-      }
+      await releaseDaemonOwnershipAfterFatal({
+        daemonLockHandle,
+        daemonStateOwner,
+      });
     } catch {
       // ignore
     }

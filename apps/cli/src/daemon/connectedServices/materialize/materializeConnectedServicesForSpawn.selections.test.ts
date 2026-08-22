@@ -43,6 +43,9 @@ describe('materializeConnectedServicesForSpawn selections', () => {
       materializationKey: 'session-1',
       activeServerDir: '/tmp/server',
       baseDir: '/tmp/base',
+      connectedAccountMaterializationAuthority: {
+        kind: 'legacy_unfenced_one_shot',
+      },
       recordsByServiceId: new Map([['openai-codex', record]]),
       selectionsByServiceId: new Map([
         ['openai-codex', {

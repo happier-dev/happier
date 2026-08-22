@@ -11,6 +11,7 @@ import { createPluginRegistryStateStore } from '@/plugins/store/registry/current
 import { readInstalledPluginCatalogSnapshot } from '@/plugins/projection/catalog/installed';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
+import type { PluginFinalPolicyCurrentGeneration } from '@/plugins/runtime/policy/facts';
 import {
   materializeZipformerVoiceModelPackPluginFixture,
   ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_LOCAL_ID,
@@ -52,8 +53,8 @@ function createDaemonPublicVoiceModelPackRuntime(
       if (!committed) return null;
       return new Map([...committed.generations].map(([pluginId, generation]) => [pluginId, {
         immutableGenerationId: generation.immutableGenerationId,
-        manifestDigest: generation.record.manifestDigest,
-        packageDigest: generation.record.packageDigest,
+        desiredImmutableGenerationId: generation.immutableGenerationId,
+        appliedImmutableGenerationId: generation.immutableGenerationId,
         distribution: generation.installation?.source.distribution ?? 'bundled',
         applied: true,
         selectedAccess: generation.installation?.optionalAccess ?? [],
@@ -118,7 +119,8 @@ async function installZipformerPluginFixture(params: Readonly<{
   const assets = new Map<string, Uint8Array>();
   for (const file of pluginJson.contributes.voiceModelPacks[0]!.manifest.files) {
     const bytes = new TextEncoder().encode(`fixture:${file.path}`);
-    file.url = `https://github.com/happier-dev/happier-assets/releases/download/test/${encodeURIComponent(file.path)}`;
+    const encodedAssetPath = file.path.split('/').map(encodeURIComponent).join('/');
+    file.url = `https://github.com/happier-dev/happier-assets/releases/download/test/${encodedAssetPath}`;
     file.sha256 = createHash('sha256').update(bytes).digest('hex');
     file.sizeBytes = bytes.byteLength;
     assets.set(file.url, bytes);
@@ -278,6 +280,8 @@ describe('daemon public Voice model-pack consumed vertical', () => {
     });
     const blockedDescriptor = blockedEntry.descriptor!;
     const blockedContribution = blockedDescriptor.contribution!;
+    const blockedArtifactBinding = blockedDescriptor.artifactBinding;
+    if (!blockedArtifactBinding) throw new Error('Expected blocked Voice fixture artifact binding');
     await expect(publicModelPacks.acceptLicense({
       qualifiedPackId,
       pluginId: blockedDescriptor.identity!.pluginId,
@@ -287,7 +291,7 @@ describe('daemon public Voice model-pack consumed vertical', () => {
       licenseId: blockedContribution.manifest.license.id,
       licenseSourceUrl: blockedContribution.manifest.license.url,
       licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(blockedContribution.manifest.license.text!),
-      artifactDigest: blockedDescriptor.sourceDigest!,
+      artifactBinding: blockedArtifactBinding,
     })).resolves.toMatchObject({
       key: qualifiedPackId,
       descriptor: expect.objectContaining({ status: 'available' }),
@@ -441,14 +445,14 @@ describe('daemon public Voice model-pack consumed vertical', () => {
     const plugin = snapshot.entries.find((entry) => (
       entry.pluginId === ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_PLUGIN_ID
     ));
-    if (!plugin?.manifestDigest) throw new Error('Expected installed Voice fixture manifest');
+    if (!plugin) throw new Error('Expected installed Voice fixture');
     const committed = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir }));
     const generation = committed?.generations.get(plugin.pluginId);
     if (!generation) throw new Error('Expected committed Voice fixture generation');
-    let admitted = new Map([[plugin.pluginId, {
+    let admitted: ReadonlyMap<string, PluginFinalPolicyCurrentGeneration> = new Map([[plugin.pluginId, {
       immutableGenerationId: generation.immutableGenerationId,
-      manifestDigest: generation.record.manifestDigest,
-      packageDigest: generation.record.packageDigest,
+      desiredImmutableGenerationId: generation.immutableGenerationId,
+      appliedImmutableGenerationId: generation.immutableGenerationId,
       distribution: generation.installation?.source.distribution ?? 'bundled',
       applied: true,
       selectedAccess: generation.installation?.optionalAccess ?? [],
@@ -464,10 +468,10 @@ describe('daemon public Voice model-pack consumed vertical', () => {
       createInstallerHost: createFixtureInstallerHostFactory(assets, () => {
         admitted = new Map([[plugin.pluginId, {
           immutableGenerationId: generation.immutableGenerationId,
-          manifestDigest: generation.record.manifestDigest,
-          packageDigest: `sha256:${'d'.repeat(64)}`,
+          desiredImmutableGenerationId: generation.immutableGenerationId,
+          appliedImmutableGenerationId: null,
           distribution: generation.installation?.source.distribution ?? 'bundled',
-          applied: true,
+          applied: false,
           selectedAccess: generation.installation?.optionalAccess ?? [],
         }]]);
       }),

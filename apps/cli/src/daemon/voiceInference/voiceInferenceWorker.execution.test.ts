@@ -22,6 +22,36 @@ function deferred<T>() {
 }
 
 describe('createVoiceInferenceWorkerExecution streaming lifecycle', () => {
+  it('keeps a healthy runtime ready when a direct TTS result exceeds the IPC output ceiling', async () => {
+    const runtime: VoiceInferenceRuntime = {
+      synthesizeTts: vi.fn(async () => {
+        throw Object.assign(new Error('voice_inference_tts_output_too_large'), { code: 'output_too_large' });
+      }),
+      transcribeAudio: vi.fn(async () => ({ text: 'unused', language: null })),
+    };
+    let diagnostics = createInferenceDiagnostics({ runtimeState: 'ready' });
+    const lifecycle: VoiceInferenceWorkerLifecycleContext = {
+      isStopped: () => false,
+      getDiagnostics: () => diagnostics,
+      setDiagnostics: (next) => { diagnostics = next; },
+      runExclusive: async (_packId, work) => await work(),
+      runLifecycleExclusive: async (_packId, work) => await work(),
+      warmRuntimeForPack: async () => ({ runtime, packDir: '/tmp/pack-1', manifest }),
+    };
+    const execution = createVoiceInferenceWorkerExecution({ lifecycle });
+
+    await expect(execution.synthesizeTts({
+      requestId: 'too-large-output',
+      text: 'hello',
+      packId: 'pack-1',
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    })).rejects.toMatchObject({ code: 'output_too_large' });
+
+    expect(diagnostics.runtimeState).toBe('ready');
+  });
+
   it('settles an already-aborted creation when its lease rejects before running work', async () => {
     const runtime: VoiceInferenceRuntime = {
       synthesizeTts: vi.fn(async () => { throw new Error('unused'); }),

@@ -34,6 +34,7 @@ import {
   type ResolvedConcreteBackendTargetRefs,
 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import { HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceMaterializationIdentityEnv';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 const TERMINAL_MODES = ['plain', 'tmux', 'zellij', 'windows_terminal', 'windows_console'] as const satisfies readonly TerminalMode[];
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = [
@@ -45,10 +46,16 @@ const MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS = 65_536;
 
 type RespawnDescriptorEncryptionMaterial = AccountScopedCryptoMaterial;
 
-const SealedRespawnEnvironmentVariablesSchema = z.object({
-  format: z.literal('account_scoped_v1'),
-  ciphertext: z.string().min(1).max(MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS),
-}).strict();
+const SealedRespawnEnvironmentVariablesSchema = z.discriminatedUnion('format', [
+  z.object({
+    format: z.literal('account_scoped_v1'),
+    ciphertext: z.string().min(1).max(MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS),
+  }).strict(),
+  z.object({
+    format: z.literal('device_local_v1'),
+    ciphertext: z.string().min(1).max(MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS),
+  }).strict(),
+]);
 
 const TerminalTmuxSpawnOptionsSchema: z.ZodType<NonNullable<TerminalSpawnOptions['tmux']>> = z
   .object({
@@ -123,10 +130,22 @@ export function buildTrackedSessionRespawnEnvironmentVariables(params: Readonly<
 
 function sealRespawnEnvironmentVariables(params: Readonly<{
   environmentVariables: Record<string, string> | undefined;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
   randomBytes?: (length: number) => Uint8Array;
 }>): z.infer<typeof SealedRespawnEnvironmentVariablesSchema> | undefined {
-  if (!params.environmentVariables || !params.encryptionMaterial) return undefined;
+  if (!params.environmentVariables) return undefined;
+  if (params.deviceLocalSecretStorage) {
+    return {
+      format: 'device_local_v1',
+      ciphertext: params.deviceLocalSecretStorage.sealJson({
+        purpose: 'session_respawn_environment',
+        value: params.environmentVariables,
+        randomBytes: params.randomBytes,
+      }),
+    };
+  }
+  if (!params.encryptionMaterial) return undefined;
   return {
     format: 'account_scoped_v1',
     ciphertext: sealAccountScopedBlobCiphertext({
@@ -140,8 +159,18 @@ function sealRespawnEnvironmentVariables(params: Readonly<{
 
 function openRespawnEnvironmentVariables(params: Readonly<{
   sealedEnvironmentVariables: z.infer<typeof SealedRespawnEnvironmentVariablesSchema>;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
 }>): Record<string, string> | null {
+  if (params.sealedEnvironmentVariables.format === 'device_local_v1') {
+    if (!params.deviceLocalSecretStorage) return null;
+    const opened = params.deviceLocalSecretStorage.openJson({
+      purpose: 'session_respawn_environment',
+      ciphertext: params.sealedEnvironmentVariables.ciphertext,
+    });
+    const parsed = z.record(z.string(), z.string()).safeParse(opened);
+    return parsed.success ? parsed.data : null;
+  }
   if (!params.encryptionMaterial) return null;
 
   const opened = openAccountScopedBlobCiphertext({
@@ -167,10 +196,17 @@ export function normalizeOwnedMarkerRespawnEnvironmentCiphertext(
     sealedEnvironmentVariables: z.infer<
       typeof SealedRespawnEnvironmentVariablesSchema
     >;
-    encryptionMaterial: RespawnDescriptorEncryptionMaterial;
+    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
+    encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
     randomBytes?: (length: number) => Uint8Array;
   }>,
 ): z.infer<typeof SealedRespawnEnvironmentVariablesSchema> | null {
+  if (params.sealedEnvironmentVariables.format === 'device_local_v1') {
+    return params.deviceLocalSecretStorage
+      ? params.sealedEnvironmentVariables
+      : null;
+  }
+  if (!params.encryptionMaterial) return null;
   const opened = openAccountScopedBlobCiphertext({
     kind: 'session_respawn_environment',
     material: params.encryptionMaterial,
@@ -505,6 +541,7 @@ function normalizeOptionalString(value: unknown): string | undefined {
 export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   spawnOptions: SpawnSessionOptions,
   options?: Readonly<{
+    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
     randomBytes?: (length: number) => Uint8Array;
     vendorResumeId?: string;
@@ -547,6 +584,7 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   }
   const sealedEnvironmentVariables = sealRespawnEnvironmentVariables({
     environmentVariables: persistedEnvironmentVariables,
+    deviceLocalSecretStorage: options?.deviceLocalSecretStorage,
     encryptionMaterial: options?.encryptionMaterial,
     randomBytes: options?.randomBytes,
   });
@@ -600,6 +638,7 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
 export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
   descriptor: SessionRunnerRespawnDescriptorV1,
   options?: Readonly<{
+    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
   }>,
 ): SpawnSessionOptions {
@@ -612,6 +651,7 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
   const openedEnvironmentVariables = descriptor.sealedEnvironmentVariables
     ? openRespawnEnvironmentVariables({
         sealedEnvironmentVariables: descriptor.sealedEnvironmentVariables,
+        deviceLocalSecretStorage: options?.deviceLocalSecretStorage,
         encryptionMaterial: options?.encryptionMaterial,
       })
     : null;

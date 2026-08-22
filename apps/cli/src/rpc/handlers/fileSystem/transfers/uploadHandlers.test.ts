@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { mkdtempSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,6 +13,7 @@ import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
+import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 
 type Handler = (data: any) => Promise<any>;
 type UploadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getUploadSession']>>;
@@ -43,6 +45,7 @@ afterEach(async () => {
     ...stores.map(async (store) => await store.dispose()),
   ]);
   vi.useRealTimers();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -368,6 +371,124 @@ describe('file transfers (upload)', () => {
     ).resolves.toEqual({
       success: false,
       error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+    });
+  });
+
+  it('stages ordered relay chunks through the exact Composer execution target without returning a filesystem path', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-composer-stage-relay-'));
+    const executionTarget = { serverId: 'server-1', machineId: 'machine-1' };
+    const owner = { pluginId: 'com.example.media', localId: 'composer' };
+    const store = createTrackedTransferSessionStore({ ttlMs: 1_000 });
+    const stageStore = createComposerMediaStageStore({
+      rootDirectory: join(workspace, 'composer-media-stages'),
+      executionTarget,
+    });
+    const mgr = createRpcHandlerManager();
+    registerTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      workingDirectory: workspace,
+      store,
+      composerMediaStage: {
+        executionTarget,
+        store: stageStore,
+      },
+    } as Parameters<typeof registerTransferUploadRpcHandlers>[1]);
+
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE);
+    if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
+
+    const content = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00]);
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    const initialized = await init({
+      t: 'composer_media_stage_upload_v1',
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'camera.png',
+      sizeBytes: content.byteLength,
+      sha256,
+    });
+    if (!initialized.success) throw new Error(initialized.error);
+    expect(initialized).toMatchObject({
+      success: true,
+      recipientPublicKeyBase64: expect.any(String),
+    });
+
+    const uploadId = initialized.uploadId as string;
+    const recipientPublicKeyBase64 = initialized.recipientPublicKeyBase64 as string;
+    await expect(chunk(createEncryptedUploadChunkRequest({
+      uploadId,
+      index: 1,
+      payload: content.subarray(8),
+      recipientPublicKeyBase64,
+    }))).resolves.toEqual({ success: false, error: 'Unexpected chunk index' });
+    await expect(chunk(createEncryptedUploadChunkRequest({
+      uploadId,
+      index: 0,
+      payload: content.subarray(0, 8),
+      recipientPublicKeyBase64,
+    }))).resolves.toEqual({ success: true });
+    await expect(chunk(createEncryptedUploadChunkRequest({
+      uploadId,
+      index: 1,
+      payload: content.subarray(8),
+      recipientPublicKeyBase64,
+    }))).resolves.toEqual({ success: true });
+
+    const finalized = await finalize({ uploadId });
+    expect(finalized).toMatchObject({
+      success: true,
+      path: 'Composer media stage',
+      sizeBytes: content.byteLength,
+      sha256,
+      result: {
+        v: 1,
+        executionTarget,
+        owner,
+        mediaKind: 'image',
+        mimeType: 'image/png',
+        name: 'camera.png',
+        sizeBytes: content.byteLength,
+        sha256,
+      },
+    });
+    expect(JSON.stringify(finalized)).not.toContain(workspace);
+  });
+
+  it('forwards the daemon-owned Composer stage target through file-system handler registration', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-composer-stage-registration-'));
+    const executionTarget = { serverId: 'server-1', machineId: 'machine-1' };
+    const stageStore = createComposerMediaStageStore({
+      rootDirectory: join(workspace, 'composer-media-stages'),
+      executionTarget,
+    });
+    const mgr = createRpcHandlerManager();
+    fileSystemRegistrations.push(registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace, {
+      composerMediaStage: {
+        executionTarget,
+        store: stageStore,
+      },
+    } as Parameters<typeof registerFileSystemHandlers>[2]));
+
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
+    if (!init) throw new Error('expected upload init handler');
+
+    const initialized = await init({
+      t: 'composer_media_stage_upload_v1',
+      executionTarget,
+      owner: { pluginId: 'com.example.media', localId: 'composer' },
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'camera.png',
+      sizeBytes: 12,
+      sha256: 'a'.repeat(64),
+    });
+    if (!initialized.success) throw new Error(initialized.error);
+    expect(initialized).toMatchObject({
+      success: true,
+      recipientPublicKeyBase64: expect.any(String),
     });
   });
 });

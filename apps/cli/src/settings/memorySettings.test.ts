@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFile, writeFile } from 'node:fs/promises';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
@@ -23,6 +24,7 @@ describe('memorySettings', () => {
   });
 
   it('returns defaults when unset', async () => {
+    const { configuration } = await import('@/configuration');
     const { readMemorySettingsFromDisk } = await import('./memorySettings');
     const settings = await readMemorySettingsFromDisk();
     expect(settings.v).toBe(1);
@@ -42,9 +44,13 @@ describe('memorySettings', () => {
     expect(settings.hints.idleDelayMs).toBe(15_000);
     expect(settings.hints.maxRunsPerHour).toBe(12);
     expect(settings.hints.summarizerPermissionMode).toBe('no_tools');
+    await expect(readFile(configuration.deviceLocalSecretKeyFile, 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 
   it('persists normalized settings into settings.json', async () => {
+    const { configuration } = await import('@/configuration');
     const { readMemorySettingsFromDisk, writeMemorySettingsToDisk } = await import('./memorySettings');
 
     await writeMemorySettingsToDisk({
@@ -63,6 +69,9 @@ describe('memorySettings', () => {
     expect(next.enabled).toBe(true);
     expect(next.hints.summarizerBackendId).toBe('claude');
     expect(next.hints.summarizerModelId).toBe('default');
+    await expect(readFile(configuration.deviceLocalSecretKeyFile, 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 
   it('stamps enabledAtMs when memory is enabled and preserves it across subsequent saves', async () => {
@@ -176,5 +185,170 @@ describe('memorySettings', () => {
       throw new Error('expected openai_compatible embeddings config');
     }
     expect(unsealed.embeddings.custom.apiKey?.value).toBe('sk-memory-test');
+  });
+
+  it('seals token-only remote embeddings API keys with device-local custody before writing settings.json', async () => {
+    const { configuration } = await import('@/configuration');
+    const { writeCredentialsTokenOnly } = await import('@/persistence');
+    const { readMemorySettingsFromDisk, writeMemorySettingsToDisk } = await import('./memorySettings');
+
+    await writeCredentialsTokenOnly({ token: 'token-only' });
+    await writeMemorySettingsToDisk({
+      v: 1,
+      enabled: true,
+      indexMode: 'deep',
+      embeddings: {
+        mode: 'custom',
+        custom: {
+          kind: 'openai_compatible',
+          baseUrl: 'https://example.test/v1',
+          apiKey: { _isSecretValue: true, value: 'sk-token-only-memory' },
+          model: 'text-embedding-3-small',
+        },
+      },
+    });
+
+    const persistedBytes = await readFile(configuration.settingsFile, 'utf8');
+    expect(persistedBytes).not.toContain('sk-token-only-memory');
+
+    const unsealed = await readMemorySettingsFromDisk();
+    expect(unsealed.embeddings.custom?.kind).toBe('openai_compatible');
+    if (unsealed.embeddings.custom?.kind !== 'openai_compatible') {
+      throw new Error('expected openai_compatible embeddings config');
+    }
+    expect(unsealed.embeddings.custom.apiKey?.value).toBe('sk-token-only-memory');
+  });
+
+  it('opens legacy account-encrypted memory settings without consulting a corrupt device-local key', async () => {
+    const { configuration } = await import('@/configuration');
+    const { deriveSettingsSecretsKeyV1, sealSecretsDeepV1 } = await import('@happier-dev/protocol');
+    const { updateSettings, writeCredentialsLegacy } = await import('@/persistence');
+    const { readMemorySettingsFromDisk } = await import('./memorySettings');
+    const secret = new Uint8Array(32).fill(7);
+
+    await writeCredentialsLegacy({ token: 't', secret });
+    const legacySealed = sealSecretsDeepV1(
+      {
+        v: 1,
+        enabled: true,
+        enabledAtMs: 1,
+        indexMode: 'deep',
+        embeddings: {
+          mode: 'custom',
+          custom: {
+            kind: 'openai_compatible',
+            baseUrl: 'https://example.test/v1',
+            apiKey: { _isSecretValue: true, value: 'sk-legacy-account-memory' },
+            model: 'text-embedding-3-small',
+          },
+        },
+      },
+      deriveSettingsSecretsKeyV1(secret),
+      (length) => new Uint8Array(length).fill(5),
+    );
+    await updateSettings((current) => ({ ...current, memory: legacySealed }));
+    await writeFile(
+      configuration.deviceLocalSecretKeyFile,
+      '{"version":1,"key":"bad"}',
+      { encoding: 'utf8', mode: 0o600 },
+    );
+
+    const unsealed = await readMemorySettingsFromDisk();
+    expect(unsealed.embeddings.custom?.kind).toBe('openai_compatible');
+    if (unsealed.embeddings.custom?.kind !== 'openai_compatible') {
+      throw new Error('expected openai_compatible embeddings config');
+    }
+    expect(unsealed.embeddings.custom.apiKey?.value).toBe('sk-legacy-account-memory');
+  });
+
+  it('does not overwrite memory settings when the device-local key is corrupt', async () => {
+    const { configuration } = await import('@/configuration');
+    const persistence = await import('@/persistence');
+    const { updateSettings, writeCredentialsTokenOnly } = persistence;
+
+    await writeCredentialsTokenOnly({ token: 'token-only' });
+    await updateSettings((current) => current);
+    const corruptKeyBytes = '{"version":1,"key":"bad"}';
+    await writeFile(
+      configuration.deviceLocalSecretKeyFile,
+      corruptKeyBytes,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    const settingsBytesBefore = await readFile(configuration.settingsFile, 'utf8');
+    const updateSettingsSpy = vi.spyOn(persistence, 'updateSettings');
+    const { writeMemorySettingsToDisk } = await import('./memorySettings');
+
+    const writePromise = writeMemorySettingsToDisk({
+      v: 1,
+      enabled: true,
+      indexMode: 'deep',
+      embeddings: {
+        mode: 'custom',
+        custom: {
+          kind: 'openai_compatible',
+          baseUrl: 'https://example.test/v1',
+          apiKey: { _isSecretValue: true, value: 'sk-must-not-persist' },
+          model: 'text-embedding-3-small',
+        },
+      },
+    });
+    await expect(writePromise).rejects.toMatchObject({
+      code: 'memory_settings_secrets_unavailable',
+    });
+    await expect(writePromise).rejects.toThrow(/Invalid device-local secret key/);
+
+    expect(updateSettingsSpy).not.toHaveBeenCalled();
+    await expect(readFile(configuration.settingsFile, 'utf8')).resolves.toBe(settingsBytesBefore);
+    await expect(readFile(configuration.deviceLocalSecretKeyFile, 'utf8')).resolves.toBe(corruptKeyBytes);
+  });
+
+  it('does not repair settings or custody bytes when a device-sealed secret cannot be opened', async () => {
+    const { configuration } = await import('@/configuration');
+    const { writeCredentialsTokenOnly } = await import('@/persistence');
+    const { writeMemorySettingsToDisk } = await import('./memorySettings');
+
+    await writeCredentialsTokenOnly({ token: 'token-only' });
+    await writeMemorySettingsToDisk({
+      v: 1,
+      enabled: true,
+      indexMode: 'deep',
+      embeddings: {
+        mode: 'custom',
+        custom: {
+          kind: 'openai_compatible',
+          baseUrl: 'https://example.test/v1',
+          apiKey: { _isSecretValue: true, value: 'sk-device-sealed' },
+          model: 'text-embedding-3-small',
+        },
+      },
+    });
+    const settingsBytesBefore = await readFile(configuration.settingsFile, 'utf8');
+    const replacementKeyBytes = JSON.stringify({
+      version: 1,
+      key: Buffer.from(new Uint8Array(32).fill(9)).toString('base64url'),
+    });
+    await writeFile(
+      configuration.deviceLocalSecretKeyFile,
+      replacementKeyBytes,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+
+    vi.resetModules();
+    const persistence = await import('@/persistence');
+    const updateSettingsSpy = vi.spyOn(persistence, 'updateSettings');
+    const {
+      MemorySettingsSecretsUnavailableError,
+      readMemorySettingsFromDisk,
+    } = await import('./memorySettings');
+
+    const readPromise = readMemorySettingsFromDisk();
+    await expect(readPromise).rejects.toMatchObject({
+      code: 'memory_settings_secrets_unavailable',
+    });
+    await expect(readPromise).rejects.toBeInstanceOf(MemorySettingsSecretsUnavailableError);
+
+    expect(updateSettingsSpy).not.toHaveBeenCalled();
+    await expect(readFile(configuration.settingsFile, 'utf8')).resolves.toBe(settingsBytesBefore);
+    await expect(readFile(configuration.deviceLocalSecretKeyFile, 'utf8')).resolves.toBe(replacementKeyBytes);
   });
 });

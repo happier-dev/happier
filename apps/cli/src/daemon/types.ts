@@ -2,19 +2,24 @@
  * Daemon-specific types (not related to API/server communication)
  */
 
-import { Metadata } from '@/api/types';
+import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { ChildProcess } from 'child_process';
 import type { AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
-import type {
-  ManagedLocalServiceRunAttachmentMarkerOwnership,
-  ManagedLocalServiceRunAttachmentV1,
-} from './sessionRegistry';
 import type { CancelStartupLaunch } from './spawn/startupLaunchCancellation';
 import type {
   ExactWindowsProcessCancellationIdentity,
   WindowsTerminalLaunchCustody,
 } from './platform/windows/windowsProcessCustody';
+import type {
+  AgentRuntimeDaemonServiceSessionOpenAttestationV1,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import type {
+  AgentRuntimeDaemonSessionDescriptorV1,
+} from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
+import type {
+  RunnerManagedDependencyRetentionV1,
+} from '@/plugins/runtime/runner/runnerManagedDependencyRetention';
 
 export type DaemonSpawnStartupReadinessFailure = Extract<
   SpawnSessionResult,
@@ -22,6 +27,23 @@ export type DaemonSpawnStartupReadinessFailure = Extract<
 >;
 
 export type { AgentSessionStartupInstructionsMarkerV1 };
+
+export type RunnerAgentInvocationContext = Readonly<{
+  cwd: string;
+  /** Stable daemon-service context only; launch-time secret material is never retained here. */
+  environment: Readonly<Record<string, string>>;
+  /** Provider launch binding is runner-owned and is rematerialized by live daemon service owners. */
+  providerBindingActive: boolean;
+}>;
+
+/**
+ * Non-secret, in-memory projection of the host-issued runner bootstrap
+ * descriptor. It binds the first daemon-service grant to the concrete Agent
+ * runtime selected during spawn; it is never marker-persisted.
+ */
+export type RunnerAgentBootstrapIdentity = Readonly<
+  Pick<AgentRuntimeDaemonSessionDescriptorV1, 'agentId' | 'backendId'>
+>;
 
 /**
  * Session tracking for daemon
@@ -38,6 +60,11 @@ export interface TrackedSession {
    */
   reattachedInterruptedTurnId?: string;
   happySessionMetadataFromLocalWebhook?: Metadata;
+  /**
+   * Exact create-or-rejoin fact from this runner's immediate server transaction.
+   * It stays in memory and is returned only to the matching spawn awaiter.
+   */
+  sessionCreationOutcome?: SessionCreationOutcome;
   /** Spawn options used to start the current runner process (in-memory only). */
   spawnOptions?: SpawnSessionOptions;
   /**
@@ -51,24 +78,6 @@ export interface TrackedSession {
    * tracked object immediately, but durable/reporting effects wait for acceptance.
    */
   acceptedSpawnMarkerGate?: Promise<boolean>;
-  /**
-   * Exact managed local-service attachment persisted with this spawn's marker.
-   * Its presence makes placeholder-to-canonical marker adoption part of the
-   * required managed bootstrap acknowledgement.
-   */
-  managedLocalServiceRunAttachment?: ManagedLocalServiceRunAttachmentV1;
-  /** Transfers exact marker cleanup custody when a wrapper PID is promoted. */
-  onManagedLocalServiceMarkerPidPromoted?: (
-    input: Readonly<{
-      fromPid: number;
-      toPid: number;
-      ownership: ManagedLocalServiceRunAttachmentMarkerOwnership;
-      processCommand?: string;
-    }>,
-  ) =>
-    | boolean
-    | 'attachment_cleared'
-    | Promise<boolean | 'attachment_cleared'>;
   /**
    * In-memory-only fresh-session activation that consumes the canonical server
    * session id reported by the child before startup is acknowledged.
@@ -85,26 +94,41 @@ export interface TrackedSession {
   spawnStartupAwaiterPid?: number;
   /** Current verified wrapper-to-runner marker/custody promotion, if any. */
   sessionMarkerPidPromotion?: Promise<boolean>;
-  /** Joins duplicate canonical Windows Terminal webhooks to one reconciliation. */
-  windowsTerminalCanonicalWebhookReconciliation?: Promise<void>;
+  /** Joins duplicate canonical webhook reports to one startup reconciliation. */
+  canonicalWebhookReconciliation?: Promise<void>;
   /** Exact idempotent pre-ACK retirement owned by this startup attempt. */
   cancelStartupLaunchBeforeAck?: CancelStartupLaunch;
   /** Required startup failure returned through the original spawn awaiter. */
   spawnStartupReadinessFailure?: DaemonSpawnStartupReadinessFailure;
-  /** Daemon-issued authorization allowing a spawned runner to use the plugin local-services bridge. */
-  localServicesBridgeTokenHash?: string;
-  /** Owning plugin id authorized for the plugin local-services bridge token. */
-  localServicesBridgePluginId?: string;
-  /** Backend/contribution id authorized for the plugin local-services bridge token. */
-  localServicesBridgeContributionId?: string;
-  /** Token file path issued to the spawned child. The marker keeps this for daemon restart reattach. */
-  localServicesBridgeTokenFilePath?: string;
-  /** In-memory-only capability for the daemon-owned native Agent session runtime. */
-  agentRuntimeBridgeTokenHash?: string;
-  agentRuntimeBridgePluginId?: string;
-  agentRuntimeBridgeAgentId?: string;
-  agentRuntimeBridgeBackendId?: string;
-  agentRuntimeBridgeGeneration?: string;
+  /**
+   * Stable private path to the current per-session daemon-service authority
+   * document. The marker stores no capability or broad daemon control token.
+   */
+  agentRuntimeDaemonServiceAuthorityFilePath?: string;
+  /** In-memory-only digest for the current daemon-service scoped capability. */
+  agentRuntimeDaemonServiceCapabilityHash?: string;
+  /**
+   * Exact host-issued bootstrap identity retained only until the first
+   * daemon-service authority is installed for this fresh runner.
+   */
+  runnerAgentBootstrapIdentity?: RunnerAgentBootstrapIdentity;
+  /** Non-secret byte-retention facts persisted in the exact runner marker. */
+  runnerAgentImmutableGenerationId?: string;
+  runnerManagedDependencyRetentionV1?:
+    RunnerManagedDependencyRetentionV1;
+  /**
+   * In-memory-only launch facts authored by the daemon admission/spawn owner.
+   * The environment may contain secrets and must never be marker-persisted.
+   */
+  runnerAgentInvocationContext?: RunnerAgentInvocationContext;
+  /** Exact latest new-turn admission witness; never a second turn lifecycle owner. */
+  agentRuntimeDaemonServiceAdmittedTurnId?: string;
+  agentRuntimeDaemonServiceAdmittedInputId?: string;
+  agentRuntimeDaemonServiceAdmittedUserMessageSeq?: number | null;
+  agentRuntimeDaemonServiceAdmittedUserMessageSeqs?: number[];
+  /** Exact completed runner-owned sessions.open request for fork/open proof. */
+  agentRuntimeDaemonServiceSessionOpenAttestation?:
+    AgentRuntimeDaemonServiceSessionOpenAttestationV1;
   /** Vendor resume id (e.g. Claude/Codex session id) supplied/derived at spawn time. */
   vendorResumeId?: string;
   /**
@@ -137,12 +161,17 @@ export interface TrackedSession {
    */
   sessionWebhookTimedOutAtMs?: number;
   /**
-   * Hash of the observed process command line for PID reuse safety.
-   * If present, we require this to match before sending SIGTERM by PID.
+   * Legacy positive-classification witness and diagnostic snapshot. When a
+   * process start time is available, command drift does not imply PID reuse.
    */
   processCommandHash?: string;
-  /** Canonical OS process birth timestamp paired with PID and command hash. */
+  /** Canonical OS process-generation witness paired with the PID. */
   processStartTimeMs?: number;
+  /**
+   * In-memory completion of the current canonical marker write. Foreground
+   * authority promotion awaits this owner instead of racing or rewriting it.
+   */
+  sessionMarkerPersistence?: Promise<boolean>;
   /** Best-effort observed process command line used for startup runtime refresh checks. */
   processCommand?: string;
   childProcess?: ChildProcess;
@@ -159,11 +188,10 @@ export interface TrackedSession {
    */
   reattachedFromDiskMarker?: boolean;
   /**
-   * A surviving native Agent runtime cannot be rebound after daemon restart:
-   * its bridge handle, generation lease, effects, and request state were
-   * process-local. Keep the exact runner fenced while refusing reuse.
+   * A surviving Runner Agent whose current daemon-service authority cannot be
+   * verified remains fenced while its exact process is retired.
    */
-  agentRuntimeRestartDisposition?: 'bridge_authority_unavailable';
+  agentRuntimeRunnerRestartDisposition?: 'runner_authority_unavailable';
   /**
    * Set when the daemon requests the session runner to stop (SIGTERM dispatched). Used as a
    * coordination hint so "resume/restart" requests can wait for the runner to fully exit instead

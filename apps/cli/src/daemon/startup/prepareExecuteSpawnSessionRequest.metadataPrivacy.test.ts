@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  sealSessionOwnerMetadataV1,
+  createAccountScopedCryptoMaterialSnapshotV1,
+  sealSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
+  type AccountEncryptionCurrentnessResponse,
+  type SessionOwnerMetadataEnvelopeV1,
 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
 const mocks = vi.hoisted(() => ({
   fetchSessionByIdCompat: vi.fn(),
+  fetchAccountEncryptionCurrentness: vi.fn(),
   ensureSessionDirectory: vi.fn(async () => ({
     ok: true as const,
     directoryCreated: false,
@@ -26,6 +30,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionByIdCompat: mocks.fetchSessionByIdCompat,
+}));
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness: mocks.fetchAccountEncryptionCurrentness,
 }));
 
 vi.mock('./ensureSessionDirectory', () => ({
@@ -61,15 +69,33 @@ vi.mock('@/ui/logger', () => ({
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
 import { executeSpawnSessionRequest } from './executeSpawnSessionRequest';
 
-const credentials: Credentials = {
+const credentials = {
   token: 'token',
   encryption: {
     type: 'legacy',
     secret: new Uint8Array(32).fill(9),
   },
-};
+} satisfies Credentials;
 
-function buildSplitSession(ownerMetadata: string | null) {
+const accountCryptoMaterial = createAccountScopedCryptoMaterialSnapshotV1({
+  accountEncryptionMode: 'e2ee',
+  material: {
+    type: 'legacy',
+    secret: credentials.encryption.secret,
+  },
+});
+
+const e2eeAccountEncryptionCurrentness = {
+  mode: 'e2ee',
+  version: 1,
+  signingKeyFingerprint: null,
+  contentKeyFingerprint: accountCryptoMaterial.contentPublicKeyFingerprint,
+  updatedAt: 1,
+} satisfies AccountEncryptionCurrentnessResponse;
+
+function buildSplitSession(
+  ownerMetadata: SessionOwnerMetadataEnvelopeV1 | null,
+) {
   return {
     id: 'session-private-resume',
     seq: 4,
@@ -91,11 +117,17 @@ function buildSplitSession(ownerMetadata: string | null) {
 describe('prepareExecuteSpawnSessionRequest metadata privacy authority', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.fetchAccountEncryptionCurrentness.mockResolvedValue(
+      e2eeAccountEncryptionCurrentness,
+    );
   });
 
   it.each([
     ['missing', null],
-    ['malformed', 'not-an-account-owner-envelope'],
+    ['malformed', {
+      t: 'encrypted',
+      c: 'not-an-account-owner-envelope',
+    } as const],
   ] as const)(
     'fails typed before directory or handoff work when owner metadata is %s',
     async (_caseName, ownerMetadata) => {
@@ -156,18 +188,16 @@ describe('prepareExecuteSpawnSessionRequest metadata privacy authority', () => {
         },
       },
     });
-    const ownerCiphertext = sealSessionOwnerMetadataV1({
+    const ownerEnvelope = sealSessionOwnerMetadataEnvelopeV1({
       material: {
         type: 'legacy',
-        secret: credentials.encryption.type === 'legacy'
-          ? credentials.encryption.secret
-          : new Uint8Array(),
+        secret: credentials.encryption.secret,
       },
       ownerMetadata,
       randomBytes: (length) => new Uint8Array(length).fill(7),
     });
     mocks.fetchSessionByIdCompat.mockResolvedValueOnce(
-      buildSplitSession(ownerCiphertext),
+      buildSplitSession(ownerEnvelope),
     );
 
     const result = await prepareExecuteSpawnSessionRequest({

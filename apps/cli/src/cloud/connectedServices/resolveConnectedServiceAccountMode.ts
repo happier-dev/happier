@@ -12,8 +12,9 @@ const accountModeCache = createConnectedServiceAccountModeCache({
 
 export async function resolveConnectedServiceAccountMode(
   api: Partial<Pick<ConnectedServiceCredentialApi, 'getAccountEncryptionMode'>>,
-  options?: Readonly<{ refresh?: boolean }>,
+  options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>,
 ): Promise<ConnectedServiceAccountMode> {
+  if (options?.signal) return await api.getAccountEncryptionMode?.(options) ?? 'unknown';
   if (options?.refresh) return await accountModeCache.refresh(api);
   return await accountModeCache.resolve(api);
 }

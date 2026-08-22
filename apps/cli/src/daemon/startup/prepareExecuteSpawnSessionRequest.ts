@@ -1,6 +1,6 @@
-import { requireCatalogEntry } from '@/agent/catalog/registry';
+import { findCatalogEntry } from '@/agent/catalog/registry';
 import { getVendorResumeSupport } from '@/session/runtime/catalogHooks';
-import { DEFAULT_CATALOG_AGENT_ID, type CatalogAgentId } from '@/agent/catalog/ids';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { logger } from '@/ui/logger';
 
 import type {
@@ -46,6 +46,19 @@ function resolveVendorResumeSupportParamsForSpawn(params: Readonly<{
     return runtimeSelection;
 }
 
+/**
+ * A requested Agent that is not installed in the current catalog is an invalid
+ * spawn request, reported through the existing spawn error vocabulary rather
+ * than as an escaping `CatalogAgentNotInstalledError`.
+ */
+function buildAgentNotInstalledSpawnErrorResult(agentId: string): SpawnSessionResult {
+    return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: `Agent '${agentId}' is not installed or unavailable in the current Agent catalog`,
+    };
+}
+
 type BackendIdentitySuccess = Extract<
     Awaited<ReturnType<typeof resolveSpawnBackendIdentity>>,
     { ok: true }
@@ -58,7 +71,6 @@ export type PreparedExecuteSpawnSessionRequest = Readonly<{
     effectiveBackendTargetV2: BackendIdentitySuccess['effectiveBackendTargetV2'];
     sessionAttachPayload: BackendIdentitySuccess['sessionAttachPayload'];
     catalogAgentId: CatalogAgentId | null;
-    catalogAgentIdForConnectedServices: CatalogAgentId;
     daemonSpawnHooks: DaemonSpawnHooks | null;
     environmentVariablesValidation: Readonly<{
         ok: true;
@@ -99,25 +111,24 @@ export async function prepareExecuteSpawnSessionRequest(
     }>,
 ): Promise<PreparedExecuteSpawnSessionRequest | SpawnSessionResult> {
     const { options } = params.request;
-    const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
-        ? Object.keys(options.environmentVariables as Record<string, unknown>)
-        : [];
+    const environmentVariableCount = options.environmentVariables && typeof options.environmentVariables === 'object'
+        ? Object.keys(options.environmentVariables as Record<string, unknown>).length
+        : 0;
     const environmentVariablesValidation = params.validateEnvVarRecordStrict(options.environmentVariables);
-    logger.debugLargeJson('[DAEMON RUN] Spawning session', {
-        directory: options.directory,
-        sessionId: options.sessionId,
-        machineId: options.machineId,
+    logger.debugLargeJson('[DAEMON RUN] Preparing session spawn', {
         approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
-        backendTarget: options.backendTarget,
-        profileId: options.profileId,
+        hasSessionId: typeof options.sessionId === 'string' && options.sessionId.trim().length > 0,
+        hasExistingSessionId: typeof options.existingSessionId === 'string'
+            && options.existingSessionId.trim().length > 0,
+        hasMachineId: typeof options.machineId === 'string' && options.machineId.trim().length > 0,
+        hasBackendTarget: options.backendTarget !== undefined,
+        hasProfileId: typeof options.profileId === 'string' && options.profileId.trim().length > 0,
         hasInitialTranscriptAfterSeq: typeof options.initialTranscriptAfterSeq === 'number',
         hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
-        windowsRemoteSessionLaunchMode: options.windowsRemoteSessionLaunchMode,
-        windowsRemoteSessionConsole: options.windowsRemoteSessionConsole,
-        environmentVariableCount: envKeysPreview.length,
-        environmentVariableKeys: envKeysPreview,
+        hasWindowsRemoteSessionLaunchMode: options.windowsRemoteSessionLaunchMode !== undefined,
+        hasWindowsRemoteSessionConsole: options.windowsRemoteSessionConsole !== undefined,
+        environmentVariableCount,
         environmentVariablesValid: environmentVariablesValidation.ok,
-        environmentVariablesError: environmentVariablesValidation.ok ? null : environmentVariablesValidation.error,
     });
 
     if (!environmentVariablesValidation.ok) {
@@ -191,12 +202,15 @@ export async function prepareExecuteSpawnSessionRequest(
     const effectiveSessionAttachPayload = sessionAttachPayload
         ? applyInitialTranscriptAfterSeqToAttachPayload(sessionAttachPayload, options.initialTranscriptAfterSeq)
         : sessionAttachPayload;
-    const catalogAgentIdForConnectedServices = (catalogAgentId ?? DEFAULT_CATALOG_AGENT_ID) as CatalogAgentId;
-    const daemonSpawnHooks = catalogAgentId
-        ? await (async () => {
-            const entry = requireCatalogEntry(catalogAgentId);
-            return entry.getDaemonSpawnHooks ? await entry.getDaemonSpawnHooks() : null;
-        })()
+    // The catalog is read live, so an Agent installed when the backend target was
+    // resolved can be gone by now. That is a request-level refusal, not an
+    // exception that unwinds the daemon spawn path.
+    const catalogEntry = catalogAgentId ? findCatalogEntry(catalogAgentId) : null;
+    if (catalogAgentId && !catalogEntry) {
+        return buildAgentNotInstalledSpawnErrorResult(catalogAgentId);
+    }
+    const daemonSpawnHooks = catalogEntry?.getDaemonSpawnHooks
+        ? await catalogEntry.getDaemonSpawnHooks()
         : null;
 
     if (effectiveResume) {
@@ -222,7 +236,7 @@ export async function prepareExecuteSpawnSessionRequest(
             daemonSpawnHooks,
         }));
         if (!ok) {
-            const supportLevel = requireCatalogEntry(catalogAgentId).vendorResumeSupport;
+            const supportLevel = catalogEntry?.vendorResumeSupport ?? null;
             const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
             return {
                 type: 'error',
@@ -237,7 +251,17 @@ export async function prepareExecuteSpawnSessionRequest(
         approvedNewDirectoryCreation,
     });
     if (!ensuredDirectory.ok) {
-        logger.debug(`[DAEMON RUN] Directory setup failed for ${directory}`, ensuredDirectory.response);
+        logger.debug(
+            '[DAEMON RUN] Session directory setup failed',
+            ensuredDirectory.response.type === 'error'
+                ? {
+                    resultType: ensuredDirectory.response.type,
+                    errorCode: ensuredDirectory.response.errorCode,
+                }
+                : {
+                    resultType: ensuredDirectory.response.type,
+                },
+        );
         return ensuredDirectory.response;
     }
 
@@ -268,8 +292,7 @@ export async function prepareExecuteSpawnSessionRequest(
         effectiveResume,
         effectiveBackendTargetV2,
         sessionAttachPayload: effectiveSessionAttachPayload,
-        catalogAgentId: catalogAgentId as CatalogAgentId | null,
-        catalogAgentIdForConnectedServices,
+        catalogAgentId,
         daemonSpawnHooks,
         environmentVariablesValidation,
         persistedProviderResumeState,

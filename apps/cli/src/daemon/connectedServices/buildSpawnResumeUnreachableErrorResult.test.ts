@@ -76,4 +76,24 @@ describe('buildSpawnResumeUnreachableErrorResult', () => {
     expect(result.errorDetail).not.toHaveProperty('cwd');
     expect(result.errorDetail.agentId).toBe('codex');
   });
+
+  it('does not publish a provider resume id echoed by an untrusted reachability reason', () => {
+    const error = new ConnectedServiceSpawnResumeUnreachableError({
+      agentId: 'pi',
+      vendorResumeId: 'pi-private-resume-identity',
+      cwd: '/work/private-project',
+      targetMaterializedRoot: '/work/private-project/.pi',
+      reason: 'pi-private-resume-identity',
+    });
+
+    const result = buildSpawnResumeUnreachableErrorResult(error);
+    const publicPayload = JSON.stringify(result);
+
+    expect(publicPayload).not.toContain('pi-private-resume-identity');
+    expect(publicPayload).not.toContain('/work/private-project');
+    if (!isConnectedServiceResumeUnreachableSpawnErrorDetail(result.errorDetail)) {
+      throw new Error('expected resume-unreachable detail');
+    }
+    expect(result.errorDetail.reason).toBe('resume_reachability_unavailable');
+  });
 });

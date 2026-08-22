@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -22,7 +23,8 @@ const REVIEW_COMMENT_ACTION_IDS = Object.freeze([
 ] as const);
 
 // These registrar tests inject focused specs directly; loading the full catalog belongs to catalog tests.
-vi.mock('@happier-dev/protocol/actions/actionSpecs', () => ({
+vi.mock('@happier-dev/protocol/actions/actionSpecs', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@happier-dev/protocol/actions/actionSpecs')>(),
     ACTION_SPECS: [],
 }));
 
@@ -48,6 +50,157 @@ function createRpcHarness() {
 }
 
 describe('ActionSpec-derived RPC registrar', () => {
+    it('projects only strict execution-run start certainty across the generated RPC seam', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+        expect(module.unwrapActionResultForRpc('execution.run.start', {
+            ok: false,
+            errorCode: 'execution_run_target_unavailable',
+            error: 'execution_run_target_unavailable',
+            details: {
+                executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+                secret: 'must-not-cross-the-rpc-boundary',
+            },
+        })).toEqual({
+            ok: false,
+            errorCode: 'execution_run_target_unavailable',
+            error: 'execution_run_target_unavailable',
+            details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+        });
+        expect(module.unwrapActionResultForRpc('execution.run.start', {
+            ok: false,
+            errorCode: 'execution_run_target_unavailable',
+            error: 'execution_run_target_unavailable',
+            details: { executionRunStart: { v: 2, runCreation: 'noRunCreated' } },
+        })).toEqual({
+            ok: false,
+            errorCode: 'execution_run_target_unavailable',
+            error: 'execution_run_target_unavailable',
+            details: { executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } },
+        });
+        expect(module.unwrapActionResultForRpc('memory.search', {
+            ok: false,
+            errorCode: 'action_failed',
+            error: 'action_failed',
+            details: { secret: 'must-not-cross-the-rpc-boundary' },
+        })).toEqual({
+            ok: false,
+            errorCode: 'action_failed',
+            error: 'action_failed',
+        });
+    });
+
+    it('classifies generated start-RPC input rejection before Action execution as no-run-created', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+        const execute = vi.fn();
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor: { execute },
+            actionSpecs: [{
+                id: 'execution.run.start',
+                surfaces: { rpc: true },
+                bindings: { rpcMethod: 'execution.run.start.test' },
+                surfaceBindings: {
+                    rpc: {
+                        inputSchema: z.object({ instructions: z.string().min(1) }).strict(),
+                        decodeInput: (input) => input,
+                        outputSchema: z.unknown(),
+                        encodeOutput: (result) => result,
+                    },
+                },
+            }],
+        });
+
+        await expect(handlers.get('execution.run.start.test')?.({ instructions: '' })).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_action_transport_input',
+            error: 'invalid_action_transport_input',
+            details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+        });
+        expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('decodes released RPC input to semantic Action input and encodes the transport result', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+        const execute = vi.fn(async () => ({
+            ok: true as const,
+            result: { operationId: 'operation-1', presentation: { state: 'running' } },
+        }));
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor: { execute },
+            actionSpecs: [{
+                id: 'sessions.external.operation.status.get',
+                surfaces: { rpc: true },
+                bindings: { rpcMethod: 'daemon.externalSessions.operation.status' },
+                surfaceBindings: {
+                    rpc: {
+                        inputSchema: z.object({ privateOperationId: z.string().min(1) }).strict(),
+                        decodeInput: (input) => ({
+                            operationId: (input as { privateOperationId: string }).privateOperationId,
+                        }),
+                        outputSchema: z.object({ privateOperationId: z.string(), state: z.string() }).strict(),
+                        encodeOutput: (result) => ({
+                            privateOperationId: (result as { operationId: string }).operationId,
+                            state: (result as { presentation: { state: string } }).presentation.state,
+                        }),
+                    },
+                },
+            }],
+        });
+
+        await expect(handlers.get('daemon.externalSessions.operation.status')?.({
+            privateOperationId: 'operation-1',
+        })).resolves.toEqual({
+            privateOperationId: 'operation-1',
+            state: 'running',
+        });
+        expect(execute).toHaveBeenCalledWith(
+            'sessions.external.operation.status.get',
+            { operationId: 'operation-1' },
+            { surface: 'rpc' },
+        );
+    });
+
+    it('rejects invalid released input and invalid encoded output at the RPC binding seam', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+        const execute = vi.fn(async () => ({ ok: true as const, result: { semantic: true } }));
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor: { execute },
+            actionSpecs: [{
+                id: 'sessions.external.operation.status.get',
+                surfaces: { rpc: true },
+                bindings: { rpcMethod: 'daemon.externalSessions.operation.status' },
+                surfaceBindings: {
+                    rpc: {
+                        inputSchema: z.object({ transportId: z.string().min(1) }).strict(),
+                        decodeInput: (input) => input,
+                        outputSchema: z.object({ transportResult: z.string() }).strict(),
+                        encodeOutput: () => ({ leakedPrivateState: true }),
+                    },
+                },
+            }],
+        });
+        const handler = handlers.get('daemon.externalSessions.operation.status');
+
+        await expect(handler?.({ transportId: '' })).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_action_transport_input',
+            error: 'invalid_action_transport_input',
+        });
+        expect(execute).not.toHaveBeenCalled();
+
+        await expect(handler?.({ transportId: 'operation-1' })).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_action_transport_output',
+            error: 'invalid_action_transport_output',
+        });
+        expect(execute).toHaveBeenCalledOnce();
+    });
+
     it('threads the canonical RPC cancellation signal into Action execution', async () => {
         const module = await import('./registerActionSpecRpcHandlers');
         const execute = vi.fn(async () => ({

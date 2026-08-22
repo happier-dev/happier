@@ -142,19 +142,27 @@ export async function requestConnectedServiceSessionRestartSignal(params: Readon
       recordDiagnostic('skipped_stale_owner');
       return { status: 'skipped_stale_owner' };
     }
-    recordDiagnostic('requested');
-    try {
-      if (params.preferProcessGroup === true) {
-        try {
-          process.kill(-params.pid, 'SIGTERM');
-          return { status: 'requested' };
-        } catch {
-          // Fall back to the runner PID on platforms or spawn modes where process groups are unavailable.
-        }
+    if (params.preferProcessGroup === true) {
+      let processGroupSignaled = false;
+      try {
+        process.kill(-params.pid, 'SIGTERM');
+        processGroupSignaled = true;
+      } catch {
+        // Fall back to the runner PID on platforms or spawn modes where process groups are unavailable.
       }
+      if (processGroupSignaled) {
+        recordDiagnostic('requested');
+        return { status: 'requested' };
+      }
+      if (params.shouldSignal && !await params.shouldSignal()) {
+        recordDiagnostic('skipped_stale_owner');
+        return { status: 'skipped_stale_owner' };
+      }
+    }
+    try {
       process.kill(params.pid, 'SIGTERM');
-      return { status: 'requested' };
     } catch (error) {
+      recordDiagnostic('requested');
       if (isConnectedServiceRestartSignalStaleProcessError(error)) {
         recordDiagnostic('process_already_missing');
         params.onProcessAlreadyMissing?.();
@@ -164,6 +172,8 @@ export async function requestConnectedServiceSessionRestartSignal(params: Readon
       params.onSignalFailure(error);
       throw error;
     }
+    recordDiagnostic('requested');
+    return { status: 'requested' };
   };
 
   if (params.delayMs <= 0) {

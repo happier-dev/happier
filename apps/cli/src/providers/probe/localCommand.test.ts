@@ -131,6 +131,49 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
       .resolves.toEqual({ status: 'unavailable' });
   });
 
+  it('runs a Provider-contributed command format and never falls back to another format', async () => {
+    // A Provider plugin whose CLI prints a format Happier does not bundle
+    // declares that format and supplies its implementation, exactly as it does
+    // for an HTTP catalog format.
+    const contributedDescriptor = {
+      endpointTemplateId: 'acme',
+      lookupNames: ['acme'],
+      fixedArgs: ['models', '--plain'],
+      parser: 'acme-list-v1',
+    };
+    const contributedCatalogParsers = {
+      'acme-list-v1': (input: unknown) => ({
+        models: String(input).split('\n').filter(Boolean).map((line) => {
+          const [id, name] = line.split('|');
+          return { id: id!, name: name! };
+        }),
+      }),
+    };
+    const runSystemTool = vi.fn(async () => ({
+      ok: true as const,
+      exitCode: 0,
+      stdout: 'acme/one|Acme One\nacme/two|Acme Two\n',
+      stderr: '',
+    }));
+    const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } });
+
+    await expect(fallback.run({
+      descriptor: contributedDescriptor,
+      endpointUrl: 'http://127.0.0.1:9911/',
+      contributedCatalogParsers,
+    })).resolves.toEqual({
+      status: 'success',
+      models: [{ id: 'acme/one', name: 'Acme One' }, { id: 'acme/two', name: 'Acme Two' }],
+    });
+
+    // Without the declaring plugin's implementation the output is reported
+    // unavailable rather than handed to a bundled format's parser.
+    await expect(fallback.run({
+      descriptor: { ...contributedDescriptor, endpointTemplateId: 'acme-2' },
+      endpointUrl: 'http://127.0.0.1:9911/',
+    })).resolves.toEqual({ status: 'unavailable' });
+  });
+
   it('rejects a truncated data row instead of accepting its first token as a model', async () => {
     const fallback = createProviderLocalCatalogFallbackRunner({
       runner: {

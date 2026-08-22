@@ -1,100 +1,95 @@
-import type { AccountSettings } from '@happier-dev/protocol';
+import { legacyCustomAcpCompat } from '@happier-dev/agents';
 
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
-import { isCatalogAgentId } from '@/agent/catalog/resolution';
-import type { ApiClient as ApiClientType } from '@/api/api';
-import { configuration } from '@/configuration';
-import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
-import { resolveConnectedServicesMaterializationBaseDir } from '@/daemon/connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
-import type { Credentials } from '@/persistence';
-import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
-
-import type { PreflightSessionControlsProbeKind } from './preflightSessionControlsProbeAdapterTypes';
-
-type Cleanup = (() => void) | null;
+import { createAllowedEnvKeySet, isAllowedEnvKey } from '@/utils/env/envKeyAllowlist';
 
 export type PreflightSessionControlsProbeEnvironment = Readonly<{
   env: NodeJS.ProcessEnv;
-  cleanupOnFailure: Cleanup;
-  cleanupOnExit: Cleanup;
 }>;
 
 type ResolvePreflightSessionControlsProbeEnvironmentParams = Readonly<{
-  agentId: CatalogAgentLookupId;
-  probeKind: PreflightSessionControlsProbeKind;
-  cwd: string;
-  connectedServices?: unknown;
-  credentials?: Credentials | null;
-  api?: ApiClientType | null;
-  accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
-  activeServerDir?: string;
-  baseDir?: string;
+  agentId?: CatalogAgentLookupId;
   processEnv?: NodeJS.ProcessEnv;
+  materializedEnv?: Readonly<Record<string, string>>;
 }>;
 
-function buildBaseEnvironment(processEnv: NodeJS.ProcessEnv | undefined): PreflightSessionControlsProbeEnvironment {
-  return {
-    env: { ...(processEnv ?? process.env) },
-    cleanupOnFailure: null,
-    cleanupOnExit: null,
-  };
+const COLD_PROBE_PROCESS_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'SystemRoot',
+  'WINDIR',
+  'ComSpec',
+  'PATHEXT',
+  'TMP',
+  'TEMP',
+  'TMPDIR',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'USER',
+  'LOGNAME',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_RUNTIME_DIR',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'PROGRAMDATA',
+  'NODE_ENV',
+  'TSX_TSCONFIG_PATH',
+  'CODEX_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'HAPPIER_CLAUDE_CONFIG_DIR',
+  'HAPPIER_HOME_DIR',
+  'HAPPIER_JS_RUNTIME_PATH',
+  'HAPPIER_MANAGED_NODE_BIN',
+  'HAPPIER_NODE_PATH',
+  'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON',
+  'HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED',
+] as const;
+
+function resolveAgentCliPathOverrideEnvironmentKey(agentId: string | undefined): string | null {
+  // Only the canonical Agent lookup set has an agent-specific CLI override contract.
+  // Treat raw/unrecognized input as having no override rather than normalizing it into an env key.
+  if (!legacyCustomAcpCompat.isAgentLookupId(agentId)) return null;
+  const normalized = String(agentId ?? '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+  return normalized ? `HAPPIER_${normalized}_PATH` : null;
 }
 
-function runCleanup(cleanup: Cleanup): void {
-  if (!cleanup) return;
-  try {
-    cleanup();
-  } catch {
-    // Best effort: probe cleanup must not mask the provider probe result.
+function buildBaseEnvironment(params: ResolvePreflightSessionControlsProbeEnvironmentParams): PreflightSessionControlsProbeEnvironment {
+  const agentCliPathOverrideEnvironmentKey = resolveAgentCliPathOverrideEnvironmentKey(params.agentId);
+  const allowedKeys = createAllowedEnvKeySet([
+    ...COLD_PROBE_PROCESS_ENV_KEYS,
+    ...(agentCliPathOverrideEnvironmentKey ? [agentCliPathOverrideEnvironmentKey] : []),
+  ]);
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(params.processEnv ?? process.env)) {
+    if (typeof value === 'string' && isAllowedEnvKey(key, allowedKeys)) {
+      env[key] = value;
+    }
   }
-}
-
-async function createConnectedServiceSpawnApi(credentials: Credentials): Promise<ApiClientType> {
-  // ApiClient is the application composition root and statically owns session/RPC registration.
-  // Load it only for the optional connected-service path so reusable capability probes remain a
-  // lower-level leaf and registration cannot form an API -> RPC -> probe -> API import cycle.
-  const { ApiClient } = await import('@/api/api');
-  return await ApiClient.create(credentials);
+  return {
+    env: {
+      ...env,
+      ...(params.materializedEnv ?? {}),
+    },
+  };
 }
 
 export async function resolvePreflightSessionControlsProbeEnvironment(
   params: ResolvePreflightSessionControlsProbeEnvironmentParams,
 ): Promise<PreflightSessionControlsProbeEnvironment> {
-  const base = buildBaseEnvironment(params.processEnv);
-  if (params.connectedServices === undefined || params.connectedServices === null) return base;
-  if (!params.credentials) return base;
-  if (!isCatalogAgentId(params.agentId)) return base;
-
-  const api = params.api ?? await createConnectedServiceSpawnApi(params.credentials);
-  const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
-  const materialized = await resolveConnectedServiceAuthForSpawn({
-    agentId: params.agentId,
-    connectedServicesBindingsRaw: params.connectedServices,
-    materializationKey: createStableSpawnNonce('preflight.session-controls-probe', {
-      agentId: params.agentId,
-      probeKind: params.probeKind,
-      cwd,
-      connectedServices: params.connectedServices,
-    }),
-    activeServerDir: params.activeServerDir ?? configuration.activeServerDir,
-    baseDir: params.baseDir ?? resolveConnectedServicesMaterializationBaseDir(configuration.happyHomeDir),
-    sessionDirectory: cwd,
-    credentials: params.credentials,
-    api,
-    accountSettings: params.accountSettings ?? null,
-    processEnv: base.env,
-  });
-
-  if (!materialized) return base;
-
-  return {
-    env: {
-      ...base.env,
-      ...materialized.env,
-    },
-    cleanupOnFailure: materialized.cleanupOnFailure,
-    cleanupOnExit: materialized.cleanupOnExit,
-  };
+  // Ambient values are always cold-probe sanitized. A caller may add only the explicit output of
+  // the selected Agent plugin's connected-account materializer after that boundary.
+  return buildBaseEnvironment(params);
 }
 
 export async function withPreflightSessionControlsProbeEnvironment<T>(
@@ -102,12 +97,5 @@ export async function withPreflightSessionControlsProbeEnvironment<T>(
   run: (environment: Readonly<{ env: NodeJS.ProcessEnv }>) => Promise<T>,
 ): Promise<T> {
   const environment = await resolvePreflightSessionControlsProbeEnvironment(params);
-  let succeeded = false;
-  try {
-    const result = await run({ env: environment.env });
-    succeeded = true;
-    return result;
-  } finally {
-    runCleanup(succeeded ? environment.cleanupOnExit : (environment.cleanupOnFailure ?? environment.cleanupOnExit));
-  }
+  return await run({ env: environment.env });
 }

@@ -2,14 +2,14 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
 import type {
-    CloudAuthCallbackCreateInputV1,
-    CloudAuthCallbackCreateResultV1,
-    CloudAuthCallbackResultV1,
-    CloudAuthCallbackServiceV1,
-    CloudAuthCallbackSessionV1,
-    CloudAuthCallbackWaitInputV1,
-    CloudAuthFailureCodeV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+    AuthCallbackCreateInput as CloudAuthCallbackCreateInputV1,
+    AuthCallbackCreateResult as CloudAuthCallbackCreateResultV1,
+    AuthCallbackResult as CloudAuthCallbackResultV1,
+    AuthCallbackService as CloudAuthCallbackServiceV1,
+    AuthCallbackSession as CloudAuthCallbackSessionV1,
+    AuthCallbackWaitInput as CloudAuthCallbackWaitInputV1,
+    AuthFailureCode as CloudAuthFailureCodeV1,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from '@/cloud/loopbackPort';
 import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
@@ -20,10 +20,11 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 type NodeHttpServerFactory = (
     handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>,
 ) => Server;
+type CloudAuthPromptTextOptions = Readonly<{ signal: AbortSignal }>;
 
 export type CloudAuthCallbackServiceOptions = Readonly<{
     signal?: AbortSignal;
-    promptText?: (label: string) => Promise<string>;
+    promptText?: (label: string, options: CloudAuthPromptTextOptions) => Promise<string>;
     generateState?: () => string;
     defaultTimeoutMs?: number;
     createServerFn?: NodeHttpServerFactory;
@@ -278,7 +279,10 @@ async function createPasteSession(
     const state = opts.generateState();
     const redirectUri = `http://localhost:${port}${callbackPath}`;
     let waitPromise: Promise<CloudAuthCallbackResultV1> | null = null;
-    const closeTransport = async () => {};
+    const promptAbortController = new AbortController();
+    const closeTransport = async () => {
+        promptAbortController.abort();
+    };
     const controller = createWaitController({
         signal: opts.signal,
         timeoutMs,
@@ -295,7 +299,10 @@ async function createPasteSession(
                 return await controller.promise;
             }
             try {
-                const promptPromise = opts.promptText(waitInput?.promptLabel ?? 'Paste redirect URL: ');
+                const promptPromise = opts.promptText(
+                    waitInput?.promptLabel ?? 'Paste redirect URL: ',
+                    { signal: promptAbortController.signal },
+                );
                 const promptResult = await Promise.race([
                     promptPromise.then((pasted) => ({ kind: 'pasted' as const, pasted })),
                     controller.promise.then((result) => ({ kind: 'settled' as const, result })),

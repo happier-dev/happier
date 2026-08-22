@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { encodeBase64, encodeBase64Url, authChallenge } from './encryption';
-import { configuration } from '@/configuration';
-import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
+import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
 /**
  * Note: This function is deprecated. Use readPrivateKey/writePrivateKey from persistence module instead.
@@ -20,11 +19,13 @@ export async function getOrCreateSecretKey(): Promise<Uint8Array> {
 export async function authGetToken(secret: Uint8Array): Promise<string> {
   const { challenge, publicKey, signature } = authChallenge(secret);
   
-  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const serverUrl = resolveServerHttpBaseUrl();
   const response = await axios.post(`${serverUrl}/v1/auth`, {
     challenge: encodeBase64(challenge),
     publicKey: encodeBase64(publicKey),
     signature: encodeBase64(signature)
+  }, {
+    headers: buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
   });
 
   if (!response.data.success || !response.data.token) {
@@ -43,3 +44,4 @@ export function generateAppUrl(secret: Uint8Array): string {
   const secretBase64Url = encodeBase64Url(secret);
   return `handy://${secretBase64Url}`;
 }
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

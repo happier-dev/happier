@@ -4,13 +4,14 @@ import type {
     UserMessage,
 } from '../types';
 import { SessionMessageContentSchema, UserMessageSchema } from '../types';
-import { coerceSessionUserPromptV1, readPendingLocalId, RuntimeEventV1Schema } from '@happier-dev/protocol';
+import { AgentSessionRuntimeEventSchema, coerceSessionUserPromptV1, readPendingLocalId } from '@happier-dev/protocol';
 import { summarizeValueShapeForLog } from '@/diagnostics/eventShapeForLog';
 import {
     detectSessionTurnLifecycleEvent,
     isBareSessionReadyEvent,
 } from '@/session/shared/sessionTurnLifecycle';
 import { readSessionHistoryReplayProvenance } from './sessionMessageCatchUp';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 type ConnectedServiceTurnLifecycleEvent = 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
 
@@ -48,12 +49,12 @@ function mapSessionTurnLifecycleToConnectedServiceEvent(value: unknown): Connect
     if (event === 'task_complete') {
         return 'assistant_message_end';
     }
-    const runtimeEvent = RuntimeEventV1Schema.safeParse(value);
+    const runtimeEvent = AgentSessionRuntimeEventSchema.safeParse(value);
     if (runtimeEvent.success) {
         if (runtimeEvent.data.kind === 'turn-start') return 'prompt_or_steer';
         if (runtimeEvent.data.kind === 'turn-cancelled'
             || runtimeEvent.data.kind === 'turn-failed'
-            || runtimeEvent.data.kind === 'session-ended') {
+            || runtimeEvent.data.kind === 'runtime-ended') {
             return 'turn_cancelled';
         }
         if (runtimeEvent.data.kind === 'turn-complete') {
@@ -66,18 +67,17 @@ function mapSessionTurnLifecycleToConnectedServiceEvent(value: unknown): Connect
 export function handleSessionNewMessageUpdate(params: {
     update: Update;
     sessionId: string;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
     receivedMessageIds: Set<string>;
     lastObservedMessageSeq: number;
     lastObservedUserMessageSeq: number;
     emit: (event: 'user-message' | 'message', payload: unknown) => void;
     observeMessage?: (message: unknown, seq: number | null) => void;
     observeCommittedUserMessageSeq?: (params: { localId: string | null | undefined; seq: number }) => void;
+    consumeLocallyAuthoredTranscriptObservationLocalId?: (localId: string) => boolean;
     onConnectedServiceTurnLifecycleEvent?: (event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled') => void;
     debug: (message: string, data?: unknown) => void;
     debugLargeJson: (message: string, data: unknown) => void;
-}): {
+} & SessionStoredContentCryptoContext): {
     handled: boolean;
     lastObservedMessageSeq: number;
     lastObservedUserMessageSeq: number;
@@ -148,7 +148,18 @@ export function handleSessionNewMessageUpdate(params: {
         body = parsedContent.data.v;
     } else {
         try {
-            body = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(parsedContent.data.c));
+            if (params.mode !== 'e2ee') {
+                return {
+                    handled: false,
+                    lastObservedMessageSeq: nextLastObservedMessageSeq,
+                    lastObservedUserMessageSeq: nextLastObservedUserMessageSeq,
+                };
+            }
+            body = decrypt(
+                params.ctx.encryptionKey,
+                params.ctx.encryptionVariant,
+                decodeBase64(parsedContent.data.c),
+            );
         } catch (error) {
             params.debug('[SOCKET] [UPDATE] Failed to decrypt new-message payload', {
                 error,
@@ -177,6 +188,8 @@ export function handleSessionNewMessageUpdate(params: {
                 ? params.update.createdAt
                 : undefined;
     const historyReplayProvenance = readSessionHistoryReplayProvenance(params.update);
+    const isLocallyAuthoredTranscriptObservation = localId !== null
+        && params.consumeLocallyAuthoredTranscriptObservationLocalId?.(localId) === true;
     const bodyWithTransportFields = {
         ...(bodyWithLocalId as any),
         // Attach server timestamps so downstream consumers can make clock-safe decisions.
@@ -185,8 +198,8 @@ export function handleSessionNewMessageUpdate(params: {
             serverCreatedAt: transportCreatedAt,
         }),
     };
-    const isHistoryObservation = historyReplayProvenance !== null;
-    if (!isHistoryObservation) {
+    const isTranscriptObservation = historyReplayProvenance !== null || isLocallyAuthoredTranscriptObservation;
+    if (!isTranscriptObservation) {
         const messageType = (bodyWithTransportFields as { type?: unknown }).type;
         if (
             messageType === 'task_started'
@@ -196,7 +209,7 @@ export function handleSessionNewMessageUpdate(params: {
             params.onConnectedServiceTurnLifecycleEvent?.(messageType);
         }
     }
-    if (!isHistoryObservation) {
+    if (!isTranscriptObservation) {
         params.observeMessage?.(
             bodyWithTransportFields,
             typeof msgSeq === 'number' && Number.isFinite(msgSeq) ? msgSeq : null,
@@ -206,7 +219,7 @@ export function handleSessionNewMessageUpdate(params: {
     // Recovery proof must come from a provider outcome observed after this runtime's
     // initial/catch-up watermark. Replayed socket rows are transcript state, not a new
     // provider outcome for the currently selected credential epoch.
-    if (!isHistoryObservation && connectedServiceTurnLifecycleEvent && isStrictlyNewMessageSeq) {
+    if (!isTranscriptObservation && connectedServiceTurnLifecycleEvent && isStrictlyNewMessageSeq) {
         params.onConnectedServiceTurnLifecycleEvent?.(connectedServiceTurnLifecycleEvent);
     }
 
@@ -216,11 +229,11 @@ export function handleSessionNewMessageUpdate(params: {
     // Try to parse as user message first.
     const userResult = UserMessageSchema.safeParse(bodyWithTransportFields);
     if (userResult.success) {
-        if (!isHistoryObservation) {
+        if (!isTranscriptObservation) {
             params.onConnectedServiceTurnLifecycleEvent?.('prompt_or_steer');
         }
         shouldMarkReceivedMessageId = true;
-        if (!isHistoryObservation) {
+        if (!isTranscriptObservation) {
             observeCommittedUserMessageSeq({
                 message: userResult.data,
                 transportLocalId: localId,
@@ -231,7 +244,9 @@ export function handleSessionNewMessageUpdate(params: {
         if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
             nextLastObservedUserMessageSeq = Math.max(nextLastObservedUserMessageSeq, msgSeq);
         }
-        params.emit('user-message', userResult.data);
+        if (!isTranscriptObservation) {
+            params.emit('user-message', userResult.data);
+        }
     } else {
         const coerced = coerceSessionUserPromptV1(bodyWithTransportFields);
         if (coerced) {
@@ -245,11 +260,11 @@ export function handleSessionNewMessageUpdate(params: {
             };
             const parsedCandidate = UserMessageSchema.safeParse(candidate);
             if (parsedCandidate.success) {
-                if (!isHistoryObservation) {
+                if (!isTranscriptObservation) {
                     params.onConnectedServiceTurnLifecycleEvent?.('prompt_or_steer');
                 }
                 shouldMarkReceivedMessageId = true;
-                if (!isHistoryObservation) {
+                if (!isTranscriptObservation) {
                     observeCommittedUserMessageSeq({
                         message: parsedCandidate.data,
                         transportLocalId: localId,
@@ -260,7 +275,9 @@ export function handleSessionNewMessageUpdate(params: {
                 if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
                     nextLastObservedUserMessageSeq = Math.max(nextLastObservedUserMessageSeq, msgSeq);
                 }
-                params.emit('user-message', parsedCandidate.data);
+                if (!isTranscriptObservation) {
+                    params.emit('user-message', parsedCandidate.data);
+                }
                 return {
                     handled: true,
                     lastObservedMessageSeq: nextLastObservedMessageSeq,

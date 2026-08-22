@@ -56,6 +56,29 @@ describe('UsageLimitRecoveryScheduler', () => {
     expect(recover).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
+  it('stops waking a recovery once the owning machine-sync attempt disposes it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000));
+    const recover = vi.fn(async () => ({ status: 'ready' as const }));
+    const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => Date.now(), recover });
+    await scheduler.enable({
+      sessionId: 'session-retired',
+      issueFingerprint: 'retired-attempt-limit',
+      resetAtMs: 3_000,
+      nextCheckAtMs: 3_000,
+      selectedAuth: { kind: 'native' },
+    });
+
+    scheduler.dispose();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(recover).not.toHaveBeenCalled();
+    await expect(scheduler.wake({ sessionId: 'session-retired', reason: 'timer' }))
+      .resolves.toEqual({ status: 'disposed' });
+    expect(recover).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -448,7 +471,10 @@ describe('UsageLimitRecoveryScheduler', () => {
 
     await scheduler.cancel({ sessionId: 'session-1' });
 
-    expect(scheduler.read('session-1')?.status).toBe('cancelled');
+    expect(scheduler.read('session-1')).toMatchObject({
+      status: 'cancelled',
+      nextCheckAtMs: null,
+    });
   });
 
   it('re-runs group recovery on wake instead of retrying the old profile directly', async () => {

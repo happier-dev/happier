@@ -47,6 +47,7 @@ vi.mock('@/configuration', () => ({
 
 vi.mock('@/persistence', () => ({
   readCredentials: readCredentialsMock,
+  readStoredCredentials: readCredentialsMock,
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', async () => {
@@ -110,6 +111,13 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
           happyHomeDir: '/tmp/happier-test-home',
           contributes,
           pluginIds,
+          generationAuthority: {
+            commit: null,
+            generations: new Map(),
+            rejectedGenerations: new Map(),
+            unavailableBundledPackageNames: new Set(),
+            isCurrent: async () => true,
+          },
         }),
     });
     for (const agentId of externalSessionAgentIds) {
@@ -298,8 +306,12 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
     );
     expect(response.ok).toBe(false);
     if (response.ok) return;
-    expect(response.errorCode).toBe('invalid_request');
-    expect(response.error).toContain('source');
+    expect(response).toMatchObject({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'invalid_request',
+      retryable: false,
+    });
   });
 
   it('reports persisted takeover unavailable when a linked session cannot resume safely', async () => {
@@ -392,7 +404,11 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
     );
     expect(response.ok).toBe(false);
     if (response.ok) return;
-    expect(response.errorCode).toBe('invalid_request');
-    expect(response.error).toContain('source');
+    expect(response).toMatchObject({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'invalid_request',
+      retryable: false,
+    });
   });
 });

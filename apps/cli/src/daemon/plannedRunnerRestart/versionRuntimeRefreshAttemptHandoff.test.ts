@@ -58,4 +58,33 @@ describe('createVersionRuntimeRefreshAttemptHandoff', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps an explicitly deadline-free attempt pending until the canonical owner settles it', async () => {
+    vi.useFakeTimers();
+    try {
+      const handoff = createVersionRuntimeRefreshAttemptHandoff({
+        timeoutMs: 100,
+        timeoutCompletion: 'timeout',
+        supersededCompletion: 'superseded',
+        cancelledCompletion: 'cancelled',
+      });
+      const attempt = handoff.create({
+        sessionId: 'sess-1',
+        previousPid: 111,
+        timeoutMs: null,
+      });
+      let settled = false;
+      void attempt.promise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBe(false);
+
+      handoff.settle('sess-1', 111, 'success');
+      await expect(attempt.promise).resolves.toBe('success');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

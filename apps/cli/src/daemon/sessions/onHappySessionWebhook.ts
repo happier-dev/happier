@@ -1,12 +1,15 @@
-import type { Metadata } from '@/api/types';
+import type { Metadata, SessionCreationOutcome } from '@/api/types';
 import { configuration } from '@/configuration';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import {
+  SPAWN_SESSION_ERROR_CODES,
+} from '@/session/shared/spawnSessionContract';
+import type { SessionCreationTerminalSpawnErrorDetail } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 
 import {
   getAgentResumeConfig,
-  inferAgentIdFromSessionMetadata,
+  resolveAgentIdFromSessionMetadata,
   resolveVendorResumeIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import { applyProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
@@ -23,7 +26,6 @@ import {
   writeSessionMarker,
 } from '../sessionRegistry';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '../processSupervision/sessionRunnerRespawnDescriptor';
-import { toDurablePluginLocalServicesBridgeAuthorization } from '../local/services/pluginBridgeAuthorization';
 import { hasSessionWebhookPidTimedOut } from '../spawn/waitForSessionWebhook';
 import { promoteTrackedSessionPidCustody } from './promoteTrackedSessionPidCustody';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
@@ -35,6 +37,7 @@ import {
 import type {
   WindowsProcessInventoryFact,
 } from '../platform/windows/windowsProcessInventory';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 const DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS = 1000;
 const PARENT_PID_LOOKUP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_PARENT_PID_LOOKUP_TIMEOUT_MS';
@@ -51,14 +54,17 @@ function isPidPlaceholderSessionId(value: string): boolean {
   return /^PID-\d+$/.test(value);
 }
 
-function shouldRequireCanonicalManagedMarkerAdoption(
+function shouldRequireCanonicalRunnerMarkerAdoption(
   tracked: TrackedSession,
   isPlaceholderSessionId: boolean,
 ): boolean {
   return (
     !isPlaceholderSessionId
     && tracked.startedBy === 'daemon'
-    && tracked.managedLocalServiceRunAttachment !== undefined
+    && tracked.reattachedFromDiskMarker !== true
+    && Boolean(
+      tracked.agentRuntimeDaemonServiceAuthorityFilePath,
+    )
     && (
       !tracked.happySessionId?.trim()
       || isPidPlaceholderSessionId(tracked.happySessionId)
@@ -267,6 +273,18 @@ function didSessionWebhookTimeout(tracked: TrackedSession | null | undefined): b
   return typeof tracked?.sessionWebhookTimedOutAtMs === 'number';
 }
 
+function hasSameSessionCreationOutcome(
+  left: SessionCreationOutcome,
+  right: SessionCreationOutcome,
+): boolean {
+  return left.disposition === right.disposition
+    && left.organizationPlacement.folderId === right.organizationPlacement.folderId
+    && left.organizationPlacement.tagIds.length === right.organizationPlacement.tagIds.length
+    && left.organizationPlacement.tagIds.every(
+      (tagId, index) => tagId === right.organizationPlacement.tagIds[index],
+    );
+}
+
 function adoptReportedSessionIdentity(
   tracked: TrackedSession,
   sessionId: string,
@@ -346,6 +364,63 @@ function createStartupReadinessGate(): Readonly<{
   });
 }
 
+/**
+ * Settles the pre-existing spawn webhook waiter when the runner reaches the
+ * server create-or-load boundary but receives its exact organization-placement
+ * rejection before it has a Session to report. The nonce is the daemon-owned
+ * attempt identity; a report must never select an arbitrary pending waiter.
+ */
+export function createOnDaemonSessionStartupFailure(params: Readonly<{
+  pidToTrackedSession: Map<number, TrackedSession>;
+  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
+}>): (input: Readonly<{
+  spawnNonce: string;
+  errorDetail: SessionCreationTerminalSpawnErrorDetail;
+}>) => boolean {
+  return (input) => {
+    const spawnNonce = input.spawnNonce.trim();
+    if (!spawnNonce) return false;
+
+    const candidates = [...params.pidToTrackedSession.values()].filter((tracked) => {
+      if (tracked.startedBy !== 'daemon' || didSessionWebhookTimeout(tracked)) {
+        return false;
+      }
+      const trackedNonce = typeof tracked.spawnOptions?.spawnNonce === 'string'
+        ? tracked.spawnOptions.spawnNonce.trim()
+        : '';
+      if (trackedNonce !== spawnNonce) return false;
+      const currentSessionId = typeof tracked.happySessionId === 'string'
+        ? tracked.happySessionId.trim()
+        : '';
+      if (!isPidPlaceholderSessionId(currentSessionId)) return false;
+      const awaiterPid = tracked.spawnStartupAwaiterPid ?? tracked.pid;
+      return params.pidToAwaiter.has(awaiterPid);
+    });
+
+    // A nonce must designate one live, pending spawn. Ambiguity and stale
+    // reports deliberately do nothing rather than waking another attempt.
+    if (candidates.length !== 1) return false;
+    const tracked = candidates[0]!;
+    const awaiterPid = tracked.spawnStartupAwaiterPid ?? tracked.pid;
+    const awaiter = params.pidToAwaiter.get(awaiterPid);
+    if (!awaiter) return false;
+
+    tracked.spawnStartupReadinessFailure ??= {
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: input.errorDetail.kind === 'session_creation_correspondence_conflict'
+        ? 'Session creation correspondence conflicts with the existing Session'
+        : 'Session creation organization placement is invalid',
+      errorDetail: input.errorDetail,
+    };
+    // Claim before invoking the existing waiter so duplicate/later callbacks
+    // cannot race its cleanup path or settle this spawn twice.
+    params.pidToAwaiter.delete(awaiterPid);
+    awaiter(tracked);
+    return true;
+  };
+}
+
 export function createOnHappySessionWebhook(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
@@ -357,6 +432,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
     number,
     () => Promise<void>
   >;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   findHappyProcessByPidFn?: typeof findHappyProcessByPid;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
   readAllWindowsProcessFactsFn?: () => Promise<
@@ -367,7 +443,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
   promoteSessionMarkerFn?: typeof promoteSessionMarkerPid;
   removeSessionMarkerIfOwnedFn?: typeof removeSessionMarkerIfOwned;
   getParentPidFn?: (pid: number) => number | null;
-  readCredentialsFn?: typeof readCredentials;
+  readCredentialsFn?: typeof readStoredCredentials;
   onTrackedSessionReady?: (tracked: TrackedSession) => Promise<void>;
   onTrackedSessionReported?: (tracked: TrackedSession) => Promise<void> | void;
   onPidPromoted?: (input: Readonly<{
@@ -375,7 +451,12 @@ export function createOnHappySessionWebhook(params: Readonly<{
     toPid: number;
     trackedSession: TrackedSession;
   }>) => void;
-}>): (sessionId: string, sessionMetadata: Metadata) => Promise<void> {
+}>): (
+  sessionId: string,
+  sessionMetadata: Metadata,
+  reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
+  sessionCreationOutcome?: SessionCreationOutcome,
+) => Promise<void> {
   const {
     pidToTrackedSession,
     pidToAwaiter,
@@ -390,13 +471,18 @@ export function createOnHappySessionWebhook(params: Readonly<{
     promoteSessionMarkerFn = promoteSessionMarkerPid,
     removeSessionMarkerIfOwnedFn = removeSessionMarkerIfOwned,
     getParentPidFn = getParentPid,
-    readCredentialsFn = readCredentials,
+    readCredentialsFn = readStoredCredentials,
     onTrackedSessionReady,
     onTrackedSessionReported,
     onPidPromoted,
   } = params;
 
-  return async (sessionId: string, sessionMetadata: Metadata) => {
+  return async (
+    sessionId: string,
+    sessionMetadata: Metadata,
+    reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
+    sessionCreationOutcome?: SessionCreationOutcome,
+  ) => {
     const normalizedPath = resolveSessionWebhookPath(sessionMetadata.path);
     const normalizedMetadata =
       normalizedPath === sessionMetadata.path ? sessionMetadata : { ...sessionMetadata, path: normalizedPath };
@@ -439,11 +525,10 @@ export function createOnHappySessionWebhook(params: Readonly<{
 
       trackedForPid = existingSession;
       requiresCanonicalMarkerAdoption =
-        shouldRequireCanonicalManagedMarkerAdoption(
+        shouldRequireCanonicalRunnerMarkerAdoption(
           existingSession,
           isPlaceholderSessionId,
         );
-
       // Update tracked session with latest webhook data.
       adoptReportedSessionIdentity(
         existingSession,
@@ -507,7 +592,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         }
         trackedForPid = trackedByRunnerPid;
         requiresCanonicalMarkerAdoption =
-          shouldRequireCanonicalManagedMarkerAdoption(
+          shouldRequireCanonicalRunnerMarkerAdoption(
             trackedByRunnerPid,
             isPlaceholderSessionId,
           );
@@ -648,7 +733,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
 
             trackedForPid = parentSession;
             requiresCanonicalMarkerAdoption =
-              shouldRequireCanonicalManagedMarkerAdoption(
+              shouldRequireCanonicalRunnerMarkerAdoption(
                 parentSession,
                 isPlaceholderSessionId,
               );
@@ -691,8 +776,10 @@ export function createOnHappySessionWebhook(params: Readonly<{
     ): Promise<string | null> => {
       if (!trackedForPid) return null;
 
-      const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
-      const metadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata);
+      const agentId = resolveAgentIdFromSessionMetadata(normalizedMetadata);
+      const metadataVendorResumeId = agentId
+        ? resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata)
+        : null;
       if (metadataVendorResumeId) {
         trackedForPid.vendorResumeId = metadataVendorResumeId;
         return metadataVendorResumeId;
@@ -706,7 +793,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       const existingMarker = markers
         .filter((marker) => marker.pid === currentSessionMarkerPid)
         .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
-      const markerVendorResumeId = existingMarker
+      const markerVendorResumeId = existingMarker && agentId
         ? resolveVendorResumeIdFromSessionMetadata(agentId, existingMarker.metadata)
         : null;
       if (markerVendorResumeId) {
@@ -719,8 +806,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
 
     const mergeKnownVendorResumeIdIntoMetadata = (vendorResumeId: string | null): Metadata => {
       if (!vendorResumeId) return normalizedMetadata;
-      const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
-      const resumeConfig = getAgentResumeConfig(agentId);
+      const agentId = resolveAgentIdFromSessionMetadata(normalizedMetadata);
+      const resumeConfig = agentId ? getAgentResumeConfig(agentId) : null;
+      if (!agentId || !resumeConfig) return normalizedMetadata;
       const vendorResumeIdField = 'vendorResumeIdField' in resumeConfig ? resumeConfig.vendorResumeIdField ?? null : null;
       if (!vendorResumeIdField) return normalizedMetadata;
       if (resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata)) return normalizedMetadata;
@@ -734,9 +822,26 @@ export function createOnHappySessionWebhook(params: Readonly<{
       trackedForPid?.startedBy === 'daemon' && !isPlaceholderSessionId
         ? trackedForPid
         : null;
+    if (trackedDaemonCanonicalSession && sessionCreationOutcome) {
+      const priorOutcome = trackedDaemonCanonicalSession.sessionCreationOutcome;
+      if (
+        priorOutcome
+        && !hasSameSessionCreationOutcome(priorOutcome, sessionCreationOutcome)
+      ) {
+        trackedDaemonCanonicalSession.spawnStartupReadinessFailure ??= {
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+          errorMessage: 'create_or_rejoin_outcome_conflict',
+        };
+      } else {
+        trackedDaemonCanonicalSession.sessionCreationOutcome ??= sessionCreationOutcome;
+      }
+    }
     if (trackedForPid) {
-      const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
-      const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata);
+      const agentId = resolveAgentIdFromSessionMetadata(normalizedMetadata);
+      const vendorResumeId = agentId
+        ? resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata)
+        : null;
       if (vendorResumeId) trackedForPid.vendorResumeId = vendorResumeId;
     }
 
@@ -771,9 +876,11 @@ export function createOnHappySessionWebhook(params: Readonly<{
       assertTrackedStartupCustody();
     };
 
-    // Fresh tracked-daemon placeholder adoption is required startup custody and is awaited below.
+    // Fresh runner-authority placeholder adoption is required startup custody and is awaited below.
     // Other marker refreshes remain best-effort.
-    const persistSessionMarker = async (): Promise<void> => {
+    const persistSessionMarker = async (
+      beforeStartupReadiness = false,
+    ): Promise<void> => {
       await awaitTrackedMarkerPromotion();
       const acceptedSpawnMarkerGate = trackedForPid?.acceptedSpawnMarkerGate;
       if (acceptedSpawnMarkerGate && !await acceptedSpawnMarkerGate) {
@@ -788,6 +895,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       if (
         startupReadinessGate
         && !requiresCanonicalMarkerAdoption
+        && !beforeStartupReadiness
         && !await startupReadinessGate.promise
       ) {
         return;
@@ -800,7 +908,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       ]);
       await awaitTrackedMarkerPromotion();
       if (currentSessionMarkerPid !== resolveSessionMarkerPid()) {
-        await persistSessionMarker();
+        await persistSessionMarker(beforeStartupReadiness);
         return;
       }
       const discoveredProcessCommand =
@@ -850,30 +958,21 @@ export function createOnHappySessionWebhook(params: Readonly<{
           ? buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
               trackedForPid.spawnOptions,
               {
-                ...(storedCredentials ? { encryptionMaterial: storedCredentials.encryption } : {}),
+                ...(params.deviceLocalSecretStorage
+                  ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage }
+                  : {}),
+                ...(storedCredentials?.encryption
+                  ? { encryptionMaterial: storedCredentials.encryption }
+                  : {}),
                 ...(knownVendorResumeId ? { vendorResumeId: knownVendorResumeId } : {}),
               },
             )
           : null;
 
       const persistedMetadata = mergeKnownVendorResumeIdIntoMetadata(knownVendorResumeId);
-      const localServicesBridgeAuthorization = toDurablePluginLocalServicesBridgeAuthorization(
-        trackedForPid?.localServicesBridgeTokenHash &&
-        trackedForPid.localServicesBridgePluginId &&
-        trackedForPid.localServicesBridgeContributionId
-          ? {
-              tokenHash: trackedForPid.localServicesBridgeTokenHash,
-              pluginId: trackedForPid.localServicesBridgePluginId,
-              contributionId: trackedForPid.localServicesBridgeContributionId,
-              ...(trackedForPid.localServicesBridgeTokenFilePath
-                ? { tokenFilePath: trackedForPid.localServicesBridgeTokenFilePath }
-                : {}),
-            }
-          : undefined,
-      );
       await awaitTrackedMarkerPromotion();
       if (currentSessionMarkerPid !== resolveSessionMarkerPid()) {
-        await persistSessionMarker();
+        await persistSessionMarker(beforeStartupReadiness);
         return;
       }
       await writeSessionMarkerFn(
@@ -887,7 +986,14 @@ export function createOnHappySessionWebhook(params: Readonly<{
           processCommand,
           metadata: persistedMetadata,
           ...(respawn ? { respawn } : {}),
-          ...(localServicesBridgeAuthorization ? { localServicesBridgeAuthorization } : {}),
+          ...(trackedForPid
+            ?.agentRuntimeDaemonServiceAuthorityFilePath
+            ? {
+                agentRuntimeDaemonServiceAuthorityFilePath:
+                  trackedForPid
+                    .agentRuntimeDaemonServiceAuthorityFilePath,
+              }
+            : {}),
         },
         ...(requiresCanonicalMarkerAdoption
           ? [{ adoptCanonicalSessionIdFromPidPlaceholder: true }]
@@ -895,10 +1001,36 @@ export function createOnHappySessionWebhook(params: Readonly<{
       );
       await awaitTrackedMarkerPromotion();
     };
-    if (!requiresCanonicalMarkerAdoption) {
-      void persistSessionMarker().catch((e) => {
-        logger.debug('[DAEMON RUN] Failed to write session marker', e);
-      });
+    let ordinaryMarkerPersistence: Promise<boolean> | null = null;
+    const startOrdinaryMarkerPersistence = (
+      beforeStartupReadiness = false,
+    ): Promise<boolean> => {
+      if (ordinaryMarkerPersistence) return ordinaryMarkerPersistence;
+      ordinaryMarkerPersistence = persistSessionMarker(
+        beforeStartupReadiness,
+      )
+        .then(() => true)
+        .catch((e) => {
+          logger.debug(
+            '[DAEMON RUN] Failed to write session marker',
+            e,
+          );
+          return false;
+        });
+      if (trackedForPid && trackedForPid.startedBy !== 'daemon') {
+        // Foreground authority promotion consumes this exact canonical write
+        // rather than racing it or creating a second marker writer.
+        trackedForPid.sessionMarkerPersistence =
+          ordinaryMarkerPersistence;
+      }
+      return ordinaryMarkerPersistence;
+    };
+    if (
+      !requiresCanonicalMarkerAdoption
+      && !trackedDaemonCanonicalSession
+        ?.agentRuntimeDaemonServiceAuthorityFilePath
+    ) {
+      void startOrdinaryMarkerPersistence();
     }
 
     if (!trackedDaemonCanonicalSession || !startupReadinessGate) return;
@@ -1032,15 +1164,42 @@ export function createOnHappySessionWebhook(params: Readonly<{
       } catch (error) {
         reportObserverFailure(error);
       }
+      if (requiresCanonicalMarkerAdoption) {
+        // Authority installation updates this exact marker with retained
+        // generation custody. Adopt the canonical Session id first so the
+        // authority owner never observes the provisional PID placeholder.
+        await persistSessionMarker();
+      } else if (
+        trackedDaemonCanonicalSession
+          .agentRuntimeDaemonServiceAuthorityFilePath
+        && !await startOrdinaryMarkerPersistence(true)
+      ) {
+        throw new Error(
+          'Runner Agent canonical session marker is unavailable',
+        );
+      }
       if (onTrackedSessionReady) {
         await onTrackedSessionReady(trackedDaemonCanonicalSession);
       }
       await awaitTrackedMarkerPromotion();
-      if (requiresCanonicalMarkerAdoption) {
-        await persistSessionMarker();
+      const spawnAwaiterPid =
+        trackedDaemonCanonicalSession.spawnStartupAwaiterPid
+        ?? trackedDaemonCanonicalSession.pid;
+      const hasActiveSpawnAwaiter = pidToAwaiter.has(spawnAwaiterPid);
+      if (
+        reconcileCanonicalReadiness
+        && trackedDaemonCanonicalSession.reattachedFromDiskMarker !== true
+        && hasActiveSpawnAwaiter
+      ) {
+        await reconcileCanonicalReadiness(
+          trackedDaemonCanonicalSession,
+        );
       }
-      await awaitTrackedMarkerPromotion();
     } catch (error) {
+      logger.debug(
+        '[DAEMON RUN] Canonical Session startup readiness failed',
+        error,
+      );
       trackedDaemonCanonicalSession.spawnStartupReadinessFailure ??= {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
@@ -1052,33 +1211,40 @@ export function createOnHappySessionWebhook(params: Readonly<{
     }
     startupReadinessGate.resolve(true);
     completeSpawnAwaiter();
-    };
-    if (windowsTerminalHostPid === null) {
-      await reconcileTrackedDaemonCanonicalWebhook();
-      return;
+    if (
+      !requiresCanonicalMarkerAdoption
+      && !ordinaryMarkerPersistence
+    ) {
+      void startOrdinaryMarkerPersistence();
     }
+    };
     const inFlightReconciliation =
       trackedDaemonCanonicalSession
-        .windowsTerminalCanonicalWebhookReconciliation;
+        .canonicalWebhookReconciliation;
     if (inFlightReconciliation) {
+      const concurrentReadinessFailure =
+        trackedDaemonCanonicalSession.spawnStartupReadinessFailure;
+      if (concurrentReadinessFailure) {
+        throw new Error(concurrentReadinessFailure.errorMessage);
+      }
       await inFlightReconciliation;
       return;
     }
     const reconciliation =
       reconcileTrackedDaemonCanonicalWebhook();
     trackedDaemonCanonicalSession
-      .windowsTerminalCanonicalWebhookReconciliation =
+      .canonicalWebhookReconciliation =
         reconciliation;
     try {
       await reconciliation;
     } finally {
       if (
         trackedDaemonCanonicalSession
-          .windowsTerminalCanonicalWebhookReconciliation
+          .canonicalWebhookReconciliation
         === reconciliation
       ) {
         delete trackedDaemonCanonicalSession
-          .windowsTerminalCanonicalWebhookReconciliation;
+          .canonicalWebhookReconciliation;
       }
     }
   };

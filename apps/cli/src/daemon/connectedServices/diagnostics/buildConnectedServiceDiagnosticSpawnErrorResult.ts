@@ -47,7 +47,10 @@ function readCredentialRefreshSpawnError(error: unknown): ConnectedServiceCreden
   if (!record) return null;
   const name = readString(record.name);
   const kind = readString(record.kind);
-  if (name === 'ConnectedServiceSpawnCredentialRefreshError' && kind === 'reconnect_required') return record;
+  if (
+    name === 'ConnectedServiceSpawnCredentialRefreshError'
+    && (kind === 'reconnect_required' || kind === 'transient_refresh_failed')
+  ) return record;
   if (
     name === 'ConnectedServiceSpawnProfileActionRequiredError'
     && kind === 'profile_action_required'
@@ -127,7 +130,10 @@ export function buildConnectedServiceCredentialRefreshSpawnErrorResult(input: Re
   );
   const refreshStatus = status || null;
   const refreshCategory = readStringField(diagnostic, 'category') || null;
-  const code = CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired;
+  const retryable = readString(error.kind) === 'transient_refresh_failed';
+  const code = retryable
+    ? CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable
+    : CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired;
 
   return buildConnectedServiceDiagnosticSpawnValidationErrorResult({
     errorMessage: code,
@@ -138,12 +144,18 @@ export function buildConnectedServiceCredentialRefreshSpawnErrorResult(input: Re
       agentId: input.agentId,
       ...(serviceId ? { serviceId } : {}),
       ...(profileId ? { profileId } : {}),
-      retryable: false,
-      diagnostics: {
-        reason,
-        refreshStatus,
-        refreshCategory,
-      },
+      retryable,
+      diagnostics: retryable
+        ? {
+            reason,
+            status: refreshStatus,
+            category: refreshCategory,
+          }
+        : {
+            reason,
+            refreshStatus,
+            refreshCategory,
+          },
     }),
   });
 }

@@ -293,6 +293,31 @@ describe('voice diagnostic store', () => {
     expect(webm?.audioPath.endsWith('.webm')).toBe(true);
   });
 
+  it('captures a staged WAV file without making the caller load its bytes', async () => {
+    const home = await makeHome();
+    const sourcePath = join(home, 'staged-input.wav');
+    const sourceWav = createMonoPcm16Wav(250);
+    await writeFile(sourcePath, sourceWav);
+    const store = createVoiceDiagnosticStore({
+      happyHomeDir: home,
+      policy: { enabled: true, consentVersion: 1, captureSttInput: true },
+    });
+
+    const artifact = await store.captureFile({
+      direction: 'stt_input',
+      format: 'wav',
+      filePath: sourcePath,
+      durationMs: null,
+      sessionId: 'session',
+      providerId: 'local_neural',
+      attemptId: 'attempt',
+    });
+
+    expect(await readFile(artifact!.audioPath)).toEqual(sourceWav);
+    expect(await readFile(sourcePath)).toEqual(sourceWav);
+    expect(artifact?.durationMs).toBe(250);
+  });
+
   it('resolves only committed artifact ids for explicit export and never accepts paths', async () => {
     const home = await makeHome();
     const store = createVoiceDiagnosticStore({

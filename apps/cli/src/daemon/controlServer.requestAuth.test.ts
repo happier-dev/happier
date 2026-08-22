@@ -1,3 +1,4 @@
+import { request as requestHttp } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,7 +9,7 @@ import {
 } from '@happier-dev/protocol';
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 
 import { logger } from '@/ui/logger';
 import { createDaemonControlApp } from './controlServer';
@@ -55,7 +56,7 @@ function createApp(overrides: Record<string, unknown> = {}) {
   const authenticate = vi.fn(
     (capability: unknown) => capability === 'scoped-capability' ? subject : null,
   );
-  const lookupRequestAuth = vi.fn(async () => ({
+  const lookupRequestAuth = vi.fn(async (_input: Readonly<{ signal?: AbortSignal }>) => ({
     accessToken: 'access-token',
     credentialContext,
   }));
@@ -111,6 +112,7 @@ describe('daemon private connected-account request-auth routes', () => {
       expect(lookupRequestAuth).toHaveBeenCalledWith({
         subject: expect.objectContaining({ subjectId: 'session:test/run:wrapper' }),
         purpose,
+        signal: expect.any(AbortSignal),
       });
 
       for (const unauthorizedCapability of [
@@ -139,6 +141,73 @@ describe('daemon private connected-account request-auth routes', () => {
       expect(lookupRequestAuth).toHaveBeenCalledOnce();
     } finally {
       await app.close();
+    }
+  });
+
+  it('cancels request-auth lookup work when the wrapper connection closes', async () => {
+    let resolveObservedSignal!: (signal: AbortSignal) => void;
+    const observedSignal = new Promise<AbortSignal>((resolve) => {
+      resolveObservedSignal = resolve;
+    });
+    let resolveObservedAbort!: () => void;
+    const observedAbort = new Promise<void>((resolve) => {
+      resolveObservedAbort = resolve;
+    });
+    const created = createApp();
+    created.lookupRequestAuth.mockImplementationOnce(async (input: Readonly<{
+      signal?: AbortSignal;
+    }>) => {
+      const signal = input.signal;
+      if (!signal) throw new Error('request-auth route did not provide a request lifetime');
+      resolveObservedSignal(signal);
+      await new Promise<void>((_resolve, reject) => {
+        const onAbort = () => {
+          resolveObservedAbort();
+          reject(signal.reason);
+        };
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+      return {
+        accessToken: 'unreachable-after-client-close',
+        credentialContext,
+      };
+    });
+    try {
+      await created.app.listen({ host: '127.0.0.1', port: 0 });
+      const address = created.app.server.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Expected daemon control test server TCP address');
+      }
+      const payload = JSON.stringify({ purpose });
+      const request = requestHttp({
+        host: '127.0.0.1',
+        port: address.port,
+        path: CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(payload),
+          [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER]: 'scoped-capability',
+        },
+      });
+      const requestClosed = new Promise<void>((resolve) => {
+        request.once('error', () => resolve());
+        request.once('close', () => resolve());
+      });
+      request.end(payload);
+      const signal = await observedSignal;
+
+      request.destroy();
+
+      await requestClosed;
+      await expect(observedAbort).resolves.toBeUndefined();
+      expect(signal.aborted).toBe(true);
+    } finally {
+      await created.app.close();
     }
   });
 

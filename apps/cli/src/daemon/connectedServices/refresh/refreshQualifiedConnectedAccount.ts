@@ -4,9 +4,9 @@ import {
   type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 import type {
-  PluginConnectedAccountHealthResult,
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+  ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
+  ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
   acquireQualifiedConnectedAccountRefreshLeaseV4,
@@ -143,6 +143,11 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
   if (!sameAccount(input.account, expectedCredential.ref)) {
     throw new Error(
       'Qualified Connected Account refresh snapshot does not match the exact account',
+    );
+  }
+  if (expectedCredential.revisionSemantics !== 'revisioned') {
+    throw new Error(
+      'Qualified Connected Account refresh requires a revisioned credential snapshot',
     );
   }
   const ownerId = input.ownerId.trim();

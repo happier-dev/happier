@@ -73,6 +73,7 @@ describe('ordinary Agent request-auth spawn preparation', () => {
                             connectedAccounts: [{
                                 purpose: 'primary',
                                 service: 'openai-codex',
+                                materializationKinds: ['httpHeaders'],
                             }, {
                                 purpose: 'realtime_upstream',
                                 service: {
@@ -165,6 +166,7 @@ describe('ordinary Agent request-auth spawn preparation', () => {
                             connectedAccounts: [{
                                 purpose: 'primary',
                                 service: 'openai-codex',
+                                materializationKinds: ['httpHeaders'],
                             }],
                         },
                     },
@@ -202,6 +204,49 @@ describe('ordinary Agent request-auth spawn preparation', () => {
         })).toBeNull();
     });
 
+    it('rejects request-auth materialization that its declared purpose does not authorize', () => {
+        const input = (materializationKinds?: readonly ('httpHeaders' | 'files')[]) => ({
+            agentId: 'codex' as const,
+            bindings,
+            contributions: {
+                agentDefinitionsById: new Map([['codex', {
+                    identity: {
+                        pluginId: 'happier.agent.codex',
+                        localId: 'codex',
+                    },
+                    richDefinition: {
+                        definition: {
+                            connectedAccounts: [{
+                                purpose: 'primary',
+                                service: 'openai-codex',
+                                ...(materializationKinds
+                                    ? { materializationKinds }
+                                    : {}),
+                            }],
+                        },
+                    },
+                    catalogEntry: {
+                        connectedAccountRequestAuthUses: [{
+                            purpose: 'primary',
+                            materialization: {
+                                kind: 'httpHeaders',
+                                origin: 'https://api.openai.com',
+                                headerNames: ['authorization'],
+                            },
+                        }],
+                    },
+                }]]),
+            },
+        });
+
+        expect(resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input()))
+            .toBeNull();
+        expect(resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input(['files'])))
+            .toBeNull();
+        expect(resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input(['httpHeaders'])))
+            .not.toBeNull();
+    });
+
     it('intersects request-auth authority without dropping native-only session bindings', () => {
         const snapshotInput = {
             agentId: 'codex' as const,
@@ -237,6 +282,7 @@ describe('ordinary Agent request-auth spawn preparation', () => {
                                     pluginId: 'happier.voice.openai',
                                     localId: 'openai',
                                 },
+                                materializationKinds: ['httpHeaders'],
                             }],
                         },
                     },
@@ -569,7 +615,6 @@ describe('ordinary Agent request-auth spawn preparation', () => {
         };
 
         await expect(activateConnectedAccountRequestAuthForSpawn({
-            agentId: 'pi',
             materializationId: 'session-1',
             materializedRootDir: '/materialized',
             subject,
@@ -607,7 +652,6 @@ describe('ordinary Agent request-auth spawn preparation', () => {
         const launchResourceScope =
             createProviderLaunchResourceScope();
         const activation = activateConnectedAccountRequestAuthForSpawn({
-            agentId: 'pi',
             materializationId: 'session-late',
             materializedRootDir: '/materialized',
             subject: {

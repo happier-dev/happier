@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import { z } from 'zod';
 
@@ -69,6 +70,7 @@ const TransactionErrorSchema = z.object({
 
 function requestHeaders(token: string): Readonly<Record<string, string>> {
   return {
+    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
   };

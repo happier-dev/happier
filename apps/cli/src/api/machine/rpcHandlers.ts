@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { logger } from '@/ui/logger';
 
 import {
@@ -13,7 +15,11 @@ import {
   StopSessionResultSchema,
   type StopSessionResult,
 } from '@/daemon/sessions/stopSessionContract';
-import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@happier-dev/protocol';
+import type {
+  DaemonExecutionRunEntry,
+  DaemonExecutionRunProcessInfo,
+  SpawnSessionNonceResolution,
+} from '@happier-dev/protocol';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
@@ -25,15 +31,21 @@ import {
   type MachineVoiceInferenceRpcRegistration,
 } from './rpcHandlers.voiceInference';
 import {
-  registerMachineVoiceOpenAiCompatRpcHandlers,
-  type MachineVoiceOpenAiCompatRpcRegistration,
-} from './rpcHandlers.voiceOpenAiCompat';
-import {
   registerMachineVoiceSpeechRpcHandlers,
   type MachineVoiceSpeechRpcRegistration,
 } from './rpcHandlers.voiceSpeech';
-import { createVoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
-import { createOpenAiCompatVoiceClient } from '@/daemon/voice/openAiCompat/client';
+import {
+  registerMachineVoiceClientCredentialRpcHandlers,
+  type MachineVoiceClientCredentialRpcRegistration,
+} from './rpcHandlers.voiceClientCredentials';
+import {
+  registerMachineVoiceClientCredentialAuthorizationRpcHandlers,
+} from './rpcHandlers.voiceClientCredentialAuthorization';
+import {
+  registerMachineVoiceClientMediatedCredentialRpcHandlers,
+  type MachineVoiceClientMediatedCredentialRpcRegistration,
+} from './rpcHandlers.voiceClientMediatedCredentials';
+import { registerMachineSpawnSessionNonceRpcHandlers } from './rpcHandlers.spawnSessionNonce';
 import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 import {
@@ -86,17 +98,24 @@ import type {
   ExternalSessionPersistedTakeoverAdmissionOwner,
 } from '@/session/actions/externalSessions/persistedTakeoverAdmission';
 import type {
+  ExternalSessionPluginAdmissionOwner,
+} from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
+import type {
   ExternalSessionHostOperationInstallation,
   ExternalSessionHostOperationSet,
 } from '@/session/external/hostOperationOwner';
 import type {
   CancelConnectedServiceRuntimeAuthRecovery,
   CancelInactiveSessionUsageLimitRecoveryCheck,
+  ReadInactiveSessionUsageLimitRecovery,
   ResumeInactiveSessionWhenUsageLimitReady,
   RetryTemporaryThrottleNow,
   ScheduleInactiveSessionUsageLimitRecoveryCheck,
 } from '@/session/actions/createCliActionDeps';
+import type { MachineSessionServerStartRpcRegistrationOptions } from '@/rpc/handlers/sessionServerStartMachineBinding';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
+import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { registerSessionPermissionRpcHandlers } from '@/rpc/handlers/sessionPermissions';
 import { registerSessionLifecycleRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
 import { MACHINE_SESSION_STOP_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
@@ -123,21 +142,34 @@ import type {
 import {
   RestartAllSessionRunnersRequestV1Schema,
   RestartSessionRunnerRequestV1Schema,
+  RestartSessionRunnerRequestV2Schema,
   SessionConnectedServiceAuthSwitchRpcParamsSchema,
   SessionRunnerStatusGetRequestV1Schema,
 } from '@happier-dev/protocol';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
+import {
+  createExternalSessionOperationExclusion,
+  type ExternalSessionOperationExclusionOwner,
+} from '@/session/external/operationExclusion';
+import {
+  resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs,
+} from '@/session/actions/externalSessions/operationProgressPublisher';
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { TerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
 import {
   getDaemonSessionRunnerStatus,
+  getDaemonSessionRunnerStatusV2,
   requestDaemonSessionConnectedServiceAuthSwitch,
   requestDaemonSessionRunnerRestart,
+  requestDaemonSessionRunnerRestartV2,
   restartAllDaemonSessionRunners,
 } from '@/daemon/controlClient';
+import { isUnattestedPublicV1RunnerRolloutMutation } from '@/daemon/plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
+import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
 const MACHINE_RPC_HANDLER_OWNER = 'machine-rpc-surface';
@@ -165,12 +197,12 @@ function normalizeMachineStopSessionResult(result: MachineStopSessionHandlerResu
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
-  resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<
-    | { status: 'success'; sessionId: string }
-    | { status: 'pending' }
-    | { status: 'not_found' }
-    | { status: 'unsupported' }
-  >;
+  /**
+   * Producer-owned proof for capability publication: resolved canonical
+   * session-spawn replies include the atomic create-or-rejoin outcome.
+   */
+  sessionSpawnV1OutcomeRequired?: true;
+  resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<SpawnSessionNonceResolution>;
   abandonSpawnSessionByNonce?: (spawnNonce: string) => Promise<
     | { status: 'completed'; sessionId: string }
     | { status: 'pending' | 'not_found' | 'unsupported' | 'failed' }
@@ -220,6 +252,15 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  /**
+   * Host-private server-origin Session-start binding. The session RPC owner
+   * supplies its lifecycle and nonce handlers at registration time.
+   */
+  sessionServerStart?: Omit<
+    MachineSessionServerStartRpcRegistrationOptions,
+    'spawnLifecycleHandler' | 'resolveSpawnSessionByNonce'
+  >;
+  externalSessionOperationExclusion?: ExternalSessionOperationExclusionOwner;
   npmRegistryProfiles?: Readonly<{
     machineId: string;
     service: NpmRegistryProfileRpcService;
@@ -230,6 +271,9 @@ export type MachineRpcHandlerDeps = Readonly<{
     featureGate: Readonly<{ isEnabled(featureId: 'providers'): boolean }>;
   }>;
   agentCatalogObservation?: AgentProviderCatalogObservationService;
+  createCapabilitiesApiClient?: NonNullable<
+    Parameters<typeof registerCapabilitiesHandlers>[1]
+  >['createApiClient'];
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   resolveExecutionSurfaces?: SessionLifecycleMachineDeps['resolveExecutionSurfaces'];
   awaitAgentSessionOpen?: SessionLifecycleMachineDeps['awaitAgentSessionOpen'];
@@ -242,6 +286,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   transientMediaReadAllowance?: TransientSessionMediaReadAllowance;
   extraTransferRelayV2DownloadOwners?: readonly TransferRelayV2DownloadSessionOwner[];
   emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptInvalidationV1) => void | Promise<void>;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   executeExternalSessionHistoricalImportCommand?: (
     command: ExternalSessionOperationSocketCommandV1,
   ) => Promise<ExternalSessionOperationSocketResponseV1>;
@@ -256,6 +301,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
   cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
+  readInactiveSessionUsageLimitRecovery?: ReadInactiveSessionUsageLimitRecovery;
   cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
   currentMachineId?: string;
@@ -274,6 +320,7 @@ export type MachineRpcHandlerDeps = Readonly<{
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{
+  externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   connectivityResources: readonly Readonly<{
     name: string;
     pause(): void | Promise<void>;
@@ -283,8 +330,9 @@ export type MachineRpcLifecycleRegistration = Readonly<{
   promptAssetTransfers: MachinePromptAssetTransferRpcRegistration;
   promptRegistryTransfers: MachinePromptRegistryTransferRpcRegistration;
   voiceInference?: MachineVoiceInferenceRpcRegistration;
-  voiceOpenAiCompat: MachineVoiceOpenAiCompatRpcRegistration;
   voiceSpeech: MachineVoiceSpeechRpcRegistration;
+  voiceClientCredentials: MachineVoiceClientCredentialRpcRegistration;
+  voiceClientMediatedCredentials: MachineVoiceClientMediatedCredentialRpcRegistration;
   dispose: () => Promise<void>;
 }>;
 
@@ -313,6 +361,14 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   const { spawnSession, stopSession, requestShutdown } = handlers;
   const memoryWorker = handlers.memory ?? null;
   const voiceInferenceWorker = handlers.voiceInference ?? null;
+  const externalSessionOperationExclusion =
+    params.deps?.externalSessionOperationExclusion
+    ?? createExternalSessionOperationExclusion({
+      activeServerDir: configuration.activeServerDir,
+      ownerId: `cli-daemon:${process.pid}:session-operations:${randomUUID()}`,
+      claimMutationLockAcquisitionTimeoutMs:
+        resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs(),
+    });
   let transferRelayV2ResponderCleanup: (() => void) | null = null;
 
   registerMachineSessionRpcHandlers({
@@ -326,6 +382,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       resumeInactiveSessionWhenUsageLimitReady: params.deps?.resumeInactiveSessionWhenUsageLimitReady,
       scheduleInactiveSessionUsageLimitRecoveryCheck: params.deps?.scheduleInactiveSessionUsageLimitRecoveryCheck,
       cancelInactiveSessionUsageLimitRecoveryCheck: params.deps?.cancelInactiveSessionUsageLimitRecoveryCheck,
+      readInactiveSessionUsageLimitRecovery: params.deps?.readInactiveSessionUsageLimitRecovery,
       cancelConnectedServiceRuntimeAuthRecovery: params.deps?.cancelConnectedServiceRuntimeAuthRecovery,
       retryTemporaryThrottleNow: params.deps?.retryTemporaryThrottleNow,
       currentMachineId: params.deps?.currentMachineId,
@@ -334,6 +391,24 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   });
   registerMachineConnectedServiceQuotaRpcHandlers({ rpcHandlerManager });
   registerApprovalRpcHandlers({ rpcHandlerManager });
+  // Detached execution runs are owned by this exact authenticated daemon. Reuse
+  // the incumbent execution-run bridge/action family with its nullable scope;
+  // no Admin target picker, Session projection, or parallel daemon registry.
+  registerCapabilitiesHandlers(rpcHandlerManager, {
+    ...(params.deps?.createCapabilitiesApiClient
+      ? { createApiClient: params.deps.createCapabilitiesApiClient }
+      : {}),
+  });
+  registerExecutionRunHandlers(rpcHandlerManager, {
+    sessionId: null,
+    cwd: params.deps?.workingDirectory ?? process.cwd(),
+    ...(params.deps?.currentMachineId ? { machineId: params.deps.currentMachineId } : {}),
+    ...(params.deps?.getServerFeaturesSnapshot
+      ? { getServerFeaturesSnapshot: params.deps.getServerFeaturesSnapshot }
+      : {}),
+    parentProvider: 'daemon.executionRuns',
+    sendAcp: async () => {},
+  });
   registerSessionPermissionRpcHandlers({ rpcHandlerManager });
   registerSubagentRpcHandlers({ rpcHandlerManager });
 
@@ -358,17 +433,20 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     })
     : null;
 
-  const voiceCredentialResolver = createVoiceCredentialResolver({
-    machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? 'machine_unavailable',
-  });
-  const voiceOpenAiCompatRegistration = registerMachineVoiceOpenAiCompatRpcHandlers({
-    rpcHandlerManager,
-    client: createOpenAiCompatVoiceClient({ credentialResolver: voiceCredentialResolver }),
-  });
   const voiceSpeechRegistration = registerMachineVoiceSpeechRpcHandlers({
-      rpcHandlerManager,
-      credentialResolver: voiceCredentialResolver,
-    });
+    rpcHandlerManager,
+    machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? null,
+  });
+  const voiceClientCredentialRegistration = registerMachineVoiceClientCredentialRpcHandlers({
+    rpcHandlerManager,
+    machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? null,
+  });
+  const voiceClientMediatedCredentialRegistration =
+    registerMachineVoiceClientMediatedCredentialRpcHandlers({ rpcHandlerManager });
+  registerMachineVoiceClientCredentialAuthorizationRpcHandlers({
+    rpcHandlerManager,
+    machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? null,
+  });
 
   registerMachineTerminalRpcHandlers({
     rpcHandlerManager,
@@ -397,6 +475,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   const promptAssetAdapterRegistry = createPromptAssetAdapterRegistry({
     homedir: params.deps?.promptAssetsHomedir,
     happierHomeDir: params.deps?.promptAssetsHappierHomeDir,
+    readRegisteredAdapters: () => (
+      pluginReloadController.getState().activeRegistry?.promptAssetAdapters ?? new Map()
+    ),
   });
   const promptRegistryAdapterRegistry = createPromptRegistryAdapterRegistry();
   registerMachinePromptAssetsRpcHandlers({
@@ -464,11 +545,15 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   }
   const externalSessionsRegistration = registerMachineExternalSessionsRpcHandlers({
     rpcHandlerManager,
+    operationExclusion: externalSessionOperationExclusion,
     spawnSession,
     stopSession: async (sessionId) => (
       normalizeMachineStopSessionResult(await stopSession(sessionId)).status === 'stopped'
     ),
     emitExternalSessionTranscriptUpdate: params.deps?.emitExternalSessionTranscriptUpdate,
+    ...(params.deps?.deviceLocalSecretStorage
+      ? { deviceLocalSecretStorage: params.deps.deviceLocalSecretStorage }
+      : {}),
     executeExternalSessionHistoricalImportCommand:
       params.deps?.executeExternalSessionHistoricalImportCommand,
     persistedTakeoverAdmissionWaiter:
@@ -511,21 +596,48 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, async (raw: unknown) => {
     const request = RestartSessionRunnerRequestV1Schema.parse(raw);
+    if (isUnattestedPublicV1RunnerRolloutMutation(request)) {
+      return {
+        ok: false as const,
+        status: 'ineligible' as const,
+        sessionId: request.sessionId,
+        reasonCode: 'runner_generation_unattested' as const,
+      };
+    }
     return await requestDaemonSessionRunnerRestart(request);
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2, async (raw: unknown) => {
+    const request = RestartSessionRunnerRequestV2Schema.parse(raw);
+    return await requestDaemonSessionRunnerRestartV2(request);
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL, async (raw: unknown) => {
     const request = RestartAllSessionRunnersRequestV1Schema.parse(raw);
+    if (isUnattestedPublicV1RunnerRolloutMutation(request)) {
+      return {
+        ok: false as const,
+        mode: request.mode,
+        requestedCount: 0,
+        restartedCount: 0,
+        skippedCount: 0,
+        failedCount: 0,
+        results: [],
+      };
+    }
     return await restartAllDaemonSessionRunners(request);
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET, async (raw: unknown) => {
     const request = SessionRunnerStatusGetRequestV1Schema.parse(raw);
     return await getDaemonSessionRunnerStatus(request);
   });
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE, async (input: { spawnNonce?: unknown }) => {
-    const spawnNonce = typeof input?.spawnNonce === 'string' ? input.spawnNonce.trim() : '';
-    if (!spawnNonce) return { status: 'not_found' };
-    if (!handlers.resolveSpawnSessionByNonce) return { status: 'unsupported' };
-    return await handlers.resolveSpawnSessionByNonce(spawnNonce);
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET, async (raw: unknown) => {
+    const request = SessionRunnerStatusGetRequestV1Schema.parse(raw);
+    return await getDaemonSessionRunnerStatusV2(request);
+  });
+  registerMachineSpawnSessionNonceRpcHandlers({
+    rpcHandlerManager,
+    ...(handlers.resolveSpawnSessionByNonce
+      ? { resolveSpawnSessionByNonce: handlers.resolveSpawnSessionByNonce }
+      : {}),
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SPAWN_SESSION_ABANDON, async (input: { spawnNonce?: unknown }) => {
     const spawnNonce = typeof input?.spawnNonce === 'string' ? input.spawnNonce.trim() : '';
@@ -552,6 +664,8 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   }
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,
+    sessionOperationExclusion: externalSessionOperationExclusion,
+    spawnSessionForHandoff: handlers.spawnSession,
     stopSessionForHandoff: async (sessionId) => {
       const isActive = await handlers.isSessionActive?.(sessionId) ?? false;
       if (!isActive) {
@@ -619,14 +733,21 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   });
 
   return {
+    ...(externalSessionsRegistration.pluginAdmissionOwner
+      ? {
+          externalSessionPluginAdmissionOwner:
+            externalSessionsRegistration.pluginAdmissionOwner,
+        }
+      : {}),
     connectivityResources: externalSessionsRegistration.connectivityResource
       ? [externalSessionsRegistration.connectivityResource]
       : [],
     transferRelayV2DownloadOwners,
     promptAssetTransfers,
     promptRegistryTransfers,
-    voiceOpenAiCompat: voiceOpenAiCompatRegistration,
     voiceSpeech: voiceSpeechRegistration,
+    voiceClientCredentials: voiceClientCredentialRegistration,
+    voiceClientMediatedCredentials: voiceClientMediatedCredentialRegistration,
     ...(voiceInferenceRegistration ? { voiceInference: voiceInferenceRegistration } : {}),
     dispose: async () => {
       const cleanup = transferRelayV2ResponderCleanup;
@@ -639,8 +760,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
         Promise.resolve(externalSessionsRegistration.dispose()),
         promptAssetTransfers.dispose(),
         promptRegistryTransfers.dispose(),
-        voiceOpenAiCompatRegistration.dispose(),
         voiceSpeechRegistration.dispose(),
+        voiceClientCredentialRegistration.dispose(),
+        voiceClientMediatedCredentialRegistration.dispose(),
         ...(voiceInferenceRegistration ? [voiceInferenceRegistration.dispose()] : []),
       ]);
     },

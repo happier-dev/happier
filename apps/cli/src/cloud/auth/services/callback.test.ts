@@ -208,7 +208,11 @@ describe('createCloudAuthCallbackService', () => {
 
     it('resolves a paste-mode wait when the host signal aborts while the prompt is pending', async () => {
         const controller = new AbortController();
-        const promptText = vi.fn(async () => await new Promise<string>(() => {}));
+        let promptSignal: AbortSignal | undefined;
+        const promptText = vi.fn(async (_label: string, options?: Readonly<{ signal: AbortSignal }>) => {
+            promptSignal = options?.signal;
+            return await new Promise<string>(() => {});
+        });
         const service = createCloudAuthCallbackService({
             signal: controller.signal,
             promptText,
@@ -227,10 +231,14 @@ describe('createCloudAuthCallbackService', () => {
             promptLabel: 'Paste Codex redirect URL: ',
         });
         await vi.waitFor(() => {
-            expect(promptText).toHaveBeenCalledWith('Paste Codex redirect URL: ');
+            expect(promptText).toHaveBeenCalledWith(
+                'Paste Codex redirect URL: ',
+                { signal: expect.any(AbortSignal) },
+            );
         });
 
         controller.abort();
+        expect(promptSignal?.aborted).toBe(true);
 
         await expect(Promise.race([
             wait,
@@ -240,6 +248,62 @@ describe('createCloudAuthCallbackService', () => {
             code: 'cancelled',
             diagnostics: [{ code: 'authentication_cancelled' }],
         });
+    });
+
+    it('aborts the live paste prompt when the callback deadline wins and leaves a late answer inert', async () => {
+        vi.useFakeTimers();
+        let resolvePrompt: ((value: string) => void) | undefined;
+        let promptSignal: AbortSignal | undefined;
+        let aborts = 0;
+        const promptText = vi.fn((_label: string, options?: Readonly<{ signal: AbortSignal }>) => (
+            new Promise<string>((resolve, reject) => {
+                resolvePrompt = resolve;
+                promptSignal = options?.signal;
+                promptSignal?.addEventListener('abort', () => {
+                    aborts += 1;
+                    const error = new Error('Terminal prompt aborted');
+                    error.name = 'AbortError';
+                    reject(error);
+                }, { once: true });
+            })
+        ));
+        const service = createCloudAuthCallbackService({ promptText });
+        const created = await service.create({
+            mode: 'paste',
+            callbackPath: '/auth/callback',
+            preferredPort: 1455,
+            timeoutMs: 10,
+        });
+
+        try {
+            expect(created.ok).toBe(true);
+            if (!created.ok) return;
+
+            const wait = created.session.wait();
+            expect(promptText).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(10);
+
+            await expect(wait).resolves.toEqual({
+                ok: false,
+                code: 'timeout',
+                diagnostics: [{ code: 'authentication_timeout' }],
+            });
+            expect(promptSignal?.aborted).toBe(true);
+            expect(aborts).toBe(1);
+
+            if (!resolvePrompt) throw new Error('Expected the pending prompt resolver');
+            resolvePrompt(`${created.session.redirectUri}?code=late-code&state=${created.session.state}`);
+            await Promise.resolve();
+
+            await expect(created.session.wait()).resolves.toEqual({
+                ok: false,
+                code: 'timeout',
+                diagnostics: [{ code: 'authentication_timeout' }],
+            });
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('closes pending loopback waits when the host signal aborts', async () => {

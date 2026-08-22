@@ -69,9 +69,21 @@ const host = {
   runtimeFamilies: { sherpa_zipformer_streaming: { abiVersion: 1 } },
 };
 
+const sourceIntegrity = (integrity = `sha512-${'b'.repeat(86)}==`) => ({
+  kind: 'sourceIntegrity' as const,
+  integrity,
+});
+
+const materialization = (immutableGenerationId = 'generation-local-7') => ({
+  kind: 'materialization' as const,
+  immutableGenerationId,
+});
+
 function installedCatalogEntry(options?: Readonly<{
   optionalNetwork?: boolean;
   requiresLicenseAcceptance?: boolean;
+  sourceKind?: 'package' | 'path';
+  admittedIntegrity?: string | null;
 }>): PluginCatalogEntry {
   const distribution = createNpmPluginDistributionIdentity({
     registryOrigin: 'https://registry.npmjs.org',
@@ -105,7 +117,10 @@ function installedCatalogEntry(options?: Readonly<{
     description: null,
     version: '2.0.0',
     enabled: true,
-    source: {} as never,
+    source: { kind: options?.sourceKind ?? 'package' } as never,
+    admittedIntegrity: options?.admittedIntegrity === undefined
+      ? `sha512-${'b'.repeat(86)}==`
+      : options.admittedIntegrity,
     install: {
       mode: 'managed_install',
       manifestVersion: '2.0.0',
@@ -114,7 +129,6 @@ function installedCatalogEntry(options?: Readonly<{
     },
     compatibility: { status: 'compatible', diagnostics: [] },
     manifestPath: '/plugins/acme.speech/.happier-plugin/plugin.json',
-    manifestDigest: `sha256:${'b'.repeat(64)}`,
     manifest: {
       hostAccess: {
         required: options?.optionalNetwork ? [] : [access],
@@ -128,35 +142,86 @@ function installedCatalogEntry(options?: Readonly<{
 }
 
 function currentGeneration(
-  entry: PluginCatalogEntry,
   overrides: Partial<PluginFinalPolicyCurrentGeneration> = {},
 ): PluginFinalPolicyCurrentGeneration {
+  const immutableGenerationId = overrides.immutableGenerationId ?? 'generation-7';
+  const applied = overrides.applied ?? true;
   return Object.freeze({
-    immutableGenerationId: 'generation-7',
-    manifestDigest: entry.manifestDigest!,
-    packageDigest: `sha256:${'c'.repeat(64)}`,
+    immutableGenerationId,
+    desiredImmutableGenerationId: overrides.desiredImmutableGenerationId ?? immutableGenerationId,
+    appliedImmutableGenerationId: overrides.appliedImmutableGenerationId
+      ?? (applied ? immutableGenerationId : null),
     distribution: 'test',
-    applied: true,
+    applied,
     selectedAccess: Object.freeze([]),
     ...overrides,
   });
 }
 
 describe('daemon public voice model-pack catalog projection', () => {
-  it('rejects the exact q8 pack id reserved by the active built-in', () => {
+  it('refuses the exact q8 pack id reserved by the active built-in without admitting it', () => {
     const packId = 'kokoro-82m-v1.0-onnx-q8-wasm';
-    expect(() => projectDaemonPluginVoiceModelPackCatalogV1({
+    const [projected] = projectDaemonPluginVoiceModelPackCatalogV1({
       plugins: [{
         pluginId: 'acme.speech',
         pluginVersion: '1.0.0',
-        pluginSourceDigest: 'b'.repeat(64),
+        artifactBinding: sourceIntegrity(),
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
         grantedNetworkOrigins: ['https://models.example.test'],
         contributions: [pack(packId)],
       }],
       host,
-    })).toThrow('voice_model_pack_identity_reserved');
+    });
+    expect(projected).toMatchObject({
+      status: 'blocked',
+      reason: 'voice_model_pack_identity_reserved',
+      installable: false,
+      loadable: false,
+    });
+  });
+
+  it('isolates one mis-authored plugin instead of emptying the catalog for every plugin', () => {
+    const projected = projectDaemonPluginVoiceModelPackCatalogV1({
+      plugins: [
+        {
+          pluginId: 'bad.speech',
+          pluginVersion: '1.0.0',
+          artifactBinding: sourceIntegrity(),
+          enabled: true,
+          authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
+          grantedNetworkOrigins: ['https://models.example.test'],
+          // Two authoring defects at once: a reserved built-in id and a
+          // duplicate id inside the same manifest.
+          contributions: [pack('kokoro-82m-v1.0-onnx-q8-wasm'), pack('dup'), pack('dup')],
+        },
+        {
+          pluginId: 'good.speech',
+          pluginVersion: '1.0.0',
+          artifactBinding: sourceIntegrity(),
+          enabled: true,
+          authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
+          grantedNetworkOrigins: ['https://models.example.test'],
+          contributions: [pack('good-en')],
+        },
+      ],
+      host,
+    });
+    expect(projected.find((entry) => entry.identity?.pluginId === 'good.speech'))
+      .toMatchObject({ status: 'available', installable: true });
+    // Every refused contribution stays visible and attributable rather than
+    // silently vanishing, and each refusal names its own cause.
+    const refused = projected.filter((entry) => (
+      entry.sourceLabel.pluginId === 'bad.speech' && entry.status === 'blocked'
+    ));
+    expect(refused.map((entry) => entry.reason).sort())
+      .toEqual(['duplicate_voice_model_pack_identity', 'voice_model_pack_identity_reserved']);
+    expect(refused.every((entry) => entry.installable === false && entry.loadable === false)).toBe(true);
+    // The first of the two duplicate declarations still works: only the repeat
+    // is refused, so a manifest typo does not cost the plugin its good packs.
+    expect(projected.filter((entry) => (
+      entry.sourceLabel.pluginId === 'bad.speech' && entry.status === 'available'
+    ))).toHaveLength(1);
   });
 
   it('does not reserve the unpublished canonical Kokoro id as a hidden alias', () => {
@@ -164,7 +229,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       plugins: [{
         pluginId: 'acme.speech',
         pluginVersion: '1.0.0',
-        pluginSourceDigest: 'b'.repeat(64),
+        artifactBinding: sourceIntegrity(),
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
         grantedNetworkOrigins: ['https://models.example.test'],
@@ -179,18 +244,38 @@ describe('daemon public voice model-pack catalog projection', () => {
     const entry = installedCatalogEntry();
     const projected = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
       installedPlugins: [entry],
-      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration(entry)]]),
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration()]]),
       host,
     });
     expect(projected[0]).toMatchObject({ status: 'available', installable: true });
     expect(projected[0]?.loadable).toBe(false);
   });
 
+  it('fails closed for an external plugin when installed-catalog acquisition integrity is unavailable', async () => {
+    const entry = installedCatalogEntry({ admittedIntegrity: null });
+    await expect(projectInstalledDaemonPluginVoiceModelPackCatalogV1({
+      installedPlugins: [entry],
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration()]]),
+      host,
+    })).resolves.toEqual([]);
+  });
+
+  it('fails closed when installed source-integrity facts do not belong to the current immutable generation', async () => {
+    const entry = installedCatalogEntry();
+    await expect(projectInstalledDaemonPluginVoiceModelPackCatalogV1({
+      installedPlugins: [entry],
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration({
+        immutableGenerationId: 'generation-8',
+      })]]),
+      host,
+    })).resolves.toEqual([]);
+  });
+
   it('does not treat an optional network declaration as a selected runtime origin', async () => {
     const entry = installedCatalogEntry({ optionalNetwork: true });
     const projected = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
       installedPlugins: [entry],
-      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration(entry)]]),
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration()]]),
       host,
     });
     expect(projected[0]).toMatchObject({
@@ -200,35 +285,25 @@ describe('daemon public voice model-pack catalog projection', () => {
     });
   });
 
-  it('consumes the shared final policy instead of recomputing trust from catalog records', async () => {
-    const entry = installedCatalogEntry();
-    const projected = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
-      installedPlugins: [entry],
-      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration(entry, {
-        manifestDigest: `sha256:${'d'.repeat(64)}`,
-      })]]),
-      host,
-    });
-
-    expect(projected[0]).toMatchObject({ status: 'blocked', reason: 'plugin_policy_denied' });
-  });
-
   it('rejects an installed pack when the canonical generation is not applied', async () => {
     const entry = installedCatalogEntry();
     const projected = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
       installedPlugins: [entry],
-      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration(entry, { applied: false })]]),
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration({ applied: false })]]),
       host,
     });
 
     expect(projected[0]).toMatchObject({ status: 'blocked', reason: 'plugin_policy_denied' });
   });
 
-  it('binds license and installed source lifecycle to the exact package digest when the manifest is unchanged', async () => {
-    const entry = installedCatalogEntry({ requiresLicenseAcceptance: true });
+  it('preserves acceptance across a new generation with the same acquisition SRI, then invalidates it when the SRI changes', async () => {
+    const oldIntegrity = `sha512-${'c'.repeat(86)}==`;
+    const newIntegrity = `sha512-${'d'.repeat(86)}==`;
+    const entry = installedCatalogEntry({
+      requiresLicenseAcceptance: true,
+      admittedIntegrity: oldIntegrity,
+    });
     const contribution = entry.manifest!.contributes.voiceModelPacks![0]!;
-    const oldPackageDigest = `sha256:${'c'.repeat(64)}`;
-    const newPackageDigest = `sha256:${'d'.repeat(64)}`;
     const licenseScope = { accountId: 'account-a', executionHost: 'daemon' as const, hostId: 'machine-a' };
     const acceptedLicenses = [{
       ...licenseScope,
@@ -238,23 +313,27 @@ describe('daemon public voice model-pack catalog projection', () => {
       licenseId: contribution.manifest.license.id,
       licenseSourceUrl: contribution.manifest.license.url,
       licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(contribution.manifest.license.text!),
-      artifactDigest: oldPackageDigest,
+      artifactBinding: sourceIntegrity(oldIntegrity),
     }];
     const installedMetadata: InstalledVoiceModelPackMetadataV1[] = [{
       schemaVersion: 1,
       identity: { pluginId: entry.pluginId, packId: contribution.id },
       directoryKey: deriveVoiceModelPackDirectoryKeyV1({ pluginId: entry.pluginId, packId: contribution.id }),
       pluginVersion: entry.version,
-      pluginSourceDigest: oldPackageDigest,
+      artifactBinding: sourceIntegrity(oldIntegrity),
       packVersion: contribution.manifest.version,
       manifestDigest: deriveVoiceModelPackManifestDigestV1(contribution.manifest),
       verifiedAtMs: 1,
     }];
 
-    const projected = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
-      installedPlugins: [entry],
-      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration(entry, {
-        packageDigest: newPackageDigest,
+    const sameSourceNewGeneration = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
+      installedPlugins: [{
+        ...entry,
+        desiredGeneration: 'generation-8',
+        appliedGeneration: 'generation-8',
+      }],
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration({
+        immutableGenerationId: 'generation-8',
       })]]),
       host,
       licenseScope,
@@ -262,13 +341,106 @@ describe('daemon public voice model-pack catalog projection', () => {
       installedMetadata,
     });
 
-    expect(projected[0]).toMatchObject({
+    expect(sameSourceNewGeneration[0]).toMatchObject({
+      status: 'available',
+      artifactBinding: sourceIntegrity(oldIntegrity),
+      installed: true,
+      lifecycleState: 'active',
+      loadable: true,
+    });
+
+    const changedSource = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
+      installedPlugins: [{
+        ...entry,
+        desiredGeneration: 'generation-9',
+        appliedGeneration: 'generation-9',
+        admittedIntegrity: newIntegrity,
+      }],
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration({
+        immutableGenerationId: 'generation-9',
+      })]]),
+      host,
+      licenseScope,
+      acceptedLicenses,
+      installedMetadata,
+    });
+
+    expect(changedSource[0]).toMatchObject({
       status: 'blocked',
       reason: 'license_acceptance_required',
-      sourceDigest: newPackageDigest,
+      artifactBinding: sourceIntegrity(newIntegrity),
       installed: true,
       lifecycleState: 'orphaned',
-      lifecycleReason: 'source_digest_changed',
+      lifecycleReason: 'artifact_binding_changed',
+      loadable: false,
+    });
+  });
+
+  it('binds local/path consent and installed lifecycle to immutable materialization generation', async () => {
+    const entry = installedCatalogEntry({
+      sourceKind: 'path',
+      admittedIntegrity: null,
+      requiresLicenseAcceptance: true,
+    });
+    const contribution = entry.manifest!.contributes.voiceModelPacks![0]!;
+    const oldBinding = materialization('generation-7');
+    const licenseScope = { accountId: 'account-a', executionHost: 'daemon' as const, hostId: 'machine-a' };
+    const acceptedLicenses = [{
+      ...licenseScope,
+      pluginId: entry.pluginId,
+      packId: contribution.id,
+      packVersion: contribution.manifest.version,
+      licenseId: contribution.manifest.license.id,
+      licenseSourceUrl: contribution.manifest.license.url,
+      licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(contribution.manifest.license.text!),
+      artifactBinding: oldBinding,
+    }];
+    const installedMetadata: InstalledVoiceModelPackMetadataV1[] = [{
+      schemaVersion: 1,
+      identity: { pluginId: entry.pluginId, packId: contribution.id },
+      directoryKey: deriveVoiceModelPackDirectoryKeyV1({ pluginId: entry.pluginId, packId: contribution.id }),
+      pluginVersion: entry.version,
+      artifactBinding: oldBinding,
+      packVersion: contribution.manifest.version,
+      manifestDigest: deriveVoiceModelPackManifestDigestV1(contribution.manifest),
+      verifiedAtMs: 1,
+    }];
+
+    const current = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
+      installedPlugins: [entry],
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration()]]),
+      host,
+      licenseScope,
+      acceptedLicenses,
+      installedMetadata,
+    });
+    expect(current[0]).toMatchObject({
+      status: 'available',
+      artifactBinding: oldBinding,
+      lifecycleState: 'active',
+      loadable: true,
+    });
+
+    const rematerialized = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
+      installedPlugins: [{
+        ...entry,
+        desiredGeneration: 'generation-local-8',
+        appliedGeneration: 'generation-local-8',
+      }],
+      currentPluginGenerations: new Map([[entry.pluginId, currentGeneration({
+        immutableGenerationId: 'generation-local-8',
+      })]]),
+      host,
+      licenseScope,
+      acceptedLicenses,
+      installedMetadata,
+    });
+    expect(rematerialized[0]).toMatchObject({
+      status: 'blocked',
+      reason: 'license_acceptance_required',
+      artifactBinding: materialization('generation-local-8'),
+      lifecycleState: 'orphaned',
+      lifecycleReason: 'artifact_binding_changed',
       loadable: false,
     });
   });
@@ -292,13 +464,13 @@ describe('daemon public voice model-pack catalog projection', () => {
       licenseId: 'Apache-2.0',
       licenseSourceUrl: licensed.manifest.license.url,
       licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(licensed.manifest.license.text!),
-      artifactDigest: `sha256:${'b'.repeat(64)}`,
+      artifactBinding: sourceIntegrity(),
     };
     const [projected] = projectDaemonPluginVoiceModelPackCatalogV1({
       plugins: [{
         pluginId: 'acme.speech',
         pluginVersion: '2.0.0',
-        pluginSourceDigest: exact.artifactDigest,
+        artifactBinding: exact.artifactBinding,
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
         grantedNetworkOrigins: ['https://models.example.test'],
@@ -307,7 +479,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       host,
       licenseScope: { accountId: 'account-a', executionHost: 'daemon', hostId: 'machine-a' },
       acceptedLicenses: [
-        { ...exact, artifactDigest: `sha256:${'d'.repeat(64)}` },
+        { ...exact, artifactBinding: sourceIntegrity(`sha512-${'d'.repeat(86)}==`) },
         exact,
       ],
     });
@@ -319,7 +491,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       plugins: [{
         pluginId: 'acme.speech',
         pluginVersion: '2.0.0',
-        pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+        artifactBinding: sourceIntegrity(),
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
         grantedNetworkOrigins: ['https://models.example.test'],
@@ -342,11 +514,11 @@ describe('daemon public voice model-pack catalog projection', () => {
     const plugin = (
       pluginId: string,
       packId: string,
-      pluginSourceDigest: string,
+      artifactBinding: unknown,
     ): DaemonVoiceModelPackPluginRecordV1 => ({
       pluginId,
       pluginVersion: '2.0.0',
-      pluginSourceDigest,
+      artifactBinding: artifactBinding as DaemonVoiceModelPackPluginRecordV1['artifactBinding'],
       enabled: true,
       authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
       grantedNetworkOrigins: ['https://models.example.test'],
@@ -355,9 +527,9 @@ describe('daemon public voice model-pack catalog projection', () => {
 
     const projected = projectDaemonPluginVoiceModelPackCatalogV1({
       plugins: [
-        plugin('zeta.speech', 'rejected-zeta', 'malformed-zeta-digest'),
-        plugin('middle.speech', 'available-middle', `sha256:${'b'.repeat(64)}`),
-        plugin('alpha.speech', 'rejected-alpha', 'malformed-alpha-digest'),
+        plugin('zeta.speech', 'rejected-zeta', { kind: 'unknown' }),
+        plugin('middle.speech', 'available-middle', sourceIntegrity()),
+        plugin('alpha.speech', 'rejected-alpha', { kind: 'unknown' }),
       ],
       host,
     });
@@ -379,14 +551,14 @@ describe('daemon public voice model-pack catalog projection', () => {
       {
         identity: null,
         sourcePluginId: 'alpha.speech',
-        reason: 'plugin_source_digest_invalid',
+        reason: 'artifact_binding_invalid',
         installable: false,
         loadable: false,
       },
       {
         identity: null,
         sourcePluginId: 'zeta.speech',
-        reason: 'plugin_source_digest_invalid',
+        reason: 'artifact_binding_invalid',
         installable: false,
         loadable: false,
       },
@@ -398,7 +570,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       plugins: [{
         pluginId: 'acme.speech',
         pluginVersion: '2.0.0',
-        pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+        artifactBinding: sourceIntegrity(),
         enabled: false,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
         grantedNetworkOrigins: ['https://models.example.test'],
@@ -409,18 +581,20 @@ describe('daemon public voice model-pack catalog projection', () => {
     expect(projected).toMatchObject({ status: 'orphaned', installable: false, loadable: false });
   });
 
-  it('fails closed when two records claim the same structured identity', () => {
+  it('fails closed when the host supplies two records for one plugin identity', () => {
     const plugin = {
       pluginId: 'acme.speech',
       pluginVersion: '2.0.0',
-      pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+      artifactBinding: sourceIntegrity(),
       enabled: true,
       authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
       grantedNetworkOrigins: ['https://models.example.test'],
       contributions: [pack('english')],
     } as const;
+    // A repeated plugin record is a malformed host record set, not a plugin
+    // authoring defect, so it stays fail-closed for the whole projection.
     expect(() => projectDaemonPluginVoiceModelPackCatalogV1({ plugins: [plugin, plugin], host }))
-      .toThrow('duplicate_voice_model_pack_identity');
+      .toThrow('duplicate_voice_model_pack_plugin_identity');
   });
 
   it('marks a pack loadable only for exact verified persisted metadata', () => {
@@ -431,7 +605,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       identity,
       directoryKey: deriveVoiceModelPackDirectoryKeyV1(identity),
       pluginVersion: '2.0.0',
-      pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+      artifactBinding: sourceIntegrity(),
       packVersion: contribution.manifest.version,
       manifestDigest: deriveVoiceModelPackManifestDigestV1(contribution.manifest),
       verifiedAtMs: 100,
@@ -439,7 +613,7 @@ describe('daemon public voice model-pack catalog projection', () => {
     const plugin = {
       pluginId: 'acme.speech',
       pluginVersion: '2.0.0',
-      pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+      artifactBinding: sourceIntegrity(),
       enabled: true,
       authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
       grantedNetworkOrigins: ['https://models.example.test'],
@@ -469,7 +643,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       identity,
       directoryKey: deriveVoiceModelPackDirectoryKeyV1(identity),
       pluginVersion: '2.0.0',
-      pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+      artifactBinding: sourceIntegrity(),
       packVersion: contribution.manifest.version,
       manifestDigest: deriveVoiceModelPackManifestDigestV1(contribution.manifest),
       verifiedAtMs: 100,
@@ -490,7 +664,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       plugins: [{
         pluginId: 'acme.speech',
         pluginVersion: '2.0.0',
-        pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+        artifactBinding: sourceIntegrity(),
         enabled: false,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
         grantedNetworkOrigins: ['https://models.example.test'],
@@ -507,7 +681,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       identity,
       directoryKey: deriveVoiceModelPackDirectoryKeyV1(identity),
       pluginVersion: '2.0.0',
-      pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+      artifactBinding: sourceIntegrity(),
       packVersion: contribution.manifest.version,
       manifestDigest: deriveVoiceModelPackManifestDigestV1(contribution.manifest),
       verifiedAtMs: 100,
@@ -517,7 +691,7 @@ describe('daemon public voice model-pack catalog projection', () => {
       plugins: [{
         pluginId: 'acme.speech',
         pluginVersion: '2.0.0',
-        pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+        artifactBinding: sourceIntegrity(),
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
         grantedNetworkOrigins: [],

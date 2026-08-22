@@ -1422,6 +1422,164 @@ describe('switchSessionConnectedServiceAuth', () => {
     expect(restartSession).toHaveBeenCalledWith(tracked);
   });
 
+  it('reconsumes current group truth once when plugin hot apply is superseded before provider mutation', async () => {
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        connectedServices: bindings('old-profile'),
+      },
+    });
+    const groups = [
+      group({
+        activeProfileId: 'first-active',
+        generation: 337,
+        members: [
+          {
+            v: 1,
+            serviceId: 'anthropic',
+            groupId: 'work',
+            profileId: 'first-active',
+            priority: 100,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            v: 1,
+            serviceId: 'anthropic',
+            groupId: 'work',
+            profileId: 'second-active',
+            priority: 90,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+      group({
+        activeProfileId: 'second-active',
+        generation: 338,
+        members: [
+          {
+            v: 1,
+            serviceId: 'anthropic',
+            groupId: 'work',
+            profileId: 'first-active',
+            priority: 90,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            v: 1,
+            serviceId: 'anthropic',
+            groupId: 'work',
+            profileId: 'second-active',
+            priority: 100,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+    ];
+    const getConnectedServiceAuthGroup = vi.fn(async () => groups.shift() ?? groups[0] ?? null);
+    const hotApply = vi.fn(async () => {
+      if (hotApply.mock.calls.length === 1) {
+        return {
+          ok: false as const,
+          errorCode: 'credential_revision_superseded' as const,
+          serviceId: 'anthropic' as const,
+          serviceResultsByServiceId: {
+            anthropic: {
+              status: 'failed' as const,
+              errorCode: 'credential_revision_superseded' as const,
+            },
+          },
+        };
+      }
+      return { ok: true as const };
+    });
+    const materializeRuntimeAuthSelection = vi.fn(async ({ groupMetadata }) => ({
+      groupGeneration: groupMetadata?.generation,
+    }));
+    const persistSessionBindings = vi.fn(async () => {});
+    const restartSession = vi.fn(async () => {});
+
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [
+            { profileId: 'first-active', status: 'connected' },
+            { profileId: 'second-active', status: 'connected' },
+          ],
+        }),
+        getConnectedServiceAuthGroup,
+      },
+      materializeRuntimeAuthSelection,
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession,
+      hotApply,
+      persistSessionBindings,
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'first-active',
+            },
+          },
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'hot_applied',
+      normalizedBindings: {
+        bindingsByServiceId: {
+          anthropic: {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'work',
+          },
+        },
+      },
+    });
+    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(2);
+    expect(materializeRuntimeAuthSelection).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      groupMetadata: expect.objectContaining({
+        activeProfileId: 'first-active',
+        generation: 337,
+      }),
+    }));
+    expect(materializeRuntimeAuthSelection).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      groupMetadata: expect.objectContaining({
+        activeProfileId: 'second-active',
+        generation: 338,
+      }),
+    }));
+    expect(hotApply).toHaveBeenCalledTimes(2);
+    expect(restartSession).not.toHaveBeenCalled();
+    expect(persistSessionBindings).toHaveBeenCalledTimes(3);
+  });
+
   it('keeps the strict generation check for dry-run preflights (prospective generations only)', async () => {
     // A dry-run preflight validates a PROSPECTIVE switch (expected == current + 1 is the committed
     // shape). A stale/other expectation must still abort so the coordinator re-resolves before
@@ -3887,9 +4045,17 @@ describe('switchSessionConnectedServiceAuth', () => {
       },
     })).resolves.toMatchObject({
       ok: false,
-      errorCode: 'hot_apply_failed',
+      // POST-EFFECT PARTIAL: `anthropic` already took the new credential and there is no rollback
+      // API for it, so this is not a rollback-safe failure. It settles as the partial state the
+      // session-scope Retry/Revert surface already reconciles.
+      errorCode: 'partial_applied_pending_reconciliation',
       serviceId: 'claude-subscription',
       diagnostics: {
+        failurePhase: 'reconciliation',
+        application: {
+          status: 'partial_applied_pending_reconciliation',
+          phase: 'hot_apply',
+        },
         serviceResultsByServiceId: {
           anthropic: { status: 'applied' },
           'claude-subscription': { status: 'failed', errorCode: 'hot_apply_failed' },
@@ -3897,13 +4063,145 @@ describe('switchSessionConnectedServiceAuth', () => {
       },
     });
 
-    expect(persistSessionBindings).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    // Persisted state must NOT be rolled back over the applied service: doing so would make the
+    // canonical record claim `anthropic` still holds the old account while its runtime already
+    // holds the new one. The staged target stays persisted so a later restart converges the
+    // still-unapplied service through the ONE canonical apply path.
+    expect(persistSessionBindings).toHaveBeenCalledTimes(1);
+    expect(persistSessionBindings).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess_1',
       normalizedBindings: multiServiceBindings({
         anthropicProfileId: 'new-anthropic',
         claudeSubscriptionProfileId: 'new-claude-subscription',
       }),
     }));
+    expect(tracked.spawnOptions?.connectedServices).toEqual(multiServiceBindings({
+      anthropicProfileId: 'new-anthropic',
+      claudeSubscriptionProfileId: 'new-claude-subscription',
+    }));
+  });
+
+  it('marks the partial-apply attempt event as partially applied instead of a clean failure', async () => {
+    // The session badge and the transcript entry describe the same settled outcome; leaving
+    // `partialState: null` here would tell the transcript the attempt left nothing behind.
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        connectedServices: multiServiceBindings({
+          anthropicProfileId: 'old-anthropic',
+          claudeSubscriptionProfileId: 'old-claude-subscription',
+        }),
+      },
+    });
+    const emitSessionEvent = vi.fn();
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async ({ serviceId }) => ({
+          serviceId,
+          profiles: [
+            { profileId: 'new-anthropic', status: 'connected' },
+            { profileId: 'new-claude-subscription', status: 'connected' },
+          ],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession: async () => {
+        throw new Error('restart should not run');
+      },
+      persistSessionBindings: vi.fn(),
+      hotApply: async () => ({
+        ok: false,
+        errorCode: 'hot_apply_failed',
+        serviceId: 'claude-subscription',
+        serviceResultsByServiceId: {
+          anthropic: { status: 'applied' },
+          'claude-subscription': { status: 'failed', errorCode: 'hot_apply_failed' },
+        },
+      }),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: multiServiceBindings({
+          anthropicProfileId: 'new-anthropic',
+          claudeSubscriptionProfileId: 'new-claude-subscription',
+        }),
+      },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'partial_applied_pending_reconciliation' });
+
+    expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      type: 'connected_service_account_switch_attempt',
+      errorCode: 'partial_applied_pending_reconciliation',
+      partialState: 'runtime_auth_partially_applied',
+    }));
+  });
+
+  it('still rolls persisted bindings back when a hot apply fails before any service applied', async () => {
+    // Guards the post-effect rule against over-reach: with NO applied service the operation really
+    // is rollback-safe, so the previous bindings must be restored and the typed hot-apply failure
+    // must survive.
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        connectedServices: multiServiceBindings({
+          anthropicProfileId: 'old-anthropic',
+          claudeSubscriptionProfileId: 'old-claude-subscription',
+        }),
+      },
+    });
+    const persistSessionBindings = vi.fn(async () => {});
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async ({ serviceId }) => ({
+          serviceId,
+          profiles: [
+            { profileId: 'new-anthropic', status: 'connected' },
+            { profileId: 'new-claude-subscription', status: 'connected' },
+          ],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession: async () => {
+        throw new Error('restart should not run');
+      },
+      persistSessionBindings,
+      hotApply: async () => ({
+        ok: false,
+        errorCode: 'credential_revision_superseded',
+        serviceId: 'anthropic',
+        serviceResultsByServiceId: {
+          anthropic: { status: 'failed', errorCode: 'credential_revision_superseded' },
+          'claude-subscription': { status: 'not_attempted' },
+        },
+      }),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: multiServiceBindings({
+          anthropicProfileId: 'new-anthropic',
+          claudeSubscriptionProfileId: 'new-claude-subscription',
+        }),
+      },
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'hot_apply_failed',
+    });
+
     expect(persistSessionBindings).toHaveBeenNthCalledWith(2, expect.objectContaining({
       sessionId: 'sess_1',
       normalizedBindings: multiServiceBindings({
@@ -3911,6 +4209,52 @@ describe('switchSessionConnectedServiceAuth', () => {
         claudeSubscriptionProfileId: 'old-claude-subscription',
       }),
     }));
+    expect(tracked.spawnOptions?.connectedServices).toEqual(multiServiceBindings({
+      anthropicProfileId: 'old-anthropic',
+      claudeSubscriptionProfileId: 'old-claude-subscription',
+    }));
+  });
+
+  it('keeps an applied switch applied when the final switch event cannot be admitted', async () => {
+    // POST-EFFECT EVIDENCE: the Provider effect and every canonical projection already completed.
+    // A throw from the final transcript admission must not surface as an untyped failure for a
+    // switch whose new authority is already ACTIVE.
+    const tracked = trackedSession();
+    const emitSessionEvent = vi.fn(async () => {
+      throw new Error('transcript_admission_failed');
+    });
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'new-profile', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession: async () => {
+        throw new Error('restart should not run');
+      },
+      persistSessionBindings: vi.fn(),
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: bindings('new-profile'),
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'hot_applied',
+      warnings: ['connected_service_switch_event_admission_failed'],
+    });
+
+    expect(emitSessionEvent).toHaveBeenCalled();
   });
 
   it('trusts exact direct-live hot-apply proof instead of re-probing account adoption', async () => {
@@ -4033,5 +4377,143 @@ describe('switchSessionConnectedServiceAuth', () => {
 
     expect(hotApply).not.toHaveBeenCalled();
     expect(restartSession).toHaveBeenCalledWith(tracked);
+  });
+  it('keeps a partly applied multi-service switch applied when the follow-up restart never signals', async () => {
+    // POST-EFFECT SETTLEMENT: `anthropic` already took the new credential, so the restart that was
+    // supposed to converge the remaining service is a SECOND remediation, not the operation's only
+    // effect. When it fails before signalling, restoring the previous persisted bindings would make
+    // the canonical record claim `anthropic` still holds the old account while its runtime holds the
+    // new one -- the same false rollback-safe report the plain hot-apply branch already refuses.
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        connectedServices: multiServiceBindings({
+          anthropicProfileId: 'old-anthropic',
+          claudeSubscriptionProfileId: 'old-claude-subscription',
+        }),
+      },
+    });
+    const persistSessionBindings = vi.fn(async () => {});
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async ({ serviceId }) => ({
+          serviceId,
+          profiles: [
+            { profileId: 'new-anthropic', status: 'connected' },
+            { profileId: 'new-claude-subscription', status: 'connected' },
+          ],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession: async () => {
+        throw new Error('restart_disallowed_by_execution_policy');
+      },
+      persistSessionBindings,
+      hotApply: async () => ({
+        ok: false,
+        errorCode: 'hot_apply_restart_required',
+        serviceId: 'claude-subscription',
+        serviceResultsByServiceId: {
+          anthropic: { status: 'applied' },
+          'claude-subscription': { status: 'failed', errorCode: 'hot_apply_restart_required' },
+        },
+      }),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: multiServiceBindings({
+          anthropicProfileId: 'new-anthropic',
+          claudeSubscriptionProfileId: 'new-claude-subscription',
+        }),
+      },
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'partial_applied_pending_reconciliation',
+      diagnostics: {
+        failurePhase: 'reconciliation',
+        application: {
+          status: 'partial_applied_pending_reconciliation',
+          phase: 'restart',
+        },
+      },
+    });
+
+    expect(persistSessionBindings).toHaveBeenCalledTimes(1);
+    expect(tracked.spawnOptions?.connectedServices).toEqual(multiServiceBindings({
+      anthropicProfileId: 'new-anthropic',
+      claudeSubscriptionProfileId: 'new-claude-subscription',
+    }));
+  });
+
+  it('keeps a hot-applied switch applied when the verification-driven restart never signals', async () => {
+    // POST-EFFECT SETTLEMENT: the hot apply and its commit already completed, so the new authority
+    // is ACTIVE. The restart is an extra remediation for an inconclusive (retryable) verification;
+    // when it fails before signalling, rolling the persisted bindings back to the old account writes
+    // a canonical claim that contradicts the live runtime. The single-service rematerialize path
+    // already returns the typed restart failure without touching persisted state.
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        connectedServices: codexBindings('codex3'),
+      },
+    });
+    const persistSessionBindings = vi.fn(async () => {});
+    const verifyProviderAccountAdoption = vi.fn<VerifyProviderAccountAdoption>(async () => ({
+      status: 'mismatch',
+      expectedProviderAccountId: 'acct_bot',
+      actualProviderAccountId: 'acct_codex3',
+      retryable: true,
+      reason: 'provider_account_adoption_mismatch',
+    }));
+
+    const input: SwitchInputWithVerification = {
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'openai-codex',
+          profiles: [{ profileId: 'bot', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession: async () => {
+        throw new Error('restart_disallowed_by_execution_policy');
+      },
+      hotApply: async () => ({ ok: true }),
+      recoverAfterRuntimeAuthSwitch: vi.fn<RecoverAfterRuntimeAuthSwitch>(async () => ({ ok: true })),
+      continueAfterRuntimeAuthSwitch: vi.fn(async () => {}),
+      verifyProviderAccountAdoption,
+      persistSessionBindings,
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'codex',
+        bindings: codexBindings('bot'),
+      },
+    };
+
+    await expect(switchSessionConnectedServiceAuth(input)).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'restart_failed',
+    });
+
+    expect(persistSessionBindings).toHaveBeenCalledTimes(1);
+    expect(persistSessionBindings).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess_1',
+      normalizedBindings: codexBindings('bot'),
+    }));
+    expect(tracked.spawnOptions?.connectedServices).toEqual(codexBindings('bot'));
   });
 });

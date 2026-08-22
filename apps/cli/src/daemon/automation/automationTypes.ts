@@ -1,33 +1,66 @@
-export type AutomationRunState = 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
+import type {
+  AutomationAccountCurrentnessWitnessV1,
+  AutomationV3RunOrigin,
+  AutomationV3WorkerResultDelivery,
+} from '@happier-dev/protocol';
 
-export type AutomationClaimRunResponse = Readonly<{
-  run: null | {
-    id: string;
-    automationId: string;
-    state: AutomationRunState;
-    scheduledAt: number;
-    dueAt: number;
-    claimedAt: number | null;
-    startedAt: number | null;
-    finishedAt: number | null;
-    claimedByMachineId: string | null;
-    leaseExpiresAt: number | null;
-    attempt: number;
-    summaryCiphertext: string | null;
-    errorCode: string | null;
-    errorMessage: string | null;
-    producedSessionId: string | null;
-    createdAt: number;
-    updatedAt: number;
-  };
-  automation: null | {
-    id: string;
-    name: string;
-    enabled: boolean;
-    targetType: 'new_session' | 'existing_session';
-    templateCiphertext: string;
-  };
+export type AutomationV2ClaimedRun = Readonly<{
+  id: string;
+  automationId: string;
+  attempt: number;
 }>;
+
+export type AutomationV2ClaimedAutomation = Readonly<{
+  id: string;
+  name: string;
+  enabled: boolean;
+  targetType: 'new_session' | 'existing_session';
+  templateCiphertext: string;
+}>;
+
+export type AutomationV3ClaimedRun = Readonly<{
+  id: string;
+  automationId: string;
+  attempt: number;
+  /** Null is a retained pre-recipe Run and must fail closed in the worker. */
+  executionInputEnvelope: string | null;
+  /** Immutable Run-owned origin consumed with the frozen execution recipe. */
+  origin: AutomationV3RunOrigin;
+  /** Missing wire fact normalizes to none at the private claim boundary. */
+  resultDelivery: AutomationV3WorkerResultDelivery | Readonly<{ kind: 'none' }>;
+}>;
+
+export type AutomationV3ClaimedAutomation = Readonly<{
+  id: string;
+  name: string;
+  enabled: boolean;
+}>;
+
+export type AutomationV2ClaimedRunPayload = Readonly<{
+  protocol: 'v2';
+  run: AutomationV2ClaimedRun;
+  automation: AutomationV2ClaimedAutomation;
+}>;
+
+export type AutomationV3ClaimedRunPayload = Readonly<{
+  protocol: 'v3';
+  run: AutomationV3ClaimedRun;
+  automation: AutomationV3ClaimedAutomation;
+  /** C: exact Account currentness observed atomically with the claim. */
+  accountCurrentness: AutomationAccountCurrentnessWitnessV1;
+}>;
+
+export type AutomationClaimedRunPayload =
+  | AutomationV2ClaimedRunPayload
+  | AutomationV3ClaimedRunPayload;
+
+export type AutomationClaimRunResponse =
+  | Readonly<{
+    protocol: 'v2' | 'v3';
+    run: null;
+    automation: null;
+  }>
+  | AutomationClaimedRunPayload;
 
 export type AutomationDaemonAssignmentsResponse = Readonly<{
   assignments: Array<{
@@ -52,5 +85,17 @@ export type AutomationDaemonAssignmentsResponse = Readonly<{
       lastRunAt: number | null;
       updatedAt: number;
     };
+  }>;
+}>;
+
+/**
+ * The worker's narrow wake cache. V3 exposes the durable claim deadline
+ * directly; a V2 schedule response is normalized at the HTTP boundary.
+ */
+export type AutomationWorkerAssignmentsResponse = Readonly<{
+  assignments: Array<{
+    machineId: string;
+    automationId: string;
+    nextClaimAt: number | null;
   }>;
 }>;

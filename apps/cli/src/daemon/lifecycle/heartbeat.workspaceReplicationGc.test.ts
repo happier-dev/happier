@@ -84,6 +84,7 @@ describe('startDaemonHeartbeatLoop workspace replication gc', () => {
             },
             currentCliVersion: '1.0.0',
             requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
         });
 
         expect(setIntervalSpy).toHaveBeenCalled();
@@ -169,6 +170,7 @@ describe('startDaemonHeartbeatLoop workspace replication gc', () => {
             },
             currentCliVersion: '1.0.0',
             requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
         });
 
         expect(setIntervalSpy).toHaveBeenCalled();

@@ -253,7 +253,27 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
         }
 
         const fromSnapshot = snapshotsByRecordId.get(parsed.fromRecordId);
-        if (fromSnapshot && fromSnapshot.accountSubject.kind !== 'provisionalLocalSubject') {
+        if (!fromSnapshot) {
+            throw new Error('Provider account usage adoption source record is unavailable');
+        }
+        if (fromSnapshot.recordKey.providerId !== parsed.stableRecordKey.providerId) {
+            throw new Error('Provider account usage adoption cannot cross providers');
+        }
+        if (
+            fromSnapshot.recordKey.quotaScope !== 'unknown'
+            && parsed.stableRecordKey.quotaScope !== 'unknown'
+            && (
+                fromSnapshot.recordKey.quotaScope !== parsed.stableRecordKey.quotaScope
+                || (
+                    fromSnapshot.recordKey.quotaScopeId !== undefined
+                    && parsed.stableRecordKey.quotaScopeId !== undefined
+                    && fromSnapshot.recordKey.quotaScopeId !== parsed.stableRecordKey.quotaScopeId
+                )
+            )
+        ) {
+            throw new Error('Provider account usage adoption cannot cross quota scopes');
+        }
+        if (fromSnapshot.accountSubject.kind !== 'provisionalLocalSubject') {
             throw new Error(`Provider account usage adoption source ${parsed.fromRecordId} is not provisional`);
         }
         const toSnapshot = snapshotsByRecordId.get(parsed.toRecordId);
@@ -276,8 +296,7 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
                     id: parsed.stableRecordKey.accountSubjectId,
                 },
             })
-            : fromSnapshot
-                ? ProviderAccountUsageSnapshotV1Schema.parse({
+            : ProviderAccountUsageSnapshotV1Schema.parse({
                 ...fromSnapshot,
                 recordId: parsed.toRecordId,
                 recordKey: parsed.stableRecordKey,
@@ -286,8 +305,7 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
                     kind: 'providerSubject',
                     id: parsed.stableRecordKey.accountSubjectId,
                 },
-            })
-                : null;
+            });
         const targetRedirect = redirectsByRecordId.get(parsed.toRecordId);
         const targetStableRecordKey = stableRecordKeysByRecordId.get(parsed.toRecordId);
         const targetSourceRecordIds = new Map(
@@ -343,8 +361,8 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
                 redirectsByRecordId.set(parsed.fromRecordId, parsed.toRecordId);
                 stableRecordKeysByRecordId.set(parsed.toRecordId, parsed.stableRecordKey);
                 setRecordSources(parsed.toRecordId, targetSources);
-                if (snapshot) snapshotsByRecordId.set(parsed.toRecordId, snapshot);
-                if (fromSnapshot) snapshotsByRecordId.delete(parsed.fromRecordId);
+                snapshotsByRecordId.set(parsed.toRecordId, snapshot);
+                snapshotsByRecordId.delete(parsed.fromRecordId);
                 sourcesByRecordId.delete(parsed.fromRecordId);
 
                 return {

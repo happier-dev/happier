@@ -1,12 +1,15 @@
+import { randomUUID } from 'node:crypto';
+
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { configuration } from '@/configuration';
 import { notifyDaemonConnectedServiceUsageLimitWaitResumeCancel } from '@/daemon/controlClient';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { CATALOG_AGENT_IDS } from '@/agent/catalog/ids';
 
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
+import type { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { createExecutionRunRpcApprovalDeps } from '@/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
@@ -24,13 +27,12 @@ import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/a
 import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { commitSessionStoredMessage } from '@/session/transport/http/sessionsHttp';
+import { importHistoricalSessionTranscript } from '@/session/transport/http/sessionsHttp';
 import { createServerBackedSessionTranscriptStore } from '@/api/session/createServerBackedSessionTranscriptStore';
 import {
     DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
     createSessionTranscriptFollowLeaseRegistry,
 } from '@/api/session/transcriptQueries';
-import { SessionMessageContentSchema } from '@/api/types';
 import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscriptActionInput';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { Metadata } from '@/api/types';
@@ -38,7 +40,6 @@ import type { ACPMessageData, ACPProvider } from '../../sessionMessageTypes';
 import {
     deriveVoiceAgentTurnLocalId,
     readAcpConfiguredBackendV1FromMetadata,
-    readRuntimeDescriptorV1FromMetadata,
     readVoiceAgentTurnPayloadFromMeta,
     type SessionTranscriptObservationProvenanceV1,
 } from '@happier-dev/protocol';
@@ -46,6 +47,8 @@ import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import type { EphemeralSendResult } from '@/api/session/client/transcript/ephemeralSendOutcome';
 import type { VoiceAgentTranscriptTurnCommitParams } from '@/api/session/client/transcript/sessionClientTranscriptApi';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
+import { createExecutionRunTranscriptCustodyError } from '@/agent/runtime/bridges/executionRun/executionRunTranscriptPublisher';
 
 export function resolveSessionClientParentProvider(metadata: unknown): ACPProvider {
     const configuredAcpBackendId = typeof readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId === 'string'
@@ -55,19 +58,8 @@ export function resolveSessionClientParentProvider(metadata: unknown): ACPProvid
         return configuredAcpBackendId;
     }
 
-    const runtimeDescriptorProviderId = typeof readRuntimeDescriptorV1FromMetadata(metadata)?.agentId === 'string'
-        ? String(readRuntimeDescriptorV1FromMetadata(metadata)?.agentId).trim()
-        : '';
-    if ((CATALOG_AGENT_IDS as readonly string[]).includes(runtimeDescriptorProviderId)) {
-        return runtimeDescriptorProviderId;
-    }
-
-    const resolvedFlavor = typeof (metadata as { flavor?: unknown })?.flavor === 'string'
-        ? String((metadata as { flavor?: string }).flavor).trim()
-        : '';
-    if ((CATALOG_AGENT_IDS as readonly string[]).includes(resolvedFlavor)) {
-        return resolvedFlavor;
-    }
+    const agentId = resolveAgentIdFromSessionMetadata(metadata);
+    if (agentId) return agentId;
 
     throw new Error('Missing canonical session parent provider identity');
 }
@@ -109,10 +101,11 @@ export function registerSessionClientRuntimeHandlers(
             localId?: string;
             meta?: Record<string, unknown>;
         }>) => Promise<void> | void;
-        sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
-        sendAgentMessage: (provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
-        sendUserTextMessageCommitted: (text: string, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
-        enqueueAgentMessageCommitted?: (
+        enqueueUserTextMessageCommitted: (
+            text: string,
+            opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
+        ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+        enqueueAgentMessageCommitted: (
             provider: ACPProvider,
             body: ACPMessageData,
             opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
@@ -121,15 +114,18 @@ export function registerSessionClientRuntimeHandlers(
             provider: ACPProvider,
             params: VoiceAgentTranscriptTurnCommitParams,
         ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
-        sendAgentMessageCommitted: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
         sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number }) => EphemeralSendResult;
         sendAgentMessageEphemeralDelta?: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) => EphemeralSendResult;
         getEphemeralStreamConnectionEpoch?: () => number;
         enqueueRegisteredSessionStateFieldMutation?: (mutation: RegisteredSessionStateFieldMutationV1) => void | Promise<void>;
-        getTranscriptQueryContext: () => Readonly<{
-            encryptionKey: Uint8Array;
-            encryptionVariant: 'legacy' | 'dataKey';
-        }>;
+        getTranscriptQueryContext: () => Readonly<
+            | { encryptionMode: 'plain' }
+            | {
+                encryptionMode: 'e2ee';
+                encryptionKey: Uint8Array;
+                encryptionVariant: 'legacy' | 'dataKey';
+            }
+        >;
         getAgentStateRequestStore?: ExecutionRunPermissionRequestStoreProvider;
         getBrowserDaemonControlRoutes?: (() => BrowserDaemonControlRoutes | null) | null;
         getBrowserDaemonContextRoutes?: (() => BrowserContextRoutes | null) | null;
@@ -143,6 +139,9 @@ export function registerSessionClientRuntimeHandlers(
         getSimulatorPreviewRoutes?: (() => SimulatorPreviewRoutes | null) | null;
         getPeerMediationObservabilityRuntimeActionContext?: (() => DaemonPeerMediationObservabilityRuntimeActionContext | null) | null;
         getServerFeaturesSnapshot?: (() => CliServerFeaturesSnapshot | undefined) | null;
+        createCapabilitiesApiClient?: NonNullable<
+            Parameters<typeof registerCapabilitiesHandlers>[1]
+        >['createApiClient'];
         persistVoiceAgentRunMetadataFromPublicRun: (run: unknown, welcomedEpoch?: number) => void;
         socketEmitExecutionRunUpdated: (run: unknown) => void;
         observeExecutionRunPublicState?: (run: unknown) => void;
@@ -152,38 +151,31 @@ export function registerSessionClientRuntimeHandlers(
     const workingDirectory = params.metadataPath ?? process.cwd();
     const executionBudgetRegistry = createExecutionBudgetRegistry();
     const transcriptQueryContext = params.getTranscriptQueryContext();
+    const transcriptTransportContext: SessionStoredContentCryptoContext =
+        transcriptQueryContext.encryptionMode === 'plain'
+            ? { mode: 'plain', ctx: null }
+            : { mode: 'e2ee', ctx: transcriptQueryContext };
     const transcriptActionExecutor = createCliActionExecutor({
         token: params.token,
         sessionId: params.sessionId,
-        ctx: transcriptQueryContext,
+        ...transcriptTransportContext,
         transcriptSessionId: params.sessionId,
         transcriptStore: createServerBackedSessionTranscriptStore({
             token: params.token,
             sessionId: params.sessionId,
-            ctx: transcriptQueryContext,
+            ctx: transcriptTransportContext.ctx,
         }),
         // A.13 watcher bound floor: idle TTL must be >= 600_000 ms (10 min) per packet body section 2.
         transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({
             maxLeases: 16,
             idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
         }),
-        writeTranscriptItems: async (_sessionId: string, items: readonly SessionTranscriptActionItem[]) => {
-            let imported = 0;
-            let cursor: string | null = null;
-            for (const item of items) {
-                const parsedContent = SessionMessageContentSchema.safeParse(item.content);
-                if (!parsedContent.success) continue;
-                const committed = await commitSessionStoredMessage({
-                    token: params.token,
-                    sessionId: params.sessionId,
-                    localId: item.id,
-                    content: parsedContent.data,
-                });
-                imported += 1;
-                cursor = String(committed.seq);
-            }
-            return { imported, cursor };
-        },
+        writeTranscriptItems: async (_sessionId: string, items: readonly SessionTranscriptActionItem[]) =>
+            await importHistoricalSessionTranscript({
+                token: params.token,
+                sessionId: params.sessionId,
+                items,
+            }),
         sessionLogAccess: {
             workingDirectory,
             accessPolicy: { kind: 'osUser' },
@@ -192,6 +184,9 @@ export function registerSessionClientRuntimeHandlers(
 
     registerSessionHandlers(params.rpcHandlerManager, workingDirectory, {
         sessionId: params.sessionId,
+        ...(params.createCapabilitiesApiClient
+            ? { createCapabilitiesApiClient: params.createCapabilitiesApiClient }
+            : {}),
         getSessionMetadata: () => params.getSessionMetadata(),
         sessionRuntimeControls: params.sessionRuntimeControls ?? null,
         enqueueSessionUserMessage: (request: Readonly<{
@@ -205,32 +200,33 @@ export function registerSessionClientRuntimeHandlers(
     });
 
     const transcriptWriter = {
-        appendUserText: (text: string, meta: Record<string, unknown>) => {
-            params.sendUserTextMessage(text, { meta });
-        },
-        appendAssistantText: (text: string, meta: Record<string, unknown>) => {
-            params.sendAgentMessage(parentProvider as ACPProvider, { type: 'message', message: text }, { meta });
-        },
         appendUserTextCommitted: async (
             text: string,
             options: Readonly<{ localId: string; meta: Record<string, unknown> }>,
         ) => {
-            await params.sendUserTextMessageCommitted(text, {
+            const admission = await params.enqueueUserTextMessageCommitted(text, {
                 localId: options.localId,
                 meta: options.meta,
+                provenance: { kind: 'non_dependent', source: 'external' },
             });
-            return { persisted: true, delivered: true };
+            if (!admission.persisted) {
+                throw new Error('Execution-run user transcript row was not admitted to durable custody');
+            }
+            return admission;
         },
         appendAssistantTextCommitted: async (
             text: string,
             options: Readonly<{ localId: string; meta: Record<string, unknown> }>,
         ) => {
-            await params.sendAgentMessageCommitted(
+            return await params.enqueueAgentMessageCommitted(
                 parentProvider as ACPProvider,
                 { type: 'message', message: text },
-                { localId: options.localId, meta: options.meta },
+                {
+                    localId: options.localId,
+                    meta: options.meta,
+                    provenance: { kind: 'non_dependent', source: 'external' },
+                },
             );
-            return { persisted: true, delivered: true };
         },
         commitVoiceAgentTranscriptTurn: async (turn: Readonly<{
             turnId: string;
@@ -290,7 +286,29 @@ export function registerSessionClientRuntimeHandlers(
         // G9-E: forward the daemon-wide cached server-features accessor so the runtime-action front
         // door's feature gate reads the live server bits cold instead of failing closed.
         ...(params.getServerFeaturesSnapshot ? { getServerFeaturesSnapshot: params.getServerFeaturesSnapshot } : {}),
-        sendAcp: (provider, body, opts) => params.sendAgentMessage(provider as ACPProvider, body as ACPMessageData, opts),
+        sendAcp: async (provider, body, opts) => {
+            const normalizedBody = body as ACPMessageData;
+            const localId = 'id' in normalizedBody && typeof normalizedBody.id === 'string'
+                ? normalizedBody.id
+                : randomUUID();
+            const admission = await params.enqueueAgentMessageCommitted(
+                provider as ACPProvider,
+                normalizedBody,
+                {
+                    localId,
+                    ...(opts?.meta ? { meta: opts.meta } : {}),
+                    provenance: {
+                        kind: 'non_dependent',
+                        source: 'sidechainId' in normalizedBody && typeof normalizedBody.sidechainId === 'string'
+                            ? 'sidechain'
+                            : 'external',
+                    },
+                },
+            );
+            if (!admission.persisted) {
+                throw createExecutionRunTranscriptCustodyError();
+            }
+        },
         streamedTranscriptSession: {
             sendAgentMessageEphemeral: (provider, body, opts) =>
                 params.sendAgentMessageEphemeral(provider as ACPProvider, body as ACPMessageData, opts),
@@ -300,13 +318,8 @@ export function registerSessionClientRuntimeHandlers(
                         params.sendAgentMessageEphemeralDelta!(provider as ACPProvider, body as ACPMessageData, opts)
                     : undefined,
             getEphemeralStreamConnectionEpoch: params.getEphemeralStreamConnectionEpoch,
-            enqueueAgentMessageCommitted:
-                typeof params.enqueueAgentMessageCommitted === 'function'
-                    ? (provider, body, opts) =>
-                        params.enqueueAgentMessageCommitted!(provider as ACPProvider, body as ACPMessageData, opts)
-                    : undefined,
-            sendAgentMessageCommitted: (provider, body, opts) =>
-                params.sendAgentMessageCommitted(provider as ACPProvider, body as ACPMessageData, opts),
+            enqueueAgentMessageCommitted: (provider, body, opts) =>
+                params.enqueueAgentMessageCommitted(provider as ACPProvider, body as ACPMessageData, opts),
         },
         transcriptWriter,
         budgetRegistry: executionBudgetRegistry,
@@ -339,11 +352,13 @@ export function registerSessionClientRuntimeHandlers(
         resolveAccountSettings: async () => {
             const activeSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
             if (activeSettings) return activeSettings;
-            const credentials = await readCredentials();
+            const credentials = await readStoredCredentials();
             if (!credentials) return null;
             const context = await bootstrapAccountSettingsContext({ credentials, mode: 'fast' });
             return context.settings ?? null;
         },
-        actionApprovalDeps: createExecutionRunRpcApprovalDeps({ readCredentials }),
+        actionApprovalDeps: createExecutionRunRpcApprovalDeps({
+            readCredentials: readStoredCredentials,
+        }),
     });
 }

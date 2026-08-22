@@ -1,21 +1,36 @@
 import { z } from 'zod'
 import { UsageSchema } from './usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
-import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, SentFromSchema } from '@happier-dev/protocol'
+import type { SocketRpcRequestPayload as ProtocolSocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc'
+import {
+  ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
+  SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1,
+  SentFromSchema,
+} from '@happier-dev/protocol'
 import type {
   AcceptedPendingSettlementRequestV1,
   AcceptedPendingSettlementResponseV1,
+  AgentModelOptionOverrideRule,
   ContentPublicKeyFingerprint,
   ExecutionRunPublicState,
   MachineReplacementReason,
+  MachineOperationProtocolCapabilitiesV1,
   PrimaryTurnStatusV1,
+  SessionOwnerMetadataEnvelopeV1,
+  SessionPendingAdmissionSettlementRequestV1,
+  SessionPendingAdmissionSettlementResponseV1,
+  SessionWorkspaceLocationV1,
+  SessionRuntimeActivitySnapshotAck,
+  SessionRuntimeActivitySnapshotRequest,
   SessionTurnMutationV1,
+  SessionOrganizationPlacementV1,
 } from '@happier-dev/protocol'
 import {
   ContentPublicKeyFingerprintSchema,
   MachineInstallationProofV1Schema,
   MachineInstallationPublicKeySchema,
   MachineReplacementReasonSchema,
+  SessionOrganizationPlacementV1Schema,
 } from '@happier-dev/protocol'
 import {
   DaemonPublicReleaseChannelLabelSchema,
@@ -28,6 +43,7 @@ import type {
   ExternalSessionsSource,
   ModelOverrideV1,
   SessionAppliedModelV1,
+  SessionActiveModelSelectionV1,
   SessionModelSelectionIntentV1,
   RuntimeDescriptorMetadataCarrier,
   SessionRollbackRangesV1,
@@ -41,8 +57,6 @@ import {
   createSessionPermissionModeSchema,
 } from '@happier-dev/protocol'
 import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol'
-import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc'
-
 export {
   EphemeralUpdateSchema,
   MessageAckResponseSchema,
@@ -126,10 +140,12 @@ export type SessionMessageContent = SessionStoredMessageContent
 /**
  * Update events
  */
-export const UpdateBodySchema = ProtocolUpdateBodySchema
+export const UpdateBodySchema: z.ZodType<ProtocolUpdateBody> =
+  ProtocolUpdateBodySchema
 export type UpdateBody = ProtocolUpdateBody
 
-export const UpdateSchema = ProtocolUpdateContainerSchema
+export const UpdateSchema: z.ZodType<ProtocolUpdateContainer> =
+  ProtocolUpdateContainerSchema
 export type Update = ProtocolUpdateContainer
 
 export type UpdateMachineBody = Extract<Update['body'], { t: 'update-machine' }>
@@ -137,17 +153,9 @@ export type UpdateMachineBody = Extract<Update['body'], { t: 'update-machine' }>
 export const SessionBroadcastSchema = SessionBroadcastContainerSchema
 export type SessionBroadcast = SessionBroadcastContainer
 
-export interface SocketRpcRequestPayload {
-  method: string
-  params: unknown
-  authorization?: SocketRpcAuthorizationContext
-  timeoutMs?: number
-  transportResponseEnvelopeVersion?: 1
-}
+export type SocketRpcRequestPayload = ProtocolSocketRpcRequestPayload
 
-export interface SocketRpcCallPayload extends SocketRpcRequestPayload {
-  timeoutMs?: number
-}
+export type SocketRpcCallPayload = SocketRpcRequestPayload
 
 export interface SocketRpcCallResponse {
   ok: boolean
@@ -177,6 +185,10 @@ export interface ServerToClientEvents {
  * Socket events from client to server
  */
 export interface ClientToServerEvents {
+  [SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1]: (
+    data: SessionPendingAdmissionSettlementRequestV1,
+    cb?: (answer: SessionPendingAdmissionSettlementResponseV1) => void
+  ) => void
   [ACCEPTED_PENDING_SETTLEMENT_EVENT_V1]: (
     data: AcceptedPendingSettlementRequestV1,
     cb?: (answer: AcceptedPendingSettlementResponseV1) => void
@@ -213,25 +225,15 @@ export interface ClientToServerEvents {
       updatedAt?: number;
     };
     error?: string;
+    retryAfterMs?: number;
   }) => void) => void,
   'session-turn-mutation': (
     data: SessionTurnMutationV1,
     cb?: (answer: { ok?: boolean; result?: string; status?: string; error?: string; errorCode?: string; code?: string; message?: string }) => void
   ) => void,
-  'runtime-activity-snapshot': (
-    data: {
-      sid: string,
-      state: 'active' | 'idle' | 'unknown',
-      runtimeActivityActiveCount: number,
-    },
-    cb?: (answer: {
-      result: 'success' | 'invalid-params' | 'forbidden' | 'session-not-found' | 'error',
-      didWrite?: boolean,
-      runtimeActivityState?: 'active' | 'idle' | 'unknown',
-      runtimeActivityActiveCount?: number,
-      runtimeActivityObservedAt?: number | null,
-      runtimeActivityRevision?: number,
-    }) => void
+  'session-runtime-activity-snapshot': (
+    data: SessionRuntimeActivitySnapshotRequest,
+    cb?: (answer: SessionRuntimeActivitySnapshotAck) => void
   ) => void,
   'execution-run-updated': (data: {
     sid: string;
@@ -314,7 +316,7 @@ type SessionSharedFields = Readonly<{
   metadata: Metadata;
   metadataLayoutVersion?: number;
   ownerMetadata?: import('@happier-dev/protocol').SessionOwnerMetadataV1 | null;
-  ownerMetadataCiphertext?: string | null;
+  ownerMetadataEnvelope?: SessionOwnerMetadataEnvelopeV1 | null;
   metadataVersion: number;
   agentState: AgentState | null;
   agentStateVersion: number;
@@ -332,6 +334,20 @@ type SessionSharedFields = Readonly<{
 export type Session =
   | (SessionSharedFields & Readonly<{ encryptionMode: 'plain' }>)
   | (SessionSharedFields & Readonly<{ encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>);
+
+/**
+ * Exact response facts from the current `POST /v1/sessions` create-or-load
+ * transaction. They are attached only to the immediate create result and are
+ * intentionally not persisted as ordinary Session state.
+ */
+export type SessionCreationOutcome = Readonly<{
+  disposition: 'created' | 'rejoined';
+  organizationPlacement: SessionOrganizationPlacementV1;
+}>;
+
+export type SessionCreateOrLoadResult = Session & Readonly<{
+  sessionCreationOutcome?: SessionCreationOutcome;
+}>;
 
 /**
  * Machine metadata - static information (rarely changes)
@@ -440,15 +456,32 @@ export const DaemonStateSchema = z.object({
 
 export type DaemonState = z.infer<typeof DaemonStateSchema>
 
-export type Machine = {
+type MachineCommon = {
   id: string,
-  encryptionKey: Uint8Array;
-  encryptionVariant: 'legacy' | 'dataKey';
   metadata: MachineMetadata | null,
   metadataVersion: number,
   daemonState: DaemonState | null,
   daemonStateVersion: number,
+  /**
+   * Complete content-free projection from the exact authenticated Machine.
+   * Missing/malformed/revoked/replaced snapshots are represented as null.
+   */
+  operationProtocolCapabilities?: MachineOperationProtocolCapabilitiesV1 | null,
+  operationProtocolCapabilitiesRevision?: number | null,
 }
+
+export type Machine = MachineCommon & (
+  | Readonly<{
+      encryptionMode: 'plain';
+      encryptionKey?: never;
+      encryptionVariant?: never;
+    }>
+  | Readonly<{
+      encryptionMode?: 'e2ee';
+      encryptionKey: Uint8Array;
+      encryptionVariant: 'legacy' | 'dataKey';
+    }>
+)
 
 /**
  * Session message from API
@@ -493,6 +526,8 @@ export type MessageMeta = z.infer<typeof MessageMetaSchema>
  * API response types
  */
 export const CreateSessionResponseSchema = z.object({
+  created: z.boolean().optional(),
+  organizationPlacement: SessionOrganizationPlacementV1Schema.optional(),
   session: z.object({
     id: z.string(),
     tag: z.string(),
@@ -588,6 +623,17 @@ export type SessionHandoffMetadataV1 = {
   targetWorkspaceRootPath?: string,
 };
 
+/**
+ * Producer-declared override rule carried on a boolean model/config option: while that option
+ * is effectively on, `optionIds` are not user-controllable and (when `forcedValue` is present)
+ * actually run at that value.
+ *
+ * This is the protocol type itself, not a hand-kept mirror: the rule is authored by an agent
+ * plugin and must reach persisted metadata byte-identical, so every threading point on that
+ * path shares one shape.
+ */
+export type SessionOptionOverrideRuleV1 = AgentModelOptionOverrideRule;
+
 export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   path: string,
   host: string,
@@ -610,6 +656,9 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
     updatedAt: number
   },
   machineId?: string,
+  sessionWorkspaceLocationV1?: SessionWorkspaceLocationV1,
+  /** Immutable create-or-rejoin recipe supplied only by the Session creation owner. */
+  sessionCreationCorrespondenceV1?: import('@happier-dev/protocol').SessionCreationCorrespondenceV1,
   /** Durable connected-service generation reconciliation state; parsed fail-closed by its owner. */
   connectedServicePendingAuthGroupGenerationsV1?: unknown,
   locallyConsumedUserMessageSeqsV1?: number[],
@@ -695,6 +744,32 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
     agentId: string,
     updatedAt: number,
     currentModelId: string,
+    availableModels: Array<{
+      id: string,
+      name: string,
+      description?: string,
+      contextWindowTokens?: number,
+      extendedContextModelId?: string,
+      modelOptions?: Array<{
+        id: string,
+        name: string,
+        description?: string,
+        type: string,
+        currentValue: string | number | boolean | null,
+        options?: Array<{
+          value: string | number | boolean | null,
+          name: string,
+          description?: string,
+        }>,
+        overridesWhenOn?: SessionOptionOverrideRuleV1,
+      }>,
+    }>,
+  },
+  sessionModelsV1?: {
+    v: 1,
+    agentId: string,
+    updatedAt: number,
+    currentModelId: string,
     activeSelectionV1?: SessionActiveModelSelectionV1,
     availableModels: Array<{
       id: string,
@@ -713,31 +788,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
           name: string,
           description?: string,
         }>,
-      }>,
-    }>,
-  },
-  sessionModelsV1?: {
-    v: 1,
-    agentId: string,
-    updatedAt: number,
-    currentModelId: string,
-    availableModels: Array<{
-      id: string,
-      name: string,
-      description?: string,
-      contextWindowTokens?: number,
-      extendedContextModelId?: string,
-      modelOptions?: Array<{
-        id: string,
-        name: string,
-        description?: string,
-        type: string,
-        currentValue: string | number | boolean | null,
-        options?: Array<{
-          value: string | number | boolean | null,
-          name: string,
-          description?: string,
-        }>,
+        overridesWhenOn?: SessionOptionOverrideRuleV1,
       }>,
     }>,
   },
@@ -761,6 +812,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
         name: string,
         description?: string,
       }>,
+      overridesWhenOn?: SessionOptionOverrideRuleV1,
     }>,
   },
   sessionConfigOptionsV1?: {
@@ -778,6 +830,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
         name: string,
         description?: string,
       }>,
+      overridesWhenOn?: SessionOptionOverrideRuleV1,
     }>,
   },
   /**
@@ -930,6 +983,12 @@ export type AgentState = {
            * Used to avoid duplicate notifications across restarts/resumes.
            */
           pushNotifiedAt?: number
+          /**
+           * Private, outstanding-only first-answer-wins permission claim.
+           * The request store validates and clears this before terminal state
+           * is projected; callers must treat it as opaque.
+           */
+          permissionResponseClaimV1?: unknown
         }
       }
       completedRequests?: {
@@ -951,6 +1010,14 @@ export type AgentState = {
         sidechainId?: string
         source?: string
         permissionSuggestions?: unknown
+        /**
+         * Bounded host-stamped present-user settlement identity. The permission
+         * request owner validates this opaque field before permitting a retry
+         * to rejoin a completed request.
+         */
+        permissionDecisionActorV1?: unknown
+        /** Non-authorizing pointer to the remote settlement row, when present. */
+        remoteMediationSettlementId?: string
       }
     }
   }

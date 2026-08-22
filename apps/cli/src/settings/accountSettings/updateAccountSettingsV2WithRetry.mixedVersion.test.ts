@@ -51,12 +51,9 @@ describe('updateAccountSettingsV2WithRetry mixed-version preservation', () => {
 
     await updateAccountSettingsV2WithRetry({
       credentials,
-      // Released writers can return only fields they understand. The updater owns
-      // merging that sparse mutation back into the untouched raw persisted object.
-      mutate: (raw) => ({
-        schemaVersion: raw.schemaVersion,
-        analyticsOptOut: true,
-      }),
+      mutation: {
+        operations: [{ op: 'set', key: 'analyticsOptOut', value: true }],
+      },
       deps: {
         fetchSettings: async () => ({
           content: {
@@ -69,6 +66,7 @@ describe('updateAccountSettingsV2WithRetry mixed-version preservation', () => {
           },
           version: 12,
         }),
+        resolveAccountEncryptionMode: async () => 'plain',
         updateSettings,
       },
     });

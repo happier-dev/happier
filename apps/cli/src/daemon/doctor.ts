@@ -5,11 +5,11 @@
  * Helps diagnose and fix issues with hung or orphaned processes
  */
 
-import spawn from 'cross-spawn';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { listProcessSnapshot } from './processSnapshotCache';
+import { forceStopKnownDaemonPid } from './controlClient';
 import {
   readWindowsProcessInventory,
   type WindowsProcessInventoryFact,
@@ -141,8 +141,8 @@ function isWindowsHappyHostProcessCandidate(name: string | undefined): boolean {
 }
 
 function isCliSourceSnapshotCommand(normalizedCommand: string): boolean {
-  return normalizedCommand.includes('/cli-dist-snapshot/src/index.ts') ||
-    normalizedCommand.includes('/cli-dist/src/index.ts');
+  return /\/(?:cli-dist-snapshot|cli-dist|cli-source-snapshot-source-\d+-\d+-\d+)\/src\/index\.ts(?=["']?(?:\s|$))/u
+    .test(normalizedCommand);
 }
 
 function projectWindowsDoctorProcessInfo(
@@ -363,7 +363,7 @@ export async function findHappyProcessByPid(pid: number): Promise<HappyProcessIn
 /**
  * Find all runaway Happier CLI processes that should be killed
  */
-export async function findRunawayHappyProcesses(): Promise<Array<{ pid: number, command: string }>> {
+export async function findRunawayHappyProcesses(): Promise<Array<Pick<HappyProcessInfo, 'pid' | 'command' | 'type'>>> {
   const allProcesses = await findAllHappyProcesses();
   
   // Filter to just runaway processes (excluding current process)
@@ -378,42 +378,29 @@ export async function findRunawayHappyProcesses(): Promise<Array<{ pid: number, 
         p.type === 'dev-daemon-version-check'
       )
     )
-    .map(p => ({ pid: p.pid, command: p.command }));
+    .map(p => ({ pid: p.pid, command: p.command, type: p.type }));
 }
 
 /**
- * Kill all runaway Happier CLI processes
+ * Stops only daemon PIDs that the canonical lifecycle owner can prove exact.
+ * Explicit doctor-clean intent does not authorize signaling a PID that was
+ * merely present in an earlier process inventory.
  */
 export async function killRunawayHappyProcesses(): Promise<{ killed: number, errors: Array<{ pid: number, error: string }> }> {
   const runawayProcesses = await findRunawayHappyProcesses();
   const errors: Array<{ pid: number, error: string }> = [];
   let killed = 0;
   
-  for (const { pid, command } of runawayProcesses) {
+  for (const { pid, command, type } of runawayProcesses) {
     try {
       console.log(`Killing runaway process PID ${pid}: ${command}`);
-      
-      if (process.platform === 'win32') {
-        // Windows: use taskkill
-        const result = spawn.sync('taskkill', ['/F', '/PID', pid.toString()], { stdio: 'pipe' });
-        if (result.error) throw result.error;
-        if (result.status !== 0) throw new Error(`taskkill exited with code ${result.status}`);
-      } else {
-        // Unix: try SIGTERM first
-        process.kill(pid, 'SIGTERM');
-        
-        // Wait a moment
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Check if still alive
-        const processes = await listProcessSnapshot({ ttlMs: 0 });
-        const stillAlive = processes.find(p => p.pid === pid);
-        if (stillAlive) {
-          console.log(`Process PID ${pid} ignored SIGTERM, using SIGKILL`);
-          process.kill(pid, 'SIGKILL');
-        }
+      if (type !== 'daemon' && type !== 'dev-daemon') {
+        throw new Error(
+          'Refusing to signal an untracked daemon-spawned process without an exact lifecycle identity',
+        );
       }
-      
+
+      await forceStopKnownDaemonPid(pid);
       console.log(`Successfully killed runaway process PID ${pid}`);
       killed++;
     } catch (error) {

@@ -1,10 +1,14 @@
 import type {
+  AccountSettings,
   CustomProviderTemplateV1,
+  PluginContributionIdentityV1,
   ProviderDiscoveryCandidateV1,
   ProviderErrorV1,
   ProviderLocalInstallationSummaryV1,
+  QualifiedConnectedAccountPurposeBindingsV1,
   SavedSecret,
 } from '@happier-dev/protocol';
+import type { ManagedProviderStartRequest } from '@happier-dev/plugin-sdk/providers';
 import type {
   DaemonProviderConnectionMutationRequestV1,
   DaemonProviderAgentCompatibilitySummaryV1,
@@ -18,6 +22,7 @@ import type {
   ProviderContributionRegistryView,
   ProviderEndpointDnsEvidence,
 } from '@/providers/registry';
+import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 
 type DescribeSuccess = Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }>;
 
@@ -69,13 +74,28 @@ export type ProviderModelSettingsMutationIntent =
   | Exclude<DaemonProviderModelSettingsMutationRequestV1, ProviderManualAddRequest>;
 
 export type ProviderConnectionServiceSnapshot = Readonly<{
-  accountSettings: Readonly<Record<string, unknown>>;
+  accountSettings: AccountSettings;
+  /** Retained source bytes for Provider legacy/malformed-subtree recovery. */
+  rawAccountSettings: Readonly<Record<string, unknown>>;
   registry: ProviderContributionRegistryView;
+}>;
+
+/**
+ * A Provider description projects runtime facts from the same resolved
+ * Account-settings snapshot as its connection facts.
+ */
+export type ProviderConnectionRuntimeSummaryInput = Readonly<{
+  connectionId: string;
+  machineId: string;
+  accountSettings: ProviderConnectionServiceSnapshot['accountSettings'];
+  registry: ProviderConnectionServiceSnapshot['registry'];
+  dnsEvidence: ProviderEndpointDnsEvidence;
+  resolution: Extract<ProviderConnectionResolution, { status: 'resolved' }>;
 }>;
 
 export type ProviderConnectionServiceDeps = Readonly<{
   machineId: string;
-  featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery' | 'localServices.managed'): boolean }>;
+  featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery'): boolean }>;
   loadSnapshot(): Promise<ProviderConnectionServiceSnapshot>;
   updateAccountSettings(
     mutate: (
@@ -95,11 +115,7 @@ export type ProviderConnectionServiceDeps = Readonly<{
     registry: ProviderContributionRegistryView;
     dnsEvidence: ProviderEndpointDnsEvidence;
   }>): ProviderConnectionResolution;
-  runtimeSummary(input: Readonly<{
-    connectionId: string;
-    machineId: string;
-    resolution: Extract<ProviderConnectionResolution, { status: 'resolved' }>;
-  }>): Promise<ProviderConnectionRuntimeProjection>;
+  runtimeSummary(input: ProviderConnectionRuntimeSummaryInput): Promise<ProviderConnectionRuntimeProjection>;
   acquireCompatibilityProjection?(): Readonly<{
     project(connection: Extract<ProviderConnectionResolution, { status: 'resolved' }>['record']): readonly DaemonProviderAgentCompatibilitySummaryV1[];
     release(): Promise<void>;
@@ -114,14 +130,15 @@ export type ProviderConnectionServiceDeps = Readonly<{
     registry: ProviderContributionRegistryView;
     candidates: readonly ProviderDiscoveryCandidateV1[];
   }>): Promise<readonly ProviderLocalInstallationSummaryV1[]>;
-  startManaged?(input: Readonly<{
-    machineId: string;
+  startManagedProviderRuntime?(input: Readonly<{
     contributionKey: string;
-    pluginId: string;
-    providerName: string;
-    lookupNames: readonly string[];
-    fixedArgs: readonly string[];
+    identity: PluginContributionIdentityV1;
+    request: Extract<ManagedProviderStartRequest, { reason: 'explicitStartLocal' }>;
+    purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
+    isAuthorizationCurrent(): boolean;
+    revalidateAuthorization(): Promise<boolean>;
   }>): Promise<Readonly<{ status: 'detecting' | 'running' }>>;
+  resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   refreshOnEnable?(input: Readonly<{
     connectionId: string;
     machineId: string;

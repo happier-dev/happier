@@ -7,6 +7,7 @@ import {
 
 import { buildConnectedServiceUxDiagnostic } from './diagnostics/connectedServiceUxDiagnostics';
 import type { ConnectedServiceSpawnResumeUnreachableError } from './resolveConnectedServiceAuthForSpawn';
+import { sanitizeConnectedServiceDiagnosticString } from './runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 
 function resolveResumeUnreachableUxDiagnosticCode(
   error: ConnectedServiceSpawnResumeUnreachableError,
@@ -17,8 +18,23 @@ function resolveResumeUnreachableUxDiagnosticCode(
   return CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume;
 }
 
-function resolveSafePublicReason(error: ConnectedServiceSpawnResumeUnreachableError): string {
+export function resolveSafeResumeUnreachableDiagnosticReason(
+  error: ConnectedServiceSpawnResumeUnreachableError,
+): string {
   const rawReason = typeof error.reason === 'string' ? error.reason.trim() : '';
+  const sensitiveContextValues = [error.vendorResumeId, error.cwd, error.targetMaterializedRoot]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim());
+  const sanitizedReason = sanitizeConnectedServiceDiagnosticString(rawReason, {
+    maxLength: 160,
+    redactedValues: sensitiveContextValues,
+  });
+  if (
+    sanitizedReason !== rawReason
+    || sensitiveContextValues.some((value) => rawReason.includes(value))
+  ) {
+    return 'resume_reachability_unavailable';
+  }
   if (/^[a-zA-Z0-9_.:-]{1,160}$/.test(rawReason) && !/[\\/]/.test(rawReason)) {
     return rawReason;
   }
@@ -38,7 +54,7 @@ function resolveSafePublicReason(error: ConnectedServiceSpawnResumeUnreachableEr
 export function buildSpawnResumeUnreachableErrorResult(
   error: ConnectedServiceSpawnResumeUnreachableError,
 ): Extract<SpawnSessionResult, { type: 'error' }> {
-  const reason = resolveSafePublicReason(error);
+  const reason = resolveSafeResumeUnreachableDiagnosticReason(error);
   return {
     type: 'error',
     errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,

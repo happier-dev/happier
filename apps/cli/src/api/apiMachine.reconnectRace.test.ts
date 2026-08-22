@@ -508,7 +508,7 @@ describe('ApiMachineClient reconnect race handling', () => {
         expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain('must-not-log');
     });
 
-    it('pauses daemon reconnects and publishes update-required state for a compatibility rejection', async () => {
+    it('does not classify an account-storage result as a connection-wide upgrade rejection', async () => {
         const { ApiMachineClient } = await import('./apiMachine');
 
         const machine: Machine = {
@@ -534,19 +534,13 @@ describe('ApiMachineClient reconnect race handling', () => {
                 error: 'client-upgrade-required',
                 requirement: {
                     v: 1,
-                    minimumSessionSyncProtocolVersion: 2,
-                    clientKind: 'daemon',
-                    minimumAppVersion: '9.0.0',
-                    updateUrl: null,
+                    kind: 'account-stored-content',
+                    minimumProtocolVersion: 2,
                 },
             },
         });
 
-        expect(states.at(-1)).toEqual(expect.objectContaining({
-            phase: 'auth_failed',
-            nextRetryAt: null,
-            lastErrorMessage: 'This Happier daemon must be upgraded before it can sync sessions.',
-        }));
+        expect(states.at(-1)?.phase).not.toBe('auth_failed');
     });
 
     it('stops reconnecting and reports a replaced machine from connect_error', async () => {

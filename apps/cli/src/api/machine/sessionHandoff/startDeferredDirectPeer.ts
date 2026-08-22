@@ -89,7 +89,7 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
     sourceStopState: Exclude<SessionHandoffSourceStopState, 'failed'>;
     preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
   }>) => Promise<unknown>;
-  resolveSourceStopState: () => Promise<SessionHandoffSourceStopState>;
+  sourceStopState: Exclude<SessionHandoffSourceStopState, 'failed'>;
   recordDeferredStartFailure: (error: unknown) => void;
   claimMaintenance: ExternalSessionOperationClaimMaintenance;
 }>): Promise<DeferredDirectPeerStartResult> {
@@ -192,10 +192,26 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
           transferId: manifestTransferId,
         })
         : undefined;
+    deferredStartEndpointCandidates = agentBundleEndpointCandidates;
+
+    let exported: Awaited<ReturnType<typeof input.exportSessionBundle>>;
+    let createdAgentBundlePayloadSource: TransferPayloadSource | null = null;
+    try {
+      input.claimMaintenance.throwIfLost();
+      exported = await input.claimMaintenance.race(() => input.exportSessionBundle(input.metadata));
+      createdAgentBundlePayloadSource = await input.claimMaintenance.race(
+        () => createSessionHandoffAgentBundlePayloadSource(exported.agentBundle),
+      );
+    } catch (error) {
+      input.directPeerTransfer.clearPublishedTransfer(agentBundleCarrierTransferId);
+      await disposeTransferPayloadSource(createdAgentBundlePayloadSource);
+      throw error;
+    }
+
     const agentBundleTransferPublication: SessionHandoffAgentBundleTransferPublication = {
       transferId: agentBundleTransferId,
-      sizeBytes: await resolveTransferPayloadSizeBytes(agentBundleCarrierPayloadSource),
-      manifestHash: await resolveTransferPayloadManifestHash(agentBundleCarrierPayloadSource),
+      sizeBytes: await resolveTransferPayloadSizeBytes(createdAgentBundlePayloadSource),
+      manifestHash: await resolveTransferPayloadManifestHash(createdAgentBundlePayloadSource),
       endpointCandidates: agentBundleEndpointCandidates,
     };
 
@@ -209,45 +225,23 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
       }
     }
 
-    deferredStartEndpointCandidates = agentBundleEndpointCandidates;
-
     deferredStartWorkPromise = (async () => {
-      let agentBundlePayloadSource: TransferPayloadSource | null = null;
       try {
-        input.claimMaintenance.throwIfLost();
-        const exported = await input.claimMaintenance.race(() => input.exportSessionBundle(input.metadata));
-        const createdAgentBundlePayloadSource = await input.claimMaintenance.race(
-          () => createSessionHandoffAgentBundlePayloadSource(exported.agentBundle),
-        );
-        agentBundlePayloadSource = createdAgentBundlePayloadSource;
-
-        const actualSourceStopState = await input.claimMaintenance.race(() => input.resolveSourceStopState());
-        if (actualSourceStopState === 'failed') {
-          throw new Error('Failed to stop the active source session before handoff cutover');
-        }
-
         input.claimMaintenance.throwIfLost();
         await input.claimMaintenance.race(async () => input.prepareStartedState({
           handoffId: input.handoffId,
           request: input.request,
           metadata: input.metadata,
-          sourceStopState: actualSourceStopState,
+          sourceStopState: input.sourceStopState,
           preExportedAgentBundle: {
             agentBundle: exported.agentBundle,
             targetPath: exported.targetPath,
             agentBundlePayloadSource: createdAgentBundlePayloadSource,
-            agentBundleTransferPublication: {
-              transferId: agentBundleTransferId,
-              sizeBytes: await resolveTransferPayloadSizeBytes(createdAgentBundlePayloadSource),
-              manifestHash: await resolveTransferPayloadManifestHash(createdAgentBundlePayloadSource),
-              endpointCandidates: agentBundleEndpointCandidates,
-            },
+            agentBundleTransferPublication,
           },
         }));
       } catch (error) {
-        if (agentBundlePayloadSource) {
-          await disposeTransferPayloadSource(agentBundlePayloadSource);
-        }
+        await disposeTransferPayloadSource(createdAgentBundlePayloadSource);
         throw error;
       }
     })();

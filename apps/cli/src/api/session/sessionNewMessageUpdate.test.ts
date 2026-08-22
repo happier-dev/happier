@@ -31,12 +31,16 @@ function createUserUpdate(): Update {
   } as Update;
 }
 
-function handle(update: Update, overrides: Partial<Parameters<typeof handleSessionNewMessageUpdate>[0]> = {}) {
+function handle(
+  update: Update,
+  overrides: Partial<Omit<
+    Parameters<typeof handleSessionNewMessageUpdate>[0],
+    'mode' | 'ctx'
+  >> = {},
+) {
   return handleSessionNewMessageUpdate({
     update,
     sessionId: 'session-1',
-    encryptionKey: new Uint8Array(32),
-    encryptionVariant: 'legacy',
     receivedMessageIds: new Set<string>(),
     lastObservedMessageSeq: 0,
     lastObservedUserMessageSeq: 0,
@@ -44,16 +48,41 @@ function handle(update: Update, overrides: Partial<Parameters<typeof handleSessi
     debug: vi.fn(),
     debugLargeJson: vi.fn(),
     ...overrides,
+    mode: 'e2ee',
+    ctx: {
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+    },
   });
 }
 
 describe('handleSessionNewMessageUpdate', () => {
-  it('projects transcript user rows as observation only', () => {
+  it('delivers ordinary transcript user rows as provider input', () => {
     const emit = vi.fn();
 
     const result = handle(createUserUpdate(), { emit });
 
     expect(emit).toHaveBeenCalledWith('user-message', expect.objectContaining({ localId: 'local-1' }));
+    expect(result.lastObservedUserMessageSeq).toBe(7);
+  });
+
+  it('suppresses a user row whose local id is owned by the durable transcript observation outbox', () => {
+    const emit = vi.fn();
+    const observeCommittedUserMessageSeq = vi.fn();
+    const onConnectedServiceTurnLifecycleEvent = vi.fn();
+    const consumeLocallyAuthoredTranscriptObservationLocalId = vi.fn((localId: string) => localId === 'local-1');
+
+    const result = handle(createUserUpdate(), {
+      emit,
+      observeCommittedUserMessageSeq,
+      onConnectedServiceTurnLifecycleEvent,
+      consumeLocallyAuthoredTranscriptObservationLocalId,
+    });
+
+    expect(consumeLocallyAuthoredTranscriptObservationLocalId).toHaveBeenCalledWith('local-1');
+    expect(emit).not.toHaveBeenCalledWith('user-message', expect.anything());
+    expect(observeCommittedUserMessageSeq).not.toHaveBeenCalled();
+    expect(onConnectedServiceTurnLifecycleEvent).not.toHaveBeenCalled();
     expect(result.lastObservedUserMessageSeq).toBe(7);
   });
 

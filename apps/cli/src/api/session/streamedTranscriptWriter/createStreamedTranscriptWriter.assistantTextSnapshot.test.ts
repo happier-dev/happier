@@ -17,7 +17,10 @@ describe('createStreamedTranscriptWriter assistant text snapshots', () => {
       session: {
         turnAssistantTextSnapshotStore: store,
         sendAgentMessageEphemeral: vi.fn(),
-        sendAgentMessageCommitted: vi.fn(async () => undefined),
+        enqueueAgentMessageCommitted: vi.fn(async () => ({
+          persisted: true,
+          delivered: false,
+        })),
       },
       initialCheckpointDelayMs: 10_000,
       checkpointIntervalMs: 10_000,
@@ -44,7 +47,10 @@ describe('createStreamedTranscriptWriter assistant text snapshots', () => {
       provider: 'codex',
       session: {
         turnAssistantTextSnapshotStore: store,
-        sendAgentMessageCommitted: vi.fn(async () => undefined),
+        enqueueAgentMessageCommitted: vi.fn(async () => ({
+          persisted: true,
+          delivered: false,
+        })),
       },
     });
 

@@ -18,8 +18,9 @@ import {
 import type {
   SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 type CredentialBinding = Readonly<{
   serviceId: ConnectedServiceCredentialRecordV1['serviceId'];
@@ -204,7 +205,7 @@ async function writePreparedCredential(params: Readonly<{
 
 export async function storeConnectedServiceCredentialForAccount(params: Readonly<{
   api: ConnectedServiceCredentialStorageApi;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   record: ConnectedServiceCredentialRecordV1;
   serverContract?: SessionSyncPendingInputServerContractResult | null;
   randomBytes?: (length: number) => Uint8Array;
@@ -245,24 +246,32 @@ export async function storeConnectedServiceCredentialForAccount(params: Readonly
   revisionSemantics ??= 'revisioned';
   const prepared: PreparedCredentialWrite = mode === 'plain'
     ? { mode, binding, expectedCredentialRevision, revisionSemantics, record }
-    : {
-        mode,
-        binding,
-        expectedCredentialRevision,
-        revisionSemantics,
-        record,
-        sealed: {
-          format: 'account_scoped_v1',
-          ciphertext: sealConnectedServiceCredentialCiphertext({
-            material: params.credentials.encryption.type === 'legacy'
-              ? { type: 'legacy', secret: params.credentials.encryption.secret }
-              : { type: 'dataKey', machineKey: params.credentials.encryption.machineKey },
-            payload: record,
-            randomBytes: params.randomBytes ?? ((length) => randomBytes(length)),
-          }),
-        },
-        metadata: metadataForRecord(record),
-      };
+    : (() => {
+        const credentials =
+          requireAccountEncryptionCredentials(params.credentials);
+        return {
+          mode,
+          binding,
+          expectedCredentialRevision,
+          revisionSemantics,
+          record,
+          sealed: {
+            format: 'account_scoped_v1',
+            ciphertext: sealConnectedServiceCredentialCiphertext({
+              material: credentials.encryption.type === 'legacy'
+                ? { type: 'legacy', secret: credentials.encryption.secret }
+                : {
+                    type: 'dataKey',
+                    machineKey: credentials.encryption.machineKey,
+                  },
+              payload: record,
+              randomBytes:
+                params.randomBytes ?? ((length) => randomBytes(length)),
+            }),
+          },
+          metadata: metadataForRecord(record),
+        };
+      })();
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {

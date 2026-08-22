@@ -83,6 +83,7 @@ describe('daemon machine RPC route attachments', () => {
     };
     let apiMachineForSessions: null | {
       registerConnectedAccountDaemonRuntime: ReturnType<typeof vi.fn>;
+      registerConnectedAccountPurposeBindingRuntime: ReturnType<typeof vi.fn>;
     } = null;
     const cache = createDaemonMachineRpcRouteAttachmentCache({
       getApiMachineForSessions: () => apiMachineForSessions as never,
@@ -96,10 +97,38 @@ describe('daemon machine RPC route attachments', () => {
     cache.attachConnectedAccountDaemonRuntime(runtime);
     apiMachineForSessions = {
       registerConnectedAccountDaemonRuntime: vi.fn(),
+      registerConnectedAccountPurposeBindingRuntime: vi.fn(),
     };
     cache.attachApiMachineForSessions(apiMachineForSessions);
 
     expect(apiMachineForSessions.registerConnectedAccountDaemonRuntime)
+      .toHaveBeenCalledWith(runtime);
+  });
+
+  it('attaches the Connected Account Action-form purpose producer before and after machine replacement', async () => {
+    const { createDaemonMachineRpcRouteAttachmentCache } = await import('./machineRpcRouteAttachments');
+    const runtime = {
+      listActionFormConnectedAccountOptions: vi.fn(),
+    };
+    let apiMachineForSessions: null | {
+      registerConnectedAccountDaemonRuntime: ReturnType<typeof vi.fn>;
+      registerConnectedAccountPurposeBindingRuntime: ReturnType<typeof vi.fn>;
+    } = null;
+    const cache = createDaemonMachineRpcRouteAttachmentCache({
+      getApiMachineForSessions: () => apiMachineForSessions as never,
+    }) as unknown as {
+      attachConnectedAccountPurposeBindingRuntime(value: typeof runtime): void;
+      attachApiMachineForSessions(apiMachine: typeof apiMachineForSessions): void;
+    };
+
+    cache.attachConnectedAccountPurposeBindingRuntime(runtime);
+    apiMachineForSessions = {
+      registerConnectedAccountDaemonRuntime: vi.fn(),
+      registerConnectedAccountPurposeBindingRuntime: vi.fn(),
+    };
+    cache.attachApiMachineForSessions(apiMachineForSessions);
+
+    expect(apiMachineForSessions.registerConnectedAccountPurposeBindingRuntime)
       .toHaveBeenCalledWith(runtime);
   });
 

@@ -1,7 +1,7 @@
 import type {
     AgentExternalSessionTakeoverLaunchPlan,
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import type { ResolvedAgentContribution } from '@/plugins/projection/registry/types';
 import { isSessionControlEnvKey } from '@/session/runtime/control/sessionControlEnvironment';
@@ -47,6 +47,12 @@ function resolveTargetBackend(
 
 export function mapExternalTakeoverLaunchPlanToSpawnOptions(params: Readonly<{
     plan: AgentExternalSessionTakeoverLaunchPlan;
+    /**
+     * Host-authoritative local target selected before the durable takeover
+     * request is admitted. Plugin launch plans may describe provider context,
+     * but never choose the process working directory.
+     */
+    targetDirectory: string;
     resolvedIdentity: AgentExternalSessionsResolvedIdentity;
     linkedSessionId: string;
     targetAgent: ExternalTakeoverTargetAgent;
@@ -65,7 +71,7 @@ export function mapExternalTakeoverLaunchPlanToSpawnOptions(params: Readonly<{
     }
 
     return {
-        directory: params.plan.directory,
+        directory: params.targetDirectory,
         backendTarget: resolveTargetBackend(params.targetAgent),
         existingSessionId: params.linkedSessionId,
         resume: params.resolvedIdentity.remoteSessionId,

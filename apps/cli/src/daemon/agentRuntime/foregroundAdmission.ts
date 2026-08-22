@@ -1,26 +1,35 @@
 import {
-  type AgentRuntimeDaemonBridgeRequestV1,
-  type AgentRuntimeDaemonSessionDescriptorV1,
-} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
-import {
   verifyAgentRuntimeSessionBridgeToken,
-  type AgentRuntimeSessionBridgeAuthorization,
+  type ForegroundAgentRuntimeBootstrapAuthorization,
+  type AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
 } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import type {
   ForegroundAgentRuntimeAdmissionOwnerRequestV1,
   ForegroundAgentRuntimeAdmissionResponseV1,
+  ForegroundAgentRuntimeClaimRequestV1,
+  ForegroundAgentRuntimeClaimResponseV1,
 } from '@/daemon/agentRuntime/foregroundAdmissionContract';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import type { AgentSessionRunnerBindingV1 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import type {
+  RunnerManagedDependencyRetentionV1,
+} from '@/plugins/runtime/runner/runnerManagedDependencyRetention';
+import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import type {
+  RunnerAgentInvocationContext,
+} from '@/daemon/types';
 
 type Cleanup = () => void | Promise<void>;
 
 export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
-  authorization: AgentRuntimeSessionBridgeAuthorization;
+  authorization: ForegroundAgentRuntimeBootstrapAuthorization;
   reservedEnvironmentVariableNames: readonly string[];
   profileSecretRequirementNamesMissingBinding: readonly string[];
   retirementSignal: AbortSignal;
   isCurrent(): boolean;
   claim(input: Readonly<{
+    canonicalSessionId: string;
+    httpPort: number;
     foregroundSatisfiedProfileSecretRequirementNames: readonly string[];
   }>): Promise<
     | Readonly<{
@@ -28,6 +37,15 @@ export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
         environment: Readonly<Record<string, string>>;
         unsetEnvironmentVariableNames: readonly string[];
         sensitiveEnvironmentVariableNames: readonly string[];
+        invocationContext: RunnerAgentInvocationContext;
+        authority: Readonly<{
+          retainedAgent: AgentSessionRunnerBindingV1;
+          runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
+          runnerManagedDependencyRetentionV1?:
+            RunnerManagedDependencyRetentionV1;
+          capabilityDigest: string;
+          transferCleanupOwnership(): void;
+        }>;
       }>
     | Readonly<{
         ok: false;
@@ -42,7 +60,7 @@ export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
 
 type Admission = {
   request: ForegroundAgentRuntimeAdmissionOwnerRequestV1;
-  authorization: AgentRuntimeSessionBridgeAuthorization;
+  authorization: ForegroundAgentRuntimeBootstrapAuthorization;
   runtimeSessionId: string | null;
   reservedEnvironmentVariableNames: readonly string[];
   profileSecretRequirementNamesMissingBinding: readonly string[];
@@ -57,7 +75,32 @@ type Admission = {
   detachRetirementListener: () => void;
   released: boolean;
   releasePromise: Promise<void> | null;
+  daemonServiceAuthority: {
+    retainedAgent: AgentSessionRunnerBindingV1;
+    runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
+    capabilityDigest: string;
+    invocationContext: RunnerAgentInvocationContext;
+    admission: ForegroundDaemonServiceAdmission | null;
+  } | null;
 };
+
+export type ForegroundDaemonServiceAdmission = Readonly<{
+  turnId: string;
+  inputId: string;
+  userMessageSeq: number | null;
+  userMessageSeqs: readonly number[];
+}>;
+
+export type ForegroundDaemonServiceSubject = Readonly<{
+  retainedAgent: AgentSessionRunnerBindingV1;
+  runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
+  capabilityDigest: string;
+  invocationContext: RunnerAgentInvocationContext;
+  readAdmission(): ForegroundDaemonServiceAdmission | null;
+  recordAdmission(
+    admission: ForegroundDaemonServiceAdmission,
+  ): Promise<boolean>;
+}>;
 
 type PendingAdmission = {
   request: ForegroundAgentRuntimeAdmissionOwnerRequestV1;
@@ -65,29 +108,6 @@ type PendingAdmission = {
   settled: Promise<void>;
   settle(): void;
 };
-
-function descriptorContextMatches(
-  admission: Admission,
-  request: AgentRuntimeDaemonBridgeRequestV1,
-): boolean {
-  const descriptor = admission.authorization.descriptor;
-  return (
-    descriptor.pluginId === request.context.pluginId
-    && descriptor.agentId === request.context.agentId
-    && descriptor.generation === request.context.generation
-  );
-}
-
-function contextMatches(
-  admission: Admission,
-  request: AgentRuntimeDaemonBridgeRequestV1,
-): boolean {
-  return (
-    (admission.runtimeSessionId ?? admission.request.sessionId)
-      === request.context.sessionId
-    && descriptorContextMatches(admission, request)
-  );
-}
 
 export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonly<{
   prepare(
@@ -97,6 +117,18 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
     | Extract<ForegroundAgentRuntimeAdmissionResponseV1, { ok: false }>
   >;
   isProcessAlive?(pid: number): boolean;
+  getHttpPort?(): number;
+  promoteDaemonServiceAuthority?(input: Readonly<{
+    canonicalSessionId: string;
+    foregroundPid: number;
+    authorityFilePath: string;
+    retainedAgent: AgentSessionRunnerBindingV1;
+    runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
+    runnerManagedDependencyRetentionV1?:
+      RunnerManagedDependencyRetentionV1;
+    capabilityDigest: string;
+    invocationContext: RunnerAgentInvocationContext;
+  }>): Promise<boolean>;
 }>) {
   const byAttemptId = new Map<string, Admission>();
   const attemptIdBySessionId = new Map<string, string>();
@@ -227,6 +259,7 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           detachRetirementListener: () => {},
           released: false,
           releasePromise: null,
+          daemonServiceAuthority: null,
         };
         const retire = () => {
           void releaseAdmission(admission).catch(() => undefined);
@@ -264,7 +297,12 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           ok: true,
           capability: {
             attemptId: request.attemptId,
-            tokenFilePath: prepared.authorization.tokenFilePath,
+            admissionFilePath:
+              prepared.authorization.foregroundAdmissionFilePath,
+            bootstrapFilePath:
+              prepared.authorization.bootstrapFilePath,
+            authorityFilePath:
+              prepared.authorization.authorityFilePath,
             descriptor: prepared.authorization.descriptor,
           },
           launchPolicy: {
@@ -280,106 +318,32 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         pending.settle();
       }
     },
-    isBridgeRequestAuthorized(
-      request: AgentRuntimeDaemonBridgeRequestV1,
-    ): boolean {
-      let admission = byAttemptId.get(
-        request.operation.kind === 'foreground.environment.claim'
-          ? request.operation.attemptId
-          : attemptIdBySessionId.get(request.context.sessionId) ?? '',
-      );
-      // Foreground admission happens before the host creates its canonical
-      // Happier session. Bind that provisional admission exactly once, on the
-      // first factory prepare carrying its scoped bearer and runtime identity.
-      if (
-        request.operation.kind === 'factory.prepare'
-        && admission?.runtimeSessionId === null
-      ) {
-        const existingAttemptId =
-          attemptIdBySessionId.get(request.context.sessionId);
-        if (
-          admission.claimState === 'claimed'
-          && descriptorContextMatches(admission, request)
-          && verifyAgentRuntimeSessionBridgeToken({
-            providedToken: request.context.token,
-            expectedTokenHash: admission.authorization.tokenHash,
-          })
-          && (
-            existingAttemptId === undefined
-            || existingAttemptId === admission.request.attemptId
-          )
-        ) {
-          admission.runtimeSessionId = request.context.sessionId;
-          attemptIdBySessionId.set(
-            request.context.sessionId,
-            admission.request.attemptId,
-          );
-        }
-      } else if (
-        request.operation.kind === 'factory.prepare'
-        && !admission
-      ) {
-        const candidates = [...byAttemptId.values()].filter((candidate) =>
-          !candidate.released
-          && candidate.claimState === 'claimed'
-          && candidate.runtimeSessionId === null
-          && descriptorContextMatches(candidate, request)
-          && verifyAgentRuntimeSessionBridgeToken({
-            providedToken: request.context.token,
-            expectedTokenHash: candidate.authorization.tokenHash,
-          })
-        );
-        if (
-          candidates.length === 1
-          && !attemptIdBySessionId.has(request.context.sessionId)
-        ) {
-          admission = candidates[0]!;
-          admission.runtimeSessionId = request.context.sessionId;
-          attemptIdBySessionId.set(
-            request.context.sessionId,
-            admission.request.attemptId,
-          );
-        }
-      }
-      if (
-        !admission
-        || admission.released
-        || (
-          request.operation.kind !== 'foreground.environment.claim'
-          && admission.runtimeSessionId === null
-        )
-        || !contextMatches(admission, request)
-      ) {
-        return false;
-      }
-      return verifyAgentRuntimeSessionBridgeToken({
-        providedToken: request.context.token,
-        expectedTokenHash: admission.authorization.tokenHash,
-      });
-    },
     async claimEnvironment(
-      request: AgentRuntimeDaemonBridgeRequestV1,
-    ): Promise<
-      | Readonly<{
-          ok: true;
-          environment: Readonly<Record<string, string>>;
-          unsetEnvironmentVariableNames: readonly string[];
-        }>
-      | Readonly<{ ok: false; error: ProviderErrorV1 }>
-    > {
-      if (request.operation.kind !== 'foreground.environment.claim') {
-        throw new Error('Foreground Agent runtime admission claim is invalid');
-      }
-      const admission = byAttemptId.get(request.operation.attemptId);
+      claimRequest: ForegroundAgentRuntimeClaimRequestV1,
+    ): Promise<ForegroundAgentRuntimeClaimResponseV1> {
+      const admission = byAttemptId.get(claimRequest.attemptId);
+      const descriptor = admission?.authorization.descriptor;
+      const existingCanonicalAttemptId =
+        attemptIdBySessionId.get(claimRequest.canonicalSessionId);
       if (
         !admission
         || admission.released
-        || !contextMatches(admission, request)
+        || admission.request.sessionId
+          !== claimRequest.provisionalSessionId
+        || admission.request.foregroundPid
+          !== claimRequest.foregroundPid
+        || descriptor?.pluginId !== claimRequest.pluginId
+        || descriptor.agentId !== claimRequest.agentId
+        || descriptor.generation !== claimRequest.generation
         || !verifyAgentRuntimeSessionBridgeToken({
-          providedToken: request.context.token,
-          expectedTokenHash: admission.authorization.tokenHash,
+          providedToken: claimRequest.capability,
+          expectedTokenHash: admission.authorization.capabilityHash,
         })
         || admission.claimState !== 'available'
+        || (
+          existingCanonicalAttemptId !== undefined
+          && existingCanonicalAttemptId !== claimRequest.attemptId
+        )
       ) {
         throw new Error('Foreground Agent runtime admission is unavailable');
       }
@@ -395,8 +359,10 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
       admission.claimState = 'claiming';
       try {
         const claimPromise = admission.claim({
+          canonicalSessionId: claimRequest.canonicalSessionId,
+          httpPort: dependencies.getHttpPort?.() ?? 0,
           foregroundSatisfiedProfileSecretRequirementNames:
-            request.operation
+            claimRequest
               .foregroundSatisfiedProfileSecretRequirementNames,
         });
         admission.claimPromise = claimPromise;
@@ -412,23 +378,155 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         admission.claimState = 'claimed';
         if (!claimed.ok) {
           await releaseAdmission(admission);
-          return claimed;
+          return {
+            ok: false,
+            error: claimed.error,
+            ...(claimed.profileSecretRecovery
+              ? {
+                  profileSecretRecovery: {
+                    requirementNames: [
+                      ...claimed.profileSecretRecovery
+                        .requirementNames,
+                    ],
+                  },
+                }
+              : {}),
+          };
         }
-        return Object.freeze({
+        const retainedAgent = claimed.authority.retainedAgent;
+        const invocationContext: RunnerAgentInvocationContext =
+          Object.freeze({
+            cwd: claimed.invocationContext.cwd,
+            // Provider/profile materialization belongs only to the original
+            // runner child launch. Daemon PluginServices rematerialize current
+            // account/HostAccess authority per operation and must never retain
+            // raw launch-time secret bytes as reusable service authority.
+            environment: Object.freeze({}),
+            providerBindingActive: false,
+          });
+        if (
+          retainedAgent.pluginId !== descriptor.pluginId
+          || retainedAgent.localAgentId !== descriptor.agentId
+          || retainedAgent.immutableGenerationId
+            !== (descriptor.immutableGenerationId ?? descriptor.generation)
+        ) {
+          await releaseAdmission(admission);
+          throw new Error(
+            'Foreground Agent runtime authority binding is invalid',
+          );
+        }
+        admission.runtimeSessionId = claimRequest.canonicalSessionId;
+        attemptIdBySessionId.set(
+          claimRequest.canonicalSessionId,
+          claimRequest.attemptId,
+        );
+        if (dependencies.promoteDaemonServiceAuthority) {
+          const promoted =
+            await dependencies.promoteDaemonServiceAuthority({
+              canonicalSessionId: claimRequest.canonicalSessionId,
+              foregroundPid: claimRequest.foregroundPid,
+              authorityFilePath:
+                admission.authorization.authorityFilePath,
+              retainedAgent,
+              runner: claimed.authority.runner,
+              ...(claimed.authority
+                .runnerManagedDependencyRetentionV1
+                ? {
+                    runnerManagedDependencyRetentionV1:
+                      claimed.authority
+                        .runnerManagedDependencyRetentionV1,
+                  }
+                : {}),
+              capabilityDigest:
+                claimed.authority.capabilityDigest,
+              invocationContext,
+            });
+          if (!promoted) {
+            await releaseAdmission(admission);
+            throw new Error(
+              'Foreground Agent runtime authority promotion is unavailable',
+            );
+          }
+          claimed.authority.transferCleanupOwnership();
+          admission.daemonServiceAuthority = null;
+        } else {
+          admission.daemonServiceAuthority = {
+            retainedAgent,
+            runner: claimed.authority.runner,
+            capabilityDigest: claimed.authority.capabilityDigest,
+            invocationContext,
+            admission: null,
+          };
+        }
+        return {
           ok: true,
-          environment: Object.freeze({ ...claimed.environment }),
-          unsetEnvironmentVariableNames: Object.freeze([
+          environment: { ...claimed.environment },
+          unsetEnvironmentVariableNames: [
             ...claimed.unsetEnvironmentVariableNames,
-          ]),
-          sensitiveEnvironmentVariableNames: Object.freeze([
+          ],
+          sensitiveEnvironmentVariableNames: [
             ...claimed.sensitiveEnvironmentVariableNames,
-          ]),
-        });
+          ],
+        };
       } catch (error) {
         admission.claimPromise = null;
         await releaseAdmission(admission);
         throw error;
       }
+    },
+    authorizeDaemonServiceRequest(input: Readonly<{
+      request: AgentRuntimeDaemonServiceRequestV1;
+      providedCapability: string;
+    }>): ForegroundDaemonServiceSubject | null {
+      const attemptId =
+        attemptIdBySessionId.get(input.request.context.sessionId);
+      const admission = attemptId
+        ? byAttemptId.get(attemptId)
+        : undefined;
+      const authority = admission?.daemonServiceAuthority;
+      if (
+        !admission
+        || admission.released
+        || admission.runtimeSessionId
+          !== input.request.context.sessionId
+        || admission.retirementSignal.aborted
+        || !admission.isCurrent()
+        || !authority
+        || !verifyAgentRuntimeSessionBridgeToken({
+          providedToken: input.providedCapability,
+          expectedTokenHash: authority.capabilityDigest,
+        })
+        || !verifyAgentRuntimeSessionBridgeToken({
+          providedToken: input.request.context.token,
+          expectedTokenHash: authority.capabilityDigest,
+        })
+      ) {
+        return null;
+      }
+      return Object.freeze({
+        retainedAgent: authority.retainedAgent,
+        runner: authority.runner,
+        capabilityDigest: authority.capabilityDigest,
+        invocationContext: authority.invocationContext,
+        readAdmission: () => authority.admission,
+        recordAdmission: async (next) => {
+          if (
+            admission.released
+            || admission.retirementSignal.aborted
+            || !admission.isCurrent()
+            || admission.daemonServiceAuthority !== authority
+          ) {
+            return false;
+          }
+          authority.admission = Object.freeze({
+            ...next,
+            userMessageSeqs: Object.freeze([
+              ...next.userMessageSeqs,
+            ]),
+          });
+          return true;
+        },
+      });
     },
     async release(attemptId: string, sessionId: string): Promise<void> {
       const pending = pendingByAttemptId.get(attemptId);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { registerFileSystemHandlers } from './fileSystem';
 
 type Handler = (data: any) => Promise<any>;
+
+afterEach(() => {
+  vi.doUnmock('fs/promises');
+  vi.resetModules();
+});
 
 function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHandler: (method: string, handler: Handler) => void } {
   const handlers = new Map<string, Handler>();
@@ -53,6 +58,40 @@ describe('filesystem path mutations', () => {
       expect(result).toMatchObject({ success: true, exists: true, kind: 'file' });
       expect(typeof result.sizeBytes).toBe('number');
       expect(typeof result.modifiedMs).toBe('number');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('statFile preserves high-precision mtime for snapshot revision consumers', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-stat-'));
+    try {
+      const statMock = vi.fn(async () => ({
+        isDirectory: () => false,
+        isFile: () => true,
+        size: 5,
+        mtime: new Date(100),
+        mtimeMs: 100.125,
+      }));
+      vi.resetModules();
+      vi.doMock('fs/promises', async (importOriginal) => {
+        const original = await importOriginal<typeof import('fs/promises')>();
+        return { ...original, stat: statMock };
+      });
+      const { registerFileSystemHandlers: registerHandlersWithPreciseStat } = await import('./fileSystem');
+      const mgr = createRpcHandlerManager();
+      registerHandlersWithPreciseStat(mgr as unknown as RpcHandlerManager, workspace);
+
+      const statFile = mgr.handlers.get(RPC_METHODS.STAT_FILE);
+      if (!statFile) throw new Error('expected statFile handler');
+
+      await expect(statFile({ path: 'file.txt' })).resolves.toEqual({
+        success: true,
+        exists: true,
+        kind: 'file',
+        sizeBytes: 5,
+        modifiedMs: 100.125,
+      });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

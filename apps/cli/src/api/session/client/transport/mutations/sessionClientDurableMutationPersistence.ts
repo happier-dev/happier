@@ -33,6 +33,8 @@ import type {
     PersistedTranscriptMessageAppendMutationV1,
     PersistedVoiceAgentTranscriptTurnMutationV1,
     RegisteredSessionStateFieldMutationV1,
+    SessionClientDurableMutationAttemptV1,
+    SessionClientDurableMutationAttemptReason,
     SessionClientDurableMutationDependency,
     SessionClientDurableMutationPause,
     SessionEndMutationV1,
@@ -74,11 +76,19 @@ export type SessionClientDurableMutationDeadLetterEntry = Readonly<{
     reason: string;
     attempts?: number;
     createdAt?: number;
+    firstFailedAt?: number;
+    lastAttempt?: SessionClientDurableMutationAttemptV1;
     deadLetteredAt: number;
     diagnostic?: Record<string, unknown>;
     payloadSummary?: Record<string, unknown>;
     queuedMutation?: QueuedSessionClientDurableMutation;
     recoveryAttemptedAt?: number;
+}>;
+
+type SessionClientDurableMutationDeadLetterIdentitySource = Readonly<{
+    kind: SessionClientDurableMutationDeadLetterEntry['kind'];
+    sessionId: string;
+    mutationId?: string;
 }>;
 
 type SessionClientDurableMutationDeadLetterFileV1 = Readonly<{
@@ -90,6 +100,21 @@ const DEFAULT_DEAD_LETTER_MAX_ENTRIES = 1_000;
 const MAX_DEAD_LETTER_MAX_ENTRIES = 10_000;
 const DEFAULT_REFERENCED_PREREQUISITE_MAX_ENTRIES = 10_000;
 const MAX_REFERENCED_PREREQUISITE_MAX_ENTRIES = 50_000;
+
+export function resolveSessionClientDurableMutationDeadLetterIdentity(
+    entry: SessionClientDurableMutationDeadLetterIdentitySource,
+): string | null {
+    if (typeof entry.mutationId !== 'string' || entry.mutationId.length === 0) return null;
+    return JSON.stringify([entry.sessionId, entry.kind, entry.mutationId]);
+}
+
+export function isRecoverableSessionClientDurableMutationDeadLetter(
+    entry: SessionClientDurableMutationDeadLetterEntry,
+): boolean {
+    return entry.reason === 'retry_exhausted'
+        && isAuthoritativeSessionClientDurableMutationKind(entry.kind)
+        && typeof entry.recoveryAttemptedAt !== 'number';
+}
 
 function encodeSessionIdForDurableMutationJournalFileName(sessionId: string): string {
     if (sessionId.length === 0) {
@@ -322,6 +347,8 @@ function createDeadLetterEntry(params: Readonly<{
     mutationId?: string;
     attempts?: number;
     createdAt?: number;
+    firstFailedAt?: number;
+    lastAttempt?: SessionClientDurableMutationAttemptV1;
     diagnostic?: Record<string, unknown>;
     payload?: unknown;
     queuedMutation?: QueuedSessionClientDurableMutation;
@@ -335,6 +362,8 @@ function createDeadLetterEntry(params: Readonly<{
         reason: params.reason,
         ...(typeof params.attempts === 'number' ? { attempts: params.attempts } : {}),
         ...(typeof params.createdAt === 'number' ? { createdAt: params.createdAt } : {}),
+        ...(typeof params.firstFailedAt === 'number' ? { firstFailedAt: params.firstFailedAt } : {}),
+        ...(params.lastAttempt ? { lastAttempt: params.lastAttempt } : {}),
         deadLetteredAt: Date.now(),
         ...(params.diagnostic ? { diagnostic: params.diagnostic } : {}),
         ...(params.payload !== undefined ? { payloadSummary: summarizePayload(params.payload) } : {}),
@@ -653,11 +682,23 @@ function parseProviderSessionIdWriteValue(
     if (value.value !== null && !SessionStateProviderSessionIdValueSchema.safeParse(value.value).success) {
         return { ok: false };
     }
+    // This re-projection is the narrowest choke point on the durable path: it
+    // rebuilds the envelope key by key, so the Agent's native session-log path
+    // has to be carried explicitly or it is silently dropped and the id survives
+    // a restart with no pointer at the conversation it names.
+    const rawNativeSessionLogPath = value.nativeSessionLogPath;
+    if (rawNativeSessionLogPath != null && typeof rawNativeSessionLogPath !== 'string') {
+        return { ok: false };
+    }
+    const nativeSessionLogPath = typeof rawNativeSessionLogPath === 'string'
+        ? rawNativeSessionLogPath.trim()
+        : '';
     return {
         ok: true,
         value: {
             metadataKey,
             value: value.value,
+            ...(nativeSessionLogPath ? { nativeSessionLogPath } : {}),
         },
     };
 }
@@ -700,6 +741,55 @@ export type ParseQueuedResult = Readonly<{
     deadLetters: readonly SessionClientDurableMutationDeadLetterEntry[];
 }>;
 
+type ParsedSessionClientDurableMutationAttemptAccounting =
+    | Readonly<{ firstFailedAt?: undefined; lastAttempt?: undefined }>
+    | Readonly<{
+        firstFailedAt: number;
+        lastAttempt: SessionClientDurableMutationAttemptV1;
+    }>;
+
+function isSessionClientDurableMutationAttemptReason(
+    value: unknown,
+): value is SessionClientDurableMutationAttemptReason {
+    return value === 'delivery_not_confirmed'
+        || value === 'delivery_error'
+        || value === 'transcript_message_provenance_missing_or_invalid'
+        || value === 'transcript_message_invalid_observation';
+}
+
+function parseSessionClientDurableMutationAttemptAccounting(
+    value: Record<string, unknown>,
+    attempts: number,
+): Readonly<{ ok: true; value: ParsedSessionClientDurableMutationAttemptAccounting }>
+    | Readonly<{ ok: false }> {
+    const hasFirstFailedAt = Object.prototype.hasOwnProperty.call(value, 'firstFailedAt');
+    const hasLastAttempt = Object.prototype.hasOwnProperty.call(value, 'lastAttempt');
+    if (!hasFirstFailedAt && !hasLastAttempt) return { ok: true, value: {} };
+    if (hasFirstFailedAt !== hasLastAttempt || attempts === 0) return { ok: false };
+
+    if (
+        typeof value.firstFailedAt !== 'number'
+        || !Number.isFinite(value.firstFailedAt)
+        || value.firstFailedAt < 0
+        || !isRecord(value.lastAttempt)
+        || value.lastAttempt.v !== 1
+        || !isSessionClientDurableMutationAttemptReason(value.lastAttempt.reason)
+        || typeof value.lastAttempt.attemptedAt !== 'number'
+        || !Number.isFinite(value.lastAttempt.attemptedAt)
+        || value.lastAttempt.attemptedAt < 0
+    ) return { ok: false };
+    const firstFailedAt = Math.trunc(value.firstFailedAt);
+    const lastAttempt: SessionClientDurableMutationAttemptV1 = {
+        v: 1,
+        reason: value.lastAttempt.reason,
+        attemptedAt: Math.trunc(value.lastAttempt.attemptedAt),
+    };
+    return {
+        ok: true,
+        value: { firstFailedAt, lastAttempt },
+    };
+}
+
 function parseQueuedSessionClientDurableMutation(value: unknown, sessionId: string): ParseQueuedResult {
     if (!isRecord(value)) {
         return {
@@ -724,6 +814,21 @@ function parseQueuedSessionClientDurableMutation(value: unknown, sessionId: stri
     const mutationId = typeof value.mutationId === 'string' ? value.mutationId : undefined;
     const dependsOn = parseMutationDependencies(value.dependsOn);
     const paused = parseMutationPause(value.paused);
+    const attemptAccounting = parseSessionClientDurableMutationAttemptAccounting(value, attempts);
+    if (!attemptAccounting.ok) {
+        return {
+            mutations: [],
+            deadLetters: [createDeadLetterEntry({
+                sessionId,
+                kind: resolveQueuedMutationKind(value.kind),
+                reason: 'invalid_mutation_attempt_metadata',
+                mutationId,
+                attempts,
+                createdAt,
+                payload: value,
+            })],
+        };
+    }
     if (dependsOn === null) {
         return {
             mutations: [],
@@ -776,6 +881,7 @@ function parseQueuedSessionClientDurableMutation(value: unknown, sessionId: stri
             createdAt,
             attempts,
             nextAttemptAt,
+            ...attemptAccounting.value,
             ...(dependsOn.length > 0 ? { dependsOn } : {}),
             ...(paused ? { paused } : {}),
         }], deadLetters: [] };
@@ -804,6 +910,7 @@ function parseQueuedSessionClientDurableMutation(value: unknown, sessionId: stri
             createdAt,
             attempts,
             nextAttemptAt,
+            ...attemptAccounting.value,
             ...(dependsOn.length > 0 ? { dependsOn } : {}),
             ...(paused ? { paused } : {}),
         }], deadLetters: [] };
@@ -832,6 +939,7 @@ function parseQueuedSessionClientDurableMutation(value: unknown, sessionId: stri
             createdAt,
             attempts,
             nextAttemptAt,
+            ...attemptAccounting.value,
             ...(dependsOn.length > 0 ? { dependsOn } : {}),
             ...(paused ? { paused } : {}),
         }], deadLetters: [] };
@@ -860,6 +968,7 @@ function parseQueuedSessionClientDurableMutation(value: unknown, sessionId: stri
             createdAt,
             attempts,
             nextAttemptAt,
+            ...attemptAccounting.value,
             ...(dependsOn.length > 0 ? { dependsOn } : {}),
             ...(paused ? { paused } : {}),
         }], deadLetters: [] };
@@ -909,6 +1018,7 @@ function parseQueuedSessionClientDurableMutation(value: unknown, sessionId: stri
             createdAt,
             attempts,
             nextAttemptAt,
+            ...attemptAccounting.value,
             ...(dependsOn.length > 0 ? { dependsOn } : {}),
             ...(paused ? { paused } : {}),
         }], deadLetters: [] };
@@ -930,8 +1040,9 @@ function parseQueuedSessionClientDurableMutation(value: unknown, sessionId: stri
 
 /**
  * Parsed runtime-custody admission. Runtime custody owns ordinary turn work,
- * transcript work, voice transcript work, and non-daemon registered fields.
- * Terminal turn/session mutations and daemon usage recovery are quarantined.
+ * semantic session end, transcript work, voice transcript work, and non-daemon
+ * registered fields. Exact terminal-turn mutations and daemon usage recovery
+ * are quarantined.
  */
 export function parseRuntimeSessionClientDurableMutation(
     value: unknown,
@@ -943,6 +1054,7 @@ export function parseRuntimeSessionClientDurableMutation(
     const belongsToExpectedSession = mutation.payload.sessionId === expectedSessionId;
     const admitted = belongsToExpectedSession && (
         (mutation.kind === 'session_turn_mutation' && mutation.payload.action !== 'end_session')
+        || mutation.kind === 'session_end'
         || mutation.kind === 'transcript_message_append'
         || mutation.kind === 'voice_agent_transcript_turn'
         || (
@@ -963,15 +1075,16 @@ export function parseRuntimeSessionClientDurableMutation(
             mutationId: typeof record?.mutationId === 'string' ? record.mutationId : mutation.mutationId,
             attempts: mutation.attempts,
             createdAt: mutation.createdAt,
+            ...(typeof mutation.firstFailedAt === 'number' ? { firstFailedAt: mutation.firstFailedAt } : {}),
+            ...(mutation.lastAttempt ? { lastAttempt: mutation.lastAttempt } : {}),
             payload: record?.payload ?? value,
         })],
     };
 }
 
 /**
- * Parsed daemon-custody admission. This is deliberately narrower than the
- * runtime journal: daemon custody can contain only exact-turn settlement and
- * the registered usage-limit recovery field.
+ * Parsed daemon-custody admission. Daemon custody accepts only host-authored
+ * exact-turn settlement, usage-limit recovery, and canonical transcript rows.
  */
 export function parseDaemonSessionClientDurableMutation(
     value: unknown,
@@ -996,7 +1109,12 @@ export function parseDaemonSessionClientDurableMutation(
         && mutation.mutationId === mutation.payload.mutationId
         && mutation.dependsOn === undefined
         && mutation.paused === undefined;
-    if (admittedExactTurnEnd || admittedUsageLimitRecovery) return parsed;
+    const admittedTranscriptMessage = mutation.kind === 'transcript_message_append'
+        && mutation.payload.sessionId === expectedSessionId
+        && mutation.mutationId === mutation.payload.mutationId
+        && mutation.dependsOn === undefined
+        && mutation.paused === undefined;
+    if (admittedExactTurnEnd || admittedUsageLimitRecovery || admittedTranscriptMessage) return parsed;
 
     const record = isRecord(value) ? value : null;
     return {
@@ -1008,6 +1126,8 @@ export function parseDaemonSessionClientDurableMutation(
             mutationId: typeof record?.mutationId === 'string' ? record.mutationId : mutation.mutationId,
             attempts: mutation.attempts,
             createdAt: mutation.createdAt,
+            ...(typeof mutation.firstFailedAt === 'number' ? { firstFailedAt: mutation.firstFailedAt } : {}),
+            ...(mutation.lastAttempt ? { lastAttempt: mutation.lastAttempt } : {}),
             payload: record?.payload ?? value,
         })],
     };
@@ -1029,8 +1149,8 @@ export async function loadSessionClientDurableMutationOutbox(
                 reason: 'invalid_outbox_file',
                 payload: parsed,
             })];
-            await saveSessionClientDurableMutationOutbox(sessionId, [], context);
             await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters, context);
+            await saveSessionClientDurableMutationOutbox(sessionId, [], context);
             return [];
         }
         const mutations: QueuedSessionClientDurableMutation[] = [];
@@ -1042,8 +1162,8 @@ export async function loadSessionClientDurableMutationOutbox(
             deadLetters.push(...parsedMutation.deadLetters);
         }
         if (deadLetters.length > 0) {
-            await saveSessionClientDurableMutationOutbox(sessionId, mutations, context);
             await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters, context);
+            await saveSessionClientDurableMutationOutbox(sessionId, mutations, context);
         }
         return mutations;
     } catch (error) {
@@ -1150,8 +1270,7 @@ function readRecoverableAuthoritativeDeadLetterMutation(
     sessionId: string,
     context?: SessionClientDurableMutationPersistenceContext,
 ): QueuedSessionClientDurableMutation | null {
-    if (!isAuthoritativeSessionClientDurableMutationKind(entry.kind)) return null;
-    if (typeof entry.recoveryAttemptedAt === 'number') return null;
+    if (!isRecoverableSessionClientDurableMutationDeadLetter(entry)) return null;
     const record = entry as unknown as Record<string, unknown>;
     const rawMutation = record.queuedMutation ?? record.mutation ?? (
         record.payload
@@ -1263,10 +1382,18 @@ export async function appendSessionClientDurableMutationDeadLetters(
     }
     const filePath = context?.paths.deadLetterPath ?? resolveSessionClientDurableMutationDeadLetterPath(sessionId);
     const existing = await loadDeadLetterFile(filePath);
+    const seenIdentities = new Set<string>();
+    const mergedEntries = [...existing, ...entries].filter((entry) => {
+        const identity = resolveSessionClientDurableMutationDeadLetterIdentity(entry);
+        if (identity === null) return true;
+        if (seenIdentities.has(identity)) return false;
+        seenIdentities.add(identity);
+        return true;
+    });
     const maxEntries = resolveDeadLetterMaxEntries();
     const referencedPrerequisites = await loadReferencedPrerequisiteMutationIds(sessionId, context);
     const retained = retainDeadLettersForQueuedPrerequisites({
-        entries: [...existing, ...entries],
+        entries: mergedEntries,
         referencedPrerequisiteMutationIds: referencedPrerequisites.mutationIds,
         ordinaryCap: maxEntries,
         referencedOverflowCount: referencedPrerequisites.overflowCount,
@@ -1296,6 +1423,10 @@ export function createSessionClientDurableMutationDeadLetterEntry(params: Readon
         mutationId: params.mutation.mutationId,
         attempts: params.mutation.attempts,
         createdAt: params.mutation.createdAt,
+        ...(typeof params.mutation.firstFailedAt === 'number'
+            ? { firstFailedAt: params.mutation.firstFailedAt }
+            : {}),
+        ...(params.mutation.lastAttempt ? { lastAttempt: params.mutation.lastAttempt } : {}),
         diagnostic: params.diagnostic,
         payload: params.mutation.payload,
         ...(isAuthoritativeSessionClientDurableMutation(params.mutation)

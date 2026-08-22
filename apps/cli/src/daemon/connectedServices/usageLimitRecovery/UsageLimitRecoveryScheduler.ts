@@ -156,6 +156,7 @@ export class UsageLimitRecoveryScheduler {
       markCancelled: (intent) => ({
         ...intent,
         status: 'cancelled',
+        nextCheckAtMs: null,
       }),
       markExhausted: (intent, next) => ({
         ...intent,
@@ -300,6 +301,15 @@ export class UsageLimitRecoveryScheduler {
 
   async wake(input: Readonly<{ sessionId: string; reason: 'timer' | 'check_now' }>): Promise<Readonly<{ status: string }>> {
     return await this.scheduler.wake(input);
+  }
+
+  /**
+   * Retires this scheduler with the owner that created it: armed timers are cleared and later
+   * wakes report `disposed` instead of claiming durable work. A machine-sync attempt that failed
+   * hands its scheduler here before a replacement attempt hydrates the same durable store.
+   */
+  dispose(): void {
+    this.scheduler.dispose();
   }
 
   private async recoverUsageLimitIntent(

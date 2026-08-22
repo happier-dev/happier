@@ -1,8 +1,10 @@
 import { logger } from '@/ui/logger';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
-import { resolveCatalogAgentIdForCliSubcommand } from '@/agent/catalog/resolution';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
+import {
+  resolveCatalogAgentId,
+  resolveCatalogAgentIdForCliSubcommand,
+} from '@/agent/catalog/resolution';
 import {
   buildSessionRunnerRespawnDescriptorV1FromSpawnOptions,
   buildSpawnSessionOptionsFromRespawnDescriptorV1,
@@ -27,21 +29,21 @@ import {
   rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
   writeSessionMarker,
   type DaemonSessionMarker,
-  type ManagedLocalServiceRunAttachmentMarkerOwnership,
-  type ManagedLocalServiceRunAttachmentV1,
 } from '../sessionRegistry';
-import { toTrackedPluginLocalServicesBridgeAuthorizationFields } from '../local/services/pluginBridgeAuthorization';
 import { resolveSessionRuntimeSnapshot } from './runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { extractResumeIdFromCommand } from './extractResumeIdFromCommand';
 import { readTerminalHostAttachmentState } from '@/terminal/attachment/terminalAttachmentInfo';
-import type { TerminalMode } from '@/terminal/runtime/terminalConfig';
-import type { DisconnectedTerminalHostCandidate } from './disconnectedTerminalHostSupervision';
+import {
+  resolveDisconnectedTerminalMode,
+  type DisconnectedTerminalHostCandidate,
+} from './disconnectedTerminalHostSupervision';
 import {
   PersistedProviderResumeBindingError,
   readPersistedProviderResumeState,
 } from '@/providers/lifecycle/readPersistedResumeSelection';
 import { readProcessIdentityByPid } from '../processIdentity';
 import type { LocalServiceProcessFact } from '../local/services/inventory/provenance';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 function extractExistingSessionIdFromCommand(command: string): string | null {
   const match = /(?:^|\s)--existing-session(?:=|\s+)(\S+)/.exec(command);
@@ -60,10 +62,10 @@ function extractBackendTargetFromCommand(command: string): SpawnSessionOptions['
   const beforeHappyStartingMode = command.slice(0, happyStartingModeIndex).trim();
   const subcommand = beforeHappyStartingMode.split(/\s+/).pop()?.trim() ?? '';
   if (!subcommand) return undefined;
-  const directCatalogAgentId = CATALOG_AGENT_IDS.includes(subcommand as CatalogAgentId)
-    ? (subcommand as CatalogAgentId)
-    : null;
-  const agentId = resolveCatalogAgentIdForCliSubcommand(subcommand) ?? directCatalogAgentId;
+  // The `happy <subcommand>` word is either an Agent's CLI subcommand or the
+  // installed Agent id itself; the catalog owns both readings.
+  const agentId = resolveCatalogAgentIdForCliSubcommand(subcommand)
+    ?? resolveCatalogAgentId(subcommand);
   return agentId ? { kind: 'backend', backendId: agentId, sourceKind: 'built_in' } : undefined;
 }
 
@@ -140,18 +142,21 @@ function parseRecoveredRespawnDescriptor(respawn: unknown): SessionRunnerRespawn
 function buildRecoveredRespawnDescriptor(params: Readonly<{
   spawnOptions?: SpawnSessionOptions;
   parsedRespawnDescriptor: SessionRunnerRespawnDescriptorV1 | null;
-  credentials?: Credentials | null;
+  credentials?: StoredCredentials | null;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   vendorResumeId?: string | null;
 }>): SessionRunnerRespawnDescriptorV1 | null {
   const {
     spawnOptions,
     parsedRespawnDescriptor,
     credentials,
+    deviceLocalSecretStorage,
     vendorResumeId,
   } = params;
   const rebuiltRespawn = spawnOptions
     ? buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(spawnOptions, {
-        encryptionMaterial: credentials?.encryption,
+        encryptionMaterial: credentials?.encryption ?? undefined,
+        ...(deviceLocalSecretStorage ? { deviceLocalSecretStorage } : {}),
         ...(vendorResumeId ? { vendorResumeId } : {}),
       })
     : null;
@@ -184,15 +189,17 @@ function buildRecoveredRespawnDescriptor(params: Readonly<{
 
 function restoreSpawnOptionsFromRespawnDescriptor(params: Readonly<{
   parsedRespawnDescriptor: SessionRunnerRespawnDescriptorV1 | null;
-  credentials?: Credentials | null;
+  credentials?: StoredCredentials | null;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
 }>): SpawnSessionOptions | undefined {
-  const { parsedRespawnDescriptor, credentials } = params;
+  const { parsedRespawnDescriptor, credentials, deviceLocalSecretStorage } = params;
   if (!parsedRespawnDescriptor) {
     return undefined;
   }
   try {
     return buildSpawnSessionOptionsFromRespawnDescriptorV1(parsedRespawnDescriptor, {
-      encryptionMaterial: credentials?.encryption,
+      encryptionMaterial: credentials?.encryption ?? undefined,
+      ...(deviceLocalSecretStorage ? { deviceLocalSecretStorage } : {}),
     });
   } catch {
     return undefined;
@@ -201,19 +208,6 @@ function restoreSpawnOptionsFromRespawnDescriptor(params: Readonly<{
 
 function normalizeSessionId(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function resolveDisconnectedTerminalMode(params: Readonly<{
-  marker: DaemonSessionMarker;
-  hostKind: DisconnectedTerminalHostCandidate['handle']['kind'];
-  attachmentId: string;
-}>): TerminalMode | null {
-  if (params.hostKind === 'tmux' || params.hostKind === 'zellij') return params.hostKind;
-  const terminal = params.marker.metadata?.terminal;
-  const evidenceAttachmentId = terminal?.controlServiceabilityV1?.attachmentId;
-  if (typeof evidenceAttachmentId === 'string' && evidenceAttachmentId !== params.attachmentId) return null;
-  const mode = terminal?.mode;
-  return mode === 'windows_terminal' || mode === 'windows_console' ? mode : null;
 }
 
 function readConnectedServiceRestartIntent(marker: DaemonSessionMarker): Readonly<{
@@ -254,7 +248,7 @@ async function rewriteExactlyAdoptedRespawnAliases(params: Readonly<{
     LocalServiceProcessFact
   >;
   pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
-  credentials?: Credentials | null;
+  credentials?: StoredCredentials | null;
 }>): Promise<void> {
   const encryptionMaterial = params.credentials?.encryption;
   if (!encryptionMaterial) return;
@@ -360,11 +354,23 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
     activeTurnId?: string;
     agentSessionStartupInstructionsMarkerV1?:
       DaemonSessionMarker['agentSessionStartupInstructionsMarkerV1'];
-    localServicesBridgeAuthorization?: DaemonSessionMarker['localServicesBridgeAuthorization'];
+    agentRuntimeDaemonServiceAuthorityFilePath?:
+      DaemonSessionMarker['agentRuntimeDaemonServiceAuthorityFilePath'];
+    agentRuntimeDaemonServiceActiveAdmission?:
+      DaemonSessionMarker['agentRuntimeDaemonServiceActiveAdmission'];
+    runnerAgentImmutableGenerationId?:
+      DaemonSessionMarker['runnerAgentImmutableGenerationId'];
+    runnerManagedDependencyRetentionV1?:
+      DaemonSessionMarker['runnerManagedDependencyRetentionV1'];
   }>>;
   markedPids: ReadonlySet<number>;
   pidToTrackedSession: Map<number, TrackedSession>;
-  credentials?: Credentials | null;
+  credentials?: StoredCredentials | null;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
+  processIdentityByPid?: ReadonlyMap<
+    number,
+    LocalServiceProcessFact
+  >;
 }>): Promise<number> {
   const {
     happyProcesses,
@@ -372,6 +378,8 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
     markedPids,
     pidToTrackedSession,
     credentials,
+    deviceLocalSecretStorage,
+    processIdentityByPid,
   } = params;
   let recovered = 0;
 
@@ -437,6 +445,22 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
     }
 
     const processCommandHash = hashProcessCommand(processInfo.command);
+    const processIdentity = processIdentityByPid?.get(
+      processInfo.pid,
+    );
+    const observedProcessStartTimeMs =
+      processIdentity?.pid === processInfo.pid
+      && hashProcessCommand(processIdentity.command)
+        === processCommandHash
+        ? processIdentity.processStartTimeMs
+        : undefined;
+    if (
+      incompleteMarker?.processStartTimeMs !== undefined
+      && observedProcessStartTimeMs
+        !== incompleteMarker.processStartTimeMs
+    ) {
+      continue;
+    }
     const parsedRespawnDescriptor = parseRecoveredRespawnDescriptor(incompleteMarker?.respawn);
     const persistedMetadata = readRuntimeSnapshotMetadata(incompleteMarker?.metadata);
     let persistedProviderResumeState: ReturnType<typeof readPersistedProviderResumeState>;
@@ -456,6 +480,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
     const respawnSpawnOptions = restoreSpawnOptionsFromRespawnDescriptor({
       parsedRespawnDescriptor,
       credentials,
+      deviceLocalSecretStorage,
     });
     const recoveredSpawnOptions = mergeRecoveredSpawnOptions({
       liveSpawnOptions,
@@ -488,11 +513,55 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       happySessionId,
       pid: processInfo.pid,
       processCommandHash,
+      ...(observedProcessStartTimeMs !== undefined
+        ? { processStartTimeMs: observedProcessStartTimeMs }
+        : {}),
       processCommand: processInfo.command,
       reattachedFromDiskMarker: true,
       ...(resolvedVendorResumeId ? { vendorResumeId: resolvedVendorResumeId } : {}),
       ...(spawnOptions ? { spawnOptions } : {}),
-      ...toTrackedPluginLocalServicesBridgeAuthorizationFields(incompleteMarker?.localServicesBridgeAuthorization),
+      ...(incompleteMarker
+        ?.agentRuntimeDaemonServiceAuthorityFilePath
+        ? {
+            agentRuntimeDaemonServiceAuthorityFilePath:
+              incompleteMarker
+                .agentRuntimeDaemonServiceAuthorityFilePath,
+          }
+        : {}),
+      ...(incompleteMarker
+        ?.agentRuntimeDaemonServiceActiveAdmission
+        ? {
+            agentRuntimeDaemonServiceAdmittedTurnId:
+              incompleteMarker
+                .agentRuntimeDaemonServiceActiveAdmission
+                .turnId,
+            agentRuntimeDaemonServiceAdmittedInputId:
+              incompleteMarker
+                .agentRuntimeDaemonServiceActiveAdmission
+                .inputId,
+            agentRuntimeDaemonServiceAdmittedUserMessageSeq:
+              incompleteMarker
+                .agentRuntimeDaemonServiceActiveAdmission
+                .userMessageSeq,
+            agentRuntimeDaemonServiceAdmittedUserMessageSeqs: [
+              ...incompleteMarker
+                .agentRuntimeDaemonServiceActiveAdmission
+                .userMessageSeqs,
+            ],
+          }
+        : {}),
+      ...(incompleteMarker?.runnerAgentImmutableGenerationId
+        ? {
+            runnerAgentImmutableGenerationId:
+              incompleteMarker.runnerAgentImmutableGenerationId,
+          }
+        : {}),
+      ...(incompleteMarker?.runnerManagedDependencyRetentionV1
+        ? {
+            runnerManagedDependencyRetentionV1:
+              incompleteMarker.runnerManagedDependencyRetentionV1,
+          }
+        : {}),
       ...(incompleteMarker?.activeTurnId
         ? { reattachedInterruptedTurnId: incompleteMarker.activeTurnId }
         : {}),
@@ -508,6 +577,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       spawnOptions,
       parsedRespawnDescriptor,
       credentials,
+      deviceLocalSecretStorage,
       vendorResumeId: resolvedVendorResumeId,
     });
 
@@ -517,10 +587,10 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       startedBy: 'daemon',
       ...(spawnOptions?.directory ? { cwd: spawnOptions.directory } : {}),
       processCommandHash,
-      ...(incompleteMarker?.processStartTimeMs !== undefined
+      ...(observedProcessStartTimeMs !== undefined
         ? {
             processStartTimeMs:
-              incompleteMarker.processStartTimeMs,
+              observedProcessStartTimeMs,
           }
         : {}),
       processCommand: processInfo.command,
@@ -528,8 +598,33 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       ...(incompleteMarker?.connectedServiceRestartIntent
         ? { connectedServiceRestartIntent: incompleteMarker.connectedServiceRestartIntent }
         : {}),
-      ...(incompleteMarker?.localServicesBridgeAuthorization
-        ? { localServicesBridgeAuthorization: incompleteMarker.localServicesBridgeAuthorization }
+      ...(incompleteMarker
+        ?.agentRuntimeDaemonServiceAuthorityFilePath
+        ? {
+            agentRuntimeDaemonServiceAuthorityFilePath:
+              incompleteMarker
+                .agentRuntimeDaemonServiceAuthorityFilePath,
+          }
+        : {}),
+      ...(incompleteMarker
+        ?.agentRuntimeDaemonServiceActiveAdmission
+        ? {
+            agentRuntimeDaemonServiceActiveAdmission:
+              incompleteMarker
+                .agentRuntimeDaemonServiceActiveAdmission,
+          }
+        : {}),
+      ...(incompleteMarker?.runnerAgentImmutableGenerationId
+        ? {
+            runnerAgentImmutableGenerationId:
+              incompleteMarker.runnerAgentImmutableGenerationId,
+          }
+        : {}),
+      ...(incompleteMarker?.runnerManagedDependencyRetentionV1
+        ? {
+            runnerManagedDependencyRetentionV1:
+              incompleteMarker.runnerManagedDependencyRetentionV1,
+          }
         : {}),
       ...(incompleteMarker?.activeTurnId ? { activeTurnId: incompleteMarker.activeTurnId } : {}),
       ...(incompleteMarker?.agentSessionStartupInstructionsMarkerV1
@@ -556,14 +651,9 @@ export type OrphanedDeadDaemonSession = Readonly<{
 
 export type ReattachTrackedSessionsFromMarkersResult = Readonly<{
   orphanedDeadDaemonSessions: ReadonlyArray<OrphanedDeadDaemonSession>;
+  recoveredLiveSessionIds?: ReadonlyArray<string>;
   disconnectedTerminalHostCandidates?: ReadonlyArray<DisconnectedTerminalHostCandidate>;
   unresolvedTerminalHostSessionIds?: ReadonlyArray<string>;
-  managedProviderRecoveryCandidates?: ReadonlyArray<Readonly<{
-    pid: number;
-    sessionId: string;
-    attachment: ManagedLocalServiceRunAttachmentV1;
-    markerOwnership: ManagedLocalServiceRunAttachmentMarkerOwnership;
-  }>>;
   connectedServiceRestartIntents: ReadonlyArray<never>;
 }>;
 
@@ -572,7 +662,6 @@ function buildReattachResult(params: Readonly<{
   recoveredLiveSessionIds: ReadonlySet<string>;
   disconnectedTerminalHostCandidates?: ReadonlyArray<DisconnectedTerminalHostCandidate>;
   unresolvedTerminalHostSessionIds?: ReadonlyArray<string>;
-  managedProviderRecoveryCandidates?: ReattachTrackedSessionsFromMarkersResult['managedProviderRecoveryCandidates'];
 }>): ReattachTrackedSessionsFromMarkersResult {
   const orphanedDeadDaemonSessions = params.orphanedDeadDaemonSessions.map((session) => ({
     ...session,
@@ -583,14 +672,14 @@ function buildReattachResult(params: Readonly<{
 
   return {
     orphanedDeadDaemonSessions,
+    ...(params.recoveredLiveSessionIds.size > 0
+      ? { recoveredLiveSessionIds: Array.from(params.recoveredLiveSessionIds).sort() }
+      : {}),
     ...(params.disconnectedTerminalHostCandidates?.length
       ? { disconnectedTerminalHostCandidates: params.disconnectedTerminalHostCandidates }
       : {}),
     ...(params.unresolvedTerminalHostSessionIds?.length
       ? { unresolvedTerminalHostSessionIds: Array.from(new Set(params.unresolvedTerminalHostSessionIds)) }
-      : {}),
-    ...(params.managedProviderRecoveryCandidates?.length
-      ? { managedProviderRecoveryCandidates: params.managedProviderRecoveryCandidates }
       : {}),
     connectedServiceRestartIntents: [],
   };
@@ -598,14 +687,15 @@ function buildReattachResult(params: Readonly<{
 
 export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
-  credentials?: Credentials | null;
+  credentials?: StoredCredentials | null;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   // Compatibility-only inputs: cold startup intentionally never probes or
   // mutates terminal hosts for dead runner markers.
   terminalHostAdapters?: unknown;
   loadTerminalHostAdapters?: unknown;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
 }>): Promise<ReattachTrackedSessionsFromMarkersResult> {
-  const { pidToTrackedSession, credentials } = params;
+  const { pidToTrackedSession, credentials, deviceLocalSecretStorage } = params;
   const orphanedDeadDaemonSessions: OrphanedDeadDaemonSession[] = [];
   const disconnectedTerminalHostCandidates: DisconnectedTerminalHostCandidate[] = [];
   const unresolvedTerminalHostSessionIds: string[] = [];
@@ -631,7 +721,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
         }
         if (attachmentState.status === 'present' && attachmentState.info.version === 2) {
           const terminalMode = resolveDisconnectedTerminalMode({
-            marker,
+            terminal: marker.metadata?.terminal,
             hostKind: attachmentState.info.handle.kind,
             attachmentId: attachmentState.info.attachmentId,
           });
@@ -677,7 +767,6 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     });
     const processIdentityByPid = new Map<number, LocalServiceProcessFact>();
     await Promise.all(aliveMarkers.map(async (marker) => {
-      if (marker.processStartTimeMs === undefined) return;
       const processIdentity = await (
         params.readProcessIdentityByPidFn ?? readProcessIdentityByPid
       )(marker.pid);
@@ -690,6 +779,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
       happyProcesses: happyProcessesForReattach,
       pidToTrackedSession,
       credentials,
+      deviceLocalSecretStorage,
       processIdentityByPid,
     });
     await rewriteExactlyAdoptedRespawnAliases({
@@ -738,7 +828,14 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
             activeTurnId: marker.activeTurnId,
             agentSessionStartupInstructionsMarkerV1:
               marker.agentSessionStartupInstructionsMarkerV1,
-            localServicesBridgeAuthorization: marker.localServicesBridgeAuthorization,
+            agentRuntimeDaemonServiceAuthorityFilePath:
+              marker.agentRuntimeDaemonServiceAuthorityFilePath,
+            agentRuntimeDaemonServiceActiveAdmission:
+              marker.agentRuntimeDaemonServiceActiveAdmission,
+            runnerAgentImmutableGenerationId:
+              marker.runnerAgentImmutableGenerationId,
+            runnerManagedDependencyRetentionV1:
+              marker.runnerManagedDependencyRetentionV1,
           },
         ] as const),
     );
@@ -749,6 +846,8 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
           markedPids: markerlessRecoveryBlockedPidSet,
           pidToTrackedSession,
           credentials,
+          deviceLocalSecretStorage,
+          processIdentityByPid,
         })
       : 0;
     if (liveRecovered > 0) {
@@ -770,35 +869,6 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
         .filter((sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim().length > 0)
         .map((sessionId) => sessionId.trim()),
     );
-    const managedProviderRecoveryCandidates =
-      aliveMarkers.flatMap((marker) => {
-        const sessionId = normalizeSessionId(marker.happySessionId);
-        const attachment = marker.managedLocalServiceRunAttachment;
-        const tracked = pidToTrackedSession.get(marker.pid);
-        if (
-          !sessionId
-          || /^PID-\d+$/.test(sessionId)
-          || !attachment
-          || !tracked
-          || normalizeSessionId(tracked.happySessionId) !== sessionId
-          || typeof marker.processCommandHash !== 'string'
-          || typeof marker.processStartTimeMs !== 'number'
-          || tracked.processCommandHash !== marker.processCommandHash
-          || tracked.processStartTimeMs !== marker.processStartTimeMs
-        ) {
-          return [];
-        }
-        return [{
-          pid: marker.pid,
-          sessionId,
-          attachment,
-          markerOwnership: {
-            happySessionId: sessionId,
-            processCommandHash: marker.processCommandHash,
-            processStartTimeMs: marker.processStartTimeMs,
-          },
-        }];
-      });
     for (const marker of aliveMarkers) {
       const restartIntent = readConnectedServiceRestartIntent(marker);
       if (!restartIntent) continue;
@@ -811,7 +881,6 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
       recoveredLiveSessionIds,
       disconnectedTerminalHostCandidates,
       unresolvedTerminalHostSessionIds,
-      managedProviderRecoveryCandidates,
     });
   } catch (e) {
     logger.debug('[DAEMON RUN] Failed to reattach sessions from disk markers', e);

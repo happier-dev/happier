@@ -17,41 +17,29 @@ describe('ApiSessionClient connection supervision', () => {
         expect(classifySessionTransportErrorToProbeResult(new Error('socket timeout'))).toBeNull();
     });
 
-    it('classifies canonical upgrade-required socket failures as terminal compatibility failures', () => {
+    it('keeps account-storage upgrade results operation-scoped', () => {
         const error = Object.assign(new Error('upgrade required'), {
             data: {
                 error: 'client-upgrade-required',
                 requirement: {
                     v: 1,
-                    minimumSessionSyncProtocolVersion: 2,
-                    clientKind: 'session-runner',
-                    minimumAppVersion: '9.0.0',
-                    updateUrl: null,
+                    kind: 'account-stored-content',
+                    minimumProtocolVersion: 2,
                 },
             },
         });
-        expect(classifySessionTransportErrorToProbeResult(error)).toEqual({
-            status: 'auth_failed',
-            statusCode: 426,
-            errorMessage: 'This Happier session runner must be upgraded before it can sync sessions.',
-        });
+        expect(classifySessionTransportErrorToProbeResult(error)).toBeNull();
     });
 
-    it('classifies the server RPC registration error envelope as terminal compatibility failure', () => {
+    it('does not turn an operation-scoped RPC upgrade result into a connection failure', () => {
         expect(classifySessionTransportErrorToProbeResult({
             type: 'register',
             error: 'client-upgrade-required',
             requirement: {
                 v: 1,
-                minimumSessionSyncProtocolVersion: 2,
-                clientKind: 'session-runner',
-                minimumAppVersion: '9.0.0',
-                updateUrl: null,
+                kind: 'account-stored-content',
+                minimumProtocolVersion: 2,
             },
-        })).toEqual({
-            status: 'auth_failed',
-            statusCode: 426,
-            errorMessage: 'This Happier session runner must be upgraded before it can sync sessions.',
-        });
+        })).toBeNull();
     });
 });

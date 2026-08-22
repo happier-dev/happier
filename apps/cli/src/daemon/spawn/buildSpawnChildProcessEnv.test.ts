@@ -137,40 +137,18 @@ describe('buildSpawnChildProcessEnv', () => {
     expect(env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1).toBeUndefined();
   });
 
-  it('removes inherited conditional session controls while preserving daemon-issued values', () => {
+  it('removes inherited conditional session controls', () => {
     const env = buildSpawnChildProcessEnv({
       processEnv: {
         PATH: '/bin',
         HAPPIER_SESSION_ATTACH_FILE: '/tmp/ambient-attach.json',
-        HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN: 'ambient-raw-token',
-        HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_FILE: '/tmp/ambient-token-file',
-        HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE: '/tmp/ambient-agent-runtime-token-file',
         HAPPIER_STACK_PROCESS_KIND: 'infra',
-      },
-      extraEnv: {
-        HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_FILE: '/tmp/daemon-token-file',
-        HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE: '/tmp/daemon-agent-runtime-token-file',
-      },
-    });
-
-    expect(env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
-    expect(env.HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN).toBeUndefined();
-    expect(env.HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_FILE).toBe('/tmp/daemon-token-file');
-    expect(env.HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE)
-      .toBe('/tmp/daemon-agent-runtime-token-file');
-    expect(env.HAPPIER_STACK_PROCESS_KIND).toBeUndefined();
-  });
-
-  it('does not inherit an Agent runtime bridge that the daemon did not issue', () => {
-    const env = buildSpawnChildProcessEnv({
-      processEnv: {
-        PATH: '/bin',
-        HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE: '/tmp/ambient-agent-runtime-token-file',
       },
       extraEnv: {},
     });
 
-    expect(env.HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE).toBeUndefined();
+    expect(env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
+    expect(env.HAPPIER_STACK_PROCESS_KIND).toBeUndefined();
   });
 
   it('does not force debug file logging for prod-shaped daemon-spawned runners', () => {

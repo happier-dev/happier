@@ -16,9 +16,8 @@ type ActiveTurn = Readonly<{
 const SOURCE_PRIORITY: Record<TurnAssistantTextSnapshotSource, number> = {
   streaming: 1,
   ephemeral: 2,
-  'provider-dispatch': 3,
-  socket: 4,
-  committed: 5,
+  socket: 3,
+  committed: 4,
 };
 
 function normalizeSeq(value: number | null | undefined): number | null {

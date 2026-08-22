@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PromptAssetDiscoverResponseV1Schema } from '@happier-dev/protocol';
+import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
@@ -12,7 +13,7 @@ import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptA
 import { registerMachineRpcHandlers } from './rpcHandlers';
 import { registerMachinePromptAssetsRpcHandlers } from './rpcHandlers.promptAssets';
 
-type Handler = (data: unknown) => Promise<any>;
+type Handler = (data: unknown, context?: { signal?: AbortSignal }) => Promise<any>;
 
 function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHandler: (method: string, handler: Handler) => void } {
   const handlers = new Map<string, Handler>();
@@ -25,6 +26,33 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
 }
 
 describe('rpcHandlers (prompt assets)', () => {
+  it('forwards RPC caller cancellation to the canonical prompt asset adapter owner', async () => {
+    const signal = new AbortController().signal;
+    const discover = vi.fn(async () => []);
+    const adapter = {
+      descriptor: { id: 'external.prompt' },
+      discover,
+    } as unknown as PromptAssetAdapter;
+    const mgr = createRpcHandlerManager();
+
+    registerMachinePromptAssetsRpcHandlers({
+      rpcHandlerManager: mgr as any,
+      adapterRegistry: new Map([['external.prompt', adapter]]),
+    });
+
+    const handler = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_ASSETS_DISCOVER);
+    if (!handler) throw new Error('expected prompt asset discover handler');
+
+    await expect(handler(
+      { assetTypeId: 'external.prompt', scope: 'user' },
+      { signal },
+    )).resolves.toEqual({ ok: true, items: [] });
+    expect(discover).toHaveBeenCalledWith(
+      { assetTypeId: 'external.prompt', scope: 'user' },
+      { signal },
+    );
+  });
+
   it('dispatches prompt asset mutation RPCs through ActionSpec when an executor is provided', async () => {
     const mgr = createRpcHandlerManager();
     const execute = vi.fn(async () => ({

@@ -26,7 +26,7 @@ export function resolveSpawnWebhookResult(params: Readonly<{
       : '';
   if (attachSessionId) {
     params.warn(
-      `[DAEMON RUN] Session webhook timed out for PID ${params.pid} while attaching to ${attachSessionId}; keeping timeout error until webhook or child-exit proof arrives`,
+      `[DAEMON RUN] Session webhook timed out for PID ${params.pid} while attaching to an existing session; keeping timeout error until webhook or child-exit proof arrives`,
     );
     return params.result;
   }
@@ -40,7 +40,7 @@ export function resolveSpawnWebhookResult(params: Readonly<{
   }
   if (trackedSessionId && !isPidPlaceholderSessionId(trackedSessionId)) {
     params.warn(
-      `[DAEMON RUN] Session webhook timed out for PID ${params.pid}, but canonical session id ${trackedSessionId} is already tracked; continuing`,
+      `[DAEMON RUN] Session webhook timed out for PID ${params.pid}, but a canonical session id is already tracked; continuing`,
     );
     return { type: 'success', sessionId: trackedSessionId };
   }

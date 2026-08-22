@@ -13,18 +13,23 @@ describe('voice inference runtime isolation mode flag', () => {
     }
   });
 
-  it('defaults to the in-process path when unset', () => {
+  it('defaults to the supervised forked path when unset', () => {
     delete process.env.HAPPIER_VOICE_INFERENCE_ISOLATION;
-    expect(resolveVoiceInferenceRuntimeIsolationMode()).toBe('in_process');
+    expect(resolveVoiceInferenceRuntimeIsolationMode()).toBe('forked');
   });
 
-  it('keeps the in-process default for unrecognized values (fail-safe)', () => {
+  it('keeps the forked default for unrecognized values (fail-safe)', () => {
     process.env.HAPPIER_VOICE_INFERENCE_ISOLATION = 'nonsense';
-    expect(resolveVoiceInferenceRuntimeIsolationMode()).toBe('in_process');
+    expect(resolveVoiceInferenceRuntimeIsolationMode()).toBe('forked');
   });
 
   it.each(['forked', 'worker', 'process', 'FORKED'])('selects the forked worker for %s', (value) => {
     process.env.HAPPIER_VOICE_INFERENCE_ISOLATION = value;
     expect(resolveVoiceInferenceRuntimeIsolationMode()).toBe('forked');
+  });
+
+  it.each(['in_process', 'IN_PROCESS'])('allows the explicit diagnostic/test in-process override for %s', (value) => {
+    process.env.HAPPIER_VOICE_INFERENCE_ISOLATION = value;
+    expect(resolveVoiceInferenceRuntimeIsolationMode()).toBe('in_process');
   });
 });

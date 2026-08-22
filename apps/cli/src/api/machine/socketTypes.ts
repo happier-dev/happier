@@ -5,6 +5,9 @@ import {
   EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1,
   MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
   MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
+  MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
+  SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1,
+  SESSION_SERVER_START_INGRESS_EVENT_V1,
   MACHINE_LIVE_STREAM_SOCKET_EVENT,
   PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
   TRANSFER_RELAY_V2_SOCKET_EVENT,
@@ -19,6 +22,12 @@ import {
   type MachineSessionTerminalCaptureResponseV1,
   type MachineSessionTerminalFinalizeRequestV1,
   type MachineSessionTerminalFinalizeResponseV1,
+  type MachineUpdateOperationProtocolCapabilitiesRequestV1,
+  type MachineUpdateOperationProtocolCapabilitiesResponseV1,
+  type SessionPendingEnqueueByMachineRequestV1,
+  type SessionPendingEnqueueByMachineResponseV1,
+  type SessionServerStartIngressRequestV1,
+  type SessionServerStartIngressResponseV1,
   type MachineTransferReceiveEnvelope,
   type MachineTransferSendEnvelope,
   type PeerTcpTunnelRelayEnvelope,
@@ -55,6 +64,18 @@ export interface DaemonToServerEvents {
   [MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1]: (
     data: MachineSessionTerminalFinalizeRequestV1,
     cb: (answer: MachineSessionTerminalFinalizeResponseV1) => void,
+  ) => void;
+  [MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1]: (
+    data: MachineUpdateOperationProtocolCapabilitiesRequestV1,
+    cb: (answer: MachineUpdateOperationProtocolCapabilitiesResponseV1) => void,
+  ) => void;
+  [SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1]: (
+    data: SessionPendingEnqueueByMachineRequestV1,
+    cb: (answer: SessionPendingEnqueueByMachineResponseV1) => void,
+  ) => void;
+  [SESSION_SERVER_START_INGRESS_EVENT_V1]: (
+    data: SessionServerStartIngressRequestV1,
+    cb: (answer: SessionServerStartIngressResponseV1) => void,
   ) => void;
 
   'machine-update-metadata': (

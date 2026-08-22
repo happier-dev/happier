@@ -34,6 +34,8 @@ describe('spawnVoiceInferenceWorkerChannel', () => {
     });
 
     expect(() => child.stdin.emit('error', brokenPipe)).not.toThrow();
+    channel.forceTerminate();
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
     child.emit('exit', 137, null);
     await expect(channel.waitForTermination()).resolves.toEqual({ type: 'exited', code: 137 });
   });

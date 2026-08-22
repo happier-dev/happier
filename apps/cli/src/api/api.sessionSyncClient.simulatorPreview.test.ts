@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 
@@ -86,7 +87,89 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
     expect(options?.localMachineId).toBe('machine-local');
   }, 60_000);
 
-  it('prefers an explicitly scoped session-input transformer over process-global hook resolution', async () => {
+  it('dispatches plugin browser actions through the current daemon route owner', async () => {
+    const { ApiClient } = await import('./api');
+    const api = await ApiClient.create({
+      token: 'token_1',
+      encryption: {
+        type: 'legacy',
+        secret: new Uint8Array(32),
+      },
+    } satisfies Credentials);
+    api.setServerFeaturesSnapshotProvider(() => ({
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: {
+          browser: {
+            enabled: true,
+            viewTargets: { enabled: true },
+            internal: { enabled: true },
+            sidecar: { enabled: true },
+          },
+        },
+      }),
+    }));
+    const firstDispatch = vi.fn(async (command: Readonly<{ commandId: string }>) => ({
+      v: 1 as const,
+      commandId: command.commandId,
+      status: 'dispatched' as const,
+      adapterKind: 'chromiumSidecar' as const,
+      events: [],
+    }));
+    const secondDispatch = vi.fn(async (command: Readonly<{ commandId: string }>) => ({
+      v: 1 as const,
+      commandId: command.commandId,
+      status: 'dispatched' as const,
+      adapterKind: 'chromiumSidecar' as const,
+      events: [],
+    }));
+    let currentRoutes = { dispatchCommand: firstDispatch };
+    api.setBrowserDaemonControlRoutesProvider(() => currentRoutes);
+    const execute = api.createBrowserRuntimeActionExecutor();
+    const input = {
+      kind: 'navigate',
+      commandId: 'command-1',
+      browserSessionId: 'browser-session-1',
+      viewId: 'view-1',
+      url: 'https://example.com',
+    } as const;
+
+    await expect(execute({
+      actionId: 'browser.navigate',
+      input,
+      context: {
+        surface: 'plugin',
+        actionCaller: { kind: 'plugin', pluginId: 'acme.browser' },
+      },
+    })).resolves.toMatchObject({ status: 'dispatched' });
+
+    currentRoutes = { dispatchCommand: secondDispatch };
+    await expect(execute({
+      actionId: 'browser.navigate',
+      input: { ...input, commandId: 'command-2' },
+      context: {
+        surface: 'plugin',
+        actionCaller: { kind: 'plugin', pluginId: 'acme.browser' },
+      },
+    })).resolves.toMatchObject({ commandId: 'command-2', status: 'dispatched' });
+    expect(firstDispatch).toHaveBeenCalledOnce();
+    expect(secondDispatch).toHaveBeenCalledOnce();
+
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(execute({
+      actionId: 'browser.navigate',
+      input: { ...input, commandId: 'command-cancelled' },
+      context: {
+        surface: 'plugin',
+        actionCaller: { kind: 'plugin', pluginId: 'acme.browser' },
+        signal: cancelled.signal,
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(secondDispatch).toHaveBeenCalledOnce();
+  }, 60_000);
+
+  it('passes the scoped session-input transformer and post-admission attachment notifier to the session owner', async () => {
     const { ApiClient } = await import('./api');
     const api = await ApiClient.create({
       token: 'token_1',
@@ -98,17 +181,25 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
     const transformSessionInputBeforeCommit = vi.fn(async (
       payload: Record<string, unknown>,
     ) => payload);
+    const afterComposerAttachmentMessageAccepted = vi.fn(async () => undefined);
 
     api.sessionSyncClient(
       { id: 'session_1' } as never,
-      { transformSessionInputBeforeCommit },
+      {
+        transformSessionInputBeforeCommit,
+        afterComposerAttachmentMessageAccepted,
+      },
     );
 
     const options = apiSessionClientConstructorMock.mock.calls[0]?.[2] as Readonly<{
       transformSessionInputBeforeCommit?: unknown;
+      afterComposerAttachmentMessageAccepted?: unknown;
     }> | undefined;
     expect(options?.transformSessionInputBeforeCommit).toBe(
       transformSessionInputBeforeCommit,
+    );
+    expect(options?.afterComposerAttachmentMessageAccepted).toBe(
+      afterComposerAttachmentMessageAccepted,
     );
   }, 60_000);
 });

@@ -56,6 +56,14 @@ export function createInactiveUsageLimitRecoveryCheckOwner() {
         runnersBySessionId.set(input.sessionId, runner);
       }
     },
+    cancelSession: async (input: Readonly<{
+      sessionId: string;
+      scheduler: UsageLimitRecoveryScheduler;
+    }>): Promise<SessionUsageLimitRecoveryV1 | null> => {
+      const cancelled = await input.scheduler.cancel({ sessionId: input.sessionId });
+      runnersBySessionId.delete(input.sessionId);
+      return cancelled;
+    },
     cancelExact: async (input: Readonly<{
       sessionId: string;
       issueFingerprint: string;

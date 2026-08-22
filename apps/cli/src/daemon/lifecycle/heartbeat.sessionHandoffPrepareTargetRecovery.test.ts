@@ -113,6 +113,7 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
             },
             currentCliVersion: '1.0.0',
             requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
         });
 
         expect(setIntervalSpy).toHaveBeenCalled();
@@ -220,6 +221,7 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
             },
             currentCliVersion: '1.0.0',
             requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
         });
 
         const tick: (() => Promise<void>) | undefined = (globalThis as any).__tick;

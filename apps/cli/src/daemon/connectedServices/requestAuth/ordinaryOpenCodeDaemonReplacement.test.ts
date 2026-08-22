@@ -241,6 +241,8 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
             const stagedCapability = await readCapability(stagedDescriptor.path);
             const materialized = await materializeOpenCodeAuthEnvironment({
                 rootDir: root,
+                materializationId,
+                connectedAccountMaterializationAuthority: 'qualified',
                 requestAuth: {
                     capabilityPath: stagedDescriptor.path,
                     purposeBindings: [binding],
@@ -255,7 +257,7 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
                 materialized.env.XDG_CONFIG_HOME ?? '',
                 'opencode',
                 'plugin',
-                'happier-request-auth-openai-2.js',
+                'happier-request-auth-openai.js',
             );
             const plugin = await import(
                 `${pathToFileURL(pluginPath).href}?loaded-during-staged-authority`
@@ -263,11 +265,12 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
             const contribution = await plugin.default();
             const loaded = await contribution.auth.loader(async () => ({
                 type: 'api',
-                key: 'happier-request-auth:openai:2',
+                key: 'happier-request-auth:openai:1',
             }));
             if (!loaded.fetch) throw new Error('Expected the staged OpenCode request-auth fetch');
 
             const upstreamAuthorization: string[] = [];
+            const upstreamDestinations: string[] = [];
             globalThis.fetch = async (request, init) => {
                 const rawUrl = request instanceof Request
                     ? request.url
@@ -278,11 +281,12 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
                 if (url.hostname === '127.0.0.1') {
                     return await originalFetch(request, init);
                 }
+                upstreamDestinations.push(url.href);
                 upstreamAuthorization.push(new Headers(init?.headers).get('authorization') ?? '');
                 return new Response('ok', { status: 200 });
             };
 
-            await expect(loaded.fetch('https://api.openai.com/v1/responses', {
+            await expect(loaded.fetch('https://chatgpt.com/backend-api/responses', {
                 method: 'POST',
                 body: JSON.stringify({ model: 'gpt-5', input: [] }),
             })).rejects.toMatchObject({
@@ -292,13 +296,14 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
             expect(prepared.authenticatedCapabilities).toEqual([stagedCapability]);
             expect(prepared.getMaterializationCount()).toBe(0);
             expect(upstreamAuthorization).toEqual([]);
+            expect(upstreamDestinations).toEqual([]);
             expect(activationSettled).toBe(false);
 
             releaseFinalProof();
             const committedDescriptor = await activation;
             expect(committedDescriptor).toEqual(stagedDescriptor);
 
-            const response = await loaded.fetch('https://api.openai.com/v1/responses', {
+            const response = await loaded.fetch('https://chatgpt.com/backend-api/responses', {
                 method: 'POST',
                 body: JSON.stringify({ model: 'gpt-5', input: [] }),
             });
@@ -310,6 +315,11 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
             expect(prepared.getMaterializationCount()).toBe(1);
             expect(upstreamAuthorization).toEqual([
                 'Bearer access-token-after-commit',
+            ]);
+            // The leaf pins the credential-bearing fetch to the declared origin and rewrites
+            // the Codex path; a request to any other destination is refused before the lease.
+            expect(upstreamDestinations).toEqual([
+                'https://chatgpt.com/backend-api/codex/responses',
             ]);
         } finally {
             releaseFinalProof();
@@ -349,6 +359,8 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
             const capabilityA = await readCapability(daemonA.descriptor.path);
             const materialized = await materializeOpenCodeAuthEnvironment({
                 rootDir: root,
+                materializationId: 'ordinary-daemon-replacement',
+                connectedAccountMaterializationAuthority: 'qualified',
                 requestAuth: {
                     capabilityPath: daemonA.descriptor.path,
                     purposeBindings: [binding],
@@ -363,7 +375,7 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
                 materialized.env.XDG_CONFIG_HOME ?? '',
                 'opencode',
                 'plugin',
-                'happier-request-auth-openai-2.js',
+                'happier-request-auth-openai.js',
             );
             const plugin = await import(
                 `${pathToFileURL(pluginPath).href}?loaded-before-daemon-replacement`
@@ -371,11 +383,12 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
             const contribution = await plugin.default();
             const loaded = await contribution.auth.loader(async () => ({
                 type: 'api',
-                key: 'happier-request-auth:openai:2',
+                key: 'happier-request-auth:openai:1',
             }));
             if (!loaded.fetch) throw new Error('Expected the ordinary OpenCode request-auth fetch');
             const survivingFetch = loaded.fetch;
             const upstreamAuthorization: string[] = [];
+            const upstreamDestinations: string[] = [];
             globalThis.fetch = async (request, init) => {
                 const rawUrl = request instanceof Request
                     ? request.url
@@ -386,11 +399,12 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
                 if (url.hostname === '127.0.0.1') {
                     return await originalFetch(request, init);
                 }
+                upstreamDestinations.push(url.href);
                 upstreamAuthorization.push(new Headers(init?.headers).get('authorization') ?? '');
                 return new Response('ok', { status: 200 });
             };
 
-            const first = await survivingFetch('https://api.openai.com/v1/responses', {
+            const first = await survivingFetch('https://chatgpt.com/backend-api/responses', {
                 method: 'POST',
                 body: JSON.stringify({ model: 'gpt-5', input: [] }),
             });
@@ -406,7 +420,7 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
                 controlToken: 'control-token-b',
             });
             const capabilityB = await readCapability(daemonB.descriptor.path);
-            const second = await survivingFetch('https://api.openai.com/v1/responses', {
+            const second = await survivingFetch('https://chatgpt.com/backend-api/responses', {
                 method: 'POST',
                 body: JSON.stringify({ model: 'gpt-5', input: [] }),
             });
@@ -415,6 +429,10 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
             expect(upstreamAuthorization).toEqual([
                 'Bearer access-token-a',
                 'Bearer access-token-b',
+            ]);
+            expect(upstreamDestinations).toEqual([
+                'https://chatgpt.com/backend-api/codex/responses',
+                'https://chatgpt.com/backend-api/codex/responses',
             ]);
             expect(daemonA.authenticatedCapabilities).toEqual([capabilityA]);
             expect(daemonB.authenticatedCapabilities).toEqual([capabilityB]);

@@ -4,116 +4,38 @@ import { access } from 'node:fs/promises';
 import { delimiter as PATH_DELIMITER, join } from 'node:path';
 import type { Readable } from 'node:stream';
 
-import { isAgentId } from '@happier-dev/agents';
+import { isBundledAgentId } from '@happier-dev/agents';
+import type {
+  AgentDaemonResolvedToolV1,
+  AgentDaemonRunToolResultV1,
+  AgentDaemonSpawnDiagnosticV1,
+  AgentDaemonSpawnHooks,
+  AgentDaemonSpawnRuntimeSelectionV1,
+  AgentDaemonSpawnToolResolutionContextV1,
+  AgentDaemonSpawnValidationResult,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   resolveWindowsCommandInvocation,
   resolveWindowsCommandOnPath,
 } from '@happier-dev/cli-common/process';
 import {
   BUILT_IN_INSTALLABLES_REGISTRY,
+  trimBugReportTextHeadToMaxBytes,
   type InstallableKey,
   type InstallablesRegistry,
 } from '@happier-dev/protocol';
 
 import { resolveAgentCliCommand } from '@/packagedRuntime/managedTools/agentCliResolution';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
-import type { CanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
-export type DaemonResolvedToolV1 =
-  | Readonly<{
-    ok: true;
-    command: string;
-    args: readonly string[];
-    source: 'system' | 'managed' | 'user_config' | 'unknown';
-  }>
-  | Readonly<{
-    ok: false;
-    reasonCode: 'tool_unavailable' | 'installable_unavailable' | 'unsupported' | 'aborted';
-    errorMessage: string;
-  }>;
-
-export type DaemonRunToolResultV1 =
-  | Readonly<{
-    ok: true;
-    command: string;
-    args: readonly string[];
-    source: Extract<DaemonResolvedToolV1, { ok: true }>['source'];
-    exitCode: number | null;
-    signal: string | null;
-    stdout: string;
-    stderr: string;
-  }>
-  | Readonly<{
-    ok: false;
-    reasonCode: Extract<DaemonResolvedToolV1, { ok: false }>['reasonCode'] | 'execution_failed' | 'timeout';
-    errorMessage: string;
-    exitCode?: number | null;
-    signal?: string | null;
-    stdout?: string;
-    stderr?: string;
-  }>;
-
-export type DaemonSpawnDiagnosticV1 = Readonly<{
-  code: string;
-  message: string;
-  detail?: Readonly<Record<string, unknown>>;
-}>;
-
-export type DaemonSpawnToolResolutionContextV1 = Readonly<{
-  signal: AbortSignal;
-  resolveSystemTool(input: Readonly<{
-    toolId: string;
-    lookupNames?: readonly string[];
-    sourcePreference?: 'system-first' | 'managed-first';
-    reason: string;
-  }>): Promise<DaemonResolvedToolV1>;
-  runSystemTool(input: Readonly<{
-    toolId: string;
-    lookupNames?: readonly string[];
-    sourcePreference?: 'system-first' | 'managed-first';
-    args?: readonly string[];
-    cwd?: string;
-    env?: Readonly<Record<string, string>>;
-    timeoutMs?: number;
-    maxStdoutBytes?: number;
-    maxStderrBytes?: number;
-    reason: string;
-  }>): Promise<DaemonRunToolResultV1>;
-  resolveManagedInstallable(input: Readonly<{
-    installableId: string;
-    sourcePreference?: 'system-first' | 'managed-first';
-    reason: string;
-  }>): Promise<DaemonResolvedToolV1>;
-  diagnostics: Readonly<{
-    info(input: DaemonSpawnDiagnosticV1): void;
-    warn(input: DaemonSpawnDiagnosticV1): void;
-  }>;
-}>;
-
-export type DaemonSpawnRuntimeSelection = Readonly<{
-  providerRuntimeSelection?: CanonicalSpawnRuntimeSelection['providerRuntimeSelection'];
-  runtimeDescriptorV1?: CanonicalSpawnRuntimeSelection['runtimeDescriptorV1'];
-  cwd?: string;
-  directory?: string;
-  env?: Readonly<Record<string, string>>;
-  providerBinding?: Readonly<{
-    v: 1;
-    agentTargetKey: string;
-    connectionId: string;
-    modelId: string;
-  }>;
-  tools?: DaemonSpawnToolResolutionContextV1;
-}>;
-
-export type DaemonSpawnValidationResult =
-  | Readonly<{ ok: true }>
-  | Readonly<{ ok: false; errorMessage: string; reasonCode?: string }>;
-
-export type DaemonSpawnHooks = Readonly<{
-  resolveRuntimePrerequisites?: (params: DaemonSpawnRuntimeSelection) => Promise<DaemonSpawnValidationResult>;
-  augmentEnv?: (params: DaemonSpawnRuntimeSelection) => Record<string, string>;
-}>;
+export type DaemonResolvedToolV1 = AgentDaemonResolvedToolV1;
+export type DaemonRunToolResultV1 = AgentDaemonRunToolResultV1;
+export type DaemonSpawnDiagnosticV1 = AgentDaemonSpawnDiagnosticV1;
+export type DaemonSpawnToolResolutionContextV1 = AgentDaemonSpawnToolResolutionContextV1;
+export type DaemonSpawnRuntimeSelection = AgentDaemonSpawnRuntimeSelectionV1;
+export type DaemonSpawnValidationResult = AgentDaemonSpawnValidationResult;
+export type DaemonSpawnHooks = AgentDaemonSpawnHooks;
 
 async function resolveCommandOnPath(
   command: string,
@@ -161,7 +83,8 @@ function resolveProviderCliTool(input: Readonly<{
   toolId: string;
   processEnv: NodeJS.ProcessEnv;
 }>): Extract<DaemonResolvedToolV1, { ok: true }> | null {
-  if (!isAgentId(input.toolId)) return null;
+  // `resolveAgentCliCommand` reads the generated bundled CLI runtime table.
+  if (!isBundledAgentId(input.toolId)) return null;
   try {
     const resolved = resolveAgentCliCommand(input.toolId, { processEnv: input.processEnv });
     if (!resolved) return null;
@@ -178,18 +101,25 @@ function resolveProviderCliTool(input: Readonly<{
 
 function clipTextToMaxBytes(input: string, maxBytes: number | undefined): string {
   if (maxBytes === undefined || maxBytes < 0) return input;
-  return Buffer.byteLength(input) <= maxBytes
-    ? input
-    : Buffer.from(input).subarray(0, maxBytes).toString('utf8');
+  return trimBugReportTextHeadToMaxBytes(input, maxBytes);
 }
 
 function appendProcessOutput(
   current: string,
-  chunk: string | Buffer | Uint8Array,
+  text: string,
   maxBytes: number | undefined,
 ): string {
-  const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
   return clipTextToMaxBytes(current + text, maxBytes);
+}
+
+function decodeProcessOutputChunk(
+  decoder: TextDecoder,
+  chunk: string | Buffer | Uint8Array,
+): string {
+  if (typeof chunk === 'string') {
+    return `${decoder.decode()}${chunk}`;
+  }
+  return decoder.decode(chunk, { stream: true });
 }
 
 async function terminatePreflightProcess(
@@ -326,27 +256,38 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
         let settled = false;
         let stdout = '';
         let stderr = '';
+        const stdoutDecoder = new TextDecoder('utf-8');
+        const stderrDecoder = new TextDecoder('utf-8');
+        let outputDecodersFlushed = false;
         let child: ChildProcessByStdio<null, Readable, Readable>;
         let forcedFailure: Extract<DaemonRunToolResultV1, { ok: false }> | null = null;
         let timeout: ReturnType<typeof setTimeout> | null = null;
 
-        const finish = (result: DaemonRunToolResultV1) => {
+        const flushProcessOutputDecoders = () => {
+          if (outputDecodersFlushed) return;
+          outputDecodersFlushed = true;
+          stdout = appendProcessOutput(stdout, stdoutDecoder.decode(), input.maxStdoutBytes);
+          stderr = appendProcessOutput(stderr, stderrDecoder.decode(), input.maxStderrBytes);
+        };
+
+        const finish = (createResult: () => DaemonRunToolResultV1) => {
           if (settled) return;
+          flushProcessOutputDecoders();
           settled = true;
           if (timeout) clearTimeout(timeout);
           signal.removeEventListener('abort', onAbort);
-          resolve(result);
+          resolve(createResult());
         };
 
         const failAndTerminate = (failure: Extract<DaemonRunToolResultV1, { ok: false }>) => {
           forcedFailure = failure;
           void terminatePreflightProcess(child, failure.reasonCode === 'timeout' ? 'SIGTERM' : undefined)
             .finally(() => {
-              finish({
+              finish(() => ({
                 ...failure,
                 stdout,
                 stderr,
-              });
+              }));
             });
         };
 
@@ -368,41 +309,50 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
             windowsVerbatimArguments: invocation.windowsVerbatimArguments,
           });
         } catch (error) {
-          finish({
+          finish(() => ({
             ok: false,
             reasonCode: 'execution_failed',
             errorMessage: error instanceof Error ? error.message : `Failed to run tool "${input.toolId}".`,
-          });
+          }));
           return;
         }
 
         child.stdout.on('data', (chunk: string | Buffer | Uint8Array) => {
-          stdout = appendProcessOutput(stdout, chunk, input.maxStdoutBytes);
+          stdout = appendProcessOutput(
+            stdout,
+            decodeProcessOutputChunk(stdoutDecoder, chunk),
+            input.maxStdoutBytes,
+          );
         });
         child.stderr.on('data', (chunk: string | Buffer | Uint8Array) => {
-          stderr = appendProcessOutput(stderr, chunk, input.maxStderrBytes);
+          stderr = appendProcessOutput(
+            stderr,
+            decodeProcessOutputChunk(stderrDecoder, chunk),
+            input.maxStderrBytes,
+          );
         });
         child.on('error', (error) => {
-          finish({
+          finish(() => ({
             ok: false,
             reasonCode: 'execution_failed',
             errorMessage: error.message,
             stdout,
             stderr,
-          });
+          }));
         });
         child.on('close', (exitCode, exitSignal) => {
           if (forcedFailure) {
-            finish({
-              ...forcedFailure,
+            const failure = forcedFailure;
+            finish(() => ({
+              ...failure,
               exitCode,
               signal: exitSignal,
               stdout,
               stderr,
-            });
+            }));
             return;
           }
-          finish({
+          finish(() => ({
             ok: true,
             command: resolved.command,
             args,
@@ -411,7 +361,7 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
             signal: exitSignal,
             stdout,
             stderr,
-          });
+          }));
         });
 
         signal.addEventListener('abort', onAbort, { once: true });

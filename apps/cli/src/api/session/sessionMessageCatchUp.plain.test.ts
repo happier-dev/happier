@@ -93,8 +93,8 @@ describe('sessionMessageCatchUp (plaintext envelopes)', () => {
         handleSessionNewMessageUpdate({
           update,
           sessionId: 's1',
-          encryptionKey: new Uint8Array(32),
-          encryptionVariant: 'legacy',
+          mode: 'plain',
+          ctx: null,
           receivedMessageIds: new Set<string>(),
           lastObservedMessageSeq: 10,
           lastObservedUserMessageSeq: 0,
@@ -169,7 +169,7 @@ describe('sessionMessageCatchUp (plaintext envelopes)', () => {
     expect(updates[0]?.body?.message?.updatedAt).toBeNull();
   });
 
-  it('ignores transcript messages with malformed seq values', async () => {
+  it('rejects transcript messages with malformed seq values', async () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
       data: {
         messages: [
@@ -184,14 +184,58 @@ describe('sessionMessageCatchUp (plaintext envelopes)', () => {
     } as any);
 
     const updates: any[] = [];
-    await catchUpSessionMessagesAfterSeq({
+    await expect(catchUpSessionMessagesAfterSeq({
       token: 't',
       sessionId: 's1',
       afterSeq: 10,
       onUpdate: (u) => updates.push(u),
+    })).rejects.toMatchObject({
+      code: 'session_transcript_stored_content_unavailable',
+      response: { status: 503 },
     });
 
     expect(updates).toHaveLength(0);
+  });
+
+  it('rejects a malformed authoritative row without publishing any page updates or following its cursor', async () => {
+    const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      data: {
+        messages: [
+          {
+            id: 'm11',
+            seq: 11,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'before' } } },
+          },
+          {
+            id: 'm12',
+            seq: 12,
+            content: { t: 'future', value: 'unreadable' },
+          },
+          {
+            id: 'm13',
+            seq: 13,
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'after' } } },
+          },
+        ],
+        nextAfterSeq: 13,
+      },
+    } as any);
+
+    const updates: any[] = [];
+    await expect(catchUpSessionMessagesAfterSeq({
+      token: 't',
+      sessionId: 's1',
+      afterSeq: 10,
+      onUpdate: (update) => updates.push(update),
+    })).rejects.toMatchObject({
+      name: 'HttpStatusError',
+      code: 'session_transcript_stored_content_unavailable',
+      response: { status: 503 },
+    });
+
+    expect(updates).toEqual([]);
+    expect(getSpy).toHaveBeenCalledTimes(1);
+    expect(getSpy.mock.calls[0]?.[1]).toMatchObject({ params: { afterSeq: 10 } });
   });
 
   it('throws terminal auth responses instead of treating them as empty catch-up', async () => {

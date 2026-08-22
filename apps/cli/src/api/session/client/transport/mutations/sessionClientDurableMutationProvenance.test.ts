@@ -34,6 +34,20 @@ async function readQueued(sessionId: string): Promise<unknown[]> {
   }
 }
 
+async function readDeadLetters(sessionId: string): Promise<unknown[]> {
+  const { resolveSessionClientDurableMutationDeadLetterPath } = await import(
+    './sessionClientDurableMutationPersistence'
+  );
+  try {
+    const parsed = JSON.parse(await readFile(resolveSessionClientDurableMutationDeadLetterPath(sessionId), 'utf8')) as {
+      entries?: unknown[];
+    };
+    return parsed.entries ?? [];
+  } catch {
+    return [];
+  }
+}
+
 function historyMutation(sessionId: string, localId: string, createdAt = 1_000, updatedAt = 1_500) {
   return {
     v: 1 as const,
@@ -50,6 +64,18 @@ function historyMutation(sessionId: string, localId: string, createdAt = 1_000, 
     updatedAt,
     provenance: { kind: 'non_dependent' as const, source: 'history' as const },
   };
+}
+
+function currentConnectionContract(socket: Readonly<{ connected: boolean }>) {
+  return {
+    mode: 'session_sync_v2_pending_input_v1',
+    runtimeActivity: 'v2',
+    pendingInput: 'v1',
+    publisherAuthority: 'indeterminate',
+    sessionConnectionEpoch: 1,
+    socket,
+    transcriptTransport: { mode: 'session_transcript_observation_v1' },
+  } as const;
 }
 
 describe('session durable transcript mutation provenance', () => {
@@ -109,7 +135,7 @@ describe('session durable transcript mutation provenance', () => {
     await outbox.close();
   });
 
-  it('keeps a public-dev provenance-free journal row diagnosable while causing zero transport effect', async () => {
+  it('dead-letters a public-dev provenance-free journal row with a typed reason and zero transport effect', async () => {
     const sessionId = 'legacy-journal-row';
     const legacyPayload = { ...historyMutation(sessionId, 'assistant-1') } as Record<string, unknown>;
     delete legacyPayload.provenance;
@@ -145,11 +171,12 @@ describe('session durable transcript mutation provenance', () => {
     const { default: axios } = await import('axios');
     expect(events).toEqual([]);
     expect(axios.post).not.toHaveBeenCalled();
-    await expect(readQueued(sessionId)).resolves.toEqual([
+    await expect(readQueued(sessionId)).resolves.toEqual([]);
+    await expect(readDeadLetters(sessionId)).resolves.toEqual([
       expect.objectContaining({
         kind: 'transcript_message_append',
         mutationId: `transcript:${sessionId}:assistant-1`,
-        payload: expect.not.objectContaining({ provenance: expect.anything() }),
+        reason: 'transcript_message_provenance_missing_or_invalid',
       }),
     ]);
     await outbox.close();
@@ -205,13 +232,14 @@ describe('session durable transcript mutation provenance', () => {
       requestReconnect: () => {},
     });
     await restarted.awaitReady();
-    await restarted.flush('flush');
+    await restarted.setSessionSyncPendingInputServerContract(
+      currentConnectionContract(restartedSocket),
+    );
 
     expect(events.map(({ event }) => event)).toEqual([
-      SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
       SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
     ]);
-    expect(events[1]?.payload).toMatchObject({
+    expect(events[0]?.payload).toMatchObject({
       createdAt: 123,
       updatedAt: 456,
       provenance: { kind: 'non_dependent', source: 'history' },

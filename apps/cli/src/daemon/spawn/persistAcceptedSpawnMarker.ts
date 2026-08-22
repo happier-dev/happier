@@ -1,18 +1,15 @@
 import {
   AgentSessionStartupInstructionsMarkerV1Schema,
-  type AccountScopedCryptoMaterial,
 } from '@happier-dev/protocol';
 
-import { toDurablePluginLocalServicesBridgeAuthorization } from '../local/services/pluginBridgeAuthorization';
 import { readProcessIdentityByPid } from '../processIdentity';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '../processSupervision/sessionRunnerRespawnDescriptor';
 import {
   hashProcessCommand,
   writeSessionMarker,
-  writeSessionMarkerWithManagedLocalServiceRunAttachment,
-  type ManagedLocalServiceRunAttachmentV1,
 } from '../sessionRegistry';
 import type { TrackedSession } from '../types';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 function readTrackedProcessCommand(trackedSession: TrackedSession): string | undefined {
   const observed = typeof trackedSession.processCommand === 'string'
@@ -31,9 +28,8 @@ function readTrackedProcessCommand(trackedSession: TrackedSession): string | und
 
 export async function persistAcceptedSpawnMarker(params: Readonly<{
   trackedSession: TrackedSession;
-  encryptionMaterial?: AccountScopedCryptoMaterial;
+  deviceLocalSecretStorage: DeviceLocalSecretStorage;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
-  managedLocalServiceRunAttachment?: ManagedLocalServiceRunAttachmentV1;
   processPid?: number;
   expectedProcessIdentity?: Readonly<{
     processStartTimeMs: number;
@@ -51,7 +47,7 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
 
   const respawn = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     trackedSession.spawnOptions,
-    params.encryptionMaterial ? { encryptionMaterial: params.encryptionMaterial } : undefined,
+    { deviceLocalSecretStorage: params.deviceLocalSecretStorage },
   );
   if (!respawn) {
     throw new Error(`Could not persist accepted spawn custody for PID ${trackedSession.pid}`);
@@ -82,18 +78,6 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
       'Accepted spawn process identity changed before marker persistence',
     );
   }
-  if (
-    params.managedLocalServiceRunAttachment
-    && (
-      processIdentity?.pid !== processPid
-      || processIdentity.processStartTimeMs === undefined
-      || !Number.isFinite(processIdentity.processStartTimeMs)
-      || processIdentity.processStartTimeMs < 0
-      || observedProcessCommand.length === 0
-    )
-  ) {
-    throw new Error('Managed local-service custody requires exact Agent process identity');
-  }
   const processCommand = observedProcessCommand || readTrackedProcessCommand(trackedSession);
   if (processIdentity?.processStartTimeMs !== undefined) {
     trackedSession.processStartTimeMs = processIdentity.processStartTimeMs;
@@ -104,20 +88,6 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
       observedProcessCommandHash
       ?? hashProcessCommand(processCommand);
   }
-  const localServicesBridgeAuthorization = toDurablePluginLocalServicesBridgeAuthorization(
-    trackedSession.localServicesBridgeTokenHash
-    && trackedSession.localServicesBridgePluginId
-    && trackedSession.localServicesBridgeContributionId
-      ? {
-          tokenHash: trackedSession.localServicesBridgeTokenHash,
-          pluginId: trackedSession.localServicesBridgePluginId,
-          contributionId: trackedSession.localServicesBridgeContributionId,
-          ...(trackedSession.localServicesBridgeTokenFilePath
-            ? { tokenFilePath: trackedSession.localServicesBridgeTokenFilePath }
-            : {}),
-        }
-      : undefined,
-  );
   const startupInstructions =
     trackedSession.spawnOptions.agentSessionStartupInstructionsV1;
   const startupInstructionsMarker = startupInstructions
@@ -143,7 +113,24 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
         }
       : {}),
     respawn,
-    ...(localServicesBridgeAuthorization ? { localServicesBridgeAuthorization } : {}),
+    ...(trackedSession.agentRuntimeDaemonServiceAuthorityFilePath
+      ? {
+          agentRuntimeDaemonServiceAuthorityFilePath:
+            trackedSession.agentRuntimeDaemonServiceAuthorityFilePath,
+        }
+      : {}),
+    ...(trackedSession.runnerManagedDependencyRetentionV1
+      ? {
+          runnerManagedDependencyRetentionV1:
+            trackedSession.runnerManagedDependencyRetentionV1,
+        }
+      : {}),
+    ...(trackedSession.runnerAgentImmutableGenerationId
+      ? {
+          runnerAgentImmutableGenerationId:
+            trackedSession.runnerAgentImmutableGenerationId,
+        }
+      : {}),
     ...(startupInstructionsMarker
       ? {
           agentSessionStartupInstructionsMarkerV1:
@@ -151,14 +138,7 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
         }
       : {}),
   };
-  if (params.managedLocalServiceRunAttachment) {
-    await writeSessionMarkerWithManagedLocalServiceRunAttachment({
-      marker,
-      attachment: params.managedLocalServiceRunAttachment,
-    });
-  } else {
-    await writeSessionMarker(marker);
-  }
+  await writeSessionMarker(marker);
   if (startupInstructionsMarker) {
     trackedSession.agentSessionStartupInstructionsMarkerV1 =
       startupInstructionsMarker;

@@ -6,7 +6,7 @@ import type { CatalogAgentId } from '@/agent/catalog/ids';
 import {
     CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     resolveConnectedAccountRequestAuthCapabilityPath,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 import {
     isPersistedExecutionRunConnectedServicesLaunchIdentityExact,
     normalizePersistedExecutionRunConnectedServicesLaunchV1,
@@ -28,7 +28,8 @@ import type {
 } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import {
     resolveQualifiedPurposeBindingSnapshotForAgentSpawn,
-    resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn,
+    resolveQualifiedRequestAuthPurposeBindingsFromSnapshot,
+    type AgentSpawnQualifiedPurposeBindingSnapshot,
     type AgentSpawnPurposeContributions,
 } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import {
@@ -131,10 +132,11 @@ type RunReleaseEntry = {
     runnerPid: number;
     runnerIdentity: object;
     agentId: CatalogAgentId;
+    cleanupOnFailure: (() => void | Promise<void>) | null;
     cleanupOnExit: (() => void | Promise<void>) | null;
     cleanupPromise: Promise<void> | null;
     retiring: boolean;
-    targetsRegistered: boolean;
+    targetsMayBeRegistered: boolean;
     purposeBindingLease: ConnectedAccountPurposeBindingLease | null;
     requestAuthCapability: ConnectedAccountRequestAuthCapabilityDescriptor | null;
     requestAuthCapabilityRetired: boolean;
@@ -143,6 +145,12 @@ type RunReleaseEntry = {
     contributionLease: Readonly<{ release(): Promise<void> }> | null;
     contributionLeaseReleased: boolean;
 };
+
+type PendingRunMaterialization = Readonly<{
+    runKey: string;
+    runnerPid: number;
+    runnerIdentity: object;
+}>;
 
 function blocked(errorMessage: string): Readonly<{
     ok: false;
@@ -177,6 +185,8 @@ export function createExecutionRunConnectedServicesBridge(
     deps: CreateExecutionRunConnectedServicesBridgeDeps,
 ): ExecutionRunConnectedServicesBridge {
     const retainedCleanupByRunKey = new Map<string, RunReleaseEntry>();
+    const pendingMaterializationByRunKey =
+        new Map<string, PendingRunMaterialization>();
     const mutationTailByRunKey = new Map<string, Promise<void>>();
 
     const withRunKeyMutation = async <T>(
@@ -205,14 +215,17 @@ export function createExecutionRunConnectedServicesBridge(
 
     const cleanupEntry = async (
         entry: RunReleaseEntry,
-        options: Readonly<{ skipFilesystem?: boolean }> = {},
+        options: Readonly<{
+            beforeAdmission?: boolean;
+            skipFilesystem?: boolean;
+        }> = {},
     ): Promise<boolean> => {
         entry.cleanupPromise ??= (async () => {
             // Currentness is revoked synchronously before capability or materialized-root I/O.
             entry.retiring = true;
             entry.purposeBindingLease?.dispose();
-            if (entry.targetsRegistered) {
-                entry.targetsRegistered = false;
+            if (entry.targetsMayBeRegistered) {
+                entry.targetsMayBeRegistered = false;
                 deps.unregisterRunTargets(entry.runKey);
             }
             if (
@@ -259,7 +272,10 @@ export function createExecutionRunConnectedServicesBridge(
                 });
             }
             if (!options.skipFilesystem) {
-                await entry.cleanupOnExit?.();
+                const cleanupFilesystem = options.beforeAdmission
+                    ? entry.cleanupOnFailure ?? entry.cleanupOnExit
+                    : entry.cleanupOnExit;
+                await cleanupFilesystem?.();
             }
         })();
         try {
@@ -287,6 +303,34 @@ export function createExecutionRunConnectedServicesBridge(
         return previousEntry ? await cleanupEntry(previousEntry) : true;
     };
 
+    const cleanupUnadmittedMaterialization = async (input: Readonly<{
+        runKey: string;
+        cleanupFilesystem: (() => void | Promise<void>) | null;
+        contributionLease: Readonly<{ release(): Promise<void> }>;
+    }>): Promise<void> => {
+        const cleanupResults = await Promise.allSettled([
+            Promise.resolve().then(async () => {
+                await input.cleanupFilesystem?.();
+            }),
+            Promise.resolve().then(async () => {
+                await input.contributionLease.release();
+            }),
+        ]);
+        for (const result of cleanupResults) {
+            if (result.status === 'fulfilled') continue;
+            logger.debug(
+                '[DAEMON RUN] Unadmitted execution-run materialization cleanup failed',
+                {
+                    runId: input.runKey,
+                    error:
+                        result.reason instanceof Error
+                            ? result.reason.message
+                            : String(result.reason),
+                },
+            );
+        }
+    };
+
     const prepareEntry = async (input: Readonly<{
         activationId: string;
         runKey: string;
@@ -298,8 +342,10 @@ export function createExecutionRunConnectedServicesBridge(
         connectedServicesBindings: Parameters<
             typeof resolveQualifiedPurposeBindingSnapshotForAgentSpawn
         >[0]['bindings'];
+        qualifiedPurposeBindingSnapshot?: AgentSpawnQualifiedPurposeBindingSnapshot | null;
         materializedRoot: string | null;
         env: Readonly<Record<string, string>>;
+        cleanupOnFailure: (() => void | Promise<void>) | null;
         cleanupOnExit: (() => void | Promise<void>) | null;
         contributionLease?: Awaited<
             ReturnType<
@@ -309,6 +355,7 @@ export function createExecutionRunConnectedServicesBridge(
             >
         >;
     }>): Promise<RunReleaseEntry> => {
+        const contributionLeaseProvided = input.contributionLease !== undefined;
         const contributionLease =
             input.contributionLease
             ?? await deps.acquireAgentPurposeContributions({
@@ -327,18 +374,17 @@ export function createExecutionRunConnectedServicesBridge(
         let activationOpen = true;
         let entry: RunReleaseEntry | null = null;
         try {
-            const purposeSnapshot =
-                resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+            const purposeSnapshot = input.qualifiedPurposeBindingSnapshot !== undefined
+                ? input.qualifiedPurposeBindingSnapshot
+                : resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                     agentId: input.agentId,
                     bindings: input.connectedServicesBindings,
                     contributions: contributionLease.contributions,
                 });
             const requestAuthPurposeBindings =
-                resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn({
-                    agentId: input.agentId,
-                    bindings: input.connectedServicesBindings,
-                    contributions: contributionLease.contributions,
-                });
+                resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
+                    purposeSnapshot,
+                );
             const subjectIsCurrent = (): boolean => {
                 if (
                     !input.runner.isCurrent()
@@ -389,9 +435,9 @@ export function createExecutionRunConnectedServicesBridge(
                     await deps.requestAuthRegistry.activate({
                         subject: scopeConnectedAccountPurposeBindingLease({
                             lease: purposeBindingLease,
-                            subjectId:
-                                `${purposeBindingLease.subjectId}/agent:${input.agentId}`,
+                            subjectId: purposeBindingLease.subjectId,
                             uses: purposeSnapshot.requestAuthUses,
+                            legacyServiceKeyedCompatibility: true,
                             registerRedaction: redactionLease.add,
                         }),
                         materializedRootDir: input.materializedRoot,
@@ -413,10 +459,11 @@ export function createExecutionRunConnectedServicesBridge(
                 runnerPid: input.runnerPid,
                 runnerIdentity: input.runner.identity,
                 agentId: input.agentId,
+                cleanupOnFailure: input.cleanupOnFailure,
                 cleanupOnExit: input.cleanupOnExit,
                 cleanupPromise: null,
                 retiring: false,
-                targetsRegistered: false,
+                targetsMayBeRegistered: false,
                 purposeBindingLease,
                 requestAuthCapability,
                 requestAuthCapabilityRetired: false,
@@ -437,7 +484,9 @@ export function createExecutionRunConnectedServicesBridge(
                     .catch(() => undefined);
             }
             redactionLease?.close();
-            await contributionLease.release().catch(() => undefined);
+            if (!contributionLeaseProvided) {
+                await contributionLease.release().catch(() => undefined);
+            }
             throw error;
         }
     };
@@ -516,8 +565,10 @@ export function createExecutionRunConnectedServicesBridge(
                                 ),
                         }
                         : {},
+                    cleanupOnFailure: null,
                     cleanupOnExit,
                 });
+                entry.targetsMayBeRegistered = true;
                 deps.registerRunTargets({
                     runKey: registration.runKey,
                     runnerPid: input.runnerPid,
@@ -530,7 +581,6 @@ export function createExecutionRunConnectedServicesBridge(
                     sessionId: runner.parentSessionId,
                     sessionDirectory: registration.sessionDirectory,
                 });
-                entry.targetsRegistered = true;
                 return true;
             } catch (error) {
                 if (entry) {
@@ -574,149 +624,185 @@ export function createExecutionRunConnectedServicesBridge(
                 );
             }
 
-            let contributionLease: Awaited<
-                ReturnType<
-                    CreateExecutionRunConnectedServicesBridgeDeps[
-                        'acquireAgentPurposeContributions'
-                    ]
-                >
-            >;
+            const pendingMaterialization: PendingRunMaterialization = {
+                runKey,
+                runnerPid: input.runnerPid,
+                runnerIdentity: runner.identity,
+            };
+            pendingMaterializationByRunKey.set(runKey, pendingMaterialization);
             try {
-                contributionLease =
-                    await deps.acquireAgentPurposeContributions({ agentId });
-            } catch (error) {
-                return blocked(
-                    error instanceof Error
-                        ? error.message
-                        : 'Agent purpose contributions are unavailable',
-                );
-            }
-            let resolved: Awaited<ReturnType<ResolveAuthForSpawn>>;
-            try {
-                resolved = await deps.resolveAuthForSpawn({
-                    agentId,
-                    connectedServicesBindingsRaw: input.connectedServices,
-                    materializationKey: runKey,
-                    sessionDirectory: input.cwd,
-                    vendorResumeId: null,
-                    resumeReachabilityRequired: false,
-                    resolveRequestAuthPurposeBindings: (bindings) =>
-                        resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn({
+                let contributionLease: Awaited<
+                    ReturnType<
+                        CreateExecutionRunConnectedServicesBridgeDeps[
+                            'acquireAgentPurposeContributions'
+                        ]
+                    >
+                >;
+                try {
+                    contributionLease =
+                        await deps.acquireAgentPurposeContributions({ agentId });
+                } catch (error) {
+                    return blocked(
+                        error instanceof Error
+                            ? error.message
+                            : 'Agent purpose contributions are unavailable',
+                    );
+                }
+                if (!runner.isCurrent()) {
+                    await cleanupUnadmittedMaterialization({
+                        runKey,
+                        cleanupFilesystem: null,
+                        contributionLease,
+                    });
+                    return blocked(
+                        'Execution-run connected services runner identity is not current',
+                    );
+                }
+                let resolved: Awaited<ReturnType<ResolveAuthForSpawn>>;
+                try {
+                    resolved = await deps.resolveAuthForSpawn({
+                        agentId,
+                        connectedServicesBindingsRaw: input.connectedServices,
+                        materializationKey: runKey,
+                        sessionDirectory: input.cwd,
+                        vendorResumeId: null,
+                        resumeReachabilityRequired: false,
+                        resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+                            resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+                                agentId,
+                                bindings,
+                                contributions: contributionLease.contributions,
+                            }),
+                    } as Parameters<ResolveAuthForSpawn>[0]);
+                } catch (error) {
+                    await cleanupUnadmittedMaterialization({
+                        runKey,
+                        cleanupFilesystem: null,
+                        contributionLease,
+                    });
+                    if (error instanceof ConnectedServiceMaterializationBlockedError) {
+                        logger.warn('[DAEMON RUN] Execution-run connected services materialization blocked; failing closed', {
+                            runId: input.runId,
                             agentId,
-                            bindings,
-                            contributions: contributionLease.contributions,
-                        }),
-                } as Parameters<ResolveAuthForSpawn>[0]);
-            } catch (error) {
-                await contributionLease.release().catch(() => undefined);
-                if (error instanceof ConnectedServiceMaterializationBlockedError) {
-                    logger.warn('[DAEMON RUN] Execution-run connected services materialization blocked; failing closed', {
+                            diagnostics: error.diagnostics.map((diagnostic) => ({
+                                code: diagnostic.code,
+                                serviceId: diagnostic.serviceId,
+                                reason: diagnostic.reason,
+                                severity: diagnostic.severity,
+                            })),
+                        });
+                        const reason = error.diagnostics.map((diagnostic) => diagnostic.reason).filter(Boolean).join('; ');
+                        return blocked(reason || 'Connected service materialization blocked');
+                    }
+                    logger.warn('[DAEMON RUN] Execution-run connected services resolution failed; failing closed', {
                         runId: input.runId,
                         agentId,
-                        diagnostics: error.diagnostics.map((diagnostic) => ({
-                            code: diagnostic.code,
-                            serviceId: diagnostic.serviceId,
-                            reason: diagnostic.reason,
-                            severity: diagnostic.severity,
-                        })),
+                        error: error instanceof Error ? error.message : String(error),
                     });
-                    const reason = error.diagnostics.map((diagnostic) => diagnostic.reason).filter(Boolean).join('; ');
-                    return blocked(reason || 'Connected service materialization blocked');
+                    return blocked(error instanceof Error ? error.message : 'Connected services resolution failed');
                 }
-                logger.warn('[DAEMON RUN] Execution-run connected services resolution failed; failing closed', {
-                    runId: input.runId,
-                    agentId,
-                    error: error instanceof Error ? error.message : String(error),
-                });
-                return blocked(error instanceof Error ? error.message : 'Connected services resolution failed');
-            }
 
-            if (!resolved) {
-                await contributionLease.release().catch(() => undefined);
-                // The runner only asks when it holds a connected selection; an empty resolution means
-                // the selection could not be honored. Fail closed rather than silently running native.
-                return blocked('Connected services selection resolved no materialized auth');
-            }
-            if (resolved.ongoingRuntimeRegistrationAllowed === false) {
-                await resolved.cleanupOnFailure?.();
-                await contributionLease.release().catch(() => undefined);
-                return blocked(
-                    'Legacy unfenced connected service materialization cannot be registered as an execution-run runtime target',
-                );
-            }
+                if (!resolved) {
+                    await cleanupUnadmittedMaterialization({
+                        runKey,
+                        cleanupFilesystem: null,
+                        contributionLease,
+                    });
+                    // The runner only asks when it holds a connected selection; an empty resolution means
+                    // the selection could not be honored. Fail closed rather than silently running native.
+                    return blocked('Connected services selection resolved no materialized auth');
+                }
 
-            const env: Record<string, string> = { ...resolved.env };
-            const materializedRoot = resolved.targetMaterializedRoot
-                ? deps.resolveRunMaterializedRoot({ runKey, agentId })
-                : null;
-            const cleanupOnExit = resolved.cleanupOnExit
-                ?? (materializedRoot
-                    ? deps.createAdoptedRootCleanup({ runKey, agentId, materializedRoot })
-                    : null);
-            const connectedServicesBindings = resolved.connectedServicesBindings ?? input.connectedServices;
-            const activationId = randomUUID();
-            let entry: RunReleaseEntry | null = null;
-            try {
-                entry = await prepareEntry({
-                    activationId,
-                    runKey,
-                    runnerPid: input.runnerPid,
-                    agentId,
-                    runner,
-                    connectedServicesBindings,
-                    materializedRoot,
-                    env,
-                    cleanupOnExit,
-                    contributionLease,
-                });
-            } catch (error) {
-                await resolved.cleanupOnFailure?.();
-                return blocked(
-                    error instanceof Error
-                        ? error.message
-                        : 'Execution-run request-auth activation failed',
-                );
-            }
-            const registration: ExecutionRunConnectedServicesRegistrationV1 = {
-                v: 1,
-                activationId,
-                runKey,
-                agentId,
-                materializationKey: runKey,
-                connectedServicesBindings,
-                connectedServiceSelectionsEnv: readRuntimeIdentityEnv(env),
-                sessionDirectory: input.cwd,
-                materializedRoot,
-            };
-            try {
-                deps.registerRunTargets({
-                    runKey,
-                    runnerPid: input.runnerPid,
-                    agentId,
-                    materializationKey: runKey,
-                    connectedServicesBindingsRaw: connectedServicesBindings,
-                    connectedServiceSelectionsEnv:
-                        registration.connectedServiceSelectionsEnv,
-                    sessionId: runner.parentSessionId,
-                    sessionDirectory: input.cwd,
-                });
-                entry.targetsRegistered = true;
-            } catch (error) {
-                await cleanupEntry(entry);
-                return blocked(
-                    error instanceof Error
-                        ? error.message
-                        : 'Execution-run target registration failed',
-                );
-            }
+                let cleanupOnFailure: (() => void | Promise<void>) | null =
+                    resolved.cleanupOnFailure;
+                let entry: RunReleaseEntry | null = null;
+                try {
+                    const env: Record<string, string> = { ...resolved.env };
+                    const materializedRoot = resolved.targetMaterializedRoot
+                        ? deps.resolveRunMaterializedRoot({ runKey, agentId })
+                        : null;
+                    const cleanupOnExit = resolved.cleanupOnExit
+                        ?? (materializedRoot
+                            ? deps.createAdoptedRootCleanup({ runKey, agentId, materializedRoot })
+                            : null);
+                    cleanupOnFailure ??= cleanupOnExit;
+                    if (resolved.ongoingRuntimeRegistrationAllowed === false) {
+                        throw new Error(
+                            'Legacy unfenced connected service materialization cannot be registered as an execution-run runtime target',
+                        );
+                    }
+                    const connectedServicesBindings = resolved.connectedServicesBindings ?? input.connectedServices;
+                    const activationId = randomUUID();
+                    entry = await prepareEntry({
+                        activationId,
+                        runKey,
+                        runnerPid: input.runnerPid,
+                        agentId,
+                        runner,
+                        connectedServicesBindings,
+                        qualifiedPurposeBindingSnapshot:
+                            resolved.qualifiedPurposeBindingSnapshot,
+                        materializedRoot,
+                        env,
+                        cleanupOnFailure,
+                        cleanupOnExit,
+                        contributionLease,
+                    });
+                    const registration: ExecutionRunConnectedServicesRegistrationV1 = {
+                        v: 1,
+                        activationId,
+                        runKey,
+                        agentId,
+                        materializationKey: runKey,
+                        connectedServicesBindings,
+                        connectedServiceSelectionsEnv: readRuntimeIdentityEnv(env),
+                        sessionDirectory: input.cwd,
+                        materializedRoot,
+                    };
+                    entry.targetsMayBeRegistered = true;
+                    deps.registerRunTargets({
+                        runKey,
+                        runnerPid: input.runnerPid,
+                        agentId,
+                        materializationKey: runKey,
+                        connectedServicesBindingsRaw: connectedServicesBindings,
+                        connectedServiceSelectionsEnv:
+                            registration.connectedServiceSelectionsEnv,
+                        sessionId: runner.parentSessionId,
+                        sessionDirectory: input.cwd,
+                    });
 
-            return {
-                ok: true,
-                activationId,
-                env,
-                connectedServicesBindings,
-                registration,
-            };
+                    return {
+                        ok: true,
+                        activationId,
+                        env,
+                        connectedServicesBindings,
+                        registration,
+                    };
+                } catch (error) {
+                    if (entry) {
+                        await cleanupEntry(entry, { beforeAdmission: true });
+                    } else {
+                        await cleanupUnadmittedMaterialization({
+                            runKey,
+                            cleanupFilesystem: cleanupOnFailure,
+                            contributionLease,
+                        });
+                    }
+                    return blocked(
+                        error instanceof Error
+                            ? error.message
+                            : 'Execution-run connected services admission failed',
+                    );
+                }
+            } finally {
+                if (
+                    pendingMaterializationByRunKey.get(runKey)
+                    === pendingMaterialization
+                ) {
+                    pendingMaterializationByRunKey.delete(runKey);
+                }
+            }
         });
     };
 
@@ -741,16 +827,28 @@ export function createExecutionRunConnectedServicesBridge(
     const releaseForRunnerExit: ExecutionRunConnectedServicesBridge[
         'releaseForRunnerExit'
     ] = async (input) => {
-        const entries = [...retainedCleanupByRunKey.values()].filter(
-            (entry) =>
+        const runKeys = new Set<string>();
+        for (const entry of retainedCleanupByRunKey.values()) {
+            if (
                 entry.runnerPid === input.runnerPid
-                && entry.runnerIdentity === input.runnerIdentity,
-        );
-        await Promise.all(entries.map(async (entry) => {
-            await withRunKeyMutation(entry.runKey, async () => {
-                const current = retainedCleanupByRunKey.get(entry.runKey);
+                && entry.runnerIdentity === input.runnerIdentity
+            ) {
+                runKeys.add(entry.runKey);
+            }
+        }
+        for (const pending of pendingMaterializationByRunKey.values()) {
+            if (
+                pending.runnerPid === input.runnerPid
+                && pending.runnerIdentity === input.runnerIdentity
+            ) {
+                runKeys.add(pending.runKey);
+            }
+        }
+        await Promise.all([...runKeys].map(async (runKey) => {
+            await withRunKeyMutation(runKey, async () => {
+                const current = retainedCleanupByRunKey.get(runKey);
                 if (
-                    current === entry
+                    current
                     && current.runnerPid === input.runnerPid
                     && current.runnerIdentity === input.runnerIdentity
                 ) {

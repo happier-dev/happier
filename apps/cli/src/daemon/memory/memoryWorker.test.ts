@@ -3,7 +3,7 @@ import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 
 describe('memoryWorker', () => {
   const envBackup = snapshotEnvValues(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
@@ -213,6 +213,7 @@ describe('memoryWorker', () => {
           { seq: 1, createdAtMs: 1000, role: 'user' as const, content: { type: 'text', text: 'hello openclaw' } },
           { seq: 2, createdAtMs: 2000, role: 'agent' as const, content: { type: 'text', text: 'we discussed memory search' } },
         ],
+        fetchCommittedSummaryShards: async () => [],
       },
     });
 
@@ -247,7 +248,7 @@ describe('memoryWorker', () => {
   });
 
   it('uses the role-filtered transcript message API for default deep indexing', async () => {
-    const fetchSessionById = vi.fn(async () => ({}));
+    const fetchSessionById = vi.fn(async () => ({ encryptionMode: 'plain' }));
     vi.doMock('@/session/transport/http/sessionsHttp', () => ({
       fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
       fetchSessionById,
@@ -285,6 +286,19 @@ describe('memoryWorker', () => {
     vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
       fetchEncryptedTranscriptMessagesPage,
     }));
+    vi.doMock('@/session/transport/http/sessionSystemRecordsHttp', async () => {
+      const actual = await vi.importActual<typeof import('@/session/transport/http/sessionSystemRecordsHttp')>(
+        '@/session/transport/http/sessionSystemRecordsHttp',
+      );
+      return {
+        ...actual,
+        fetchSessionSystemRecordsPage: vi.fn(async () => ({
+          records: [],
+          nextCursor: null,
+          hasNext: false,
+        })),
+      };
+    });
 
     const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
     await writeMemorySettingsToDisk({ v: 1, enabled: true, indexMode: 'deep' });
@@ -292,7 +306,7 @@ describe('memoryWorker', () => {
     const { startMemoryWorker } = await import('./memoryWorker');
     const { searchTier2Memory } = await import('./searchMemory');
 
-    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    const credentials: StoredCredentials = { token: 't', encryption: null };
     const worker = await startMemoryWorker({
       credentials,
       machineId: 'machine_1',
@@ -390,7 +404,7 @@ describe('memoryWorker', () => {
     });
 
     await worker.reloadSettings();
-    await worker.ensureUpToDate('sess-maintenance');
+    await expect(worker.ensureUpToDate('sess-maintenance')).rejects.toBe(maintenanceError);
 
     expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalled();
     expect(runMemoryHintsExecutionRun).not.toHaveBeenCalled();

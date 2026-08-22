@@ -72,12 +72,20 @@ describe.sequential('daemon control client PID safety', () => {
         'utf-8',
       );
 
-      await stopDaemon();
+      await expect(stopDaemon()).rejects.toMatchObject({
+        code: 'daemon_stop_incomplete',
+        reason: 'process_identity_unverified',
+        pid: child.pid,
+      });
 
       // Process should still be alive (PID reuse safety).
       expect(() => process.kill(child.pid!, 0)).not.toThrow();
-      // Stale daemon state should be removed so future control commands can recover.
-      expect(existsSync(configuration.daemonStateFile)).toBe(false);
+      // An external client must not delete a publication it cannot prove it owns.
+      expect(existsSync(configuration.daemonStateFile)).toBe(true);
+      expect(JSON.parse(readFileSync(configuration.daemonStateFile, 'utf8'))).toMatchObject({
+        pid: child.pid,
+        controlToken: 'token-123',
+      });
     } finally {
       removeTempDirSync(homeDir);
     }

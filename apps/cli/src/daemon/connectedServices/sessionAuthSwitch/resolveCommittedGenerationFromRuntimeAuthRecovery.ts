@@ -47,6 +47,7 @@ export function resolveCommittedGenerationFromRuntimeAuthRecovery(input: Readonl
   serviceId: ConnectedServiceId;
   groupId: string;
   recovery: unknown;
+  provenance?: ConnectedServiceAuthGroupCommittedGenerationFact['provenance'];
 }>): ResolvedRuntimeAuthRecoveryCommittedGeneration | null {
   const recovery = asRecord(input.recovery);
   if (recovery?.status !== 'switch_attempted') return null;
@@ -80,7 +81,7 @@ export function resolveCommittedGenerationFromRuntimeAuthRecovery(input: Readonl
   return Object.freeze({
     committedGeneration: buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: buildConnectedServiceAuthGroupTargetEpochIdentity(decisionCommittedTarget),
-      provenance: 'hard_limit',
+      provenance: input.provenance ?? 'hard_limit',
       decisionCommittedTarget,
     }),
     sourceRequiresConvergence: status === 'superseded_after_apply' || !hasExactMatchingAdoptionProof,

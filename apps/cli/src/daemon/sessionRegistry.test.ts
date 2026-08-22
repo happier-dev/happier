@@ -2,6 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { DeviceLocalSecretStorage } from './deviceLocalSecretStorage';
+
+const testDeviceLocalSecretStorage: DeviceLocalSecretStorage = {
+  sealJson: ({ value }) => `test.${Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')}`,
+  openJson: ({ ciphertext }) => JSON.parse(Buffer.from(ciphertext.slice('test.'.length), 'base64url').toString('utf8')) as unknown,
+  deriveOpaqueIdentity: ({ value }) =>
+    Buffer.from(value, 'utf8').toString('hex').padEnd(64, '0').slice(0, 64),
+  deriveSecretKey: () => new Uint8Array(32).fill(7),
+};
 
 function createDeferred<T = void>(): {
   promise: Promise<T>;
@@ -107,6 +116,421 @@ describe('sessionRegistry', () => {
     expect(markers2[0].happySessionId).toBe('sess-2');
   }, 60_000);
 
+  it('persists only the stable runner daemon-service authority path', async () => {
+    const {
+      listSessionMarkers,
+      writeSessionMarker,
+    } = await import('./sessionRegistry');
+    const authorityPath =
+      join(happyHomeDir, 'tmp', 'agent-authorities', 'session.json');
+
+    await writeSessionMarker({
+      pid: 12347,
+      happySessionId: 'session-authority-path',
+      startedBy: 'daemon',
+      cwd: '/tmp/project',
+      agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
+    });
+
+    const [marker] = await listSessionMarkers();
+    expect(marker).toMatchObject({
+      happySessionId: 'session-authority-path',
+      agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
+    });
+    expect(JSON.stringify(marker)).not.toContain('capability');
+    expect(JSON.stringify(marker)).not.toContain('controlToken');
+  });
+
+  it('clears only the exact stale daemon-service promotion marker and custody facts', async () => {
+    const {
+      clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned,
+      listSessionMarkers,
+      writeSessionMarker,
+    } = await import('./sessionRegistry');
+    const processCommandHash = 'f'.repeat(64);
+    const processStartTimeMs = 1_717_171_717_700;
+    const authorityFilePath = join(
+      happyHomeDir,
+      'tmp',
+      'agent-authorities',
+      'stale-promotion.json',
+    );
+    const retention = {
+      v: 1 as const,
+      sourceGenerationIds: ['registry:dependency'],
+      qualifiedDependencyIds: ['acme.plugin/dependency'],
+    };
+    await writeSessionMarker({
+      pid: 12348,
+      happySessionId: 'session-stale-promotion',
+      startedBy: 'daemon',
+      cwd: '/tmp/project',
+      processCommandHash,
+      processStartTimeMs,
+      agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath,
+      agentRuntimeDaemonServiceSessionOpenAttestation: {
+        request: {
+          kind: 'create',
+          sessionId: 'session-stale-promotion',
+          cwd: '/tmp/project',
+        },
+        providerSessionId: 'provider-session-1',
+      },
+      runnerAgentImmutableGenerationId: 'registry:agent',
+      runnerManagedDependencyRetentionV1: retention,
+    });
+
+    await expect(
+      clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned({
+        pid: 12348,
+        sessionId: 'session-stale-promotion',
+        processCommandHash,
+        processStartTimeMs,
+        authorityFilePath,
+        immutableGenerationId: 'registry:agent',
+        retention,
+      }),
+    ).resolves.toBe(true);
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({
+        pid: 12348,
+        happySessionId: 'session-stale-promotion',
+        cwd: '/tmp/project',
+      }),
+    ]);
+    const [cleared] = await listSessionMarkers();
+    expect(cleared).not.toHaveProperty(
+      'agentRuntimeDaemonServiceAuthorityFilePath',
+    );
+    expect(cleared).not.toHaveProperty(
+      'agentRuntimeDaemonServiceSessionOpenAttestation',
+    );
+    expect(cleared).not.toHaveProperty(
+      'runnerAgentImmutableGenerationId',
+    );
+    expect(cleared).not.toHaveProperty(
+      'runnerManagedDependencyRetentionV1',
+    );
+
+    await writeSessionMarker({
+      pid: 12348,
+      happySessionId: 'session-stale-promotion',
+      startedBy: 'daemon',
+      cwd: '/tmp/project',
+      processCommandHash,
+      processStartTimeMs,
+      agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath,
+      runnerAgentImmutableGenerationId: 'registry:agent',
+      runnerManagedDependencyRetentionV1: retention,
+    });
+    await expect(
+      clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned({
+        pid: 12348,
+        sessionId: 'session-stale-promotion',
+        processCommandHash,
+        processStartTimeMs,
+        authorityFilePath,
+      }),
+    ).resolves.toBe(true);
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({
+        runnerAgentImmutableGenerationId: 'registry:agent',
+        runnerManagedDependencyRetentionV1: retention,
+      }),
+    ]);
+    expect((await listSessionMarkers())[0]).not.toHaveProperty(
+      'agentRuntimeDaemonServiceAuthorityFilePath',
+    );
+
+    await writeSessionMarker({
+      pid: 12348,
+      happySessionId: 'session-stale-promotion',
+      startedBy: 'daemon',
+      cwd: '/tmp/project',
+      processCommandHash,
+      processStartTimeMs,
+      agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath,
+      runnerAgentImmutableGenerationId: 'registry:agent',
+      runnerManagedDependencyRetentionV1: retention,
+    });
+    await expect(
+      clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned({
+        pid: 12348,
+        sessionId: 'session-stale-promotion',
+        processCommandHash,
+        processStartTimeMs,
+        authorityFilePath,
+        immutableGenerationId: 'registry:agent',
+        retention: {
+          ...retention,
+          sourceGenerationIds: ['registry:other-dependency'],
+        },
+      }),
+    ).resolves.toBe(false);
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({
+        agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath,
+        runnerAgentImmutableGenerationId: 'registry:agent',
+        runnerManagedDependencyRetentionV1: retention,
+      }),
+    ]);
+  });
+
+  it('merges non-secret managed-dependency retention under exact live runner marker ownership', async () => {
+    const {
+      listSessionMarkers,
+      updateSessionMarkerRunnerManagedDependencyRetention,
+      writeSessionMarker,
+    } = await import('./sessionRegistry');
+    const processCommandHash = 'c'.repeat(64);
+    const processStartTimeMs = 1_717_171_717_321;
+    await writeSessionMarker({
+      pid: 12349,
+      happySessionId: 'session-managed-dependency-retention',
+      startedBy: 'daemon',
+      processCommandHash,
+      processStartTimeMs,
+      runnerManagedDependencyRetentionV1: {
+        v: 1,
+        sourceGenerationIds: ['registry:g'],
+        qualifiedDependencyIds: ['acme.plugin/tool-g'],
+      },
+    });
+
+    await expect(
+      updateSessionMarkerRunnerManagedDependencyRetention({
+        pid: 12349,
+        sessionId: 'session-managed-dependency-retention',
+        processCommandHash,
+        processStartTimeMs,
+        retention: {
+          v: 1,
+          sourceGenerationIds: ['registry:h'],
+          qualifiedDependencyIds: ['acme.plugin/tool-h'],
+          adoptedManagedProviderAuthority: {
+            pluginId: 'acme.plugin',
+            immutableGenerationId: 'provider-generation-stale',
+            manifestAuthority: 'external',
+            hardRevocationRevisionAtAdmission: 0,
+          },
+        },
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      updateSessionMarkerRunnerManagedDependencyRetention({
+        pid: 12349,
+        sessionId: 'session-managed-dependency-retention',
+        processCommandHash,
+        processStartTimeMs: processStartTimeMs + 1,
+        retention: {
+          v: 1,
+          sourceGenerationIds: ['registry:must-not-write'],
+          qualifiedDependencyIds: ['acme.plugin/must-not-write'],
+        },
+      }),
+    ).resolves.toBe(false);
+
+    const [marker] = await listSessionMarkers();
+    expect(marker).toMatchObject({
+      runnerManagedDependencyRetentionV1: {
+        v: 1,
+        sourceGenerationIds: ['registry:g', 'registry:h'],
+        qualifiedDependencyIds: [
+          'acme.plugin/tool-g',
+          'acme.plugin/tool-h',
+        ],
+      },
+    });
+    expect(JSON.stringify(marker)).not.toContain('capability');
+    expect(JSON.stringify(marker)).not.toContain('token');
+    expect(marker?.runnerManagedDependencyRetentionV1
+      ?.adoptedManagedProviderAuthority).toBeUndefined();
+  });
+
+  it('pins and exactly releases the adopted Provider authority under the exact runner process identity', async () => {
+    const {
+      listSessionMarkers,
+      updateSessionMarkerRunnerManagedProviderAuthority,
+      writeSessionMarker,
+    } = await import('./sessionRegistry');
+    const processCommandHash = 'e'.repeat(64);
+    const processStartTimeMs = 1_717_171_717_500;
+    const identity = {
+      pid: 12351,
+      sessionId: 'session-managed-provider-retention',
+      processCommandHash,
+      processStartTimeMs,
+    } as const;
+    const providerP = {
+      pluginId: 'acme.provider.p',
+      immutableGenerationId: 'registry:provider-p',
+      manifestAuthority: 'bundled_first_party',
+      hardRevocationRevisionAtAdmission: 7,
+    } as const;
+    const providerQ = {
+      pluginId: 'acme.provider.q',
+      immutableGenerationId: 'registry:provider-q',
+      manifestAuthority: 'external',
+      hardRevocationRevisionAtAdmission: 11,
+    } as const;
+    const providerPWrongSourceClass = {
+      ...providerP,
+      manifestAuthority: 'external',
+    } as const;
+    await writeSessionMarker({
+      pid: identity.pid,
+      happySessionId: identity.sessionId,
+      startedBy: 'daemon',
+      processCommandHash,
+      processStartTimeMs,
+      runnerManagedDependencyRetentionV1: {
+        v: 1,
+        sourceGenerationIds: ['registry:dependency'],
+        qualifiedDependencyIds: ['acme.plugin/dependency'],
+      },
+    });
+
+    await expect(
+      updateSessionMarkerRunnerManagedProviderAuthority({
+        ...identity,
+        authority: providerP,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      updateSessionMarkerRunnerManagedProviderAuthority({
+        ...identity,
+        authority: providerQ,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      updateSessionMarkerRunnerManagedProviderAuthority({
+        ...identity,
+        authority: null,
+        expectedAuthority: providerPWrongSourceClass,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      updateSessionMarkerRunnerManagedProviderAuthority({
+        ...identity,
+        authority: null,
+        expectedAuthority: providerQ,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      updateSessionMarkerRunnerManagedProviderAuthority({
+        ...identity,
+        processStartTimeMs: processStartTimeMs + 1,
+        authority: null,
+        expectedAuthority: providerP,
+      }),
+    ).resolves.toBe(false);
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({
+        runnerManagedDependencyRetentionV1: {
+          v: 1,
+          adoptedManagedProviderAuthority: providerP,
+          sourceGenerationIds: ['registry:dependency'],
+          qualifiedDependencyIds: ['acme.plugin/dependency'],
+        },
+      }),
+    ]);
+
+    await expect(
+      updateSessionMarkerRunnerManagedProviderAuthority({
+        ...identity,
+        authority: null,
+        expectedAuthority: providerP,
+      }),
+    ).resolves.toBe(true);
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({
+        runnerManagedDependencyRetentionV1: {
+          v: 1,
+          sourceGenerationIds: ['registry:dependency'],
+          qualifiedDependencyIds: ['acme.plugin/dependency'],
+        },
+      }),
+    ]);
+    expect(
+      (await listSessionMarkers())[0]
+        ?.runnerManagedDependencyRetentionV1,
+    ).not.toHaveProperty(
+      'adoptedManagedProviderAuthority',
+    );
+  });
+
+  it('pins one exact non-authorizing Runner Agent generation for each process identity', async () => {
+    const {
+      listSessionMarkers,
+      updateSessionMarkerRunnerAgentImmutableGenerationId,
+      writeSessionMarker,
+    } = await import('./sessionRegistry');
+    const processCommandHash = 'd'.repeat(64);
+    const processStartTimeMs = 1_717_171_717_654;
+    await writeSessionMarker({
+      pid: 12350,
+      happySessionId: 'session-runner-agent-generation',
+      startedBy: 'daemon',
+      processCommandHash,
+      processStartTimeMs,
+    });
+
+    await expect(
+      updateSessionMarkerRunnerAgentImmutableGenerationId({
+        pid: 12350,
+        sessionId: 'session-runner-agent-generation',
+        processCommandHash,
+        processStartTimeMs,
+        immutableGenerationId: 'registry:g',
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      updateSessionMarkerRunnerAgentImmutableGenerationId({
+        pid: 12350,
+        sessionId: 'session-runner-agent-generation',
+        processCommandHash,
+        processStartTimeMs,
+        immutableGenerationId: 'registry:g',
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      updateSessionMarkerRunnerAgentImmutableGenerationId({
+        pid: 12350,
+        sessionId: 'session-runner-agent-generation',
+        processCommandHash,
+        processStartTimeMs,
+        immutableGenerationId: 'registry:h',
+      }),
+    ).resolves.toBe(false);
+
+    await writeSessionMarker({
+      pid: 12350,
+      happySessionId: 'session-runner-agent-generation',
+      startedBy: 'daemon',
+      processCommandHash,
+      processStartTimeMs,
+    });
+    await writeSessionMarker({
+      pid: 12351,
+      happySessionId: 'session-runner-agent-generation-h',
+      startedBy: 'daemon',
+      processCommandHash: 'e'.repeat(64),
+      processStartTimeMs: processStartTimeMs + 1,
+      runnerAgentImmutableGenerationId: 'registry:h',
+    });
+
+    expect(await listSessionMarkers()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        pid: 12350,
+        runnerAgentImmutableGenerationId: 'registry:g',
+      }),
+      expect.objectContaining({
+        pid: 12351,
+        runnerAgentImmutableGenerationId: 'registry:h',
+      }),
+    ]));
+  });
+
   it('rewrites only the expected respawn ciphertext under exact marker ownership', async () => {
     const {
       listSessionMarkers,
@@ -197,6 +621,8 @@ describe('sessionRegistry', () => {
     const trackedSession: import('./types').TrackedSession = {
       startedBy: 'daemon',
       pid: 12346,
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        '/tmp/private/runner-daemon-authority.json',
       spawnOptions: {
         directory: '/tmp/project',
         backendTarget: {
@@ -205,33 +631,21 @@ describe('sessionRegistry', () => {
           sourceKind: 'built_in',
         },
         spawnNonce: 'nonce-before-session-attach',
+        environmentVariables: {
+          OPENAI_API_KEY: 'sk-device-local-marker',
+        },
         agentSessionStartupInstructionsV1: startupInstructions,
       },
     };
 
     await persistAcceptedSpawnMarker({
+      deviceLocalSecretStorage: testDeviceLocalSecretStorage,
       readProcessIdentityByPidFn: async () => ({
         pid: 12346,
         processStartTimeMs: 1_717_171_717_000,
         command: 'happier codex --started-by daemon',
       }),
       trackedSession,
-      managedLocalServiceRunAttachment: {
-        v: 1,
-        process: {
-          pid: 701,
-          processStartTimeMs: 1_717_171_717_701,
-          processCommandHash: 'a'.repeat(64),
-        },
-        endpoint: {
-          host: '127.0.0.1',
-          port: 45_701,
-        },
-        materialization: {
-          rootDir: '/tmp/happier-managed-provider',
-          materializationId: 'materialization-managed-provider',
-        },
-      },
     });
 
     await expect(listSessionMarkers()).resolves.toEqual([
@@ -244,24 +658,13 @@ describe('sessionRegistry', () => {
         processStartTimeMs: 1_717_171_717_000,
         respawn: expect.objectContaining({
           spawnNonce: 'nonce-before-session-attach',
+          sealedEnvironmentVariables: expect.objectContaining({
+            format: 'device_local_v1',
+          }),
         }),
         agentSessionStartupInstructionsMarkerV1: startupInstructionsMarker,
-        managedLocalServiceRunAttachment: {
-          v: 1,
-          process: {
-            pid: 701,
-            processStartTimeMs: 1_717_171_717_701,
-            processCommandHash: 'a'.repeat(64),
-          },
-          endpoint: {
-            host: '127.0.0.1',
-            port: 45_701,
-          },
-          materialization: {
-            rootDir: '/tmp/happier-managed-provider',
-            materializationId: 'materialization-managed-provider',
-          },
-        },
+        agentRuntimeDaemonServiceAuthorityFilePath:
+          '/tmp/private/runner-daemon-authority.json',
       }),
     ]);
     expect(trackedSession.agentSessionStartupInstructionsMarkerV1)
@@ -279,46 +682,7 @@ describe('sessionRegistry', () => {
     expect(serializedMarker).not.toContain('"instructions"');
   });
 
-  it('refuses managed wrapper custody when the accepted Agent process identity is incomplete', async () => {
-    const { persistAcceptedSpawnMarker } = await import('./spawn/persistAcceptedSpawnMarker');
-    const { listSessionMarkers } = await import('./sessionRegistry');
-
-    await expect(persistAcceptedSpawnMarker({
-      readProcessIdentityByPidFn: async () => ({
-        pid: 12347,
-        command: 'happier codex --started-by daemon',
-      }),
-      trackedSession: {
-        startedBy: 'daemon',
-        pid: 12347,
-        spawnOptions: {
-          directory: '/tmp/project',
-          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-          spawnNonce: 'nonce-incomplete-agent-identity',
-        },
-      },
-      managedLocalServiceRunAttachment: {
-        v: 1,
-        process: {
-          pid: 702,
-          processStartTimeMs: 1_717_171_717_702,
-          processCommandHash: 'b'.repeat(64),
-        },
-        endpoint: {
-          host: '127.0.0.1',
-          port: 45_702,
-        },
-        materialization: {
-          rootDir: '/tmp/happier-managed-provider-incomplete-agent',
-          materializationId: 'materialization-managed-provider-incomplete-agent',
-        },
-      },
-    })).rejects.toThrow('Managed local-service custody requires exact Agent process identity');
-
-    await expect(listSessionMarkers()).resolves.toEqual([]);
-  });
-
-  it('persists and clears only the exact active turn for the matching session marker', async () => {
+  it('persists and clears only the exact active turn and causal input custody for the matching session marker', async () => {
     const {
       listSessionMarkers,
       updateSessionMarkerActiveTurn,
@@ -330,14 +694,29 @@ describe('sessionRegistry', () => {
       startedBy: 'daemon',
       cwd: '/tmp',
     });
+    const admission = {
+      turnId: 'session-turn:exact-1',
+      inputId: 'input:exact-1',
+      userMessageSeq: 7,
+      userMessageSeqs: [7],
+    } as const;
 
     await expect(updateSessionMarkerActiveTurn({
       pid: 12347,
       sessionId: 'sess-active-turn',
       activeTurnId: 'session-turn:exact-1',
+      agentRuntimeDaemonServiceActiveAdmission: admission,
     })).resolves.toBe(true);
     await expect(listSessionMarkers()).resolves.toEqual([
-      expect.objectContaining({ activeTurnId: 'session-turn:exact-1' }),
+      expect.objectContaining({
+        activeTurnId: 'session-turn:exact-1',
+        agentRuntimeDaemonServiceActiveAdmission: {
+          turnId: 'session-turn:exact-1',
+          inputId: 'input:exact-1',
+          userMessageSeq: 7,
+          userMessageSeqs: [7],
+        },
+      }),
     ]);
 
     await expect(updateSessionMarkerActiveTurn({
@@ -353,9 +732,30 @@ describe('sessionRegistry', () => {
       pid: 12347,
       sessionId: 'sess-active-turn',
       activeTurnId: null,
+      expectedAgentRuntimeDaemonServiceActiveAdmission: {
+        ...admission,
+        inputId: 'input:newer',
+      },
+    })).resolves.toBe(false);
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({
+        activeTurnId: 'session-turn:exact-1',
+        agentRuntimeDaemonServiceActiveAdmission: admission,
+      }),
+    ]);
+
+    await expect(updateSessionMarkerActiveTurn({
+      pid: 12347,
+      sessionId: 'sess-active-turn',
+      activeTurnId: null,
+      expectedAgentRuntimeDaemonServiceActiveAdmission:
+        admission,
     })).resolves.toBe(true);
     const [cleared] = await listSessionMarkers();
     expect(cleared).not.toHaveProperty('activeTurnId');
+    expect(cleared).not.toHaveProperty(
+      'agentRuntimeDaemonServiceActiveAdmission',
+    );
   });
 
   it('preserves active-turn custody across routine writes for the same session only', async () => {
@@ -366,6 +766,12 @@ describe('sessionRegistry', () => {
       startedBy: 'daemon',
       cwd: '/tmp',
       activeTurnId: 'session-turn:exact-2',
+      agentRuntimeDaemonServiceActiveAdmission: {
+        turnId: 'session-turn:exact-2',
+        inputId: 'input:exact-2',
+        userMessageSeq: null,
+        userMessageSeqs: [],
+      },
     });
 
     await writeSessionMarker({
@@ -378,6 +784,12 @@ describe('sessionRegistry', () => {
       expect.objectContaining({
         cwd: '/tmp/refreshed',
         activeTurnId: 'session-turn:exact-2',
+        agentRuntimeDaemonServiceActiveAdmission:
+          expect.objectContaining({
+            inputId: 'input:exact-2',
+            userMessageSeq: null,
+            userMessageSeqs: [],
+          }),
       }),
     ]);
 
@@ -389,6 +801,99 @@ describe('sessionRegistry', () => {
     });
     const [replacement] = await listSessionMarkers();
     expect(replacement).not.toHaveProperty('activeTurnId');
+    expect(replacement).not.toHaveProperty(
+      'agentRuntimeDaemonServiceActiveAdmission',
+    );
+  });
+
+  it('preserves daemon respawn recovery across routine writes for the same process identity only', async () => {
+    const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
+    const respawn = {
+      version: 1 as const,
+      directory: '/tmp/session-respawn-preserve',
+      backendTarget: {
+        kind: 'builtInAgent' as const,
+        agentId: 'codex' as const,
+      },
+      spawnNonce: 'nonce-session-respawn-preserve',
+      connectedServices: {
+        version: 1 as const,
+        bindingsByServiceId: {},
+      },
+      connectedServiceMaterializationIdentityV1: {
+        v: 1 as const,
+        id: 'csm_session_respawn_preserve',
+        createdAt: 1_000,
+      },
+    };
+    await writeSessionMarker({
+      pid: 12350,
+      happySessionId: 'sess-respawn-preserve',
+      startedBy: 'daemon',
+      cwd: '/tmp/session-respawn-preserve',
+      processCommandHash: 'e'.repeat(64),
+      processStartTimeMs: 2_000,
+      respawn,
+    });
+
+    await writeSessionMarker({
+      pid: 12350,
+      happySessionId: 'sess-respawn-preserve',
+      startedBy: 'daemon',
+      cwd: '/tmp/session-respawn-preserve/refreshed',
+      processCommandHash: 'e'.repeat(64),
+      processStartTimeMs: 2_000,
+    });
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({
+        cwd: '/tmp/session-respawn-preserve/refreshed',
+        respawn: expect.objectContaining({
+          version: 1,
+          directory: '/tmp/session-respawn-preserve',
+          backendTarget: {
+            kind: 'builtInAgent',
+            agentId: 'codex',
+          },
+          spawnNonce: 'nonce-session-respawn-preserve',
+          connectedServices: {
+            version: 1,
+            bindingsByServiceId: {},
+          },
+          connectedServiceMaterializationIdentityV1: {
+            v: 1,
+            id: 'csm_session_respawn_preserve',
+            createdAt: 1_000,
+          },
+        }),
+      }),
+    ]);
+
+    await writeSessionMarker({
+      pid: 12350,
+      happySessionId: 'sess-respawn-preserve',
+      startedBy: 'terminal',
+      cwd: '/tmp/session-respawn-preserve/terminal-owned',
+      processCommandHash: 'e'.repeat(64),
+      processStartTimeMs: 2_000,
+    });
+    const [terminalOwned] = await listSessionMarkers();
+    expect(terminalOwned).toMatchObject({
+      happySessionId: 'sess-respawn-preserve',
+      startedBy: 'terminal',
+      cwd: '/tmp/session-respawn-preserve/terminal-owned',
+    });
+    expect(terminalOwned).not.toHaveProperty('respawn');
+
+    await writeSessionMarker({
+      pid: 12350,
+      happySessionId: 'sess-replacement',
+      startedBy: 'daemon',
+      cwd: '/tmp/session-replacement',
+      processCommandHash: 'f'.repeat(64),
+      processStartTimeMs: 3_000,
+    });
+    const [replacement] = await listSessionMarkers();
+    expect(replacement).not.toHaveProperty('respawn');
   });
 
   it('preserves required startup identity across same-session rewrites and rejects conflicts', async () => {
@@ -514,539 +1019,6 @@ describe('sessionRegistry', () => {
         agentSessionStartupInstructionsMarkerV1: marker,
       }),
     ]);
-  });
-
-  it('preserves a managed local-service run attachment across same-session rewrites only', async () => {
-    const {
-      listSessionMarkers,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 24_680,
-        processStartTimeMs: 1_717_171_717_000,
-        processCommandHash: 'a'.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_680 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime',
-        materializationId: 'materialization-1',
-      },
-    };
-    const ownership = {
-      happySessionId: 'sess-managed-service',
-      processCommandHash: '1'.repeat(64),
-      processStartTimeMs: 1_717_171_700_000,
-    };
-
-    await writeSessionMarker({
-      pid: 12_340,
-      ...ownership,
-      startedBy: 'daemon',
-      cwd: '/tmp/first',
-    });
-    await expect(setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_340,
-      ownership,
-      expectedAttachment: null,
-      attachment,
-    })).resolves.toBe(true);
-
-    await writeSessionMarker({
-      pid: 12_340,
-      ...ownership,
-      startedBy: 'daemon',
-      cwd: '/tmp/refreshed',
-    });
-    await expect(listSessionMarkers()).resolves.toEqual([
-      expect.objectContaining({
-        cwd: '/tmp/refreshed',
-        managedLocalServiceRunAttachment: attachment,
-      }),
-    ]);
-
-    await writeSessionMarker({
-      pid: 12_340,
-      happySessionId: 'sess-replacement',
-      processCommandHash: ownership.processCommandHash,
-      processStartTimeMs: ownership.processStartTimeMs,
-      startedBy: 'daemon',
-      cwd: '/tmp/replacement',
-    });
-    const [replacement] = await listSessionMarkers();
-    expect(replacement).not.toHaveProperty('managedLocalServiceRunAttachment');
-  });
-
-  it('adopts an exact same-process PID placeholder into the canonical session and preserves its managed attachment', async () => {
-    const {
-      listSessionMarkers,
-      writeSessionMarker,
-      writeSessionMarkerWithManagedLocalServiceRunAttachment,
-    } = await import('./sessionRegistry');
-    const pid = 12_341;
-    const processCommandHash = '2'.repeat(64);
-    const processStartTimeMs = 1_717_171_700_001;
-    const spawnNonce = 'nonce-same-pid-canonical-adoption';
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 24_681,
-        processStartTimeMs: 1_717_171_717_001,
-        processCommandHash: 'b'.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_681 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-adoption',
-        materializationId: 'materialization-adoption',
-      },
-    };
-
-    await writeSessionMarkerWithManagedLocalServiceRunAttachment({
-      marker: {
-        pid,
-        happySessionId: `PID-${pid}`,
-        processCommandHash,
-        processStartTimeMs,
-        startedBy: 'daemon',
-        cwd: '/tmp/placeholder',
-        respawn: {
-          version: 1,
-          directory: '/tmp/placeholder',
-          spawnNonce,
-        },
-      },
-      attachment,
-    });
-    await writeSessionMarker({
-      pid,
-      happySessionId: 'session-canonical',
-      processCommandHash,
-      processStartTimeMs,
-      startedBy: 'daemon',
-      cwd: '/tmp/canonical',
-      respawn: {
-        version: 1,
-        directory: '/tmp/canonical',
-        spawnNonce,
-      },
-    }, {
-      adoptCanonicalSessionIdFromPidPlaceholder: true,
-    });
-
-    await expect(listSessionMarkers()).resolves.toEqual([
-      expect.objectContaining({
-        pid,
-        happySessionId: 'session-canonical',
-        cwd: '/tmp/canonical',
-        managedLocalServiceRunAttachment: attachment,
-      }),
-    ]);
-    await expect(writeSessionMarker({
-      pid,
-      happySessionId: 'session-conflict',
-      processCommandHash: '3'.repeat(64),
-      processStartTimeMs,
-      startedBy: 'daemon',
-      cwd: '/tmp/conflict',
-      respawn: {
-        version: 1,
-        directory: '/tmp/conflict',
-        spawnNonce,
-      },
-    }, {
-      adoptCanonicalSessionIdFromPidPlaceholder: true,
-    })).rejects.toThrow(
-      'session_marker_canonical_adoption_ownership_mismatch',
-    );
-    await expect(listSessionMarkers()).resolves.toEqual([
-      expect.objectContaining({
-        pid,
-        happySessionId: 'session-canonical',
-        cwd: '/tmp/canonical',
-        managedLocalServiceRunAttachment: attachment,
-      }),
-    ]);
-  });
-
-  it('rejects same-process canonical adoption from a foreign spawn nonce without losing managed custody', async () => {
-    const {
-      listSessionMarkers,
-      writeSessionMarker,
-      writeSessionMarkerWithManagedLocalServiceRunAttachment,
-    } = await import('./sessionRegistry');
-    const pid = 12_342;
-    const processCommandHash = '4'.repeat(64);
-    const processStartTimeMs = 1_717_171_700_002;
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 24_682,
-        processStartTimeMs: 1_717_171_717_002,
-        processCommandHash: 'c'.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_682 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-foreign-adoption',
-        materializationId: 'materialization-foreign-adoption',
-      },
-    };
-    await writeSessionMarkerWithManagedLocalServiceRunAttachment({
-      marker: {
-        pid,
-        happySessionId: `PID-${pid}`,
-        processCommandHash,
-        processStartTimeMs,
-        startedBy: 'daemon',
-        cwd: '/tmp/placeholder',
-        respawn: {
-          version: 1,
-          directory: '/tmp/placeholder',
-          spawnNonce: 'nonce-accepted-spawn',
-        },
-      },
-      attachment,
-    });
-
-    await expect(writeSessionMarker({
-      pid,
-      happySessionId: 'session-foreign-spawn',
-      processCommandHash,
-      processStartTimeMs,
-      startedBy: 'daemon',
-      cwd: '/tmp/foreign',
-      respawn: {
-        version: 1,
-        directory: '/tmp/foreign',
-        spawnNonce: 'nonce-foreign-spawn',
-      },
-    }, {
-      adoptCanonicalSessionIdFromPidPlaceholder: true,
-    })).rejects.toThrow(
-      'session_marker_canonical_adoption_ownership_mismatch',
-    );
-
-    await expect(listSessionMarkers()).resolves.toEqual([
-      expect.objectContaining({
-        pid,
-        happySessionId: `PID-${pid}`,
-        cwd: '/tmp/placeholder',
-        respawn: expect.objectContaining({
-          spawnNonce: 'nonce-accepted-spawn',
-        }),
-        managedLocalServiceRunAttachment: attachment,
-      }),
-    ]);
-  });
-
-  it('does not preserve or mutate an attachment after same-session PID reuse', async () => {
-    const {
-      clearSessionMarkerManagedLocalServiceRunAttachment,
-      listSessionMarkers,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const attachment = (suffix: string, pid: number) => ({
-      v: 1 as const,
-      process: {
-        pid,
-        processStartTimeMs: 1_717_171_717_010,
-        processCommandHash: suffix.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_690 },
-      materialization: {
-        rootDir: `/tmp/happier-provider-runtime-reuse-${suffix}`,
-        materializationId: `materialization-reuse-${suffix}`,
-      },
-    });
-    const staleAttachment = attachment('8', 24_690);
-    const currentAttachment = attachment('9', 24_691);
-    const staleOwnership = {
-      happySessionId: 'sess-managed-service-reused',
-      processCommandHash: 'a'.repeat(64),
-      processStartTimeMs: 1_717_171_700_010,
-    };
-    const currentOwnership = {
-      ...staleOwnership,
-      processCommandHash: 'b'.repeat(64),
-      processStartTimeMs: 1_717_171_700_011,
-    };
-    await writeSessionMarker({
-      pid: 12_349,
-      ...staleOwnership,
-      startedBy: 'daemon',
-      cwd: '/tmp/stale-owner',
-    });
-    await setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_349,
-      ownership: staleOwnership,
-      expectedAttachment: null,
-      attachment: staleAttachment,
-    });
-
-    await writeSessionMarker({
-      pid: 12_349,
-      ...currentOwnership,
-      startedBy: 'daemon',
-      cwd: '/tmp/current-owner',
-    });
-    let [current] = await listSessionMarkers();
-    expect(current).not.toHaveProperty('managedLocalServiceRunAttachment');
-    await expect(setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_349,
-      ownership: staleOwnership,
-      expectedAttachment: null,
-      attachment: staleAttachment,
-    })).resolves.toBe(false);
-    await expect(setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_349,
-      ownership: currentOwnership,
-      expectedAttachment: null,
-      attachment: currentAttachment,
-    })).resolves.toBe(true);
-    await expect(clearSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_349,
-      ownership: staleOwnership,
-      attachment: currentAttachment,
-    })).resolves.toBe('mismatch');
-    [current] = await listSessionMarkers();
-    expect(current.managedLocalServiceRunAttachment).toEqual(currentAttachment);
-  });
-
-  it('sets and clears only the exact managed local-service attachment owned by the session', async () => {
-    const {
-      clearSessionMarkerManagedLocalServiceRunAttachment,
-      listSessionMarkers,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const first = {
-      v: 1 as const,
-      process: {
-        pid: 24_681,
-        processStartTimeMs: 1_717_171_717_001,
-        processCommandHash: 'b'.repeat(64),
-      },
-      endpoint: { host: '::1' as const, port: 40_681 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-first',
-        materializationId: 'materialization-first',
-      },
-    };
-    const replacement = {
-      ...first,
-      process: {
-        ...first.process,
-        pid: 24_682,
-        processCommandHash: 'c'.repeat(64),
-      },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-replacement',
-        materializationId: 'materialization-replacement',
-      },
-    };
-    const ownership = {
-      happySessionId: 'sess-managed-service-cas',
-      processCommandHash: '2'.repeat(64),
-      processStartTimeMs: 1_717_171_700_001,
-    };
-
-    await writeSessionMarker({
-      pid: 12_341,
-      ...ownership,
-      startedBy: 'daemon',
-      cwd: '/tmp',
-    });
-    await expect(setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_341,
-      ownership: { ...ownership, happySessionId: 'other-session' },
-      expectedAttachment: null,
-      attachment: first,
-    })).resolves.toBe(false);
-    await expect(setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_341,
-      ownership,
-      expectedAttachment: null,
-      attachment: first,
-    })).resolves.toBe(true);
-    await expect(setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_341,
-      ownership,
-      expectedAttachment: null,
-      attachment: replacement,
-    })).resolves.toBe(false);
-    await expect(setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_341,
-      ownership,
-      expectedAttachment: first,
-      attachment: replacement,
-    })).resolves.toBe(true);
-
-    await expect(clearSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_341,
-      ownership,
-      attachment: first,
-    })).resolves.toBe('mismatch');
-    await expect(clearSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_341,
-      ownership,
-      attachment: replacement,
-    })).resolves.toBe('cleared');
-    await expect(clearSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_341,
-      ownership,
-      attachment: replacement,
-    })).resolves.toBe('already_absent');
-    const [cleared] = await listSessionMarkers();
-    expect(cleared).not.toHaveProperty('managedLocalServiceRunAttachment');
-  });
-
-  it('does not let a stale full-marker rewrite resurrect a cleared managed local-service attachment', async () => {
-    const {
-      clearSessionMarkerManagedLocalServiceRunAttachment,
-      listSessionMarkers,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 24_687,
-        processStartTimeMs: 1_717_171_717_005,
-        processCommandHash: 'b'.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_687 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-stale',
-        materializationId: 'materialization-stale',
-      },
-    };
-    const ownership = {
-      happySessionId: 'sess-managed-service-stale',
-      processCommandHash: '3'.repeat(64),
-      processStartTimeMs: 1_717_171_700_002,
-    };
-    await writeSessionMarker({
-      pid: 12_347,
-      ...ownership,
-      startedBy: 'daemon',
-      cwd: '/tmp/first',
-    });
-    await setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_347,
-      ownership,
-      expectedAttachment: null,
-      attachment,
-    });
-    const stale = (await listSessionMarkers())[0];
-    await expect(clearSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_347,
-      ownership,
-      attachment,
-    })).resolves.toBe('cleared');
-
-    await writeSessionMarker({
-      ...stale,
-      cwd: '/tmp/stale-rewrite',
-    });
-
-    const [afterStaleRewrite] = await listSessionMarkers();
-    expect(afterStaleRewrite.cwd).toBe('/tmp/stale-rewrite');
-    expect(afterStaleRewrite).not.toHaveProperty('managedLocalServiceRunAttachment');
-  });
-
-  it('keeps the current CAS winner when a stale attachment clear races replacement', async () => {
-    const {
-      clearSessionMarkerManagedLocalServiceRunAttachment,
-      listSessionMarkers,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const attachment = (suffix: string, pid: number) => ({
-      v: 1 as const,
-      process: {
-        pid,
-        processStartTimeMs: 1_717_171_717_006,
-        processCommandHash: suffix.repeat(64),
-      },
-      endpoint: { host: '::1' as const, port: 40_688 },
-      materialization: {
-        rootDir: `/tmp/happier-provider-runtime-race-${suffix}`,
-        materializationId: `materialization-race-${suffix}`,
-      },
-    });
-    const first = attachment('c', 24_688);
-    const replacement = attachment('d', 24_689);
-    const ownership = {
-      happySessionId: 'sess-managed-service-race',
-      processCommandHash: '4'.repeat(64),
-      processStartTimeMs: 1_717_171_700_003,
-    };
-    await writeSessionMarker({
-      pid: 12_348,
-      ...ownership,
-      startedBy: 'daemon',
-      cwd: '/tmp',
-    });
-    await setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_348,
-      ownership,
-      expectedAttachment: null,
-      attachment: first,
-    });
-
-    const [replaceResult, staleClearResult] = await Promise.all([
-      setSessionMarkerManagedLocalServiceRunAttachment({
-        pid: 12_348,
-        ownership,
-        expectedAttachment: first,
-        attachment: replacement,
-      }),
-      clearSessionMarkerManagedLocalServiceRunAttachment({
-        pid: 12_348,
-        ownership,
-        attachment: first,
-      }),
-    ]);
-
-    expect(replaceResult).toBe(true);
-    expect(staleClearResult).toBe('mismatch');
-    await expect(listSessionMarkers()).resolves.toEqual([
-      expect.objectContaining({
-        managedLocalServiceRunAttachment: replacement,
-      }),
-    ]);
-  });
-
-  it('rejects malformed or secret-bearing managed local-service attachments', async () => {
-    const { configuration } = await import('@/configuration');
-    const { listSessionMarkers } = await import('./sessionRegistry');
-    const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-sessions');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'pid-12342.json'), JSON.stringify({
-      pid: 12_342,
-      happySessionId: 'sess-malformed-attachment',
-      happyHomeDir: configuration.happyHomeDir,
-      createdAt: 1,
-      updatedAt: 1,
-      managedLocalServiceRunAttachment: {
-        v: 1,
-        process: {
-          pid: 24_683,
-          processStartTimeMs: 1_717_171_717_002,
-          processCommandHash: 'd'.repeat(64),
-        },
-        endpoint: { host: '127.0.0.1', port: 40_683 },
-        materialization: {
-          rootDir: '/tmp/happier-provider-runtime-malformed',
-          materializationId: 'materialization-malformed',
-        },
-        capability: 'must-never-be-persisted',
-      },
-    }), 'utf-8');
-
-    await expect(listSessionMarkers()).resolves.toEqual([]);
   });
 
   it('should ignore markers with wrong happyHomeDir and tolerate invalid JSON', async () => {
@@ -1753,433 +1725,6 @@ describe('sessionRegistry', () => {
     expect(runnerMarker).not.toHaveProperty('connectedServiceRestartIntent');
   });
 
-  it('transfers the source managed local-service attachment during exact PID promotion', async () => {
-    const {
-      hashProcessCommand,
-      listSessionMarkers,
-      promoteSessionMarkerPid,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 24_684,
-        processStartTimeMs: 1_717_171_717_003,
-        processCommandHash: 'e'.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_684 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-promotion',
-        materializationId: 'materialization-promotion',
-      },
-    };
-    const respawn = {
-      version: 1 as const,
-      directory: '/wrapper',
-      spawnNonce: 'nonce-managed-service-promotion',
-    };
-    const sourceOwnership = {
-      happySessionId: 'PID-12343',
-      processCommandHash: '5'.repeat(64),
-      processStartTimeMs: 1_717_171_700_004,
-    };
-    const targetCommand = 'canonical runner process';
-    const targetOwnership = {
-      happySessionId: 'sess-managed-service-promotion',
-      processCommandHash: hashProcessCommand(targetCommand),
-      processStartTimeMs: 1_717_171_700_005,
-    };
-    await writeSessionMarker({
-      pid: 12_343,
-      ...sourceOwnership,
-      startedBy: 'daemon',
-      cwd: '/wrapper',
-      respawn,
-    });
-    await expect(setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_343,
-      ownership: sourceOwnership,
-      expectedAttachment: null,
-      attachment,
-    })).resolves.toBe(true);
-    await writeSessionMarker({
-      pid: 12_344,
-      ...targetOwnership,
-      processCommand: targetCommand,
-      startedBy: 'daemon',
-      cwd: '/runner',
-      respawn: { ...respawn, directory: '/runner' },
-    });
-
-    await expect(promoteSessionMarkerPid(12_343, 12_344, {
-      readProcessIdentityByPidFn: async (pid) => pid === 12_344
-        ? {
-            pid,
-            command: targetCommand,
-            processStartTimeMs: targetOwnership.processStartTimeMs,
-          }
-        : null,
-    })).resolves.toEqual({
-      sourceMarkerOwnership: {
-        ...sourceOwnership,
-      },
-      targetMarkerOwnership: {
-        ...targetOwnership,
-      },
-      targetProcessCommand: targetCommand,
-    });
-    await expect(listSessionMarkers()).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        pid: 12_344,
-        happySessionId: 'sess-managed-service-promotion',
-        managedLocalServiceRunAttachment: attachment,
-      }),
-    ]));
-  });
-
-  it('promotes managed custody onto the exact runner placeholder written before its canonical webhook', async () => {
-    const {
-      hashProcessCommand,
-      listSessionMarkers,
-      promoteSessionMarkerPid,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const wrapperPid = 12_354;
-    const runnerPid = 12_355;
-    const spawnNonce = 'nonce-managed-placeholder-target';
-    const runnerCommand = 'managed placeholder runner';
-    const runnerStartTimeMs = 1_717_171_700_015;
-    const runnerCommandHash = hashProcessCommand(runnerCommand);
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 24_695,
-        processStartTimeMs: 1_717_171_717_015,
-        processCommandHash: 'e'.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_695 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-placeholder-target',
-        materializationId: 'materialization-placeholder-target',
-      },
-    };
-    const wrapperOwnership = {
-      happySessionId: `PID-${wrapperPid}`,
-      processCommandHash: 'f'.repeat(64),
-      processStartTimeMs: 1_717_171_700_014,
-    };
-    await writeSessionMarker({
-      pid: wrapperPid,
-      ...wrapperOwnership,
-      startedBy: 'daemon',
-      cwd: '/wrapper',
-      respawn: {
-        version: 1,
-        directory: '/wrapper',
-        spawnNonce,
-      },
-    });
-    await setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: wrapperPid,
-      ownership: wrapperOwnership,
-      expectedAttachment: null,
-      attachment,
-    });
-    await writeSessionMarker({
-      pid: runnerPid,
-      happySessionId: `PID-${runnerPid}`,
-      processCommandHash: runnerCommandHash,
-      processStartTimeMs: runnerStartTimeMs,
-      processCommand: runnerCommand,
-      startedBy: 'daemon',
-      cwd: '/runner',
-      respawn: {
-        version: 1,
-        directory: '/runner',
-        spawnNonce,
-      },
-    });
-
-    await expect(promoteSessionMarkerPid(wrapperPid, runnerPid, {
-      readProcessIdentityByPidFn: async () => ({
-        pid: runnerPid,
-        processStartTimeMs: runnerStartTimeMs,
-        command: runnerCommand,
-      }),
-    })).resolves.toEqual({
-      sourceMarkerOwnership: wrapperOwnership,
-      targetMarkerOwnership: {
-        happySessionId: `PID-${runnerPid}`,
-        processCommandHash: runnerCommandHash,
-        processStartTimeMs: runnerStartTimeMs,
-      },
-      targetProcessCommand: runnerCommand,
-    });
-    expect(
-      (await listSessionMarkers())
-        .find((marker) => marker.pid === runnerPid),
-    ).toEqual(expect.objectContaining({
-      happySessionId: `PID-${runnerPid}`,
-      managedLocalServiceRunAttachment: attachment,
-    }));
-  });
-
-  it('rejects PID promotion instead of merging conflicting managed local-service attachments', async () => {
-    const {
-      listSessionMarkers,
-      promoteSessionMarkerPid,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const attachment = (suffix: string, pid: number) => ({
-      v: 1 as const,
-      process: {
-        pid,
-        processStartTimeMs: 1_717_171_717_004,
-        processCommandHash: suffix.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_685 },
-      materialization: {
-        rootDir: `/tmp/happier-provider-runtime-${suffix}`,
-        materializationId: `materialization-${suffix}`,
-      },
-    });
-    const sourceAttachment = attachment('f', 24_685);
-    const targetAttachment = attachment('a', 24_686);
-    const respawn = {
-      version: 1 as const,
-      directory: '/wrapper',
-      spawnNonce: 'nonce-managed-service-conflict',
-    };
-    const sourceOwnership = {
-      happySessionId: 'PID-12345',
-      processCommandHash: '6'.repeat(64),
-      processStartTimeMs: 1_717_171_700_006,
-    };
-    const targetOwnership = {
-      happySessionId: 'sess-managed-service-conflict',
-      processCommandHash: '7'.repeat(64),
-      processStartTimeMs: 1_717_171_700_007,
-    };
-    await writeSessionMarker({
-      pid: 12_345,
-      ...sourceOwnership,
-      startedBy: 'daemon',
-      cwd: '/wrapper',
-      respawn,
-    });
-    await setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_345,
-      ownership: sourceOwnership,
-      expectedAttachment: null,
-      attachment: sourceAttachment,
-    });
-    await writeSessionMarker({
-      pid: 12_346,
-      ...targetOwnership,
-      startedBy: 'daemon',
-      cwd: '/runner',
-      respawn: { ...respawn, directory: '/runner' },
-    });
-    await setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_346,
-      ownership: targetOwnership,
-      expectedAttachment: null,
-      attachment: targetAttachment,
-    });
-    const before = await listSessionMarkers();
-
-    await expect(promoteSessionMarkerPid(12_345, 12_346)).resolves.toBeNull();
-    await expect(listSessionMarkers()).resolves.toEqual(before);
-  });
-
-  it('refuses to transfer an attachment when the target PID identity cannot be observed', async () => {
-    const {
-      listSessionMarkers,
-      promoteSessionMarkerPid,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const ownership = {
-      happySessionId: 'PID-12350',
-      processCommandHash: '8'.repeat(64),
-      processStartTimeMs: 1_717_171_700_008,
-    };
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 24_692,
-        processStartTimeMs: 1_717_171_717_012,
-        processCommandHash: '9'.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_692 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-unobserved-target',
-        materializationId: 'materialization-unobserved-target',
-      },
-    };
-    await writeSessionMarker({
-      pid: 12_350,
-      ...ownership,
-      startedBy: 'daemon',
-      cwd: '/wrapper',
-      respawn: {
-        version: 1,
-        directory: '/wrapper',
-        spawnNonce: 'nonce-managed-service-unobserved-target',
-      },
-    });
-    await setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: 12_350,
-      ownership,
-      expectedAttachment: null,
-      attachment,
-    });
-
-    await expect(promoteSessionMarkerPid(12_350, 12_351, {
-      readProcessIdentityByPidFn: async () => null,
-    })).resolves.toBeNull();
-    await expect(listSessionMarkers()).resolves.toEqual([
-      expect.objectContaining({
-        pid: 12_350,
-        managedLocalServiceRunAttachment: attachment,
-      }),
-    ]);
-  });
-
-  it('normalizes a managed placeholder to the live runner before its canonical webhook', async () => {
-    const {
-      hashProcessCommand,
-      listSessionMarkers,
-      promoteSessionMarkerPid,
-      setSessionMarkerManagedLocalServiceRunAttachment,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-    const { configuration } = await import('@/configuration');
-    const { createOnHappySessionWebhook } =
-      await import('./sessions/onHappySessionWebhook');
-    const wrapperPid = 12_352;
-    const runnerPid = 12_353;
-    const sourceOwnership = {
-      happySessionId: `PID-${wrapperPid}`,
-      processCommandHash: 'c'.repeat(64),
-      processStartTimeMs: 1_717_171_700_009,
-    };
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 24_693,
-        processStartTimeMs: 1_717_171_717_013,
-        processCommandHash: 'd'.repeat(64),
-      },
-      endpoint: { host: '127.0.0.1' as const, port: 40_693 },
-      materialization: {
-        rootDir: '/tmp/happier-provider-runtime-pre-webhook',
-        materializationId: 'materialization-pre-webhook',
-      },
-    };
-    const runnerCommand = 'pre-webhook canonical runner';
-    const runnerStartTimeMs = 1_717_171_700_010;
-    await writeSessionMarker({
-      pid: wrapperPid,
-      ...sourceOwnership,
-      startedBy: 'daemon',
-      cwd: '/wrapper',
-      respawn: {
-        version: 1,
-        directory: '/wrapper',
-        spawnNonce: 'nonce-managed-service-pre-webhook',
-      },
-    });
-    await setSessionMarkerManagedLocalServiceRunAttachment({
-      pid: wrapperPid,
-      ownership: sourceOwnership,
-      expectedAttachment: null,
-      attachment,
-    });
-
-    const promotion = await promoteSessionMarkerPid(wrapperPid, runnerPid, {
-      readProcessIdentityByPidFn: async () => ({
-        pid: runnerPid,
-        processStartTimeMs: runnerStartTimeMs,
-        command: runnerCommand,
-      }),
-    });
-    expect(promotion).toEqual({
-      sourceMarkerOwnership: sourceOwnership,
-      targetMarkerOwnership: {
-        happySessionId: `PID-${runnerPid}`,
-        processCommandHash: hashProcessCommand(runnerCommand),
-        processStartTimeMs: runnerStartTimeMs,
-      },
-      targetProcessCommand: runnerCommand,
-    });
-    const promotedMarker = (await listSessionMarkers())
-      .find((marker) => marker.pid === runnerPid);
-    expect(promotedMarker).toEqual(expect.objectContaining({
-      happySessionId: `PID-${runnerPid}`,
-      managedLocalServiceRunAttachment: attachment,
-    }));
-    const tracked = {
-      pid: runnerPid,
-      startedBy: 'daemon' as const,
-      happySessionId: promotion?.targetMarkerOwnership?.happySessionId,
-      processCommandHash:
-        promotion?.targetMarkerOwnership?.processCommandHash,
-      processStartTimeMs:
-        promotion?.targetMarkerOwnership?.processStartTimeMs,
-      processCommand: promotion?.targetProcessCommand,
-      spawnOptions: {
-        directory: '/tmp/project',
-        backendTarget: {
-          kind: 'backend' as const,
-          backendId: 'codex',
-          sourceKind: 'built_in' as const,
-        },
-        spawnNonce: 'nonce-managed-service-pre-webhook',
-      },
-      managedLocalServiceRunAttachment: attachment,
-      activateConnectedAccountSessionBindingOnCanonicalSession:
-        vi.fn(async () => null),
-    };
-    const awaiter = vi.fn();
-    const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map([[runnerPid, tracked]]),
-      pidToAwaiter: new Map([[runnerPid, awaiter]]),
-      getParentPidFn: () => null,
-      findHappyProcessByPidFn: async () => null,
-      readProcessIdentityByPidFn: async () => ({
-        pid: runnerPid,
-        processStartTimeMs: runnerStartTimeMs,
-        command: runnerCommand,
-      }),
-      onTrackedSessionReady: vi.fn(async () => undefined),
-    });
-
-    await expect(onWebhook('session-managed-pre-webhook', {
-      path: '/tmp/project',
-      host: 'test-host',
-      homeDir: '/tmp/home',
-      happyHomeDir: configuration.happyHomeDir,
-      happyLibDir: '/tmp/lib',
-      happyToolsDir: '/tmp/tools',
-      hostPid: runnerPid,
-      startedBy: 'daemon',
-      machineId: 'machine-test',
-    })).resolves.toBeUndefined();
-    expect(awaiter).toHaveBeenCalledOnce();
-    expect(
-      (await listSessionMarkers()).find((marker) => marker.pid === runnerPid),
-    ).toEqual(expect.objectContaining({
-      happySessionId: 'session-managed-pre-webhook',
-      managedLocalServiceRunAttachment: attachment,
-      processCommandHash: hashProcessCommand(runnerCommand),
-      processStartTimeMs: runnerStartTimeMs,
-    }));
-  });
-
   it('promotes a canonical resume wrapper onto the same nonce-correlated canonical runner session', async () => {
     const {
       hashProcessCommand,
@@ -2624,6 +2169,94 @@ describe('sessionRegistry', () => {
       codexBackendMode: 'acp',
     });
     expect(markers[0].respawn).not.toHaveProperty('experimentalCodexResume');
+  });
+
+
+  it('never mirrors replay seed text into the on-disk session marker', async () => {
+    const { configuration } = await import('@/configuration');
+    const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
+    const seedText = `REPLAY-SEED-${'x'.repeat(4096)}`;
+
+    await writeSessionMarker({
+      pid: 12399,
+      happySessionId: 'sess-replay-seeded',
+      startedBy: 'daemon',
+      cwd: '/tmp/project',
+      metadata: {
+        hostPid: 12399,
+        flavor: 'cursor',
+        replaySeedV1: {
+          v: 1,
+          seedText,
+          sourceSessionId: 'source-session',
+          sourceCutoffSeqInclusive: 12,
+          createdAtMs: 1,
+        },
+      },
+    });
+
+    const markers = await listSessionMarkers();
+    expect(markers).toHaveLength(1);
+    // The seed is the user's prior conversation in cleartext. The Session row is
+    // e2ee, so mirroring it into a temp file would publish what the Session hides.
+    expect(markers[0].metadata.replaySeedV1.seedText).toBe('');
+    // Blanked exactly the way the Session-metadata owner retires a seed: the
+    // identity fields, and every other mirrored field, survive.
+    expect(markers[0].metadata.replaySeedV1).toMatchObject({
+      v: 1,
+      sourceSessionId: 'source-session',
+      sourceCutoffSeqInclusive: 12,
+    });
+    expect(markers[0].metadata.flavor).toBe('cursor');
+
+    const raw = readFileSync(
+      join(configuration.happyHomeDir, 'tmp', 'daemon-sessions', 'pid-12399.json'),
+      'utf-8',
+    );
+    expect(raw).not.toContain(seedText);
+  });
+
+  it('blanks a replay seed that an older marker already mirrored to disk', async () => {
+    const { configuration } = await import('@/configuration');
+    const { listSessionMarkers, updateSessionMarkerActiveTurn } = await import('./sessionRegistry');
+    const seedText = `REPLAY-SEED-${'y'.repeat(4096)}`;
+    const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-sessions');
+    const filePath = join(dir, 'pid-12400.json');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        pid: 12400,
+        happySessionId: 'sess-stale-seed',
+        happyHomeDir: configuration.happyHomeDir,
+        createdAt: 1,
+        updatedAt: 1,
+        startedBy: 'daemon',
+        metadata: {
+          hostPid: 12400,
+          replaySeedV1: {
+            v: 1,
+            seedText,
+            sourceSessionId: 'source-session',
+            sourceCutoffSeqInclusive: 12,
+            createdAtMs: 1,
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    await updateSessionMarkerActiveTurn({
+      pid: 12400,
+      sessionId: 'sess-stale-seed',
+      activeTurnId: 'turn-1',
+    });
+
+    const markers = await listSessionMarkers();
+    expect(markers).toHaveLength(1);
+    expect(markers[0].activeTurnId).toBe('turn-1');
+    expect(markers[0].metadata.replaySeedV1.seedText).toBe('');
+    expect(readFileSync(filePath, 'utf-8')).not.toContain(seedText);
   });
 
 });

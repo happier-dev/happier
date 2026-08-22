@@ -1,5 +1,6 @@
 import {
   createProviderErrorV1,
+  createProviderManagedRuntimeBindingEqualityKeyV1,
   normalizeProviderEndpointUrlSyntax,
   type AssessedProviderEndpoint,
   type ProviderErrorV1,
@@ -76,10 +77,16 @@ export function revalidateProviderProbeAuthorizationTicket(
       && ticket.grantFingerprint === current.grantFingerprint
       && ticket.connectionScope === current.connectionScope
       && ticket.contributionKey === current.contributionKey
-      && JSON.stringify(ticket.implementationIdentity) === JSON.stringify(current.implementationIdentity)
-      && JSON.stringify(ticket.managedFacet) === JSON.stringify(current.managedFacet)
-      && JSON.stringify(ticket.purposeBindings) === JSON.stringify(current.purposeBindings)
-      && JSON.stringify(ticket.catalogSource) === JSON.stringify(current.catalogSource)
+      && createProviderManagedRuntimeBindingEqualityKeyV1({
+        implementationIdentity: ticket.implementationIdentity,
+        managedRuntime: ticket.managedRuntime,
+        purposeBindings: ticket.purposeBindings,
+      })
+        === createProviderManagedRuntimeBindingEqualityKeyV1({
+          implementationIdentity: current.implementationIdentity,
+          managedRuntime: current.managedRuntime,
+          purposeBindings: current.purposeBindings,
+        })
       && ticket.endpointTemplateId === current.endpointTemplateId
       && ticket.protocol === current.protocol
       && ticket.path === current.path
@@ -215,7 +222,8 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
           await resolveManagedProviderPurposeBindingSnapshot({
             implementationIdentity:
               resolution.record.deployment.implementationIdentity,
-            facet: resolution.record.deployment.facet,
+            connectedAccounts:
+              resolution.record.deployment.managedRuntime.connectedAccounts ?? [],
             purposeBindingIntents:
               resolution.record.deployment.purposeBindingIntents,
             resolveBindingIntent: input.resolveManagedPurposeBindingIntent,

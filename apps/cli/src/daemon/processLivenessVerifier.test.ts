@@ -109,7 +109,7 @@ describe('verifyProcessLiveness', () => {
 });
 
 describe('verifySessionMarkerProcessLiveness', () => {
-  it('requires the marker identity owner to have captured a command hash', async () => {
+  it('uses captured process generation without requiring mutable command text', async () => {
     const verifyHappyProcessIdentity = vi.fn(async () => true);
 
     await expect(verifySessionMarkerProcessLiveness({
@@ -119,11 +119,15 @@ describe('verifySessionMarkerProcessLiveness', () => {
       readRunState: async () => 'servable',
       verifyHappyProcessIdentity,
     })).resolves.toEqual({
-      status: 'unknown',
+      status: 'verified_running',
       pid: 4_242,
       processStartTimeMs: 1_717_171_717_000,
     });
-    expect(verifyHappyProcessIdentity).not.toHaveBeenCalled();
+    expect(verifyHappyProcessIdentity).toHaveBeenCalledWith({
+      pid: 4_242,
+      expectedProcessCommandHash: undefined,
+      expectedProcessStartTimeMs: 1_717_171_717_000,
+    });
   });
 
   it('requires the marker identity owner to have captured process start time', async () => {
@@ -139,7 +143,7 @@ describe('verifySessionMarkerProcessLiveness', () => {
     expect(verifyHappyProcessIdentity).not.toHaveBeenCalled();
   });
 
-  it('reports a servable marker as running only when its captured PID, start time, and command still match', async () => {
+  it('reports a servable marker as running when its captured PID generation still matches', async () => {
     const processCommandHash = 'a'.repeat(64);
     const processStartTimeMs = 1_717_171_717_000;
     const verifyHappyProcessIdentity = vi.fn(async () => true);

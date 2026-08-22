@@ -35,6 +35,43 @@ function credentialResolver(
 }
 
 describe('provider probe HTTP client', () => {
+  it('parses a Provider-contributed catalog format and reports an unimplemented one typed', async () => {
+    const client = createProviderProbeHttpClient({
+      resolveAddresses: async () => ['93.184.216.34'],
+      transport: async () => response({
+        body: Buffer.from('{"entries":[{"slug":"acme/one","label":"Acme One"}]}'),
+      }),
+    });
+    const request = {
+      endpointUrl: 'https://models.example/v1',
+      path: '/v1/catalog',
+      parser: 'acme-catalog-v3',
+      publicHeaders: {},
+      ...authorizedDestination,
+    } as const;
+
+    const result = await client.getCatalog({
+      ...request,
+      contributedCatalogParsers: {
+        'acme-catalog-v3': (body) => ({
+          models: (body as { entries: readonly { slug: string; label: string }[] })
+            .entries.map((entry) => ({ id: entry.slug, name: entry.label })),
+        }),
+      },
+    });
+    expect(result.catalog).toEqual({
+      models: [{ id: 'acme/one', name: 'Acme One' }],
+      loadStates: [],
+    });
+
+    // Without the contributing plugin the declared format has no reachable
+    // implementation: it must report a typed unavailable rather than reading
+    // the body with another Provider's parser.
+    await expect(client.getCatalog(request)).rejects.toMatchObject({
+      code: 'provider_contribution_unavailable',
+    });
+  });
+
   it('materializes and closes credentials only after fresh DNS and destination authorization', async () => {
     const events: string[] = [];
     const close = vi.fn();

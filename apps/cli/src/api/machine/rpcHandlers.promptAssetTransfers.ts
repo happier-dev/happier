@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { registerUploadTransferLifecycleHandlers } from '@/transfers/rpc/registerUploadTransferLifecycleHandlers';
 import { resolvePromptAssetDownloadSource } from '@/transfers/targets/resolvePromptAssetDownloadSource';

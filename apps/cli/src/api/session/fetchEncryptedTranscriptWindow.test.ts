@@ -150,6 +150,30 @@ describe('fetchEncryptedTranscriptWindow', () => {
     expect(rows[0]!.content.t).toBe('plain');
   });
 
+  it('rejects the complete window when a malformed row is followed by a valid row', async () => {
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: {
+        messages: [
+          { seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c5' } },
+          { seq: 6, createdAt: 2, content: { t: 'future', value: 'unreadable' } },
+          { seq: 7, createdAt: 3, content: { t: 'encrypted', c: 'c7' } },
+        ],
+      },
+    });
+
+    await expect(fetchEncryptedTranscriptRange({
+      token: 't',
+      sessionId: 'sess_1',
+      seqFrom: 5,
+      seqTo: 7,
+    })).rejects.toMatchObject({
+      name: 'HttpStatusError',
+      code: 'session_transcript_stored_content_unavailable',
+      response: { status: 503 },
+    });
+  });
+
   it('computes afterSeq and limit for a bounded range fetch', async () => {
     mockGet.mockResolvedValue({
       status: 200,

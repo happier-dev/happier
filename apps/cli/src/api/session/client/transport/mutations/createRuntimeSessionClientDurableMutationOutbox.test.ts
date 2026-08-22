@@ -32,7 +32,17 @@ import {
 } from './sessionClientDurableMutationPersistence';
 
 function serverContract(mode: 'session_sync_v2_pending_input_v1' | 'released_server_v0_2_1') {
-    return { mode, sessionConnectionEpoch: 1, socket: {} } as const;
+    return {
+        mode,
+        runtimeActivity: mode === 'released_server_v0_2_1' ? 'legacy' : 'v2',
+        pendingInput: mode === 'released_server_v0_2_1' ? 'released_server_v0_2_1' : 'v1',
+        publisherAuthority: 'indeterminate',
+        sessionConnectionEpoch: 1,
+        socket: {},
+        transcriptTransport: mode === 'released_server_v0_2_1'
+            ? { mode: 'released_server_v0_2_1' as const }
+            : { mode: 'session_transcript_observation_v1' as const },
+    } as const;
 }
 
 function createDeferred<T = void>() {
@@ -298,7 +308,7 @@ describe('runtime session client durable mutation outbox', () => {
         await outbox.close();
     });
 
-    it('persists normal turns but exposes no full-end producer and rejects a cast exact end', async () => {
+    it('durably admits a semantic session end while still rejecting a cast exact turn end', async () => {
         const outbox = createRuntimeSessionClientDurableMutationOutbox({
             token: 'token',
             sessionId: 's1',
@@ -306,7 +316,6 @@ describe('runtime session client durable mutation outbox', () => {
             requestReconnect: () => undefined,
         });
 
-        expect('enqueueSessionEnd' in outbox).toBe(false);
         await outbox.enqueueSessionTurnMutation({
             v: 1,
             sessionId: 's1',
@@ -323,6 +332,13 @@ describe('runtime session client durable mutation outbox', () => {
             turnId: 'turn-1',
             observedAt: 101,
         } as unknown as Parameters<typeof outbox.enqueueSessionTurnMutation>[0])).rejects.toThrow(/normal turn/);
+        await outbox.enqueueSessionEnd({
+            v: 1,
+            sessionId: 's1',
+            mutationId: 'session-end:s1',
+            source: 'session_end',
+            observedAt: 103,
+        });
         await expect(outbox.enqueueRegisteredSessionStateFieldMutation(
             createRegisteredSessionStateFieldMutation({
                 sessionId: 's1',
@@ -341,7 +357,10 @@ describe('runtime session client durable mutation outbox', () => {
         const persisted = JSON.parse(await readFile(paths.queuePath, 'utf8')) as {
             mutations: Array<{ mutationId: string }>;
         };
-        expect(persisted.mutations.map((mutation) => mutation.mutationId)).toEqual(['begin-turn-1']);
+        expect(persisted.mutations.map((mutation) => mutation.mutationId)).toEqual([
+            'begin-turn-1',
+            'session-end:s1',
+        ]);
         await outbox.close();
     });
 
@@ -491,8 +510,14 @@ describe('runtime session client durable mutation outbox', () => {
             });
             await outbox.setSessionSyncPendingInputServerContract({
                 mode,
+                runtimeActivity: 'indeterminate',
+                pendingInput: 'indeterminate',
+                publisherAuthority: 'indeterminate',
                 sessionConnectionEpoch: 1,
                 socket: { connected: true },
+                transcriptTransport: mode === 'auth_failed'
+                    ? { mode: 'auth_failed', reason: 'connection_auth_failed' }
+                    : { mode: 'indeterminate', reason: 'connection_contract_unresolved' },
             });
             await outbox.enqueueRegisteredSessionStateFieldMutation(
                 createRegisteredSessionStateFieldMutation({

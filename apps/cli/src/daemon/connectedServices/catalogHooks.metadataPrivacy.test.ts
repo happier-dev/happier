@@ -3,8 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 const resolvePersistedSessionFile = vi.hoisted(() => vi.fn(
   ({ metadata }: Readonly<{ metadata: unknown }>) => {
     const record = metadata as Readonly<Record<string, unknown>>;
-    return typeof record.codexSessionFile === 'string'
-      ? record.codexSessionFile
+    return record.codexBackendMode === 'appServer'
+      && typeof record.codexSessionId === 'string'
+      ? record.codexSessionId
       : null;
   },
 ));
@@ -27,10 +28,15 @@ import {
   resolveConnectedServiceCandidatePersistedSessionFile,
 } from './catalogHooks';
 
-describe('connected-service Agent metadata projection', () => {
-  it('excludes owner-only External Session operation progress from the Agent leaf', () => {
+describe('connected-service Agent metadata input', () => {
+  it('passes only the exact persisted-session lookup fields to the Agent leaf', () => {
     const metadata = {
+      codexBackendMode: 'appServer',
+      codexSessionId: 'codex-session-1',
       codexSessionFile: '/private/codex/session.jsonl',
+      externalSessionOperation: {
+        operationClaimId: 'private-legacy-claim',
+      },
       externalSessionOperationV1: {
         v: 1,
         progress: { operationId: 'private-operation', revision: 7 },
@@ -48,14 +54,15 @@ describe('connected-service Agent metadata projection', () => {
     expect(resolveConnectedServiceCandidatePersistedSessionFile(
       'codex',
       metadata,
-    )).toBe('/private/codex/session.jsonl');
+    )).toBe('codex-session-1');
     expect(resolvePersistedSessionFile).toHaveBeenCalledWith({
       metadata: {
-        codexSessionFile: '/private/codex/session.jsonl',
-        externalSessionOperationPresentationV1:
-          metadata.externalSessionOperationPresentationV1,
+        codexBackendMode: 'appServer',
+        codexSessionId: 'codex-session-1',
       },
     });
+    expect(metadata).toHaveProperty('externalSessionOperation');
     expect(metadata).toHaveProperty('externalSessionOperationV1');
+    expect(metadata).toHaveProperty('externalSessionOperationPresentationV1');
   });
 });

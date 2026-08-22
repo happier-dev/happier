@@ -1,11 +1,114 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 import { createSessionHandoffStartActionHandler } from './start';
 
 describe('session handoff start operation exclusion', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  it('cancels transport wait behind passive repair without starting handoff effects after release', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-start-barrier-cancel-'));
+    const sessionOperationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'handoff-start-barrier-cancel',
+      claimMutationLockAcquisitionTimeoutMs: 10_000,
+    });
+    let signalRepairStarted!: () => void;
+    const repairStarted = new Promise<void>((resolve) => {
+      signalRepairStarted = resolve;
+    });
+    let releaseRepair!: () => void;
+    const repairRelease = new Promise<void>((resolve) => {
+      releaseRepair = resolve;
+    });
+    const repair = sessionOperationExclusion.withPassiveRepairClaimBarrier({
+      sessionId: 'session-1',
+      operationClaimId: 'passive-repair-claim',
+    }, async () => {
+      signalRepairStarted();
+      await repairRelease;
+    });
+    await repairStarted;
+    const stopSessionForHandoff = vi.fn(async () => 'already_inactive' as const);
+    const prepareStartedState = vi.fn();
+    const handler = createSessionHandoffStartActionHandler({
+      activeServerDir,
+      createUuid: () => 'handoff-barrier-cancel',
+      loadSessionMetadata: async () => ({ path: '/tmp/project' }),
+      machineTransferChannelPresent: true,
+      directPeerTransfer: undefined,
+      stopSessionForHandoff,
+      prepareJobStore: { write: vi.fn() },
+      sourceExportStore: { save: vi.fn(), writeAgentBundleFile: vi.fn() } as never,
+      prepareStartedState: prepareStartedState as never,
+      exportSessionBundle: vi.fn() as never,
+      waitForPersistedSourceExport: vi.fn() as never,
+      invalidateDirectPeerRouteCacheForHandoffMachines: vi.fn(),
+      resolveWorkspaceReplicationHandoffBackTargetRootPath: () => null,
+      buildStartPendingStatus: vi.fn() as never,
+      buildStartRecoveryStatus: vi.fn() as never,
+      buildPrepareJobRecord: vi.fn() as never,
+      invalidRequest: () => ({ ok: false, errorCode: 'invalid_request' }),
+      sessionOperationExclusion,
+      retainSessionOperationClaim: vi.fn(),
+      releaseSessionOperationClaim: vi.fn(),
+    });
+    const request = {
+      sessionId: 'session-1',
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      sessionStorageMode: 'persisted',
+      preferredTransportStrategies: ['server_routed_stream'],
+      negotiatedTransportStrategy: 'server_routed_stream',
+    } as const;
+    const controller = new AbortController();
+    const result = handler(request, { signal: controller.signal });
+    let cancellationAssertionTimer: NodeJS.Timeout | null = null;
+    try {
+      controller.abort();
+      await expect(Promise.race([
+        result.then(
+          () => 'handoff_start_resolved',
+          (error: unknown) => error instanceof Error ? error.name : 'unknown_error',
+        ),
+        new Promise((resolve) => {
+          cancellationAssertionTimer = setTimeout(
+            () => resolve('handoff_start_did_not_observe_cancellation'),
+            500,
+          );
+        }),
+      ])).resolves.toBe('AbortError');
+      expect(stopSessionForHandoff).not.toHaveBeenCalled();
+      expect(prepareStartedState).not.toHaveBeenCalled();
+    } finally {
+      if (cancellationAssertionTimer) {
+        clearTimeout(cancellationAssertionTimer);
+      }
+      releaseRepair();
+      await repair;
+      await result.catch(() => undefined);
+    }
+
+    expect(stopSessionForHandoff).not.toHaveBeenCalled();
+    expect(prepareStartedState).not.toHaveBeenCalled();
+    const probe = await sessionOperationExclusion.acquire({
+      kind: 'handoff',
+      sessionId: request.sessionId,
+      requestId: 'post-cancellation-probe',
+      sourceMachineId: request.sourceMachineId,
+      targetMachineId: request.targetMachineId,
+      semanticRequest: 'post-cancellation-probe',
+    });
+    expect(probe.status).toBe('acquired');
+    if (probe.status === 'acquired') await probe.claim.release();
+    await rm(activeServerDir, { recursive: true, force: true });
+  }, 3_000);
 
   it('fails before stop/export when takeover already owns the session operation', async () => {
     const stopSessionForHandoff = vi.fn(async () => 'already_inactive' as const);

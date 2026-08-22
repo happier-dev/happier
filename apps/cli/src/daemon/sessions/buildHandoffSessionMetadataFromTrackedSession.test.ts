@@ -4,8 +4,11 @@ const buildRuntimeLocalHandoffMetadataForAgentMock = vi.hoisted(() => vi.fn(
     (
         agentId: string,
         params: Readonly<{
+            machineId: string | null;
+            workingDirectory: string | null;
+            transcriptStorage: string | null;
+            environmentVariables: Readonly<Record<string, string | undefined>> | null;
             vendorResumeId: string;
-            metadata: Readonly<Record<string, unknown>>;
         }>,
     ): Readonly<Record<string, unknown>> => (
         agentId === 'opencode'
@@ -14,9 +17,17 @@ const buildRuntimeLocalHandoffMetadataForAgentMock = vi.hoisted(() => vi.fn(
     ),
 ));
 
+const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
+    readAgentCatalogSnapshot: vi.fn(),
+}));
+
 vi.mock('@/session/handoff/metadata/catalogHooks', () => ({
     buildRuntimeLocalHandoffMetadataForAgent:
         buildRuntimeLocalHandoffMetadataForAgentMock,
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+    readAgentCatalogSnapshot,
 }));
 
 import { buildHandoffSessionMetadataFromTrackedSession } from './buildHandoffSessionMetadataFromTrackedSession';
@@ -24,9 +35,17 @@ import { buildHandoffSessionMetadataFromTrackedSession } from './buildHandoffSes
 describe('buildHandoffSessionMetadataFromTrackedSession', () => {
     beforeEach(() => {
         buildRuntimeLocalHandoffMetadataForAgentMock.mockClear();
+        readAgentCatalogSnapshot.mockReturnValue({
+            agentDefinitionsById: new Map(),
+            catalogEntriesById: {
+                claude: { id: 'claude' },
+                opencode: { id: 'opencode' },
+                'acme.agent': { id: 'acme.agent' },
+            },
+        });
     });
 
-    it('excludes owner-only External Session operation progress from Agent handoff leaves', () => {
+    it('excludes External Session operation progress and presentation from Agent handoff leaves', () => {
         const inputMetadata = {
             machineId: 'machine-session-handoff',
             path: '/repo-source-current',
@@ -58,16 +77,19 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
         });
 
         expect(buildRuntimeLocalHandoffMetadataForAgentMock)
-            .toHaveBeenCalledWith('claude', expect.objectContaining({
-                metadata: expect.objectContaining({
-                    path: '/repo-source-current',
-                    externalSessionOperationPresentationV1:
-                        inputMetadata.externalSessionOperationPresentationV1,
-                }),
-            }));
-        expect(buildRuntimeLocalHandoffMetadataForAgentMock.mock.calls[0]?.[1].metadata)
+            .toHaveBeenCalledWith('claude', {
+                machineId: 'machine-session-handoff',
+                workingDirectory: '/repo-source-current',
+                transcriptStorage: null,
+                environmentVariables: null,
+                vendorResumeId: 'provider-handoff-private-operation',
+            });
+        expect(buildRuntimeLocalHandoffMetadataForAgentMock.mock.calls[0]?.[1])
             .not.toHaveProperty('externalSessionOperationV1');
+        expect(buildRuntimeLocalHandoffMetadataForAgentMock.mock.calls[0]?.[1])
+            .not.toHaveProperty('externalSessionOperationPresentationV1');
         expect(inputMetadata).toHaveProperty('externalSessionOperationV1');
+        expect(inputMetadata).toHaveProperty('externalSessionOperationPresentationV1');
     });
 
     it('falls back to the persisted handoff overlay when the tracked session lost its webhook metadata', () => {
@@ -180,5 +202,65 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                 opencodeSessionId: 'sess-handoff-direct',
             }),
         }));
+    });
+
+    it('uses the installed external Agent identity for its catalog-owned handoff metadata', () => {
+        const metadata = buildHandoffSessionMetadataFromTrackedSession({
+            trackedSession: {
+                startedBy: 'daemon',
+                pid: 456,
+                happySessionId: 'sess-external-identity',
+                vendorResumeId: 'acme-session-456',
+                happySessionMetadataFromLocalWebhook: {
+                    machineId: 'machine-session-handoff',
+                    path: '/repo-acme',
+                    homeDir: '/Users/acme',
+                    flavor: 'claude',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'acme.agent',
+                        agent: {},
+                    },
+                },
+            } as never,
+            machineId: 'machine-session-handoff',
+        });
+
+        expect(buildRuntimeLocalHandoffMetadataForAgentMock).toHaveBeenCalledWith('acme.agent', {
+            machineId: 'machine-session-handoff',
+            workingDirectory: '/repo-acme',
+            transcriptStorage: null,
+            environmentVariables: null,
+            vendorResumeId: 'acme-session-456',
+        });
+        expect(metadata).toEqual(expect.objectContaining({
+            runtimeLocalMetadata: expect.objectContaining({
+                claudeSessionId: 'acme-session-456',
+            }),
+        }));
+    });
+
+    it('does not apply an installed Agent handoff hook to a configured external runtime identity', () => {
+        buildHandoffSessionMetadataFromTrackedSession({
+            trackedSession: {
+                startedBy: 'daemon',
+                pid: 457,
+                happySessionId: 'sess-configured-identity',
+                vendorResumeId: 'configured-session-457',
+                happySessionMetadataFromLocalWebhook: {
+                    machineId: 'machine-session-handoff',
+                    path: '/repo-configured',
+                    homeDir: '/Users/configured',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'acp:review-bot',
+                        agent: {},
+                    },
+                },
+            } as never,
+            machineId: 'machine-session-handoff',
+        });
+
+        expect(buildRuntimeLocalHandoffMetadataForAgentMock).not.toHaveBeenCalled();
     });
 });

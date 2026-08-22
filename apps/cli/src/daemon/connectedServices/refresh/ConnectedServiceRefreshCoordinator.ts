@@ -1,10 +1,10 @@
 import {
   BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   type AccountSettings,
   type BuiltInLegacyConnectedAccountOperation,
   type ConnectedServiceCredentialHealthV1,
   ConnectedServiceCredentialRecordV1Schema,
-  openConnectedServiceCredentialCiphertext,
   sealConnectedServiceCredentialCiphertext,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialMutationResponseV1,
@@ -13,11 +13,12 @@ import {
   type ConnectedServiceExecutionAuthorityV1,
   type ConnectedServiceId,
   type ConnectedServiceOauthCredentialRawMetadata,
+  type QualifiedConnectedAccountPurposeBindingV1,
   type QualifiedConnectedAccountCredentialSnapshotV4,
   type QualifiedConnectedAccountProfileV4,
   type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
-import type { PluginConnectedAccountHealthResult } from '@happier-dev/plugin-sdk/runtime';
+import type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/plugin-sdk/connected-accounts';
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -28,12 +29,12 @@ import type {
 } from '@/api/client/qualifiedConnectedAccountApi';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
-import type { Credentials } from '@/persistence';
+import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
+import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
 
 import {
-  assertConnectedServiceCredentialRecordBinding,
-  ConnectedServiceCredentialBindingMismatchError,
+  resolveConnectedServiceCredentialSource,
   resolveConnectedServiceCredentialResolutions,
 } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
@@ -77,6 +78,15 @@ import {
   getConnectedServiceMaterializedHomeFreshness,
   resolveConnectedServiceMaterializedHomeRoot,
 } from '../catalogHooks';
+import {
+  resolveQualifiedRequestAuthPurposeBindingsFromSnapshot,
+  type AgentSpawnQualifiedPurposeBindingSnapshot,
+} from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import {
+  assertQualifiedPurposeAuthorityForSelections,
+  ConnectedServiceQualifiedPurposeAuthorityError,
+} from '../requestAuth/qualifiedPurposeAuthority';
+import { parseConnectedServiceBindingSelections } from '../parseConnectedServicesBindings';
 import type { ConnectedServiceProjectedCredentialPresence } from '../accountGroups/generation/connectedServiceProjectionSnapshot';
 import type {
   QualifiedConnectedAccountEstablishedRuntimeOwner,
@@ -234,6 +244,49 @@ export type ConnectedServiceCredentialRefreshResult = Readonly<{
   credentialRevision?: ConnectedServiceCredentialRevisionV1;
 }>;
 
+export type ConnectedServiceAuthGroupCandidatePreparationResult =
+  | Readonly<{ status: 'ready' }>
+  | Readonly<{
+      status: 'ineligible';
+      memberState: Readonly<{
+        credentialHealthStatus: 'needs_reauth' | 'refresh_failed_retryable';
+      }>;
+    }>;
+
+export function resolveConnectedServiceAuthGroupCandidatePreparation(input: Readonly<{
+  reason: string;
+  refreshResult: ConnectedServiceCredentialRefreshResult;
+}>): ConnectedServiceAuthGroupCandidatePreparationResult {
+  switch (input.refreshResult.status) {
+    case 'refreshed':
+    case 'not_needed':
+    case 'not_oauth':
+      return { status: 'ready' };
+    case 'blocked_by_credential_health':
+    case 'credential_missing':
+      return {
+        status: 'ineligible',
+        memberState: { credentialHealthStatus: 'needs_reauth' },
+      };
+    case 'refresh_failed':
+      return {
+        status: 'ineligible',
+        memberState: {
+          credentialHealthStatus: isReauthRequiredFailure(
+            input.refreshResult.diagnostic.category ?? 'unknown',
+          )
+            ? 'needs_reauth'
+            : 'refresh_failed_retryable',
+        },
+      };
+    case 'lease_not_acquired':
+      return {
+        status: 'ineligible',
+        memberState: { credentialHealthStatus: 'refresh_failed_retryable' },
+      };
+  }
+}
+
 export type ConnectedServiceRuntimeAuthCredentialRefreshResult =
   ConnectedServiceCredentialRefreshResult & Readonly<{
     runtimeAuthDisposition?: 'superseded_by_current_group';
@@ -245,7 +298,7 @@ export type ConnectedServiceCredentialHealthNotificationStatus =
 
 export type ConnectedServiceCredentialHealthNotificationTarget = Readonly<{
   pid: number;
-  agentId: CatalogAgentId;
+  agentId: CatalogAgentId | null;
   sessionId: string;
 }>;
 
@@ -311,6 +364,27 @@ function isReauthRequiredFailure(category: ConnectedServiceRefreshFailureCategor
     || category === 'missing_refresh_token';
 }
 
+export type ConnectedServiceCredentialRefreshFailureCode =
+  | typeof CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired
+  | typeof CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable;
+
+export class ConnectedServiceCredentialRefreshError extends Error {
+  readonly code: ConnectedServiceCredentialRefreshFailureCode;
+  readonly diagnostic: ConnectedServiceCredentialRefreshDiagnostic;
+
+  constructor(diagnostic: ConnectedServiceCredentialRefreshDiagnostic) {
+    const reconnectRequired = diagnostic.status === 'blocked_by_credential_health'
+      || (diagnostic.category !== undefined && isReauthRequiredFailure(diagnostic.category));
+    const code = reconnectRequired
+      ? CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired
+      : CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable;
+    super(code);
+    this.name = 'ConnectedServiceCredentialRefreshError';
+    this.code = code;
+    this.diagnostic = diagnostic;
+  }
+}
+
 function isReconnectRequiredProfileStatus(status: unknown): boolean {
   return status === 'needs_reauth';
 }
@@ -353,23 +427,6 @@ function buildCredentialHealthFromPluginStatus(
     reconnectRequired: false,
     ...(providerErrorCode ? { providerErrorCode } : {}),
   };
-}
-
-function openConnectedServiceRecord(params: Readonly<{
-  credentials: Credentials;
-  ciphertext: string;
-}>): ConnectedServiceCredentialRecordV1 {
-  const opened = openConnectedServiceCredentialCiphertext({
-    material:
-      params.credentials.encryption.type === 'legacy'
-        ? { type: 'legacy', secret: params.credentials.encryption.secret }
-        : { type: 'dataKey', machineKey: params.credentials.encryption.machineKey },
-    ciphertext: params.ciphertext,
-  });
-  if (!opened || !opened.value) {
-    throw new Error('Failed to decrypt connected service credential');
-  }
-  return ConnectedServiceCredentialRecordV1Schema.parse(opened.value);
 }
 
 function buildUpdatedOauthRecord(params: Readonly<{
@@ -605,65 +662,30 @@ function classifyRefreshFailure(error: unknown): Readonly<{
 
 async function readCredentialForRefresh(params: Readonly<{
   api: ApiClient;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   binding: BoundProfile;
 }>): Promise<ConnectedServiceCredentialSource | null> {
   const accountMode = await resolveConnectedServiceAccountMode(params.api);
-  if (accountMode !== 'e2ee' && typeof params.api.getConnectedServiceCredentialPlain === 'function') {
-    try {
-      const plain = await params.api.getConnectedServiceCredentialPlain({
-        serviceId: params.binding.serviceId,
-        profileId: params.binding.profileId,
-      });
-      if (plain?.content.t === 'plain') {
-        const record = assertConnectedServiceCredentialRecordBinding({
-          binding: params.binding,
-          record: ConnectedServiceCredentialRecordV1Schema.parse(plain.content.v),
-        });
-        const source = {
-          storageMode: 'plain',
-          record,
-          expiresAt: typeof record.expiresAt === 'number' && Number.isFinite(record.expiresAt) ? record.expiresAt : null,
-        } as const;
-        return plain.revisionSemantics === 'revisioned' ? {
-          ...source,
-          revisionSemantics: 'revisioned',
-          credentialRevision: plain.credentialRevision,
-        } : {
-          ...source,
-          revisionSemantics: 'legacy_unfenced',
-          credentialRevision: null,
-        };
-      }
-      if (accountMode === 'plain') return null;
-    } catch (error) {
-      if (error instanceof ConnectedServiceCredentialBindingMismatchError) throw error;
-      if (accountMode !== 'unknown') throw error;
-    }
-  }
-
-  const sealed = await params.api.getConnectedServiceCredentialSealed({
-    serviceId: params.binding.serviceId,
-    profileId: params.binding.profileId,
+  const resolved = await resolveConnectedServiceCredentialSource({
+    credentials: params.credentials,
+    api: params.api,
+    binding: params.binding,
+    accountMode,
   });
-  if (!sealed) return null;
-  if (sealed.metadata?.kind !== 'oauth') return null;
-
+  if (!resolved) return null;
   const source = {
-    storageMode: 'sealed',
-    record: assertConnectedServiceCredentialRecordBinding({
-      binding: params.binding,
-      record: openConnectedServiceRecord({
-        credentials: params.credentials,
-        ciphertext: sealed.sealed.ciphertext,
-      }),
-    }),
-    expiresAt: sealed.metadata.expiresAt ?? null,
+    storageMode: resolved.storageMode === 'e2ee' ? 'sealed' : 'plain',
+    record: resolved.record,
+    expiresAt:
+      typeof resolved.record.expiresAt === 'number'
+      && Number.isFinite(resolved.record.expiresAt)
+        ? resolved.record.expiresAt
+        : null,
   } as const;
-  return sealed.revisionSemantics === 'revisioned' ? {
+  return resolved.revisionSemantics === 'revisioned' ? {
     ...source,
     revisionSemantics: 'revisioned',
-    credentialRevision: sealed.credentialRevision,
+    credentialRevision: resolved.credentialRevision,
   } : {
     ...source,
     revisionSemantics: 'legacy_unfenced',
@@ -673,7 +695,7 @@ async function readCredentialForRefresh(params: Readonly<{
 
 async function persistUpdatedCredential(params: Readonly<{
   api: ApiClient;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   binding: BoundProfile;
   source: RevisionedConnectedServiceCredentialSource;
   updated: ConnectedServiceCredentialRecordV1;
@@ -696,11 +718,12 @@ async function persistUpdatedCredential(params: Readonly<{
     return result;
   }
 
+  const credentials = requireAccountEncryptionCredentials(params.credentials);
   const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
     material:
-      params.credentials.encryption.type === 'legacy'
-        ? { type: 'legacy', secret: params.credentials.encryption.secret }
-        : { type: 'dataKey', machineKey: params.credentials.encryption.machineKey },
+      credentials.encryption.type === 'legacy'
+        ? { type: 'legacy', secret: credentials.encryption.secret }
+        : { type: 'dataKey', machineKey: credentials.encryption.machineKey },
     payload: params.updated,
     randomBytes: (length) => randomBytes(length),
   });
@@ -752,7 +775,7 @@ export class ConnectedServiceRefreshCoordinator {
 
   constructor(private readonly params: Readonly<{
     api: ApiClient;
-    credentials: Credentials;
+    credentials: StoredCredentials;
     machineIdProvider: () => string;
     ownerIdProvider?: () => string | null | undefined;
     activeServerDir: string;
@@ -763,12 +786,17 @@ export class ConnectedServiceRefreshCoordinator {
     accountSettingsProvider?: () => AccountSettings | Readonly<Record<string, unknown>> | null | undefined;
     processEnv?: NodeJS.ProcessEnv;
     runtimeRegistry?: ConnectedServiceRuntimeRegistry;
+    resolveQualifiedPurposeBindingSnapshot?: (input: Readonly<{
+      agentId: CatalogAgentId;
+      connectedServicesBindingsRaw: unknown;
+    }>) => Promise<AgentSpawnQualifiedPurposeBindingSnapshot | null>;
     qualifiedConnectedAccountRuntime?: QualifiedConnectedAccountRefreshRuntime;
     onAuthUpdated?: (event: Readonly<{
       binding: BoundProfile;
       affectedTargets: ReadonlyArray<SpawnTarget>;
       trigger: 'refresh_triggered_restart' | 'reconnect_propagation';
       credentialPresence?: ConnectedServiceProjectedCredentialPresence;
+      executionAuthority: ConnectedServiceExecutionAuthorityV1;
     }>) => void | Promise<void>;
     onCredentialHealthNotification?: (event: Readonly<{
       diagnostic: ConnectedServiceCredentialRefreshDiagnostic;
@@ -829,7 +857,8 @@ export class ConnectedServiceRefreshCoordinator {
 
   registerSpawnTarget(params: Readonly<{
     pid: number;
-    agentId: CatalogAgentId;
+    /** Absent for a configured backend target, which has no catalog Agent identity. */
+    agentId: CatalogAgentId | null;
     sessionId?: string | null;
     materializationKey: string;
     connectedServicesBindingsRaw: unknown;
@@ -1279,12 +1308,13 @@ export class ConnectedServiceRefreshCoordinator {
   async refreshConnectedServiceCredentialForSpawnPreflight(input: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
+    force?: boolean;
   }>): Promise<ConnectedServiceCredentialRefreshResult> {
     const binding = { serviceId: input.serviceId, profileId: input.profileId };
     const result = await this.refreshOauthBinding(
       binding,
       this.params.now(),
-      { reason: 'spawn_preflight' },
+      { reason: 'spawn_preflight', force: input.force },
     );
     if (result.status === 'not_needed') {
       const rematerialization = await this.maybeRematerializeStaleMaterializedHomesForFreshStoreBinding(binding);
@@ -1293,6 +1323,21 @@ export class ConnectedServiceRefreshCoordinator {
       }
     }
     return result;
+  }
+
+  async prepareConnectedServiceAuthGroupCandidateForSwitch(input: Readonly<{
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    reason: string;
+  }>): Promise<ConnectedServiceAuthGroupCandidatePreparationResult> {
+    return resolveConnectedServiceAuthGroupCandidatePreparation({
+      reason: input.reason,
+      refreshResult: await this.refreshConnectedServiceCredentialForSpawnPreflight({
+        serviceId: input.serviceId,
+        profileId: input.profileId,
+        force: input.reason === 'auth_expired' || input.reason === 'refresh_failed',
+      }),
+    });
   }
 
   async refreshConnectedServiceCredentialForQuota(input: Readonly<{
@@ -1365,6 +1410,98 @@ export class ConnectedServiceRefreshCoordinator {
     }
 
     return result;
+  }
+
+  async refreshQualifiedConnectedAccountCredentialForRequestAuth(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+  }>): Promise<boolean> {
+    const runtime = this.params.qualifiedConnectedAccountRuntime;
+    if (
+      !runtime
+      || !this.shouldRunQualifiedOperation(input.account, 'credential_read')
+      || !this.shouldRunQualifiedOperation(input.account, 'oauth_refresh')
+      || !this.shouldRunQualifiedOperation(input.account, 'refresh_lease')
+      || !this.shouldRunQualifiedOperation(input.account, 'credential_write')
+    ) {
+      return false;
+    }
+    const expectedCredential = await runtime.readCredential({
+      token: this.params.credentials.token,
+      ref: input.account,
+    });
+    if (
+      !expectedCredential
+      || qualifiedAccountKey(expectedCredential.ref)
+        !== qualifiedAccountKey(input.account)
+      || expectedCredential.revisionSemantics !== 'revisioned'
+      || expectedCredential.credentialRevision
+        !== input.expectedCredentialRevision
+    ) {
+      return false;
+    }
+    const ownerId =
+      this.params.ownerIdProvider?.()?.trim()
+      || this.params.machineIdProvider().trim();
+    if (!ownerId) return false;
+    try {
+      const settlement = await refreshQualifiedConnectedAccount({
+        account: input.account,
+        token: this.params.credentials.token,
+        ownerId,
+        leaseMs: this.params.refreshLeaseMs,
+        operationId: randomBytes(16).toString('hex'),
+        expectedCredential,
+        establishedRuntimeOwner: runtime.establishedRuntimeOwner,
+        resolveV4Support: () =>
+          peerClassV4Support(runtime.resolvePeerClass()),
+        acquireRefreshLease: runtime.acquireRefreshLease,
+        mutateCredential: runtime.mutateCredential,
+      });
+      if (
+        settlement.basis.credentialRevision
+          !== input.expectedCredentialRevision
+        || !settlement.basis.isCurrent()
+      ) {
+        return false;
+      }
+      if (settlement.status === 'refreshed') {
+        this.resetQualifiedConnectedAccountHealthBackoff(input.account);
+        await runtime.onCredentialUpdated?.(input.account);
+        return true;
+      }
+      if (settlement.status === 'unchanged') {
+        this.resetQualifiedConnectedAccountHealthBackoff(input.account);
+        return false;
+      }
+      const health = settlement.status === 'outcome_unknown'
+        ? {
+            v: 1 as const,
+            status: 'refresh_failed_retryable' as const,
+            reconnectRequired: false,
+            providerErrorCode:
+              settlement.result.diagnostic.code.trim().slice(0, 128),
+          }
+        : buildCredentialHealthFromPluginStatus(settlement.result);
+      await this.settleQualifiedConnectedAccountHealth({
+        account: input.account,
+        basis: settlement.basis,
+        health,
+      });
+      this.armQualifiedConnectedAccountHealthBackoff(input.account);
+      return false;
+    } catch (error) {
+      this.armQualifiedConnectedAccountHealthBackoff(input.account);
+      logger.warn(
+        '[DAEMON RUN] Qualified Connected Account request-auth refresh did not settle',
+        {
+          service: input.account.service,
+          accountId: input.account.accountId,
+          error: serializeAxiosErrorForLog(error),
+        },
+      );
+      return false;
+    }
   }
 
   private async didRegisteredRuntimeAuthSessionAdvanceToAnotherGroupMember(input: Readonly<{
@@ -1559,7 +1696,7 @@ export class ConnectedServiceRefreshCoordinator {
       },
     );
     if (result.status !== 'refreshed' || result.credential?.kind !== 'oauth') {
-      throw new Error('connected_service_chatgpt_refresh_unavailable');
+      throw new ConnectedServiceCredentialRefreshError(result.diagnostic);
     }
     // Distribution happens BY CONSTRUCTION on the 'refreshed' completion path (RR-1).
 
@@ -1654,7 +1791,7 @@ export class ConnectedServiceRefreshCoordinator {
       { force: true, reason: 'provider_auth_bridge' },
     );
     if (result.status !== 'refreshed' || result.credential?.kind !== 'oauth') {
-      throw new Error('connected_service_claude_subscription_refresh_unavailable');
+      throw new ConnectedServiceCredentialRefreshError(result.diagnostic);
     }
     // Distribution happens BY CONSTRUCTION on the 'refreshed' completion path (RR-1).
 
@@ -2152,7 +2289,9 @@ export class ConnectedServiceRefreshCoordinator {
       return {
         status: 'lease_not_acquired',
         credential: null,
-        credentialRevision: expectedCredential.credentialRevision,
+        ...(expectedCredential.revisionSemantics === 'revisioned'
+          ? { credentialRevision: expectedCredential.credentialRevision }
+          : {}),
         diagnostic: buildRefreshDiagnostic({
           binding,
           reason: options.reason,
@@ -2964,12 +3103,13 @@ export class ConnectedServiceRefreshCoordinator {
     if (!profileId) return;
     const binding = { serviceId: input.serviceId, profileId } satisfies BoundProfile;
     const affectedTargets = (await this.rematerializeTargetsForBindingDetailed(binding)).rematerializedTargets;
-    if (affectedTargets.length === 0 || input.executionAuthority === 'passive_projection') return;
+    if (affectedTargets.length === 0) return;
     await this.params.onAuthUpdated?.({
       binding,
       affectedTargets,
       trigger: 'reconnect_propagation',
       credentialPresence: input.credentialPresence,
+      executionAuthority: input.executionAuthority,
     });
   }
 
@@ -3005,6 +3145,7 @@ export class ConnectedServiceRefreshCoordinator {
       binding,
       affectedTargets,
       trigger: 'refresh_triggered_restart',
+      executionAuthority: 'runtime_recovery',
     }));
     this.inFlightRefreshAuthUpdatedNotifications.set(key, promise);
     try {
@@ -3086,6 +3227,49 @@ export class ConnectedServiceRefreshCoordinator {
           resolution.record,
         ]),
       );
+      const qualifiedPurposeBindingSnapshot =
+        await this.params.resolveQualifiedPurposeBindingSnapshot?.({
+          agentId: target.agentId,
+          connectedServicesBindingsRaw: target.connectedServicesBindingsRaw,
+        }) ?? null;
+      try {
+        assertQualifiedPurposeAuthorityForSelections({
+          selections: parseConnectedServiceBindingSelections(
+            target.connectedServicesBindingsRaw,
+          ),
+          snapshot: qualifiedPurposeBindingSnapshot,
+        });
+      } catch (error) {
+        if (!(error instanceof ConnectedServiceQualifiedPurposeAuthorityError)) {
+          throw error;
+        }
+        const targetBinding = targetBindings.find((candidate) =>
+          error.missingServiceIds.includes(candidate.serviceId)
+        ) ?? binding;
+        failed.push({
+          target,
+          binding: targetBinding,
+          diagnostic: {
+            code: error.code,
+            providerId: target.agentId,
+            severity: 'blocking',
+            serviceId: targetBinding.serviceId,
+            reason: error.message,
+          },
+        });
+        logger.warn('[DAEMON RUN] Skipping connected-service rematerialization; qualified purpose authority unavailable', {
+          serviceId: targetBinding.serviceId,
+          profileId: targetBinding.profileId,
+          agentId: target.agentId,
+          reason: error.reason,
+          missingServiceIds: error.missingServiceIds,
+        });
+        continue;
+      }
+      const requestAuthPurposeBindings =
+        resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
+          qualifiedPurposeBindingSnapshot,
+        );
       try {
         await materializeConnectedServicesForSpawn({
           agentId: target.agentId,
@@ -3095,6 +3279,12 @@ export class ConnectedServiceRefreshCoordinator {
           recordsByServiceId: records,
           accountSettings: this.params.accountSettingsProvider?.() ?? null,
           processEnv: this.params.processEnv ?? process.env,
+          connectedAccountMaterializationAuthority: {
+            kind: 'qualified',
+            purposeBindings:
+              qualifiedPurposeBindingSnapshot?.bindings ?? Object.freeze([]),
+            requestAuthPurposeBindings,
+          },
           ...(target.childSelectionsByServiceId
             ? { selectionsByServiceId: this.buildResolvedSelectionsByServiceId(target.childSelectionsByServiceId, records) }
             : {}),

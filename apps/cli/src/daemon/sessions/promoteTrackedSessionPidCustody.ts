@@ -117,12 +117,6 @@ export async function promoteTrackedSessionPidCustody(
                   tracked.spawnOptions.spawnNonce.trim(),
               }
             : {}),
-          ...(tracked.managedLocalServiceRunAttachment
-            ? {
-                expectedManagedLocalServiceRunAttachment:
-                  tracked.managedLocalServiceRunAttachment,
-              }
-            : {}),
         });
       if (!exactMarker) {
         logger.debug(
@@ -190,10 +184,7 @@ export async function promoteTrackedSessionPidCustody(
     const targetMarkerOwnership =
       markerPromotion.targetMarkerOwnership;
     if (
-      (
-        tracked.managedLocalServiceRunAttachment
-        || requireExactTargetOwnership
-      )
+      requireExactTargetOwnership
       && (
         !targetMarkerOwnership?.processCommandHash
         || targetMarkerOwnership.processStartTimeMs === undefined
@@ -201,7 +192,7 @@ export async function promoteTrackedSessionPidCustody(
     ) {
       await rollbackTargetMarker();
       logger.debug(
-        '[DAEMON RUN] Promoted managed attachment lacks exact target marker ownership; retaining source custody',
+        '[DAEMON RUN] Promoted target lacks exact marker ownership; retaining source custody',
         { fromPid, toPid },
       );
       return false;
@@ -225,50 +216,13 @@ export async function promoteTrackedSessionPidCustody(
       return false;
     }
 
-    let promotedAttachmentWasCleared = false;
-    if (
-      targetMarkerOwnership?.processCommandHash
-      && targetMarkerOwnership.processStartTimeMs !== undefined
-      && tracked.onManagedLocalServiceMarkerPidPromoted
-    ) {
-      const markerCustodyPromoted =
-        await tracked.onManagedLocalServiceMarkerPidPromoted({
-          fromPid,
-          toPid,
-          ownership: {
-            happySessionId:
-              targetMarkerOwnership.happySessionId,
-            processCommandHash:
-              targetMarkerOwnership.processCommandHash,
-            processStartTimeMs:
-              targetMarkerOwnership.processStartTimeMs,
-          },
-          ...(markerPromotion.targetProcessCommand
-            ? {
-                processCommand:
-                  markerPromotion.targetProcessCommand,
-              }
-            : {}),
-        });
-      if (!markerCustodyPromoted) {
-        await rollbackTargetMarker();
-        logger.debug(
-          '[DAEMON RUN] Managed marker custody refused PID promotion; retaining source custody',
-          { fromPid, toPid },
-        );
-        return false;
-      }
-      promotedAttachmentWasCleared =
-        markerCustodyPromoted === 'attachment_cleared';
-    }
-
     if (
       pidToTrackedSession.get(fromPid) !== tracked
       || targetHasCustody()
     ) {
       await rollbackTargetMarker();
       logger.debug(
-        '[DAEMON RUN] PID ownership changed during managed marker custody promotion; preserving source custody',
+        '[DAEMON RUN] PID ownership changed during marker custody promotion; preserving source custody',
         { fromPid, toPid },
       );
       return false;
@@ -287,9 +241,6 @@ export async function promoteTrackedSessionPidCustody(
       sessionAttachCleanupByPid.set(toPid, attachCleanup);
     }
     pidToTrackedSession.delete(fromPid);
-    if (promotedAttachmentWasCleared) {
-      delete tracked.managedLocalServiceRunAttachment;
-    }
     const targetMarkerSessionId =
       normalizeSessionId(targetMarkerOwnership?.happySessionId);
     const currentSessionId =

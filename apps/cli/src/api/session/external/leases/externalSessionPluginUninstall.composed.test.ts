@@ -9,6 +9,7 @@ import { createDaemonPluginChangeService } from '@/plugins/daemon/changeService'
 import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
+import { successfulManagedPluginPnpmBoundary } from '@/plugins/testkit/managedPnpmBoundary';
 
 import { createExternalSessionFollowLeaseManager } from './createExternalSessionFollowLeaseManager';
 import { createExternalSessionObservationDaemonProjection } from './createExternalSessionObservationDaemonProjection';
@@ -39,6 +40,10 @@ type FixtureState = {
     pageTranscriptCalls: number;
     readAfterTranscriptCalls: number;
     lastEmit: ((batch: unknown) => void) | null;
+    observerLifecycle: Array<Readonly<{
+        kind: 'started' | 'disposed';
+        generation: string;
+    }>>;
 };
 
 const roots: string[] = [];
@@ -56,7 +61,10 @@ afterEach(async () => {
     );
 });
 
-async function materializeObservationPlugin(pluginRoot: string): Promise<void> {
+async function materializeObservationPlugin(
+    pluginRoot: string,
+    generation = 'generation-one',
+): Promise<void> {
     await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
     await writeFile(
         join(pluginRoot, '.happier-plugin', 'plugin.json'),
@@ -79,7 +87,6 @@ async function materializeObservationPlugin(pluginRoot: string): Promise<void> {
                             sources: [{
                                 sourceKind: SOURCE.kind,
                                 schema: {
-                                    passthrough: false,
                                     fields: [
                                         {
                                             name: 'kind',
@@ -121,6 +128,7 @@ async function materializeObservationPlugin(pluginRoot: string): Promise<void> {
         join(pluginRoot, 'daemon.mjs'),
         `
 const state = globalThis[${JSON.stringify(FIXTURE_STATE_KEY)}];
+const generation = ${JSON.stringify(generation)};
 
 export function activate(api) {
   api.agents.registerExternalSessions(${JSON.stringify(AGENT_ID)}, {
@@ -177,6 +185,7 @@ export function activate(api) {
     },
     observeResource(request) {
       state.observerAcquisitions += 1;
+      state.observerLifecycle.push({ kind: 'started', generation });
       state.lastEmit = request.emit;
       request.emit({
         items: [{
@@ -196,6 +205,7 @@ export function activate(api) {
           if (disposed) return;
           disposed = true;
           state.observerDisposals += 1;
+          state.observerLifecycle.push({ kind: 'disposed', generation });
         },
       };
     },
@@ -283,6 +293,7 @@ describe('installed path plugin External Session uninstall lifecycle', () => {
             pageTranscriptCalls: 0,
             readAfterTranscriptCalls: 0,
             lastEmit: null,
+            observerLifecycle: [],
         };
         (globalThis as unknown as Record<string, unknown>)[FIXTURE_STATE_KEY] =
             fixtureState;
@@ -295,6 +306,7 @@ describe('installed path plugin External Session uninstall lifecycle', () => {
             prepare: createDaemonPathPluginChangePreparer({
                 happyHomeDir,
                 runtimeLifecycle,
+                runManagedPluginPnpm: successfulManagedPluginPnpmBoundary,
             }),
             createPendingChangeId: () => 'external-uninstall-install-review',
         });
@@ -360,6 +372,8 @@ describe('installed path plugin External Session uninstall lifecycle', () => {
                             latestObservation.link.linkGeneration,
                         pluginGeneration:
                             latestObservation.resource.pluginGeneration,
+                        retirementSignal:
+                            latestObservation.resource.retirementSignal,
                     },
                     acquireFollowLease: async () => {
                         fixtureState.followAcquisitions += 1;
@@ -410,6 +424,35 @@ describe('installed path plugin External Session uninstall lifecycle', () => {
             });
             const retiredEmit = fixtureState.lastEmit;
 
+            await materializeObservationPlugin(
+                pluginRoot,
+                'generation-two',
+            );
+            const reloaded = await changeService.requestPluginChange({
+                kind: 'development',
+                pluginId: PLUGIN_ID,
+                sourceRootPath: pluginRoot,
+                changedPaths: ['daemon.mjs'],
+            });
+            expect(reloaded).toMatchObject({
+                kind: 'committed',
+                pluginId: PLUGIN_ID,
+            });
+            if (reloaded.kind !== 'committed') {
+                throw new Error(`Expected committed reload, received ${reloaded.kind}`);
+            }
+            expect(reloaded.appliedGeneration).toBe(reloaded.desiredGeneration);
+            await vi.waitFor(() => {
+                expect(fixtureState.observerLifecycle).toEqual([
+                    { kind: 'started', generation: 'generation-one' },
+                    { kind: 'disposed', generation: 'generation-one' },
+                    { kind: 'started', generation: 'generation-two' },
+                ]);
+                expect(fixtureState.followAcquisitions).toBe(2);
+                expect(fixtureState.followDisposals).toBe(1);
+            });
+            await projection.flush();
+
             await expect(changeService.requestPluginChange({
                 kind: 'uninstall',
                 pluginId: PLUGIN_ID,
@@ -421,10 +464,10 @@ describe('installed path plugin External Session uninstall lifecycle', () => {
             });
 
             await vi.waitFor(() => {
-                expect(fixtureState.observerDisposals).toBe(1);
-                expect(fixtureState.followDisposals).toBe(1);
+                expect(fixtureState.observerDisposals).toBe(2);
+                expect(fixtureState.followDisposals).toBe(2);
                 expect(publications.map((snapshot) => snapshot.status))
-                    .toEqual(['working', 'unknown']);
+                    .toEqual(['working', 'working', 'unknown']);
             });
             expect(latestObservation).toBeNull();
             expect(linkedSession.metadata.externalSessionV1).toMatchObject({
@@ -447,19 +490,19 @@ describe('installed path plugin External Session uninstall lifecycle', () => {
             });
             await projection.flush();
             expect(publications.map((snapshot) => snapshot.status))
-                .toEqual(['working', 'unknown']);
+                .toEqual(['working', 'working', 'unknown']);
 
             await install();
             await vi.waitFor(() => {
-                expect(fixtureState.observerAcquisitions).toBe(2);
-                expect(fixtureState.followAcquisitions).toBe(2);
+                expect(fixtureState.observerAcquisitions).toBe(3);
+                expect(fixtureState.followAcquisitions).toBe(3);
             });
             await projection.flush();
             expect(publications.map((snapshot) => snapshot.status))
-                .toEqual(['working', 'unknown', 'working']);
+                .toEqual(['working', 'working', 'unknown', 'working']);
             expect(fixtureState).toMatchObject({
-                observerDisposals: 1,
-                followDisposals: 1,
+                observerDisposals: 2,
+                followDisposals: 2,
                 pageTranscriptCalls: 0,
                 readAfterTranscriptCalls: 0,
             });
@@ -471,10 +514,15 @@ describe('installed path plugin External Session uninstall lifecycle', () => {
         }
 
         expect(fixtureState).toMatchObject({
-            observerAcquisitions: 2,
-            observerDisposals: 2,
-            followAcquisitions: 2,
-            followDisposals: 2,
+            observerAcquisitions: 3,
+            observerDisposals: 3,
+            followAcquisitions: 3,
+            followDisposals: 3,
         });
-    });
+        // Three real immutable plugin generations are materialized, activated and
+        // retired through the daemon store here. Measured 16s on an idle machine
+        // and 114s while other suites ran in parallel, so the suite's 30s default
+        // reports a phantom failure under load; the budget is sized from the
+        // loaded measurement rather than just above it.
+    }, 240_000);
 });

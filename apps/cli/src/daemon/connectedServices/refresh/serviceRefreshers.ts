@@ -1,8 +1,13 @@
 import { URLSearchParams } from 'node:url';
 
-import type { FetchRuntimeServiceV1 } from '@/plugins/runtime/exec/privateContract';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import {
   CLAUDE_OAUTH_TOKEN_URL,
+  CLAUDE_OAUTH_CLIENT_ID,
+  CLAUDE_OAUTH_PROFILE_HEADERS,
+  CLAUDE_OAUTH_PROFILE_URL,
+  OPENAI_CODEX_CLIENT_ID,
+  OPENAI_CODEX_TOKEN_URL,
   projectConnectedAccountOauthProfileMetadata,
   type ConnectedServiceId,
   type ConnectedServiceOauthCredentialRawMetadata,
@@ -15,6 +20,16 @@ import { readSafeOauthProviderErrorCode } from '@/cloud/safeOauthProviderError';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
 
 const CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+function readFetchResponseText(response: Awaited<ReturnType<HttpService['request']>>): string {
+  return textDecoder.decode(response.body);
+}
+
+function readFetchResponseJson(response: Awaited<ReturnType<HttpService['request']>>): unknown {
+  return JSON.parse(readFetchResponseText(response)) as unknown;
+}
 
 type LegacyOauthPayloadMapping = Readonly<{
   accessTokenField: string;
@@ -83,11 +98,11 @@ function resolveLegacyOauthRefreshConfig(
     return Object.freeze({
       clientId: resolveNonEmptyEnv(
         process.env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_CLIENT_ID,
-        'app_EMoamEEZ73f0CkXaXp7hrann',
+        OPENAI_CODEX_CLIENT_ID,
       ),
       tokenUrl: resolveNonEmptyEnv(
         process.env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL,
-        'https://auth.openai.com/oauth/token',
+        OPENAI_CODEX_TOKEN_URL,
       ),
       refreshBody: 'form',
       payloadMapping: Object.freeze({
@@ -105,7 +120,7 @@ function resolveLegacyOauthRefreshConfig(
   return Object.freeze({
     clientId: resolveNonEmptyEnv(
       process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID,
-      '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+      CLAUDE_OAUTH_CLIENT_ID,
     ),
     tokenUrl: resolveNonEmptyEnv(
       process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL,
@@ -128,10 +143,8 @@ function resolveLegacyOauthRefreshConfig(
       expiresAt: Object.freeze({ expiresInField: 'expires_in' }),
     }),
     profileMetadata: Object.freeze({
-      endpointUrl: 'https://api.anthropic.com/api/oauth/profile',
-      headers: Object.freeze({
-        'anthropic-beta': 'oauth-2025-04-20',
-      }),
+      endpointUrl: CLAUDE_OAUTH_PROFILE_URL,
+      headers: CLAUDE_OAUTH_PROFILE_HEADERS,
       projection: 'claude_oauth_profile_entitlement',
     }),
   });
@@ -213,7 +226,7 @@ export async function refreshReleasedPeerLegacyConnectedAccountOauthTokens(param
   serviceId: ConnectedServiceId;
   refreshToken: string;
   now: number;
-  runtimeFetch?: FetchRuntimeServiceV1;
+  runtimeFetch?: Pick<HttpService, 'request'>;
 }>): Promise<Readonly<{
   accessToken: string;
   refreshToken: string;
@@ -230,30 +243,31 @@ export async function refreshReleasedPeerLegacyConnectedAccountOauthTokens(param
     refresh_token: params.refreshToken,
     client_id: config.clientId,
   };
-  const response = await runtimeFetch(
+  const response = await runtimeFetch.request(
     config.refreshBody === 'json'
       ? {
           url: config.tokenUrl,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(bodyFields),
-          signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS),
+          body: textEncoder.encode(JSON.stringify(bodyFields)),
+          redirect: 'error',
         }
       : {
           url: config.tokenUrl,
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams(bodyFields),
-          signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS),
+          body: textEncoder.encode(new URLSearchParams(bodyFields).toString()),
+          redirect: 'error',
         },
+    { signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS) },
   );
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
+  if (response.status < 200 || response.status >= 300) {
+    const body = readFetchResponseText(response);
     const providerErrorCode = readSafeOauthProviderErrorCode(body);
-    const safeError = providerErrorCode ?? response.statusText;
+    const safeError = providerErrorCode ?? 'provider_error';
     throw new Error(`Connected account refresh failed (${params.serviceId}, ${response.status}): ${safeError || 'provider_error'}`);
   }
-  const json: unknown = await response.json();
+  const json = readFetchResponseJson(response);
   const mapped = mapLegacyOauthPayload({
     mapping: config.payloadMapping,
     now: params.now,
@@ -267,35 +281,35 @@ export async function refreshReleasedPeerLegacyConnectedAccountOauthTokens(param
   let raw: ConnectedServiceOauthCredentialRawMetadata | null | undefined;
   const profileMetadata = config.profileMetadata;
   if (profileMetadata) {
-    let profileResponse: Awaited<ReturnType<FetchRuntimeServiceV1>> | null = null;
+    let profileResponse: Awaited<ReturnType<HttpService['request']>> | null = null;
     try {
-      profileResponse = await runtimeFetch({
+      profileResponse = await runtimeFetch.request({
         url: profileMetadata.endpointUrl,
         method: 'GET',
         headers: {
           ...profileMetadata.headers,
           Authorization: `Bearer ${accessToken}`,
         },
-        signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS),
-      });
+        redirect: 'error',
+      }, { signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS) });
     } catch {
       profileResponse = null;
     }
 
     if (profileResponse?.status === 401) {
-      const body = await profileResponse.text().catch(() => '');
+      const body = readFetchResponseText(profileResponse);
       const providerErrorCode = readSafeOauthProviderErrorCode(body);
-      const safeError = providerErrorCode ?? profileResponse.statusText;
+      const safeError = providerErrorCode ?? 'provider_error';
       throw new Error(
         `Connected account refreshed access-token verification failed (${params.serviceId}, 401): ${safeError || 'provider_error'}`,
       );
     }
 
-    if (profileResponse?.ok) {
+    if (profileResponse && profileResponse.status >= 200 && profileResponse.status < 300) {
       try {
         raw = projectConnectedAccountOauthProfileMetadata({
           projection: profileMetadata.projection,
-          value: await profileResponse.json(),
+          value: readFetchResponseJson(profileResponse),
         }) ?? undefined;
       } catch {
         raw = undefined;

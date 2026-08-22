@@ -10,6 +10,7 @@ function toVoiceInferencePublicErrorMessage(errorCode: string): string {
     case 'machine_unreachable':
     case 'request_timeout':
     case 'invalid_audio_input':
+    case 'output_too_large':
     case 'unsupported_codec':
     case 'unsupported_runtime_family':
     case 'cancelled':
@@ -31,6 +32,7 @@ export function toVoiceInferenceErrorCode(error: unknown): DaemonVoiceInferenceE
     case 'machine_unreachable':
     case 'request_timeout':
     case 'invalid_audio_input':
+    case 'output_too_large':
     case 'unsupported_codec':
     case 'unsupported_runtime_family':
     case 'cancelled':

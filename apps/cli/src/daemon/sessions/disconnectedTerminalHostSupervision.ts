@@ -1,5 +1,6 @@
 import type { TerminalHostAdapter, TerminalHostHandle } from '@happier-dev/agents';
 
+import type { Metadata } from '@/api/types';
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
 import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/terminal/attachment/catalogHooks';
 import {
@@ -14,6 +15,10 @@ import type { TerminalMode } from '@/terminal/runtime/terminalConfig';
 
 import { removeSessionMarker as removeDefaultSessionMarker } from '../sessionRegistry';
 import type { SessionRunnerServiceabilityProbe } from './isSessionRunnerActive';
+import {
+  requireExactTerminalControlServiceabilityRetirement,
+  type ExactTerminalControlServiceabilityRetirement,
+} from './retireTerminalControlServiceability';
 
 export type DisconnectedTerminalHostCandidate = Readonly<{
   sessionId: string;
@@ -41,6 +46,20 @@ export function resolveDisconnectedTerminalHostResumeGate(
 
 type TerminalHostAdapters = Readonly<Partial<Record<TerminalHostAdapter['kind'], TerminalHostAdapter>>>;
 
+export function resolveDisconnectedTerminalMode(input: Readonly<{
+  terminal: Metadata['terminal'] | undefined;
+  hostKind: DisconnectedTerminalHostCandidate['handle']['kind'];
+  attachmentId: string;
+}>): TerminalMode | null {
+  if (input.hostKind === 'tmux' || input.hostKind === 'zellij') return input.hostKind;
+  const evidenceAttachmentId = input.terminal?.controlServiceabilityV1?.attachmentId;
+  if (typeof evidenceAttachmentId === 'string' && evidenceAttachmentId !== input.attachmentId) {
+    return null;
+  }
+  const mode = input.terminal?.mode;
+  return mode === 'windows_terminal' || mode === 'windows_console' ? mode : null;
+}
+
 export async function superviseDisconnectedTerminalHostCandidate(input: Readonly<{
   candidate: DisconnectedTerminalHostCandidate;
   terminalHostAdapters: TerminalHostAdapters;
@@ -53,6 +72,12 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
     sessionId: string;
     attachmentInfo: BoundTerminalHostAttachmentInfo;
   }>) => Promise<void>;
+  retireExactTerminalControlServiceability?: (input: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+    attachmentInfo: BoundTerminalHostAttachmentInfo;
+    terminalMode: TerminalMode;
+  }>) => Promise<ExactTerminalControlServiceabilityRetirement | void>;
 }>): Promise<DisconnectedTerminalHostSupervisionResult> {
   const readAttachment = input.readTerminalAttachmentInfo ?? readDefaultTerminalHostAttachmentInfo;
   const current = await readAttachment({
@@ -91,6 +116,11 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   }
   if (probe.status === 'inconclusive') return { state: 'unknown', reason: 'probe_inconclusive' };
 
+  const terminalMode = current.handle.kind === 'windows_console'
+    ? input.candidate.terminalMode
+    : current.handle.kind;
+  if (!terminalMode) return { state: 'unknown', reason: 'retirement_failed' };
+
   const disposition = await executeTerminalHostDisposition({
     happyHomeDir: input.candidate.happyHomeDir,
     sessionId: input.candidate.sessionId,
@@ -99,6 +129,26 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
     adapter,
     readAttachmentInfo: readAttachment,
     removeAttachmentInfo: input.removeTerminalAttachmentInfo ?? removeDefaultTerminalHostAttachmentInfo,
+    beforeDescriptorRetirement: input.retireExactTerminalControlServiceability
+      ? async ({ attachmentInfo }) => {
+          try {
+            const retirement = await input.retireExactTerminalControlServiceability!({
+              happyHomeDir: input.candidate.happyHomeDir,
+              sessionId: input.candidate.sessionId,
+              attachmentInfo,
+              terminalMode,
+            });
+            requireExactTerminalControlServiceabilityRetirement(retirement);
+          } catch (error) {
+            logger.debug('[DAEMON RUN] Confirmed-dead terminal host retained for serviceability retirement retry', {
+              sessionId: input.candidate.sessionId,
+              attachmentId: input.candidate.attachmentId,
+              error,
+            });
+            throw error;
+          }
+        }
+      : undefined,
   });
   if (disposition.status !== 'retired') return { state: 'unknown', reason: 'retirement_failed' };
   try {

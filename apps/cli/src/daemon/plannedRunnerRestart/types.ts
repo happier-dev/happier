@@ -1,6 +1,7 @@
 import type {
   RestartAllSessionRunnersResultV1,
   RestartSessionRunnerRequestV1,
+  RestartSessionRunnerRequestV2,
   RestartSessionRunnerResultV1,
   RestartSessionRunnerStatusV1,
   SessionRunnerRestartModeV1,
@@ -34,10 +35,14 @@ export type PlannedRunnerRestartNotSignaledReason =
   | 'unsafe_process'
   | 'superseded'
   | 'activity_in_progress'
+  | 'source_cutover_requirement_missing'
+  | 'runner_identity_changed'
   | SessionRunnerRestartDisabledReason;
 
 export type PlannedRunnerRestartSignalGateResult =
   | boolean
+  | 'source_cutover_requirement_missing'
+  | 'runner_identity_changed'
   | SessionRunnerRestartDisabledReason;
 
 export type PlannedRunnerRestartSignalRequest = Readonly<{
@@ -68,6 +73,6 @@ export type PlannedRunnerRestartDeferral =
   }>;
 
 export type RestartSessionRunnerStatus = RestartSessionRunnerStatusV1;
-export type RestartSessionRunnerRequest = RestartSessionRunnerRequestV1;
+export type RestartSessionRunnerRequest = RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2;
 export type RestartSessionRunnerResult = RestartSessionRunnerResultV1;
 export type RestartAllSessionRunnersResult = RestartAllSessionRunnersResultV1;

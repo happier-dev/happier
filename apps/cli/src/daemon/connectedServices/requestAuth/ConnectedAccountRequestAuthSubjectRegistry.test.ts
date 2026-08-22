@@ -8,13 +8,13 @@ import type {
 } from '@happier-dev/protocol';
 import {
     readConnectedAccountRequestAuthCapabilityFile,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 
 import {
     createConnectedAccountRequestAuthSubjectRegistry,
 } from './ConnectedAccountRequestAuthSubjectRegistry';
 import {
-    removeConnectedAccountRequestAuthCapabilityFile,
+    removeConnectedAccountRequestAuthCapabilityFileIfOwned,
 } from './capabilityFile';
 import {
     ConnectedAccountRequestAuthError,
@@ -79,7 +79,7 @@ function subject(
 }
 
 describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
-    it('derives Agent and managed Provider capabilities from one lease without cross-purpose authority', async () => {
+    it('preserves host-issued catalog compatibility provenance only on the authenticated private principal', async () => {
         const agentRoot = await mkdtemp(
             join(tmpdir(), 'happier-request-auth-agent-'),
         );
@@ -129,13 +129,14 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
         const managedRedactions: string[][] = [];
         const agentSubject = scopeConnectedAccountSessionPurposeBindingLease({
             lease: unionLease,
-            subjectId: 'agent-session:canonical/agent',
+            subjectId: unionLease.subjectId,
             uses: [use],
+            legacyServiceKeyedCompatibility: true,
             registerRedaction: (values) => agentRedactions.push([...values]),
         });
         const managedSubject = scopeConnectedAccountSessionPurposeBindingLease({
             lease: unionLease,
-            subjectId: 'agent-session:canonical/managed',
+            subjectId: unionLease.subjectId,
             uses: [managedUse],
             registerRedaction: (values) => managedRedactions.push([...values]),
         });
@@ -161,7 +162,7 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
         const agentPrincipal = registry.authenticate(agentSecret);
         const managedPrincipal = registry.authenticate(managedSecret);
         const requestAuth = createConnectedAccountRequestAuthService({
-            resolveCurrentBinding: (currentBinding) => ({
+            resolveCurrentBinding: ({ binding: currentBinding }) => ({
                 account: currentBinding.target.kind === 'account'
                     ? currentBinding.target.account
                     : { service: currentBinding.target.service, accountId: 'resolved' },
@@ -182,14 +183,22 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
 
         expect(agentPrincipal).not.toBeNull();
         expect(managedPrincipal).not.toBeNull();
-        expect(() => requestAuth.validateRequestAuth({
+        expect(agentCapability).not.toHaveProperty(
+            'legacyServiceKeyedCompatibility',
+        );
+        expect(managedCapability).not.toHaveProperty(
+            'legacyServiceKeyedCompatibility',
+        );
+        expect(agentPrincipal?.legacyServiceKeyedCompatibility).toBe(true);
+        expect(managedPrincipal?.legacyServiceKeyedCompatibility).toBeUndefined();
+        await expect(requestAuth.validateRequestAuth({
             subject: agentPrincipal!,
             purpose,
-        })).not.toThrow();
-        expect(() => requestAuth.validateRequestAuth({
+        })).resolves.toBeUndefined();
+        await expect(requestAuth.validateRequestAuth({
             subject: managedPrincipal!,
             purpose: managedPurpose,
-        })).not.toThrow();
+        })).resolves.toBeUndefined();
         agentPrincipal!.registerRedaction(['agent-secret']);
         managedPrincipal!.registerRedaction(['managed-secret']);
         expect(agentRedactions).toEqual([['agent-secret']]);
@@ -199,7 +208,7 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
             [managedPrincipal!, purpose],
         ] as const) {
             try {
-                requestAuth.validateRequestAuth({
+                await requestAuth.validateRequestAuth({
                     subject: principal,
                     purpose: forbiddenPurpose,
                 });
@@ -226,7 +235,7 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-subject-'));
         roots.push(root);
         const stagedPath = join(root, 'request-auth', 'capability.json');
-        const removeCapabilityFile = vi.fn(async () => undefined);
+        const removeCapabilityFileIfOwned = vi.fn(async () => true);
         const registry = createConnectedAccountRequestAuthSubjectRegistry({
             writeCapabilityFile: async () => ({
                 path: stagedPath,
@@ -235,7 +244,7 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
                 capabilityDigest: 'b'.repeat(64),
             }),
             verifyCapabilityFile: async () => null,
-            removeCapabilityFile,
+            removeCapabilityFileIfOwned,
         });
 
         await expect(registry.activate({
@@ -245,15 +254,18 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
             httpPort: 43_123,
         })).rejects.toThrow('request_auth_capability_verification_failed');
         expect(registry.authenticate('unverified-capability')).toBeNull();
-        expect(removeCapabilityFile).toHaveBeenCalledOnce();
-        expect(removeCapabilityFile).toHaveBeenCalledWith(stagedPath);
+        expect(removeCapabilityFileIfOwned).toHaveBeenCalledOnce();
+        expect(removeCapabilityFileIfOwned).toHaveBeenCalledWith({
+            descriptor: expect.objectContaining({ path: stagedPath }),
+            materializedRootDir: root,
+        });
     });
 
     it('rolls back staged map and file authority exactly once when finalization fails after commit', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-finalize-'));
         roots.push(root);
-        const removeCapabilityFile = vi.fn(
-            removeConnectedAccountRequestAuthCapabilityFile,
+        const removeCapabilityFileIfOwned = vi.fn(
+            removeConnectedAccountRequestAuthCapabilityFileIfOwned,
         );
         let registry!: ReturnType<
             typeof createConnectedAccountRequestAuthSubjectRegistry
@@ -261,7 +273,7 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
         let secret = '';
         const authorityDuringFinalization: Array<string | null> = [];
         registry = createConnectedAccountRequestAuthSubjectRegistry({
-            removeCapabilityFile,
+            removeCapabilityFileIfOwned,
         });
 
         await expect(registry.activate({
@@ -294,7 +306,7 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
             'session:one/run:wrapper-one',
         ]);
         expect(registry.authenticate(secret)).toBeNull();
-        expect(removeCapabilityFile).toHaveBeenCalledOnce();
+        expect(removeCapabilityFileIfOwned).toHaveBeenCalledOnce();
         await expect(readConnectedAccountRequestAuthCapabilityFile(
             join(root, 'request-auth', 'capability.json'),
         )).resolves.toBeNull();
@@ -303,11 +315,11 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
     it('closes an abandoned staged commit so it cannot publish authority later', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-abandoned-'));
         roots.push(root);
-        const removeCapabilityFile = vi.fn(
-            removeConnectedAccountRequestAuthCapabilityFile,
+        const removeCapabilityFileIfOwned = vi.fn(
+            removeConnectedAccountRequestAuthCapabilityFileIfOwned,
         );
         const registry = createConnectedAccountRequestAuthSubjectRegistry({
-            removeCapabilityFile,
+            removeCapabilityFileIfOwned,
         });
         const staged: { commit?: () => void } = {};
         let secret = '';
@@ -331,7 +343,7 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
         })).rejects.toThrow('request_auth_authority_commit_missing');
 
         expect(registry.authenticate(secret)).toBeNull();
-        expect(removeCapabilityFile).toHaveBeenCalledOnce();
+        expect(removeCapabilityFileIfOwned).toHaveBeenCalledOnce();
         expect(() => staged.commit?.()).toThrow(
             'request_auth_authority_commit_invalid',
         );
@@ -396,8 +408,11 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
         let registry!: ReturnType<typeof createConnectedAccountRequestAuthSubjectRegistry>;
         let secret = '';
         registry = createConnectedAccountRequestAuthSubjectRegistry({
-            removeCapabilityFile: async () => {
+            removeCapabilityFileIfOwned: async (input) => {
                 observations.push(registry.authenticate(secret) === null);
+                return await removeConnectedAccountRequestAuthCapabilityFileIfOwned(
+                    input,
+                );
             },
         });
         const capability = await registry.activate({
@@ -416,6 +431,97 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
         expect(capturedPrincipal?.isCurrent()).toBe(false);
         expect(capturedPrincipal?.resolvePurposeUse(purpose)).toBeNull();
         expect(capturedPrincipal?.listPurposeUses()).toEqual([]);
+    });
+
+    it('keeps failed retirement cleanup retryable without restoring authority', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-retry-'));
+        roots.push(root);
+        const removeCapabilityFileIfOwned = vi.fn(
+            removeConnectedAccountRequestAuthCapabilityFileIfOwned,
+        );
+        removeCapabilityFileIfOwned.mockRejectedValueOnce(
+            new Error('capability_cleanup_busy'),
+        );
+        const registry = createConnectedAccountRequestAuthSubjectRegistry({
+            removeCapabilityFileIfOwned,
+        });
+        const capability = await registry.activate({
+            subject: subject(),
+            materializedRootDir: root,
+            materializationId: 'wrapper-retry',
+            httpPort: 43_123,
+        });
+        const secret = (
+            await readConnectedAccountRequestAuthCapabilityFile(capability.path)
+        )?.capability;
+        const capturedPrincipal = registry.authenticate(secret);
+
+        await expect(registry.retire(capability)).rejects.toThrow(
+            'capability_cleanup_busy',
+        );
+        expect(registry.authenticate(secret)).toBeNull();
+        expect(capturedPrincipal?.isCurrent()).toBe(false);
+        await expect(readConnectedAccountRequestAuthCapabilityFile(
+            capability.path,
+        )).resolves.not.toBeNull();
+
+        await expect(registry.retire(capability)).resolves.toBeUndefined();
+        expect(removeCapabilityFileIfOwned).toHaveBeenCalledTimes(2);
+        await expect(readConnectedAccountRequestAuthCapabilityFile(
+            capability.path,
+        )).resolves.toBeNull();
+
+        await expect(registry.retire(capability)).resolves.toBeUndefined();
+        expect(removeCapabilityFileIfOwned).toHaveBeenCalledTimes(2);
+    });
+
+    it('cannot remove replacement authority when retrying failed retirement', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-retry-'));
+        roots.push(root);
+        const removeCapabilityFileIfOwned = vi.fn(
+            removeConnectedAccountRequestAuthCapabilityFileIfOwned,
+        );
+        removeCapabilityFileIfOwned.mockRejectedValueOnce(
+            new Error('capability_cleanup_busy'),
+        );
+        const registry = createConnectedAccountRequestAuthSubjectRegistry({
+            removeCapabilityFileIfOwned,
+        });
+        const capabilityA = await registry.activate({
+            subject: subject(),
+            materializedRootDir: root,
+            materializationId: 'wrapper-retry',
+            httpPort: 43_123,
+        });
+        const secretA = (
+            await readConnectedAccountRequestAuthCapabilityFile(capabilityA.path)
+        )?.capability;
+
+        await expect(registry.retire(capabilityA)).rejects.toThrow(
+            'capability_cleanup_busy',
+        );
+        const capabilityB = await registry.activate({
+            subject: subject(),
+            materializedRootDir: root,
+            materializationId: 'wrapper-retry',
+            httpPort: 43_124,
+        });
+        const secretB = (
+            await readConnectedAccountRequestAuthCapabilityFile(capabilityB.path)
+        )?.capability;
+
+        await expect(registry.retire(capabilityA)).resolves.toBeUndefined();
+        expect(registry.authenticate(secretA)).toBeNull();
+        expect(registry.authenticate(secretB)).not.toBeNull();
+        await expect(readConnectedAccountRequestAuthCapabilityFile(
+            capabilityB.path,
+        )).resolves.toMatchObject({
+            capability: secretB,
+            httpPort: 43_124,
+        });
+
+        await registry.retire(capabilityB);
+        expect(registry.authenticate(secretB)).toBeNull();
     });
 
     it('scope digest is derived from purpose intent and contains no resolved group member', async () => {

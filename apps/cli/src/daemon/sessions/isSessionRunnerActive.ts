@@ -2,17 +2,10 @@ import type { TrackedSession } from '../types';
 import { readProcessRunState as readProcessRunStateDefault, type ProcessRunState } from '../processRunState';
 import { readSessionRunnerLockStatus, type SessionRunnerLockStatus } from '../sessionRunnerLock';
 
-import { findHappyProcessByPid } from '../doctor';
-import { hashProcessCommand } from '../sessionRegistry';
+import { processGenerationProvesReuse, readProcessIdentityByPid } from '../processIdentity';
 
 function normalizeSessionId(raw: unknown): string {
   return String(raw ?? '').trim();
-}
-
-async function getProcessCommandHashDefault(pid: number): Promise<string | null> {
-  const proc = await findHappyProcessByPid(pid).catch(() => null);
-  if (!proc?.command) return null;
-  return hashProcessCommand(proc.command);
 }
 
 function trackedSessionMatchesSessionId(tracked: TrackedSession, sessionId: string): boolean {
@@ -24,10 +17,6 @@ function trackedSessionMatchesSessionId(tracked: TrackedSession, sessionId: stri
   return trackedHappySessionId === sessionId || trackedExistingSessionId === sessionId;
 }
 
-function isValidCommandHash(value: string | null | undefined): value is string {
-  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-}
-
 type ReadProcessRunState = (pid: number) => Promise<ProcessRunState>;
 
 /** Process-presence evidence for duplicate-spawn fencing, not exact-session RPC serviceability. */
@@ -36,21 +25,22 @@ async function isPidPresentForDuplicateFence(pid: number, readProcessRunState: R
   return state === 'servable';
 }
 
-async function commandHashProvesPidReuse(params: {
-  storedHash: string | null | undefined;
+async function processGenerationProvesPidReuseForPid(params: {
+  storedProcessStartTimeMs: number | undefined;
   pid: number;
-  getProcessCommandHash: (pid: number) => Promise<string | null>;
+  readProcessIdentityByPid: typeof readProcessIdentityByPid;
 }): Promise<boolean> {
-  if (!isValidCommandHash(params.storedHash)) return false;
-
-  const currentHash = await params.getProcessCommandHash(params.pid).catch(() => null);
-  return isValidCommandHash(currentHash) && currentHash !== params.storedHash;
+  const currentIdentity = await params.readProcessIdentityByPid(params.pid).catch(() => null);
+  return processGenerationProvesReuse(
+    params.storedProcessStartTimeMs,
+    currentIdentity?.processStartTimeMs,
+  );
 }
 
 async function isLockActive(params: {
   sessionId: string;
   readProcessRunState: ReadProcessRunState;
-  getProcessCommandHash: (pid: number) => Promise<string | null>;
+  readProcessIdentityByPid: typeof readProcessIdentityByPid;
   readSessionRunnerLockStatus: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
 }): Promise<boolean> {
   const status = await params.readSessionRunnerLockStatus({ sessionId: params.sessionId }).catch(() => null);
@@ -62,10 +52,10 @@ async function isLockActive(params: {
   // If the lock PID is alive but its command hash is provably different, the OS reused
   // the PID for another process. Treat it as inactive so acquisition can break the stale lock.
   if (
-    await commandHashProvesPidReuse({
-      storedHash: status.lock.processCommandHash,
+    await processGenerationProvesPidReuseForPid({
+      storedProcessStartTimeMs: status.lock.processStartTimeMs,
       pid,
-      getProcessCommandHash: params.getProcessCommandHash,
+      readProcessIdentityByPid: params.readProcessIdentityByPid,
     })
   ) {
     return false;
@@ -79,7 +69,7 @@ async function isTrackedSessionActive(params: {
   sessionId: string;
   tracked: TrackedSession;
   readProcessRunState: ReadProcessRunState;
-  getProcessCommandHash: (pid: number) => Promise<string | null>;
+  readProcessIdentityByPid: typeof readProcessIdentityByPid;
 }): Promise<boolean> {
   if (!trackedSessionMatchesSessionId(params.tracked, params.sessionId)) return false;
 
@@ -95,10 +85,10 @@ async function isTrackedSessionActive(params: {
   // If this is only daemon bookkeeping, a matching live PID is not enough: the OS may have
   // reused the PID after the original runner exited. Only a valid hash mismatch proves that.
   if (
-    await commandHashProvesPidReuse({
-      storedHash: params.tracked.processCommandHash,
+    await processGenerationProvesPidReuseForPid({
+      storedProcessStartTimeMs: params.tracked.processStartTimeMs,
       pid: pidToCheck,
-      getProcessCommandHash: params.getProcessCommandHash,
+      readProcessIdentityByPid: params.readProcessIdentityByPid,
     })
   ) {
     return false;
@@ -111,21 +101,21 @@ export async function isSessionRunnerActive(params: Readonly<{
   sessionId: string;
   trackedSessions: Iterable<TrackedSession>;
   readProcessRunState?: ReadProcessRunState;
-  getProcessCommandHash?: (pid: number) => Promise<string | null>;
+  readProcessIdentityByPid?: typeof readProcessIdentityByPid;
   readSessionRunnerLockStatus?: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
 }>): Promise<boolean> {
   const sessionId = normalizeSessionId(params.sessionId);
   if (!sessionId) return false;
 
   const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
-  const getProcessCommandHash = params.getProcessCommandHash ?? getProcessCommandHashDefault;
+  const readProcessIdentity = params.readProcessIdentityByPid ?? readProcessIdentityByPid;
   const readLockStatus = params.readSessionRunnerLockStatus ?? readSessionRunnerLockStatus;
 
   for (const tracked of params.trackedSessions) {
-    if (await isTrackedSessionActive({ sessionId, tracked, readProcessRunState, getProcessCommandHash })) return true;
+    if (await isTrackedSessionActive({ sessionId, tracked, readProcessRunState, readProcessIdentityByPid: readProcessIdentity })) return true;
   }
 
-  return await isLockActive({ sessionId, readProcessRunState, getProcessCommandHash, readSessionRunnerLockStatus: readLockStatus });
+  return await isLockActive({ sessionId, readProcessRunState, readProcessIdentityByPid: readProcessIdentity, readSessionRunnerLockStatus: readLockStatus });
 }
 
 export type SessionRunnerServiceability =
@@ -154,7 +144,7 @@ export async function probeSessionRunnerServiceability(params: Readonly<{
   trackedSessions: Iterable<TrackedSession>;
   probeCapability: () => Promise<SessionRunnerServiceability>;
   readProcessRunState?: ReadProcessRunState;
-  getProcessCommandHash?: (pid: number) => Promise<string | null>;
+  readProcessIdentityByPid?: typeof readProcessIdentityByPid;
   readSessionRunnerLockStatus?: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
 }>): Promise<SessionRunnerServiceabilityProbe> {
   const sessionId = normalizeSessionId(params.sessionId);

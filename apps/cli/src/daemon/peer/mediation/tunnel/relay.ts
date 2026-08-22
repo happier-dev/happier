@@ -41,11 +41,6 @@ import {
     type PeerTcpTunnelVoiceBinaryAppendConsumer,
     type PeerTcpTunnelVoiceBinaryTerminalConsumer,
 } from './voiceBinaryAppend';
-import {
-    dispatchVoiceMediaAgentRealtimeBinaryFrame,
-    type VoiceMediaAgentRealtimeApplicationConsumer,
-} from '../../../voiceMedia/voiceMediaApplicationDispatcher';
-import { voiceMediaPeerApplicationEncryptionRegistry } from '../../../voiceMedia/voiceMediaPeerApplicationEncryption';
 import { createAtomicRouteGrantConsumption } from './grantConsumption';
 import {
     decodePeerTcpTunnelBinaryRoutingHeaderV2,
@@ -66,7 +61,6 @@ type ActiveRelayTunnel = Readonly<{
     maxFrameBytes: number;
     maxTotalBytes?: number;
     peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
-    applicationAbortController?: AbortController;
 }>;
 
 function encodeVoiceConsumerResponse(response: unknown): Uint8Array {
@@ -90,7 +84,6 @@ export type RegisterPeerTcpTunnelRelayTerminatorOptions = Readonly<{
     observability?: DaemonPeerMediationObservabilityEmitter;
     voiceBinaryAppendConsumer?: PeerTcpTunnelVoiceBinaryAppendConsumer;
     voiceBinaryTerminalConsumer?: PeerTcpTunnelVoiceBinaryTerminalConsumer;
-    voiceMediaAgentRealtimeConsumer?: VoiceMediaAgentRealtimeApplicationConsumer;
 }>;
 
 function normalizeDestinationHost(host: string): string {
@@ -317,18 +310,6 @@ export function registerPeerTcpTunnelRelayTerminator(
                 ...(bytes ? { bytesIn: bytes.in, bytesOut: bytes.out } : {}),
             });
         }
-        active?.applicationAbortController?.abort('tunnel_closed');
-        if (
-            active?.peerApplicationEncryption?.applicationKind === 'agent_realtime'
-            && options.voiceMediaAgentRealtimeConsumer
-        ) {
-            await options.voiceMediaAgentRealtimeConsumer.close({
-                authority: active.peerApplicationEncryption,
-                substreamId:
-                    `agent.realtime.${active.peerApplicationEncryption.applicationAttemptId}`,
-                reasonCode: 'tunnel_closed',
-            });
-        }
         if (!input?.skipApplicationSubstreamClose) {
             await active?.applicationSubstreams?.close();
         }
@@ -528,18 +509,6 @@ export function registerPeerTcpTunnelRelayTerminator(
                     applicationAuthorityDigest: verification.payload.applicationAuthorityDigest!,
                 }
                 : undefined;
-        if (
-            peerApplicationEncryption?.applicationKind === 'agent_realtime'
-            && !voiceMediaPeerApplicationEncryptionRegistry.bindAgentRealtimeAttempt({
-                authority: peerApplicationEncryption,
-                peerApplicationEncryption,
-            }).ok
-        ) {
-            grantReservation.activationFailed();
-            emitAbort(tunnelId, 'application_authority_invalid');
-            return;
-        }
-
         openingTunnels.add(tunnelId);
         let connection: PeerTcpTunnelTcpConnection | undefined;
         if (verification.payload.flowKind === 'tcp_tunnel') {
@@ -626,16 +595,8 @@ export function registerPeerTcpTunnelRelayTerminator(
             : undefined;
         const applicationSubstreams = encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2
             && verification.payload.flowKind === 'voice_media'
-            && (
-                (
-                    verification.payload.applicationKind === 'speech_transcription'
-                    && options.voiceBinaryAppendConsumer
-                )
-                || (
-                    verification.payload.applicationKind === 'agent_realtime'
-                    && options.voiceMediaAgentRealtimeConsumer
-                )
-            )
+            && verification.payload.applicationKind === 'speech_transcription'
+            && options.voiceBinaryAppendConsumer
             ? createPeerTcpTunnelApplicationSubstreamSession({
                 tunnelId,
                 maxBinaryHeaderBytes,
@@ -682,7 +643,6 @@ export function registerPeerTcpTunnelRelayTerminator(
             ...(peerApplicationEncryption ? { peerApplicationEncryption } : {}),
             ...(substreamMux ? { substreamMux } : {}),
             ...(applicationSubstreams ? { applicationSubstreams } : {}),
-            ...(applicationSubstreams ? { applicationAbortController: new AbortController() } : {}),
         });
         bytesByTunnelId.set(tunnelId, { in: 0, out: 0 });
         emitObservability({
@@ -719,19 +679,13 @@ export function registerPeerTcpTunnelRelayTerminator(
             if (routingHeader.ok && routingHeader.header.substreamId) {
                 const active = activeTunnels.get(routingHeader.header.tunnelId);
                 const voiceSubstream = parseDaemonVoiceInferenceSttSubstreamId(routingHeader.header.substreamId);
-                const agentRealtimeSubstream = active?.peerApplicationEncryption?.applicationKind === 'agent_realtime'
-                    && routingHeader.header.substreamId
-                        === `agent.realtime.${active.peerApplicationEncryption.applicationAttemptId}`;
                 if (
                     active
-                    && (voiceSubstream || agentRealtimeSubstream)
+                    && voiceSubstream
                     && active.flowKind === 'voice_media'
                     && active.encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2
                     && active.applicationSubstreams
-                    && (
-                        (voiceSubstream && options.voiceBinaryAppendConsumer)
-                        || (agentRealtimeSubstream && options.voiceMediaAgentRealtimeConsumer)
-                    )
+                    && options.voiceBinaryAppendConsumer
                 ) {
                     if (envelope.frame.byteLength > maxFramedMessageBytes) {
                         await active.applicationSubstreams.denySubstream(
@@ -753,40 +707,6 @@ export function registerPeerTcpTunnelRelayTerminator(
                         return;
                     }
                     await active.applicationSubstreams.acceptBinaryFrame(envelope.frame, async ({ payload, sequence }) => {
-                        if (
-                            agentRealtimeSubstream
-                            && options.voiceMediaAgentRealtimeConsumer
-                            && active.peerApplicationEncryption
-                        ) {
-                            const handled = await dispatchVoiceMediaAgentRealtimeBinaryFrame({
-                                authority: active.peerApplicationEncryption,
-                                peerApplicationEncryption: active.peerApplicationEncryption,
-                                substreamId: routingHeader.header.substreamId!,
-                                carrierSequence: sequence,
-                                payload,
-                                consumer: options.voiceMediaAgentRealtimeConsumer,
-                                emitPayload: async (createPayload) => {
-                                    await active.applicationSubstreams!.sendApplicationFrame({
-                                        substreamId: routingHeader.header.substreamId!,
-                                        createPayload: async (carrierSequence) => {
-                                            const response = await createPayload(carrierSequence);
-                                            if (!response) {
-                                                throw new Error(
-                                                    'Agent realtime relay response could not be encrypted',
-                                                );
-                                            }
-                                            return response;
-                                        },
-                                    });
-                                },
-                                signal: active.applicationAbortController?.signal
-                                    ?? new AbortController().signal,
-                            });
-                            if (!handled) {
-                                throw new Error('Agent realtime relay frame was rejected');
-                            }
-                            return null;
-                        }
                         let responsePayload: Uint8Array | null = null;
                         await dispatchDaemonVoiceInferenceSttBinaryAppend({
                             consumer: options.voiceBinaryAppendConsumer!,
@@ -847,62 +767,18 @@ export function registerPeerTcpTunnelRelayTerminator(
                     return;
                 }
                 const voiceSubstream = parseDaemonVoiceInferenceSttSubstreamId(decodedHeader.header.substreamId);
-                const agentRealtimeSubstream =
-                    active.peerApplicationEncryption?.applicationKind === 'agent_realtime'
-                    && decodedHeader.header.substreamId
-                        === `agent.realtime.${active.peerApplicationEncryption.applicationAttemptId}`;
                 if (await rejectIfVoiceRelayCarriesGenericFrame({
                     active,
                     tunnelId: decodedHeader.header.tunnelId,
                     allowed: active.flowKind === 'voice_media'
-                        ? voiceSubstream !== null || agentRealtimeSubstream
-                        : voiceSubstream === null && !agentRealtimeSubstream,
+                        ? voiceSubstream !== null
+                        : voiceSubstream === null,
                 })) {
                     return;
                 }
-                if (voiceSubstream || agentRealtimeSubstream) {
-                    if (
-                        active.applicationSubstreams
-                        && (
-                            (voiceSubstream && options.voiceBinaryAppendConsumer)
-                            || (agentRealtimeSubstream && options.voiceMediaAgentRealtimeConsumer)
-                        )
-                    ) {
+                if (voiceSubstream) {
+                    if (active.applicationSubstreams && options.voiceBinaryAppendConsumer) {
                         await active.applicationSubstreams.acceptBinaryFrame(envelope.frame, async ({ payload, sequence }) => {
-                            if (
-                                agentRealtimeSubstream
-                                && options.voiceMediaAgentRealtimeConsumer
-                                && active.peerApplicationEncryption
-                            ) {
-                                const handled = await dispatchVoiceMediaAgentRealtimeBinaryFrame({
-                                    authority: active.peerApplicationEncryption,
-                                    peerApplicationEncryption: active.peerApplicationEncryption,
-                                    substreamId: decodedHeader.header.substreamId!,
-                                    carrierSequence: sequence,
-                                    payload,
-                                    consumer: options.voiceMediaAgentRealtimeConsumer,
-                                    emitPayload: async (createPayload) => {
-                                        await active.applicationSubstreams!.sendApplicationFrame({
-                                            substreamId: decodedHeader.header.substreamId!,
-                                            createPayload: async (carrierSequence) => {
-                                                const response = await createPayload(carrierSequence);
-                                                if (!response) {
-                                                    throw new Error(
-                                                        'Agent realtime relay response could not be encrypted',
-                                                    );
-                                                }
-                                                return response;
-                                            },
-                                        });
-                                    },
-                                    signal: active.applicationAbortController?.signal
-                                        ?? new AbortController().signal,
-                                });
-                                if (!handled) {
-                                    throw new Error('Agent realtime relay frame was rejected');
-                                }
-                                return null;
-                            }
                             let responsePayload: Uint8Array | null = null;
                             await dispatchDaemonVoiceInferenceSttBinaryAppend({
                                 consumer: options.voiceBinaryAppendConsumer,

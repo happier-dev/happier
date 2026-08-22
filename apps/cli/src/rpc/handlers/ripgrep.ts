@@ -25,7 +25,7 @@ export function registerRipgrepHandler(
 ): void {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
     // Ripgrep handler - raw interface to ripgrep
-    rpcHandlerManager.registerHandler<RipgrepRequest, RipgrepResponse>(RPC_METHODS.RIPGREP, async (data) => {
+    rpcHandlerManager.registerHandler<RipgrepRequest, RipgrepResponse>(RPC_METHODS.RIPGREP, async (data, context) => {
         logger.debug('Ripgrep request with args:', data.args, 'cwd:', data.cwd);
 
         let cwd = workingDirectory;
@@ -40,7 +40,10 @@ export function registerRipgrepHandler(
         }
 
         try {
-            const result = await runRipgrep(data.args, { cwd });
+            const result = await runRipgrep(data.args, {
+                cwd,
+                ...(context?.signal ? { signal: context.signal } : {}),
+            });
             return {
                 success: true,
                 exitCode: result.exitCode,

@@ -169,7 +169,7 @@ describe('ApiSessionClient socket write readiness', () => {
     const client = new ApiSessionClient(
       'tok',
       session,
-      { credentials: ownerCredentials },
+      { credentials: { token: 'tok', encryption: null } },
     );
     const updater = vi.fn((metadata) => ({
       ...metadata,
@@ -188,6 +188,71 @@ describe('ApiSessionClient socket write readiness', () => {
       }),
     );
     expect(harness.patchMetadataEnvelopeTuple).not.toHaveBeenCalled();
+  });
+
+  it('checks exact publisher authority through the authenticated session socket', async () => {
+    harness.startDeferred = createDeferred();
+    harness.startDeferred.resolve();
+    harness.sessionSocket = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event, payload) => {
+        if (event !== 'session-publisher-authority-check') {
+          throw new Error(`unexpected event ${event}`);
+        }
+        expect(payload).toEqual({ sessionId: 's-publisher-check' });
+        return {
+          status: 'current',
+          sessionId: 's-publisher-check',
+          publisherPrecondition: {
+            machineId: 'machine-1',
+            committedFenceMs: 1_000,
+          },
+        };
+      },
+    });
+    harness.userSocket = createApiSessionSocketStub({ connected: true });
+
+    const session = createPlainSessionFixture({ id: 's-publisher-check' });
+    const client = new ApiSessionClient(
+      'tok',
+      session,
+      { credentials: { token: 'tok', encryption: null } },
+    );
+    (client as never as {
+      sessionSyncPendingInputServerContractResult: unknown;
+    }).sessionSyncPendingInputServerContractResult = {
+      mode: 'session_sync_v3_publisher_authority_check_v1',
+      sessionConnectionEpoch: 1,
+      socket: harness.sessionSocket,
+    };
+
+    await expect(client.checkCurrentPublisherAuthority()).resolves.toBe(true);
+  });
+
+  it('fails closed without emitting the authority-check event to the moving Remote v2 predecessor', async () => {
+    harness.startDeferred = createDeferred();
+    harness.startDeferred.resolve();
+    harness.sessionSocket = createApiSessionSocketStub({ connected: true });
+    harness.userSocket = createApiSessionSocketStub({ connected: true });
+
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's-remote-v2-publisher-check' }),
+      { credentials: ownerCredentials },
+    );
+    (client as never as {
+      sessionSyncPendingInputServerContractResult: unknown;
+    }).sessionSyncPendingInputServerContractResult = {
+      mode: 'session_sync_v2_pending_input_v1',
+      sessionConnectionEpoch: 1,
+      socket: harness.sessionSocket,
+    };
+
+    await expect(client.checkCurrentPublisherAuthority()).resolves.toBe(false);
+    expect(harness.sessionSocket.emitWithAck).not.toHaveBeenCalledWith(
+      'session-publisher-authority-check',
+      expect.anything(),
+    );
   });
 
   it('keeps ordinary layout-0 AgentState on the legacy socket owner', async () => {
@@ -227,7 +292,7 @@ describe('ApiSessionClient socket write readiness', () => {
     const client = new ApiSessionClient(
       'tok',
       session,
-      { credentials: ownerCredentials },
+      { credentials: { token: 'tok', encryption: null } },
     );
     const updater = vi.fn((agentState) => ({ ...agentState, startupReady: true }));
 
@@ -266,24 +331,34 @@ describe('ApiSessionClient socket write readiness', () => {
     const legacySession = createPlainSessionFixture({ id: 's-layout-one' });
     const tuple = buildSessionMetadataEnvelopeFields({
       credentials: ownerCredentials,
+      accountEncryptionMode: 'e2ee',
       metadata: legacySession.metadata ?? {},
       agentState: legacySession.agentState,
-      storedContentMode: 'plain',
-      encryptionKey: new Uint8Array(32),
+      storedContentMode: 'e2ee',
+      encryptionKey: ownerCredentials.encryption.secret,
       encryptionVariant: 'legacy',
     });
     const client = new ApiSessionClient(
       'tok',
       {
         ...legacySession,
+        encryptionMode: 'e2ee',
+        encryptionKey: ownerCredentials.encryption.secret,
+        encryptionVariant: 'legacy',
         metadataLayoutVersion: 1,
         metadata: legacySession.metadata,
         metadataVersion: 1,
         ownerMetadata: tuple.ownerMetadataValue,
-        ownerMetadataCiphertext: tuple.ownerMetadata.ciphertext,
+        ownerMetadataEnvelope: tuple.ownerMetadata,
         agentStateVersion: 2,
       },
-      { credentials: ownerCredentials },
+      {
+        credentials: ownerCredentials,
+        getAccountEncryptionCurrentness: async () => ({
+          mode: 'e2ee', version: 1, signingKeyFingerprint: null,
+          contentKeyFingerprint: 'content-fingerprint', updatedAt: 1,
+        }),
+      },
     );
 
     harness.fetchSessionByIdCompat.mockResolvedValueOnce({
@@ -291,10 +366,10 @@ describe('ApiSessionClient socket write readiness', () => {
       metadataLayoutVersion: 1,
       metadata: tuple.sharedMetadata.ciphertext,
       metadataVersion: 1,
-      ownerMetadata: tuple.ownerMetadata.ciphertext,
+      ownerMetadata: tuple.ownerMetadata,
       agentState: tuple.agentState,
       agentStateVersion: 2,
-      encryptionMode: 'plain',
+      encryptionMode: 'e2ee',
       dataEncryptionKey: null,
     });
     await client.updateMetadata((metadata) => ({
@@ -311,10 +386,10 @@ describe('ApiSessionClient socket write readiness', () => {
       metadataLayoutVersion: 1,
       metadata: metadataPatch.sharedMetadata.ciphertext,
       metadataVersion: 2,
-      ownerMetadata: metadataPatch.ownerMetadata.ciphertext,
+      ownerMetadata: metadataPatch.ownerMetadata,
       agentState: metadataPatch.agentState.ciphertext,
       agentStateVersion: 3,
-      encryptionMode: 'plain',
+      encryptionMode: 'e2ee',
       dataEncryptionKey: null,
     });
     await client.updateAgentState((agentState) => ({
@@ -336,19 +411,122 @@ describe('ApiSessionClient socket write readiness', () => {
     expect(harness.sessionSocket.emitWithAck).not.toHaveBeenCalled();
   });
 
+  it('binds a focused layout-1 owner patch to the exact current publisher fence', async () => {
+    harness.startDeferred = createDeferred();
+    harness.startDeferred.resolve();
+    harness.sessionSocket = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event) => {
+        if (event !== 'session-publisher-authority-check') {
+          throw new Error(`unexpected event ${event}`);
+        }
+        return {
+          status: 'current',
+          sessionId: 's-layout-one-publisher',
+          publisherPrecondition: {
+            machineId: 'machine-1',
+            committedFenceMs: 1_000,
+          },
+        };
+      },
+    });
+    harness.userSocket = createApiSessionSocketStub({ connected: true });
+    harness.patchMetadataEnvelopeTuple.mockResolvedValue({
+      success: true,
+      metadataLayoutVersion: 1,
+      sharedMetadata: { version: 2 },
+      agentState: { version: 3 },
+    });
+
+    const legacySession = createPlainSessionFixture({
+      id: 's-layout-one-publisher',
+    });
+    const tuple = buildSessionMetadataEnvelopeFields({
+      credentials: ownerCredentials,
+      accountEncryptionMode: 'e2ee',
+      metadata: legacySession.metadata ?? {},
+      agentState: legacySession.agentState,
+      storedContentMode: 'e2ee',
+      encryptionKey: ownerCredentials.encryption.secret,
+      encryptionVariant: 'legacy',
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      {
+        ...legacySession,
+        encryptionMode: 'e2ee',
+        encryptionKey: ownerCredentials.encryption.secret,
+        encryptionVariant: 'legacy',
+        metadataLayoutVersion: 1,
+        metadata: legacySession.metadata,
+        metadataVersion: 1,
+        ownerMetadata: tuple.ownerMetadataValue,
+        ownerMetadataEnvelope: tuple.ownerMetadata,
+        agentStateVersion: 2,
+      },
+      {
+        credentials: ownerCredentials,
+        getAccountEncryptionCurrentness: async () => ({
+          mode: 'e2ee', version: 1, signingKeyFingerprint: null,
+          contentKeyFingerprint: 'content-fingerprint', updatedAt: 1,
+        }),
+      },
+    );
+    (client as never as {
+      sessionSyncPendingInputServerContractResult: unknown;
+    }).sessionSyncPendingInputServerContractResult = {
+      mode: 'session_sync_v3_publisher_authority_check_v1',
+      sessionConnectionEpoch: 1,
+      socket: harness.sessionSocket,
+    };
+    harness.fetchSessionByIdCompat.mockResolvedValue({
+      ...legacySession,
+      metadataLayoutVersion: 1,
+      metadata: tuple.sharedMetadata.ciphertext,
+      metadataVersion: 1,
+      ownerMetadata: tuple.ownerMetadata,
+      agentState: tuple.agentState,
+      agentStateVersion: 2,
+      encryptionMode: 'e2ee',
+      dataEncryptionKey: null,
+    });
+
+    await client.updateMetadataAsCurrentPublisher((metadata) => ({
+      ...metadata,
+      summary: { text: 'publisher fenced', updatedAt: 2 },
+    }));
+
+    expect(harness.patchMetadataEnvelopeTuple).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'tok',
+        sessionId: 's-layout-one-publisher',
+        patch: expect.objectContaining({
+          mode: 'owner',
+          publisherPrecondition: {
+            machineId: 'machine-1',
+            committedFenceMs: 1_000,
+          },
+        }),
+      }),
+    );
+  });
+
   it('delays runtime activity projection writes until the managed session socket is online', async () => {
     harness.startDeferred = createDeferred();
     harness.sessionSocket = createApiSessionSocketStub({
       connected: false,
       emitWithAck: async (event, payload: any) => {
-        if (event === 'runtime-activity-snapshot') {
+        if (event === 'session-runtime-activity-snapshot') {
           return {
-            result: 'success',
-            didWrite: true,
-            runtimeActivityState: payload.state,
-            runtimeActivityActiveCount: payload.runtimeActivityActiveCount,
-            runtimeActivityObservedAt: 1_000,
-            runtimeActivityRevision: 1,
+            status: 'applied',
+            sessionId: payload.sessionId,
+            mutationId: payload.mutationId,
+            projection: {
+              state: payload.snapshot.state,
+              activeCount: payload.snapshot.activeCount,
+              observedAt: 1_000,
+              revision: 1,
+            },
           };
         }
         return { result: 'success' };
@@ -371,10 +549,10 @@ describe('ApiSessionClient socket write readiness', () => {
     await expect.poll(() => harness.sessionSocket?.connected === true).toBe(true);
     await updatePromise;
 
-    expect(harness.sessionSocket.emitWithAck).toHaveBeenCalledWith('runtime-activity-snapshot', {
-      sid: 's-ready-runtime-activity',
-      state: 'active',
-      runtimeActivityActiveCount: 1,
+    expect(harness.sessionSocket.emitWithAck).toHaveBeenCalledWith('session-runtime-activity-snapshot', {
+      sessionId: 's-ready-runtime-activity',
+      mutationId: 'runtime-activity-snapshot:s-ready-runtime-activity',
+      snapshot: { state: 'active', activeCount: 1 },
     });
     expect(harness.sessionSocket.emitWithAck.mock.calls.map((call) => call[0])).not.toContain('update-state');
     expect(harness.sessionSocket.emitWithAck.mock.calls.map((call) => call[0])).not.toContain('update-metadata');
@@ -391,17 +569,20 @@ describe('ApiSessionClient socket write readiness', () => {
     harness.sessionSocket = createApiSessionSocketStub({
       connected: true,
       emitWithAck: async (event, payload: any) => {
-        if (event !== 'runtime-activity-snapshot') {
+        if (event !== 'session-runtime-activity-snapshot') {
           return { result: 'success' };
         }
         await acknowledge.promise;
         return {
-          result: 'success',
-          didWrite: true,
-          runtimeActivityState: payload.state,
-          runtimeActivityActiveCount: payload.runtimeActivityActiveCount,
-          runtimeActivityObservedAt: 1_000,
-          runtimeActivityRevision: 1,
+          status: 'applied',
+          sessionId: payload.sessionId,
+          mutationId: payload.mutationId,
+          projection: {
+            state: payload.snapshot.state,
+            activeCount: payload.snapshot.activeCount,
+            observedAt: 1_000,
+            revision: 1,
+          },
         };
       },
     });
@@ -425,7 +606,7 @@ describe('ApiSessionClient socket write readiness', () => {
     (client as never as {
       sessionSyncPendingInputServerContractResult: unknown;
     }).sessionSyncPendingInputServerContractResult = {
-      mode: 'session_sync_v2_pending_input_v1',
+      mode: 'session_sync_v3_publisher_authority_check_v1',
       sessionConnectionEpoch: 1,
       socket: harness.sessionSocket,
     };
@@ -438,7 +619,7 @@ describe('ApiSessionClient socket write readiness', () => {
       });
     await expect.poll(() =>
       harness.sessionSocket?.emitWithAck.mock.calls.some(
-        ([event]) => event === 'runtime-activity-snapshot',
+        ([event]) => event === 'session-runtime-activity-snapshot',
       ),
     ).toBe(true);
     expect(settled).toBe(false);
@@ -447,16 +628,19 @@ describe('ApiSessionClient socket write readiness', () => {
     await claim;
 
     expect(harness.sessionSocket.emitWithAck).toHaveBeenCalledWith(
-      'runtime-activity-snapshot',
+      'session-runtime-activity-snapshot',
       {
-        sid: 's-startup-publisher-claim',
-        state: 'unknown',
-        runtimeActivityActiveCount: 0,
+        sessionId: 's-startup-publisher-claim',
+        mutationId: 'runtime-activity-snapshot:s-startup-publisher-claim',
+        snapshot: { state: 'unknown', activeCount: 0 },
       },
     );
   });
 
-  it('keeps ordinary released-v0.2.1 startup off the unsupported publisher-claim transport', async () => {
+  it.each([
+    'released_server_v0_2_1',
+    'session_sync_v2_pending_input_v1',
+  ] as const)('keeps ordinary %s startup off the unsupported publisher-claim transport', async (mode) => {
     harness.startDeferred = createDeferred();
     harness.startDeferred.resolve();
     harness.sessionSocket = createApiSessionSocketStub({ connected: true });
@@ -469,17 +653,20 @@ describe('ApiSessionClient socket write readiness', () => {
     (client as never as {
       sessionSyncPendingInputServerContractResult: unknown;
     }).sessionSyncPendingInputServerContractResult = {
-      mode: 'released_server_v0_2_1',
+      mode,
       sessionConnectionEpoch: 1,
       socket: harness.sessionSocket,
     };
 
     await expect(
       client.claimCurrentSessionPublisherAuthorityForStartup(),
-    ).resolves.toEqual({ status: 'unsupported' });
+    ).resolves.toEqual({
+      status: 'unsupported',
+      reason: 'publisher_authority_check_unsupported',
+    });
 
     expect(harness.sessionSocket.emitWithAck).not.toHaveBeenCalledWith(
-      'runtime-activity-snapshot',
+      'session-runtime-activity-snapshot',
       expect.anything(),
     );
   });
@@ -491,33 +678,39 @@ describe('ApiSessionClient socket write readiness', () => {
     const socketA = createApiSessionSocketStub({
       connected: true,
       emitWithAck: async (event, payload: any) => {
-        if (event !== 'runtime-activity-snapshot') {
+        if (event !== 'session-runtime-activity-snapshot') {
           return { result: 'success' };
         }
         await firstAcknowledge.promise;
         return {
-          result: 'success',
-          didWrite: true,
-          runtimeActivityState: payload.state,
-          runtimeActivityActiveCount: payload.runtimeActivityActiveCount,
-          runtimeActivityObservedAt: 1_000,
-          runtimeActivityRevision: 1,
+          status: 'applied',
+          sessionId: payload.sessionId,
+          mutationId: payload.mutationId,
+          projection: {
+            state: payload.snapshot.state,
+            activeCount: payload.snapshot.activeCount,
+            observedAt: 1_000,
+            revision: 1,
+          },
         };
       },
     });
     const socketB = createApiSessionSocketStub({
       connected: true,
       emitWithAck: async (event, payload: any) => {
-        if (event !== 'runtime-activity-snapshot') {
+        if (event !== 'session-runtime-activity-snapshot') {
           return { result: 'success' };
         }
         return {
-          result: 'success',
-          didWrite: true,
-          runtimeActivityState: payload.state,
-          runtimeActivityActiveCount: payload.runtimeActivityActiveCount,
-          runtimeActivityObservedAt: 2_000,
-          runtimeActivityRevision: 2,
+          status: 'applied',
+          sessionId: payload.sessionId,
+          mutationId: payload.mutationId,
+          projection: {
+            state: payload.snapshot.state,
+            activeCount: payload.snapshot.activeCount,
+            observedAt: 2_000,
+            revision: 2,
+          },
         };
       },
     });
@@ -546,7 +739,7 @@ describe('ApiSessionClient socket write readiness', () => {
       sessionSyncPendingInputServerContractResult: unknown;
     };
     clientInternals.sessionSyncPendingInputServerContractResult = {
-      mode: 'session_sync_v2_pending_input_v1',
+      mode: 'session_sync_v3_publisher_authority_check_v1',
       sessionConnectionEpoch: 1,
       socket: socketA,
     };
@@ -554,13 +747,13 @@ describe('ApiSessionClient socket write readiness', () => {
     const claim = client.claimCurrentSessionPublisherAuthorityForStartup();
     await expect.poll(() =>
       socketA.emitWithAck.mock.calls.some(
-        ([event]) => event === 'runtime-activity-snapshot',
+        ([event]) => event === 'session-runtime-activity-snapshot',
       ),
     ).toBe(true);
 
     clientInternals.socket = socketB;
     clientInternals.sessionSyncPendingInputServerContractResult = {
-      mode: 'session_sync_v2_pending_input_v1',
+      mode: 'session_sync_v3_publisher_authority_check_v1',
       sessionConnectionEpoch: 2,
       socket: socketB,
     };
@@ -570,11 +763,12 @@ describe('ApiSessionClient socket write readiness', () => {
 
     expect(socketA.emitWithAck).toHaveBeenCalledTimes(1);
     expect(socketB.emitWithAck).toHaveBeenCalledWith(
-      'runtime-activity-snapshot',
+      'session-runtime-activity-snapshot',
       {
-        sid: 's-superseded-startup-publisher-claim',
-        state: 'unknown',
-        runtimeActivityActiveCount: 0,
+        sessionId: 's-superseded-startup-publisher-claim',
+        mutationId:
+          'runtime-activity-snapshot:s-superseded-startup-publisher-claim',
+        snapshot: { state: 'unknown', activeCount: 0 },
       },
     );
   });

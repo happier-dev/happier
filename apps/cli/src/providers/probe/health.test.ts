@@ -14,14 +14,13 @@ describe('providerProbeFailureHealthState', () => {
   ] as const)('maps %s to %s', (code, status) => {
     expect(providerProbeFailureHealthState(new ProviderProbeClientError(code), {
       observedAt: 1_000,
-      retryAt: 2_000,
     })).toMatchObject({ status, errorCode: code, activity: 'idle', observedAt: 1_000 });
   });
 
   it('does not attach retry timing to terminal auth/parser failures', () => {
     expect(providerProbeFailureHealthState(
       new ProviderProbeClientError('provider_endpoint_unauthorized'),
-      { observedAt: 1_000, retryAt: 2_000 },
+      { observedAt: 1_000 },
     )).not.toHaveProperty('retryAt');
   });
 });

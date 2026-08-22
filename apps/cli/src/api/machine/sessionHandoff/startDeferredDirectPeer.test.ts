@@ -34,8 +34,17 @@ describe('prepareDeferredDirectPeerStart', () => {
       } as const,
       targetPath: '/repo-source',
     }));
-    const prepareStartedState = vi.fn(async () => undefined);
-    const resolveSourceStopState = vi.fn(async () => 'already_inactive' as const);
+    let preparedAgentBundleTransferPublication:
+      | NonNullable<SessionHandoffMetadataV2['agentBundleTransferPublication']>
+      | undefined;
+    const prepareStartedState = vi.fn(async (input: Readonly<{
+      preExportedAgentBundle?: Readonly<{
+        agentBundleTransferPublication: NonNullable<SessionHandoffMetadataV2['agentBundleTransferPublication']>;
+      }>;
+    }>) => {
+      preparedAgentBundleTransferPublication =
+        input.preExportedAgentBundle?.agentBundleTransferPublication;
+    });
     const recordDeferredStartFailure = vi.fn();
 
     const prepared = await prepareDeferredDirectPeerStart({
@@ -66,7 +75,7 @@ describe('prepareDeferredDirectPeerStart', () => {
       waitForPersistedSourceExport,
       exportSessionBundle,
       prepareStartedState,
-      resolveSourceStopState,
+      sourceStopState: 'already_inactive',
       recordDeferredStartFailure,
       claimMaintenance: {
         throwIfLost: () => undefined,
@@ -80,6 +89,11 @@ describe('prepareDeferredDirectPeerStart', () => {
     await prepared.deferredStartWorkPromise;
     expect(recordDeferredStartFailure).not.toHaveBeenCalled();
     expect(prepareStartedState).toHaveBeenCalledTimes(1);
+    expect(preparedAgentBundleTransferPublication).toBeDefined();
+    expect(deferredHandoffMetadataV2.agentBundleTransferPublication).toMatchObject({
+      sizeBytes: preparedAgentBundleTransferPublication!.sizeBytes,
+      manifestHash: preparedAgentBundleTransferPublication!.manifestHash,
+    });
     expect(sourceExportStoreSave).not.toHaveBeenCalled();
     expect(waitForPersistedSourceExport).not.toHaveBeenCalled();
   });

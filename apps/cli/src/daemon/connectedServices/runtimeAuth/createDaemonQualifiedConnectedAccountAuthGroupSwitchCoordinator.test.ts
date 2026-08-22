@@ -28,6 +28,7 @@ function group(input: Readonly<{
     return QualifiedConnectedAccountGroupV4Schema.parse({
         v: 1,
         ref: { service, groupId: 'fallbacks' },
+        incarnation: 'qualified-group-row-fallbacks',
         displayName: 'Fallbacks',
         policy: {
             ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
@@ -80,6 +81,7 @@ function accounts(
                 },
                 status: 'connected',
                 authenticationModeId: 'oauth',
+                revisionSemantics: 'revisioned',
                 credentialRevision:
                     input.primaryRevision
                     ?? primaryCredentialRevision,
@@ -97,6 +99,7 @@ function accounts(
                 },
                 status: 'connected',
                 authenticationModeId: 'oauth',
+                revisionSemantics: 'revisioned',
                 credentialRevision: backupCredentialRevision,
                 configurationReady: true,
                 configurationRevision: null,
@@ -206,6 +209,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
             mutation: {
                 group: { service, groupId: 'fallbacks' },
                 connectedAccountId: 'backup',
+                expectedIncarnation: 'qualified-group-row-fallbacks',
                 expectedGeneration: 7,
                 expectedRuntimeStateRevision: 3,
                 expectedSource: {

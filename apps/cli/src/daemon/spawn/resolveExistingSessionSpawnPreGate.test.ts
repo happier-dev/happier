@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { resolveExistingSessionSpawnPreGate } from './resolveExistingSessionSpawnPreGate';
 
+function serializeLogCalls(calls: readonly unknown[][]): string {
+  return JSON.stringify(calls, (_key, value) => value instanceof Error
+    ? { name: value.name, message: value.message, stack: value.stack }
+    : value);
+}
+
 describe('resolveExistingSessionSpawnPreGate', () => {
   it('fences a restart survivor before activity probing and admits one replacement after retirement', async () => {
     const isSessionRunnerActive = vi.fn(async () => false);
@@ -13,7 +19,7 @@ describe('resolveExistingSessionSpawnPreGate', () => {
         startedBy: 'daemon' as const,
         happySessionId: 'sess-restart-unavailable',
         reattachedFromDiskMarker: true,
-        agentRuntimeRestartDisposition: 'bridge_authority_unavailable' as const,
+        agentRuntimeRunnerRestartDisposition: 'runner_authority_unavailable' as const,
       },
     ]]);
 
@@ -52,9 +58,10 @@ describe('resolveExistingSessionSpawnPreGate', () => {
     const isSessionRunnerActive = vi.fn(async () => true);
     const logDebug = vi.fn();
     const onAlreadyRunning = vi.fn(async () => {});
+    const privateSessionId = 'private-existing-session-sentinel';
 
     const resolved = await resolveExistingSessionSpawnPreGate({
-      existingSessionId: 'sess-live',
+      existingSessionId: privateSessionId,
       pidToTrackedSession: new Map(),
       isSessionRunnerActive,
       waitForExitTimeoutMs: 0,
@@ -66,12 +73,34 @@ describe('resolveExistingSessionSpawnPreGate', () => {
     expect(resolved).toEqual({
       shortCircuitResult: {
         type: 'success',
-        sessionId: 'sess-live',
+        sessionId: privateSessionId,
       },
     });
-    expect(isSessionRunnerActive).toHaveBeenCalledWith('sess-live');
-    expect(logDebug).toHaveBeenCalledWith('[DAEMON RUN] Resume requested for sess-live, but session is already running');
-    expect(onAlreadyRunning).toHaveBeenCalledWith('sess-live');
+    expect(isSessionRunnerActive).toHaveBeenCalledWith(privateSessionId);
+    expect(onAlreadyRunning).toHaveBeenCalledWith(privateSessionId);
+    expect(serializeLogCalls(logDebug.mock.calls)).not.toContain(privateSessionId);
+  });
+
+  it('keeps an unavailable activity probe advisory without logging private probe details', async () => {
+    const privateSessionId = 'private-probe-session-sentinel';
+    const privateProbeError = 'private-probe-error-sentinel';
+    const logDebug = vi.fn();
+
+    const resolved = await resolveExistingSessionSpawnPreGate({
+      existingSessionId: privateSessionId,
+      pidToTrackedSession: new Map(),
+      isSessionRunnerActive: vi.fn(async () => {
+        throw new Error(privateProbeError);
+      }),
+      waitForExitTimeoutMs: 0,
+      waitForExitPollIntervalMs: 50,
+      logDebug,
+    });
+
+    expect(resolved).toEqual({ shortCircuitResult: null });
+    const serializedLogs = serializeLogCalls(logDebug.mock.calls);
+    expect(serializedLogs).not.toContain(privateSessionId);
+    expect(serializedLogs).not.toContain(privateProbeError);
   });
 
   it('continues to replacement spawn when the already-running hook reports an unservable runner', async () => {

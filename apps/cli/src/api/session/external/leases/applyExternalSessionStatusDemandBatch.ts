@@ -10,7 +10,7 @@ import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadL
 import {
     isCurrentExternalSessionLinkStorageState,
 } from '@/api/session/external/linking/currentExternalSessionLinkStorageEligibility';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 
 export type CurrentExternalSessionStatusDemandLink = Readonly<{
     machineId: string;
@@ -33,7 +33,7 @@ export async function loadCanonicalCurrentExternalSessionStatusDemandLink(
         deadlineAtMs?: number;
     }>,
 ): Promise<CurrentExternalSessionStatusDemandLink | null> {
-    const credentials = await readCredentials();
+    const credentials = await readStoredCredentials();
     if (!credentials) {
         throw new Error('External-session status demand credentials are unavailable');
     }

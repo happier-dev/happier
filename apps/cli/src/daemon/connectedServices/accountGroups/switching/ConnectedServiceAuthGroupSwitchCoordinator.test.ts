@@ -6,6 +6,7 @@ import {
   InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
   type ConnectedServiceAuthGroupSwitchState,
 } from './ConnectedServiceAuthGroupSwitchCoordinator';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from '../quotas/preTurnQuotaProbe';
 
 function state(activeProfileId: string, generation: number): ConnectedServiceAuthGroupSwitchState {
   return {
@@ -45,6 +46,110 @@ class TestGenerationConflictError extends Error {
 }
 
 describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
+    it('validates quota-recovery candidates before CAS and lets the canonical selector skip an unusable member', async () => {
+        const initial = {
+            ...state('primary', 1),
+            members: [
+                { profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
+                { profileId: 'invalid-backup', priority: 2, createdAtMs: 2, enabled: true },
+                { profileId: 'healthy-backup', priority: 3, createdAtMs: 3, enabled: true },
+            ],
+        };
+        const prepareCandidateForSwitch = vi.fn(async (input: Readonly<{ profileId: string }>) => (
+            input.profileId === 'invalid-backup'
+                ? {
+                    status: 'ineligible' as const,
+                    memberState: { credentialHealthStatus: 'needs_reauth' as const },
+                }
+                : { status: 'ready' as const }
+        ));
+        const commitSwitch = vi.fn(async (input: Readonly<{ toProfileId: string }>) => ({
+            ...initial,
+            activeProfileId: input.toProfileId,
+            generation: 2,
+        }));
+        const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+            leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+            nowMs: () => 1_000,
+            quotaFreshnessMs: 60_000,
+            loadState: async () => initial,
+            prepareCandidateForSwitch,
+            commitSwitch,
+            applyGeneration: async () => ({ ok: true, mode: 'hot_apply' as const }),
+        });
+
+        await expect(coordinator.switchAfterClassifiedFailure({
+            sessionId: 'source-session',
+            serviceId: 'openai-codex',
+            groupId: 'main',
+            reason: 'usage_limit',
+            observedProfileId: 'primary',
+        })).resolves.toMatchObject({
+            status: 'switched',
+            activeProfileId: 'healthy-backup',
+            generation: 2,
+        });
+        expect(prepareCandidateForSwitch).toHaveBeenCalledTimes(2);
+        expect(commitSwitch).toHaveBeenCalledWith(expect.objectContaining({
+            toProfileId: 'healthy-backup',
+        }));
+    });
+
+  it('does not hold the group decision lease while a pre-turn quota probe is pending', async () => {
+    let releaseProbe!: () => void;
+    let notifyProbeStarted!: () => void;
+    const probeStarted = new Promise<void>((resolve) => {
+      notifyProbeStarted = resolve;
+    });
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    let loadCount = 0;
+    const autoState = state('primary', 1);
+    const disabledState: ConnectedServiceAuthGroupSwitchState = {
+      ...autoState,
+      policy: { ...autoState.policy, autoSwitch: false },
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry({ leaseTimeoutMs: 20 }),
+      nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000,
+      loadState: async () => {
+        loadCount += 1;
+        return loadCount === 1 ? autoState : disabledState;
+      },
+      commitSwitch: async ({ toProfileId }) => state(toProfileId, 2),
+      applyGeneration: async () => ({ ok: true as const, mode: 'hot_apply' as const }),
+      probeQuotaSnapshotsForGroup: async (input) => {
+        notifyProbeStarted();
+        await probeGate;
+        return {
+          status: 'complete' as const,
+          requestedProfileCount: input.profileIds.length,
+          completedProfileCount: input.profileIds.length,
+        };
+      },
+    });
+
+    const probing = coordinator.switchBeforeTurn({
+      sessionId: 'probing-session',
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      reason: 'soft_threshold',
+    });
+    await probeStarted;
+
+    await expect(coordinator.switchBeforeTurn({
+      sessionId: 'manual-session',
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      reason: 'soft_threshold',
+    })).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
+
+    releaseProbe();
+    await expect(probing).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
+  });
+
   it('adopts authoritative switched truth when a reactive lease waiter expires after the peer commit', async () => {
     vi.useFakeTimers();
     try {
@@ -86,6 +191,53 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       });
       expect(applyGeneration).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'source-session',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        activeProfileId: 'backup',
+        generation: 2,
+      }));
+      owner.finish();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('adopts authoritative switched truth when a proactive lease waiter expires after the peer commit', async () => {
+    vi.useFakeTimers();
+    try {
+      const leases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry({ leaseTimeoutMs: 10 });
+      const owner = leases.acquire({ serviceId: 'openai-codex', groupId: 'main' });
+      if (owner.kind !== 'owner') throw new Error('owner expected');
+      let current = stateWithCredential('primary', 1, failedCredentialRevision);
+      const applyGeneration = vi.fn(async () => ({ ok: true as const, mode: 'hot_apply' as const }));
+      const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+        leases,
+        nowMs: () => 1_000,
+        quotaFreshnessMs: 60_000,
+        loadState: async () => current,
+        commitSwitch: async () => {
+          throw new Error('lease loser must not commit');
+        },
+        applyGeneration,
+      });
+
+      const recovery = coordinator.switchBeforeTurn({
+        sessionId: 'respawning-session',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        reason: 'soft_threshold',
+        observedProfileId: 'primary',
+      });
+      current = stateWithCredential('backup', 2, replacementCredentialRevision);
+      await vi.advanceTimersByTimeAsync(10);
+
+      await expect(recovery).resolves.toMatchObject({
+        status: 'observed_generation',
+        activeProfileId: 'backup',
+        generation: 2,
+      });
+      expect(applyGeneration).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'respawning-session',
         serviceId: 'openai-codex',
         groupId: 'main',
         activeProfileId: 'backup',
@@ -1546,6 +1698,34 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       reason: 'soft_threshold',
     });
   });
+
+  it.each(['soft_threshold', 'usage_limit'] as const)(
+    'does not select or commit from incomplete quota evidence for %s',
+    async (reason) => {
+      const commitSwitch = vi.fn(async ({ toProfileId }: { toProfileId: string }) => state(toProfileId, 2));
+      const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+        leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+        nowMs: () => 1_000,
+        quotaFreshnessMs: 60_000,
+        loadState: async () => state('primary', 1),
+        probeQuotaSnapshotsForGroup: async () => ({
+          status: 'incomplete' as const,
+          requestedProfileCount: 2,
+          completedProfileCount: 1,
+          reason: 'deadline_exceeded' as const,
+        }),
+        commitSwitch,
+        applyGeneration: async () => ({ ok: true as const }),
+      });
+
+      await expect(coordinator.switchBeforeTurn({
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        reason,
+      })).rejects.toBeInstanceOf(ConnectedServiceAuthGroupQuotaProbeIncompleteError);
+      expect(commitSwitch).not.toHaveBeenCalled();
+    },
+  );
 
   it('applies an already-advanced pre-turn group generation to a stale session profile', async () => {
     const now = 1_000_000;

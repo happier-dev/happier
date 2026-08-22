@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -436,9 +436,22 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       close: vi.fn(async () => {}),
     };
     const capture = vi.fn<VoiceDiagnosticsController['capture']>(async () => null);
+    const capturedWav = (() => {
+      let resolve: (bytes: Buffer) => void = () => {};
+      const promise = new Promise<Buffer>((nextResolve) => {
+        resolve = nextResolve;
+      });
+      return { promise, resolve };
+    })();
+    const captureFile = vi.fn<VoiceDiagnosticsController['captureFile']>(async (input) => {
+      capturedWav.resolve(await readFile(input.filePath));
+      return null;
+    });
+    const voiceDiagnostics = { capture, captureFile };
+    const streamRoot = await createTempStreamRoot();
     const manager = createVoiceInferenceSpeechStreamManager({
-      streamRoot: await createTempStreamRoot(),
-      voiceDiagnostics: { capture },
+      streamRoot,
+      voiceDiagnostics,
       voiceInferenceWorker: {
         transcribeAudio: vi.fn(async () => { throw new Error('unused'); }),
         cancelStt: vi.fn(async () => {}),
@@ -463,8 +476,10 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     });
     await manager.finish({ streamId: started.streamId, generation: started.generation, finalSeq: 0 });
 
-    await vi.waitFor(() => expect(capture).toHaveBeenCalledOnce());
-    const captured = capture.mock.calls[0]?.[0];
+    await vi.waitFor(() => expect(captureFile).toHaveBeenCalledOnce());
+    expect(capture).not.toHaveBeenCalled();
+    const capturedWavBytes = await capturedWav.promise;
+    const captured = captureFile.mock.calls[0]?.[0];
     expect(captured).toMatchObject({
       direction: 'stt_input',
       format: 'wav',
@@ -473,8 +488,9 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       providerId: 'local_neural',
       attemptId: 'runtime-diagnostic-request',
     });
-    expect(Buffer.from(captured!.bytes).subarray(0, 4).toString('ascii')).toBe('RIFF');
-    expect([...Buffer.from(captured!.bytes).subarray(44)]).toEqual([0, 0, 1, 0]);
+    expect(capturedWavBytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
+    expect([...capturedWavBytes.subarray(44)]).toEqual([0, 0, 1, 0]);
+    await vi.waitFor(async () => expect(await readdir(streamRoot)).toEqual([]));
   });
 
   it('keeps completed streaming STT usable while surfacing and recovering diagnostics retention failure', async () => {
@@ -549,9 +565,12 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       close: vi.fn(async () => {}),
     };
     const capture = vi.fn<VoiceDiagnosticsController['capture']>(async () => null);
+    const captureFile = vi.fn<VoiceDiagnosticsController['captureFile']>(async () => null);
+    const voiceDiagnostics = { capture, captureFile };
+    const streamRoot = await createTempStreamRoot();
     const manager = createVoiceInferenceSpeechStreamManager({
-      streamRoot: await createTempStreamRoot(),
-      voiceDiagnostics: { capture },
+      streamRoot,
+      voiceDiagnostics,
       voiceInferenceWorker: {
         transcribeAudio: vi.fn(async () => { throw new Error('unused'); }),
         cancelStt: vi.fn(async () => {}),
@@ -576,6 +595,8 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     await manager.cancel({ streamId: started.streamId, generation: started.generation });
 
     expect(capture).not.toHaveBeenCalled();
+    expect(captureFile).not.toHaveBeenCalled();
+    expect(await readdir(streamRoot)).toEqual([]);
   });
 
   it('preserves the upload bridge compatibility path for non-runtime streaming starts', async () => {

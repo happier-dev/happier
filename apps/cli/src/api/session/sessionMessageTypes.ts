@@ -8,6 +8,19 @@ type ConnectedServiceRuntimeAuthRecoverySessionEventMessage = Extract<
   TranscriptRawAgentEventV1,
   { type: 'connected-service-runtime-auth-recovery' }
 >;
+type TypedAgentSessionEventMessage = {
+  type: 'event';
+  id: string;
+  data: TranscriptRawAgentEventV1;
+};
+type SourceFactConsumedMessage = {
+  type: 'output';
+  data: {
+    type: 'progress';
+    marker: 'source_fact_consumed';
+    reason: 'host_prompt_echo';
+  };
+};
 type ContextCompactionPhase = 'started' | 'progress' | 'completed' | 'failed' | 'cancelled';
 type ContextCompactionSource =
   | 'agent-event'
@@ -21,7 +34,7 @@ type ContextCompactionEventFields = {
   provider?: string;
   backendId?: string;
   agentId?: string;
-  trigger?: 'manual' | 'auto' | 'threshold' | 'overflow' | 'unknown';
+  trigger?: 'manual' | 'auto' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
   source?: ContextCompactionSource;
   agentEventId?: string;
   agentSessionId?: string;
@@ -32,6 +45,8 @@ type ContextCompactionEventFields = {
   retryAttempt?: number;
   errorCode?: string;
   sanitizedErrorPreview?: string;
+  continuation?: 'paused';
+  pauseReason?: 'agent-idle-after-compaction';
 };
 
 export type ACPMessageData = AcpSidechainMeta & (
@@ -50,6 +65,8 @@ export type ACPMessageData = AcpSidechainMeta & (
   | { type: 'permission-request'; permissionId: string; toolName: string; description: string; options?: unknown }
   | { type: 'permission-response'; permissionId: string; approved: boolean; decision?: string; toolName?: string }
   | { type: 'token_count'; [key: string]: unknown }
+  | TypedAgentSessionEventMessage
+  | SourceFactConsumedMessage
   | (TranscriptEventLifecycle & { type: 'context-compaction' } & ContextCompactionEventFields)
 );
 

@@ -17,7 +17,6 @@ import {
 } from './resourceScope';
 import type { ProviderSpawnAuthorizationAttempt } from '../spawn/authorize';
 import { isSessionControlEnvKey } from '@/session/runtime/control/sessionControlEnvironment';
-import { ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 
 type ProviderLaunchPrerequisiteContext = Readonly<{
   agentTargetKey: string;
@@ -31,15 +30,6 @@ type CreateAuthorizationAttemptContext = Readonly<{
   agentTargetKey: string;
   agentId: string;
 }>;
-
-export type DirectConnectedServiceEnvironmentResolver = (
-  bindings: ConnectedServiceBindingsV1 | null,
-) => Promise<Readonly<{
-  environment: Readonly<Record<string, string>>;
-  unsetEnvKeys?: readonly string[];
-  cleanupOnFailure?: ProviderLaunchCleanup | null;
-  cleanupOnExit?: ProviderLaunchCleanup | null;
-}> | null>;
 
 export type DirectProviderLaunchResult =
   | Readonly<{
@@ -63,6 +53,7 @@ export type DirectProviderLaunchResult =
       revalidateBeforeCommit: () => Promise<Readonly<
         { ok: true } | { ok: false; error: ProviderErrorV1 }
       >>;
+      transferLaunchMaterializationCleanupOwnership: () => void;
       cleanupOnExit: ProviderLaunchCleanup | null;
     }>
   | Readonly<{
@@ -106,7 +97,6 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     | { ok: false; error: ProviderErrorV1 }
   >>;
   initialResources?: readonly ProviderLaunchResource[];
-  resolveConnectedServices?: DirectConnectedServiceEnvironmentResolver;
 }>): Promise<DirectProviderLaunchResult> {
   const scope = createProviderLaunchResourceScope();
   try {
@@ -139,32 +129,13 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
         };
       }
     }
-    const connectedServiceEnvironment = dependencies.resolveConnectedServices
-      ? await dependencies.resolveConnectedServices(
-          prepared.kind === 'provider' ? prepared.connectedServices : input.connectedServices,
-        )
-      : null;
-    if (connectedServiceEnvironment) {
-      scope.register({
-        onFailure: connectedServiceEnvironment.cleanupOnFailure ?? (() => {}),
-        onExit: connectedServiceEnvironment.cleanupOnExit ?? (() => {}),
-      });
-    }
     if (prepared.kind === 'native') {
-      if (!connectedServiceEnvironment) {
-        await scope.release();
-        return {
-          ...prepared,
-          environment: Object.freeze({}),
-          unsetEnvKeys: Object.freeze([]),
-          cleanupOnExit: null,
-        };
-      }
+      await scope.release();
       return {
         ...prepared,
-        environment: Object.freeze({ ...connectedServiceEnvironment.environment }),
-        unsetEnvKeys: Object.freeze([...(connectedServiceEnvironment.unsetEnvKeys ?? [])]),
-        cleanupOnExit: scope.transfer(),
+        environment: Object.freeze({}),
+        unsetEnvKeys: Object.freeze([]),
+        cleanupOnExit: null,
       };
     }
 
@@ -191,14 +162,8 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     }
     scope.register(attempt.takeCleanupOnExit());
 
-    const environment: Record<string, string> = Object.assign(
-      Object.create(null),
-      connectedServiceEnvironment?.environment ?? {},
-    );
+    const environment: Record<string, string> = Object.create(null);
     const unsetEnvKeysByIdentity = new Map<string, string>();
-    for (const name of connectedServiceEnvironment?.unsetEnvKeys ?? []) {
-      unsetEnvKeysByIdentity.set(name.toLowerCase(), name);
-    }
     for (const entry of materialized.materialization.providerEnvironmentOverlay) {
       if (isSessionControlEnvKey(entry.name)) continue;
       const identity = entry.name.toLowerCase();
@@ -213,6 +178,12 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     }
 
     const cleanupOnExit = scope.transfer();
+    let launchMaterializationCleanupTransferred = false;
+    const transferLaunchMaterializationCleanupOwnership = () => {
+      if (launchMaterializationCleanupTransferred) return;
+      launchMaterializationCleanupTransferred = true;
+      attempt.transferLaunchMaterializationCleanupOwnership();
+    };
     const revalidateBeforeCommit = async (): Promise<Readonly<
       { ok: true } | { ok: false; error: ProviderErrorV1 }
     >> => {
@@ -244,11 +215,11 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       bindingMetadata: attempt.authorization.sessionBindingMetadata,
       sanitizeDiagnosticText,
       revalidateBeforeCommit,
+      transferLaunchMaterializationCleanupOwnership,
       cleanupOnExit,
     };
   } catch (error) {
     await scope.release();
-    if (error instanceof ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError) throw error;
     const connectionId = input.selection?.ref.providerConnectionId ?? undefined;
     return {
       ok: false,

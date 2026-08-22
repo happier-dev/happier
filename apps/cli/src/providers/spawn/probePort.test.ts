@@ -60,37 +60,14 @@ const managedTicket: ProviderManagedProbeHostAuthorizationTicket = {
     pluginId: 'happier.provider.gateway',
     localId: 'gateway',
   },
-  managedFacet: {
-    managedEndpoint: {
-      localService: {
-        id: 'gateway-managed',
-        launch: {
-          kind: 'packaged-runtime-binary',
-          directorySegments: ['tools', 'unpacked'],
-          executableBaseName: 'gateway-managed',
-          privateConfigPathFlag: '--config',
-        },
-        launchMode: {
-          kind: 'assignAndInject',
-          portPolicy: { kind: 'allocated' },
-        },
-        hostPolicy: { kind: 'loopback' },
-        name: { strategy: 'fixed', name: 'Gateway managed' },
-        healthCheck: { kind: 'http', path: '/healthz' },
-        restart: { kind: 'never' },
-        cleanup: { staleAfterMs: 60_000 },
-      },
-      protocols: ['openai-responses'],
-    },
+  managedRuntime: {
+    kind: 'managed',
+    dependencies: [],
     connectedAccounts: [],
     requestAuthUses: [],
+    endpointTemplateIds: ['responses'],
   },
   purposeBindings: { v: 1, bindings: [] },
-  catalogSource: {
-    kind: 'transientModelEndpoint',
-    contractVersion: 'happier.gateway-managed/v1',
-    sdkVersion: 'v1.2.3',
-  },
   endpointTemplateId: 'responses',
   protocol: 'openai-responses',
   path: '/models',
@@ -321,8 +298,8 @@ describe('provider probe authorization port', () => {
     } as const;
     const groupTicket: ProviderManagedProbeHostAuthorizationTicket = {
       ...managedTicket,
-      managedFacet: {
-        ...managedTicket.managedFacet,
+      managedRuntime: {
+        ...managedTicket.managedRuntime,
         connectedAccounts: [{
           purpose: 'upstream',
           service,
@@ -370,9 +347,9 @@ describe('provider probe authorization port', () => {
     });
     expect(revalidateProviderProbeAuthorizationTicket(groupTicket, {
       ...groupTicket,
-      catalogSource: {
-        ...groupTicket.catalogSource,
-        sdkVersion: 'v1.2.4',
+      managedRuntime: {
+        ...groupTicket.managedRuntime,
+        dependencies: ['changed-runtime'],
       },
     })).toMatchObject({
       ok: false,

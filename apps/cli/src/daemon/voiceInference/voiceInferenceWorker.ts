@@ -1,4 +1,7 @@
-import { createForkedVoiceInferenceRuntimeHandle } from './forkedWorker/forkedRuntimeLoader';
+import {
+  createForkedVoiceInferenceRuntimeHandle,
+  type ForkedVoiceInferenceWorkerProcessObservation,
+} from './forkedWorker/forkedRuntimeLoader';
 import {
   createVoiceInferenceWorkerExecution,
   type VoiceInferenceWorkerExecutionHandle,
@@ -32,8 +35,10 @@ export async function startVoiceInferenceWorker(params?: Readonly<{
   now?: () => number;
   residencyMs?: number;
   perModelConcurrency?: number;
-  maxResidentBytes?: number;
+  maxLoadedArtifactBytes?: number;
   publicModelPacks?: DaemonPublicVoiceModelPackRuntime;
+  /** Test-only observer for the exact process owned by the canonical forked runtime. */
+  onForkedWorkerProcess?: (process: ForkedVoiceInferenceWorkerProcessObservation) => void;
 }>): Promise<VoiceInferenceWorkerHandle> {
   let abortAllRequests = async () => {};
 
@@ -49,7 +54,9 @@ export async function startVoiceInferenceWorker(params?: Readonly<{
   const isolationMode = params?.isolationMode ?? resolveVoiceInferenceRuntimeIsolationMode();
   const forkedHandle = params?.runtimeLoader || isolationMode !== 'forked'
     ? null
-    : createForkedVoiceInferenceRuntimeHandle();
+    : createForkedVoiceInferenceRuntimeHandle({
+      onWorkerProcess: params?.onForkedWorkerProcess,
+    });
   const runtimeLoader = params?.runtimeLoader ?? forkedHandle?.runtimeLoader;
 
   const lifecycle = createVoiceInferenceWorkerLifecycle({
@@ -58,7 +65,7 @@ export async function startVoiceInferenceWorker(params?: Readonly<{
     now: params?.now,
     residencyMs: params?.residencyMs,
     perModelConcurrency: params?.perModelConcurrency,
-    maxResidentBytes: params?.maxResidentBytes,
+    maxLoadedArtifactBytes: params?.maxLoadedArtifactBytes,
     publicModelPacks: params?.publicModelPacks,
     onStop: async () => {
       await abortAllRequests();

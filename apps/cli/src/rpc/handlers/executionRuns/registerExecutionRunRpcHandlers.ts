@@ -10,6 +10,7 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
+import type { ExecutionRunTranscriptPublisher } from '@/agent/runtime/bridges/executionRun/executionRunTranscriptPublisher';
 import type { ExecutionRunSessionStateTarget } from '@/agent/runtime/bridges/executionRun/sessionStateDelivery';
 import {
   buildExecutionRunProfileCatalog,
@@ -51,7 +52,8 @@ import { resolvePluginPromptAssetBlocks } from '@/plugins/runtime/hooks/executio
 import { resolveInvocationContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate';
 
 export type ExecutionRunRpcHandlerContext = Readonly<{
-  sessionId: string;
+  /** Fixed handler scope: a concrete Session or the daemon-owned detached scope. */
+  sessionId: string | null;
   cwd: string;
   machineId?: string;
   serverUrl?: string;
@@ -67,7 +69,7 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   localServices?: LocalServicesRuntimeActionRoutes | null;
   simulatorPreview?: SimulatorPreviewRoutes | null;
   peerMediationObservability?: DaemonPeerMediationObservabilityRuntimeActionContext | null;
-  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  sendAcp: ExecutionRunTranscriptPublisher;
   streamedTranscriptSession?: Readonly<{
     sendAgentMessageEphemeral?: (
       provider: ACPProvider,
@@ -85,15 +87,8 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
       body: ACPMessageData,
       opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
     ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
-    sendAgentMessageCommitted: (
-      provider: ACPProvider,
-      body: ACPMessageData,
-      opts: { localId: string; meta?: Record<string, unknown> },
-    ) => Promise<void>;
   }>;
   transcriptWriter?: Readonly<{
-    appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
-    appendAssistantText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
     appendUserTextCommitted?: (
       text: string,
       options: Readonly<{ localId: string; meta: Record<string, unknown> }>,
@@ -134,13 +129,14 @@ function invalidParams(): Readonly<{ ok: false; error: string; errorCode: string
 
 function createExecutionRunRpcRegistrarExecutor(params: Readonly<{
   executor: RpcActionExecutor;
-  defaultSessionId: string;
+  defaultSessionId: string | null;
 }>): RpcActionExecutor {
   return {
     execute: async (actionId, input, context) => {
+      const defaultSessionId = context?.defaultSessionId ?? params.defaultSessionId;
       const result = await params.executor.execute(actionId, input, {
         ...context,
-        defaultSessionId: context?.defaultSessionId ?? params.defaultSessionId,
+        ...(defaultSessionId ? { defaultSessionId } : {}),
       });
 
       if (!result.ok && result.errorCode === 'invalid_parameters') {
@@ -185,12 +181,20 @@ export function registerExecutionRunRpcHandlers(
                 runtimeRegistry: runtimeRegistryLease.registry,
               });
               const profileCatalog = buildExecutionRunProfileCatalog(
-                (engineRegistry.contributions.executionRunProfiles ?? []).map<ExecutionRunProfileContributionCatalogInput>((profile) =>
-                  profile.pluginId ? { pluginId: profile.pluginId, definition: profile.definition } : profile.definition),
+                (engineRegistry.contributions.executionRunProfiles ?? []).flatMap<ExecutionRunProfileContributionCatalogInput>((profile) => {
+                  if (!profile.pluginId) return [profile.definition];
+                  const current = runtimeRegistryLease.registry
+                    .pluginFinalPolicyCurrentGenerationsById
+                    ?.get(profile.pluginId) ?? null;
+                  return current?.applied === true
+                    ? [{
+                      pluginId: profile.pluginId,
+                      immutableGenerationId: current.immutableGenerationId,
+                      definition: profile.definition,
+                    }]
+                    : [];
+                }),
                 {
-                  ...(engineRegistry.contributions.generationId
-                    ? { generationId: engineRegistry.contributions.generationId }
-                    : {}),
                   resolveAgentIdentity: (agentId) => {
                     const agent = engineRegistry.contributions.agents.find((candidate) => (
                       candidate.id === agentId && candidate.pluginId
@@ -200,7 +204,7 @@ export function registerExecutionRunRpcHandlers(
                       : null;
                   },
                   resolvePolicyFacts: ({ agentId }) => resolveInvocationContributionPolicyFacts({
-                    sessionId: ctx.sessionId,
+                    ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
                     facts: {
                       'session.agentId': agentId,
                       ...(ctx.machineId ? { 'machine.id': ctx.machineId } : {}),
@@ -210,7 +214,7 @@ export function registerExecutionRunRpcHandlers(
                     return await resolvePluginPromptAssetBlocks({
                       agentId,
                       selectedAsset: promptAsset,
-                      sessionId: ctx.sessionId,
+                      ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
                       ...(ctx.machineId ? { machineId: ctx.machineId } : {}),
                     });
                   },
@@ -292,6 +296,15 @@ export function registerExecutionRunRpcHandlers(
     getPermissionRequestStore: ctx.getPermissionRequestStore,
     parentSessionStateTarget: ctx.parentSessionStateTarget ?? null,
     resolveAccountSettings: ctx.resolveAccountSettings,
+    ...(ctx.machineId ? { machineId: ctx.machineId } : {}),
+    resolveProvidersFeatureEnabled: () => {
+      const serverSnapshot = ctx.getServerFeaturesSnapshot?.();
+      return resolveCliFeatureDecision({
+        featureId: 'providers',
+        env: process.env,
+        ...(serverSnapshot ? { serverSnapshot } : {}),
+      }).state === 'enabled';
+    },
     ...(materializeReviewHostAction ? { materializeReviewHostAction } : {}),
     checkConnectedServicesGenerationCurrent: async ({ runId }) => {
       const result = await checkExecutionRunConnectedServicesGenerationCurrent({ runId, runnerPid: process.pid });

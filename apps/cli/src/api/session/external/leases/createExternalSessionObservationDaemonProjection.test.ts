@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionObservationReconcileResourceRequest,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 const runtimeLeaseMocks = vi.hoisted(() => ({
     acquire: vi.fn(),

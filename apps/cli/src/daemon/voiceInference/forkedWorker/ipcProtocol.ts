@@ -11,9 +11,8 @@
  * exactly that many bytes of UTF-8 JSON. This survives partial reads and never relies
  * on a delimiter appearing inside arbitrary payloads.
  *
- * Request/response is correlated by `id`. Streaming is supported: a single request can
- * be answered by zero or more `partial` frames (STT partial hypotheses / chunked TTS
- * bytes) followed by exactly one terminal `result` or `error` frame.
+ * Request/response is correlated by `id` and every request receives exactly one terminal
+ * `result` or `error` frame. Streaming STT uses its explicit start/append/finish requests.
  */
 
 import {
@@ -112,17 +111,9 @@ export type VoiceInferenceWorkerRequestFrame =
 
 export type VoiceInferenceWorkerRequestKind = VoiceInferenceWorkerRequestFrame['kind'];
 
-/** A streamed partial emitted by the child before a terminal frame for the same id. */
-export type VoiceInferenceWorkerPartialFrame =
-  /** Streaming STT: an interim hypothesis for the in-flight transcription. */
-  | Readonly<{ kind: 'partial'; id: string; partialKind: 'stt'; text: string; language: string | null }>
-  /** Chunked TTS: one ordered slice of the synthesized audio, base64-encoded. */
-  | Readonly<{ kind: 'partial'; id: string; partialKind: 'tts'; index: number; chunkBase64: string }>;
-
 /** Child → daemon. Terminal results and readiness telemetry. */
 export type VoiceInferenceWorkerResponseFrame =
   | Readonly<{ kind: 'ready'; id: string }>
-  | VoiceInferenceWorkerPartialFrame
   | Readonly<{ kind: 'result'; id: string; result: VoiceInferenceWorkerResultPayload }>
   | Readonly<{
       kind: 'error';
@@ -136,7 +127,6 @@ export type VoiceInferenceWorkerResponseFrame =
       kind: 'snapshot';
       packId: string;
       runtimeState: DaemonVoiceInferenceModelRuntimeState;
-      residentMemoryBytes: number | null;
     }>;
 
 export type VoiceInferenceWorkerResultPayload =
@@ -171,7 +161,8 @@ const LENGTH_PREFIX_BYTES = 4;
  * `resolveVoiceInferenceWorkerMaxFrameBytes()` knob, injected by the client/runner; this
  * fallback only applies when no bound is passed (e.g. a low-level unit test). It is far
  * below the historical 64 MiB so a single base64-inflated TTS frame cannot balloon daemon
- * memory — large audio prefers the chunked-TTS `partial` path instead.
+ * memory. Direct TTS with a larger terminal result is rejected by the child with the typed
+ * `output_too_large` contract; this IPC has no chunk producer.
  */
 const DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
@@ -232,12 +223,11 @@ export function createVoiceInferenceWorkerFrameDecoder(
 /**
  * Schema validation for inbound child→daemon frames (L4). The forked child is the UNtrusted peer
  * on this wire: a corrupt or hostile native engine can emit a well-framed, valid-JSON frame whose
- * SHAPE is wrong — e.g. a TTS partial with a negative/fractional `index` that would be used
- * directly as a chunk-array key, or a non-string `chunkBase64`. The daemon-side client validates
- * every decoded frame against this response-frame contract at a single chokepoint and terminates
- * the channel on any mismatch, pairing with the M2 decode-error termination so malformed input
- * can never reach the request handlers. Reuses the protocol's canonical audio-output and
- * runtime-state schemas rather than re-describing them here.
+ * SHAPE is wrong — e.g. a terminal synthesize result with an invalid audio-output descriptor.
+ * The daemon-side client validates every decoded frame against this response-frame contract at a
+ * single chokepoint and terminates the channel on any mismatch, pairing with the M2 decode-error
+ * termination so malformed input can never reach the request handlers. Reuses the protocol's
+ * canonical audio-output and runtime-state schemas rather than re-describing them here.
  */
 const VoiceInferenceWorkerResultPayloadSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('warm') }),
@@ -273,34 +263,14 @@ const VoiceInferenceWorkerResultPayloadSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
-const VoiceInferenceWorkerPartialFrameSchema = z.discriminatedUnion('partialKind', [
-  z.object({
-    kind: z.literal('partial'),
-    id: z.string(),
-    partialKind: z.literal('stt'),
-    text: z.string(),
-    language: z.string().nullable(),
-  }),
-  z.object({
-    kind: z.literal('partial'),
-    id: z.string(),
-    partialKind: z.literal('tts'),
-    // Non-negative integer: it indexes the reassembly chunk array directly downstream.
-    index: z.number().int().nonnegative(),
-    chunkBase64: z.string(),
-  }),
-]);
-
 const VoiceInferenceWorkerResponseFrameSchema = z.union([
   z.object({ kind: z.literal('ready'), id: z.string() }),
-  VoiceInferenceWorkerPartialFrameSchema,
   z.object({ kind: z.literal('result'), id: z.string(), result: VoiceInferenceWorkerResultPayloadSchema }),
   z.object({ kind: z.literal('error'), id: z.string(), code: z.string(), message: z.string() }),
   z.object({
     kind: z.literal('snapshot'),
     packId: z.string(),
     runtimeState: DaemonVoiceInferenceModelRuntimeStateSchema,
-    residentMemoryBytes: z.number().nullable(),
   }),
 ]);
 

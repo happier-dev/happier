@@ -136,6 +136,25 @@ function buildRespawnOptions(params: Readonly<{
   };
 }
 
+/**
+ * Startup instructions are a first-start effect. Until their cold-resume
+ * semantics are proven, every restart caller must leave the live runner in
+ * place instead of discovering this only after process exit.
+ */
+export function isSessionRunnerColdResumeSupported(input: Readonly<{
+  trackedSession: TrackedSession;
+  spawnOptionsOverride?: SpawnSessionOptions;
+}>): boolean {
+  const durableSpawnOptions = input.trackedSession.spawnOptions;
+  const spawnOptions =
+    input.spawnOptionsOverride ?? durableSpawnOptions;
+  return !(
+    input.trackedSession.agentSessionStartupInstructionsMarkerV1
+    || durableSpawnOptions?.agentSessionStartupInstructionsV1
+    || spawnOptions?.agentSessionStartupInstructionsV1
+  );
+}
+
 export function createSessionRunnerRespawnManager(params: Readonly<{
   enabled: boolean;
   maxRestarts: number | null;
@@ -513,11 +532,15 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         return 'terminal';
       }
 
-      if (
-        trackedSession.agentSessionStartupInstructionsMarkerV1
-        || durableSpawnOptions.agentSessionStartupInstructionsV1
-        || spawnOptions.agentSessionStartupInstructionsV1
-      ) {
+      if (!isSessionRunnerColdResumeSupported({
+        trackedSession,
+        ...(options?.spawnOptionsOverride
+          ? {
+              spawnOptionsOverride:
+                options.spawnOptionsOverride,
+            }
+          : {}),
+      })) {
         endRespawnCycle(sessionId);
         params.logWarn(
           `[DAEMON RUN] Respawn suppressed for session ${sessionId} `

@@ -18,7 +18,6 @@ export type HostedWebStaticAssetLifecycleContribution = Readonly<{
     runtimeMode: unknown;
     artifactManifest: unknown;
     manifestContributionId?: string;
-    artifact?: unknown;
     routeMode?: 'hostOrigin' | 'pathFallback';
     security: PluginHostedWebSecurityPolicyV1;
     sourceMaps?: StartHostedWebStaticAssetServerInput['sourceMaps'];
@@ -203,12 +202,10 @@ export function createHostedWebStaticAssetLifecycle(
         for (const contribution of contributions) {
             const key = identityKey(contribution);
             const runtime = resolveHostedWebAssetRuntime({
-                pluginId: contribution.pluginId,
                 contributionId: contribution.contributionId,
                 manifestContributionId: contribution.manifestContributionId,
                 runtimeMode: contribution.runtimeMode,
                 manifest: contribution.artifactManifest,
-                artifact: contribution.artifact,
             });
             if (!runtime.ok) {
                 diagnostics.push(diagnostic({

@@ -1,4 +1,3 @@
-import type { AgentId } from '@happier-dev/agents';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import { AGENTS } from '@/agent/catalog/registry';
@@ -8,7 +7,6 @@ import type {
   ConnectedServiceRecoveryCapabilities,
   ConnectedServiceRuntimeAuthApplyCapability,
   LegacyConnectedServiceRuntimeAuthFailureSourceInput,
-  ConnectedServiceRuntimeAuthSelectionMaterializerParams,
   ConnectedServiceStateSharingDescriptor,
   ConnectedServiceSwitchContinuityParams,
   ConnectedServiceSwitchContinuityResult,
@@ -22,7 +20,7 @@ import type {
   VerifyResumeReachableResult,
 } from './verifyResumeReachableTypes';
 import { getOrLoadConnectedServiceCatalogHook } from './catalogHookCache';
-import { projectAgentVisibleSessionMetadata } from '@/agent/runtime/sessionMetadataVisibility';
+import type { ConnectedServicePersistedSessionMetadata } from '@/agent/catalog/types';
 
 const cachedConnectedServicesMaterializerPromises = new Map<CatalogAgentId, Promise<ConnectedServicesMaterializer | null>>();
 const cachedConnectedServiceMaterializedHomeFreshnessPromises = new Map<CatalogAgentId, Promise<ConnectedServiceMaterializedHomeFreshness | null>>();
@@ -91,16 +89,6 @@ export async function getConnectedServiceRuntimeAuthAdapter(
     agentId,
     () => AGENTS[agentId]?.getConnectedServiceRuntimeAuthAdapter?.() ?? Promise.resolve(null),
   );
-}
-
-export async function materializeConnectedServiceRuntimeAuthSelectionThroughCatalog(
-  agentId: AgentId | null | undefined,
-  params: ConnectedServiceRuntimeAuthSelectionMaterializerParams,
-): Promise<unknown | null> {
-  const catalogId = resolveCatalogAgentId(agentId);
-  const entry = AGENTS[catalogId];
-  if (!entry?.materializeConnectedServiceRuntimeAuthSelection) return null;
-  return await entry.materializeConnectedServiceRuntimeAuthSelection(params);
 }
 
 export async function getConnectedServiceStateSharingDescriptor(
@@ -191,27 +179,36 @@ export async function resolveConnectedServiceSwitchContinuity(
 }
 
 export async function verifyResumeReachableThroughCatalog(
-  agentId: AgentId | null | undefined,
+  agentId: CatalogAgentId | null | undefined,
   input: VerifyResumeReachableInput,
 ): Promise<VerifyResumeReachableResult | null> {
   const catalogId = resolveCatalogAgentId(agentId);
-  const entry = AGENTS[catalogId];
+  const entry = catalogId ? AGENTS[catalogId] : null;
   if (!entry?.verifyResumeReachable) return null;
   return await entry.verifyResumeReachable(input);
 }
 
 export function resolveConnectedServiceCandidatePersistedSessionFile(
-  agentId: AgentId | null | undefined,
+  agentId: CatalogAgentId | null | undefined,
   metadata: unknown,
 ): string | null {
   const catalogId = resolveCatalogAgentId(agentId);
-  const entry = AGENTS[catalogId];
+  const entry = catalogId ? AGENTS[catalogId] : null;
   return entry?.resolveConnectedServiceCandidatePersistedSessionFile?.({
-    metadata:
-      metadata && typeof metadata === 'object' && !Array.isArray(metadata)
-        ? projectAgentVisibleSessionMetadata(
-            metadata as Readonly<Record<string, unknown>>,
-          )
-        : metadata,
+    metadata: buildConnectedServicePersistedSessionMetadata(metadata),
   }) ?? null;
+}
+
+export function buildConnectedServicePersistedSessionMetadata(
+  value: unknown,
+): ConnectedServicePersistedSessionMetadata {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return Object.freeze({});
+  const piSessionFile = Reflect.get(value, 'piSessionFile');
+  const codexBackendMode = Reflect.get(value, 'codexBackendMode');
+  const codexSessionId = Reflect.get(value, 'codexSessionId');
+  return Object.freeze({
+    ...(typeof piSessionFile === 'string' ? { piSessionFile } : {}),
+    ...(typeof codexBackendMode === 'string' ? { codexBackendMode } : {}),
+    ...(typeof codexSessionId === 'string' ? { codexSessionId } : {}),
+  });
 }

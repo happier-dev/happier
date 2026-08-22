@@ -1,9 +1,18 @@
 import { logger } from '@/ui/logger';
+import {
+    assertCommittedTranscriptAdmission,
+    CommittedTranscriptAdmissionExpiredError,
+    type CommittedTranscriptAdmission,
+} from '@/api/session/transcriptPort';
 import { isDeepStrictEqual } from 'node:util';
 import { configuration } from '@/configuration';
 import { isAuthenticationError, readAuthenticationStatus } from '@/api/client/httpStatusError';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import type { SessionSyncPendingInputServerContractResult } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import {
+    supportsSessionSyncPendingInputV1,
+    supportsRuntimeActivityV2,
+} from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import type { SessionClientConnectionContractResult } from '../sessionClientConnectionContract';
 import {
     SessionRuntimeActivityProjectionSchema,
     SessionRuntimeActivitySnapshotSchema,
@@ -22,12 +31,14 @@ import {
     appendSessionClientDurableMutationDeadLetters,
     createSessionClientDurableMutationPersistenceContext,
     createSessionClientDurableMutationDeadLetterEntry,
+    isRecoverableSessionClientDurableMutationDeadLetter,
     loadSessionClientDurableMutationDeadLetters,
     loadSessionClientDurableMutationOutbox,
     markAuthoritativeSessionClientDurableMutationDeadLettersRecovered,
     parseDaemonSessionClientDurableMutation,
     parseRuntimeSessionClientDurableMutation,
     recoverAuthoritativeSessionClientDurableMutationDeadLetters,
+    resolveSessionClientDurableMutationDeadLetterIdentity,
     resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries,
     resolveSessionClientDurableMutationOutboxPath,
     saveSessionClientDurableMutationOutbox,
@@ -37,13 +48,22 @@ import {
 import { deliverSessionEndMutation } from './deliverSessionEndMutation';
 import { deliverSessionTurnMutation, type UnsupportedSessionTurnMutationDiagnostic } from './deliverSessionTurnMutation';
 import { deliverTranscriptMessageMutation } from './deliverTranscriptMessageMutation';
+import {
+    findSessionClientDurableMutationDependencyCycles,
+    readSessionClientDurableMutationDependencies,
+} from './sessionClientDurableMutationDependencies';
 import { withSessionClientDurableMutationDeliverySlot } from './sessionClientDurableMutationDeliveryLimiter';
-import { shouldDeadLetterSessionClientDurableMutation } from './sessionClientDurableMutationDurabilityPolicy';
+import {
+    shouldDeadLetterSessionClientDurableMutation,
+} from './sessionClientDurableMutationDurabilityPolicy';
+import { createSerializedWorkQueueDiagnostics } from '@/utils/serializedWorkQueueDiagnostics';
 import type {
     DaemonUsageLimitRecoveryFieldMutation,
     QueuedSessionClientDurableMutation,
     RegisteredSessionStateFieldMutationV1,
+    SessionEndMutationV1,
     SessionClientDurableMutationDependency,
+    SessionClientDurableMutationAttemptReason,
     SessionClientDurableMutationPause,
     SessionClientDurableMutationSocket,
     TranscriptMessageAppendMutationV1,
@@ -56,9 +76,17 @@ import {
     requireTranscriptMessageAppendProvenance,
 } from './sessionClientDurableMutationTypes';
 
+export type TranscriptMessageAdmissionOptions = Readonly<{
+    admission?: CommittedTranscriptAdmission;
+}>;
+
 type GenericSessionClientDurableMutationOutbox = Readonly<{
     enqueueSessionTurnMutation(mutation: SessionTurnMutationV1): Promise<void>;
-    enqueueTranscriptMessage(mutation: TranscriptMessageAppendMutationV1): Promise<Readonly<{
+    enqueueSessionEnd(mutation: SessionEndMutationV1): Promise<void>;
+    enqueueTranscriptMessage(
+        mutation: TranscriptMessageAppendMutationV1,
+        opts?: TranscriptMessageAdmissionOptions,
+    ): Promise<Readonly<{
         persisted: boolean;
         delivered: boolean;
     }>>;
@@ -71,7 +99,7 @@ type GenericSessionClientDurableMutationOutbox = Readonly<{
         mutation: RegisteredSessionStateFieldMutationV1,
         opts?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<RegisteredSessionStateFieldWaitResult>;
-    setSessionSyncPendingInputServerContract(result: SessionSyncPendingInputServerContractResult): Promise<void>;
+    setSessionSyncPendingInputServerContract(result: SessionClientConnectionContractResult): Promise<void>;
     readRuntimeActivitySnapshotTail(): RuntimeActivitySnapshotTail;
     waitForRuntimeActivitySnapshotTailChange(sequence: number, signal?: AbortSignal): Promise<boolean>;
     awaitReady(): Promise<void>;
@@ -145,6 +173,13 @@ type CreateGenericSessionClientDurableMutationOutboxParams = Readonly<{
     runtimeActivitySupportControlled?: boolean;
     getSocket: () => SessionClientDurableMutationSocket | null;
     requestReconnect: (reason: string) => void;
+    onTranscriptMessageDeliveryAttempt?: (mutation: Readonly<{
+        localId: string;
+        messageRole?: 'user' | 'agent' | 'event' | 'unknown';
+    }>) => void;
+    deliverTranscriptMessageMutation?: (
+        mutation: TranscriptMessageAppendMutationV1,
+    ) => Promise<boolean | undefined>;
     deliverRegisteredSessionStateFieldMutation?: (
         mutation: RegisteredSessionStateFieldMutationV1,
     ) => Promise<RegisteredSessionStateFieldDeliveryResult>;
@@ -193,6 +228,19 @@ function createQueuedSessionTurnMutation(
         mutationId: mutation.mutationId,
         payload: mutation,
         createdAt: now,
+        attempts: 0,
+        nextAttemptAt: 0,
+    };
+}
+
+function createQueuedSessionEndMutation(
+    mutation: SessionEndMutationV1,
+): Extract<QueuedSessionClientDurableMutation, Readonly<{ kind: 'session_end' }>> {
+    return {
+        kind: 'session_end',
+        mutationId: mutation.mutationId,
+        payload: mutation,
+        createdAt: Date.now(),
         attempts: 0,
         nextAttemptAt: 0,
     };
@@ -377,10 +425,28 @@ type DurableMutationDeliveryOutcome = Readonly<{
     delivered: boolean;
     ignoredLossy?: boolean;
     unsupportedCapability?: boolean;
+    terminalFailureReason?:
+        | 'transcript_message_provenance_missing_or_invalid'
+        | 'transcript_message_invalid_observation';
     paused?: SessionClientDurableMutationPause;
     registeredFieldSettlement?: PendingRegisteredFieldSettlement;
     runtimeActivitySettlement?: NonNullable<RuntimeActivitySnapshotTail['settlement']>;
 }>;
+
+function recordFailedSessionClientDurableMutationAttempt(
+    mutation: QueuedSessionClientDurableMutation,
+    reason: SessionClientDurableMutationAttemptReason,
+    attemptedAt: number,
+): QueuedSessionClientDurableMutation {
+    const attempts = mutation.attempts + 1;
+    return {
+        ...mutation,
+        attempts,
+        firstFailedAt: mutation.firstFailedAt ?? attemptedAt,
+        lastAttempt: { v: 1, reason, attemptedAt },
+        nextAttemptAt: Date.now() + resolveSessionClientDurableMutationRetryDelayMs(attempts),
+    } as QueuedSessionClientDurableMutation;
+}
 
 type DurableMutationDependencyState =
     | Readonly<{ status: 'ready' }>
@@ -505,15 +571,6 @@ function registeredFieldValuesEqual(
         && JSON.stringify(left.payload.op) === JSON.stringify(right.payload.op);
 }
 
-function readQueuedMutationDependencies(
-    mutation: QueuedSessionClientDurableMutation,
-): readonly SessionClientDurableMutationDependency[] {
-    if (mutation.dependsOn) return mutation.dependsOn;
-    return mutation.kind === 'registered_session_state_field'
-        ? mutation.payload.dependsOn ?? []
-        : [];
-}
-
 function pruneDurableFailedMutationReasons(params: Readonly<{
     reasons: ReadonlyMap<string, string>;
     queued: readonly QueuedSessionClientDurableMutation[];
@@ -522,7 +579,7 @@ function pruneDurableFailedMutationReasons(params: Readonly<{
     const retained = new Map<string, string>();
     let failedReasonOverflowCount = 0;
     for (const mutation of params.queued) {
-        for (const dependency of readQueuedMutationDependencies(mutation)) {
+        for (const dependency of readSessionClientDurableMutationDependencies(mutation)) {
             if (retained.has(dependency.mutationId)) continue;
             const reason = params.reasons.get(dependency.mutationId);
             if (!reason) continue;
@@ -574,7 +631,6 @@ function readQueuedMutationCoalesceKey(mutation: QueuedSessionClientDurableMutat
     const transcriptKey = readTranscriptCoalesceKey(mutation);
     if (transcriptKey) return transcriptKey;
     if (mutation.kind === 'voice_agent_transcript_turn') return mutation.mutationId;
-    if (mutation.kind === 'session_end') return `session_end:${mutation.payload.sessionId}`;
     if (mutation.kind === 'registered_session_state_field') {
         return `registered_session_state_field:${mutation.payload.sessionId}:${mutation.payload.fieldId}`;
     }
@@ -604,11 +660,6 @@ function resolveCoalescedMutation(
     }
     if (existing.kind === 'voice_agent_transcript_turn' && incoming.kind === 'voice_agent_transcript_turn') {
         return existing;
-    }
-    if (existing.kind === 'session_end' && incoming.kind === 'session_end') {
-        return readQueuedMutationObservedAt(incoming) >= readQueuedMutationObservedAt(existing)
-            ? incoming
-            : existing;
     }
     if (
         existing.kind === 'registered_session_state_field'
@@ -677,21 +728,6 @@ function mergeQueuedSessionClientDurableMutations(
     return mergeQueuedSessionClientDurableMutationsWithOwnership(earlier, later).mutations;
 }
 
-function pruneSessionEndsSupersededByLaterTurnBegins(
-    queued: readonly QueuedSessionClientDurableMutation[],
-): QueuedSessionClientDurableMutation[] {
-    let latestTurnBeginObservedAt = -Infinity;
-    for (const mutation of queued) {
-        if (mutation.kind !== 'session_turn_mutation' || mutation.payload.action !== 'begin') continue;
-        latestTurnBeginObservedAt = Math.max(latestTurnBeginObservedAt, readQueuedMutationObservedAt(mutation));
-    }
-    if (!Number.isFinite(latestTurnBeginObservedAt)) return [...queued];
-    return queued.filter((mutation) => (
-        mutation.kind !== 'session_end'
-        || readQueuedMutationObservedAt(mutation) >= latestTurnBeginObservedAt
-    ));
-}
-
 function createGenericSessionClientDurableMutationOutbox(
     params: CreateGenericSessionClientDurableMutationOutboxParams,
 ): GenericSessionClientDurableMutationOutbox {
@@ -708,8 +744,9 @@ function createGenericSessionClientDurableMutationOutbox(
         };
         return {
             enqueueSessionTurnMutation: async (mutation) => { await (await resolveReopened())?.enqueueSessionTurnMutation(mutation); },
-            enqueueTranscriptMessage: async (mutation) => (
-                await (await resolveReopened())?.enqueueTranscriptMessage(mutation)
+            enqueueSessionEnd: async (mutation) => { await (await resolveReopened())?.enqueueSessionEnd(mutation); },
+            enqueueTranscriptMessage: async (mutation, opts) => (
+                await (await resolveReopened())?.enqueueTranscriptMessage(mutation, opts)
                 ?? { persisted: false, delivered: false }
             ),
             enqueueVoiceAgentTranscriptTurn: async (mutation) => (
@@ -763,6 +800,8 @@ function createGenericSessionClientDurableMutationOutbox(
                 initialRegisteredSessionStateFieldMutations: params.initialRegisteredSessionStateFieldMutations,
                 flushOnReady: params.flushOnReady,
                 runtimeActivitySupportControlled: params.runtimeActivitySupportControlled,
+                isDeliveryActive: () => [...handles.values()]
+                    .some((handle) => handle.isDeliveryActive?.() !== false),
                 getSocket: () => selectActiveGenericSessionClientDurableMutationOutboxHandle(
                     handles,
                     (handle) => handle.supportsSocketDelivery !== false
@@ -780,6 +819,21 @@ function createGenericSessionClientDurableMutationOutbox(
                             });
                         }
                     }
+                },
+                onTranscriptMessageDeliveryAttempt: (mutation) => {
+                    selectActiveGenericSessionClientDurableMutationOutboxHandle(
+                        handles,
+                        (handle) => handle.supportsSocketDelivery !== false
+                            && handle.isDeliveryActive?.() !== false,
+                    ).onTranscriptMessageDeliveryAttempt?.(mutation);
+                },
+                deliverTranscriptMessageMutation: async (mutation) => {
+                    const deliver = [...handles.values()]
+                        .reverse()
+                        .find((handle) => handle.isDeliveryActive?.() !== false
+                            && handle.deliverTranscriptMessageMutation !== undefined)
+                        ?.deliverTranscriptMessageMutation;
+                    return deliver ? await deliver(mutation) : undefined;
                 },
                 isShuttingDown: () => [...handles.values()]
                     .some((handle) => handle.isShuttingDown?.() === true),
@@ -825,9 +879,13 @@ function createGenericSessionClientDurableMutationOutbox(
             if (handleClosed) return;
             await sharedEntry.outbox.enqueueSessionTurnMutation(mutation);
         },
-        enqueueTranscriptMessage: async (mutation) => {
+        enqueueSessionEnd: async (mutation) => {
+            if (handleClosed) return;
+            await sharedEntry.outbox.enqueueSessionEnd(mutation);
+        },
+        enqueueTranscriptMessage: async (mutation, opts) => {
             if (handleClosed) return { persisted: false, delivered: false };
-            return await sharedEntry.outbox.enqueueTranscriptMessage(mutation);
+            return await sharedEntry.outbox.enqueueTranscriptMessage(mutation, opts);
         },
         enqueueVoiceAgentTranscriptTurn: async (mutation) => {
             if (handleClosed) return { persisted: false, delivered: false };
@@ -866,7 +924,11 @@ export type RuntimeSessionTurnMutationV1 = Exclude<SessionTurnMutationV1, Readon
 
 export type RuntimeSessionClientDurableMutationOutbox = Readonly<{
     enqueueSessionTurnMutation(mutation: RuntimeSessionTurnMutationV1): Promise<void>;
-    enqueueTranscriptMessage(mutation: TranscriptMessageAppendMutationV1): Promise<Readonly<{
+    enqueueSessionEnd(mutation: SessionEndMutationV1): Promise<void>;
+    enqueueTranscriptMessage(
+        mutation: TranscriptMessageAppendMutationV1,
+        opts?: TranscriptMessageAdmissionOptions,
+    ): Promise<Readonly<{
         persisted: boolean;
         delivered: boolean;
     }>>;
@@ -881,7 +943,7 @@ export type RuntimeSessionClientDurableMutationOutbox = Readonly<{
     ): Promise<RegisteredSessionStateFieldWaitResult>;
     activateDelivery(): Promise<void>;
     deactivateDelivery(): void;
-    setSessionSyncPendingInputServerContract(result: SessionSyncPendingInputServerContractResult): Promise<void>;
+    setSessionSyncPendingInputServerContract(result: SessionClientConnectionContractResult): Promise<void>;
     readRuntimeActivitySnapshotTail(): RuntimeActivitySnapshotTail;
     waitForRuntimeActivitySnapshotTailChange(sequence: number, signal?: AbortSignal): Promise<boolean>;
     awaitReady(): Promise<void>;
@@ -897,6 +959,10 @@ export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly
     initiallyActive?: boolean;
     getSocket: () => SessionClientDurableMutationSocket | null;
     requestReconnect: (reason: string) => void;
+    onTranscriptMessageDeliveryAttempt?: (mutation: Readonly<{
+        localId: string;
+        messageRole?: 'user' | 'agent' | 'event' | 'unknown';
+    }>) => void;
     deliverRegisteredSessionStateFieldMutation?: (
         mutation: RegisteredSessionStateFieldMutationV1,
     ) => Promise<boolean | Readonly<{
@@ -906,7 +972,7 @@ export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly
 }>): RuntimeSessionClientDurableMutationOutbox {
     let deliveryActive = params.initiallyActive !== false;
     let retainedSessionSyncPendingInputServerContract:
-        SessionSyncPendingInputServerContractResult | null = null;
+        SessionClientConnectionContractResult | null = null;
     const assertRuntimeCustodyMutation = (queued: QueuedSessionClientDurableMutation): void => {
         if (parseRuntimeSessionClientDurableMutation(queued, params.sessionId).mutations.length !== 1) {
             throw new Error('Mutation is not admitted by runtime custody for the expected session');
@@ -936,9 +1002,14 @@ export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly
             assertRuntimeCustodyMutation(queued);
             await journal.enqueueSessionTurnMutation(mutation as SessionTurnMutationV1);
         },
-        async enqueueTranscriptMessage(mutation) {
+        async enqueueSessionEnd(mutation) {
+            const queued = createQueuedSessionEndMutation(mutation);
+            assertRuntimeCustodyMutation(queued);
+            await journal.enqueueSessionEnd(mutation);
+        },
+        async enqueueTranscriptMessage(mutation, opts) {
             assertRuntimeCustodyMutation(createQueuedTranscriptMessage(mutation));
-            return await journal.enqueueTranscriptMessage(mutation);
+            return await journal.enqueueTranscriptMessage(mutation, opts);
         },
         async enqueueVoiceAgentTranscriptTurn(mutation) {
             assertRuntimeCustodyMutation(createQueuedVoiceAgentTranscriptTurn(mutation));
@@ -984,6 +1055,13 @@ export type ExactDaemonSessionTurnEndMutationV1 = ExactSessionTurnEndMutationV1;
 export type DaemonSessionClientDurableMutationOutbox = Readonly<{
     enqueueExactTurnEnd(mutation: ExactDaemonSessionTurnEndMutationV1): Promise<void>;
     enqueueUsageLimitRecovery(mutation: DaemonUsageLimitRecoveryFieldMutation): Promise<void>;
+    enqueueTranscriptMessage(
+        mutation: TranscriptMessageAppendMutationV1,
+        opts?: TranscriptMessageAdmissionOptions,
+    ): Promise<Readonly<{
+        persisted: boolean;
+        delivered: boolean;
+    }>>;
     awaitReady(): Promise<void>;
     flush(reason: 'connect' | 'timer' | 'flush' | 'startup' | 'enqueue'): Promise<void>;
     close(): Promise<void>;
@@ -997,6 +1075,9 @@ export function createDaemonSessionClientDurableMutationOutbox(params: Readonly<
     deliverUsageLimitRecovery?: (
         mutation: DaemonUsageLimitRecoveryFieldMutation,
     ) => Promise<boolean | Readonly<{ delivered: boolean; settlement: 'applied' | 'superseded' }>>;
+    deliverTranscriptMessage?: (
+        mutation: TranscriptMessageAppendMutationV1,
+    ) => Promise<boolean>;
     enableExactTurnDelivery?: boolean;
     isShuttingDown?: () => boolean;
 }>): DaemonSessionClientDurableMutationOutbox {
@@ -1029,6 +1110,9 @@ export function createDaemonSessionClientDurableMutationOutbox(params: Readonly<
                 },
             }
             : {}),
+        ...(params.deliverTranscriptMessage
+            ? { deliverTranscriptMessageMutation: params.deliverTranscriptMessage }
+            : {}),
     });
     return {
         async enqueueExactTurnEnd(mutation) {
@@ -1045,6 +1129,13 @@ export function createDaemonSessionClientDurableMutationOutbox(params: Readonly<
             }
             await journal.enqueueRegisteredSessionStateFieldMutation(mutation);
         },
+        async enqueueTranscriptMessage(mutation, opts) {
+            const queued = createQueuedTranscriptMessage(mutation);
+            if (parseDaemonSessionClientDurableMutation(queued, params.sessionId).mutations.length !== 1) {
+                throw new Error('Daemon mutation custody accepts only canonical transcript messages for the expected session');
+            }
+            return await journal.enqueueTranscriptMessage(mutation, opts);
+        },
         awaitReady: () => journal.awaitReady(),
         flush: (reason) => journal.flush(reason),
         close: () => journal.close(),
@@ -1059,6 +1150,26 @@ function createGenericSessionClientDurableMutationOutboxInstance(
     let inFlightMutations: QueuedSessionClientDurableMutation[] = [];
     let flushInFlight: Promise<void> | null = null;
     let persistInFlight: Promise<void> = Promise.resolve();
+    const persistDiagnostics = createSerializedWorkQueueDiagnostics({
+        queueName: 'session-durable-mutation-persist',
+        slowAfterMs: 30_000,
+        report: (report) => {
+            logger.infoFile('[API] Serialized durable mutation persistence diagnostic', {
+                sessionId: params.sessionId,
+                ...report,
+            });
+        },
+    });
+    const flushDiagnostics = createSerializedWorkQueueDiagnostics({
+        queueName: 'session-durable-mutation-flush',
+        slowAfterMs: 30_000,
+        report: (report) => {
+            logger.infoFile('[API] Serialized durable mutation flush diagnostic', {
+                sessionId: params.sessionId,
+                ...report,
+            });
+        },
+    });
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let loadedMutationsNeedPersist = false;
     // Set only when already-observed transcript output remains resident after its admission save failed.
@@ -1066,14 +1177,69 @@ function createGenericSessionClientDurableMutationOutboxInstance(
     let durableFailedMutationReasons = new Map<string, string>();
     let nextRegisteredFieldAdmissionOrder: number | null = 1;
     const registeredFieldSettlements = new Map<string, RegisteredFieldSettlementGroup>();
+    const awaitedDeliveryMutationCounts = new Map<string, number>();
+    const acknowledgedAwaitedDeliveryMutationIds = new Set<string>();
     let deadLetterRecoveryTail: Promise<void> = Promise.resolve();
-    let sessionSyncPendingInputServerContractResult: SessionSyncPendingInputServerContractResult | null = null;
+    let sessionSyncPendingInputServerContractResult: SessionClientConnectionContractResult | null = null;
+    const reportedPersistentlyBlockingMutationIds = new Set<string>();
     let runtimeActivityTail: RuntimeActivitySnapshotTail = {
         sequence: 0,
         custody: null,
         settlement: null,
     };
     const runtimeActivityTailWaiters = new Set<() => void>();
+
+    function reportPersistentlyBlockingMutation(
+        mutation: QueuedSessionClientDurableMutation,
+        blockedMutations: readonly QueuedSessionClientDurableMutation[],
+    ): void {
+        // A mutation that can be dead-lettered eventually clears the queue head on its own.
+        // Every durable_required mutation is retried forever with head-of-line custody, so it is
+        // the persistent blocker this diagnostic exists to surface - including daemon-authored
+        // registered session-state fields such as `runtime.usageLimitRecovery`.
+        if (shouldDeadLetterSessionClientDurableMutation(mutation)) return;
+        if (blockedMutations.length === 0) return;
+        if (mutation.attempts < resolveSessionClientDurableMutationMaxAttempts()) return;
+        if (reportedPersistentlyBlockingMutationIds.has(mutation.mutationId)) return;
+        reportedPersistentlyBlockingMutationIds.add(mutation.mutationId);
+
+        const blockedMutationKinds: Record<string, number> = {};
+        for (const blocked of blockedMutations) {
+            blockedMutationKinds[blocked.kind] = (blockedMutationKinds[blocked.kind] ?? 0) + 1;
+        }
+        const turn = mutation.kind === 'session_turn_mutation' ? mutation.payload : null;
+        logger.infoFile(
+            '[API] Authoritative session mutation remains queued and is blocking later mutations',
+            {
+                sessionId: mutation.payload.sessionId,
+                mutationId: mutation.mutationId,
+                mutationKind: mutation.kind,
+                attempts: mutation.attempts,
+                ageMs: Math.max(0, Date.now() - mutation.createdAt),
+                ...(mutation.firstFailedAt === undefined
+                    ? {}
+                    : { firstFailedAt: mutation.firstFailedAt }),
+                ...(mutation.lastAttempt === undefined
+                    ? {}
+                    : {
+                        lastAttemptReason: mutation.lastAttempt.reason,
+                        lastAttemptedAt: mutation.lastAttempt.attemptedAt,
+                    }),
+                ...(turn ? {
+                    action: turn.action,
+                    ...(turn.turnId ? { turnId: turn.turnId } : {}),
+                    observedAt: turn.observedAt,
+                } : {}),
+                blockedMutationCount: blockedMutations.length,
+                blockedMutationKinds,
+                serverContractMode: sessionSyncPendingInputServerContractResult?.mode ?? 'unknown',
+                runtimeActivityServerContract:
+                    sessionSyncPendingInputServerContractResult?.runtimeActivity ?? 'unknown',
+                pendingInputServerContract:
+                    sessionSyncPendingInputServerContractResult?.pendingInput ?? 'unknown',
+            },
+        );
+    }
 
     function publishRuntimeActivityTail(next: Omit<RuntimeActivitySnapshotTail, 'sequence'>): void {
         runtimeActivityTail = {
@@ -1157,7 +1323,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                         inFlightMutations,
                         queuedMerge.mutations,
                     );
-                    const committed = pruneSessionEndsSupersededByLaterTurnBegins(committedMerge.mutations);
+                    const committed = committedMerge.mutations;
                     await saveSessionClientDurableMutationOutbox(params.sessionId, committed, params.persistenceContext);
                     applyRegisteredFieldOwnershipReplacements(queuedMerge.replacements);
                     applyRegisteredFieldOwnershipReplacements(committedMerge.replacements);
@@ -1185,16 +1351,29 @@ function createGenericSessionClientDurableMutationOutboxInstance(
 
     const ready = (async () => {
         const loadedRaw = await loadSessionClientDurableMutationOutbox(params.sessionId, params.persistenceContext);
+        const deadLetters = await loadSessionClientDurableMutationDeadLetters(params.sessionId, params.persistenceContext);
         const recoveredRaw = await recoverAuthoritativeSessionClientDurableMutationDeadLetters(
             params.sessionId,
             100,
             params.persistenceContext,
         );
-        const loaded = loadedRaw.map(normalizeQueuedRuntimeActivityIdentity);
-        const recovered = recoveredRaw.map(normalizeQueuedRuntimeActivityIdentity);
-        const hydrated = pruneSessionEndsSupersededByLaterTurnBegins(
-            mergeQueuedSessionClientDurableMutations(loaded, recovered),
+        const terminalDeadLetterIdentities = new Set(
+            deadLetters
+                .filter((entry) => !isRecoverableSessionClientDurableMutationDeadLetter(entry))
+                .map(resolveSessionClientDurableMutationDeadLetterIdentity)
+                .filter((identity): identity is string => identity !== null),
         );
+        const loaded = loadedRaw
+            .map(normalizeQueuedRuntimeActivityIdentity)
+            .filter((mutation) => !terminalDeadLetterIdentities.has(
+                resolveSessionClientDurableMutationDeadLetterIdentity({
+                    sessionId: params.sessionId,
+                    kind: mutation.kind,
+                    mutationId: mutation.mutationId,
+                }) ?? '',
+            ));
+        const recovered = recoveredRaw.map(normalizeQueuedRuntimeActivityIdentity);
+        const hydrated = mergeQueuedSessionClientDurableMutations(loaded, recovered);
         const highestPersistedAdmissionOrder = hydrated.reduce((highest, mutation) => (
             Math.max(highest, readRegisteredFieldAdmissionOrder(mutation) ?? 0)
         ), 0);
@@ -1237,8 +1416,10 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 recoveredCount: recovered.length,
             });
         }
-        const deadLetters = await loadSessionClientDurableMutationDeadLetters(params.sessionId, params.persistenceContext);
-        durableFailedMutationReasons = createDurableFailedMutationReasons(deadLetters);
+        durableFailedMutationReasons = createDurableFailedMutationReasons(
+            deadLetters,
+            new Set(recovered.map((mutation) => mutation.mutationId)),
+        );
         const hydratedRuntimeActivityCustody = readQueuedRuntimeActivityCustody();
         if (hydratedRuntimeActivityCustody !== null) {
             runtimeActivityTail = {
@@ -1262,11 +1443,13 @@ function createGenericSessionClientDurableMutationOutboxInstance(
 
     function createDurableFailedMutationReasons(
         deadLetters: readonly SessionClientDurableMutationDeadLetterEntry[],
+        recoveredMutationIds: ReadonlySet<string> = new Set(),
     ): Map<string, string> {
         const reasons = new Map<string, string>();
         for (const deadLetter of deadLetters) {
             if (!deadLetter.mutationId) continue;
             if (typeof deadLetter.recoveryAttemptedAt === 'number') continue;
+            if (recoveredMutationIds.has(deadLetter.mutationId)) continue;
             reasons.set(deadLetter.mutationId, deadLetter.reason);
         }
         return reasons;
@@ -1296,11 +1479,9 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             .then(async () => {
                 await saveSessionClientDurableMutationOutbox(
                     params.sessionId,
-                    pruneSessionEndsSupersededByLaterTurnBegins(
-                        mergeQueuedSessionClientDurableMutations(
-                            inFlightMutations,
-                            mutations,
-                        ),
+                    mergeQueuedSessionClientDurableMutations(
+                        inFlightMutations,
+                        mutations,
                     ),
                     params.persistenceContext,
                 );
@@ -1500,28 +1681,62 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             return { delivered: result.delivered };
         }
         if (mutation.kind === 'transcript_message_append') {
+            params.onTranscriptMessageDeliveryAttempt?.(mutation.payload);
+            const overriddenDelivery = await params.deliverTranscriptMessageMutation?.(
+                mutation.payload as TranscriptMessageAppendMutationV1,
+            );
+            if (overriddenDelivery !== undefined) {
+                return { delivered: overriddenDelivery };
+            }
             const result = await deliverTranscriptMessageMutation({
                 token: params.token,
                 socket: params.getSocket(),
-                serverContractMode: sessionSyncPendingInputServerContractResult?.mode,
+                connectionContract: sessionSyncPendingInputServerContractResult,
                 mutation: mutation.payload,
             });
+            if (!result.delivered && result.reason === 'transcript_message_transport_unavailable') {
+                return { delivered: false, unsupportedCapability: true };
+            }
+            if (!result.delivered && (
+                result.reason === 'transcript_message_provenance_missing_or_invalid'
+                || result.reason === 'transcript_message_invalid_observation'
+            )) {
+                return { delivered: false, terminalFailureReason: result.reason };
+            }
             return { delivered: result.delivered };
         }
         if (mutation.kind === 'voice_agent_transcript_turn') {
+            params.onTranscriptMessageDeliveryAttempt?.(mutation.payload.user);
             const user = await deliverTranscriptMessageMutation({
                 token: params.token,
                 socket: params.getSocket(),
-                serverContractMode: sessionSyncPendingInputServerContractResult?.mode,
+                connectionContract: sessionSyncPendingInputServerContractResult,
                 mutation: mutation.payload.user,
             });
-            if (!user.delivered) return { delivered: false };
+            if (!user.delivered) {
+                return user.reason === 'transcript_message_transport_unavailable'
+                    ? { delivered: false, unsupportedCapability: true }
+                    : user.reason === 'transcript_message_provenance_missing_or_invalid'
+                        || user.reason === 'transcript_message_invalid_observation'
+                        ? { delivered: false, terminalFailureReason: user.reason }
+                        : { delivered: false };
+            }
+            params.onTranscriptMessageDeliveryAttempt?.(mutation.payload.assistant);
             const assistant = await deliverTranscriptMessageMutation({
                 token: params.token,
                 socket: params.getSocket(),
-                serverContractMode: sessionSyncPendingInputServerContractResult?.mode,
+                connectionContract: sessionSyncPendingInputServerContractResult,
                 mutation: mutation.payload.assistant,
             });
+            if (!assistant.delivered && assistant.reason === 'transcript_message_transport_unavailable') {
+                return { delivered: false, unsupportedCapability: true };
+            }
+            if (!assistant.delivered && (
+                assistant.reason === 'transcript_message_provenance_missing_or_invalid'
+                || assistant.reason === 'transcript_message_invalid_observation'
+            )) {
+                return { delivered: false, terminalFailureReason: assistant.reason };
+            }
             return { delivered: assistant.delivered };
         }
         if (mutation.kind === 'registered_session_state_field') {
@@ -1578,7 +1793,9 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         };
     }
 
-    async function flush(reason: 'connect' | 'timer' | 'flush' | 'startup' | 'enqueue'): Promise<void> {
+    async function flush(
+        reason: 'connect' | 'timer' | 'flush' | 'startup' | 'enqueue' | 'connection_contract',
+    ): Promise<void> {
         await ready;
         if (closed && reason !== 'flush') return;
         await recoverDeadLetteredAuthoritativeMutations().catch((error) => {
@@ -1596,31 +1813,37 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             }
             return;
         }
-        flushInFlight = (async () => {
+        const trackedFlush = flushDiagnostics.track({
+            operation: 'flush',
+            details: {
+                reason,
+                pendingMutationCount: mutations.length,
+            },
+        });
+        flushInFlight = trackedFlush.run(async () => {
             clearRetryTimer();
             if (mutationsNeedPersistBeforeDelivery) {
                 await persist();
                 mutationsNeedPersistBeforeDelivery = false;
             }
+            if (params.isDeliveryActive?.() === false) return;
             const now = Date.now();
             let didChange = loadedMutationsNeedPersist;
             loadedMutationsNeedPersist = false;
             let shouldRequestReconnect = false;
             const remaining: QueuedSessionClientDurableMutation[] = [];
-            const prunedMutations = pruneSessionEndsSupersededByLaterTurnBegins(mutations);
-            if (prunedMutations.length !== mutations.length) {
-                mutations = prunedMutations;
-                didChange = true;
-            }
             const batch = mutations;
             mutations = [];
             inFlightMutations = batch;
             const deadLetters: SessionClientDurableMutationDeadLetterEntry[] = [];
+            const deadLetteredMutationsPendingDurableCut: QueuedSessionClientDurableMutation[] = [];
+            const durableFailedMutationReasonsBeforeFlush = new Map(durableFailedMutationReasons);
             const failedMutationReasons = new Map(durableFailedMutationReasons);
             const resolvedMutationIds = new Set<string>();
             const batchMutationIds = new Set(
                 batch.map((mutation) => mutation.mutationId),
             );
+            const dependencyCyclesByMutationId = findSessionClientDurableMutationDependencyCycles(batch);
             const capabilityBlockedKeys = new Set<string>();
             const mutationsPendingDurableRemoval: QueuedSessionClientDurableMutation[] = [];
             const registeredFieldSettlementsPendingDurableCut: PendingRegisteredFieldSettlement[] = [];
@@ -1639,7 +1862,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             const resolveDependencyState = (
                 mutation: QueuedSessionClientDurableMutation,
             ): DurableMutationDependencyState => {
-                for (const dependency of readQueuedMutationDependencies(mutation)) {
+                for (const dependency of readSessionClientDurableMutationDependencies(mutation)) {
                     const prerequisiteReason = failedMutationReasons.get(dependency.mutationId);
                     if (prerequisiteReason) {
                         return { status: 'failed', dependency, prerequisiteReason };
@@ -1658,12 +1881,27 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             };
             for (let index = 0; index < batch.length; index += 1) {
                 let mutation = batch[index];
+                const dependencyCycleMutationIds = dependencyCyclesByMutationId.get(mutation.mutationId);
+                if (dependencyCycleMutationIds) {
+                    deadLetteredMutationsPendingDurableCut.push(mutation);
+                    deadLetters.push(createSessionClientDurableMutationDeadLetterEntry({
+                        sessionId: params.sessionId,
+                        mutation,
+                        reason: 'dependency_cycle',
+                        diagnostic: { cycleMutationIds: dependencyCycleMutationIds },
+                    }));
+                    failedMutationReasons.set(mutation.mutationId, 'dependency_cycle');
+                    durableFailedMutationReasons.set(mutation.mutationId, 'dependency_cycle');
+                    refreshInFlightMutations(index + 1);
+                    didChange = true;
+                    continue;
+                }
                 if (mutation.kind === 'registered_session_state_field' && mutation.payload.fieldId === 'runtime.activity') {
-                    const contractMode = sessionSyncPendingInputServerContractResult?.mode ?? 'indeterminate';
+                    const contract = sessionSyncPendingInputServerContractResult;
                     if (
                         params.runtimeActivitySupportControlled
-                        && contractMode !== 'session_sync_v2_pending_input_v1'
-                        && contractMode !== 'released_server_v0_2_1'
+                        && !supportsRuntimeActivityV2(contract)
+                        && contract?.runtimeActivity !== 'legacy'
                     ) {
                         remaining.push(mutation);
                         refreshInFlightMutations(index + 1);
@@ -1671,7 +1909,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     }
                     if (
                         params.runtimeActivitySupportControlled
-                        && contractMode === 'released_server_v0_2_1'
+                        && contract?.runtimeActivity === 'legacy'
                     ) {
                         const settlementGroup = registeredFieldSettlements.get(mutation.mutationId);
                         mutationsPendingDurableRemoval.push(mutation);
@@ -1696,6 +1934,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 }
                 const dependencyState = resolveDependencyState(mutation);
                 if (dependencyState.status === 'failed') {
+                    deadLetteredMutationsPendingDurableCut.push(mutation);
                     deadLetters.push(createSessionClientDurableMutationDeadLetterEntry({
                         sessionId: params.sessionId,
                         mutation,
@@ -1752,7 +1991,12 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     (reason === 'connect' || reason === 'startup')
                     && !shouldDeadLetterSessionClientDurableMutation(mutation)
                 );
-                if (!shouldRedriveAuthoritative && reason !== 'flush' && mutation.nextAttemptAt > now) {
+                if (
+                    !shouldRedriveAuthoritative
+                    && reason !== 'flush'
+                    && reason !== 'connection_contract'
+                    && mutation.nextAttemptAt > now
+                ) {
                     if (isTranscriptDeliveryMutation(mutation) || (
                         mutation.kind === 'registered_session_state_field'
                         && mutation.payload.fieldId === 'runtime.activity'
@@ -1786,9 +2030,17 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     transcriptDeliveriesThisFlush += 1;
                 }
                 let outcome: DurableMutationDeliveryOutcome = { delivered: false };
+                let attemptFailureReason: SessionClientDurableMutationAttemptReason = 'delivery_not_confirmed';
+                let attemptedAt = 0;
                 try {
-                    outcome = await withSessionClientDurableMutationDeliverySlot(() => deliver(mutation));
+                    outcome = await withSessionClientDurableMutationDeliverySlot(() => {
+                        attemptedAt = Date.now();
+                        return deliver(mutation);
+                    });
                     if (outcome.delivered) {
+                        if (awaitedDeliveryMutationCounts.has(mutation.mutationId)) {
+                            acknowledgedAwaitedDeliveryMutationIds.add(mutation.mutationId);
+                        }
                         mutationsPendingDurableRemoval.push(mutation);
                         if (outcome.registeredFieldSettlement) {
                             registeredFieldSettlementsPendingDurableCut.push(outcome.registeredFieldSettlement);
@@ -1807,6 +2059,8 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                             delivered: false,
                             paused: createSessionAuthPause(error),
                         };
+                    } else {
+                        attemptFailureReason = 'delivery_error';
                     }
                     logger.debug('[API] Durable session mutation delivery failed', {
                         sessionId: params.sessionId,
@@ -1843,28 +2097,46 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     continue;
                 }
 
-                if (mutation.kind === 'registered_session_state_field' && mutation.payload.fieldId === 'runtime.activity') {
-                    const attempts = mutation.attempts + 1;
-                    remaining.push({
-                        ...mutation,
-                        attempts,
-                        nextAttemptAt: Date.now() + resolveSessionClientDurableMutationRetryDelayMs(attempts),
-                    } as QueuedSessionClientDurableMutation);
+                if (outcome.terminalFailureReason) {
+                    const failedMutation = recordFailedSessionClientDurableMutationAttempt(
+                        mutation,
+                        outcome.terminalFailureReason,
+                        attemptedAt || Date.now(),
+                    );
+                    deadLetteredMutationsPendingDurableCut.push(failedMutation);
+                    deadLetters.push(createSessionClientDurableMutationDeadLetterEntry({
+                        sessionId: params.sessionId,
+                        mutation: failedMutation,
+                        reason: outcome.terminalFailureReason,
+                    }));
+                    failedMutationReasons.set(mutation.mutationId, outcome.terminalFailureReason);
+                    durableFailedMutationReasons.set(mutation.mutationId, outcome.terminalFailureReason);
                     refreshInFlightMutations(index + 1);
                     didChange = true;
                     continue;
                 }
 
-                const attempts = mutation.attempts + 1;
-                const failedMutation = {
-                    ...mutation,
-                    attempts,
-                    nextAttemptAt: Date.now() + resolveSessionClientDurableMutationRetryDelayMs(attempts),
-                } as QueuedSessionClientDurableMutation;
+                if (mutation.kind === 'registered_session_state_field' && mutation.payload.fieldId === 'runtime.activity') {
+                    remaining.push(recordFailedSessionClientDurableMutationAttempt(
+                        mutation,
+                        attemptFailureReason,
+                        attemptedAt || Date.now(),
+                    ));
+                    refreshInFlightMutations(index + 1);
+                    didChange = true;
+                    continue;
+                }
+
+                const failedMutation = recordFailedSessionClientDurableMutationAttempt(
+                    mutation,
+                    attemptFailureReason,
+                    attemptedAt || Date.now(),
+                );
                 if (
-                    attempts >= resolveSessionClientDurableMutationMaxAttempts()
+                    failedMutation.attempts >= resolveSessionClientDurableMutationMaxAttempts()
                     && shouldDeadLetterSessionClientDurableMutation(failedMutation)
                 ) {
+                    deadLetteredMutationsPendingDurableCut.push(failedMutation);
                     deadLetters.push(createSessionClientDurableMutationDeadLetterEntry({
                         sessionId: params.sessionId,
                         mutation: failedMutation,
@@ -1876,6 +2148,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     didChange = true;
                     continue;
                 }
+                reportPersistentlyBlockingMutation(failedMutation, batch.slice(index + 1));
                 remaining.push(failedMutation);
                 remaining.push(...batch.slice(index + 1));
                 inFlightMutations = [];
@@ -1890,21 +2163,45 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             inFlightMutations = [];
             pruneDurableFailedMutationReasonsForQueuedDependents(reason);
             if (didChange) {
+                let retention = {
+                    cappedDeadLetterCount: 0,
+                    referencedRetainedEntryCount: 0,
+                    prunedEntryCount: 0,
+                    referencedPrerequisiteOverflowCount: 0,
+                };
+                if (deadLetters.length > 0) {
+                    try {
+                        retention = await appendSessionClientDurableMutationDeadLetters(
+                            params.sessionId,
+                            deadLetters,
+                            params.persistenceContext,
+                        );
+                    } catch (error) {
+                        mutations = mergeLiveQueuedMutations(
+                            deadLetteredMutationsPendingDurableCut,
+                            mutations,
+                        );
+                        durableFailedMutationReasons = durableFailedMutationReasonsBeforeFlush;
+                        scheduleRetry();
+                        throw error;
+                    }
+                }
                 try {
                     await persist();
                 } catch (error) {
                     const now = Date.now();
                     mutations = mergeLiveQueuedMutations(
                         mutationsPendingDurableRemoval.map((mutation) => {
-                            const attempts = mutation.attempts + 1;
                             return {
                                 ...mutation,
-                                attempts,
-                                nextAttemptAt: now + resolveSessionClientDurableMutationRetryDelayMs(attempts),
+                                nextAttemptAt: now + resolveSessionClientDurableMutationRetryDelayMs(
+                                    Math.max(1, mutation.attempts),
+                                ),
                             } as QueuedSessionClientDurableMutation;
                         }),
                         mutations,
                     );
+                    if (deadLetters.length > 0) loadedMutationsNeedPersist = true;
                     scheduleRetry();
                     throw error;
                 }
@@ -1932,11 +2229,6 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 ) {
                     publishRuntimeActivityTail({ custody: null, settlement: null });
                 }
-                const retention = await appendSessionClientDurableMutationDeadLetters(
-                    params.sessionId,
-                    deadLetters,
-                    params.persistenceContext,
-                );
                 if (
                     deadLetters.length > 0
                     || retention.cappedDeadLetterCount > 0
@@ -1957,7 +2249,12 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 mutation.kind === 'registered_session_state_field'
                 && mutation.payload.fieldId === 'runtime.activity'
                 && params.runtimeActivitySupportControlled
-                && sessionSyncPendingInputServerContractResult?.mode !== 'session_sync_v2_pending_input_v1'
+                && (
+                    sessionSyncPendingInputServerContractResult === null
+                    || !supportsRuntimeActivityV2(
+                        sessionSyncPendingInputServerContractResult,
+                    )
+                )
             ));
             if (!closed && hasDeliverableMutation) {
                 if (shouldRequestReconnect) {
@@ -1965,35 +2262,37 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 }
                 scheduleRetry();
             }
-        })().finally(() => {
+        }).finally(() => {
             flushInFlight = null;
         });
         await flushInFlight;
-    }
-
-    function hasQueuedMutation(mutationId: string): boolean {
-        return (
-            mutations.some((queued) => queued.mutationId === mutationId)
-            || inFlightMutations.some((queued) => queued.mutationId === mutationId)
-        );
     }
 
     async function enqueue(
         mutation: QueuedSessionClientDurableMutation,
         opts: Readonly<{
             awaitFlush?: boolean;
+            admission?: CommittedTranscriptAdmission;
             registeredFieldSettlementGroup?: RegisteredFieldSettlementGroup;
             rejectRegisteredFieldAdmission?: (error: unknown) => void;
         }> = {},
     ): Promise<Readonly<{ delivered: boolean; persisted: boolean }>> {
         await ready;
+        assertCommittedTranscriptAdmission(opts.admission);
         if (closed) return { delivered: false, persisted: false };
         let admittedMutation = mutation;
         let reusedDurableCustody = false;
         const previousPersist = persistInFlight;
+        const trackedPersist = persistDiagnostics.track({
+            operation: 'persist-mutation',
+            details: {
+                mutationKind: mutation.kind,
+                mutationId: mutation.mutationId,
+            },
+        });
         const nextPersist = previousPersist
             .catch(() => undefined)
-            .then(async () => {
+            .then(() => trackedPersist.run(async () => {
                 if (closed) return;
                 assertTranscriptCoalescingCompatible(mutation, mutations);
                 assertTranscriptCoalescingCompatible(mutation, inFlightMutations);
@@ -2029,14 +2328,13 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     mutations,
                     [admittedMutation],
                 );
-                const candidate = pruneSessionEndsSupersededByLaterTurnBegins(
-                    queuedMerge.mutations,
-                );
+                const candidate = queuedMerge.mutations;
                 const committedMerge = mergeQueuedSessionClientDurableMutationsWithOwnership(
                     inFlightMutations,
                     candidate,
                 );
-                const committed = pruneSessionEndsSupersededByLaterTurnBegins(committedMerge.mutations);
+                const committed = committedMerge.mutations;
+                assertCommittedTranscriptAdmission(opts.admission);
                 await saveSessionClientDurableMutationOutbox(
                     params.sessionId,
                     committed,
@@ -2069,13 +2367,16 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     committedQueued,
                 );
                 applyRegisteredFieldOwnershipReplacements(publicationMerge.replacements);
-                mutations = pruneSessionEndsSupersededByLaterTurnBegins(publicationMerge.mutations);
+                mutations = publicationMerge.mutations;
                 publishQueuedRuntimeActivityCustodyIfChanged();
-            });
+            }));
         persistInFlight = nextPersist;
         try {
             await nextPersist;
         } catch (error) {
+            if (error instanceof CommittedTranscriptAdmissionExpiredError) {
+                throw error;
+            }
             if (isTranscriptDeliveryMutation(admittedMutation)) {
                 // Transcript delivery mutations describe provider output that has
                 // already been observed. Retain the candidate in the canonical
@@ -2090,6 +2391,14 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             throw admissionError;
         }
         if (closed) return { delivered: false, persisted: false };
+        assertCommittedTranscriptAdmission(opts.admission);
+        const deliveryMutationId = opts.registeredFieldSettlementGroup?.activeMutationId ?? admittedMutation.mutationId;
+        if (opts.awaitFlush === true) {
+            awaitedDeliveryMutationCounts.set(
+                deliveryMutationId,
+                (awaitedDeliveryMutationCounts.get(deliveryMutationId) ?? 0) + 1,
+            );
+        }
         const flushPromise = flush(reusedDurableCustody ? 'flush' : 'enqueue').catch((error) => {
             logger.debug('[API] Durable session mutation enqueue flush failed', {
                 sessionId: params.sessionId,
@@ -2103,8 +2412,20 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         } else {
             void flushPromise;
         }
-        const deliveryMutationId = opts.registeredFieldSettlementGroup?.activeMutationId ?? admittedMutation.mutationId;
-        return { delivered: !hasQueuedMutation(deliveryMutationId), persisted: true };
+        const delivered = acknowledgedAwaitedDeliveryMutationIds.has(deliveryMutationId);
+        if (opts.awaitFlush === true) {
+            const waiterCount = awaitedDeliveryMutationCounts.get(deliveryMutationId) ?? 0;
+            if (waiterCount <= 1) {
+                awaitedDeliveryMutationCounts.delete(deliveryMutationId);
+                acknowledgedAwaitedDeliveryMutationIds.delete(deliveryMutationId);
+            } else {
+                awaitedDeliveryMutationCounts.set(deliveryMutationId, waiterCount - 1);
+            }
+        }
+        return {
+            delivered,
+            persisted: true,
+        };
     }
 
     if (params.flushOnReady !== false) {
@@ -2120,8 +2441,14 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         async enqueueSessionTurnMutation(mutation) {
             await enqueue(createQueuedSessionTurnMutation(mutation));
         },
-        async enqueueTranscriptMessage(mutation) {
-            const result = await enqueue(createQueuedTranscriptMessage(mutation), { awaitFlush: true });
+        async enqueueSessionEnd(mutation) {
+            await enqueue(createQueuedSessionEndMutation(mutation));
+        },
+        async enqueueTranscriptMessage(mutation, opts) {
+            const result = await enqueue(createQueuedTranscriptMessage(mutation), {
+                awaitFlush: true,
+                ...(opts?.admission === undefined ? {} : { admission: opts.admission }),
+            });
             return { persisted: result.persisted, delivered: result.delivered };
         },
         async enqueueVoiceAgentTranscriptTurn(mutation) {
@@ -2150,10 +2477,10 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             if (
                 previousMode !== result.mode
                 && (
-                    result.mode === 'session_sync_v2_pending_input_v1'
-                    || result.mode === 'released_server_v0_2_1'
+                    supportsRuntimeActivityV2(result)
+                    || result.runtimeActivity === 'legacy'
                 )
-            ) await flush('flush');
+            ) await flush('connection_contract');
         },
         readRuntimeActivitySnapshotTail() {
             return runtimeActivityTail;

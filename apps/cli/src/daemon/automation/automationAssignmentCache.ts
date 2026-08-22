@@ -1,23 +1,23 @@
-import type { AutomationDaemonAssignmentsResponse } from './automationTypes';
+import type { AutomationWorkerAssignmentsResponse } from './automationTypes';
 
 export type AutomationAssignmentCache = ReturnType<typeof createAutomationAssignmentCache>;
 
 export function createAutomationAssignmentCache() {
-  let assignments: AutomationDaemonAssignmentsResponse['assignments'] = [];
+  let assignments: AutomationWorkerAssignmentsResponse['assignments'] = [];
   let updatedAt = 0;
 
   return {
-    replace(nextAssignments: AutomationDaemonAssignmentsResponse['assignments']): void {
+    replace(nextAssignments: AutomationWorkerAssignmentsResponse['assignments']): void {
       assignments = Array.isArray(nextAssignments) ? nextAssignments : [];
       updatedAt = Date.now();
     },
 
-    getAll(): AutomationDaemonAssignmentsResponse['assignments'] {
+    getAll(): AutomationWorkerAssignmentsResponse['assignments'] {
       return assignments;
     },
 
     getByAutomationId(automationId: string) {
-      return assignments.find((assignment) => assignment.automation.id === automationId) ?? null;
+      return assignments.find((assignment) => assignment.automationId === automationId) ?? null;
     },
 
     getUpdatedAt(): number {

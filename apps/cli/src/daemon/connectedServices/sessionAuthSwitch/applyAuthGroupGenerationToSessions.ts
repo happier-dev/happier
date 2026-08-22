@@ -52,13 +52,6 @@ type ImmutableGenerationApplyInput = Readonly<{
   targets: ReadonlyArray<ApplyAuthGroupGenerationSessionTarget>;
   signal?: AbortSignal;
   executionAuthority: ConnectedServiceGenerationExecutionAuthority;
-  /** @deprecated Ignored. Generation deferral is runtime-local and is never persisted. */
-  recordPendingGeneration?: (input: Readonly<{
-    sessionId: string;
-    committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
-    disposition: Exclude<ConnectedServiceAuthGenerationReconciliationDisposition, 'converged'>;
-    errorCode: string | null;
-  }>) => Promise<void>;
   applyCommittedGeneration(input: Readonly<{
     sessionId: string;
     fromProfileId: string | null;
@@ -72,6 +65,21 @@ type ImmutableGenerationApplyInput = Readonly<{
      * admission owner must fence every live producer before it starts.
      */
     applicationCohortSessionIds?: readonly string[];
+    signal?: AbortSignal;
+  }>): Promise<Readonly<{
+    reconciliationDisposition: ConnectedServiceAuthGenerationReconciliationDisposition;
+    errorCode: string | null;
+    authoritativeGeneration?: ConnectedServiceAuthGroupCommittedGenerationFact;
+    providerAdoptedTarget?: ConnectedServiceProviderAdoptedGenerationTarget;
+    restartRequested?: boolean;
+  }>>;
+  applySharedGenerationApplication?(input: Readonly<{
+    representativeSessionId: string;
+    applicationOwnerId: string;
+    applicationCohortSessionIds: readonly string[];
+    committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
+    switchReason: ConnectedServiceSessionAuthSwitchReason;
+    executionAuthority: ConnectedServiceGenerationExecutionAuthority;
     signal?: AbortSignal;
   }>): Promise<Readonly<{
     reconciliationDisposition: ConnectedServiceAuthGenerationReconciliationDisposition;
@@ -251,10 +259,20 @@ export async function applyConnectedServiceAuthGroupGenerationToSessions(
         representative,
         applicationOwnerId: shared.applicationOwnerId,
         committedGeneration: applyInput.committedGeneration,
-        apply: async () => await input.applyCommittedGeneration({
-          ...applyInput,
-          applicationCohortSessionIds: shared.targets.map((target) => target.sessionId),
-        }),
+        apply: async () => input.applySharedGenerationApplication
+          ? await input.applySharedGenerationApplication({
+            representativeSessionId: representative.sessionId,
+            applicationOwnerId: shared.applicationOwnerId,
+            applicationCohortSessionIds: shared.targets.map((target) => target.sessionId),
+            committedGeneration: applyInput.committedGeneration,
+            switchReason: applyInput.switchReason,
+            executionAuthority: applyInput.executionAuthority,
+            ...(applyInput.signal ? { signal: applyInput.signal } : {}),
+          })
+          : {
+            reconciliationDisposition: 'failed',
+            errorCode: 'shared_application_apply_wiring_missing',
+          },
       });
     },
     clearAdoptedGeneration: async (clearInput) => {

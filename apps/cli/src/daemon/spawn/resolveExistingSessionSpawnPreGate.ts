@@ -31,8 +31,8 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
   const restartUnavailable = Array.from(params.pidToTrackedSession.values())
     .some((tracked) => (
       tracked.happySessionId?.trim() === normalizedExistingSessionId
-      && tracked.agentRuntimeRestartDisposition
-        === 'bridge_authority_unavailable'
+      && tracked.agentRuntimeRunnerRestartDisposition
+        === 'runner_authority_unavailable'
     ));
   if (restartUnavailable) {
     return {
@@ -48,11 +48,8 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
   const probeExistingSessionRunnerActive = async (): Promise<boolean> => {
     try {
       return await params.isSessionRunnerActive(normalizedExistingSessionId);
-    } catch (error) {
-      params.logDebug('[DAEMON RUN] Existing-session activity probe unavailable; continuing with attach spawn', {
-        sessionId: normalizedExistingSessionId,
-        error,
-      });
+    } catch {
+      params.logDebug('[DAEMON RUN] Existing-session activity probe unavailable; continuing with attach spawn');
       return false;
     }
   };
@@ -70,11 +67,8 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
         timeoutMs: params.waitForExitTimeoutMs,
         pollIntervalMs: params.waitForExitPollIntervalMs,
       });
-    } catch (error) {
-      params.logDebug('[DAEMON RUN] Failed while waiting for an existing session to exit; continuing with attach spawn', {
-        sessionId: normalizedExistingSessionId,
-        error,
-      });
+    } catch {
+      params.logDebug('[DAEMON RUN] Failed while waiting for an existing session to exit; continuing with attach spawn');
     }
   }
 
@@ -82,7 +76,7 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
     return { shortCircuitResult: null };
   }
 
-  params.logDebug(`[DAEMON RUN] Resume requested for ${normalizedExistingSessionId}, but session is already running`);
+  params.logDebug('[DAEMON RUN] Resume target is already running');
   const decision = await params.onAlreadyRunning?.(normalizedExistingSessionId);
   if (decision?.action === 'spawn_replacement') {
     return { shortCircuitResult: null };

@@ -2,8 +2,7 @@ import type { ApiClient } from '@/api/api';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonState } from '@/api/types';
 import type { ConnectedServiceQuotasLoopHandle } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
-import type { LocalServiceManagedRuntimeSnapshotV1, MachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol';
-import type { ProviderManagedLocalServicesDispatch } from '@/providers/discovery/managedStart';
+import type { MachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import { startAutomationWorker, type AutomationWorkerHandle } from '../automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from '../memory/memoryWorker';
@@ -17,7 +16,7 @@ import {
   type MachineLiveStreamCaptureRegistry,
 } from '../peer/mediation/stream';
 import type { DaemonPeerMediationObservabilityEmitter } from '../peer/mediation/observability/events';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { NormalizedLocalServiceInventorySnapshot } from '../local/services/inventory/scanner';
 import packageJson from '../../../package.json';
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
@@ -28,6 +27,9 @@ import type {
   ExternalSessionHostOperationInstallation,
   ExternalSessionHostOperationSet,
 } from '@/session/external/hostOperationOwner';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
+import { MemorySettingsSecretsUnavailableError } from '@/settings/memorySettings';
+import type { DaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 
 type BootstrapRuntime = Omit<
   Parameters<typeof startDaemonMachineRegistration>[0]['bootstrapRuntime'],
@@ -49,7 +51,9 @@ type MachineSyncRuntime = Parameters<typeof startDaemonMachineRegistration>[0]['
 export function createDaemonMachineBootstrapRuntime(
   params: Readonly<{
     api: ApiClient;
-    credentials: Credentials;
+    credentials: StoredCredentials;
+    daemonSessionMutationCustody?: DaemonSessionMutationCustody;
+    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     diagnosticSubsystemGates: Readonly<{
       disableMachineSync: boolean;
       disableAutomationWorker: boolean;
@@ -90,11 +94,10 @@ export function createDaemonMachineBootstrapRuntime(
     // PMS-WIRE: shared observability emitter whose store is published on the Api provider bridge.
     peerMediationObservabilityEmitter?: DaemonPeerMediationObservabilityEmitter;
     readLocalServiceInventorySnapshot?: () => Promise<NormalizedLocalServiceInventorySnapshot | null>;
-    dispatchProviderLocalServicesBridge?: ProviderManagedLocalServicesDispatch;
     managedCatalogRuntime?: BootstrapRuntime['managedCatalogRuntime'];
     resolveManagedPurposeBindingIntent?: BootstrapRuntime['resolveManagedPurposeBindingIntent'];
     createAgentCatalogObservation?: BootstrapRuntime['createAgentCatalogObservation'];
-    readManagedLocalServicesSnapshot?: () => Promise<LocalServiceManagedRuntimeSnapshotV1 | null>;
+    onAutomationWorkerStarted?: (worker: AutomationWorkerHandle) => void;
     prepareApiMachineForSessions?: (apiMachine: ApiMachineClient) => void;
     persistedTakeoverAdmissionWaiter?: PersistedTakeoverAdmissionWaiter;
     attachPersistedTakeoverAdmissionOwner?: (
@@ -105,9 +108,16 @@ export function createDaemonMachineBootstrapRuntime(
     ) => Promise<ExternalSessionHostOperationInstallation>;
   }>,
 ): BootstrapRuntime {
+  let connectedApiMachine: ApiMachineClient | null = null;
   return {
     cliVersion: packageJson.version,
     credentials: params.credentials,
+    ...(params.daemonSessionMutationCustody
+      ? { daemonSessionMutationCustody: params.daemonSessionMutationCustody }
+      : {}),
+    ...(params.deviceLocalSecretStorage
+      ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage }
+      : {}),
     daemonServerWorkScheduler: params.daemonServerWorkScheduler,
     setDaemonServerWorkOnline: params.setDaemonServerWorkOnline,
     onMachineConnectionOnline: params.onMachineConnectionOnline,
@@ -130,7 +140,8 @@ export function createDaemonMachineBootstrapRuntime(
             ...(params.serviceLabel ? { serviceLabel: params.serviceLabel } : null),
           }, {
             isDaemonQuiescing: params.isShuttingDown,
-          });
+      });
+      connectedApiMachine = apiMachine;
       params.prepareApiMachineForSessions?.(apiMachine);
       return apiMachine;
     },
@@ -143,12 +154,25 @@ export function createDaemonMachineBootstrapRuntime(
         logger.warn('[DAEMON RUN] Diagnostic gate enabled: automation worker disabled');
         return null;
       }
-      return startAutomationWorker({
+      const worker = startAutomationWorker({
         token: params.credentials.token,
+        credentials: params.credentials,
         machineId: runtimeMachineId,
-        encryption: params.credentials.encryption,
+        ...(params.credentials.encryption
+          ? { encryption: params.credentials.encryption }
+          : {}),
         spawnSession: params.spawnSession,
+        ...(connectedApiMachine
+          ? {
+              machineAdmissionTransport: async (request, options) =>
+                await connectedApiMachine!.enqueueSessionPendingByMachine(request, options),
+              dispatchSessionServerStart: async (request, options) =>
+                await connectedApiMachine!.dispatchSessionServerStart(request, options),
+            }
+          : {}),
       });
+      params.onAutomationWorkerStarted?.(worker);
+      return worker;
     },
     startMemoryWorkerForMachine: async (runtimeMachineId) => {
       try {
@@ -157,6 +181,9 @@ export function createDaemonMachineBootstrapRuntime(
           machineId: runtimeMachineId,
         });
       } catch (error) {
+        if (error instanceof MemorySettingsSecretsUnavailableError) {
+          throw error;
+        }
         logger.warn('[DAEMON RUN] Failed to start memory worker (best-effort)', error);
         return null;
       }
@@ -211,9 +238,6 @@ export function createDaemonMachineBootstrapRuntime(
     ...(params.readLocalServiceInventorySnapshot
       ? { readLocalServiceInventorySnapshot: params.readLocalServiceInventorySnapshot }
       : {}),
-    ...(params.dispatchProviderLocalServicesBridge
-      ? { dispatchProviderLocalServicesBridge: params.dispatchProviderLocalServicesBridge }
-      : {}),
     ...(params.managedCatalogRuntime
       ? { managedCatalogRuntime: params.managedCatalogRuntime }
       : {}),
@@ -225,9 +249,6 @@ export function createDaemonMachineBootstrapRuntime(
       : {}),
     ...(params.createAgentCatalogObservation
       ? { createAgentCatalogObservation: params.createAgentCatalogObservation }
-      : {}),
-    ...(params.readManagedLocalServicesSnapshot
-      ? { readManagedLocalServicesSnapshot: params.readManagedLocalServicesSnapshot }
       : {}),
     ...(params.persistedTakeoverAdmissionWaiter
       ? {

@@ -84,6 +84,9 @@ describe('voice diagnostics controller capture authorization', () => {
         capture: async (): Promise<VoiceDiagnosticArtifact | null> => {
           throw new VoiceDiagnosticCleanupError(new Error('simulated_cleanup_failure'));
         },
+        captureFile: async (): Promise<VoiceDiagnosticArtifact | null> => {
+          throw new VoiceDiagnosticCleanupError(new Error('simulated_cleanup_failure'));
+        },
         inspect: async () => inspection,
         list: async () => inspection.artifacts,
         prune: async () => {},
@@ -325,6 +328,10 @@ describe('voice diagnostics controller capture authorization', () => {
           if (captureFails) throw new Error('simulated_capture_failure');
           return artifact;
         },
+        captureFile: async (): Promise<VoiceDiagnosticArtifact | null> => {
+          if (captureFails) throw new Error('simulated_capture_failure');
+          return artifact;
+        },
         inspect: async () => inspection,
         list: async () => inspection.artifacts,
         prune: async () => {},
@@ -395,6 +402,10 @@ describe('voice diagnostics controller capture authorization', () => {
           if (captureFails) throw new Error('simulated_capture_failure');
           return artifact;
         },
+        captureFile: async (): Promise<VoiceDiagnosticArtifact | null> => {
+          if (captureFails) throw new Error('simulated_capture_failure');
+          return artifact;
+        },
         inspect: async (): Promise<VoiceDiagnosticStoreInspection> => {
           if (!catalogReadable) throw new Error('simulated_catalog_unreadable');
           return { artifacts: [], ownedEntryCount: 0, cleanupRequired: false };
@@ -455,6 +466,7 @@ describe('voice diagnostics controller capture authorization', () => {
         root: join(home, 'voice', 'diagnostics', 'v1'),
         backupPolicy: { status: 'best_effort' as const, storage: 'private_cache' as const, mechanism: 'cachedir_tag' as const, automaticSync: 'not_implemented' as const },
         capture: async () => null,
+        captureFile: async (): Promise<VoiceDiagnosticArtifact | null> => null,
         inspect: async (): Promise<VoiceDiagnosticStoreInspection> => { throw new Error('simulated_catalog_unreadable'); },
         list: async () => [],
         prune: async () => {},

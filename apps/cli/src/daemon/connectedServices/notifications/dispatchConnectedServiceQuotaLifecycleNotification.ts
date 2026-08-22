@@ -3,6 +3,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import type { ExpoPushActivityNotificationSender } from '@/notifications/activity/sendExpoPushActivityNotification';
 import type { ConnectedServiceQuotaLifecycleTransition } from '../quotas/ConnectedServiceQuotasCoordinator';
+import { resolveConnectedServiceNotificationDisplayName } from './connectedServiceNotificationLabels';
 
 export async function dispatchConnectedServiceQuotaLifecycleNotificationAsync(params: Readonly<{
   settings: AccountSettings | null | undefined;
@@ -31,6 +32,8 @@ export async function dispatchConnectedServiceQuotaLifecycleNotificationAsync(pa
         topic,
         sessionId,
         serviceId: transition.serviceId,
+        serviceDisplayName:
+          resolveConnectedServiceNotificationDisplayName(transition.serviceId),
         issueFingerprint: transition.issueFingerprint,
         groupId: transition.groupId,
         profileId: transition.activeProfileId,

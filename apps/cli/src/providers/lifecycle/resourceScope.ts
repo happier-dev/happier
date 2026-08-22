@@ -31,14 +31,24 @@ export function createProviderLaunchResourceScope(input: Readonly<{
   let releasePromise: Promise<void> | null = null;
   let transferredRetirement: ProviderLaunchCleanup | null = null;
   const run = async (owned: ProviderLaunchCleanup[]) => {
+    let firstError: unknown;
+    let cleanupFailed = false;
     for (let index = owned.length - 1; index >= 0; index -= 1) {
       try {
         await owned[index]?.();
       } catch (error) {
-        input.onCleanupError?.(sanitize(error));
-        throw error;
+        if (!cleanupFailed) {
+          cleanupFailed = true;
+          firstError = error;
+        }
+        try {
+          input.onCleanupError?.(sanitize(error));
+        } catch {
+          // Cleanup diagnostics cannot take custody away from later resources.
+        }
       }
     }
+    if (cleanupFailed) throw firstError;
   };
 
   return Object.freeze({

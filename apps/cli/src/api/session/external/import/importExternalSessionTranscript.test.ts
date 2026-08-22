@@ -5,12 +5,16 @@ import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
-import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import {
-  cleanupExternalSessionHistoricalImportStagedMedia,
+  SESSION_ROLE_USER_PRODUCER_ADMISSION_MODES_V1,
+  type ExternalSessionTranscriptRawMessageV1,
+} from '@happier-dev/protocol';
+import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
+import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
+import {
   prepareExternalSessionHistoricalImportItem,
   stageExternalSessionHistoricalImportItem,
+  validateExternalSessionHistoricalImportStagedItem,
 } from './importExternalSessionTranscript';
 
 vi.mock('sharp', () => ({
@@ -57,6 +61,25 @@ const credentials = {
   encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3]) },
 };
 
+// Mirrors the canonical Message-writer profile-candidate reservation. The
+// unsupported profile vector ensures E2EE cannot hide a future profile that
+// the current reader cannot replay.
+const reservedStructuredPresentationRawCandidates = [
+  {
+    id: 'current-v1',
+    raw: Object.freeze({
+      v: 1,
+      profile: 'pluginTranscriptV1',
+      owner: { pluginId: 'acme.preview', contributionLocalId: 'review-card' },
+      snapshot: { kind: 'text', text: 'must wait for a reader floor' },
+    }),
+  },
+  {
+    id: 'unsupported-profile',
+    raw: Object.freeze({ v: 2, profile: 'pluginTranscriptV2' }),
+  },
+] as const;
+
 async function preparePlainHistoricalImportItem(params: Readonly<{
   item: ExternalSessionTranscriptRawMessageV1;
   workingDirectory: string;
@@ -94,7 +117,342 @@ async function preparePlainHistoricalImportItem(params: Readonly<{
 }
 
 describe('external session historical import item preparation', () => {
-  it('replays immutable staged media idempotently and removes its final workspace file on discard', async () => {
+  it('writes plain historical content with token-only credentials', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-token-only-import-'));
+    try {
+      const linked = createLinkedSession(workingDirectory);
+      const prepared = await prepareExternalSessionHistoricalImportItem({
+        item: {
+          id: 'plain-item',
+          localId: 'plain-item',
+          createdAtMs: 123,
+          raw: { role: 'agent', content: { type: 'output', data: 'plain' } },
+        },
+        linked,
+        credentials: { token: 'plain-token', encryption: null },
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+
+      expect(prepared.content).toEqual({
+        t: 'plain',
+        v: { role: 'agent', content: { type: 'output', data: 'plain' } },
+      });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a child sidechain through preparation and staged replay', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-sidechain-import-'));
+    const sidechainId = '22222222-2222-2222-2222-222222222222';
+    try {
+      const item: ExternalSessionTranscriptRawMessageV1 = {
+        id: 'child-sidechain-item',
+        localId: 'child-sidechain-item',
+        createdAtMs: 123,
+        sidechainId,
+        raw: { role: 'agent', content: { type: 'output', data: 'child output' } },
+      };
+      const linked = createLinkedSession(workingDirectory);
+      const staged = await stageExternalSessionHistoricalImportItem({
+        item,
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+      const prepared = await prepareExternalSessionHistoricalImportItem({
+        item: staged.item,
+        linked,
+        credentials,
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+      const replayed = validateExternalSessionHistoricalImportStagedItem({
+        staged,
+        linked,
+        credentials,
+        sessionId: 'sess-managed',
+      });
+
+      expect(staged.item).toMatchObject({ sidechainId });
+      expect(prepared).toMatchObject({ sidechainId });
+      expect(replayed).toMatchObject({ sidechainId });
+
+      const rootItem: ExternalSessionTranscriptRawMessageV1 = {
+        id: 'root-sidechain-item',
+        localId: 'root-sidechain-item',
+        createdAtMs: 124,
+        raw: { role: 'agent', content: { type: 'output', data: 'root output' } },
+      };
+      const rootStaged = await stageExternalSessionHistoricalImportItem({
+        item: rootItem,
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+      const rootPrepared = await prepareExternalSessionHistoricalImportItem({
+        item: rootStaged.item,
+        linked,
+        credentials,
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+      const rootReplayed = validateExternalSessionHistoricalImportStagedItem({
+        staged: rootStaged,
+        linked,
+        credentials,
+        sessionId: 'sess-managed',
+      });
+
+      expect(rootStaged.item).not.toHaveProperty('sidechainId');
+      expect(rootPrepared).toMatchObject({ sidechainId: null });
+      expect(rootReplayed).toMatchObject({ sidechainId: null });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('host-stamps only source-fact user history and removes protected input metadata', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-source-fact-import-'));
+    try {
+      const sourceFact = await prepareExternalSessionHistoricalImportItem({
+        item: {
+          id: 'source-fact-user',
+          localId: 'source-fact-user',
+          createdAtMs: 123,
+          messageRole: 'user',
+          userProjection: 'source_fact',
+          raw: {
+            role: 'user',
+            content: { type: 'text', text: 'historical user fact' },
+            meta: {
+              displayText: 'preserve this',
+              happierProvenanceV1: { v: 1, kind: 'host', producer: 'happierApp' },
+              happierInputAuthorityV1: { v: 1, producer: 'happierApp' },
+              happierInputRequestV1: { v: 1, producer: 'happierApp' },
+            },
+          },
+        },
+        linked: createLinkedSession(workingDirectory),
+        credentials,
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+      const ordinaryUser = await prepareExternalSessionHistoricalImportItem({
+        item: {
+          id: 'ordinary-user',
+          localId: 'ordinary-user',
+          createdAtMs: 124,
+          messageRole: 'user',
+          raw: {
+            role: 'user',
+            content: { type: 'text', text: 'ordinary imported user row' },
+            meta: {
+              happierProvenanceV1: { v: 1, kind: 'host', producer: 'externalSessionHistory' },
+              happierInputAuthorityV1: { v: 1, producer: 'happierApp' },
+            },
+          },
+        },
+        linked: createLinkedSession(workingDirectory),
+        credentials,
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+
+      expect(sourceFact.content).toEqual({
+        t: 'plain',
+        v: expect.objectContaining({
+          role: 'user',
+          meta: expect.objectContaining({
+            displayText: 'preserve this',
+            happierProvenanceV1: {
+              v: 1,
+              kind: 'host',
+              producer: 'externalSessionHistory',
+            },
+          }),
+        }),
+      });
+      if (sourceFact.content.t !== 'plain') throw new Error('expected_plain_source_fact_content');
+      const sourceFactMeta = (sourceFact.content.v as Record<string, unknown>).meta;
+      expect(sourceFactMeta).not.toHaveProperty('happierInputAuthorityV1');
+      expect(sourceFactMeta).not.toHaveProperty('happierInputRequestV1');
+      expect(SESSION_ROLE_USER_PRODUCER_ADMISSION_MODES_V1.externalSessionHistory)
+        .toBe('transcriptOnly');
+
+      if (ordinaryUser.content.t !== 'plain') throw new Error('expected_plain_ordinary_user_content');
+      const ordinaryUserMeta = (ordinaryUser.content.v as Record<string, unknown>).meta;
+      expect(ordinaryUserMeta).not.toHaveProperty('happierProvenanceV1');
+      expect(ordinaryUserMeta).not.toHaveProperty('happierInputAuthorityV1');
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails retained E2EE historical import without fabricating encryption material', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-locked-import-'));
+    try {
+      const linked = {
+        ...createLinkedSession(workingDirectory),
+        rawSession: {
+          id: 'sess-encrypted',
+          encryptionMode: 'e2ee',
+        } as LoadedLinkedExternalSession['rawSession'],
+      };
+
+      await expect(prepareExternalSessionHistoricalImportItem({
+        item: {
+          id: 'encrypted-item',
+          localId: 'encrypted-item',
+          createdAtMs: 123,
+          raw: { role: 'agent', content: { type: 'output', data: 'encrypted' } },
+        },
+        linked,
+        credentials: { token: 'plain-token', encryption: null },
+        sessionId: 'sess-encrypted',
+        workingDirectory,
+        sourceReadRoots: [],
+      })).rejects.toMatchObject({
+        category: 'conversion',
+      });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps fresh E2EE historical preparations randomized', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-randomized-import-'));
+    try {
+      const linked = {
+        ...createLinkedSession(workingDirectory),
+        rawSession: {
+          id: 'sess-encrypted',
+          encryptionMode: 'e2ee',
+          dataEncryptionKey: null,
+        } as LoadedLinkedExternalSession['rawSession'],
+      };
+      const input = {
+        item: {
+          id: 'randomized-item',
+          localId: 'randomized-item',
+          createdAtMs: 123,
+          raw: { role: 'agent', content: { type: 'output', data: 'randomized' } },
+        },
+        linked,
+        credentials: {
+          token: 'token-1',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+        },
+        sessionId: 'sess-encrypted',
+        workingDirectory: null,
+        sourceReadRoots: [],
+      } as const;
+
+      const first = await prepareExternalSessionHistoricalImportItem(input);
+      const second = await prepareExternalSessionHistoricalImportItem(input);
+
+      expect(first.localId).toBe(second.localId);
+      expect(first.content.t).toBe('encrypted');
+      expect(second.content.t).toBe('encrypted');
+      if (first.content.t !== 'encrypted' || second.content.t !== 'encrypted') {
+        throw new Error('expected_encrypted_historical_import_content');
+      }
+      expect(second.content.c).not.toBe(first.content.c);
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects structured-presentation candidates before plaintext historical-import conversion', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-reserved-plain-import-'));
+    try {
+      const linked = createLinkedSession(workingDirectory);
+      for (const candidate of reservedStructuredPresentationRawCandidates) {
+        const item: ExternalSessionTranscriptRawMessageV1 = {
+          id: `reserved-plain-${candidate.id}`,
+          localId: `reserved-plain-${candidate.id}`,
+          createdAtMs: 123,
+          raw: candidate.raw,
+        };
+        const staged = await stageExternalSessionHistoricalImportItem({
+          item,
+          workingDirectory,
+          sourceReadRoots: [],
+        });
+
+        await expect(prepareExternalSessionHistoricalImportItem({
+          item: staged.item,
+          linked,
+          credentials: { token: 'plain-token', encryption: null },
+          sessionId: 'sess-managed',
+          workingDirectory,
+          sourceReadRoots: [],
+        })).rejects.toMatchObject({ category: 'conversion' });
+        expect(() => validateExternalSessionHistoricalImportStagedItem({
+          staged,
+          linked,
+          credentials: { token: 'plain-token', encryption: null },
+          sessionId: 'sess-managed',
+        })).toThrowError(expect.objectContaining({ category: 'conversion' }));
+      }
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects structured-presentation candidates before E2EE historical-import encryption', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-reserved-e2ee-import-'));
+    try {
+      const linked = {
+        ...createLinkedSession(workingDirectory),
+        rawSession: {
+          id: 'sess-encrypted',
+          encryptionMode: 'e2ee',
+          dataEncryptionKey: null,
+        } as LoadedLinkedExternalSession['rawSession'],
+      };
+      const credentials = {
+        token: 'token-1',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) },
+      };
+      for (const candidate of reservedStructuredPresentationRawCandidates) {
+        const item: ExternalSessionTranscriptRawMessageV1 = {
+          id: `reserved-e2ee-${candidate.id}`,
+          localId: `reserved-e2ee-${candidate.id}`,
+          createdAtMs: 123,
+          raw: candidate.raw,
+        };
+        const staged = await stageExternalSessionHistoricalImportItem({
+          item,
+          workingDirectory,
+          sourceReadRoots: [],
+        });
+
+        await expect(prepareExternalSessionHistoricalImportItem({
+          item: staged.item,
+          linked,
+          credentials,
+          sessionId: 'sess-encrypted',
+          workingDirectory,
+          sourceReadRoots: [],
+        })).rejects.toMatchObject({ category: 'conversion' });
+        expect(() => validateExternalSessionHistoricalImportStagedItem({
+          staged,
+          linked,
+          credentials,
+          sessionId: 'sess-encrypted',
+        })).toThrowError(expect.objectContaining({ category: 'conversion' }));
+      }
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('reports ownership only for the preparation that created deterministic workspace media', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-staged-import-discard-'));
     try {
       const sourcePath = join(workingDirectory, 'source.png');
@@ -134,7 +492,8 @@ describe('external session historical import item preparation', () => {
         category: 'media',
       });
 
-      const firstCleanupPaths: string[] = [];
+      const firstCreatedPaths: string[] = [];
+      const firstWorkspacePaths: string[] = [];
       const first = await prepareExternalSessionHistoricalImportItem({
         item: staged.item,
         linked,
@@ -142,9 +501,11 @@ describe('external session historical import item preparation', () => {
         sessionId: 'sess-managed',
         workingDirectory,
         sourceReadRoots: [],
-        cleanupWorkspaceMediaPaths: firstCleanupPaths,
+        createdWorkspaceMediaPaths: firstCreatedPaths,
+        persistedWorkspaceMediaPaths: firstWorkspacePaths,
       });
-      const secondCleanupPaths: string[] = [];
+      const secondCreatedPaths: string[] = [];
+      const secondWorkspacePaths: string[] = [];
       const second = await prepareExternalSessionHistoricalImportItem({
         item: staged.item,
         linked,
@@ -152,20 +513,89 @@ describe('external session historical import item preparation', () => {
         sessionId: 'sess-managed',
         workingDirectory,
         sourceReadRoots: [],
-        cleanupWorkspaceMediaPaths: secondCleanupPaths,
+        createdWorkspaceMediaPaths: secondCreatedPaths,
+        persistedWorkspaceMediaPaths: secondWorkspacePaths,
       });
       expect(second).toEqual(first);
-      expect(secondCleanupPaths).toEqual(firstCleanupPaths);
-      await expect(readFile(resolve(workingDirectory, firstCleanupPaths[0]!)))
+      expect(firstCreatedPaths).toHaveLength(1);
+      expect(secondCreatedPaths).toEqual([]);
+      expect(firstWorkspacePaths).toEqual(firstCreatedPaths);
+      expect(secondWorkspacePaths).toEqual(firstCreatedPaths);
+      await expect(readFile(resolve(workingDirectory, firstCreatedPaths[0]!)))
         .resolves.toEqual(pngBytes);
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
 
-      await cleanupExternalSessionHistoricalImportStagedMedia({
-        staged,
-        agentId: linked.agentId,
-        remoteSessionId: linked.remoteSessionId,
-        sessionId: 'sess-managed',
+  it('cleans only newly created media after interrupted preparation and preserves an exact reused file', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-staged-import-transient-cleanup-'));
+    try {
+      const firstSourcePath = join(workingDirectory, 'first.png');
+      const secondSourcePath = join(workingDirectory, 'second.png');
+      await writeFile(firstSourcePath, pngBytes);
+      await writeFile(secondSourcePath, Buffer.concat([pngBytes, Buffer.from('second')]));
+      const rawFor = (paths: readonly string[]): ExternalSessionTranscriptRawMessageV1 => ({
+        id: 'transient-media-item',
+        localId: 'transient-media-item',
+        createdAtMs: 123,
+        raw: {
+          meta: {
+            happier: {
+              kind: 'session_media.v1',
+              payload: { media: paths.map(externalSessionMediaItem) },
+            },
+          },
+        },
       });
-      await expect(stat(resolve(workingDirectory, firstCleanupPaths[0]!)))
+      const firstStaged = await stageExternalSessionHistoricalImportItem({
+        item: rawFor([firstSourcePath]),
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+      const firstCreatedPaths: string[] = [];
+      await prepareExternalSessionHistoricalImportItem({
+        item: firstStaged.item,
+        linked: createLinkedSession(workingDirectory),
+        credentials,
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+        createdWorkspaceMediaPaths: firstCreatedPaths,
+      });
+      expect(firstCreatedPaths).toHaveLength(1);
+
+      const secondStaged = await stageExternalSessionHistoricalImportItem({
+        item: rawFor([firstSourcePath, secondSourcePath]),
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+      const transientCreatedPaths: string[] = [];
+      await expect(prepareExternalSessionHistoricalImportItem({
+        item: secondStaged.item,
+        linked: {
+          ...createLinkedSession(workingDirectory),
+          rawSession: {
+            id: 'sess-managed',
+            encryptionMode: 'e2ee',
+          } as LoadedLinkedExternalSession['rawSession'],
+        },
+        credentials: { token: 'token-1', encryption: null },
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+        createdWorkspaceMediaPaths: transientCreatedPaths,
+      })).rejects.toMatchObject({ category: 'conversion' });
+      expect(transientCreatedPaths).toHaveLength(1);
+
+      await garbageCollectUncommittedSessionMedia({
+        workingDirectory,
+        candidateWorkspaceRelativePaths: transientCreatedPaths,
+        reason: 'interrupted_ingestion',
+      });
+      await expect(readFile(resolve(workingDirectory, firstCreatedPaths[0]!)))
+        .resolves.toEqual(pngBytes);
+      await expect(stat(resolve(workingDirectory, transientCreatedPaths[0]!)))
         .rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });

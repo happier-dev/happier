@@ -64,7 +64,7 @@ export type MachineVoiceInferenceStreamingRpcRegistration = Readonly<{
 export function registerMachineVoiceInferenceStreamingRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   voiceInferenceWorker: VoiceInferenceSpeechStreamWorker;
-  voiceDiagnostics?: Pick<VoiceDiagnosticsController, 'capture'>;
+  voiceDiagnostics?: Pick<VoiceDiagnosticsController, 'captureFile'>;
 }>): MachineVoiceInferenceStreamingRpcRegistration {
   const streamManager = createVoiceInferenceSpeechStreamManager({
     voiceInferenceWorker: params.voiceInferenceWorker,

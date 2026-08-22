@@ -14,6 +14,7 @@ import { createProviderRuntimeStateStore } from '../runtimeState';
 import type { ProviderProbeAuthorizationPort } from './authorization';
 import { createProviderProbeHttpClient, type ProviderProbeTransport } from './client';
 import {
+  createProviderCatalogRefreshFingerprint,
   createProviderCatalogService,
   type ProviderManagedCatalogSource,
 } from './catalog';
@@ -84,37 +85,14 @@ const managedSource = {
     pluginId: 'happier.provider.cliproxyapi',
     localId: 'cliproxyapi',
   },
-  managedFacet: {
-    managedEndpoint: {
-      localService: {
-        id: 'cliproxyapi',
-        launch: {
-          kind: 'packaged-runtime-binary',
-          directorySegments: ['tools', 'unpacked'],
-          executableBaseName: 'cliproxyapi-managed',
-          privateConfigPathFlag: '--config',
-        },
-        launchMode: {
-          kind: 'assignAndInject',
-          portPolicy: { kind: 'allocated' },
-        },
-        hostPolicy: { kind: 'loopback' },
-        name: { strategy: 'fixed', name: 'CLIProxyAPI' },
-        healthCheck: { kind: 'http', path: '/healthz' },
-        restart: { kind: 'never' },
-        cleanup: { staleAfterMs: 60_000 },
-      },
-      protocols: ['openai-responses'],
-    },
+  managedRuntime: {
+    kind: 'managed',
+    dependencies: [],
+    endpointTemplateIds: ['cliproxyapi-openai-responses'],
     connectedAccounts: [],
     requestAuthUses: [],
   },
   purposeBindings: { v: 1, bindings: [] },
-  catalogSource: {
-    kind: 'transientModelEndpoint',
-    contractVersion: 'happier.cliproxyapi-managed/v1',
-    sdkVersion: 'v7.2.95',
-  },
   endpointTemplateId: 'cliproxyapi-openai-responses',
   protocol: 'openai-responses',
   publicHeaders: {},
@@ -152,7 +130,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'must-not-be-used',
-      retryDelayMs: () => 30_000,
     });
 
     await expect(service.refresh({
@@ -187,7 +164,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'must-not-be-used',
-      retryDelayMs: () => 30_000,
     });
 
     await expect(service.refresh({
@@ -238,7 +214,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
 
     await expect(service.refresh({
@@ -284,7 +259,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'must-not-be-used',
-      retryDelayMs: () => 30_000,
     });
 
     await expect(service.refresh({
@@ -311,7 +285,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
     const probes: readonly ProviderCatalogProbeV1[] = [
       { endpointTemplateId: 'openai', path: '/first', parser: 'openai-models' },
@@ -344,7 +317,6 @@ describe('provider catalog service', () => {
       localCatalogFallback: { run: commandFallback },
       now: () => 10_000,
       createObservationId: () => 'observation-command',
-      retryDelayMs: () => 30_000,
     });
     const probes: readonly ProviderCatalogProbeV1[] = [
       { endpointTemplateId: 'openai', path: '/first', parser: 'openai-models' },
@@ -381,7 +353,7 @@ describe('provider catalog service', () => {
       }),
       authorization: authPort(), runtimeStore,
       localCatalogFallback: { run: commandFallback },
-      now: () => 10_000, createObservationId: () => 'unused', retryDelayMs: () => 30_000,
+      now: () => 10_000, createObservationId: () => 'unused',
     });
     await expect(service.refresh({
       connectionId, machineId, endpoints, mode: 'health',
@@ -409,7 +381,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
     await expect(service.refresh({
       connectionId,
@@ -444,7 +415,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
     const refresh = service.refresh({
       connectionId,
@@ -464,7 +434,7 @@ describe('provider catalog service', () => {
     expect(state.endpointHealth).toEqual([]);
   });
 
-  it('honors bounded Retry-After when persisting rate-limit retry timing', async () => {
+  it('does not publish consumer-derived retry timing for scheduler-owned rate-limit admission', async () => {
     const runtimeStore = await store();
     const service = createProviderCatalogService({
       client: createProviderProbeHttpClient({
@@ -480,7 +450,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
 
     await service.refresh({
@@ -490,7 +459,8 @@ describe('provider catalog service', () => {
       probes: [{ endpointTemplateId: 'openai', path: '/models', parser: 'openai-models' }],
     });
     const state = await runtimeStore.read();
-    expect(state.endpointHealth[0]?.state).toMatchObject({ status: 'rate_limited', retryAt: 130_000 });
+    expect(state.endpointHealth[0]?.state).toMatchObject({ status: 'rate_limited', observedAt: 10_000 });
+    expect(state.endpointHealth[0]?.state).not.toHaveProperty('retryAt');
   });
 
   it('does not persist a settled failure when the caller cancels', async () => {
@@ -506,7 +476,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
 
     await expect(service.refresh({
@@ -546,7 +515,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
     await firstService.refresh({ connectionId, machineId, endpoints, probes });
 
@@ -568,7 +536,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 20_000,
       createObservationId: () => 'must-not-be-used',
-      retryDelayMs: () => 30_000,
     });
     await failedService.refresh({ connectionId, machineId, endpoints, probes });
 
@@ -589,7 +556,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
     await expect(service.refresh({ connectionId, machineId, endpoints, probes: [] }))
       .resolves.toEqual({ status: 'not_supported' });
@@ -611,7 +577,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'must-not-be-used',
-      retryDelayMs: () => 30_000,
     });
     await expect(service.refresh({
       connectionId,
@@ -648,7 +613,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'observation-a',
-      retryDelayMs: () => 30_000,
     });
     const refresh = service.refresh({
       connectionId,
@@ -669,22 +633,24 @@ describe('provider catalog service', () => {
 
   it('uses one authorized bounded managed runtime and commits no transient endpoint health', async () => {
     const close = vi.fn(async () => {});
+    const authenticatedFetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('http://127.0.0.1:45123/v1/models');
+      expect(new Headers(init?.headers).has('authorization')).toBe(false);
+      return new Response(
+        '{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}',
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
     const launch = vi.fn(async () => ({
       ok: true as const,
       endpointUrl: 'http://127.0.0.1:45123/v1',
-      downstreamBearer: 'probe-local-bearer',
+      access: { fetch: authenticatedFetch },
       isCurrent: () => true,
       close,
     }));
     const authorize = vi.fn(authPort().authorize);
-    const transport = vi.fn<ProviderProbeTransport>(async (request) => {
-      expect(request.url).toBe('http://127.0.0.1:45123/v1/models');
-      expect(request.headers.authorization).toBe('Bearer probe-local-bearer');
-      return {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-        body: Buffer.from('{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}'),
-      };
+    const transport = vi.fn<ProviderProbeTransport>(async () => {
+      throw new Error('managed catalog must not use the raw HTTP transport');
     });
     const runtimeStore = await store();
     const service = createProviderCatalogService({
@@ -697,7 +663,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'managed-observation',
-      retryDelayMs: () => 30_000,
     });
 
     await expect(service.refresh({
@@ -716,6 +681,8 @@ describe('provider catalog service', () => {
     });
     expect(authorize).toHaveBeenCalledBefore(launch);
     expect(launch).toHaveBeenCalledTimes(1);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+    expect(transport).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
     const state = await runtimeStore.read();
     expect(state.catalogs).toHaveLength(1);
@@ -748,7 +715,15 @@ describe('provider catalog service', () => {
         launch: async () => ({
           ok: true as const,
           endpointUrl: 'http://127.0.0.1:45123/v1',
-          downstreamBearer: 'probe-local-bearer',
+          access: {
+            fetch: async () => new Response(
+              '{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}',
+              {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+              },
+            ),
+          },
           isCurrent: () => true,
           close,
         }),
@@ -756,7 +731,6 @@ describe('provider catalog service', () => {
       runtimeStore,
       now: () => 10_000,
       createObservationId: () => 'must-not-commit',
-      retryDelayMs: () => 30_000,
     });
 
     await expect(service.refresh({
@@ -777,4 +751,103 @@ describe('provider catalog service', () => {
     expect((await runtimeStore.read()).catalogs).toEqual([]);
   });
 
+  it('refuses a retired contributed catalog format instead of authoring a current observation', async () => {
+    const runtimeStore = await store();
+    let generationIsCurrent = true;
+    const parse = vi.fn(() => ({ models: [{ id: 'acme/sonnet' }], loadStates: [] }));
+    const service = createProviderCatalogService({
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => ['93.184.216.34'],
+        transport: async () => {
+          // The contributing plugin is replaced while this probe is in flight,
+          // exactly as a reload does to queued or running probe work.
+          generationIsCurrent = false;
+          return {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+            body: Buffer.from('{"catalog":[]}'),
+          };
+        },
+      }),
+      authorization: authPort(),
+      runtimeStore,
+      now: () => 10_000,
+      createObservationId: () => 'must-not-commit',
+    });
+
+    await expect(service.refresh({
+      connectionId,
+      machineId,
+      endpoints,
+      probes: [{ endpointTemplateId: 'openai', path: '/catalog', parser: 'acme-catalog-v3' }],
+      contributedCatalogParsers: {
+        parsersByFormat: { 'acme-catalog-v3': parse },
+        isCurrent: () => generationIsCurrent,
+      },
+    })).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'provider_contribution_unavailable' },
+    });
+    expect((await runtimeStore.read()).catalogs).toEqual([]);
+    expect((await runtimeStore.read()).endpointHealth).toEqual([]);
+  });
+
+  it('never dispatches a probe for a contributed format whose generation is already retired', async () => {
+    const runtimeStore = await store();
+    const transport = vi.fn<ProviderProbeTransport>();
+    const service = createProviderCatalogService({
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => ['93.184.216.34'],
+        transport,
+      }),
+      authorization: authPort(),
+      runtimeStore,
+      now: () => 10_000,
+      createObservationId: () => 'must-not-commit',
+    });
+
+    await expect(service.refresh({
+      connectionId,
+      machineId,
+      endpoints,
+      probes: [{ endpointTemplateId: 'openai', path: '/catalog', parser: 'acme-catalog-v3' }],
+      contributedCatalogParsers: {
+        parsersByFormat: { 'acme-catalog-v3': () => ({ models: [], loadStates: [] }) },
+        isCurrent: () => false,
+      },
+    })).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'provider_contribution_unavailable' },
+    });
+    expect(transport).not.toHaveBeenCalled();
+    expect((await runtimeStore.read()).endpointHealth).toEqual([]);
+  });
+
+});
+
+describe('managed provider catalog refresh fingerprint', () => {
+  const managedProbe: ProviderCatalogProbeV1 = {
+    endpointTemplateId: managedSource.endpointTemplateId,
+    path: '/v1/models',
+    parser: 'openai-models',
+  };
+
+  it('fingerprints the single declared managed catalog probe', () => {
+    expect(createProviderCatalogRefreshFingerprint({
+      endpoints,
+      probes: [managedProbe],
+      managedSource,
+    })).toEqual(expect.any(String));
+  });
+
+  it('rejects a managed provider that declares more than one catalog probe', () => {
+    expect(() => createProviderCatalogRefreshFingerprint({
+      endpoints,
+      probes: [
+        managedProbe,
+        { ...managedProbe, endpointTemplateId: 'cliproxyapi-openai-chat' },
+      ],
+      managedSource,
+    })).toThrow(TypeError);
+  });
 });

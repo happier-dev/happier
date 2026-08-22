@@ -48,7 +48,7 @@ describe('createOnHappySessionWebhook (PPID correlation)', () => {
         writeSessionMarkerFn: async () => {},
       });
 
-      onWebhook('session-child-1', createMetadata(childPid, 'daemon'));
+      await onWebhook('session-child-1', createMetadata(childPid, 'daemon'));
 
       expect(awaiter).toHaveBeenCalledTimes(1);
       expect(pidToAwaiter.has(wrapperPid)).toBe(false);

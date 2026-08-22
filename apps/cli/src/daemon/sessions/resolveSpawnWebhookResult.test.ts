@@ -47,6 +47,7 @@ describe('resolveSpawnWebhookResult', () => {
     expect(resolved).toEqual(result);
     expect(pidToTrackedSession.get(321)?.happySessionId).toBe('session-321');
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('session-321');
   });
 
   it('keeps webhook-timeout errors when canonical startup readiness missed its deadline', () => {
@@ -76,6 +77,31 @@ describe('resolveSpawnWebhookResult', () => {
       errorMessage: 'timed out',
     });
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('session-322');
+  });
+
+  it('does not log a canonical session id when recovering a webhook timeout', () => {
+    const trackedSession = {
+      startedBy: 'daemon',
+      pid: 323,
+      happySessionId: 'private-session-323',
+    } as TrackedSession;
+    const pidToTrackedSession = new Map<number, TrackedSession>([[323, trackedSession]]);
+    const warn = vi.fn();
+
+    const resolved = resolveSpawnWebhookResult({
+      pid: 323,
+      result: {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        errorMessage: 'timed out',
+      },
+      pidToTrackedSession,
+      warn,
+    });
+
+    expect(resolved).toEqual({ type: 'success', sessionId: 'private-session-323' });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private-session-323');
   });
 
   it('keeps webhook-timeout error when tracked session has no canonical session id yet', () => {

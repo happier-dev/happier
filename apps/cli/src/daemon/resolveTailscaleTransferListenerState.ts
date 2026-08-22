@@ -53,12 +53,17 @@ export async function resolveTailscaleTransferListenerState(params: Readonly<{
     };
   }
 
-  if (!status.loggedIn) {
+  // `loggedIn` is the wrong question: serve config outlives `tailscale down`,
+  // so a signed-in machine with a stopped backend would keep publishing a
+  // configured transfer listener that no other device can reach. `available`
+  // then reports whether tailscaled answered at all, which is what the daemon
+  // previously learned from a thrown status error.
+  if (!status.running) {
     return {
       enabled: params.enabled,
       configured: false,
       active: false,
-      available: true,
+      available: status.daemonReachable,
     };
   }
 

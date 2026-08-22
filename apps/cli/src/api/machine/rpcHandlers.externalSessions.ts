@@ -2,6 +2,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   EXTERNAL_SESSION_IMPORT_PUBLICATION_FENCE_VERSION_V1,
   EXTERNAL_SESSION_RUNTIME_BOUND_ADMISSION_VERSION_V3,
+  ExternalSessionOperationActionResponseV1Schema,
   type ActionExecuteResult,
   type ActionId,
   type ExternalSessionTranscriptInvalidationV1,
@@ -37,11 +38,11 @@ import {
   mapActionFailureToExternalSessionsError,
   resolveTakeoverReadinessCacheMs,
   type ExternalSessionActionContext,
-  type ExternalSessionTakeoverActionInput,
 } from '@/session/actions/externalSessions';
 
 import {
   registerLegacyDirectSessionFollowPolicyWireAlias,
+  registerLegacyDirectSessionLinkEnsureWireAlias,
   registerLegacyDirectSessionTakeoverWireAliases,
 } from './legacyDirectSessionWireAliases';
 import { mapCanonicalExternalSessionResponseToLegacyDirectSession } from './legacyDirectSessionResponseCompatibility';
@@ -55,7 +56,10 @@ import {
   resolveExternalLinkedTakeoverWriterSafety,
 } from '@/api/session/external/takeover/resolveExternalLinkedTakeoverWriterSafety';
 import { configuration } from '@/configuration';
-import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
+import {
+  createExternalSessionOperationExclusion,
+  type ExternalSessionOperationExclusionOwner,
+} from '@/session/external/operationExclusion';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import {
   executeExternalSessionImportActivation,
@@ -68,9 +72,13 @@ import {
   createDefaultExternalSessionMaterializeStartActionExecutor,
   type ExternalSessionMaterializeStartActionExecutor,
 } from '@/session/actions/externalSessions/materializeStartAction';
+import type {
+  ExternalSessionPluginAdmissionOwner,
+} from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
 import {
   publishExternalSessionOperationProgress,
   repairExternalSessionOperationProgressProjections,
+  resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs,
 } from '@/session/actions/externalSessions/operationProgressPublisher';
 import {
   createDefaultExternalSessionTakeoverStartActionExecutor,
@@ -99,9 +107,6 @@ import {
   type ExternalSessionPersistedTakeoverPhaseRunner,
 } from '@/session/actions/externalSessions/takeoverPhaseRunner';
 import { randomUUID } from 'node:crypto';
-import {
-  createExternalSessionTakeoverHostOperation,
-} from '@/session/external/takeoverHostOperation';
 import {
   createExternalSessionFollowHostOperation,
 } from '@/session/external/followHostOperation';
@@ -132,6 +137,7 @@ import {
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';
+import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 
 export type ExternalSessionArchivedStateChange = Readonly<{
   sessionId: string;
@@ -271,7 +277,15 @@ export function createExternalSessionRpcActionExecutor(
         case 'sessions.external.backgroundFollow.set':
           return { ok: true, result: await executeExternalSessionFollowPolicySetAction(input, context) };
         case 'sessions.external.candidates.list':
-          return { ok: true, result: await executeExternalSessionCandidatesListAction(input) };
+          return {
+            ok: true,
+            result: await executeExternalSessionCandidatesListAction(
+              input,
+              executionContext?.signal
+                ? { signal: executionContext.signal }
+                : undefined,
+            ),
+          };
         case 'sessions.external.link.ensure':
           return { ok: true, result: await executeExternalSessionLinkEnsureAction(input) };
         case 'sessions.external.status.get':
@@ -294,7 +308,15 @@ export function createExternalSessionRpcActionExecutor(
           };
         case 'sessions.external.materialize.start':
           return materializeStart
-            ? { ok: true, result: await materializeStart.start(input) }
+            ? {
+              ok: true,
+              result: await materializeStart.start(
+                input,
+                executionContext?.signal
+                  ? { signal: executionContext.signal }
+                  : undefined,
+              ),
+            }
             : unsupportedExternalSessionAction(actionId);
         case 'sessions.external.operation.status.get':
           return materialize
@@ -375,6 +397,47 @@ function readExternalSessionGenericFailure(actionId: ActionId): string {
   }
 }
 
+const EXTERNAL_SESSION_DURABLE_OPERATION_ACTION_IDS = new Set<ActionId>([
+  'sessions.external.materialize.start',
+  'sessions.external.takeover.start',
+  'sessions.external.operation.status.get',
+  'sessions.external.operation.cancel',
+  'sessions.external.operation.resume',
+  'sessions.external.operation.retry',
+  'sessions.external.operation.discard',
+]);
+
+function isExternalSessionDurableOperationAction(
+  actionId: ActionId,
+): boolean {
+  return EXTERNAL_SESSION_DURABLE_OPERATION_ACTION_IDS.has(actionId);
+}
+
+function internalExternalSessionOperationActionFailure(): ActionExecuteResult {
+  return {
+    ok: true,
+    result: {
+      ok: false,
+      error: {
+        code: 'internal_error',
+        message: 'External session operation failed.',
+      },
+    },
+  };
+}
+
+function mapExternalSessionDurableOperationActionResult(
+  result: ActionExecuteResult,
+): ActionExecuteResult {
+  if (!result.ok) return internalExternalSessionOperationActionFailure();
+  const parsed = ExternalSessionOperationActionResponseV1Schema.safeParse(
+    result.result,
+  );
+  return parsed.success
+    ? { ok: true, result: parsed.data }
+    : internalExternalSessionOperationActionFailure();
+}
+
 function createExternalSessionGenericRpcActionExecutor(
   executor: RpcActionExecutor,
 ): RpcActionExecutor {
@@ -382,6 +445,9 @@ function createExternalSessionGenericRpcActionExecutor(
     execute: async (actionId, input, context) => {
       try {
         const result = await executor.execute(actionId, input, context);
+        if (isExternalSessionDurableOperationAction(actionId)) {
+          return mapExternalSessionDurableOperationActionResult(result);
+        }
         if (result.ok) {
           return result;
         }
@@ -390,6 +456,9 @@ function createExternalSessionGenericRpcActionExecutor(
           result: mapActionFailureToExternalSessionsError(result),
         };
       } catch (error) {
+        if (isExternalSessionDurableOperationAction(actionId)) {
+          return internalExternalSessionOperationActionFailure();
+        }
         return {
           ok: true,
           result: internalErrorResponse(
@@ -405,9 +474,11 @@ function createExternalSessionGenericRpcActionExecutor(
 
 export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
+  operationExclusion?: ExternalSessionOperationExclusionOwner;
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession?: (sessionId: string) => Promise<boolean>;
   emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptInvalidationV1) => void | Promise<void>;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   transientMediaReadAllowance?: ExternalSessionActionContext['transientMediaReadAllowance'];
   actionExecutor?: RpcActionExecutor;
   getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
@@ -434,6 +505,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     ) => void | Promise<void>,
   ) => () => void;
 }>): Readonly<{
+  pluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   connectivityResource?: Readonly<{
     name: string;
     pause(): void | Promise<void>;
@@ -496,10 +568,13 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       },
     })
     : null;
-  const operationExclusion = createExternalSessionOperationExclusion({
-    activeServerDir: configuration.activeServerDir,
-    ownerId: `cli-daemon:${process.pid}:external-session-operations:${randomUUID()}`,
-  });
+  const operationExclusion = params.operationExclusion
+    ?? createExternalSessionOperationExclusion({
+      activeServerDir: configuration.activeServerDir,
+      ownerId: `cli-daemon:${process.pid}:external-session-operations:${randomUUID()}`,
+      claimMutationLockAcquisitionTimeoutMs:
+        resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs(),
+    });
   const resolveSessionHookFeatureDecision = () => resolveCliFeatureDecision({
     featureId: PLUGIN_SESSION_HOOK_MANAGEMENT_FEATURE_ID,
     env: process.env,
@@ -761,6 +836,9 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     ...(params.getServerFeaturesSnapshot
       ? { getServerFeaturesSnapshot: params.getServerFeaturesSnapshot }
       : {}),
+    ...(params.deviceLocalSecretStorage
+      ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage }
+      : {}),
     emitExternalSessionTranscriptUpdate,
     transientMediaReadAllowance: params.transientMediaReadAllowance,
     spawnSession: params.spawnSession,
@@ -785,21 +863,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
   const takeoverPhaseRunner = materializeActionExecutor
     ? createExternalSessionPersistedTakeoverPhaseRunner({
       importExecutor: materializeActionExecutor,
-    })
-    : null;
-  const externalLinkedTakeoverPhaseRunner = params.spawnSession
-    ? createExternalSessionExternalLinkedTakeoverPhaseRunner({
-      activeServerDir: configuration.activeServerDir,
-      operationExclusion,
-      resolveWriterSafety: resolveExternalLinkedTakeoverWriterSafety,
-      loadCurrent:
-        loadCurrentExternalSessionExternalLinkedTakeoverSource,
-      followLeaseManager,
-      resolveSpawn: resolveExternalTakeoverSpawnOptions,
-      spawnResolvedTakeoverSession:
-        spawnResolvedExternalTakeoverSession,
-      spawnSession: params.spawnSession,
-      publishProgress: publishExternalSessionOperationProgressForServer,
     })
     : null;
   const materializeStartActionExecutor = materializeActionExecutor
@@ -837,16 +900,72 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
           suspendFollow: async (input) => {
             await followLeaseManager.suspendSession(input);
           },
+          ...(passiveObservation
+            ? {
+              reconcilePassiveFollowSession: (sessionId: string) =>
+                passiveObservation.reconcileSession(sessionId),
+            }
+            : {}),
           sendHistoricalCommand:
             params.executeExternalSessionHistoricalImportCommand,
+          ...(materializeActionExecutor?.cleanupTerminalStaging
+            ? {
+              cleanupTerminalStaging:
+                materializeActionExecutor.cleanupTerminalStaging,
+            }
+            : {}),
         })
       : null;
-  // Boot recovery is deliberately local-only: it CASes the durable operation
-  // row before the ordinary public-safe projection publish, and never invokes
+  const externalLinkedTakeoverPhaseRunner = params.spawnSession
+    && params.executeExternalSessionHistoricalImportCommand
+    && params.persistedTakeoverAdmissionWaiter
+    && persistedTakeoverAdmissionOwner
+    ? createExternalSessionExternalLinkedTakeoverPhaseRunner({
+      activeServerDir: configuration.activeServerDir,
+      operationExclusion,
+      resolveWriterSafety: resolveExternalLinkedTakeoverWriterSafety,
+      loadCurrent:
+        loadCurrentExternalSessionExternalLinkedTakeoverSource,
+      followLeaseManager,
+      resolveSpawn: resolveExternalTakeoverSpawnOptions,
+      spawnResolvedTakeoverSession:
+        spawnResolvedExternalTakeoverSession,
+      spawnSession: params.spawnSession,
+      admissionWaiter: params.persistedTakeoverAdmissionWaiter,
+      reconcileRuntimeBindingFailure:
+        persistedTakeoverAdmissionOwner.reconcileRuntimeBindingFailure,
+      publishProgress: publishExternalSessionOperationProgressForServer,
+    })
+    : null;
+  // Recovery is deliberately local-only: it CASes the durable operation row
+  // before the ordinary public-safe projection publish and may remove private
+  // staging only after the operation row is terminal. It never invokes
   // admission commands, source reads, authority reconciliation, or spawn.
-  void repairExternalSessionOperationProgressProjections(
-    configuration.activeServerDir,
-  ).catch(() => undefined);
+  const repairOperationProgressProjections = async (): Promise<void> => {
+    try {
+      await repairExternalSessionOperationProgressProjections(
+        configuration.activeServerDir,
+        {
+          inspectOperationClaim:
+            operationExclusion.inspectPassiveRepairClaim,
+          withOperationClaimBarrier:
+            operationExclusion.withPassiveRepairClaimBarrier,
+          ...(materializeActionExecutor?.cleanupTerminalStaging
+            ? {
+              cleanupTerminalStaging:
+                materializeActionExecutor.cleanupTerminalStaging,
+            }
+            : {}),
+        },
+      );
+    } catch (error) {
+      logExternalSessionsInternalError(
+        'external_session.operation_projection_repair_lifecycle',
+        error,
+      );
+    }
+  };
+  void repairOperationProgressProjections();
   const detachPersistedTakeoverAdmissionOwner =
     persistedTakeoverAdmissionOwner
     && params.attachPersistedTakeoverAdmissionOwner
@@ -882,7 +1001,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       host: sessionHookHostProxy,
     })
     : null;
-
   const externalSessionRpcActionExecutor = params.actionExecutor
     ?? createExternalSessionRpcActionExecutor(
       externalSessionActionContext,
@@ -936,10 +1054,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     },
   };
 
-  const takeoverHostOperation = createExternalSessionTakeoverHostOperation({
-      ensureLink: async (input) => await executeExternalSessionLinkEnsureAction(input),
-      takeover: async (input) => await executeExternalSessionTakeoverAction(input, externalSessionActionContext),
-    });
   const followHostOperation = params.machineId
       ? createExternalSessionFollowHostOperation({
           machineId: params.machineId,
@@ -954,11 +1068,15 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     : null;
   const hostOperationInstallation = params.installExternalSessionHostOperations
     ? params.installExternalSessionHostOperations({
-        takeoverOperation: takeoverHostOperation,
         followTargetOperation: followTargetHostOperation,
         followOperation: followHostOperation,
       })
     : null;
+  // Own the installation failure now instead of first observing it at teardown: an
+  // unobserved rejection here is what the daemon turns into an exception shutdown.
+  // `dispose()` still awaits this exact promise and records the failure as the
+  // `host_operations` cleanup phase, so nothing is swallowed.
+  void hostOperationInstallation?.catch(() => undefined);
 
   registerActionSpecRpcHandlers({
     rpcHandlerManager,
@@ -967,6 +1085,10 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     mapResponseForMethod: ({ method, response }) => method.startsWith('daemon.directSessions.')
       ? mapCanonicalExternalSessionResponseToLegacyDirectSession(response)
       : response,
+  });
+
+  registerLegacyDirectSessionLinkEnsureWireAlias({
+    rpcHandlerManager,
   });
 
   registerLegacyDirectSessionFollowPolicyWireAlias({
@@ -979,48 +1101,103 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       }),
   });
 
-  const dispatchExternalSessionTakeoverAction = async (
-    actionInput: ExternalSessionTakeoverActionInput,
-  ): Promise<ActionExecuteResult> => {
-    try {
-      return await dispatchActionFromRpc({
-        actionId: 'sessions.external.takeover',
-        input: actionInput,
-        executor: publicationFenceAwareActionExecutor,
-      });
-    } catch (error) {
-      return internalErrorResponse('external_session_takeover', error, 'external_session_takeover_failed');
-    }
-  };
-
   registerLegacyDirectSessionTakeoverWireAliases({
     rpcHandlerManager,
-    dispatchExternalSessionTakeoverAction,
   });
   return {
-    ...(passiveObservation
-      ? {
-          connectivityResource: {
-            name: 'externalSessionPassiveFollow',
-            pause: () => passiveObservation.pause(),
-            resume: () => passiveObservation.resume(),
-          },
-        }
-      : {}),
+    pluginAdmissionOwner: {
+      ...(materializeStartActionExecutor
+        ? {
+            materializeStart:
+              materializeStartActionExecutor.startPluginMaterialize,
+          }
+        : {}),
+      takeoverStart: takeoverStartActionExecutor.startPluginTakeover,
+      ...(sessionHookActionExecutor
+        ? { hookManagementAction: sessionHookActionExecutor.execute }
+        : {}),
+    },
+    connectivityResource: {
+      name: 'externalSessionPassiveFollow',
+      pause: () => passiveObservation?.pause(),
+      resume: async () => {
+        await repairOperationProgressProjections();
+        await passiveObservation?.resume();
+      },
+    },
     async dispose() {
-      detachPersistedTakeoverAdmissionOwner?.();
-      unsubscribeSessionHookHydration?.();
+      const cleanupFailures: Error[] = [];
+      const recordCleanupFailure = (phase: string, error: unknown): void => {
+        logExternalSessionsInternalError(
+          `external_session.daemon_dispose.${phase}`,
+          error,
+        );
+        cleanupFailures.push(
+          new Error(`external_session_daemon_cleanup_failed:${phase}`),
+        );
+      };
+      const runCleanup = async (
+        phase: string,
+        cleanup: () => unknown | Promise<unknown>,
+      ): Promise<void> => {
+        try {
+          await cleanup();
+        } catch (error) {
+          recordCleanupFailure(phase, error);
+        }
+      };
+
+      await runCleanup(
+        'persisted_takeover_admission_owner',
+        () => detachPersistedTakeoverAdmissionOwner?.(),
+      );
+      await runCleanup(
+        'session_hook_hydration',
+        () => unsubscribeSessionHookHydration?.(),
+      );
       sessionHookLifecycleDisposed = true;
-      await reconcileSessionHookLifecycle();
-      await hostOperationInstallation
-        ?.then(async (installation) => await installation.dispose())
-        .catch(() => undefined);
-      unregisterSessionArchivedStateChanges();
-      await Promise.all([...archiveStateTransitions]);
-      await statusDemandBinding?.dispose();
-      await passiveObservation?.dispose();
-      await followLeaseManager.dispose();
-      await observationProjection.dispose();
+      await runCleanup(
+        'session_hook_lifecycle',
+        reconcileSessionHookLifecycle,
+      );
+      await runCleanup('host_operations', async () => {
+        const installation = await hostOperationInstallation;
+        await installation?.dispose();
+      });
+      await runCleanup(
+        'session_archived_state_changes',
+        unregisterSessionArchivedStateChanges,
+      );
+      const archivedTransitionResults = await Promise.allSettled(
+        [...archiveStateTransitions],
+      );
+      for (const result of archivedTransitionResults) {
+        if (result.status === 'rejected') {
+          recordCleanupFailure('session_archived_transition', result.reason);
+        }
+      }
+      await runCleanup(
+        'status_demand_binding',
+        async () => await statusDemandBinding?.dispose(),
+      );
+      await runCleanup(
+        'passive_observation',
+        async () => await passiveObservation?.dispose(),
+      );
+      await runCleanup(
+        'follow_lease_manager',
+        async () => await followLeaseManager.dispose(),
+      );
+      await runCleanup(
+        'observation_projection',
+        async () => await observationProjection.dispose(),
+      );
+      if (cleanupFailures.length > 0) {
+        throw new AggregateError(
+          cleanupFailures,
+          'External Session daemon cleanup failed',
+        );
+      }
     },
   };
 }

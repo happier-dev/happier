@@ -8,6 +8,7 @@ import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderConnectionIdSchema,
+  createProviderBindingSecurityFingerprintV1,
   createProviderErrorV1,
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
   type ConnectedServiceBindingsV1,
@@ -42,7 +43,6 @@ const hoisted = vi.hoisted(() => {
   const acquireAuthoritativePluginRuntimeRegistryLease = vi.fn();
   const resolveMergedContributionRegistry = vi.fn();
   const createRuntimeProviderSpawnAuthorizationAttempt = vi.fn();
-  const prepareDaemonManagedProviderBinding = vi.fn();
   const getActiveAccountSettingsSnapshot = vi.fn<() => unknown>(() => null);
   const ensureSessionDirectory = vi.fn<() => Promise<MockEnsureSessionDirectoryResult>>(async () => ({
     ok: false,
@@ -62,7 +62,6 @@ const hoisted = vi.hoisted(() => {
     acquireAuthoritativePluginRuntimeRegistryLease,
     resolveMergedContributionRegistry,
     createRuntimeProviderSpawnAuthorizationAttempt,
-    prepareDaemonManagedProviderBinding,
     getActiveAccountSettingsSnapshot,
     ensureSessionDirectory,
   };
@@ -78,6 +77,9 @@ vi.mock('@/agent/catalog/registry', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agent/catalog/registry')>();
   return {
     ...actual,
+    // The spawn path reads the catalog through the typed-unavailable lookup;
+    // both names resolve to the one controlled entry in these tests.
+    findCatalogEntry: hoisted.requireCatalogEntry,
     requireCatalogEntry: hoisted.requireCatalogEntry,
   };
 });
@@ -151,10 +153,6 @@ vi.mock('@/providers/spawn/authorize', async (importOriginal) => {
     createRuntimeProviderSpawnAuthorizationAttempt: hoisted.createRuntimeProviderSpawnAuthorizationAttempt,
   };
 });
-
-vi.mock('../spawn/prepareDaemonManagedProviderBinding', () => ({
-  prepareDaemonManagedProviderBinding: hoisted.prepareDaemonManagedProviderBinding,
-}));
 
 vi.mock('../spawn/resolveStackProcessKindOverrideForSessionSpawn', () => ({
   resolveStackProcessKindOverrideForSessionSpawn: vi.fn(),
@@ -236,8 +234,28 @@ function createRegistryWithBackendOwners(ownersByBackendId: Record<string, strin
       Object.entries(ownersByBackendId).map(([agentId, pluginId]) => [
         agentId,
         {
+          id: agentId,
+          identity: { pluginId, localId: agentId },
+          provenance: 'first_party' as const,
+          source: { kind: 'bundled' as const },
           pluginId,
-          definition: { id: agentId },
+          definition: { id: agentId, kindVersion: 1, ownedBackendIds: [agentId] },
+          richDefinition: {
+            provenance: 'first_party' as const,
+            definition: {
+              id: agentId,
+              title: { key: `agents.${agentId}.title`, fallback: agentId },
+              runtime: { kind: 'custom' as const },
+              primary: 'sessions' as const,
+              capabilities: {
+                sessions: {
+                  open: ['create' as const],
+                  delivery: ['newTurn' as const],
+                  cancel: true,
+                },
+              },
+            },
+          },
         },
       ]),
     ),
@@ -251,6 +269,61 @@ function createRegistryWithBackendOwners(ownersByBackendId: Record<string, strin
         },
       ]),
     ),
+  };
+}
+
+function createManagedProviderRuntimeBindingBasis(input: Readonly<{
+  connectionId: ReturnType<typeof ProviderConnectionIdSchema.parse>;
+  pluginId: string;
+  providerLocalId: string;
+}>): ProviderRuntimeBindingBasisV1 {
+  return {
+    v: 1,
+    deployment: {
+      kind: 'managedLocal',
+      implementationIdentity: {
+        pluginId: input.pluginId,
+        localId: input.providerLocalId,
+      },
+      managedRuntime: {
+        kind: 'managed',
+        dependencies: [],
+        endpointTemplateIds: ['responses'],
+        connectedAccounts: [],
+        requestAuthUses: [],
+      },
+      purposeBindings: { v: 1, bindings: [] },
+    },
+    agentTargetKey: 'backend:codex',
+    connectionId: input.connectionId,
+    contributionKey: `${input.pluginId}/${input.providerLocalId}`,
+    endpoint: {
+      endpointTemplateId: 'responses',
+      protocol: 'openai-responses',
+      publicHeaders: {},
+    },
+    runtimeCredentialTransport: null,
+    prepared: { v: 1, materialization: 'engineConfig' },
+    adapterVersion: 1,
+    credentialAuthorization: {
+      connectionSecurityFingerprint: 'connection-security',
+      grantFingerprint: 'grant',
+    },
+    agentSupport: {
+      acceptsProtocols: ['openai-responses'],
+      required: { streaming: true },
+      credentialSupport: {
+        supportsNoAuth: true,
+        apiKeyTransports: [],
+      },
+      authIsolation: {
+        suppressConnectedServiceIds: [],
+        ownedEnvKeys: [],
+      },
+      materialization: 'engineConfig',
+      applyPolicy: 'restart_session',
+      supportsFreeformModelIds: true,
+    },
   };
 }
 
@@ -315,16 +388,36 @@ async function configureProviderBoundExistingSessionSpawn(input: Readonly<{
       supportsFreeformModelIds: true,
     },
   } satisfies ProviderRuntimeBindingBasisV1;
+  const model = { id: 'model-a', name: 'Model A' } as const;
+  const compatibilityFingerprint = 'compatibility-v1';
+  const bindingSecurityFingerprint =
+    createProviderBindingSecurityFingerprintV1({
+      agentTargetKey: runtimeBindingBasis.agentTargetKey,
+      connectionId: runtimeBindingBasis.connectionId,
+      modelId: model.id,
+      modelCapabilities: {},
+      endpointTemplateId: runtimeBindingBasis.endpoint.endpointTemplateId,
+      endpointUrl: runtimeBindingBasis.endpoint.normalizedUrl,
+      protocol: runtimeBindingBasis.endpoint.protocol,
+      publicHeaders: runtimeBindingBasis.endpoint.publicHeaders,
+      materialization: runtimeBindingBasis.prepared.materialization,
+      adapterBindingKey: runtimeBindingBasis.prepared.adapterBindingKey,
+      credentialDestination:
+        runtimeBindingBasis.runtimeCredentialTransport.destination,
+      compatibilityFingerprint,
+      adapterVersion: runtimeBindingBasis.adapterVersion,
+    });
   const sessionBindingMetadata = {
     v: 1 as const,
     connectionId,
     contributionKey: 'plugin.gateway/gateway',
     connectionRevision: 2,
+    model,
     protocol: 'openai-responses' as const,
     materialization: 'engineConfig' as const,
     adapterBindingKey: 'gateway',
-    compatibilityFingerprint: 'compatibility-v1',
-    bindingSecurityFingerprint: 'security-v1',
+    compatibilityFingerprint,
+    bindingSecurityFingerprint,
     runtimeBindingBasis,
     displaySnapshot: {
       providerName: 'Gateway',
@@ -486,7 +579,6 @@ describe('executeSpawnSessionRequest', () => {
     hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockReset();
     hoisted.resolveMergedContributionRegistry.mockReset();
     hoisted.createRuntimeProviderSpawnAuthorizationAttempt.mockReset();
-    hoisted.prepareDaemonManagedProviderBinding.mockReset();
     hoisted.getActiveAccountSettingsSnapshot.mockReset();
     hoisted.getActiveAccountSettingsSnapshot.mockReturnValue(null);
     hoisted.ensureSessionDirectory.mockClear();
@@ -504,17 +596,33 @@ describe('executeSpawnSessionRequest', () => {
       catalogAgentId: 'codex',
     });
     hoisted.refreshAccountSettingsForMinimumVersion.mockResolvedValue(null);
-    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockImplementation(async () => ({
-      registry: {
-        contributes: createRegistryWithBackendOwners({
-          codex: 'happier.agent.codex',
-          claude: 'happier.agent.claude',
-        }),
-        agentRuntimesByAgentId: new Map(),
-      },
-      source: 'active',
-      release: vi.fn(async () => {}),
-    }));
+    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockImplementation(async () => {
+      const owners = {
+        codex: 'happier.agent.codex',
+        claude: 'happier.agent.claude',
+      };
+      return {
+        registry: {
+          contributes: createRegistryWithBackendOwners(owners),
+          agentRuntimesByAgentId: new Map(
+            Object.entries(owners).map(([agentId, pluginId]) => [agentId, {
+              pluginId,
+              pluginVersion: '1.0.0',
+              agentId,
+              generation: `${agentId}-generation`,
+              immutableGenerationId: `${agentId}-immutable-generation`,
+              hasPrimaryRuntime: true,
+            }]),
+          ),
+          runtimeCapabilitiesByPluginId: new Map(
+            Object.values(owners).map((pluginId) => [pluginId, new Set(['agents', 'sessionHooks'])]),
+          ),
+          activateContributionsOnDemand: async () => [],
+        },
+        source: 'active',
+        release: vi.fn(async () => {}),
+      };
+    });
     hoisted.resolveMergedContributionRegistry.mockImplementation(async () => createRegistryWithBackendOwners({
       codex: 'happier.agent.codex',
       claude: 'happier.agent.claude',
@@ -964,6 +1072,7 @@ describe('executeSpawnSessionRequest', () => {
               connectedAccounts: [{
                 purpose: 'generation-b-anthropic-request',
                 service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+                materializationKinds: ['httpHeaders'],
               }],
             },
           },
@@ -1087,7 +1196,9 @@ describe('executeSpawnSessionRequest', () => {
           anthropic: { source: 'connected', selection: 'profile', profileId: 'anthropic-work' },
         },
       });
-      expect(input.resolveRequestAuthPurposeBindings?.(input.connectedServicesBindingsRaw as ConnectedServiceBindingsV1)).toEqual([{
+      expect(input.resolveQualifiedPurposeBindingSnapshot?.(
+        input.connectedServicesBindingsRaw as ConnectedServiceBindingsV1,
+      )?.bindings).toEqual([{
         purpose: {
           consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
           purpose: 'generation-b-anthropic-request',
@@ -1202,9 +1313,18 @@ describe('executeSpawnSessionRequest', () => {
     expect(hoisted.acquireAuthoritativePluginRuntimeRegistryLease).toHaveBeenCalledTimes(1);
   });
 
-  it('runs the daemon-owned managed endpoint transaction after Connected Services and before Agent endpoint exposure', async () => {
+  it('defers managed Provider sessionDemand to a current runner bootstrap without daemon allocation', async () => {
     const events: string[] = [];
     const connectionId = ProviderConnectionIdSchema.parse('pc_managed_gateway');
+    const providerIdentity = {
+      pluginId: 'happier.provider.cliproxyapi',
+      localId: 'cliproxyapi',
+    } as const;
+    const runtimeBindingBasis = createManagedProviderRuntimeBindingBasis({
+      connectionId,
+      pluginId: providerIdentity.pluginId,
+      providerLocalId: providerIdentity.localId,
+    });
     const managedPurposeBinding = {
       purpose: {
         consumer: {
@@ -1234,6 +1354,7 @@ describe('executeSpawnSessionRequest', () => {
       adapterBindingKey: 'cliproxyapi',
       compatibilityFingerprint: 'compatibility-v1',
       bindingSecurityFingerprint: 'managed-binding-security-v1',
+      runtimeBindingBasis,
       displaySnapshot: {
         providerName: 'CLIProxyAPI',
         connectionName: 'CLIProxyAPI managed',
@@ -1262,6 +1383,14 @@ describe('executeSpawnSessionRequest', () => {
       registry: {
         contributes: {
           agentDefinitionsById: new Map([['codex', {
+            id: 'codex',
+            identity: {
+              pluginId: 'happier.agent.codex',
+              localId: 'codex',
+            },
+            pluginId: 'happier.agent.codex',
+            provenance: 'first_party' as const,
+            source: { kind: 'bundled' as const },
             definition: {
               id: 'codex',
               kindVersion: 1,
@@ -1275,15 +1404,51 @@ describe('executeSpawnSessionRequest', () => {
                 supportsFreeformModelIds: true,
               },
             },
+            richDefinition: {
+              provenance: 'first_party' as const,
+              definition: {
+                id: 'codex',
+                title: { key: 'agents.codex.title', fallback: 'Codex' },
+                description: {
+                  key: 'agents.codex.description',
+                  fallback: 'Codex',
+                },
+                runtime: { kind: 'custom' as const },
+                primary: 'sessions' as const,
+                capabilities: {
+                  sessions: {
+                    open: ['create' as const],
+                    delivery: ['newTurn' as const],
+                    cancel: true,
+                  },
+                },
+              },
+            },
           }]]),
         },
-        agentRuntimesByAgentId: new Map(),
+        agentRuntimesByAgentId: new Map([['codex', {
+          pluginId: 'happier.agent.codex',
+          pluginVersion: '1.0.0',
+          agentId: 'codex',
+          generation: 'agent-generation-q',
+          immutableGenerationId: 'agent-immutable-q',
+          hasPrimaryRuntime: true,
+        }]]),
+        runtimeCapabilitiesByPluginId: new Map([[
+          'happier.agent.codex',
+          new Set(['agents', 'sessionHooks']),
+        ]]),
+        activateContributionsOnDemand: async () => [],
       },
       source: 'active' as const,
       release: vi.fn(async () => undefined),
     };
     hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce(acceptedLease);
-    const cleanupOnFailure = vi.fn();
+    let cleanupTransferred = false;
+    const cleanupOnFailureEffect = vi.fn();
+    const cleanupOnFailure = vi.fn(() => {
+      if (!cleanupTransferred) cleanupOnFailureEffect();
+    });
     const cleanupOnExit = vi.fn();
     const revalidateBeforeCommit = vi.fn(async () => {
       events.push('provider-commit-check');
@@ -1299,11 +1464,35 @@ describe('executeSpawnSessionRequest', () => {
               pluginId: 'happier.provider.cliproxyapi',
               localId: 'cliproxyapi',
             },
-            definition: { name: 'CLIProxyAPI' },
+            definition: {
+              name: 'CLIProxyAPI',
+              managedRuntime: {
+                kind: 'managed' as const,
+                endpointTemplateIds: ['responses'],
+              },
+            },
           },
           implementation: {
             implementationIdentity:
               managedPurposeBinding.purpose.consumer,
+            managedRuntime: {
+              kind: 'managed' as const,
+              dependencies: [],
+              endpointTemplateIds: ['responses'],
+              connectedAccounts: [],
+              requestAuthUses: [{
+                purpose:
+                  managedPurposeBinding.purpose.purpose,
+                materialization: {
+                  kind: 'httpHeaders' as const,
+                  origin: 'https://chatgpt.com',
+                  headerNames: [
+                    'authorization',
+                    'chatgpt-account-id',
+                  ],
+                },
+              }],
+            },
             facet: {
               requestAuthUses: [{
                 purpose:
@@ -1324,9 +1513,18 @@ describe('executeSpawnSessionRequest', () => {
             },
           },
         },
-        ticket: { connectionId, machineId: 'machine-a' },
+        ticket: {
+          connectionId,
+          connectionRevision: 1,
+          machineId: 'machine-a',
+        },
         binding: {
           selection: { model: { id: 'model-a' } },
+          endpoint: {
+            endpointTemplateId: 'responses',
+            protocol: 'openai-responses' as const,
+            publicHeaders: {},
+          },
         },
         support: {
           authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] },
@@ -1334,57 +1532,20 @@ describe('executeSpawnSessionRequest', () => {
         sessionBindingMetadata,
       },
       isAuthorizationCurrent: () => true,
+      isRetainedAuthorizationCurrent: () => true,
       revalidateBeforeEffect: vi.fn(async () => ({ ok: true as const })),
       revalidateBeforeCommit,
       materializeManagedEndpoint: vi.fn(),
       cleanupOnFailure,
-      takeCleanupOnExit: () => cleanupOnExit,
+      takeCleanupOnExit: () => {
+        cleanupTransferred = true;
+        return cleanupOnExit;
+      },
     };
     hoisted.createRuntimeProviderSpawnAuthorizationAttempt.mockImplementationOnce(async () => {
       events.push('provider-authorize');
       return { ok: true, attempt: managedAttempt };
     });
-    hoisted.prepareDaemonManagedProviderBinding.mockImplementationOnce(async (input) => {
-      events.push('managed-capability');
-      expect(input.attempt).toBe(managedAttempt);
-      expect(input.context).toMatchObject({
-        sessionId: 'managed-session-1',
-      });
-      expect(input.requestAuthSubject).toMatchObject({
-        subjectId: expect.stringContaining(
-          'agent-session:managed-session-1/managed-provider:',
-        ),
-      });
-      expect(input.requestAuthHttpPort).toBe(18_765);
-      events.push('managed-materialize');
-      return {
-        ok: true as const,
-        materialization: {
-          providerEnvironmentOverlay: [],
-          launchMaterialization: {
-            v: 1 as const,
-            kind: 'engineConfig' as const,
-            engineConfig: { endpoint: 'runtime-only' },
-          },
-          additionalRedactionValues: [],
-          cleanup: null,
-        },
-        redactionLease: {
-          redact: (value: string) => value,
-          values: () => [],
-          add: () => undefined,
-          snapshotRedactor: () => (value: string) => value,
-          createStreamingSanitizer: () => ({
-            push: (value: string | Uint8Array) => String(value),
-            flush: () => '',
-          }),
-          close: vi.fn(),
-        },
-        sessionBindingMetadata,
-        activateManagedProviderRequestAuth: vi.fn(async () => undefined),
-      };
-    });
-
     const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
     const { resolveSpawnChildEnvironment } = await import('../spawn/resolveSpawnChildEnvironment');
     const { resolveConnectedServiceAuthForSpawn } = await import('../connectedServices/resolveConnectedServiceAuthForSpawn');
@@ -1402,34 +1563,45 @@ describe('executeSpawnSessionRequest', () => {
     });
     vi.mocked(resolveSpawnChildEnvironment).mockImplementationOnce(async (input) => {
       events.push('generic-hooks');
-      const late = await input.materializeProviderBindingAfterHooks?.();
-      expect(late).toMatchObject({ ok: true });
+      expect(input.providerBindingContext).toEqual({
+        v: 1,
+        agentTargetKey: 'backend:codex',
+        connectionId,
+        modelId: 'model-a',
+      });
+      expect(input.materializeProviderBindingAfterHooks).toBeUndefined();
       return {
         ok: true,
         cleanupOnFailure: null,
         cleanupOnExit: null,
         expandedEnvironmentVariables: {},
         extraEnvForChild: {},
-        providerBindingLaunchHandoff: late?.ok
-          ? late.providerBindingLaunchHandoff
-          : undefined,
       };
     });
     vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async (input) => {
+      expect(input.runnerAgentSessionBootstrapAuthorization).toMatchObject({
+        descriptor: {
+          pluginId: 'happier.agent.codex',
+          agentId: 'codex',
+          backendId: 'codex',
+          generation: 'agent-generation-q',
+          immutableGenerationId: 'agent-immutable-q',
+        },
+        bootstrapFilePath: expect.any(String),
+        authorityFilePath: expect.any(String),
+      });
       expect(await input.revalidateBeforeCommit?.()).toBeNull();
       events.push('child-commit');
-      return { type: 'success', sessionId: 'managed-session-1' };
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorMessage: 'fixture launch refusal after runner handoff',
+      };
     });
 
     const result = await executeSpawnSessionRequest({
       ...createParams(),
       connectedAccountRequestAuthHttpPort: 18_765,
-      managedProviderEndpointRuntime: {
-        resolveManagedLocalServicesEnabled: async () => {
-          events.push('local-services-gate');
-          return true;
-        },
-      } as never,
       resolveProvidersFeatureEnabled: async () => true,
       activateSessionPurposeBindings: vi.fn(() => {
         events.push('lease');
@@ -1464,19 +1636,24 @@ describe('executeSpawnSessionRequest', () => {
       },
     });
 
-    expect(result).toEqual({ type: 'success', sessionId: 'managed-session-1' });
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorMessage: 'fixture launch refusal after runner handoff',
+    });
     expect(events).toEqual([
       'provider-authorize',
       'connected-services',
       'lease',
       'generic-hooks',
-      'local-services-gate',
-      'managed-capability',
-      'managed-materialize',
       'provider-commit-check',
       'child-commit',
     ]);
-    expect(cleanupOnFailure).not.toHaveBeenCalled();
+    expect(managedAttempt.revalidateBeforeEffect).not.toHaveBeenCalled();
+    expect(managedAttempt.materializeManagedEndpoint).not.toHaveBeenCalled();
+    expect(cleanupOnFailure).toHaveBeenCalledOnce();
+    expect(cleanupOnFailureEffect).not.toHaveBeenCalled();
+    expect(cleanupOnExit).toHaveBeenCalledOnce();
   });
 
   it('removes a pending session-attach file when final Provider commit revalidation refuses the spawn', async () => {
@@ -1616,6 +1793,14 @@ describe('executeSpawnSessionRequest', () => {
     expect(setup.providerCleanupOnFailure).toHaveBeenCalledTimes(1);
     expect(setup.providerCleanupOnExit).not.toHaveBeenCalled();
     expect(setup.releaseRuntimeRegistryLease).toHaveBeenCalledTimes(1);
+
+    const { logger } = await import('@/ui/logger');
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[DAEMON RUN] Session spawn failed after startup preparation',
+      { error: 'downstream failure echoed [REDACTED]' },
+    );
+    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls))
+      .not.toContain('downstream failure echoed secret');
   });
 
   it('returns one typed incomplete-retirement result when precommit Provider cleanup fails', async () => {
@@ -1662,7 +1847,7 @@ describe('executeSpawnSessionRequest', () => {
     });
     expect(setup.providerCleanupOnFailure).toHaveBeenCalledTimes(1);
     expect(setup.providerCleanupOnExit).not.toHaveBeenCalled();
-    expect(setup.releaseRuntimeRegistryLease).not.toHaveBeenCalled();
+    expect(setup.releaseRuntimeRegistryLease).toHaveBeenCalledTimes(1);
   });
 
   it('fails provider-bound spawn closed at the root feature gate before provider preflight or authorization', async () => {
@@ -2065,7 +2250,7 @@ describe('executeSpawnSessionRequest', () => {
     }));
   });
 
-  it('issues local-services bridge authorization through a token file and never passes the raw token in child env', async () => {
+  it('does not inject the retired fixed plugin local-services bridge authority into child env', async () => {
     hoisted.requireCatalogEntry.mockReturnValue({});
     hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
       ok: true,
@@ -2103,32 +2288,16 @@ describe('executeSpawnSessionRequest', () => {
     });
 
     const spawnParams = vi.mocked(routeSpawnModeAndWaitForWebhook).mock.calls.at(-1)?.[0] as any;
-    expect(spawnParams.extraEnvForChildWithMessage).toEqual(expect.objectContaining({
-      HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_FILE: expect.stringContaining('/tmp/happier-home/tmp/'),
-    }));
     expect(spawnParams.extraEnvForChildWithMessage).not.toHaveProperty(
       'HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN',
     );
-    expect(spawnParams.unsetEnvKeys).toEqual(expect.arrayContaining([
-      'HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN',
-      'HAPPIER_SESSION_ATTACH_FILE',
-      'HAPPIER_STACK_PROCESS_KIND',
-      'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON',
-      'HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON',
-      'HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT',
-    ]));
-    expect(spawnParams.unsetEnvKeys).not.toContain(
+    expect(spawnParams.extraEnvForChildWithMessage).not.toHaveProperty(
       'HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN_FILE',
     );
-    expect(spawnParams.localServicesBridgeAuthorization).toEqual({
-      tokenHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
-      pluginId: 'happier.agent.codex',
-      contributionId: 'codex',
-      tokenFilePath: expect.stringContaining('/tmp/happier-home/tmp/'),
-    });
+    expect(spawnParams).not.toHaveProperty('localServicesBridgeAuthorization');
   });
 
-  it('uses bundled plugin metadata for built-in local-services bridge ownership while the Agent bridge acquires its runtime lease', async () => {
+  it('acquires the authoritative runtime lease for the built-in Agent runner bootstrap', async () => {
     hoisted.requireCatalogEntry.mockReturnValue({});
     const effectiveBackendTargetV2 = {
       kind: 'backend',
@@ -2182,17 +2351,10 @@ describe('executeSpawnSessionRequest', () => {
       type: 'success',
       sessionId: 'session-1',
     });
-    const spawnParams = vi.mocked(routeSpawnModeAndWaitForWebhook).mock.calls.at(-1)?.[0] as {
-      localServicesBridgeAuthorization?: { pluginId?: string; contributionId?: string };
-    };
-    expect(spawnParams.localServicesBridgeAuthorization).toEqual(expect.objectContaining({
-      pluginId: 'happier.agent.opencode',
-      contributionId: 'opencode',
-    }));
     expect(hoisted.acquireAuthoritativePluginRuntimeRegistryLease).toHaveBeenCalledTimes(1);
   });
 
-  it('resolves configured local-services bridge ownership from the authoritative plugin runtime registry lease', async () => {
+  it('resolves configured Agent bootstrap ownership from the authoritative plugin runtime registry lease', async () => {
     hoisted.requireCatalogEntry.mockReturnValue({});
     hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
       ok: true,
@@ -2244,10 +2406,6 @@ describe('executeSpawnSessionRequest', () => {
       processEnv: {},
     });
 
-    const spawnParams = vi.mocked(routeSpawnModeAndWaitForWebhook).mock.calls.at(-1)?.[0] as {
-      localServicesBridgeAuthorization?: { pluginId?: string };
-    };
-    expect(spawnParams.localServicesBridgeAuthorization?.pluginId).toBe('active.plugin.review-bot');
     expect(hoisted.acquireAuthoritativePluginRuntimeRegistryLease).toHaveBeenCalledWith({
       happyHomeDir: '/tmp/happier-home',
     });
@@ -2421,20 +2579,49 @@ describe('executeSpawnSessionRequest', () => {
       ok: true,
       directoryCreated: false,
     });
+    const agentRuntimesByAgentId = new Map();
+    const activateContributionsOnDemand = vi.fn(async () => {
+      agentRuntimesByAgentId.set('pi', {
+        pluginId: 'happier.agent.pi',
+        pluginVersion: '1.0.0',
+        agentId: 'pi',
+        generation: 'agent-generation-pi',
+        immutableGenerationId: 'agent-immutable-pi',
+        hasPrimaryRuntime: true,
+      });
+      return [];
+    });
     hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
       registry: {
         contributes: {
           ...createRegistryWithBackendOwners({ pi: 'happier.agent.pi' }),
           agentDefinitionsById: new Map([['pi', {
+            id: 'pi',
             identity: { pluginId: 'happier.agent.pi', localId: 'pi' },
+            pluginId: 'happier.agent.pi',
+            provenance: 'first_party' as const,
+            source: { kind: 'bundled' as const },
             richDefinition: {
+              provenance: 'first_party' as const,
               definition: {
+                id: 'pi',
+                title: { key: 'agents.pi.title', fallback: 'Pi' },
+                runtime: { kind: 'custom' as const },
+                primary: 'sessions' as const,
+                capabilities: {
+                  sessions: {
+                    open: ['create' as const],
+                    delivery: ['newTurn' as const],
+                    cancel: true,
+                  },
+                },
                 connectedAccounts: [{
                   purpose: 'openai-codex-model-request',
                   service: {
                     pluginId: 'happier.agent.codex',
                     localId: 'openai-codex',
                   },
+                  materializationKinds: ['httpHeaders'],
                 }],
               },
             },
@@ -2446,7 +2633,12 @@ describe('executeSpawnSessionRequest', () => {
             },
           }]]),
         },
-        agentRuntimesByAgentId: new Map(),
+        agentRuntimesByAgentId,
+        runtimeCapabilitiesByPluginId: new Map([[
+          'happier.agent.pi',
+          new Set(['agents', 'sessionHooks']),
+        ]]),
+        activateContributionsOnDemand,
       },
       source: 'active',
       release: vi.fn(async () => undefined),
@@ -2465,7 +2657,8 @@ describe('executeSpawnSessionRequest', () => {
     vi.mocked(shouldResolveConnectedServiceAuthForSpawn).mockReturnValue(true);
     vi.mocked(resolveConnectedServiceAuthForSpawn).mockResolvedValueOnce({
       env: {},
-      targetMaterializedRoot: '/tmp/pi-materialized',
+      targetMaterializedRoot: '/tmp/pi-stable-home',
+      requestAuthMaterializedRoot: '/tmp/pi-materialized',
       cleanupOnFailure: null,
       cleanupOnExit: null,
       connectedServicesBindings: {
@@ -2479,6 +2672,11 @@ describe('executeSpawnSessionRequest', () => {
         },
       },
       requestAuthPurposeBindings: [agentPurposeBinding],
+      qualifiedPurposeBindingSnapshot: {
+        purposes: [agentPurposeBinding.purpose],
+        bindings: [agentPurposeBinding],
+        requestAuthUses: [agentRequestAuthUse],
+      },
     });
     vi.mocked(resolveSpawnChildEnvironment).mockImplementationOnce(async () => {
       events.push('child-environment');
@@ -2580,6 +2778,11 @@ describe('executeSpawnSessionRequest', () => {
       'child-environment',
       'spawn',
     ]);
+    expect(activateContributionsOnDemand).toHaveBeenCalledWith([{
+      pluginId: 'happier.agent.pi',
+      family: 'agents',
+      localId: 'pi',
+    }]);
     expect(activateSessionPurposeBindings).toHaveBeenCalledWith({
       sessionId: 'session-1',
       purposes: [agentPurpose],
@@ -2587,449 +2790,13 @@ describe('executeSpawnSessionRequest', () => {
     });
     expect(requestAuthRegistry.activate).toHaveBeenCalledWith({
       subject: expect.objectContaining({
-        subjectId: 'agent-session:session-1/agent:pi',
+        subjectId: 'agent-session:session-1',
+        legacyServiceKeyedCompatibility: true,
       }),
       materializedRootDir: '/tmp/pi-materialized',
       materializationId: 'csm_pi_request_auth',
       httpPort: 18_765,
     });
-    expect(requestAuthRegistry.retire).toHaveBeenCalledWith(descriptor);
-    expect(sessionPurposeBindingSubject.dispose).toHaveBeenCalledTimes(1);
-  });
-
-  it('defers one fresh Agent + managed Provider lease and both scoped capabilities until the canonical server session id', async () => {
-    const events: string[] = [];
-    const managedConnectionId =
-      ProviderConnectionIdSchema.parse('pc_fresh_managed');
-    const managedPurposeBinding = {
-      purpose: {
-        consumer: {
-          pluginId: 'happier.provider.cliproxyapi',
-          localId: 'cliproxyapi',
-        },
-        purpose: 'openai-upstream',
-      },
-      target: {
-        kind: 'account' as const,
-        account: {
-          service: {
-            pluginId: 'happier.connected-account.openai',
-            localId: 'codex',
-          },
-          accountId: 'managed-work',
-        },
-      },
-    };
-    const managedRequestAuthUse = {
-      purpose: managedPurposeBinding.purpose,
-      materialization: {
-        kind: 'httpHeaders' as const,
-        origin: 'https://chatgpt.com',
-        headerNames: ['authorization', 'chatgpt-account-id'],
-      },
-    };
-    const managedSessionBindingMetadata = {
-      v: 1 as const,
-      connectionId: managedConnectionId,
-      contributionKey:
-        'happier.provider.cliproxyapi/cliproxyapi',
-      connectionRevision: 1,
-      protocol: 'openai-responses' as const,
-      materialization: 'engineConfig' as const,
-      adapterBindingKey: 'cliproxyapi',
-      compatibilityFingerprint: 'compatibility-v1',
-      bindingSecurityFingerprint: 'security-v1',
-      displaySnapshot: {
-        providerName: 'CLIProxyAPI',
-        connectionName: 'CLIProxyAPI',
-        connectionRole: 'default' as const,
-        connectionDisplayNameMode: 'automatic' as const,
-      },
-    };
-    const managedAttempt = {
-      deployment: { kind: 'managedLocal' as const },
-      authorization: {
-        deployment: {
-          kind: 'managedLocal' as const,
-          contribution: {
-            identity: {
-              pluginId: 'happier.provider.cliproxyapi',
-              localId: 'cliproxyapi',
-            },
-            definition: { name: 'CLIProxyAPI' },
-          },
-          implementation: {
-            implementationIdentity: managedPurposeBinding.purpose.consumer,
-            facet: {
-              requestAuthUses: [{
-                purpose: managedPurposeBinding.purpose.purpose,
-                materialization: managedRequestAuthUse.materialization,
-              }],
-            },
-            purposeBindings: {
-              v: 1 as const,
-              bindings: [managedPurposeBinding],
-            },
-          },
-        },
-        ticket: {
-          connectionId: managedConnectionId,
-          machineId: 'machine-a',
-        },
-        binding: {
-          selection: { model: { id: 'model-a' } },
-        },
-        support: {
-          authIsolation: {
-            suppressConnectedServiceIds: [],
-            ownedEnvKeys: [],
-          },
-        },
-        sessionBindingMetadata: managedSessionBindingMetadata,
-      },
-      isAuthorizationCurrent: () => true,
-      revalidateBeforeEffect: vi.fn(async () => ({ ok: true as const })),
-      revalidateBeforeCommit: vi.fn(async () => ({ ok: true as const })),
-      materializeManagedEndpoint: vi.fn(),
-      cleanupOnFailure: vi.fn(),
-      takeCleanupOnExit: () => null,
-    } as unknown as ProviderSpawnAuthorizationAttempt;
-    hoisted.createRuntimeProviderSpawnAuthorizationAttempt.mockResolvedValueOnce({
-      ok: true,
-      attempt: managedAttempt,
-    });
-    const agentPurpose = {
-      consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
-      purpose: 'openai-codex-model-request',
-    };
-    const agentPurposeBinding = {
-      purpose: agentPurpose,
-      target: {
-        kind: 'account' as const,
-        account: {
-          service: {
-            pluginId: 'happier.agent.codex',
-            localId: 'openai-codex',
-          },
-          accountId: 'codex-work',
-        },
-      },
-    };
-    const agentRequestAuthUse = {
-      purpose: agentPurpose,
-      materialization: {
-        kind: 'httpHeaders' as const,
-        origin: 'https://chatgpt.com',
-        headerNames: ['authorization', 'chatgpt-account-id'],
-      },
-    };
-    hoisted.requireCatalogEntry.mockReturnValue({});
-    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
-      ok: true,
-      normalizedExistingSessionId: '',
-      effectiveResume: '',
-      effectiveBackendTargetV2: {
-        kind: 'backend',
-        sourceKind: 'built_in',
-        backendId: 'pi',
-      },
-      sessionAttachPayload: { v: 2, encryptionMode: 'plain' },
-      catalogAgentId: 'pi',
-    });
-    hoisted.ensureSessionDirectory.mockResolvedValueOnce({
-      ok: true,
-      directoryCreated: false,
-    });
-    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
-      registry: {
-        contributes: {
-          ...createRegistryWithBackendOwners({ pi: 'happier.agent.pi' }),
-          agentDefinitionsById: new Map([['pi', {
-            identity: { pluginId: 'happier.agent.pi', localId: 'pi' },
-            richDefinition: {
-              definition: {
-                connectedAccounts: [{
-                  purpose: 'openai-codex-model-request',
-                  service: {
-                    pluginId: 'happier.agent.codex',
-                    localId: 'openai-codex',
-                  },
-                }],
-              },
-            },
-            catalogEntry: {
-              connectedAccountRequestAuthUses: [{
-                purpose: agentPurpose.purpose,
-                materialization: agentRequestAuthUse.materialization,
-              }],
-            },
-          }]]),
-        },
-        agentRuntimesByAgentId: new Map(),
-      },
-      source: 'active',
-      release: vi.fn(async () => undefined),
-    });
-
-    const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
-    const { createSpawnLifecycleCallbacks } = await import('../spawn/createSpawnLifecycleCallbacks');
-    const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
-    const { resolveSpawnChildEnvironment } = await import('../spawn/resolveSpawnChildEnvironment');
-    const { resolveConnectedServiceAuthForSpawn } = await import('../connectedServices/resolveConnectedServiceAuthForSpawn');
-    const { shouldResolveConnectedServiceAuthForSpawn } = await import('../connectedServices/shouldResolveConnectedServiceAuthForSpawn');
-    vi.mocked(shouldResolveConnectedServiceAuthForSpawn).mockReturnValue(true);
-    vi.mocked(resolveConnectedServiceAuthForSpawn).mockResolvedValueOnce({
-      env: {},
-      targetMaterializedRoot: '/tmp/pi-materialized',
-      cleanupOnFailure: null,
-      cleanupOnExit: null,
-      connectedServicesBindings: {
-        v: 1,
-        bindingsByServiceId: {
-          'openai-codex': {
-            source: 'connected',
-            selection: 'profile',
-            profileId: 'codex-work',
-          },
-        },
-      },
-      requestAuthPurposeBindings: [agentPurposeBinding],
-    });
-    const activateManagedProviderRequestAuth = vi.fn(async (subject) => {
-      events.push('managed-capability');
-      expect(subject.resolvePurposeUse(managedPurposeBinding.purpose)).toEqual({
-        binding: managedPurposeBinding,
-        use: managedRequestAuthUse,
-      });
-      expect(subject.resolvePurposeUse(agentPurpose)).toBeNull();
-      expect(subject.listPurposeUses()).toEqual([{
-        binding: managedPurposeBinding,
-        use: managedRequestAuthUse,
-      }]);
-    });
-    hoisted.prepareDaemonManagedProviderBinding.mockImplementationOnce(
-      async (input) => {
-        events.push('wrapper-start');
-        expect(input.context).toMatchObject({
-          operationId: 'fresh-managed-spawn-nonce',
-        });
-        expect(input.requestAuthSubject).toBeUndefined();
-        return {
-          ok: true as const,
-          materialization: {
-            providerEnvironmentOverlay: [],
-            launchMaterialization: {
-              v: 1 as const,
-              kind: 'engineConfig' as const,
-              engineConfig: { endpoint: 'runtime-only' },
-            },
-            additionalRedactionValues: [],
-            cleanup: null,
-          },
-          redactionLease: {
-            redact: (value: string) => value,
-            values: () => [],
-            add: () => undefined,
-            snapshotRedactor: () => (value: string) => value,
-            createStreamingSanitizer: () => ({
-              push: (value: string | Uint8Array) => String(value),
-              flush: () => '',
-            }),
-            close: vi.fn(),
-          },
-          sessionBindingMetadata: managedSessionBindingMetadata,
-          activateManagedProviderRequestAuth,
-        };
-      },
-    );
-    vi.mocked(resolveSpawnChildEnvironment).mockImplementationOnce(async (input) => {
-      events.push('child-environment');
-      const late = await input.materializeProviderBindingAfterHooks?.();
-      expect(late).toMatchObject({ ok: true });
-      return {
-        ok: true,
-        cleanupOnFailure: null,
-        cleanupOnExit: null,
-        expandedEnvironmentVariables: {},
-        extraEnvForChild: {},
-        providerBindingLaunchHandoff:
-          late?.ok ? late.providerBindingLaunchHandoff : undefined,
-      };
-    });
-    const descriptor = {
-      path: '/tmp/pi-materialized/.happier/request-auth-capability.json',
-      materializationId: 'csm_pi_request_auth_fresh',
-      subjectScopeDigest: 'a'.repeat(64),
-      capabilityDigest: 'b'.repeat(64),
-    };
-    const requestAuthRegistry = {
-      activate: vi.fn(async (input) => {
-        events.push('activate');
-        expect(input.subject.resolvePurposeUse(agentPurpose)).toEqual({
-          binding: agentPurposeBinding,
-          use: agentRequestAuthUse,
-        });
-        expect(input.subject.resolvePurposeUse(managedPurposeBinding.purpose))
-          .toBeNull();
-        expect(input.subject.listPurposeUses()).toEqual([{
-          binding: agentPurposeBinding,
-          use: agentRequestAuthUse,
-        }]);
-        return descriptor;
-      }),
-      retire: vi.fn(async () => undefined),
-    };
-    const sessionPurposeBindingSubject = {
-      subjectId: 'agent-session:session-from-server',
-      isCurrent: () => true,
-      resolvePurposeBinding: (purpose: typeof agentPurpose) => {
-        if (
-          purpose.consumer.pluginId === agentPurpose.consumer.pluginId
-          && purpose.consumer.localId === agentPurpose.consumer.localId
-          && purpose.purpose === agentPurpose.purpose
-        ) {
-          return agentPurposeBinding;
-        }
-        if (
-          purpose.consumer.pluginId
-            === managedPurposeBinding.purpose.consumer.pluginId
-          && purpose.consumer.localId
-            === managedPurposeBinding.purpose.consumer.localId
-          && purpose.purpose === managedPurposeBinding.purpose.purpose
-        ) {
-          return managedPurposeBinding;
-        }
-        return null;
-      },
-      listPurposeBindings: () => [
-        agentPurposeBinding,
-        managedPurposeBinding,
-      ],
-      dispose: vi.fn(),
-    };
-    const activateSessionPurposeBindings = vi.fn(() => {
-      events.push('lease');
-      return sessionPurposeBindingSubject;
-    });
-    let lifecycleInput:
-      Parameters<typeof createSpawnLifecycleCallbacks>[0]
-      | null = null;
-    const lifecycleCallbacks = {
-      persistAcceptedSpawnMarker: vi.fn(async () => undefined),
-      removeAcceptedSpawnMarkerIfOwned:
-        vi.fn(async () => true),
-      consumeSessionAttachCleanupForPid: vi.fn(),
-      cleanupPendingSessionAttach: vi.fn(async () => undefined),
-      registerSpawnResourceCleanupForPid: vi.fn(),
-      registerConnectedServiceSpawnTarget: vi.fn(),
-    };
-    vi.mocked(createSpawnLifecycleCallbacks).mockImplementationOnce((input) => {
-      lifecycleInput = input;
-      return lifecycleCallbacks;
-    });
-    vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async () => {
-      events.push('spawn');
-      expect(events).toEqual(['child-environment', 'wrapper-start', 'spawn']);
-      expect(activateSessionPurposeBindings).not.toHaveBeenCalled();
-      expect(requestAuthRegistry.activate).not.toHaveBeenCalled();
-      expect(activateManagedProviderRequestAuth).not.toHaveBeenCalled();
-      const activateAfterCanonicalSession =
-        lifecycleInput
-          ?.activateConnectedAccountSessionBindingOnCanonicalSession;
-      expect(activateAfterCanonicalSession).toEqual(expect.any(Function));
-      await expect(
-        activateAfterCanonicalSession?.('session-from-server'),
-      ).resolves.toBeNull();
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-        errorMessage: 'fixture launch refusal',
-      };
-    });
-
-    await expect(executeSpawnSessionRequest({
-      ...createParams(),
-      options: {
-        directory: '/tmp/project',
-        sessionId: 'caller-reservation',
-        spawnNonce: 'fresh-managed-spawn-nonce',
-        machineId: 'machine-a',
-        backendTarget: {
-          kind: 'backend',
-          backendId: 'pi',
-          sourceKind: 'built_in',
-        },
-        modelSelection: {
-          v: 1,
-          updatedAt: 1,
-          ref: {
-            agentTargetKey: 'backend:pi',
-            providerConnectionId: managedConnectionId,
-            modelId: 'model-a',
-          },
-        },
-        connectedServices: {
-          v: 1,
-          bindingsByServiceId: {
-            'openai-codex': {
-              source: 'connected',
-              selection: 'profile',
-              profileId: 'codex-work',
-            },
-          },
-        },
-        connectedServiceMaterializationIdentityV1: {
-          v: 1,
-          id: 'csm_pi_request_auth_fresh',
-          createdAt: 1,
-        },
-      },
-      managedProviderEndpointRuntime: {
-        resolveManagedLocalServicesEnabled: async () => true,
-      } as never,
-      resolveProvidersFeatureEnabled: async () => true,
-      connectedAccountRequestAuthRegistry: requestAuthRegistry,
-      connectedAccountRequestAuthHttpPort: 18_765,
-      activateSessionPurposeBindings,
-    })).resolves.toEqual({
-      type: 'error',
-      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-      errorMessage: 'fixture launch refusal',
-    });
-
-    expect(events.slice(0, 6)).toEqual([
-      'child-environment',
-      'wrapper-start',
-      'spawn',
-      'lease',
-      'activate',
-      'managed-capability',
-    ]);
-    expect(resolveConnectedServiceAuthForSpawn).toHaveBeenCalledWith(
-      expect.not.objectContaining({ sessionId: expect.anything() }),
-    );
-    expect(activateSessionPurposeBindings).toHaveBeenCalledWith({
-      sessionId: 'session-from-server',
-      purposes: [agentPurpose, managedPurposeBinding.purpose],
-      bindings: [agentPurposeBinding, managedPurposeBinding],
-    });
-    expect(requestAuthRegistry.activate).toHaveBeenCalledWith({
-      subject: expect.objectContaining({
-        subjectId: expect.stringContaining(
-          'agent-session:session-from-server/agent:',
-        ),
-      }),
-      materializedRootDir: '/tmp/pi-materialized',
-      materializationId: 'csm_pi_request_auth_fresh',
-      httpPort: 18_765,
-    });
-    expect(activateManagedProviderRequestAuth).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subjectId: expect.stringContaining(
-          'agent-session:session-from-server/managed-provider:',
-        ),
-      }),
-    );
     expect(requestAuthRegistry.retire).toHaveBeenCalledWith(descriptor);
     expect(sessionPurposeBindingSubject.dispose).toHaveBeenCalledTimes(1);
   });
@@ -3071,6 +2838,7 @@ describe('executeSpawnSessionRequest', () => {
       cleanupOnFailure: null,
       cleanupOnExit: null,
       connectedServicesBindings: { v: 1, bindingsByServiceId: {} },
+      qualifiedPurposeBindingSnapshot: null,
     });
     vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
       ok: true,
@@ -3180,6 +2948,7 @@ describe('executeSpawnSessionRequest', () => {
           },
         },
       },
+      qualifiedPurposeBindingSnapshot: null,
     });
     vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
       ok: true,
@@ -3293,6 +3062,7 @@ describe('executeSpawnSessionRequest', () => {
       cleanupOnFailure: null,
       cleanupOnExit: null,
       connectedServicesBindings: { v: 1, bindingsByServiceId: {} },
+      qualifiedPurposeBindingSnapshot: null,
     });
     vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
       ok: true,
@@ -3311,7 +3081,11 @@ describe('executeSpawnSessionRequest', () => {
       createdAt: 123,
       source: 'first_spawn',
     };
-    const repairMissingConnectedServiceMaterializationIdentityForSpawn = vi.fn(async () => repairedIdentity);
+    const persistAfterMaterialization = vi.fn(async () => undefined);
+    const repairMissingConnectedServiceMaterializationIdentityForSpawn = vi.fn(async () => ({
+      identity: repairedIdentity,
+      persistAfterMaterialization,
+    }));
 
     const result = await executeSpawnSessionRequest({
       ...createParams(),
@@ -3361,6 +3135,7 @@ describe('executeSpawnSessionRequest', () => {
         connectedServiceMaterializationIdentityV1: repairedIdentity,
       }),
     }));
+    expect(persistAfterMaterialization).toHaveBeenCalledOnce();
   });
 
   it('returns a structured connected-service ux diagnostic when an existing connected-service spawn has no materialization identity', async () => {

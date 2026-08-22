@@ -63,6 +63,7 @@ vi.mock('@/agent/catalog/registry', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agent/catalog/registry')>();
   return {
     ...actual,
+    findCatalogEntry: hoisted.requireCatalogEntry,
     requireCatalogEntry: hoisted.requireCatalogEntry,
   };
 });
@@ -306,6 +307,7 @@ describe('executeSpawnSessionRequest §2 resume-reachability gate (integration)'
       cleanupOnFailure: null,
       cleanupOnExit: null,
       connectedServicesBindings: { v: 1, bindingsByServiceId: {} },
+      qualifiedPurposeBindingSnapshot: null,
     });
     vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
       ok: true,

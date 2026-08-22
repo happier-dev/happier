@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDaemonControlApp } from './controlServer';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
+import { logger } from '@/ui/logger';
+
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+  },
+}));
 
 describe('daemon control server: /spawn-session', () => {
   afterEach(() => {
@@ -45,7 +53,271 @@ describe('daemon control server: /spawn-session', () => {
     }
   });
 
-  it('strips retired first-turn content from daemon control spawn requests', async () => {
+  it('does not persist private spawn directory or session identity at control ingress', async () => {
+    const privateDirectory = '/Users/private-user/work/client-project';
+    const privateSessionId = 'session-private-identity';
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success', sessionId: privateSessionId }),
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      vi.mocked(logger.debug).mockClear();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-happier-daemon-token': 'test-token',
+        },
+        payload: JSON.stringify({
+          directory: privateDirectory,
+          sessionId: privateSessionId,
+          backendTarget: {
+            kind: 'backend',
+            backendId: 'codex',
+            sourceKind: 'built_in',
+          },
+        }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      const diagnostics = vi.mocked(logger.debug).mock.calls
+        .flatMap((call) => call)
+        .map((value) => value instanceof Error
+          ? `${value.name}:${value.message}:${value.stack ?? ''}`
+          : String(value))
+        .join('|');
+      expect(diagnostics).not.toContain(privateDirectory);
+      expect(diagnostics).not.toContain(privateSessionId);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('does not persist session identity or raw errors at session-started ingress', async () => {
+    const privateSessionId = 'session-private-startup-identity';
+    const privateStartupError = `startup failed for ${privateSessionId}`;
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success', sessionId: privateSessionId }),
+      requestShutdown: () => {},
+      onHappySessionWebhook: async () => {
+        throw new Error(privateStartupError);
+      },
+      admitPersistedTakeover: async () => {
+        throw new Error(privateStartupError);
+      },
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      vi.mocked(logger.debug).mockClear();
+      const ordinary = await app.inject({
+        method: 'POST',
+        url: '/session-started',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-happier-daemon-token': 'test-token',
+        },
+        payload: JSON.stringify({ sessionId: privateSessionId, metadata: {} }),
+      });
+      const persistedTakeover = await app.inject({
+        method: 'POST',
+        url: '/session-started',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-happier-daemon-token': 'test-token',
+        },
+        payload: JSON.stringify({
+          sessionId: privateSessionId,
+          metadata: {},
+          persistedTakeoverAdmission: {
+            mode: 'persisted',
+            operationId: 'private-operation',
+            attemptId: 'private-attempt',
+            phase: 'admit',
+            publisherPrecondition: {
+              machineId: 'machine_local',
+              committedFenceMs: 1,
+            },
+          },
+        }),
+      });
+
+      expect(ordinary.statusCode).toBe(503);
+      expect(ordinary.json()).toEqual({
+        status: 'error',
+        errorCode: 'session_startup_reconciliation_failed',
+      });
+      expect(persistedTakeover.statusCode).toBe(503);
+      expect(persistedTakeover.json()).toEqual({
+        status: 'error',
+        errorCode: 'persisted_takeover_admission_failed',
+      });
+      const diagnostics = vi.mocked(logger.debug).mock.calls
+        .flatMap((call) => call)
+        .map((value) => value instanceof Error
+          ? `${value.name}:${value.message}:${value.stack ?? ''}`
+          : String(value))
+        .join('|');
+      expect(diagnostics).not.toContain(privateSessionId);
+      expect(diagnostics).not.toContain(privateStartupError);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('routes the strict terminal creation failure through the existing session-started callback', async () => {
+    const onHappySessionWebhook = vi.fn();
+    const onSessionStartupFailure = vi.fn(() => true);
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }),
+      requestShutdown: () => {},
+      onHappySessionWebhook,
+      onSessionStartupFailure,
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/session-started',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-happier-daemon-token': 'test-token',
+        },
+        payload: JSON.stringify({
+          result: 'failure',
+          spawnNonce: 'creation-attempt-1',
+          errorDetail: {
+            kind: 'session_creation_organization_invalid',
+            code: 'organization_invalid',
+          },
+        }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ status: 'ok' });
+      expect(onSessionStartupFailure).toHaveBeenCalledWith({
+        spawnNonce: 'creation-attempt-1',
+        errorDetail: {
+          kind: 'session_creation_organization_invalid',
+          code: 'organization_invalid',
+        },
+      });
+      expect(onHappySessionWebhook).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('preserves the full existing spawn-nonce grammar for terminal failures', async () => {
+    const onSessionStartupFailure = vi.fn(() => true);
+    const spawnNonce = 'n'.repeat(1_025);
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }),
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      onSessionStartupFailure,
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/session-started',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-happier-daemon-token': 'test-token',
+        },
+        payload: JSON.stringify({
+          result: 'failure',
+          spawnNonce,
+          errorDetail: {
+            kind: 'session_creation_organization_invalid',
+            code: 'organization_invalid',
+          },
+        }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(onSessionStartupFailure).toHaveBeenCalledWith({
+        spawnNonce,
+        errorDetail: {
+          kind: 'session_creation_organization_invalid',
+          code: 'organization_invalid',
+        },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('preserves the terminal organization refusal on the original spawn response', async () => {
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({
+        type: 'error' as const,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'Session creation organization placement is invalid',
+        errorDetail: {
+          kind: 'session_creation_organization_invalid' as const,
+          code: 'organization_invalid' as const,
+        },
+      }),
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-happier-daemon-token': 'test-token',
+        },
+        payload: JSON.stringify({ directory: '/tmp' }),
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({
+        success: false,
+        error: 'Session creation organization placement is invalid',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorDetail: {
+          kind: 'session_creation_organization_invalid',
+          code: 'organization_invalid',
+        },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects retired first-turn and public Action fields from daemon control spawn requests', async () => {
     const spawnSession = vi.fn<Parameters<typeof createDaemonControlApp>[0]['spawnSession']>(async () => ({
       type: 'success' as const,
       sessionId: 'happy-test-123',
@@ -62,20 +334,30 @@ describe('daemon control server: /spawn-session', () => {
 
     try {
       await app.ready();
-      const res = await app.inject({
-        method: 'POST',
-        url: '/spawn-session',
-        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
-        payload: JSON.stringify({
-          directory: '/tmp',
-          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-          initialPrompt: 'send this first turn',
-        }),
-      });
+      for (const syntheticActionFields of [
+        { initialPrompt: 'send this first turn' },
+        { tag: 'predecessor metadata label' },
+      ]) {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/spawn-session',
+          headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+          payload: JSON.stringify({
+            directory: '/tmp',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            ...syntheticActionFields,
+          }),
+        });
 
-      expect(res.statusCode).toBe(200);
-      expect(spawnSession).toHaveBeenCalledTimes(1);
-      expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({
+          success: false,
+          error: 'Invalid params',
+          errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        });
+      }
+
+      expect(spawnSession).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }
@@ -359,6 +641,72 @@ describe('daemon control server: /spawn-session', () => {
         success: true,
         status: 'success',
         sessionId: 'sess-from-response',
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('preserves create-or-rejoin outcome in direct and nonce-settled spawn responses', async () => {
+    const sessionCreationOutcome = {
+      disposition: 'rejoined' as const,
+      organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
+    };
+    const spawnSession = vi.fn(async () => ({
+      type: 'success' as const,
+      sessionId: 'sess-outcome',
+      sessionCreationOutcome,
+    }));
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession,
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const spawnRes = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({ directory: '/tmp', spawnNonce: 'nonce-outcome' }),
+      });
+      expect(spawnRes.json()).toEqual({
+        success: true,
+        sessionId: 'sess-outcome',
+        approvedNewDirectoryCreation: true,
+        sessionCreationOutcome,
+      });
+
+      const retryRes = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({ directory: '/tmp/retry', spawnNonce: 'nonce-outcome' }),
+      });
+      expect(retryRes.json()).toEqual({
+        success: true,
+        sessionId: 'sess-outcome',
+        approvedNewDirectoryCreation: true,
+        sessionCreationOutcome,
+      });
+      expect(spawnSession).toHaveBeenCalledTimes(1);
+
+      const resolveRes = await app.inject({
+        method: 'POST',
+        url: '/spawn-session/resolve',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({ spawnNonce: 'nonce-outcome' }),
+      });
+      expect(resolveRes.json()).toEqual({
+        success: true,
+        status: 'success',
+        sessionId: 'sess-outcome',
+        sessionCreationOutcome,
       });
     } finally {
       await app.close();
@@ -795,6 +1143,105 @@ describe('daemon control server: /spawn-session', () => {
         success: true,
         status: 'success',
         sessionId: 'sess-timeout-resolved',
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('settles an admitted nonce to first terminal child-exit failure and replays it', async () => {
+    let settleSpawn!: (result: {
+      type: 'error';
+      errorCode: typeof SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK;
+      errorMessage: string;
+    }) => void;
+    let trackedChildren: any[] = [];
+    const spawnSession = vi.fn(async () => await new Promise<{
+      type: 'error';
+      errorCode: typeof SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK;
+      errorMessage: string;
+    }>((resolve) => {
+      settleSpawn = resolve;
+    }));
+    const app = createDaemonControlApp({
+      getChildren: () => trackedChildren,
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession,
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+    const headers = { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' };
+    const payload = JSON.stringify({ directory: '/tmp', spawnNonce: 'nonce-child-exit' });
+    const errorMessage = 'Child process exited before session webhook (pid=8892, code=1, signal=null)';
+
+    try {
+      await app.ready();
+      const firstSpawn = app.inject({ method: 'POST', url: '/spawn-session', headers, payload });
+      await vi.waitFor(() => expect(spawnSession).toHaveBeenCalledOnce());
+
+      await expect(app.inject({
+        method: 'POST',
+        url: '/spawn-session/resolve',
+        headers,
+        payload: JSON.stringify({ spawnNonce: 'nonce-child-exit' }),
+      })).resolves.toMatchObject({ statusCode: 200 });
+
+      settleSpawn({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        errorMessage,
+      });
+      expect((await firstSpawn).json()).toMatchObject({
+        success: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        error: errorMessage,
+      });
+
+      const terminal = await app.inject({
+        method: 'POST',
+        url: '/spawn-session/resolve',
+        headers,
+        payload: JSON.stringify({ spawnNonce: 'nonce-child-exit' }),
+      });
+      expect(terminal.json()).toEqual({
+        success: true,
+        status: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        errorMessage,
+      });
+
+      const retry = await app.inject({ method: 'POST', url: '/spawn-session', headers, payload });
+      expect(retry.json()).toMatchObject({
+        success: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        error: errorMessage,
+      });
+      expect(spawnSession).toHaveBeenCalledOnce();
+
+      trackedChildren = [{
+        startedBy: 'daemon',
+        pid: 8892,
+        happySessionId: 'session-too-late',
+        spawnOptions: { directory: '/tmp', spawnNonce: 'nonce-child-exit' },
+      }];
+      expect((await app.inject({
+        method: 'POST',
+        url: '/session-started',
+        headers,
+        payload: JSON.stringify({ sessionId: 'session-too-late', metadata: {} }),
+      })).statusCode).toBe(200);
+      expect((await app.inject({
+        method: 'POST',
+        url: '/spawn-session/resolve',
+        headers,
+        payload: JSON.stringify({ spawnNonce: 'nonce-child-exit' }),
+      })).json()).toEqual({
+        success: true,
+        status: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        errorMessage,
       });
     } finally {
       await app.close();

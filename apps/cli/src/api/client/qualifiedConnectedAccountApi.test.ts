@@ -2,6 +2,8 @@ import axios from "axios";
 import { buildProviderAccountUsageRecordId } from "@happier-dev/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from "@/api/clientCompatibility/cliClientCompatibility";
+
 import {
     acquireQualifiedConnectedAccountRefreshLeaseV4,
     deleteQualifiedConnectedAccountCredentialV4,
@@ -112,6 +114,7 @@ describe("qualified Connected Account V4 API", () => {
         const group = {
             v: 1 as const,
             ref: { service, groupId: "primary-group" },
+            incarnation: "qualified-group-row-primary",
             displayName: null,
             policy: {},
             activeConnectedAccountId: "provider/account",
@@ -132,6 +135,7 @@ describe("qualified Connected Account V4 API", () => {
             mutation: {
                 group: group.ref,
                 connectedAccountId: "provider/account",
+                expectedIncarnation: group.incarnation,
                 expectedGeneration: 1,
                 expectedRuntimeStateRevision: 2,
                 expectedSource: {
@@ -149,6 +153,7 @@ describe("qualified Connected Account V4 API", () => {
             {
                 group: group.ref,
                 connectedAccountId: "provider/account",
+                expectedIncarnation: group.incarnation,
                 expectedGeneration: 1,
                 expectedRuntimeStateRevision: 2,
                 expectedSource: {
@@ -171,6 +176,7 @@ describe("qualified Connected Account V4 API", () => {
         const group = {
             v: 1 as const,
             ref: { service, groupId: "primary-group" },
+            incarnation: "qualified-group-row-primary",
             displayName: null,
             policy: {},
             activeConnectedAccountId: "provider/account",
@@ -184,6 +190,7 @@ describe("qualified Connected Account V4 API", () => {
         const patch = {
             service,
             groupId: group.ref.groupId,
+            expectedIncarnation: group.incarnation,
             expectedRuntimeStateRevision: 2,
             runtimeState: {
                 state: { status: "error" as const },
@@ -235,6 +242,7 @@ describe("qualified Connected Account V4 API", () => {
         const credential = {
             ref,
             authenticationModeId: "token",
+            revisionSemantics: "revisioned" as const,
             credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
             configurationRevision: "configuration-revision",
             content: { t: "plain" as const, v: { token: "opaque" } },
@@ -243,6 +251,7 @@ describe("qualified Connected Account V4 API", () => {
         const configuration = {
             target,
             authenticationModeId: "token",
+            revisionSemantics: "revisioned" as const,
             credentialRevision: credential.credentialRevision,
             configurationRevision: "configuration-revision",
             configurationContent: {
@@ -428,6 +437,7 @@ describe("qualified Connected Account V4 API", () => {
         );
         for (const [, config] of vi.mocked(axios.delete).mock.calls) {
             expect(config?.headers).toEqual({
+                ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                 Authorization: "Bearer token",
             });
         }

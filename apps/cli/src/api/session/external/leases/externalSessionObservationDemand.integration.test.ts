@@ -1,11 +1,21 @@
 import { getEventListeners, setMaxListeners } from 'node:events';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    afterAll,
+    afterEach,
+    beforeAll,
+    describe,
+    expect,
+    it,
+    vi,
+} from 'vitest';
 
 import type {
     AgentExternalSessionObservationContribution,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type {
     ExternalAgentObservationSnapshotV1,
     ExternalSessionStatusDemandDaemonMessageV1,
@@ -19,6 +29,14 @@ import type { Credentials } from '@/persistence';
 import type {
     LoadedLinkedExternalSession,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
+import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import type {
+    tryDecryptSessionOwnerMetadataView,
+} from '@/session/transport/encryption/sessionEncryptionContext';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
     acquireCanonicalExternalSessionFollowLease,
 } from './acquireCanonicalExternalSessionFollowLease';
@@ -47,6 +65,10 @@ type Publication = Readonly<{
     value: ExternalAgentObservationSnapshotV1;
 }>;
 
+type OwnerMetadataRawSession = Parameters<
+    typeof tryDecryptSessionOwnerMetadataView
+>[0]['rawSession'];
+
 const seams = vi.hoisted(() => ({
     nowMs: 1_000,
     projection: null as unknown,
@@ -54,10 +76,44 @@ const seams = vi.hoisted(() => ({
     contributionsByResourceKey: new Map<string, unknown>(),
     currentLinksBySessionId: new Map<string, unknown>(),
     resolvedInputsBySessionId: new Map<string, unknown>(),
+    rawSessionsBySessionId: new Map<string, RawSessionRecord>(),
+    ownerMetadataByRawSession: new Map<
+        OwnerMetadataRawSession,
+        Record<string, unknown>
+    >(),
     publications: [] as unknown[],
     nextTimerId: 0,
     timers: new Map<number, unknown>(),
 }));
+
+vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
+    const actual = await importOriginal<
+        typeof import('@/session/transport/http/sessionsHttp')
+    >();
+    return {
+        ...actual,
+        fetchSessionById: async (
+            input: Parameters<typeof actual.fetchSessionById>[0],
+        ) =>
+            seams.rawSessionsBySessionId.get(input.sessionId) ?? null,
+    };
+});
+
+vi.mock('@/session/transport/encryption/sessionEncryptionContext', async (
+    importOriginal,
+) => {
+    const actual = await importOriginal<
+        typeof import('@/session/transport/encryption/sessionEncryptionContext')
+    >();
+    return {
+        ...actual,
+        tryDecryptSessionOwnerMetadataView: (
+            input: Parameters<
+                typeof actual.tryDecryptSessionOwnerMetadataView
+            >[0],
+        ) => seams.ownerMetadataByRawSession.get(input.rawSession) ?? null,
+    };
+});
 
 vi.mock('./createExternalSessionObservationDaemonProjection', async (importOriginal) => {
     const actual = await importOriginal<
@@ -250,6 +306,24 @@ function demandMessage(
 }
 
 describe('composed External Session observation demand', () => {
+    let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
+
+    beforeAll(async () => {
+        runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
+            resolveRuntimeRegistry: async () =>
+                await resolveExecutablePluginRuntimeRegistry({
+                    contributes: getResolvedContributionRegistry(),
+                    pluginIds: ['happier.agent.opencode'],
+                }),
+        });
+    });
+
+    afterAll(async () => {
+        await runtimeRegistryLease?.release();
+        runtimeRegistryLease = null;
+        await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+    });
+
     afterEach(() => {
         vi.restoreAllMocks();
         seams.nowMs = 1_000;
@@ -258,6 +332,8 @@ describe('composed External Session observation demand', () => {
         seams.contributionsByResourceKey.clear();
         seams.currentLinksBySessionId.clear();
         seams.resolvedInputsBySessionId.clear();
+        seams.rawSessionsBySessionId.clear();
+        seams.ownerMetadataByRawSession.clear();
         seams.publications.length = 0;
         seams.nextTimerId = 0;
         seams.timers.clear();
@@ -641,7 +717,8 @@ describe('composed External Session observation demand', () => {
         for (let index = 0; index < 100; index += 1) {
             const sessionId = `follow-session-${index}`;
             const resourceKey = index < 50 ? 'endpoint-a' : 'endpoint-b';
-            const linkGeneration = `link-generation-${index}`;
+            const linkedAtMs = index + 1;
+            const linkGeneration = String(linkedAtMs);
             const remoteSessionId = `native-session-${index}`;
             const source = {
                 kind: 'opencodeServer' as const,
@@ -688,10 +765,9 @@ describe('composed External Session observation demand', () => {
                 },
             };
             const linked: LoadedLinkedExternalSession = {
-                // The transport record is a genuine network-boundary fixture and
-                // remains unread because every follow starts from an accepted cursor.
                 rawSession: {
                     id: sessionId,
+                    currentStorageState: 'machine_only',
                 } as LoadedLinkedExternalSession['rawSession'],
                 metadata: {},
                 sessionPath: null,
@@ -703,6 +779,18 @@ describe('composed External Session observation demand', () => {
                 linkData: {},
                 codexBackendMode: null,
             };
+            seams.rawSessionsBySessionId.set(sessionId, linked.rawSession);
+            seams.ownerMetadataByRawSession.set(linked.rawSession, {
+                externalSessionV1: {
+                    v: 1,
+                    agentId: linked.agentId,
+                    machineId: linked.machineId,
+                    remoteSessionId: linked.remoteSessionId,
+                    source: linked.source,
+                    linkData: linked.linkData,
+                    linkedAtMs,
+                },
+            });
             const cursor = `cursor-${index}`;
             const observationProjection = {
                 reconcileTranscriptDemand: async (input: Readonly<{

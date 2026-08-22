@@ -2,13 +2,19 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@/ui/logger';
 
 const { configurationMock } = vi.hoisted(() => ({
-    configurationMock: { activeServerDir: '' },
+    configurationMock: {
+        activeServerDir: '',
+        apiServerUrl: 'http://server.example.test',
+    },
 }));
 
 vi.mock('@/configuration', () => ({ configuration: configurationMock }));
+vi.mock('axios');
 
 import {
     createDaemonSessionClientDurableMutationOutbox,
@@ -19,6 +25,7 @@ import {
 } from './createSessionClientDurableMutationOutbox';
 import {
     createRegisteredSessionStateFieldMutation,
+    createTranscriptMessageAppendMutation,
     type DaemonUsageLimitRecoveryFieldMutation,
 } from './sessionClientDurableMutationTypes';
 import {
@@ -31,6 +38,8 @@ import {
 describe('daemon session client durable mutation outbox', () => {
     beforeEach(async () => {
         configurationMock.activeServerDir = await mkdtemp(join(tmpdir(), 'happier-daemon-session-mutations-'));
+        vi.mocked(axios.post).mockReset();
+        vi.mocked(axios.post).mockRejectedValue(new Error('http unavailable'));
     });
 
     afterEach(async () => {
@@ -77,6 +86,250 @@ describe('daemon session client durable mutation outbox', () => {
         });
         await expect(readFile(runtimePaths.queuePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
         await outbox.close();
+    });
+
+    it('reports a persistently blocking authoritative mutation once without changing retry custody', async () => {
+        const previousMaxAttempts = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS;
+        const previousBaseRetryMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS;
+        const previousJitterMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS;
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS = '1';
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+        const infoFileSpy = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+        const exact: ExactDaemonSessionTurnEndMutationV1 = {
+            v: 1,
+            sessionId: 's1',
+            mutationId: 'persistently-blocked-end',
+            action: 'end_session',
+            turnId: 'turn-blocked',
+            observedAt: 100,
+        };
+        const following = createTranscriptMessageAppendMutation({
+            sessionId: 's1',
+            localId: 'following-transcript-row',
+            messageRole: 'event',
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'event' } } },
+            createdAt: 101,
+            updatedAt: 101,
+            provenance: { kind: 'non_dependent', source: 'background' },
+        });
+        const persistenceContext = createSessionClientDurableMutationPersistenceContext({
+            activeServerDir: configurationMock.activeServerDir,
+            custody: 'daemon',
+            sessionId: 's1',
+            parseQueuedMutation: parseDaemonSessionClientDurableMutation,
+        });
+        await saveSessionClientDurableMutationOutbox('s1', [
+            {
+                kind: 'session_turn_mutation',
+                mutationId: exact.mutationId,
+                payload: exact,
+                createdAt: exact.observedAt,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+            {
+                kind: 'transcript_message_append',
+                mutationId: following.mutationId,
+                payload: following,
+                createdAt: following.createdAt,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+        ], persistenceContext);
+        const outbox = createDaemonSessionClientDurableMutationOutbox({
+            token: 'token',
+            sessionId: 's1',
+            getSocket: () => ({ connected: false, emit: () => undefined }),
+            requestReconnect: () => undefined,
+        });
+
+        try {
+            await outbox.awaitReady();
+            await outbox.flush('flush');
+            await outbox.flush('flush');
+
+            expect(infoFileSpy).toHaveBeenCalledTimes(1);
+            expect(infoFileSpy).toHaveBeenCalledWith(
+                '[API] Authoritative session mutation remains queued and is blocking later mutations',
+                expect.objectContaining({
+                    sessionId: 's1',
+                    mutationId: exact.mutationId,
+                    mutationKind: 'session_turn_mutation',
+                    action: 'end_session',
+                    turnId: 'turn-blocked',
+                    attempts: 1,
+                    lastAttemptReason: 'delivery_not_confirmed',
+                    blockedMutationCount: 1,
+                    blockedMutationKinds: { transcript_message_append: 1 },
+                }),
+            );
+            const persisted = JSON.parse(await readFile(persistenceContext.paths.queuePath, 'utf8')) as {
+                mutations: Array<{ mutationId?: string; attempts?: number }>;
+            };
+            expect(persisted.mutations).toEqual([
+                expect.objectContaining({ mutationId: exact.mutationId, attempts: 2 }),
+                expect.objectContaining({ mutationId: following.mutationId, attempts: 0 }),
+            ]);
+        } finally {
+            infoFileSpy.mockRestore();
+            await outbox.close();
+            if (previousMaxAttempts === undefined) delete process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS;
+            else process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS = previousMaxAttempts;
+            if (previousBaseRetryMs === undefined) delete process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS;
+            else process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = previousBaseRetryMs;
+            if (previousJitterMs === undefined) delete process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS;
+            else process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = previousJitterMs;
+        }
+    });
+
+    it('reports a persistently blocking durable-required usage-limit recovery field once', async () => {
+        const previousMaxAttempts = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS;
+        const previousBaseRetryMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS;
+        const previousJitterMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS;
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS = '1';
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+        const infoFileSpy = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+        const recoveryField = createRegisteredSessionStateFieldMutation({
+            sessionId: 's1',
+            fieldId: 'runtime.usageLimitRecovery',
+            source: 'daemon',
+            deliveryClass: 'durable_required',
+            observedAt: 100,
+            op: {
+                kind: 'set',
+                value: {
+                    v: 1,
+                    status: 'cancelled',
+                    resumePromptMode: 'standard',
+                    issueFingerprint: 'usage-limit:codex:turn-1:1:2',
+                    armedAtMs: 1,
+                    resetAtMs: 2,
+                    nextCheckAtMs: null,
+                    attemptCount: 1,
+                    maxAttempts: 3,
+                    lastProbeError: null,
+                    selectedAuth: { kind: 'native', serviceId: 'openai-codex' },
+                },
+            },
+        }) as DaemonUsageLimitRecoveryFieldMutation;
+        const following = createTranscriptMessageAppendMutation({
+            sessionId: 's1',
+            localId: 'blocked-behind-usage-limit-recovery',
+            messageRole: 'event',
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'event' } } },
+            createdAt: 101,
+            updatedAt: 101,
+            provenance: { kind: 'non_dependent', source: 'background' },
+        });
+        const persistenceContext = createSessionClientDurableMutationPersistenceContext({
+            activeServerDir: configurationMock.activeServerDir,
+            custody: 'daemon',
+            sessionId: 's1',
+            parseQueuedMutation: parseDaemonSessionClientDurableMutation,
+        });
+        await saveSessionClientDurableMutationOutbox('s1', [
+            {
+                kind: 'registered_session_state_field',
+                mutationId: recoveryField.mutationId,
+                payload: recoveryField,
+                createdAt: recoveryField.observedAt,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+            {
+                kind: 'transcript_message_append',
+                mutationId: following.mutationId,
+                payload: following,
+                createdAt: following.createdAt,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+        ], persistenceContext);
+        const outbox = createDaemonSessionClientDurableMutationOutbox({
+            token: 'token',
+            sessionId: 's1',
+            getSocket: () => null,
+            requestReconnect: () => undefined,
+            deliverUsageLimitRecovery: async () => false,
+        });
+
+        try {
+            await outbox.awaitReady();
+            await outbox.flush('flush');
+            await outbox.flush('flush');
+
+            expect(infoFileSpy).toHaveBeenCalledWith(
+                '[API] Authoritative session mutation remains queued and is blocking later mutations',
+                expect.objectContaining({
+                    sessionId: 's1',
+                    mutationId: recoveryField.mutationId,
+                    mutationKind: 'registered_session_state_field',
+                    blockedMutationCount: 1,
+                    blockedMutationKinds: { transcript_message_append: 1 },
+                }),
+            );
+        } finally {
+            infoFileSpy.mockRestore();
+            await outbox.close();
+            if (previousMaxAttempts === undefined) delete process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS;
+            else process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS = previousMaxAttempts;
+            if (previousBaseRetryMs === undefined) delete process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS;
+            else process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = previousBaseRetryMs;
+            if (previousJitterMs === undefined) delete process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS;
+            else process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = previousJitterMs;
+        }
+    });
+
+    it('retains a daemon transcript event after HTTP delivery failure and replays it once after restart', async () => {
+        const failedDelivery = vi.fn(async () => {
+            throw new Error('http unavailable');
+        });
+        const first = createDaemonSessionClientDurableMutationOutbox({
+            token: 'token',
+            sessionId: 's1',
+            getSocket: () => null,
+            requestReconnect: () => undefined,
+            deliverTranscriptMessage: failedDelivery,
+        });
+        const mutation = createTranscriptMessageAppendMutation({
+            sessionId: 's1',
+            localId: 'connected-service-account-switch:one',
+            messageRole: 'event',
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'event' } } },
+            createdAt: 100,
+            updatedAt: 100,
+            provenance: { kind: 'non_dependent', source: 'background' },
+        });
+
+        await expect(first.enqueueTranscriptMessage(mutation)).resolves.toEqual({
+            persisted: true,
+            delivered: false,
+        });
+        const paths = resolveSessionClientDurableMutationJournalPaths({
+            activeServerDir: configurationMock.activeServerDir,
+            custody: 'daemon',
+            sessionId: 's1',
+        });
+        await expect(readFile(paths.queuePath, 'utf8')).resolves.toContain(mutation.mutationId);
+        await first.close();
+
+        const replayed = vi.fn(async () => true);
+        const restarted = createDaemonSessionClientDurableMutationOutbox({
+            token: 'token',
+            sessionId: 's1',
+            getSocket: () => null,
+            requestReconnect: () => undefined,
+            deliverTranscriptMessage: replayed,
+        });
+        await restarted.awaitReady();
+        await restarted.flush('startup');
+
+        expect(replayed).toHaveBeenCalledTimes(1);
+        expect(replayed).toHaveBeenCalledWith(mutation);
+        await expect(readFile(paths.queuePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        await restarted.close();
     });
 
     it('rejects casted broad or decorated terminal rows before persistence', async () => {

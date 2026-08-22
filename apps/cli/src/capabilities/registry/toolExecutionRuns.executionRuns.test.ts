@@ -23,6 +23,7 @@ function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>, path = '
 
 function makeCliEngineRegistryMock(
   contributions: Partial<Awaited<ReturnType<typeof engineRegistry.resolveCliEngineRegistry>>['contributions']>,
+  options?: Readonly<{ currentPluginGenerationById?: ReadonlyMap<string, string> }>,
 ): Awaited<ReturnType<typeof engineRegistry.resolveCliEngineRegistry>> {
   return {
     contributions: {
@@ -37,6 +38,9 @@ function makeCliEngineRegistryMock(
       pluginDiagnosticsByPluginId: {},
       ...contributions,
     },
+    resolveCurrentPluginGeneration: async (pluginId) => (
+      options?.currentPluginGenerationById?.get(pluginId) ?? null
+    ),
     resolveForBackendId: async () => null,
     resolveExecutionSurfaces: async () => ({
       terminalRuntime: null,
@@ -107,6 +111,19 @@ describe('executionRunsCapability', () => {
     }) as { backends: Record<string, { available?: boolean }> };
 
     expect(result.backends['plugin.review']).toMatchObject({ available: true });
+  });
+
+  it('advertises the exact V2 facts required before detached or start-and-wait dispatch', async () => {
+    const result = await executionRunsCapability.detect({
+      context: { cliSnapshot: makeCliSnapshot({ codex: { available: true } }) },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      protocolVersion?: unknown;
+      features?: unknown;
+    };
+
+    expect(result.protocolVersion).toBe(2);
+    expect(result.features).toEqual({ detachedScope: true, startAndWait: true });
   });
 
   afterEach(() => {
@@ -308,11 +325,12 @@ describe('executionRunsCapability', () => {
       },
     };
     vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      generationId: 'registry:generation-1',
       executionRunProfiles: [profile],
       executionRunProfilesById: new Map([
         ['acme.execution-runs/review-profile', profile],
       ]),
+    }, {
+      currentPluginGenerationById: new Map([['acme.execution-runs', 'immutable-profile-1']]),
     }));
 
     const res = await executionRunsCapability.detect({
@@ -340,7 +358,7 @@ describe('executionRunsCapability', () => {
         title: 'Acme review',
         promptAsset: 'review-prompt',
         compatibleAgents: ['acme-review'],
-        generationId: 'registry:generation-1',
+        generationId: 'immutable-profile-1',
         available: true,
         defaults: {
           retention: 'ephemeral',

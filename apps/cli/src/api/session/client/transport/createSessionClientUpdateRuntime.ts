@@ -6,6 +6,7 @@ import type { KnownPendingQueueState, PendingQueueState } from '../../pendingQue
 import { extractAssistantTextSnapshotFromSessionContent } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 import type { PendingQueueRuntimeActivityProjection } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 export type SessionClientUpdateRuntime = Readonly<{
     handleUpdate: (data: Update, opts: {
@@ -21,9 +22,6 @@ export type SessionClientUpdateRuntime = Readonly<{
 export function createSessionClientUpdateRuntime(
     deps: Readonly<{
         sessionId: string;
-        sessionEncryptionMode: 'e2ee' | 'plain';
-        encryptionKey: Uint8Array;
-        encryptionVariant: 'legacy' | 'dataKey';
         getMetadataLayoutVersion?: () => number;
         getMetadata: () => Metadata | null;
         setMetadata: (metadata: Metadata | null) => void;
@@ -42,9 +40,10 @@ export function createSessionClientUpdateRuntime(
         markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
         initialLastObservedMessageSeq: number;
         observeCommittedUserMessageSeq?: (params: { localId: string | null | undefined; seq: number }) => void;
+        consumeLocallyAuthoredTranscriptObservationLocalId?: (localId: string) => boolean;
         turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
         onRuntimeActivityProjectionFromServer?: (projection: PendingQueueRuntimeActivityProjection) => void;
-    }>,
+    }> & SessionStoredContentCryptoContext,
 ): SessionClientUpdateRuntime {
     const receivedMessageIds = new Set<string>();
     let lastObservedMessageSeq = deps.initialLastObservedMessageSeq;
@@ -84,14 +83,17 @@ export function createSessionClientUpdateRuntime(
                 const newMessageHandlingResult = handleSessionNewMessageUpdate({
                     update: data,
                     sessionId: deps.sessionId,
-                    encryptionKey: deps.encryptionKey,
-                    encryptionVariant: deps.encryptionVariant,
+                    ...(deps.mode === 'plain'
+                        ? { mode: 'plain' as const, ctx: null }
+                        : { mode: 'e2ee' as const, ctx: deps.ctx }),
                     receivedMessageIds,
                     lastObservedMessageSeq,
                     lastObservedUserMessageSeq,
                     onConnectedServiceTurnLifecycleEvent: (event) => deps.onConnectedServiceTurnLifecycleEvent?.(event),
                     emit: (event, payload) => deps.emit(event, payload),
                     observeCommittedUserMessageSeq: (params) => deps.observeCommittedUserMessageSeq?.(params),
+                    consumeLocallyAuthoredTranscriptObservationLocalId: (localId) =>
+                        deps.consumeLocallyAuthoredTranscriptObservationLocalId?.(localId) === true,
                     debug: (message, payload) => logger.debug(message, payload),
                     debugLargeJson: (message, payload) => logger.debugLargeJson(message, payload),
                     observeMessage: (message, seq) => {
@@ -125,14 +127,14 @@ export function createSessionClientUpdateRuntime(
                     updateSource: opts.source,
                     sessionId: deps.sessionId,
                     metadataLayoutVersion: deps.getMetadataLayoutVersion?.() ?? 0,
-                    sessionEncryptionMode: deps.sessionEncryptionMode,
+                    ...(deps.mode === 'plain'
+                        ? { mode: 'plain' as const, ctx: null }
+                        : { mode: 'e2ee' as const, ctx: deps.ctx }),
                     metadata: deps.getMetadata(),
                     metadataVersion: deps.getMetadataVersion(),
                     agentState: deps.getAgentState(),
                     agentStateVersion: deps.getAgentStateVersion(),
                     pendingWakeSeq,
-                    encryptionKey: deps.encryptionKey,
-                    encryptionVariant: deps.encryptionVariant,
                     onMetadataUpdated: () => {
                         shouldEmitMetadataUpdated = true;
                     },

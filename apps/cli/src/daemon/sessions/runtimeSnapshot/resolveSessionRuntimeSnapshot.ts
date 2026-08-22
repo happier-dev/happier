@@ -1,12 +1,9 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import { isPermissionMode } from '@/api/types';
 import {
-  inferAgentIdFromSessionMetadata,
-  isAgentId,
+  resolveAgentIdFromSessionMetadata,
   resolveModelSelectionIntentFromSessionMetadata,
-  resolveObservedVendorResumeIdForResume,
   resolveVendorResumeIdFromSessionMetadata,
-  type AgentId,
 } from '@happier-dev/agents';
 import {
   resolvePermissionIntentFromMetadataSnapshot,
@@ -21,6 +18,7 @@ import {
   type ConnectedServiceBindingsV1,
 } from '@happier-dev/protocol';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import {
   readConnectedServiceMaterializationIdentityFromEnvironment,
   readConnectedServiceMaterializationIdentityFromMetadata,
@@ -83,7 +81,7 @@ function readSessionId(options: SpawnSessionOptions): string | null {
   return normalizeNonEmptyString(options.existingSessionId) ?? normalizeNonEmptyString(options.sessionId);
 }
 
-function readAgentIdFromOptions(options: SpawnSessionOptions | null | undefined): AgentId | null {
+function readAgentIdFromOptions(options: SpawnSessionOptions | null | undefined): CatalogAgentId | null {
   const target = options?.backendTarget && typeof options.backendTarget === 'object'
     ? options.backendTarget as Record<string, unknown>
     : null;
@@ -93,7 +91,8 @@ function readAgentIdFromOptions(options: SpawnSessionOptions | null | undefined)
       : target?.kind === 'builtInAgent'
         ? target.agentId
         : null;
-  return isAgentId(rawAgentId) ? rawAgentId : null;
+  const agentId = typeof rawAgentId === 'string' ? rawAgentId.trim() : '';
+  return agentId || null;
 }
 
 function parseConnectedServices(value: unknown): ConnectedServiceBindingsV1 | null {
@@ -254,34 +253,23 @@ function chooseVendorResumeId(
   const agentId =
     readAgentIdFromOptions(params.incomingOptions)
     ?? readAgentIdFromOptions(params.trackedSpawnOptions)
-    ?? inferAgentIdFromSessionMetadata(metadata);
-  const metadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
+    ?? resolveAgentIdFromSessionMetadata(metadata);
+  const metadataVendorResumeId = agentId
+    ? resolveVendorResumeIdFromSessionMetadata(agentId, metadata)
+    : null;
   if (explicitResumeId) return { value: explicitResumeId, updatedAt: null };
 
-  const persistedObservedVendorResumeId =
+  // The persisted current view wins over a tracked runtime observation for every
+  // Agent alike. A Claude-only divergence gate used to refuse the resume outright
+  // here, on the strength of a continuity proof that no longer exists (`AM-24`);
+  // there is nothing left for it to decide, and one rule for every Agent is what
+  // keeps this from being a second resume decision-maker.
+  const observedVendorResumeId =
     normalizeNonEmptyString(metadataVendorResumeId)
-    ?? normalizeNonEmptyString(params.persistedVendorResumeId);
-  const trackedObservedVendorResumeId = normalizeNonEmptyString(params.trackedVendorResumeId);
-  if (
-    persistedObservedVendorResumeId
-    && trackedObservedVendorResumeId
-    && persistedObservedVendorResumeId !== trackedObservedVendorResumeId
-    && resolveObservedVendorResumeIdForResume({
-      agentId,
-      metadata,
-      vendorResumeId: trackedObservedVendorResumeId,
-    }) === null
-  ) {
-    return null;
-  }
-  const observedVendorResumeId = persistedObservedVendorResumeId ?? trackedObservedVendorResumeId;
-  const eligibleObservedVendorResumeId = resolveObservedVendorResumeIdForResume({
-    agentId,
-    metadata,
-    vendorResumeId: observedVendorResumeId,
-  });
-  return eligibleObservedVendorResumeId
-    ? { value: eligibleObservedVendorResumeId, updatedAt: null }
+    ?? normalizeNonEmptyString(params.persistedVendorResumeId)
+    ?? normalizeNonEmptyString(params.trackedVendorResumeId);
+  return observedVendorResumeId
+    ? { value: observedVendorResumeId, updatedAt: null }
     : null;
 }
 

@@ -95,6 +95,7 @@ vi.mock('@/scm/scmBackendCatalog', async (importOriginal) => {
 
 vi.mock('@/persistence', () => ({
   readCredentials: vi.fn(),
+  readStoredCredentials: vi.fn(async () => null),
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
@@ -180,11 +181,13 @@ beforeEach(async () => {
   approvalStoreMockState.approvalsGet.mockReset();
   approvalStoreMockState.approvalsUpdate.mockResolvedValue({ ok: true });
   approvalStoreMockState.approvalsGet.mockResolvedValue(null);
-  const { readCredentials } = await import('@/persistence');
+  const { readCredentials, readStoredCredentials } = await import('@/persistence');
   const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
   const { fetchEncryptedTranscriptMessages } = await import('@/session/replay/fetchEncryptedTranscriptMessages');
   const { runReplaySummaryForDialog } = await import('@/session/replay/summary/runReplaySummaryForDialog');
   vi.mocked(readCredentials).mockReset();
+  vi.mocked(readStoredCredentials).mockReset();
+  vi.mocked(readStoredCredentials).mockResolvedValue(null);
   vi.mocked(fetchSessionById).mockReset();
   vi.mocked(fetchEncryptedTranscriptMessages).mockReset();
   vi.mocked(runReplaySummaryForDialog).mockReset();
@@ -669,6 +672,7 @@ const executionRunRpcActionBindings = [
   [SESSION_RPC_METHODS.EXECUTION_RUN_SEND, 'execution.run.send'],
   [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, 'execution.run.ensure'],
   [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, 'execution.run.ensure_or_start'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1, 'execution.run.ensure_or_start'],
   [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, 'execution.run.stream.start'],
   [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ, 'execution.run.stream.read'],
   [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL, 'execution.run.stream.cancel'],
@@ -698,7 +702,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('unused'),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           actionExecutor,
         });
       },
@@ -714,6 +718,7 @@ describe('executionRuns session RPC handlers', () => {
       input: { marker: actionId },
       context: {
         defaultSessionId: 'sess_1',
+        signal: expect.any(AbortSignal),
         surface: 'rpc',
       },
     })));
@@ -748,7 +753,7 @@ describe('executionRuns session RPC handlers', () => {
             cwd: process.cwd(),
             parentProvider: 'claude',
             createBackend: () => createStaticBackend('unused'),
-            sendAcp: () => {},
+            sendAcp: async () => {},
           });
         },
       });
@@ -804,7 +809,7 @@ describe('executionRuns session RPC handlers', () => {
             cwd: process.cwd(),
             parentProvider: 'claude',
             createBackend: () => createStaticBackend('unused'),
-            sendAcp: () => {},
+            sendAcp: async () => {},
             actionApprovalDeps: {
               approvalsCreate,
               approvalsUpdate,
@@ -921,7 +926,7 @@ describe('executionRuns session RPC handlers', () => {
             cwd: process.cwd(),
             parentProvider: 'claude',
             createBackend: () => createStaticBackend('unused'),
-            sendAcp: () => {},
+            sendAcp: async () => {},
           });
         },
       });
@@ -945,7 +950,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
           resolveAccountSettings: async () => ({ codexBackendMode: 'mcp' }),
         });
       },
@@ -987,8 +992,9 @@ describe('executionRuns session RPC handlers', () => {
                 summary: 'Summary.',
               }),
             ),
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
         });
       },
     });
@@ -1047,7 +1053,7 @@ describe('executionRuns session RPC handlers', () => {
 	                summary: 'Ok.',
 	              }),
 	            ),
-	          sendAcp: () => {},
+	          sendAcp: async () => {},
 	          onExecutionRunPublicStateUpdated: (run: ExecutionRunPublicState) => {
 	            updates.push(run);
 	          },
@@ -1093,7 +1099,7 @@ describe('executionRuns session RPC handlers', () => {
             opts.backendId === 'claude'
               ? createPendingBackend()
               : createStaticBackend(JSON.stringify({ findings: [], summary: 'done' })),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1177,7 +1183,7 @@ describe('executionRuns session RPC handlers', () => {
                 capture,
               );
             },
-            sendAcp: () => {},
+            sendAcp: async () => {},
           });
         },
       });
@@ -1282,7 +1288,7 @@ describe('executionRuns session RPC handlers', () => {
               capture,
             );
           },
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1347,7 +1353,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('should not run'),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1378,7 +1384,7 @@ describe('executionRuns session RPC handlers', () => {
             opts.backendId === 'codex'
               ? createStaticBackend(JSON.stringify({ findings: [], summary: 'done' }))
               : createPendingBackend(),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1444,7 +1450,7 @@ describe('executionRuns session RPC handlers', () => {
             }
             return createStaticBackend(JSON.stringify({ findings: [], summary: 'done' }));
           },
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1515,8 +1521,9 @@ describe('executionRuns session RPC handlers', () => {
                 summary: 'Summary.',
               }),
             ),
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
         });
       },
     });
@@ -1568,8 +1575,9 @@ describe('executionRuns session RPC handlers', () => {
           parentProvider: 'claude',
           createBackend: () =>
             createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
         });
       },
     });
@@ -1603,8 +1611,9 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('reply'),
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
         });
       },
     });
@@ -1648,8 +1657,9 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
         });
       },
     });
@@ -1704,7 +1714,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1745,7 +1755,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1791,7 +1801,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1844,7 +1854,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1891,7 +1901,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -1954,7 +1964,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2014,8 +2024,9 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
         });
       },
     });
@@ -2059,7 +2070,7 @@ describe('executionRuns session RPC handlers', () => {
             cwd: process.cwd(),
             parentProvider: 'claude',
             createBackend: () => createNeverResolvingBackend(),
-            sendAcp: () => {},
+            sendAcp: async () => {},
           });
         },
       });
@@ -2108,7 +2119,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend(JSON.stringify({ findings: [], summary: 'ok' })),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2149,7 +2160,7 @@ describe('executionRuns session RPC handlers', () => {
               `Hello.\n\n<voice_actions>${JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'hi' } }] })}</voice_actions>`,
             );
           },
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2262,7 +2273,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2354,7 +2365,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2463,7 +2474,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => backend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2507,8 +2518,6 @@ describe('executionRuns session RPC handlers', () => {
   it('commits persistent voice_agent transcript turns durably via the transcript port', async () => {
     const committedUserTurns: Array<{ text: string; meta: Record<string, unknown> }> = [];
     const committedAssistantTurns: Array<{ text: string; meta: Record<string, unknown> }> = [];
-    const bestEffortUserTurns: string[] = [];
-    const bestEffortAssistantTurns: string[] = [];
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
@@ -2518,14 +2527,8 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('Committed reply'),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           transcriptWriter: {
-            appendUserText: (text: string) => {
-              bestEffortUserTurns.push(text);
-            },
-            appendAssistantText: (text: string) => {
-              bestEffortAssistantTurns.push(text);
-            },
             commitVoiceAgentTranscriptTurn: async (turn: Readonly<{
               turnId: string;
               user: Readonly<{ text: string; meta: Record<string, unknown> }>;
@@ -2554,12 +2557,14 @@ describe('executionRuns session RPC handlers', () => {
       verbosity: 'short',
       transcript: { persistenceMode: 'persistent', epoch: 4 },
     });
+    expect(started.runId).toEqual(expect.any(String));
 
     const streamStart = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, {
       runId: started.runId,
       message: 'Persist this user turn',
       displayMessage: 'Persist only this clean user turn',
     });
+    expect(streamStart.streamId).toEqual(expect.any(String));
     const read = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ, {
       runId: started.runId,
       streamId: streamStart.streamId,
@@ -2578,8 +2583,96 @@ describe('executionRuns session RPC handlers', () => {
     expect(committedAssistantTurns[0]?.meta).toMatchObject({
       happier: { kind: 'voice_agent_turn.v1', payload: { epoch: 4, role: 'assistant', voiceAgentId: started.runId } },
     });
-    expect(bestEffortUserTurns).toHaveLength(0);
-    expect(bestEffortAssistantTurns).toHaveLength(0);
+  });
+
+  it('admits a V2 persisted user transcript through the registered handler before the real voice manager starts its stream', async () => {
+    const admissionOrder: string[] = [];
+    const committedUserTurns: Array<Readonly<{
+      text: string;
+      localId: string;
+      meta: Record<string, unknown>;
+    }>> = [];
+    let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    runtime = createTestExecutionRunHostRuntime({
+      onSendPrompt(_sessionId, prompt) {
+        admissionOrder.push(`manager:${prompt}`);
+        runtime.emitMessage({ type: 'model-output', fullText: 'V2 committed reply' } as AgentMessage);
+      },
+      onWaitForTurnCompletion() {},
+    });
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => runtime,
+          sendAcp: async () => {},
+          transcriptWriter: {
+            appendUserTextCommitted: async (text, options) => {
+              admissionOrder.push(`persist:${text}`);
+              committedUserTurns.push({ text, localId: options.localId, meta: options.meta });
+              return { persisted: true, delivered: true };
+            },
+            appendAssistantTextCommitted: async () => ({ persisted: true, delivered: true }),
+            commitVoiceAgentTranscriptTurn: async () => ({ persisted: true, delivered: true }),
+          },
+        });
+      },
+    });
+
+    const started = await client.call<ExecutionRunStartResponse, unknown>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      chatModelId: 'chat',
+      commitModelId: 'commit',
+      idleTtlSeconds: 60,
+      initialContext: 'ctx',
+      verbosity: 'short',
+      transcript: { persistenceMode: 'persistent', epoch: 4 },
+    });
+
+    const streamStart = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2, {
+      runId: started.runId,
+      message: 'Provider-bound user text',
+      displayMessage: 'Persisted canonical user text',
+      userTranscript: { mode: 'persist', localId: 'voice-v2-local-id' },
+    });
+
+    expect(streamStart.streamId).toEqual(expect.any(String));
+    expect(admissionOrder).toHaveLength(2);
+    expect(admissionOrder[0]).toBe('persist:Persisted canonical user text');
+    expect(admissionOrder[1]).toContain('Provider-bound user text');
+    expect(committedUserTurns).toEqual([
+      expect.objectContaining({
+        text: 'Persisted canonical user text',
+        localId: 'voice-v2-local-id',
+        meta: expect.objectContaining({
+          happier: expect.objectContaining({
+            kind: 'voice_agent_turn.v1',
+            payload: expect.objectContaining({
+              epoch: 4,
+              role: 'user',
+              voiceAgentId: started.runId,
+              runId: started.runId,
+            }),
+          }),
+        }),
+      }),
+    ]);
+
+    await expect(client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ, {
+      runId: started.runId,
+      streamId: streamStart.streamId,
+      cursor: 0,
+      maxEvents: 128,
+    })).resolves.toMatchObject({ done: true });
   });
 
   it('normalizes predecessor and bounded current-dev transcript commit vectors once at the RPC seam', async () => {
@@ -2592,10 +2685,8 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('Unused reply'),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           transcriptWriter: {
-            appendUserText: () => {},
-            appendAssistantText: () => {},
             appendUserTextCommitted: async (text, options) => {
               committedUserTurns.push({ text, localId: options.localId });
               return { persisted: true, delivered: true };
@@ -2620,21 +2711,22 @@ describe('executionRuns session RPC handlers', () => {
       verbosity: 'short',
       transcript: { persistenceMode: 'persistent', epoch: 4 },
     });
+    expect(started.runId).toEqual(expect.any(String));
 
     // New reader consuming ../remote-dev@0649e4de's prospective writer shape.
-    await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
+    await expect(client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
       runId: started.runId,
       message: 'Predecessor provider text',
       displayMessage: 'Predecessor display text',
       localId: 'predecessor-local-id',
-    });
+    })).resolves.toMatchObject({ ok: true });
     // Bounded support for the already-current undeployed dev writer shape.
-    await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
+    await expect(client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
       runId: started.runId,
       text: 'Current-dev provider text',
       displayText: 'Current-dev display text',
       localId: 'current-dev-local-id',
-    });
+    })).resolves.toMatchObject({ ok: true });
 
     expect(committedUserTurns).toEqual([
       { text: 'Predecessor display text', localId: 'predecessor-local-id' },
@@ -2655,7 +2747,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createBackend(),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2747,7 +2839,7 @@ describe('executionRuns session RPC handlers', () => {
             });
             return runtime;
           },
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2830,7 +2922,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createBackend(),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2869,7 +2961,7 @@ describe('executionRuns session RPC handlers', () => {
             cwd: process.cwd(),
             parentProvider: 'claude',
             createBackend: () => createStaticBackend('Hello.'),
-            sendAcp: () => {},
+            sendAcp: async () => {},
           });
         },
       });
@@ -2905,7 +2997,7 @@ describe('executionRuns session RPC handlers', () => {
             }
             return createStaticBackend('ok');
           },
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2938,7 +3030,7 @@ describe('executionRuns session RPC handlers', () => {
             }
             return createStaticBackend('ok');
           },
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -2976,7 +3068,7 @@ describe('executionRuns session RPC handlers', () => {
             }
             return createStaticBackend('configured ok');
           },
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3004,7 +3096,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: ({ modelId }) => createStaticBackend(modelId === 'commit' ? 'COMMIT_TEXT' : 'Hello.'),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3050,7 +3142,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('Hello! What are we working on today?'),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           onExecutionRunVoiceAgentWelcomed,
         });
       },
@@ -3096,7 +3188,9 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('Hello.'),
-          sendAcp: (_provider, body, opts) => sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider, body, opts) => {
+            sent.push({ body, meta: opts?.meta });
+          },
         });
       },
     });
@@ -3135,7 +3229,7 @@ describe('executionRuns session RPC handlers', () => {
             if (backendId === 'codex') throw new Error('codex missing');
             return createStaticBackend('ok');
           },
-          sendAcp: () => {},
+          sendAcp: async () => {},
           budgetRegistry,
         });
       },
@@ -3172,7 +3266,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend(JSON.stringify({ findings: [], summary: 'ok' })),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3207,7 +3301,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createThrowingBackend({ throwAtSendCount: 2, message: 'boom' }),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3239,7 +3333,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend(JSON.stringify({ findings: [], summary: 'ok' })),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3267,7 +3361,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend(JSON.stringify({ findings: [], summary: 'ok' })),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3300,7 +3394,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: workspace,
           parentProvider: 'claude',
           createBackend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3340,7 +3434,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3374,7 +3468,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend,
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3405,7 +3499,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend(JSON.stringify({ findings: [], summary: 'ok' })),
-          sendAcp: () => {},
+          sendAcp: async () => {},
         });
       },
     });
@@ -3434,7 +3528,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           policy: { maxConcurrentRuns: 1, boundedTimeoutMs: 60_000 },
         });
       },
@@ -3474,7 +3568,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           policy: { maxConcurrentRuns: null as number | null, boundedTimeoutMs: null as number | null },
         });
       },
@@ -3518,7 +3612,7 @@ describe('executionRuns session RPC handlers', () => {
             cwd: process.cwd(),
             parentProvider: 'claude',
             createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
-            sendAcp: () => {},
+            sendAcp: async () => {},
           });
         },
       });
@@ -3568,7 +3662,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           policy: { maxConcurrentRuns: 50, boundedTimeoutMs: 60_000 },
           budgetRegistry,
         });
@@ -3627,8 +3721,9 @@ describe('executionRuns session RPC handlers', () => {
                 summary: 'Summary.',
               }),
             ),
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
           policy: {
             maxDepth: 0,
           },
@@ -3670,7 +3765,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 50_000),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 10 },
         });
       },
@@ -3714,7 +3809,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createDelayedBackend(JSON.stringify({ findings: [], summary: 'late' }), 30),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           policy,
         });
       },
@@ -3746,7 +3841,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('reply'),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000, maxTurns: 1 },
         });
       },
@@ -3783,8 +3878,9 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createBackend(),
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
           policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000 },
         });
       },
@@ -3828,8 +3924,9 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createBackend(),
-          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
-            sent.push({ body, meta: opts?.meta }),
+          sendAcp: async (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+            sent.push({ body, meta: opts?.meta });
+          },
           policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000 },
         });
       },
@@ -3866,7 +3963,7 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: () => createStaticBackend('reply'),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000 },
         });
       },
@@ -3927,7 +4024,7 @@ describe('executionRuns session RPC handlers', () => {
             },
             onSendPrompt() {},
           }),
-          sendAcp: () => {},
+          sendAcp: async () => {},
           policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000 },
         });
       },

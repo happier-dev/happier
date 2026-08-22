@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import type { RpcHandler, RpcHandlerRegistrar } from '../rpc/types';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
@@ -28,6 +28,10 @@ describe('rpcHandlers.sessionGoals', () => {
   const credentials: Credentials = {
     token: 'token-1',
     encryption: { type: 'legacy', secret: new Uint8Array(32) },
+  };
+  const tokenOnlyCredentials: StoredCredentials = {
+    token: 'token-only',
+    encryption: null,
   };
 
   let handlers: Map<string, (raw: unknown) => Promise<unknown>>;
@@ -75,7 +79,7 @@ describe('rpcHandlers.sessionGoals', () => {
       path: '/repo',
       host: 'localhost',
       machineId: 'machine-1',
-      encryptionMode: 'plain',
+      encryptionMode: 'e2ee',
     });
     registerMachineSessionGoalRpcHandlers({
       rpcHandlerManager: {
@@ -85,16 +89,20 @@ describe('rpcHandlers.sessionGoals', () => {
       } satisfies RpcHandlerRegistrar,
       deps: {
         isUsageLimitRecoveryEnabled: async () => true,
-        readCredentials: async () => credentials,
+        readStoredCredentials: async () => credentials,
         resolveSessionTransportContext: async () => ({
           ok: true,
           sessionId: 'resolved-session',
           rawSession,
+          accountEncryptionCurrentness: {
+            mode: 'e2ee', version: 1, signingKeyFingerprint: null,
+            contentKeyFingerprint: 'content-fingerprint', updatedAt: 1,
+          },
           ctx: {
             encryptionKey: new Uint8Array(32),
             encryptionVariant: 'legacy',
           },
-          mode: 'plain',
+          mode: 'e2ee',
         }),
         currentMachineId: 'machine-1',
         stageUsageLimitRecoveryMutation: async ({ mutation }) => {
@@ -140,6 +148,40 @@ describe('rpcHandlers.sessionGoals', () => {
     });
     expect(sessionGoalClear).toHaveBeenCalledWith({ sessionId: 'resolved-session' });
     expect(sessionGoalGet).toHaveBeenCalledWith({ sessionId: 'resolved-session' });
+  });
+
+  it('routes plaintext session goal controls with token-only credentials', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'resolved-session',
+      metadata: '{}',
+      path: '/repo',
+      host: 'localhost',
+      machineId: 'machine-1',
+      encryptionMode: 'plain',
+    });
+    registerWithTransport({
+      readStoredCredentials: async () => tokenOnlyCredentials,
+      resolveSessionTransportContext: async () => ({
+        ok: true,
+        sessionId: 'resolved-session',
+        rawSession,
+        accountEncryptionCurrentness: {
+          mode: 'plain', version: 1, signingKeyFingerprint: null,
+          contentKeyFingerprint: null, updatedAt: 1,
+        },
+        ctx: null,
+        mode: 'plain',
+      }),
+    });
+
+    await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_GOAL_GET)?.({
+      sessionId: 'session-prefix',
+    })).resolves.toEqual({ workState: null });
+    expect(createCliActionDepsParams).toMatchObject({
+      credentials: tokenOnlyCredentials,
+      mode: 'plain',
+      ctx: null,
+    });
   });
 
   it('returns stable invalid-parameter errors before dispatching malformed controls', async () => {
@@ -263,6 +305,63 @@ describe('rpcHandlers.sessionGoals', () => {
       fieldId: 'runtime.usageLimitRecovery',
       source: 'daemon',
     }));
+  });
+
+  it('routes plain inactive usage-limit control with token-only credentials and no crypto context', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'resolved-session',
+      metadata: '{}',
+      path: '/repo',
+      host: 'localhost',
+      machineId: 'machine-1',
+      encryptionMode: 'plain',
+    });
+    registerWithTransport({
+      readStoredCredentials: async () => tokenOnlyCredentials,
+      resolveSessionTransportContext: async () => ({
+        ok: true,
+        sessionId: 'resolved-session',
+        rawSession,
+        accountEncryptionCurrentness: {
+          mode: 'plain', version: 1, signingKeyFingerprint: null,
+          contentKeyFingerprint: null, updatedAt: 1,
+        },
+        ctx: null,
+        mode: 'plain',
+      }),
+    });
+
+    await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE)?.({
+      sessionId: 'session-prefix',
+    })).resolves.toEqual({ ok: true, status: 'waiting', sessionId: 'resolved-session' });
+
+    expect(routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: tokenOnlyCredentials,
+      ctx: null,
+      mode: 'plain',
+    }));
+    expect(createCliActionDepsParams).toBeNull();
+  });
+
+  it('preserves typed unavailable for retained E2EE usage-limit control without material', async () => {
+    registerWithTransport({
+      readStoredCredentials: async () => tokenOnlyCredentials,
+      resolveSessionTransportContext: async () => ({
+        ok: false,
+        code: 'encryption_material_unavailable',
+        sessionId: 'resolved-session',
+      }),
+    });
+
+    await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE)?.({
+      sessionId: 'session-prefix',
+    })).resolves.toEqual({
+      ok: false,
+      status: 'unsupported',
+      sessionId: 'resolved-session',
+      errorCode: 'encryption_material_unavailable',
+    });
+    expect(routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable).not.toHaveBeenCalled();
   });
 
   it('returns invalid-parameter errors for malformed daemon usage-limit controls', async () => {

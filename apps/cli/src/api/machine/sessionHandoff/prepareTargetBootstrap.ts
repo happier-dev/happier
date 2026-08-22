@@ -7,6 +7,7 @@ import {
 
 import {
   createSessionHandoffPrepareTargetJobStore,
+  type SessionHandoffPrepareTargetJobRecordV2,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import {
@@ -206,4 +207,22 @@ export async function resolvePrepareTargetBootstrap(
     pendingStatus,
     runJob,
   };
+}
+
+export async function resumePersistedPrepareTarget(
+  input: Omit<ResolvePrepareTargetBootstrapInput, 'request'> & Readonly<{
+    record: SessionHandoffPrepareTargetJobRecordV2;
+  }>,
+): Promise<void> {
+  if (!input.record.prepareTargetRequest) {
+    throw new Error('Interrupted prepare-target job has no persisted request');
+  }
+  if (input.record.prepareTargetRequest.handoffId !== input.record.handoffId) {
+    throw new Error('Interrupted prepare-target job identity disagrees with its persisted request');
+  }
+  await resolvePrepareTargetBootstrap({
+    ...input,
+    request: input.record.prepareTargetRequest,
+    acceptedResumeJobId: input.record.jobId,
+  });
 }

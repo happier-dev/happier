@@ -14,7 +14,7 @@ import type {
   TransferEndpointCandidate,
 } from '@happier-dev/protocol';
 import {
-  sealSessionOwnerMetadataV1,
+  sealSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -1250,7 +1250,7 @@ function createWorkspaceReplicationAdapterForTest(
       }),
       metadataVersion: 1,
       metadataLayoutVersion: 1,
-      ownerMetadata: sealSessionOwnerMetadataV1({
+      ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
         material: { type: 'legacy', secret },
         ownerMetadata,
         randomBytes: (length) => new Uint8Array(length).fill(23),
@@ -1374,6 +1374,135 @@ function createWorkspaceReplicationAdapterForTest(
     expect(stopSessionForHandoff.mock.invocationCallOrder[0]).toBeLessThan(
       exportSessionBundle.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it('stops an active direct-peer fallback source before exporting its provider bundle', async () => {
+    const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const exportSessionBundle = vi.fn(async () => ({
+      agentBundle: {
+        agentId: 'claude' as const,
+        remoteSessionId: 'claude_session_direct_peer_active',
+        transcriptBase64: 'e30K',
+      },
+      targetPath: '/repo',
+    }));
+    const stopSessionForHandoff = vi.fn(async () => 'stopped' as const);
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineSessionHandoffRpcHandlers({
+      rpcHandlerManager,
+      loadSessionMetadata: async () => ({
+        machineId: 'machine_source',
+        path: '/repo',
+        flavor: 'claude',
+        claudeSessionId: 'claude_session_direct_peer_active',
+      }),
+      exportSessionBundle,
+      stopSessionForHandoff,
+      machineTransferChannel: {
+        onEnvelope: () => () => {},
+        sendEnvelope: () => {},
+      },
+      directPeerTransfer: {
+        publishTransfer: vi.fn(async ({ transferId }) => [
+          buildDirectPeerEndpointCandidate({ transferId }),
+        ]),
+        requestPayloadFile: vi.fn(),
+        clearPublishedTransfer: vi.fn(),
+      },
+    });
+
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    expect(start).toBeDefined();
+
+    const started = await start!({
+      sessionId: 'sess_direct_peer_active',
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      sessionStorageMode: 'persisted',
+      preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+      negotiatedTransportStrategy: 'direct_peer',
+    });
+
+    expect(started).toMatchObject({
+      handoffId: expect.stringMatching(/^handoff_/),
+      handoffMetadataV2: {
+        agentBundleTransferPublication: {
+          sizeBytes: expect.any(Number),
+          manifestHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        },
+      },
+    });
+    expect(stopSessionForHandoff).toHaveBeenCalledWith('sess_direct_peer_active');
+    expect(stopSessionForHandoff.mock.invocationCallOrder[0]).toBeLessThan(
+      exportSessionBundle.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('does not export a direct-peer fallback provider bundle when active-source stop fails', async () => {
+    const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const exportSessionBundle = vi.fn(async () => ({
+      agentBundle: {
+        agentId: 'claude' as const,
+        remoteSessionId: 'claude_session_direct_peer_stop_failed',
+        transcriptBase64: 'e30K',
+      },
+      targetPath: '/repo',
+    }));
+    const stopSessionForHandoff = vi.fn(async () => 'failed' as const);
+    const clearPublishedTransfer = vi.fn();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineSessionHandoffRpcHandlers({
+      rpcHandlerManager,
+      loadSessionMetadata: async () => ({
+        machineId: 'machine_source',
+        path: '/repo',
+        flavor: 'claude',
+        claudeSessionId: 'claude_session_direct_peer_stop_failed',
+      }),
+      exportSessionBundle,
+      stopSessionForHandoff,
+      machineTransferChannel: {
+        onEnvelope: () => () => {},
+        sendEnvelope: () => {},
+      },
+      directPeerTransfer: {
+        publishTransfer: vi.fn(async ({ transferId }) => [
+          buildDirectPeerEndpointCandidate({ transferId }),
+        ]),
+        requestPayloadFile: vi.fn(),
+        clearPublishedTransfer,
+      },
+    });
+
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    expect(start).toBeDefined();
+
+    await expect(start!({
+      sessionId: 'sess_direct_peer_stop_failed',
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      sessionStorageMode: 'persisted',
+      preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+      negotiatedTransportStrategy: 'direct_peer',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'source_stop_failed',
+      error: 'Failed to stop the active source session before handoff cutover',
+    });
+
+    expect(stopSessionForHandoff).toHaveBeenCalledWith('sess_direct_peer_stop_failed');
+    expect(exportSessionBundle).not.toHaveBeenCalled();
+    expect(clearPublishedTransfer).not.toHaveBeenCalled();
   });
 
 	  it('acknowledges workspace handoff start (pending) without waiting for source stop/export when negotiatedTransportStrategy is omitted and server-routed fallback is available', async () => {
@@ -2500,7 +2629,7 @@ function createWorkspaceReplicationAdapterForTest(
     }
   });
 
-  it('surfaces workspaceReplicationHandoffBackTargetRootPath when session metadata indicates a sync_changes handoff back to the prior source machine', async () => {
+  it('surfaces a Windows workspaceReplicationHandoffBackTargetRootPath when session metadata indicates a sync_changes handoff back', async () => {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-start-v2-handoff-back-hint-'));
     const published = await createPublishedDirectPeerPayloadRouter();
@@ -2539,7 +2668,7 @@ function createWorkspaceReplicationAdapterForTest(
             v: 1,
             sourceMachineId: 'machine_target',
             targetMachineId: 'machine_source',
-            sourceWorkspaceRootPath: '/repo/./wsrepl-large',
+            sourceWorkspaceRootPath: 'C:\\Users\\alice\\projects\\.\\demo',
             targetWorkspaceRootPath: '/home/guest/wsrepl-large-replication-9',
           },
         }),
@@ -2571,7 +2700,7 @@ function createWorkspaceReplicationAdapterForTest(
       });
 
       expect(result.handoffMetadataV2).toMatchObject({
-        workspaceReplicationHandoffBackTargetRootPath: '/repo/wsrepl-large',
+        workspaceReplicationHandoffBackTargetRootPath: 'C:\\Users\\alice\\projects\\demo',
       });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
@@ -5537,7 +5666,7 @@ function createWorkspaceReplicationAdapterForTest(
     }
   });
 
-  it('keeps deferred direct-peer prepare-target on direct-peer when server-routed fallback exists', async () => {
+  it('waits for a truthful provider-bundle commitment before keeping deferred prepare-target on direct-peer', async () => {
 
     const sourcePath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-deferred-workspace-'));
     const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-deferred-source-'));
@@ -5586,6 +5715,7 @@ function createWorkspaceReplicationAdapterForTest(
 
     const channels = createLoopbackMachineTransferChannels();
     const published = await createPublishedDirectPeerPayloadRouter();
+    const exportSessionBundle = vi.fn(async () => await exportDeferred.promise);
     const sourceRpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
         sourceRegistered.set(method, handler);
@@ -5633,7 +5763,7 @@ function createWorkspaceReplicationAdapterForTest(
           flavor: 'claude',
           claudeSessionId: 'claude_session_source',
         }),
-        exportSessionBundle: vi.fn(async () => await exportDeferred.promise),
+        exportSessionBundle,
         machineTransferChannel: channels.source,
         directPeerTransfer: {
           publishTransfer: published.publishTransfer,
@@ -5683,6 +5813,20 @@ function createWorkspaceReplicationAdapterForTest(
       });
 
       await vi.waitFor(() => {
+        expect(exportSessionBundle).toHaveBeenCalledOnce();
+      });
+      expect(started).toBeNull();
+
+      exportDeferred.resolve({
+        agentBundle: {
+          agentId: 'claude',
+          remoteSessionId: 'claude_session_source',
+          transcriptBase64: 'e30K',
+        },
+        targetPath: sourcePath,
+      });
+
+      await vi.waitFor(() => {
         expect(started).toMatchObject({
           handoffId: expect.stringMatching(/^handoff_/),
           status: expect.objectContaining({
@@ -5693,6 +5837,8 @@ function createWorkspaceReplicationAdapterForTest(
         });
         expect(started.endpointCandidates.length).toBeGreaterThan(0);
         expect(started.handoffMetadataV2?.agentBundleTransferPublication?.endpointCandidates?.length).toBeGreaterThan(0);
+        expect(started.handoffMetadataV2?.agentBundleTransferPublication?.sizeBytes).toBeGreaterThan(2);
+        expect(started.handoffMetadataV2?.agentBundleTransferPublication?.manifestHash).toMatch(/^sha256:[a-f0-9]{64}$/);
         expect(started.handoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates?.length).toBeGreaterThan(0);
       });
 
@@ -5713,15 +5859,6 @@ function createWorkspaceReplicationAdapterForTest(
           status: 'pending',
           phase: 'staging_target',
         }),
-      });
-
-      exportDeferred.resolve({
-        agentBundle: {
-          agentId: 'claude',
-          remoteSessionId: 'claude_session_source',
-          transcriptBase64: 'e30K',
-        },
-        targetPath: sourcePath,
       });
 
       let ready = prepareAck;
@@ -7935,8 +8072,8 @@ function createWorkspaceReplicationAdapterForTest(
           expect(received.destinationPath).toEqual(destinationPath);
           expect(received.sizeBytes).toBeGreaterThan(0);
           const rawAgentBundle = await readFile(received.destinationPath, 'utf8');
-          const parsedAgentBundle = JSON.parse(rawAgentBundle) as { agentId?: unknown };
-          expect(parsedAgentBundle.agentId).toEqual('claude');
+          const parsedAgentBundle = JSON.parse(rawAgentBundle) as { providerId?: unknown };
+          expect(parsedAgentBundle.providerId).toEqual('claude');
         } finally {
           await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
         }

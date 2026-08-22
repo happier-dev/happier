@@ -2,7 +2,7 @@ import type {
   ConnectedServiceId,
   SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
 } from '@happier-dev/protocol';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
   createSessionConnectedServiceAuthTransport,
   type SessionConnectedServiceAuthTransportResult,
@@ -13,7 +13,7 @@ import type {
 } from './runtimeAccountIdentityTypes';
 
 type RuntimeIdentityTransportFactory = (input: Readonly<{
-  credentials: Credentials | null | undefined;
+  credentials: StoredCredentials | null | undefined;
   sessionId: string;
 }>) => Readonly<{
   readConnectedServiceRuntimeIdentity: ReturnType<
@@ -59,7 +59,7 @@ function mapProviderFailure(
 }
 
 export function createConnectedServiceRuntimeIdentityFanoutReader(params: Readonly<{
-  credentials: Credentials | null | undefined;
+  credentials: StoredCredentials | null | undefined;
   createTransport?: RuntimeIdentityTransportFactory;
 }>): RuntimeAccountIdentityFanoutReader {
   const createTransport = params.createTransport ?? createSessionConnectedServiceAuthTransport;

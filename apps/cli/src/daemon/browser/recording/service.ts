@@ -28,6 +28,7 @@ export type BrowserRecordingDaemonUnavailableCode =
   | 'browser_recording_retention_unavailable'
   | 'browser_recording_capture_adapter_missing'
   | 'browser_recording_already_active'
+  | 'browser_recording_id_conflict'
   | 'browser_recording_missing'
   | 'browser_recording_not_active'
   | 'browser_recording_media_discard_failed'
@@ -415,9 +416,19 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
       }
 
       const startedAtMs = startInput.startedAtMs ?? now();
+      const recordingId = buildRecordingId(startInput, startedAtMs);
+      if (sessionsById.has(recordingId)) {
+        return {
+          status: 'unavailable',
+          reason: createUnavailable(
+            'browser_recording_id_conflict',
+            'A browser recording with this identity already exists.',
+          ),
+        };
+      }
       const recording = BrowserRecordingSessionV1Schema.parse({
         v: 1,
-        recordingId: buildRecordingId(startInput, startedAtMs),
+        recordingId,
         browserSessionId: startInput.browserSessionId,
         viewId: startInput.viewId,
         profileId: startInput.profileId,

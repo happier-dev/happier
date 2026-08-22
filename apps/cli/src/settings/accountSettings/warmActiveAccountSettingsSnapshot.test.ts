@@ -59,12 +59,52 @@ describe('warmActiveAccountSettingsSnapshotBestEffort', () => {
     expect(bootstrapAccountSettingsContext).not.toHaveBeenCalled();
   });
 
-  it('fails open (returns false, never throws) when the refresh fails', async () => {
-    const warnings: unknown[] = [];
+  it('forces a network retry when the active snapshot is only an empty fallback', async () => {
+    const bootstrapAccountSettingsContext = vi.fn(async () => createContext(7));
 
     await expect(warmActiveAccountSettingsSnapshotBestEffort({
       credentials: createCredentialsStub(),
-      logger: { warn: (message, error) => { warnings.push([message, error]); } },
+      deps: {
+        getActiveSnapshot: () => ({
+          ...createContext(0),
+          source: 'none',
+          scopeKey: 'token-scope',
+        }),
+        bootstrapAccountSettingsContext,
+        resolveScopeKey: () => 'token-scope',
+      },
+    })).resolves.toBe(true);
+
+    expect(bootstrapAccountSettingsContext).toHaveBeenCalledWith(expect.objectContaining({
+      refresh: 'force',
+    }));
+  });
+
+  it('does not report an empty fallback snapshot as successfully warmed', async () => {
+    const diagnostics: unknown[] = [];
+
+    await expect(warmActiveAccountSettingsSnapshotBestEffort({
+      credentials: createCredentialsStub(),
+      logger: { debug: (message, error) => { diagnostics.push([message, error]); } },
+      deps: {
+        getActiveSnapshot: () => null,
+        bootstrapAccountSettingsContext: vi.fn(async () => ({
+          ...createContext(0),
+          source: 'none' as const,
+        })),
+        resolveScopeKey: () => 'token-scope',
+      },
+    })).resolves.toBe(false);
+
+    expect(diagnostics).toHaveLength(1);
+  });
+
+  it('fails open and keeps the non-fatal diagnostic out of the user console', async () => {
+    const diagnostics: unknown[] = [];
+
+    await expect(warmActiveAccountSettingsSnapshotBestEffort({
+      credentials: createCredentialsStub(),
+      logger: { debug: (message, error) => { diagnostics.push([message, error]); } },
       deps: {
         getActiveSnapshot: () => null,
         bootstrapAccountSettingsContext: vi.fn(async () => {
@@ -74,6 +114,6 @@ describe('warmActiveAccountSettingsSnapshotBestEffort', () => {
       },
     })).resolves.toBe(false);
 
-    expect(warnings).toHaveLength(1);
+    expect(diagnostics).toHaveLength(1);
   });
 });

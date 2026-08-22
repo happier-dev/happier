@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -67,9 +69,6 @@ describe('cleanupAndShutdown', () => {
                 stopTailscaleTransferServeLifecycle: async () => {
                     calls.push('tailscaleStop');
                 },
-                stopManagedServersOnShutdown: async () => {
-                    calls.push('managedServersStop');
-                },
                 stopSshTunnelsOnShutdown: async () => {
                     calls.push('sshTunnelsStop');
                 },
@@ -96,7 +95,6 @@ describe('cleanupAndShutdown', () => {
                 'beforeShutdown',
                 'directPeerStop',
                 'tailscaleStop',
-                'managedServersStop',
                 'sshTunnelsStop',
                 'controlServerStop',
                 'caffeinateStop',
@@ -148,7 +146,6 @@ describe('cleanupAndShutdown', () => {
                 stopTailscaleTransferServeLifecycle: async () => {
                     calls.push('tailscaleStop');
                 },
-                stopManagedServersOnShutdown: async () => {},
                 stopControlServer: async () => {},
                 stopCaffeinate: async () => {},
                 daemonLockHandle: null,
@@ -163,6 +160,108 @@ describe('cleanupAndShutdown', () => {
                 'exit:0',
             ]);
             exitSpy.mockRestore();
+        });
+    });
+
+    it('does not remove a successor daemon state publication during predecessor shutdown', async () => {
+        await withTempDir('happier-cleanup-successor-state-', async (homeDir) => {
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+            });
+            vi.resetModules();
+
+            const [{ cleanupAndShutdown }, { readDaemonState, writeDaemonState }] = await Promise.all([
+                import('./cleanupAndShutdown'),
+                import('@/persistence'),
+            ]);
+            const predecessor = {
+                pid: 111,
+                httpPort: 5111,
+                startedAt: 1_111,
+                startedWithCliVersion: '0.0.0-a',
+                runtimeId: 'shared-runtime',
+                controlToken: 'control-a',
+            };
+            const successor = {
+                pid: 222,
+                httpPort: 5222,
+                startedAt: 2_222,
+                startedWithCliVersion: '0.0.0-b',
+                runtimeId: 'shared-runtime',
+                controlToken: 'control-b',
+            };
+            writeDaemonState(successor);
+            const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
+
+            await cleanupAndShutdown({
+                source: 'happier-cli',
+                processEnv: {},
+                resolvePositiveIntEnv: (_raw, fallback) => fallback,
+                restartOnStaleVersionAndHeartbeat: null,
+                connectedServiceRefreshLoopHandle: null,
+                connectedServiceQuotasLoopHandle: null,
+                apiMachine: null,
+                machineConnectionStateCleanup: null,
+                automationWorker: null,
+                memoryWorker: null,
+                voiceInferenceWorker: null,
+                trackedSessionCount: 0,
+                stopDirectPeerServer: async () => {},
+                stopTailscaleTransferServeLifecycle: async () => {},
+                stopControlServer: async () => {},
+                stopCaffeinate: async () => {},
+                daemonLockHandle: null,
+                releaseDaemonLock: async () => {},
+                daemonStateOwner: predecessor,
+            });
+
+            await expect(readDaemonState()).resolves.toMatchObject(successor);
+            exitSpy.mockRestore();
+        });
+    });
+
+    it('clears an owned publication before releasing its lifecycle lock after a fatal error', async () => {
+        await withTempDir('happier-cleanup-fatal-owner-', async (homeDir) => {
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+            });
+            vi.resetModules();
+
+            const [
+                { configuration },
+                { releaseDaemonOwnershipAfterFatal },
+                {
+                    acquireDaemonLock,
+                    readDaemonState,
+                    writeDaemonStateForLockOwner,
+                },
+            ] = await Promise.all([
+                import('@/configuration'),
+                import('./cleanupAndShutdown'),
+                import('@/persistence'),
+            ]);
+            const lockHandle = await acquireDaemonLock(2, 1);
+            expect(lockHandle).not.toBeNull();
+            if (!lockHandle) return;
+
+            const stateOwner = {
+                pid: process.pid,
+                httpPort: 5111,
+                startedAt: 1_111,
+                startedWithCliVersion: '0.0.0-test',
+                controlToken: 'control-owner',
+            };
+            expect(writeDaemonStateForLockOwner(lockHandle, stateOwner)).toBe(true);
+
+            await releaseDaemonOwnershipAfterFatal({
+                daemonLockHandle: lockHandle,
+                daemonStateOwner: stateOwner,
+            });
+
+            await expect(readDaemonState()).resolves.toBeNull();
+            expect(existsSync(configuration.daemonLockFile)).toBe(false);
         });
     });
 });

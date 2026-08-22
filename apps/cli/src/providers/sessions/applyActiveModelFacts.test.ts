@@ -109,6 +109,49 @@ describe('applyActiveModelFacts', () => {
     });
   });
 
+  it('publishes the producer-declared option override rule alongside the descriptor', () => {
+    const activeTarget = {
+      selection: {
+        agentTargetKey: 'backend:claude',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        modelId: 'claude-opus-5',
+      },
+      policy: 'live',
+      providerBinding: {
+        connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        model: {
+          id: 'claude-opus-5',
+          name: 'Opus 5',
+          modelOptions: [
+            {
+              id: 'reasoning_effort',
+              name: 'Thinking',
+              type: 'select',
+              currentValue: 'high',
+              options: [{ value: 'xhigh', name: 'XHigh' }],
+            },
+            {
+              id: 'ultracode',
+              name: 'Ultracode',
+              type: 'boolean',
+              currentValue: 'false',
+              overridesWhenOn: { optionIds: ['reasoning_effort'], forcedValue: 'xhigh' },
+            },
+          ],
+        },
+        materialization: { v: 1, kind: 'spawnEnv' },
+      },
+      sessionBindingMetadata: null,
+      runtimeBindingBasis: null,
+      revalidateBeforeEffect: async () => true,
+    } satisfies AuthorizedSessionModelTransitionTarget;
+
+    const published = applyActiveModelFacts(baseMetadata, activeTarget, 'claude');
+    expect(
+      published.sessionModelsV1?.availableModels[0]?.modelOptions?.[1]?.overridesWhenOn,
+    ).toEqual({ optionIds: ['reasoning_effort'], forcedValue: 'xhigh' });
+  });
+
   it('publishes the complete authorized Provider model descriptor as active facts', () => {
     const activeTarget = {
       selection: {

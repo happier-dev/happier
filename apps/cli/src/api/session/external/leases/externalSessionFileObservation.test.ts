@@ -15,14 +15,18 @@ import { join } from 'node:path';
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
+    AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type {
     ExternalAgentObservationResourceDescriptorV1,
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 import { createExternalSessionFollowLeaseManager } from './createExternalSessionFollowLeaseManager';
 import {
@@ -54,11 +58,19 @@ type ReadOutcome =
 
 const roots: string[] = [];
 
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
+    async () => {
+        throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
+    };
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
+
 function invocation(maxSerializedBytes = 524_288) {
     return {
         signal: new AbortController().signal,
         deadlineAtMs: Date.now() + 30_000,
         maxSerializedBytes,
+        managedEndpointRead: unavailableManagedEndpointRead,
+        exec: unavailableInvocationExec,
     };
 }
 
@@ -76,6 +88,7 @@ async function resolveResourceDescriptor(
         resourceKey: grouping.resourceKey,
         links: [{ linkKey: grouping.linkKey, linkedSource: identity }],
         signal: new AbortController().signal,
+        managedEndpointRead: unavailableManagedEndpointRead,
     });
     const outcome = result.purpose === 'resource_descriptors'
         ? result.outcomes[0]
@@ -438,6 +451,7 @@ async function runFileObservationScenario(
                 resourceKey: input.resource.resourceKey,
                 links: input.links,
                 signal: input.signal,
+                managedEndpointRead: unavailableManagedEndpointRead,
             });
         },
     });
@@ -678,29 +692,55 @@ describe('source-backed External Session file observation', () => {
             message: string;
             sidechainId?: string;
         }>> = [];
-        const isCodexMessageBody = (
+        const parseCodexMessageBody = (
             value: unknown,
-        ): value is Readonly<{
-            type: 'message';
+        ): Readonly<{
             message: string;
             sidechainId?: string;
-        }> => {
+        }> | null => {
             if (
                 typeof value !== 'object'
                 || value === null
                 || Array.isArray(value)
             ) {
-                return false;
+                return null;
             }
             const outer = value as Record<string, unknown>;
+            const content = outer.content;
+            if (
+                outer.role !== 'agent'
+                || typeof content !== 'object'
+                || content === null
+                || Array.isArray(content)
+            ) {
+                return null;
+            }
+            const contentRecord = content as Record<string, unknown>;
+            const data = contentRecord.data;
+            if (
+                contentRecord.type !== 'codex'
+                || typeof data !== 'object'
+                || data === null
+                || Array.isArray(data)
+            ) {
+                return null;
+            }
+            const body = data as Record<string, unknown>;
             return (
-                outer.type === 'message'
-                && typeof outer.message === 'string'
+                body.type === 'message'
+                && typeof body.message === 'string'
                 && (
-                    outer.sidechainId === undefined
-                    || typeof outer.sidechainId === 'string'
+                    body.sidechainId === undefined
+                    || typeof body.sidechainId === 'string'
                 )
-            );
+            )
+                ? {
+                    message: body.message,
+                    ...(typeof body.sidechainId === 'string'
+                        ? { sidechainId: body.sidechainId }
+                        : {}),
+                }
+                : null;
         };
         const readAfterLimits: number[] = [];
         const retirement = new AbortController();
@@ -710,6 +750,24 @@ describe('source-backed External Session file observation', () => {
             retirementSignal: retirement.signal,
         };
         const manager = createExternalSessionFollowLeaseManager();
+        const applyTranscriptItems = (
+            items: readonly Readonly<{ raw: unknown }>[],
+        ): void => {
+            for (const item of items) {
+                const message = parseCodexMessageBody(item.raw);
+                if (!message) {
+                    continue;
+                }
+                deliveredMessages.push({
+                    message: message.message,
+                    ...(message.sidechainId
+                        ? {
+                            sidechainId: message.sidechainId,
+                        }
+                        : {}),
+                });
+            }
+        };
         await manager.attach({
             sessionId: 'delayed-child-session',
             leaseId: 'delayed-child-viewer',
@@ -726,23 +784,36 @@ describe('source-backed External Session file observation', () => {
                         cursor,
                         maxItems: 200,
                     });
-                    if (!result.ok || result.value.outcome !== 'advanced') {
+                    if (!result.ok) {
                         return;
                     }
-                    cursor = result.value.nextCursor;
-                    for (const item of result.value.items) {
-                        if (!isCodexMessageBody(item.raw)) {
-                            continue;
-                        }
-                        deliveredMessages.push({
-                            message: item.raw.message,
-                            ...(item.raw.sidechainId
-                                ? {
-                                    sidechainId: item.raw.sidechainId,
+                    if (result.value.outcome === 'gap_or_cursor_expired') {
+                        return {
+                            outcome: 'gap_or_cursor_expired' as const,
+                            recover: async () => {
+                                const page = await externalSessions.pageTranscript({
+                                    ...invocation(),
+                                    source,
+                                    remoteSessionId: rootSessionId,
+                                    direction: 'older',
+                                    maxItems: 200,
+                                });
+                                if (!page.ok || !page.value.tailCursor) {
+                                    throw new Error(
+                                        'Expected a canonical cursor after membership recovery',
+                                    );
                                 }
-                                : {}),
-                        });
+                                applyTranscriptItems(page.value.items);
+                                cursor = page.value.tailCursor;
+                            },
+                        };
                     }
+                    if (result.value.outcome !== 'advanced') {
+                        return { outcome: result.value.outcome };
+                    }
+                    applyTranscriptItems(result.value.items);
+                    cursor = result.value.nextCursor;
+                    return { outcome: 'advanced' as const };
                 },
             }),
         });
@@ -785,6 +856,7 @@ describe('source-backed External Session file observation', () => {
                     resourceKey: input.resource.resourceKey,
                     links: input.links,
                     signal: input.signal,
+                    managedEndpointRead: unavailableManagedEndpointRead,
                 });
             },
         });

@@ -36,6 +36,37 @@ describe('waitForSessionWebhook', () => {
     expect(pidToSpawnWebhookTimeout.has(42)).toBe(false);
   });
 
+  it('returns the authoritative create-or-rejoin outcome carried by the matched runner', async () => {
+    const pidToAwaiter = new Map<number, (session: any) => void>();
+    const pidToSpawnResultResolver = new Map<number, (result: any) => void>();
+    const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+
+    const promise = waitForSessionWebhook({
+      pid: 43,
+      pidToAwaiter,
+      pidToSpawnResultResolver,
+      pidToSpawnWebhookTimeout,
+      timeoutErrorMessage: 'timeout',
+    });
+
+    pidToAwaiter.get(43)?.({
+      happySessionId: 'session-create-outcome',
+      sessionCreationOutcome: {
+        disposition: 'rejoined',
+        organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
+      },
+    });
+
+    await expect(promise).resolves.toEqual({
+      type: 'success',
+      sessionId: 'session-create-outcome',
+      sessionCreationOutcome: {
+        disposition: 'rejoined',
+        organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
+      },
+    });
+  });
+
   it('resolves timeout error and cleans maps when webhook does not arrive', async () => {
     vi.useFakeTimers();
 

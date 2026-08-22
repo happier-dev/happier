@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginHostedWebSecurityPolicyV1Schema } from '@happier-dev/protocol/plugins/ui';
+import {
+    PLUGIN_UI_HOST_API_VERSION_V1,
+    PluginHostedWebSecurityPolicyV1Schema,
+} from '@happier-dev/protocol/plugins/ui';
 
 import { createHostedWebStaticAssetLifecycle } from './lifecycle';
 import {
@@ -51,10 +54,8 @@ function manifest(digest = DIGEST_WEB) {
                 bundler: 'vite',
                 version: '6.0.0',
             },
-            hostUiApiVersion: '1.0.0',
-            compat: {
-                react: '19.0.0',
-            },
+            hostUiApiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
+            compat: {},
         }],
     };
 }
@@ -91,7 +92,7 @@ const artifact = {
     integrity: { digest: DIGEST_WEB },
     compatibility: {
         hostAppVersion: '1.0.0',
-        hostUiApiVersion: '1.0.0',
+        hostUiApiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
         reactVersion: '19.0.0',
         nativeCapabilities: [],
     },

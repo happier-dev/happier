@@ -12,7 +12,7 @@ import { isLegacyUnclassifiedTranscriptRow } from './legacyUnclassifiedTranscrip
 type MemorySemanticTranscriptContext = Readonly<{
   encryptionKey: Uint8Array;
   encryptionVariant: 'legacy' | 'dataKey';
-}>;
+}> | null;
 
 export type FetchMemorySemanticTranscriptPageResult = Readonly<{
   items: readonly MemoryIndexableTranscriptItem[];

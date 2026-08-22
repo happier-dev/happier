@@ -1,11 +1,40 @@
-import { describe, expect, it } from 'vitest';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { readAgentCatalogSnapshot, runBackendSessionCliCommand } = vi.hoisted(() => ({
+  readAgentCatalogSnapshot: vi.fn(),
+  runBackendSessionCliCommand: vi.fn(async () => {}),
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot,
+}));
+
+vi.mock('@/cli/runBackendSessionCliCommand', () => ({
+  runBackendSessionCliCommand,
+}));
+
+import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
 import {
   resolveDaemonCatalogAgentIdFromBackendTarget,
   resolveDaemonCliSubcommandFromBackendTarget,
 } from './backendTargetRouting';
 
 describe('backendTargetRouting', () => {
+  beforeEach(() => {
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        codex: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'supported' },
+        'acme-agent': {
+          id: 'acme-agent',
+          cliSubcommand: 'acme-agent',
+          vendorResumeSupport: 'supported',
+        },
+      },
+    });
+  });
+
   it('fails closed when backend target is missing', () => {
     expect(resolveDaemonCatalogAgentIdFromBackendTarget(undefined)).toBeNull();
     expect(resolveDaemonCliSubcommandFromBackendTarget(undefined)).toBeNull();
@@ -44,6 +73,67 @@ describe('backendTargetRouting', () => {
 
     expect(resolveDaemonCatalogAgentIdFromBackendTarget(target)).toBe('codex');
     expect(resolveDaemonCliSubcommandFromBackendTarget(target)).toBe('codex');
+  });
+
+  it('routes an installed external Session Agent through the exact active catalog projection', () => {
+    const target = {
+      kind: 'backend',
+      backendId: 'acme-agent',
+      sourceKind: 'built_in',
+    } as const;
+
+    expect(resolveDaemonCatalogAgentIdFromBackendTarget(target)).toBe('acme-agent');
+    expect(resolveDaemonCliSubcommandFromBackendTarget(target)).toBe('acme-agent');
+  });
+
+  it('routes an external no-CLI Session Agent subcommand into its generic host session runner', async () => {
+    const contribution = projectManifestAgentContribution({
+      definition: PluginAgentContributionV2Schema.parse({
+        id: 'acme-agent',
+        title: 'Acme Agent',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        capabilities: {
+          sessions: {
+            open: ['create', 'resume'],
+            delivery: ['newTurn'],
+            cancel: true,
+          },
+        },
+      }),
+      provenance: 'external',
+      source: { kind: 'path' },
+      pluginId: 'com.acme.agent',
+    });
+    const entry = contribution.catalogEntry;
+    expect(entry).not.toBeNull();
+    if (!entry?.getCliCommandHandler) throw new Error('Expected projected Session Agent command handler');
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map([[entry.id, contribution]]),
+      catalogEntriesById: { [entry.id]: entry },
+    });
+
+    const subcommand = resolveDaemonCliSubcommandFromBackendTarget({
+      kind: 'backend',
+      backendId: entry.id,
+      sourceKind: 'built_in',
+    });
+    expect(subcommand).toBe(entry.cliSubcommand);
+    if (!subcommand) throw new Error('Expected active catalog subcommand');
+
+    const context = {
+      args: [subcommand, '--happy-starting-mode', 'remote'],
+      rawArgv: ['happier', subcommand, '--happy-starting-mode', 'remote'],
+      terminalRuntime: null,
+    };
+    await (await entry.getCliCommandHandler())(context);
+
+    expect(runBackendSessionCliCommand).toHaveBeenCalledWith({
+      context,
+      backendIdForSessionRuntime: 'acme-agent',
+      runtimeAuthorityAgentId: 'acme-agent',
+      agentIdForAccountSettings: 'acme-agent',
+    });
   });
 
   it('fails closed for unknown built-in backend targets', () => {

@@ -7,21 +7,39 @@ import {
   DaemonProviderProfileMigrationConflictConfirmResponseV1Schema,
   RPC_METHODS,
 } from '@happier-dev/protocol/rpc';
+import { createProviderErrorV1 } from '@happier-dev/protocol';
 import type {
   DaemonProviderConnectionMutationRequestV1,
+  DaemonProviderDraftProbeRequestV1,
   DaemonProviderModelSettingsMutationRequestV1,
 } from '@happier-dev/protocol/rpc';
 
 import { registerMachineProviderRpcHandlers } from './rpcHandlers.providers';
+import { createProviderProbeScheduler } from '@/providers/probe/scheduler';
+import type { ProviderCatalogRefreshResult } from '@/providers/probe/catalog';
+import type { ProviderProbeWaiterLifetime } from '@/providers/probe/rpc';
+import type { RpcHandlerContext } from '../rpc/types';
 
-function harness(providersEnabled = true) {
-  const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
+function harness(providersEnabled: boolean | (() => boolean) = true) {
+  const handlers = new Map<string, (raw: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
   const rpcHandlerManager = {
-    registerHandler(method: string, handler: (raw: unknown) => Promise<unknown>) { handlers.set(method, handler); },
+    registerHandler(method: string, handler: (raw: unknown, context?: RpcHandlerContext) => Promise<unknown>) { handlers.set(method, handler); },
   } as never;
   const services = {
-    probe: vi.fn(async () => ({ status: 'success' as const, models: [], requestFingerprint: 'probe-request:v1:test' as never })),
-    probeDraft: vi.fn(async () => ({ status: 'success' as const, models: [], requestFingerprint: 'probe-request:v1:test' as never })),
+    probe: vi.fn<(
+      input: Readonly<{ connectionId: string; machineId: string }>,
+      waiter?: Readonly<{ signal?: AbortSignal }>,
+    ) => Promise<ProviderCatalogRefreshResult>>(async (
+      _input,
+      _waiter,
+    ) => ({ status: 'success' as const, models: [], requestFingerprint: 'probe-request:v1:test' as never })),
+    probeDraft: vi.fn<(
+      input: DaemonProviderDraftProbeRequestV1,
+      waiter?: ProviderProbeWaiterLifetime,
+    ) => Promise<ProviderCatalogRefreshResult>>(async (
+      _input,
+      _waiter,
+    ) => ({ status: 'success' as const, models: [], requestFingerprint: 'probe-request:v1:test' as never })),
     models: vi.fn(async () => ({
       status: 'success' as const, connectionId: 'pc_1', connectionRevision: 1,
       manualModelPolicy: 'allowed' as const, modelLoadAction: 'descriptor_absent' as const, models: [],
@@ -74,13 +92,17 @@ function harness(providersEnabled = true) {
     rpcHandlerManager,
     machineId: 'machine-a',
     services,
-    featureGate: { isEnabled: () => providersEnabled },
+    featureGate: {
+      isEnabled: () => typeof providersEnabled === 'function'
+        ? providersEnabled()
+        : providersEnabled,
+    },
   });
   return { handlers, services };
 }
 
 describe('machine provider RPC registration', () => {
-  it('fails every provider RPC closed before invoking runtime services when the root feature is disabled', async () => {
+  it('fails provider reads and new mutations closed before invoking runtime services when the root feature is disabled', async () => {
     const h = harness(false);
     await expect(h.handlers.get(RPC_METHODS.DAEMON_PROVIDERS_PROBE)!({ connectionId: 'pc_1', machineId: 'machine-a' }))
       .resolves.toMatchObject({ status: 'error', error: { code: 'provider_feature_disabled' } });
@@ -154,6 +176,30 @@ describe('machine provider RPC registration', () => {
     expect(h.services.previewProfileMigration).not.toHaveBeenCalled();
     expect(h.services.confirmProfileMigration).not.toHaveBeenCalled();
     expect(h.services.confirmProfileMigrationConflict).not.toHaveBeenCalled();
+  });
+
+  it('dispatches exact model-load cancellation after provider-feature revocation while keeping new loads gated', async () => {
+    let providersEnabled = true;
+    const h = harness(() => providersEnabled);
+    const handler = h.handlers.get(RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD)!;
+    const request = { connectionId: 'pc_1', machineId: 'machine-a', modelId: 'm' } as const;
+
+    await expect(handler({ action: 'load', ...request })).resolves.toEqual({
+      status: 'loaded',
+      source: 'requested',
+    });
+    providersEnabled = false;
+
+    await expect(handler({ action: 'cancel', ...request })).resolves.toEqual({
+      status: 'cancelled',
+      providerMayContinue: true,
+    });
+    await expect(handler({ action: 'load', ...request })).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'provider_feature_disabled' },
+    });
+    expect(h.services.cancelModelLoad).toHaveBeenCalledWith(request);
+    expect(h.services.loadModel).toHaveBeenCalledTimes(1);
   });
 
   it('delegates strict guided profile-migration preview and confirmation only on the addressed machine', async () => {
@@ -280,6 +326,105 @@ describe('machine provider RPC registration', () => {
     expect(h.services.models).toHaveBeenCalledWith({ connectionId: 'pc_1', machineId: 'machine-a' });
     expect(h.services.loadModel).toHaveBeenCalledWith({ connectionId: 'pc_1', machineId: 'machine-a', modelId: 'm' });
     expect(h.services.cancelModelLoad).toHaveBeenCalledWith({ connectionId: 'pc_1', machineId: 'machine-a', modelId: 'm' });
+  });
+
+  it('detaches an aborted RPC probe waiter while a second waiter retains the shared probe', async () => {
+    const h = harness();
+    const scheduler = createProviderProbeScheduler();
+    let release!: (result: ProviderCatalogRefreshResult) => void;
+    const operation = vi.fn(() => new Promise<ProviderCatalogRefreshResult>((resolve) => {
+      release = resolve;
+    }));
+    h.services.probe.mockImplementation((identity, waiter?: Readonly<{ signal?: AbortSignal }>) => scheduler.runCatalog(
+      'provider-observation-a',
+      'manual_refresh',
+      operation,
+      {
+        unavailable: () => ({
+          status: 'error' as const,
+          error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+        }),
+        ...(waiter?.signal ? { signal: waiter.signal } : {}),
+      },
+    ));
+
+    const handler = h.handlers.get(RPC_METHODS.DAEMON_PROVIDERS_PROBE)!;
+    const firstController = new AbortController();
+    const first = handler(
+      { connectionId: 'pc_1', machineId: 'machine-a' },
+      { signal: firstController.signal },
+    );
+    await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
+    const second = handler({ connectionId: 'pc_1', machineId: 'machine-a' });
+
+    firstController.abort();
+    release({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:test' as never });
+
+    await expect(first).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_endpoint_unavailable' },
+    });
+    await expect(second).resolves.toMatchObject({ status: 'success' });
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it('detaches an aborted RPC draft-probe waiter while a second waiter retains the shared probe', async () => {
+    const h = harness();
+    const scheduler = createProviderProbeScheduler();
+    let release!: (result: ProviderCatalogRefreshResult) => void;
+    const operation = vi.fn(() => new Promise<ProviderCatalogRefreshResult>((resolve) => {
+      release = resolve;
+    }));
+    h.services.probeDraft.mockImplementation((request, waiter?: Readonly<{ signal?: AbortSignal }>) => scheduler.runCatalog(
+      'draft-observation-a',
+      'manual_refresh',
+      operation,
+      {
+        unavailable: () => ({
+          status: 'error' as const,
+          error: createProviderErrorV1('provider_endpoint_unavailable', {
+            connectionId: request.draftConnectionId,
+            machineId: request.machineId,
+          }),
+        }),
+        ...(waiter?.signal ? { signal: waiter.signal } : {}),
+      },
+    ));
+    const request = {
+      kind: 'draft' as const,
+      draftConnectionId: 'pc_draft_1',
+      machineId: 'machine-a',
+      template: {
+        v: 1 as const,
+        name: 'Draft',
+        endpointTemplates: [{
+          id: 'openai', protocol: 'openai-chat' as const, baseUrl: 'https://models.example/v1',
+          capabilities: {
+            streaming: 'unknown' as const, toolRoundTrips: 'unknown' as const,
+            statefulResponses: 'unknown' as const, reasoningControls: 'unknown' as const,
+          },
+        }],
+        catalog: {
+          source: 'probe' as const, manualModelPolicy: 'allowed' as const,
+          probes: [{ endpointTemplateId: 'openai', path: '/models', parser: 'openai-models' as const }],
+        },
+      },
+      savedSecretId: null,
+      actionNonce: 'draft-action-0002',
+    };
+    const handler = h.handlers.get(RPC_METHODS.DAEMON_PROVIDERS_PROBE)!;
+    const firstController = new AbortController();
+    const first = handler(request, { signal: firstController.signal });
+    await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
+    const second = handler(request);
+
+    firstController.abort();
+    release({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:test' as never });
+
+    await expect(first).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_endpoint_unavailable' },
+    });
+    await expect(second).resolves.toMatchObject({ status: 'success' });
+    expect(operation).toHaveBeenCalledOnce();
   });
 
   it('refuses another machine before invoking services', async () => {

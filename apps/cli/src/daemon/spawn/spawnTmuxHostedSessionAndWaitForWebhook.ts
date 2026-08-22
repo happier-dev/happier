@@ -21,8 +21,9 @@ import { buildTmuxSpawnConfig } from '../platform/tmux/spawnConfig';
 import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
 import type { ChildExit } from '../sessions/onChildExited';
 import type { TrackedSession } from '../types';
-import type { PluginLocalServicesBridgeAuthorization } from '../local/services/pluginBridgeAuthorization';
-import type { AgentRuntimeSessionBridgeAuthorization } from '../agentRuntime/sessionBridgeAuthorization';
+import type {
+  RunnerAgentSessionBootstrapAuthorization,
+} from '../agentRuntime/sessionBridgeAuthorization';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { waitForSessionWebhook } from './waitForSessionWebhook';
 import type { SpawnCommitRevalidation } from './spawnCommitRevalidation';
@@ -52,8 +53,8 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
   directoryCreated: boolean;
   extraEnvForChildWithMessage: Record<string, string>;
   unsetEnvKeys?: readonly string[];
-  localServicesBridgeAuthorization: PluginLocalServicesBridgeAuthorization;
-  agentRuntimeSessionBridgeAuthorization?: AgentRuntimeSessionBridgeAuthorization | null;
+  runnerAgentSessionBootstrapAuthorization?:
+    RunnerAgentSessionBootstrapAuthorization | null;
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
   pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
@@ -117,8 +118,7 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
     }
   }
 
-  const sessionDesc = resolvedTmuxSessionName || 'current/most recent session';
-  params.logDebug(`[DAEMON RUN] Attempting to spawn session in tmux: ${sessionDesc}`);
+  params.logDebug('[DAEMON RUN] Attempting to spawn session in tmux');
 
   const agentSubcommand = resolveDaemonCliSubcommandFromBackendTarget(params.effectiveBackendTargetV2);
   if (!agentSubcommand) {
@@ -219,7 +219,7 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
     };
   }
 
-  params.logDebug(`[DAEMON RUN] Successfully spawned in tmux session: ${tmuxResult.sessionId}, PID: ${tmuxResult.pid}`);
+  params.logDebug(`[DAEMON RUN] Successfully spawned in tmux, PID: ${tmuxResult.pid}`);
 
   if (!tmuxResult.pid) {
     throw new Error('Tmux window created but no PID returned');
@@ -240,20 +240,16 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
     pid: tmuxPid,
     spawnOptions: params.trackedSpawnOptions,
     acceptedSpawnMarkerGate,
-    localServicesBridgeTokenHash: params.localServicesBridgeAuthorization.tokenHash,
-    localServicesBridgePluginId: params.localServicesBridgeAuthorization.pluginId,
-    localServicesBridgeContributionId: params.localServicesBridgeAuthorization.contributionId,
-    localServicesBridgeTokenFilePath: params.localServicesBridgeAuthorization.tokenFilePath,
-    ...(params.agentRuntimeSessionBridgeAuthorization ? {
-      agentRuntimeBridgeTokenHash: params.agentRuntimeSessionBridgeAuthorization.tokenHash,
-      agentRuntimeBridgePluginId:
-        params.agentRuntimeSessionBridgeAuthorization.descriptor.pluginId,
-      agentRuntimeBridgeAgentId:
-        params.agentRuntimeSessionBridgeAuthorization.descriptor.agentId,
-      agentRuntimeBridgeBackendId:
-        params.agentRuntimeSessionBridgeAuthorization.descriptor.backendId,
-      agentRuntimeBridgeGeneration:
-        params.agentRuntimeSessionBridgeAuthorization.descriptor.generation,
+    ...(params.runnerAgentSessionBootstrapAuthorization ? {
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        params.runnerAgentSessionBootstrapAuthorization
+          .authorityFilePath,
+      runnerAgentBootstrapIdentity: {
+        agentId:
+          params.runnerAgentSessionBootstrapAuthorization.descriptor.agentId,
+        backendId:
+          params.runnerAgentSessionBootstrapAuthorization.descriptor.backendId,
+      },
     } : {}),
     tmuxSessionId: tmuxResult.sessionId,
     tmuxTmpDir: typeof tmuxTmpDir === 'string' && tmuxTmpDir.trim().length > 0 ? tmuxTmpDir.trim() : undefined,
@@ -306,8 +302,8 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
     onTimeout: () => {
       params.logDebug(`[DAEMON RUN] Session webhook timeout for PID ${tmuxPid} (tmux)`);
     },
-    onSuccess: (completedSession) => {
-      params.logDebug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook (tmux)`);
+    onSuccess: () => {
+      params.logDebug('[DAEMON RUN] Session fully spawned with webhook (tmux)');
     },
   });
   try {

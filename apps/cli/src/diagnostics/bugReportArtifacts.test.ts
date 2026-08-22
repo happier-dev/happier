@@ -5,12 +5,14 @@ import type { collectBugReportMachineDiagnosticsSnapshot } from './bugReportMach
 
 const {
   readCredentialsMock,
+  readStoredCredentialsMock,
   readSettingsMock,
   collectBugReportMachineDiagnosticsSnapshotMock,
   readBugReportLogTailMock,
   buildDoctorSnapshotMock,
 } = vi.hoisted(() => ({
   readCredentialsMock: vi.fn<() => Promise<{ token: string } | null>>(async () => null),
+  readStoredCredentialsMock: vi.fn<() => Promise<{ token: string; encryption: null } | null>>(async () => null),
   readSettingsMock: vi.fn(async () => ({
     schemaVersion: 5,
     onboardingCompleted: false,
@@ -98,6 +100,7 @@ vi.mock('@/configuration', () => ({
 
 vi.mock('@/persistence', () => ({
   readCredentials: readCredentialsMock,
+  readStoredCredentials: readStoredCredentialsMock,
   readSettings: readSettingsMock,
 }));
 
@@ -119,7 +122,10 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
 
   it('redacts sensitive invocation input and strips absolute paths in JSON artifacts', async () => {
     const payload = Buffer.from(JSON.stringify({ sub: 'acct_123' })).toString('base64url');
-    readCredentialsMock.mockResolvedValueOnce({ token: `header.${payload}.sig` });
+    readStoredCredentialsMock.mockResolvedValueOnce({
+      token: `header.${payload}.sig`,
+      encryption: null,
+    });
 
     const result = await collectBugReportDiagnosticsArtifacts({
       includeDiagnostics: true,
@@ -155,6 +161,8 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(JSON.stringify(cliContext)).not.toContain('?token=');
     expect(cliContext.cwd).toBe(basename(process.cwd()));
     expect(cliContext.accountId).toBe('acct_123');
+    expect(readStoredCredentialsMock).toHaveBeenCalledOnce();
+    expect(readCredentialsMock).not.toHaveBeenCalled();
     expect(cliContext.settingsActiveServerId).toBe('cloud');
     expect(cliContext.settingsServers).toBeDefined();
 
@@ -176,7 +184,10 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
   });
 
   it('skips daemon/stack/server collectors when accepted kinds only allow cli artifacts', async () => {
-    readCredentialsMock.mockResolvedValueOnce({ token: 'token-value' });
+    readStoredCredentialsMock.mockResolvedValueOnce({
+      token: 'token-value',
+      encryption: null,
+    });
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
     try {
@@ -288,7 +299,10 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
 
   it('uses context-window-derived line count for server diagnostics requests', async () => {
     const urls: string[] = [];
-    readCredentialsMock.mockResolvedValueOnce({ token: 'token-value' });
+    readStoredCredentialsMock.mockResolvedValueOnce({
+      token: 'token-value',
+      encryption: null,
+    });
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
       urls.push(String(input));
       return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
@@ -312,7 +326,10 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
   });
 
   it('treats server diagnostics 404 as skipped (disabled) instead of an error', async () => {
-    readCredentialsMock.mockResolvedValueOnce({ token: 'token-value' });
+    readStoredCredentialsMock.mockResolvedValueOnce({
+      token: 'token-value',
+      encryption: null,
+    });
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain' } });
     });

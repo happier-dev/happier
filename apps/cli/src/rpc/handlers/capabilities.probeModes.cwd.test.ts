@@ -66,6 +66,16 @@ describe('capabilities.invoke(cli.* probeModes)', () => {
     }));
   });
 
+  it('does not forward connected-service selections to the mode probe', async () => {
+    mocks.probeModes.mockResolvedValue({ provider: 'opencode', availableModes: [], source: 'static' });
+    await createCall()(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.opencode',
+      method: 'probeModes',
+      params: { connectedServices: { v: 1, bindingsByServiceId: {} } },
+    });
+    expect(mocks.probeModes).toHaveBeenCalledWith(expect.not.objectContaining({ connectedServices: expect.anything() }));
+  });
+
   it('uses a long enough default timeout when timeoutMs is omitted', async () => {
     mocks.probeModes.mockResolvedValue({
       provider: 'opencode',
@@ -141,7 +151,7 @@ describe('capabilities.invoke(cli.* probeModes)', () => {
     });
     mocks.resolveProbeBackendContext.mockResolvedValue({
       backendTarget: undefined,
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
       accountSettings: { codexBackendMode: 'appServer' },
     });
 
@@ -156,7 +166,7 @@ describe('capabilities.invoke(cli.* probeModes)', () => {
     expect(mocks.probeModes).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
       accountSettings: { codexBackendMode: 'appServer' },
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
     }));
   });
 });

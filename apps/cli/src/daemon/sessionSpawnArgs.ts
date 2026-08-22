@@ -1,6 +1,9 @@
 import {
+  serializeSessionCreationCorrespondenceV1,
   serializeSessionModelSelectionV1,
+  SessionCreationTagV1Schema,
   type BackendTargetRefV2,
+  type SessionCreationCorrespondenceV1,
   type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 import {
@@ -18,6 +21,12 @@ export function buildHappySessionControlArgs(opts: Readonly<{
   modelSelection?: SessionModelSelectionV1;
   resume?: string;
   nativeForkSource?: NativeForkSource;
+  /** Opaque host-derived identity carried only from daemon to its runner. */
+  sessionCreationTag?: string;
+  /** Immutable recipe used to reject a same-key create with different meaning. */
+  sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
+  /** Mutable presentation state that must reach only the fresh create envelope. */
+  initialTitle?: string;
   existingSessionId?: string;
   backendTarget?: BackendTargetRefV2;
 }>): string[] {
@@ -34,6 +43,25 @@ export function buildHappySessionControlArgs(opts: Readonly<{
     args.push('--native-fork-source-v1', serializeNativeForkSourceV1(opts.nativeForkSource));
   }
 
+  if (opts.sessionCreationTag !== undefined) {
+    const sessionCreationTag = SessionCreationTagV1Schema.parse(opts.sessionCreationTag);
+    args.push('--session-creation-tag-v1', sessionCreationTag);
+  }
+  if (opts.sessionCreationCorrespondence !== undefined) {
+    const correspondence = opts.sessionCreationCorrespondence;
+    const sessionCreationTag = SessionCreationTagV1Schema.parse(opts.sessionCreationTag);
+    if (correspondence.sessionCreationTag !== sessionCreationTag) {
+      throw new Error('Session creation correspondence tag does not match the admitted tag');
+    }
+    args.push(
+      '--session-creation-correspondence-v1',
+      serializeSessionCreationCorrespondenceV1(correspondence),
+    );
+  }
+  const initialTitle = typeof opts.initialTitle === 'string' ? opts.initialTitle.trim() : '';
+  if (initialTitle) {
+    args.push('--session-initial-title-v1', initialTitle);
+  }
   const existingSessionId = typeof opts.existingSessionId === 'string' ? opts.existingSessionId.trim() : '';
   if (existingSessionId) {
     args.push('--existing-session', existingSessionId);

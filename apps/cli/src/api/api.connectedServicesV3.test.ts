@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
-import { ApiClient } from './api';
+import { ApiClient, ConnectedServiceCredentialUnsupportedFormatError } from './api';
 import { logger } from '@/ui/logger';
 import { resetServerEndpointFailureLogSamplingForTests } from './client/serverEndpointFailureLog';
 import { readHttpStatus } from './client/httpStatusError';
@@ -129,6 +129,48 @@ describe('ApiClient connected services v3 credentials', () => {
       profileId: 'work',
     })).rejects.toThrow('Invalid connected service credential response');
     expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain('setup-token');
+  });
+
+  it('preserves unsupported stored credential content as a typed failure instead of absence', async () => {
+    mockGet.mockRejectedValue(createAxiosResponseError({
+      status: 409,
+      data: { error: 'connect_credential_unsupported_format' },
+    }));
+
+    const api = await ApiClient.create({
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    });
+
+    await expect(api.getConnectedServiceCredentialPlain({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    })).rejects.toMatchObject({
+      name: 'ConnectedServiceCredentialUnsupportedFormatError',
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    });
+    await expect(api.getConnectedServiceCredentialPlain({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    })).rejects.toBeInstanceOf(ConnectedServiceCredentialUnsupportedFormatError);
+  });
+
+  it('keeps a genuine missing v3 credential as absence', async () => {
+    mockGet.mockRejectedValue(createAxiosResponseError({
+      status: 404,
+      data: { error: 'connect_credential_not_found' },
+    }));
+
+    const api = await ApiClient.create({
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    });
+
+    await expect(api.getConnectedServiceCredentialPlain({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    })).resolves.toBeNull();
   });
 
   it('posts plaintext credentials without logging credential secrets', async () => {

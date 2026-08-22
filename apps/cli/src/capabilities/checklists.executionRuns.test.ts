@@ -42,8 +42,7 @@ describe('capabilities checklists', () => {
           ownerId: 'happier.agent.fixture',
           pluginId: 'happier.agent.fixture',
           manifestPath: 'bundled:happier.agent.fixture',
-          manifestDigest: 'sha256:fixture',
-        },
+          },
         descriptor,
       }],
     });
@@ -61,6 +60,31 @@ describe('capabilities checklists', () => {
   it('does not emphasize Codex ACP installables for the default resume checklist', () => {
     const entries = checklists[resumeChecklistId('codex')] ?? [];
     expect(entries.some((entry) => entry.id === CODEX_ACP_DEP_ID)).toBe(false);
+  });
+
+  it('reflects an Agent contributed after the first checklist read', async () => {
+    // `AGENTS` is a live Proxy over `readAgentCatalogSnapshot()`, so the catalog gains entries as
+    // plugins activate. Memoizing the resolved table froze the `cli.<agentId>` capability requests
+    // to whichever catalog happened to exist at the first read, which reported a later-contributed
+    // Agent as having no CLI capability check for the rest of the process.
+    const catalogEntries: Record<string, { id: string }> = { claude: { id: 'claude' } };
+    vi.resetModules();
+    vi.doMock('@/agent/catalog/registry', () => ({
+      get AGENTS() {
+        return catalogEntries;
+      },
+    }));
+
+    const moduleExports = await import('./checklists');
+    expect(moduleExports.checklists[CHECKLIST_IDS.NEW_SESSION]?.map((entry) => entry.id)).toContain(
+      'cli.claude',
+    );
+
+    catalogEntries['acme.later'] = { id: 'acme.later' };
+
+    expect(moduleExports.checklists[CHECKLIST_IDS.NEW_SESSION]?.map((entry) => entry.id)).toContain(
+      'cli.acme.later',
+    );
   });
 
   it('does not read AGENTS during module initialization', async () => {

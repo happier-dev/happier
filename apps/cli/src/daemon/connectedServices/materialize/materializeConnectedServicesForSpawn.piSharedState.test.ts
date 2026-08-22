@@ -42,6 +42,9 @@ describe('materializeConnectedServicesForSpawn (PI shared state)', () => {
         activeServerDir,
         baseDir,
         sessionDirectory,
+        connectedAccountMaterializationAuthority: {
+          kind: 'legacy_unfenced_one_shot',
+        },
         recordsByServiceId: new Map([['openai', openai]]),
         accountSettings: {
           connectedServicesProviderStateSharingSettingsV1: {

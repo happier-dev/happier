@@ -20,6 +20,7 @@ export type RequestPlannedRunnerRestartParams = Readonly<{
   isProcessSafeToSignal?: (params: Readonly<{
     pid: number;
     expectedProcessCommandHash?: string;
+    expectedProcessStartTimeMs?: number;
   }>) => Promise<boolean>;
   observeProcessMissing?: (tracked: TrackedSession) => void;
   clearRestartIntentForPid?: (pid: number, logMessage: string) => void;
@@ -45,46 +46,80 @@ export async function requestPlannedRunnerRestart(
   let signaled = false;
   let notSignaledReason: PlannedRunnerRestartNotSignaledReason | undefined;
   const isProcessSafeToSignal = params.isProcessSafeToSignal ?? isPidSafeHappySessionProcess;
+  const expectedPid = params.tracked.pid;
+  const expectedProcessCommandHash =
+    params.tracked.processCommandHash?.trim() ?? '';
+  const expectedProcessStartTimeMs = params.tracked.processStartTimeMs;
+  if (
+    !Number.isInteger(expectedPid)
+    || expectedPid <= 0
+    || !expectedProcessCommandHash
+    || !Number.isInteger(expectedProcessStartTimeMs)
+    || (expectedProcessStartTimeMs ?? -1) < 0
+  ) {
+    return {
+      signaled: false,
+      notSignaledReason: 'unsafe_process',
+    };
+  }
 
   const runSwitch = async (): Promise<void> => {
-    if (params.restartRequestedPids.has(params.tracked.pid)) {
+    if (params.restartRequestedPids.has(expectedPid)) {
       notSignaledReason = 'restart_already_running';
       return;
     }
-    params.restartRequestedPids.add(params.tracked.pid);
+    params.restartRequestedPids.add(expectedPid);
     let ownerStillCurrent = true;
     let missingProcessObserved = false;
+    const trackedWitnessIsCurrent = (): boolean => {
+      ownerStillCurrent =
+        params.pidToTrackedSession.get(expectedPid) === params.tracked;
+      if (!ownerStillCurrent) {
+        notSignaledReason = 'stale_owner';
+        return false;
+      }
+      if (
+        params.tracked.pid !== expectedPid
+        || params.tracked.processCommandHash?.trim()
+          !== expectedProcessCommandHash
+        || params.tracked.processStartTimeMs
+          !== expectedProcessStartTimeMs
+      ) {
+        notSignaledReason = 'unsafe_process';
+        return false;
+      }
+      return true;
+    };
+    const exactProcessWitnessIsCurrent = async (): Promise<boolean> => {
+      if (!trackedWitnessIsCurrent()) return false;
+      const safe = await isProcessSafeToSignal({
+        pid: expectedPid,
+        expectedProcessCommandHash,
+        expectedProcessStartTimeMs,
+      });
+      if (!safe) {
+        notSignaledReason = 'unsafe_process';
+        return false;
+      }
+      return trackedWitnessIsCurrent();
+    };
     const signalResult = await params.requestSignal({
       tracked: params.tracked,
       shouldSignal: async () => {
-        ownerStillCurrent = params.pidToTrackedSession.get(params.tracked.pid) === params.tracked;
-        if (!ownerStillCurrent) {
-          notSignaledReason = 'stale_owner';
+        if (!await exactProcessWitnessIsCurrent()) return false;
+        const allowedByActivityGate = (await params.canSignal?.()) ?? true;
+        if (allowedByActivityGate !== true) {
+          notSignaledReason = allowedByActivityGate === false
+            ? 'activity_in_progress'
+            : allowedByActivityGate;
           return false;
         }
-        const safe = await isProcessSafeToSignal({
-          pid: params.tracked.pid,
-          ...(params.tracked.processCommandHash
-            ? { expectedProcessCommandHash: params.tracked.processCommandHash }
-            : {}),
-        });
-            if (!safe) {
-              notSignaledReason = 'unsafe_process';
-              return false;
-            }
-            const allowedByActivityGate = (await params.canSignal?.()) ?? true;
-            if (allowedByActivityGate !== true) {
-              notSignaledReason = allowedByActivityGate === false
-                ? 'activity_in_progress'
-                : allowedByActivityGate;
-              return false;
-            }
-            return true;
-          },
+        return await exactProcessWitnessIsCurrent();
+      },
       onSignalFailure: (error) => {
-        params.restartRequestedPids.delete(params.tracked.pid);
+        params.restartRequestedPids.delete(expectedPid);
         clearRestartIntent({
-          pid: params.tracked.pid,
+          pid: expectedPid,
           clearRestartIntentForPid: params.clearRestartIntentForPid,
           message: params.onSignalFailureLogMessage
             ?? '[DAEMON RUN] Failed to clear planned runner restart intent after signal failure',
@@ -105,16 +140,16 @@ export async function requestPlannedRunnerRestart(
     });
 
     if (!ownerStillCurrent || signalResult.status === 'skipped_stale_owner') {
-      params.restartRequestedPids.delete(params.tracked.pid);
+      params.restartRequestedPids.delete(expectedPid);
       clearRestartIntent({
-        pid: params.tracked.pid,
+        pid: expectedPid,
         clearRestartIntentForPid: params.clearRestartIntentForPid,
         message: '[DAEMON RUN] Failed to clear stale planned runner restart intent after skipped signal',
       });
       if (notSignaledReason === 'unsafe_process') {
         params.logWarn?.('[DAEMON RUN] Refusing planned session runner restart because PID identity no longer matches tracked runner', {
           sessionId: params.sessionId,
-          pid: params.tracked.pid,
+          pid: expectedPid,
         });
       }
       return;

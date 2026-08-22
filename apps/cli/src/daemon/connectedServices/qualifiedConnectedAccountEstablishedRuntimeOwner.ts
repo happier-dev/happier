@@ -11,25 +11,26 @@ import {
   sealQualifiedConnectedAccountContentEnvelope,
   type AccountScopedCryptoMaterial,
   type BuiltInLegacyConnectedServiceId,
+  type ConnectedServiceCredentialRevisionV1,
   type PluginConnectedAccountAuthenticationModeV2,
   type QualifiedConnectedAccountConfigurationSnapshotV4,
   type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 import type {
-  PluginConnectedAccountCredentialReader,
-  PluginConnectedAccountRuntimeConfiguration,
-} from '@happier-dev/plugin-sdk/runtime';
+  ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
   readQualifiedConnectedAccountConfigurationV4,
   readQualifiedConnectedAccountCredentialV4,
 } from '@/api/client/qualifiedConnectedAccountApi';
+import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { ConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import {
   resolveConnectedServiceCredentialResolutions,
 } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
   createConnectedAccountConfigurationOwner,
   parseConnectedAccountConfigurationRecordContent,
@@ -37,7 +38,14 @@ import {
   type ConnectedAccountConfigurationRecord,
   type ConnectedAccountConfigurationTarget,
 } from '@/plugins/runtime/connectedAccounts/configurationOwner';
+import {
+  projectConnectedAccountConfiguredEndpoints,
+} from '@/plugins/runtime/connectedAccounts/configuredOrigins';
 import type {
+  ConnectedAccountConfiguredEndpoint,
+} from '@/plugins/runtime/connectedAccounts/configuredOrigins';
+import type {
+  ConnectedAccountRuntimeEstablishedInvocation,
   ConnectedAccountRuntimeEstablishedOperation,
   ConnectedAccountRuntimeEstablishedResult,
 } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
@@ -46,18 +54,48 @@ import type { PluginReloadController } from '@/plugins/runtime/reload/controller
 import type { ConnectedAccountDaemonPersistence } from './ConnectedAccountDaemonRuntime';
 
 type MaybePromise<T> = T | Promise<T>;
+type ConnectedAccountCredentialReader =
+  ConnectedAccountRuntimeEstablishedInvocation['context']['credentials'];
 
 type CredentialSnapshotReader = typeof readQualifiedConnectedAccountCredentialV4;
 type ConfigurationSnapshotReader = typeof readQualifiedConnectedAccountConfigurationV4;
 type QualifiedConnectedAccountCredentialSnapshotV4 = ReturnType<
   typeof QualifiedConnectedAccountCredentialSnapshotV4Schema.parse
 >;
+type RevisionedQualifiedConnectedAccountCredentialSnapshotV4 = Extract<
+  QualifiedConnectedAccountCredentialSnapshotV4,
+  { revisionSemantics: 'revisioned' }
+>;
+type RevisionedQualifiedConnectedAccountConfigurationSnapshotV4 = Extract<
+  QualifiedConnectedAccountConfigurationSnapshotV4,
+  { revisionSemantics: 'revisioned' }
+>;
 
 export type QualifiedConnectedAccountEstablishedRuntimeOwner = Readonly<{
+  /**
+   * Host-private currentness read for the request-auth broker. It exposes no credential content
+   * and does not invoke a plugin runtime.
+   */
+  readCredentialRevision(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    signal?: AbortSignal;
+  }>): Promise<ConnectedServiceCredentialRevisionV1>;
+  /**
+   * Host-private projection of the incumbent configured-origin owner for one
+   * exact account. It returns bounded, unique, host-normalized, credential-free
+   * origins, exposes no credential or configuration content, selects no
+   * preferred origin, and does not invoke a plugin runtime.
+   */
+  readConfiguredEndpoints(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    signal?: AbortSignal;
+  }>): Promise<readonly ConnectedAccountConfiguredEndpoint[]>;
   invokeWithReceipt<TOperation extends ConnectedAccountRuntimeEstablishedOperation>(
     input: Readonly<{
       account: QualifiedConnectedAccountRef;
       operation: TOperation;
+      /** Host-private callback fence; never a public plugin capability field. */
+      expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
       assertEffectfulOperationAllowed?: () => void;
       signal?: AbortSignal;
     }>,
@@ -69,31 +107,42 @@ export type QualifiedConnectedAccountEstablishedRuntimeOwner = Readonly<{
     input: Readonly<{
       account: QualifiedConnectedAccountRef;
       operation: TOperation;
+      /** Host-private callback fence; never a public plugin capability field. */
+      expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
       assertEffectfulOperationAllowed?: () => void;
       signal?: AbortSignal;
     }>,
   ): Promise<ConnectedAccountRuntimeEstablishedResult<TOperation>>;
 }>;
 
-export type RevisionedLegacyConnectedAccountMaterializationOwner =
-  Readonly<{
-    invoke(input: Readonly<{
-      account: QualifiedConnectedAccountRef;
-      serviceId: BuiltInLegacyConnectedServiceId;
-      request: Extract<
-        ConnectedAccountRuntimeEstablishedOperation,
-        { kind: 'materialize' }
-      >['request'];
-      signal?: AbortSignal;
-    }>): Promise<
-      ConnectedAccountRuntimeEstablishedResult<
-        Extract<
-          ConnectedAccountRuntimeEstablishedOperation,
-          { kind: 'materialize' }
-        >
-      >
-    >;
-  }>;
+type RevisionedLegacyConnectedAccountMaterializationOperation = Extract<
+  ConnectedAccountRuntimeEstablishedOperation,
+  { kind: 'materialize' }
+>;
+type RevisionedLegacyConnectedAccountMaterializationInput = Readonly<{
+  account: QualifiedConnectedAccountRef;
+  serviceId: BuiltInLegacyConnectedServiceId;
+  request: RevisionedLegacyConnectedAccountMaterializationOperation['request'];
+  /** Host-private callback fence; never a public plugin capability field. */
+  expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
+  signal?: AbortSignal;
+}>;
+type RevisionedLegacyConnectedAccountMaterializationResult =
+  ConnectedAccountRuntimeEstablishedResult<
+    RevisionedLegacyConnectedAccountMaterializationOperation
+  >;
+
+export type RevisionedLegacyConnectedAccountMaterializationOwner = Readonly<{
+  invokeWithReceipt(
+    input: RevisionedLegacyConnectedAccountMaterializationInput,
+  ): Promise<Readonly<{
+    result: RevisionedLegacyConnectedAccountMaterializationResult;
+    basis: QualifiedConnectedAccountEstablishedInvocationBasis;
+  }>>;
+  invoke(
+    input: RevisionedLegacyConnectedAccountMaterializationInput,
+  ): Promise<RevisionedLegacyConnectedAccountMaterializationResult>;
+}>;
 
 export type QualifiedConnectedAccountEstablishedInvocationBasis = Readonly<{
   credentialRevision: string;
@@ -172,7 +221,10 @@ function configurationTarget(
   });
 }
 
-function resolveCryptoMaterial(credentials: Credentials): AccountScopedCryptoMaterial {
+function resolveCryptoMaterial(
+  credentials: StoredCredentials,
+): AccountScopedCryptoMaterial | null {
+  if (!credentials.encryption) return null;
   return credentials.encryption.type === 'legacy'
     ? Object.freeze({
         type: 'legacy' as const,
@@ -182,6 +234,17 @@ function resolveCryptoMaterial(credentials: Credentials): AccountScopedCryptoMat
         type: 'dataKey' as const,
         machineKey: credentials.encryption.machineKey,
       });
+}
+
+function requireCryptoMaterial(
+  credentials: StoredCredentials,
+  material: AccountScopedCryptoMaterial | null,
+): AccountScopedCryptoMaterial {
+  if (material) return material;
+  requireAccountEncryptionCredentials(credentials);
+  throw new Error(
+    'Account encryption credentials unexpectedly resolved without crypto material',
+  );
 }
 
 function assertNotAborted(signal: AbortSignal | undefined): void {
@@ -194,7 +257,8 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
 function openEnvelope(input: Readonly<{
   kind: 'credential' | 'configuration';
   accountMode: Exclude<ConnectedServiceAccountEncryptionMode, 'unknown'>;
-  material: AccountScopedCryptoMaterial;
+  credentials: StoredCredentials;
+  material: AccountScopedCryptoMaterial | null;
   envelope:
     | QualifiedConnectedAccountCredentialSnapshotV4['content']
     | QualifiedConnectedAccountConfigurationSnapshotV4['configurationContent'];
@@ -208,7 +272,7 @@ function openEnvelope(input: Readonly<{
     : openQualifiedConnectedAccountContentEnvelope({
         kind: input.kind,
         accountMode: 'e2ee',
-        material: input.material,
+        material: requireCryptoMaterial(input.credentials, input.material),
         envelope: input.envelope,
       });
   if (opened === null) {
@@ -238,9 +302,25 @@ function assertConfigurationSnapshotIdentity(
   }
 }
 
+function requireRevisionedCredentialSnapshot(
+  snapshot: QualifiedConnectedAccountCredentialSnapshotV4,
+): asserts snapshot is RevisionedQualifiedConnectedAccountCredentialSnapshotV4 {
+  if (snapshot.revisionSemantics !== 'revisioned') {
+    throw new Error('Connected-account credential snapshot is unfenced');
+  }
+}
+
+function requireRevisionedConfigurationSnapshot(
+  snapshot: QualifiedConnectedAccountConfigurationSnapshotV4,
+): asserts snapshot is RevisionedQualifiedConnectedAccountConfigurationSnapshotV4 {
+  if (snapshot.revisionSemantics !== 'revisioned') {
+    throw new Error('Connected-account configuration snapshot is unfenced');
+  }
+}
+
 function assertSnapshotPair(input: Readonly<{
-  credential: QualifiedConnectedAccountCredentialSnapshotV4;
-  configuration: QualifiedConnectedAccountConfigurationSnapshotV4 | null;
+  credential: RevisionedQualifiedConnectedAccountCredentialSnapshotV4;
+  configuration: RevisionedQualifiedConnectedAccountConfigurationSnapshotV4 | null;
 }>): void {
   const { credential, configuration } = input;
   if (credential.configurationRevision === null) {
@@ -265,8 +345,8 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
       PluginReloadController,
       'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
     >;
-    credentials: Credentials;
-    getAccountEncryptionMode(): Promise<ConnectedServiceAccountEncryptionMode>;
+    credentials: StoredCredentials;
+    getAccountEncryptionMode(signal?: AbortSignal): Promise<ConnectedServiceAccountEncryptionMode>;
     readCredential?: CredentialSnapshotReader;
     readConfiguration?: ConfigurationSnapshotReader;
     configuration: Pick<
@@ -289,29 +369,54 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     account: QualifiedConnectedAccountRef,
     signal?: AbortSignal,
   ): Promise<Readonly<{
-    credential: QualifiedConnectedAccountCredentialSnapshotV4;
-    configuration: QualifiedConnectedAccountConfigurationSnapshotV4 | null;
+    credential: RevisionedQualifiedConnectedAccountCredentialSnapshotV4;
+    configuration: RevisionedQualifiedConnectedAccountConfigurationSnapshotV4 | null;
   }>> {
     assertNotAborted(signal);
     const credential = await readCredential({
       token: params.credentials.token,
       ref: account,
+      signal,
     });
     assertNotAborted(signal);
     if (!credential) {
       throw new Error('Connected-account credential snapshot is unavailable');
     }
     assertCredentialSnapshotIdentity(credential, account);
+    requireRevisionedCredentialSnapshot(credential);
     const configuration = credential.configurationRevision === null
       ? null
       : await readConfiguration({
           token: params.credentials.token,
           target: accountTarget(account),
+          signal,
         });
     assertNotAborted(signal);
-    if (configuration) assertConfigurationSnapshotIdentity(configuration, account);
+    if (configuration) {
+      assertConfigurationSnapshotIdentity(configuration, account);
+      requireRevisionedConfigurationSnapshot(configuration);
+    }
     assertSnapshotPair({ credential, configuration });
     return Object.freeze({ credential, configuration });
+  }
+
+  async function readCredentialRevision(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    signal?: AbortSignal;
+  }>): Promise<ConnectedServiceCredentialRevisionV1> {
+    assertNotAborted(input.signal);
+    const credential = await readCredential({
+      token: params.credentials.token,
+      ref: input.account,
+      signal: input.signal,
+    });
+    assertNotAborted(input.signal);
+    if (!credential) {
+      throw new Error('Connected-account credential snapshot is unavailable');
+    }
+    assertCredentialSnapshotIdentity(credential, input.account);
+    requireRevisionedCredentialSnapshot(credential);
+    return credential.credentialRevision;
   }
 
   async function invokeWithReceipt<
@@ -320,6 +425,8 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     input: Readonly<{
       account: QualifiedConnectedAccountRef;
       operation: TOperation;
+      /** Host-private callback fence; never a public plugin capability field. */
+      expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
       assertEffectfulOperationAllowed?: () => void;
       signal?: AbortSignal;
     }>,
@@ -328,11 +435,19 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     basis: QualifiedConnectedAccountEstablishedInvocationBasis;
   }>> {
       assertNotAborted(input.signal);
-      const accountMode = await params.getAccountEncryptionMode();
+      const accountMode = await params.getAccountEncryptionMode(input.signal);
       if (accountMode === 'unknown') {
         throw new Error('Connected-account account encryption mode is unavailable');
       }
       const initial = await readExactSnapshots(input.account, input.signal);
+      const expectedCredentialRevision =
+        input.expectedCredentialRevision ?? initial.credential.credentialRevision;
+      if (
+        input.expectedCredentialRevision !== undefined
+        && initial.credential.credentialRevision !== input.expectedCredentialRevision
+      ) {
+        throw new Error('Connected-account credential revision is no longer current');
+      }
       const authenticationModeId =
         initial.credential.authenticationModeId;
       if (!authenticationModeId) {
@@ -348,6 +463,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
         plaintext: openEnvelope({
           kind: 'credential',
           accountMode,
+          credentials: params.credentials,
           material,
           envelope: initial.credential.content,
         }),
@@ -409,6 +525,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
                 openEnvelope({
                   kind: 'configuration',
                   accountMode,
+                  credentials: params.credentials,
                   material,
                   envelope: initial.configuration.configurationContent,
                 }),
@@ -448,6 +565,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
                 openEnvelope({
                   kind: 'configuration',
                   accountMode,
+                  credentials: params.credentials,
                   material,
                   envelope: latest.configuration.configurationContent,
                 }),
@@ -487,7 +605,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
         const baseConfiguration = admittedConfiguration.snapshot;
         const exactConfiguration: PluginConnectedAccountRuntimeConfiguration =
           baseConfiguration;
-        const credentialReader: PluginConnectedAccountCredentialReader =
+        const credentialReader: ConnectedAccountCredentialReader =
           Object.freeze({
             async get(key, options) {
               assertNotAborted(options?.signal ?? input.signal);
@@ -501,7 +619,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
         const result = await invoker.invokeEstablished({
           target: Object.freeze({
             account: input.account,
-            expectedCredentialRevision: initial.credential.credentialRevision,
+            expectedCredentialRevision,
             expectedRuntimeConfigurationRevision:
               runtimeConfigurationRevision,
           }),
@@ -518,15 +636,24 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
             return latest.credential.configurationRevision
               === initial.credential.configurationRevision;
           },
+          configurationRevocationSignal(configuration) {
+            return configuration === exactConfiguration
+              ? configurationOwner.currentnessSignal(baseConfiguration)
+              : AbortSignal.abort(
+                  Object.freeze({ kind: 'configurationUnknown' as const }),
+                );
+          },
           async isCredentialRevisionCurrent() {
             const latest = await readCredential({
               token: params.credentials.token,
               ref: input.account,
+              signal: input.signal,
             });
             return Boolean(
               latest
               && sameAccount(latest.ref, input.account)
-              && latest.credentialRevision === initial.credential.credentialRevision,
+              && latest.revisionSemantics === 'revisioned'
+              && latest.credentialRevision === expectedCredentialRevision,
             );
           },
           ...(input.signal ? { signal: input.signal } : {}),
@@ -629,7 +756,10 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
                 : sealQualifiedConnectedAccountContentEnvelope({
                     kind: 'credential',
                     accountMode: 'e2ee',
-                    material,
+                    material: requireCryptoMaterial(
+                      params.credentials,
+                      material,
+                    ),
                     payload: plaintext,
                     randomBytes,
                   });
@@ -646,12 +776,95 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
       }
   }
 
+  async function readConfiguredEndpoints(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    signal?: AbortSignal;
+  }>): Promise<readonly ConnectedAccountConfiguredEndpoint[]> {
+    assertNotAborted(input.signal);
+    const accountMode = await params.getAccountEncryptionMode(input.signal);
+    if (accountMode === 'unknown') {
+      throw new Error('Connected-account account encryption mode is unavailable');
+    }
+    const initial = await readExactSnapshots(input.account, input.signal);
+    const authenticationModeId = initial.credential.authenticationModeId;
+    if (!authenticationModeId) {
+      throw new Error(
+        'Connected-account authentication mode is unavailable in the current descriptor',
+      );
+    }
+    const lease = await params.reloadController.acquireRuntimeRegistry();
+    try {
+      if (!params.reloadController.isRuntimeRegistryCurrent(lease.registry)) {
+        throw new Error('Connected-account runtime registry is no longer current');
+      }
+      const runtimeLease = await lease.registry.resolveConnectedAccountRuntime?.(
+        input.account.service,
+      );
+      if (
+        !runtimeLease
+        || !runtimeLease.isCurrent()
+        || !sameService(runtimeLease.ref, input.account.service)
+      ) {
+        throw new Error('Connected-account established runtime is unavailable');
+      }
+      const mode = runtimeLease.descriptor.authentication.modes.find(
+        (candidate) => candidate.id === authenticationModeId,
+      );
+      if (!mode) {
+        throw new Error(
+          'Connected-account authentication mode is unavailable in the current descriptor',
+        );
+      }
+      const descriptorConfiguration =
+        'configuration' in mode ? mode.configuration : undefined;
+      if (!descriptorConfiguration) return Object.freeze([]);
+      const exactConfigurationTarget = configurationTarget(input.account, mode);
+      const record: ConnectedAccountConfigurationRecord | null =
+        exactConfigurationTarget.kind === 'account'
+          ? initial.configuration
+            ? parseConnectedAccountConfigurationRecordContent(
+                openEnvelope({
+                  kind: 'configuration',
+                  accountMode,
+                  credentials: params.credentials,
+                  material,
+                  envelope: initial.configuration.configurationContent,
+                }),
+                initial.configuration.configurationRevision,
+              )
+            : null
+          : await params.configuration.read(exactConfigurationTarget);
+      assertNotAborted(input.signal);
+      // An account that has never been configured owns no configured origin.
+      // That is a truthful empty projection, not an elided one.
+      if (!record) return Object.freeze([]);
+      const endpoints = projectConnectedAccountConfiguredEndpoints({
+        configuration: descriptorConfiguration,
+        values: record.values,
+      });
+      if (!params.reloadController.isRuntimeRegistryCurrent(lease.registry)) {
+        throw new Error('Connected-account runtime registry is no longer current');
+      }
+      // One configured endpoint is one fact pair; deduping by base keeps two
+      // deployments beneath one origin distinct.
+      const byBase = new Map(endpoints.map((endpoint) => [endpoint.base, endpoint]));
+      return Object.freeze(
+        [...byBase.values()].sort((left, right) => (left.base < right.base ? -1 : 1)),
+      );
+    } finally {
+      await lease.release();
+    }
+  }
+
   return Object.freeze({
+    readCredentialRevision,
+    readConfiguredEndpoints,
     invokeWithReceipt,
     async invoke<TOperation extends ConnectedAccountRuntimeEstablishedOperation>(
       input: Readonly<{
         account: QualifiedConnectedAccountRef;
         operation: TOperation;
+        expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
         assertEffectfulOperationAllowed?: () => void;
         signal?: AbortSignal;
       }>,
@@ -667,7 +880,7 @@ export function createRevisionedLegacyConnectedAccountMaterializationOwner(
       PluginReloadController,
       'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
     >;
-    credentials: Credentials;
+    credentials: StoredCredentials;
     api: Pick<
       ConnectedServiceCredentialApi,
       | 'getAccountEncryptionMode'
@@ -688,8 +901,12 @@ export function createRevisionedLegacyConnectedAccountMaterializationOwner(
     params.randomBytes
     ?? ((length: number) => new Uint8Array(nodeRandomBytes(length)));
 
-  return Object.freeze({
-    async invoke(input) {
+  async function invokeWithReceipt(
+    input: RevisionedLegacyConnectedAccountMaterializationInput,
+  ): Promise<Readonly<{
+    result: RevisionedLegacyConnectedAccountMaterializationResult;
+    basis: QualifiedConnectedAccountEstablishedInvocationBasis;
+  }>> {
       const compatibility =
         BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
           input.serviceId
@@ -765,13 +982,17 @@ export function createRevisionedLegacyConnectedAccountMaterializationOwner(
               : sealQualifiedConnectedAccountContentEnvelope({
                   kind: 'credential',
                   accountMode: 'e2ee',
-                  material,
+                  material: requireCryptoMaterial(
+                    params.credentials,
+                    material,
+                  ),
                   payload: resolution.record,
                   randomBytes,
                 });
           return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
             ref: input.account,
             authenticationModeId,
+            revisionSemantics: 'revisioned',
             credentialRevision:
               resolution.credentialRevision,
             configurationRevision: null,
@@ -804,14 +1025,23 @@ export function createRevisionedLegacyConnectedAccountMaterializationOwner(
           configuration: params.configuration,
           randomBytes,
         });
-      return await owner.invoke({
+      return await owner.invokeWithReceipt({
         account: input.account,
         operation: {
           kind: 'materialize',
           request: input.request,
         },
+        ...(input.expectedCredentialRevision
+          ? { expectedCredentialRevision: input.expectedCredentialRevision }
+          : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
+  }
+
+  return Object.freeze({
+    invokeWithReceipt,
+    async invoke(input) {
+      return (await invokeWithReceipt(input)).result;
     },
   });
 }

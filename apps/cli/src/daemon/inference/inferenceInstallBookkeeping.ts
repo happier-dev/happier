@@ -25,6 +25,33 @@ type PersistedInstallState = Readonly<{
   modelsById: Record<string, InstalledInferenceModel>;
 }>;
 
+const INFERENCE_INSTALL_FAILED_DIAGNOSTIC = 'inference_install_failed';
+
+function sanitizeInferenceInstallDiagnostic(value: string): string {
+  return value === 'model_pack_sha256_mismatch'
+    ? value
+    : INFERENCE_INSTALL_FAILED_DIAGNOSTIC;
+}
+
+function sanitizePersistedInstallModel(model: InstalledInferenceModel): InstalledInferenceModel {
+  const progress = model.progress;
+  const sanitizedProgress = progress && progress.message
+    ? {
+        ...progress,
+        message: progress.phase === 'error'
+          ? sanitizeInferenceInstallDiagnostic(progress.message)
+          : null,
+      }
+    : progress;
+  return {
+    ...model,
+    progress: sanitizedProgress,
+    lastError: model.lastError
+      ? sanitizeInferenceInstallDiagnostic(model.lastError)
+      : null,
+  };
+}
+
 export type InferenceInstallBookkeeping = Readonly<{
   list: () => Promise<InstalledInferenceModel[]>;
   install: (params: Readonly<{
@@ -78,16 +105,35 @@ export function createInferenceInstallBookkeeping(params: Readonly<{
       return;
     }
     loaded = true;
+    let shouldRewriteSanitizedState = false;
     try {
       const contents = await readStateFile(params.stateFilePath);
       const parsed = JSON.parse(contents);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.modelsById && typeof parsed.modelsById === 'object') {
+        const persistedModels = parsed.modelsById as Record<string, InstalledInferenceModel>;
         state = {
-          modelsById: parsed.modelsById as Record<string, InstalledInferenceModel>,
+          modelsById: Object.fromEntries(
+            Object.entries(persistedModels).map(([modelId, model]) => [
+              modelId,
+              sanitizePersistedInstallModel(model),
+            ]),
+          ),
         };
+        shouldRewriteSanitizedState =
+          JSON.stringify(state.modelsById) !== JSON.stringify(persistedModels);
       }
     } catch {
       state = { modelsById: {} };
+      return;
+    }
+    if (shouldRewriteSanitizedState) {
+      try {
+        await ensureParentDir(params.stateFilePath);
+        await writeStateFile(params.stateFilePath, JSON.stringify(state, null, 2));
+      } catch {
+        // A read-only legacy file must not make its sanitized in-memory status disappear.
+        // The same projection boundary will sanitize it again on the next load.
+      }
     }
   }
 
@@ -122,24 +168,32 @@ export function createInferenceInstallBookkeeping(params: Readonly<{
         previousModel.version !== null
         && previousModel.manifestHash !== null;
       const reportProgress = async (progress: InferenceInstallProgress): Promise<void> => {
+        const publicProgress = progress.message
+          ? {
+              ...progress,
+              message: progress.phase === 'error'
+                ? sanitizeInferenceInstallDiagnostic(progress.message)
+                : null,
+            }
+          : progress;
         await writeModel({
           modelId,
-          state: progress.phase === 'error' ? 'error' : progress.phase === 'complete' ? 'installed' : 'installing',
+          state: publicProgress.phase === 'error' ? 'error' : publicProgress.phase === 'complete' ? 'installed' : 'installing',
           version:
-            progress.phase === 'complete' || !preserveInstalledIdentity
+            publicProgress.phase === 'complete' || !preserveInstalledIdentity
               ? version
               : previousModel.version,
           manifestHash:
-            progress.phase === 'complete' || !preserveInstalledIdentity
+            publicProgress.phase === 'complete' || !preserveInstalledIdentity
               ? manifestHash
               : previousModel.manifestHash,
           kind: kind ?? previousModel.kind,
           model: model ?? previousModel.model,
           updatedAtMs: now(),
-          progress,
-          lastError: progress.phase === 'error' ? progress.message ?? null : null,
+          progress: publicProgress,
+          lastError: publicProgress.phase === 'error' ? publicProgress.message ?? null : null,
         });
-        await onProgress?.(progress);
+        await onProgress?.(publicProgress);
       };
 
       await reportProgress({ phase: 'queued', progress: 0 });
@@ -150,7 +204,10 @@ export function createInferenceInstallBookkeeping(params: Readonly<{
         await reportProgress({
           phase: 'error',
           progress: 1,
-          message: error instanceof Error ? error.message : String(error),
+          // Installer/runtime failures can contain provider prose, local paths, or
+          // credential material. Keep the original error for internal control flow,
+          // but persist and project only the bounded host-owned public taxonomy.
+          message: error instanceof Error ? error.message : INFERENCE_INSTALL_FAILED_DIAGNOSTIC,
         });
         throw error;
       }

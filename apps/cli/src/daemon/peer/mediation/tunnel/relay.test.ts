@@ -1,18 +1,14 @@
 import {
     PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
     createSpeechTranscriptionApplicationAuthorityDigestV1,
-    createAgentRealtimeApplicationAuthorityV1,
     createPeerTcpTunnelRelayAuthorizationSigningInputV2,
     decodePeerTcpTunnelBinaryFrameV2,
-    encodeVoiceMediaAgentRealtimeFrameV1,
     encodePeerTcpTunnelBinaryFrameV2,
     PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-    VOICE_MEDIA_AGENT_REALTIME_PCM_FORMAT_V1,
     type PeerTcpTunnelRelayEnvelopeV1,
 } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
-import { voiceMediaPeerApplicationEncryptionRegistry } from '../../../voiceMedia/voiceMediaPeerApplicationEncryption';
 
 type RelayModule = typeof import('./relay');
 
@@ -94,7 +90,7 @@ function createRelayAuthorization(
         signatureBase64Url?: string;
         targetMachineId?: string;
         relaySocketId?: string;
-        applicationKind?: 'speech_transcription' | 'agent_realtime';
+        applicationKind?: 'speech_transcription';
         applicationAttemptId?: string;
         applicationAuthorityDigest?: string;
     }>,
@@ -346,10 +342,6 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
         registerServerSocket(machineServerSocket);
 
         const speechTerminal = vi.fn(async (_input: unknown) => ({ ok: true as const }));
-        const agentRealtimeConsumer = {
-            dispatchFrame: vi.fn(async () => null),
-            close: vi.fn(async () => undefined),
-        };
         mod.registerPeerTcpTunnelRelayTerminator({
             accountId: 'user_1',
             machineId: 'machine_1',
@@ -365,7 +357,6 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
                 events: [],
             })),
             voiceBinaryTerminalConsumer: speechTerminal,
-            voiceMediaAgentRealtimeConsumer: agentRealtimeConsumer,
         });
 
         const createUserServerSocket = (socketId: string) => {
@@ -477,60 +468,7 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
                 tunnelId: speechTunnelId,
             }),
         }));
-        expect(agentRealtimeConsumer.close).not.toHaveBeenCalled();
-
-        const agentAuthority = createAgentRealtimeApplicationAuthorityV1({
-            v: 1,
-            happierSessionId: 'session-socket-loss',
-            agentRef: { pluginId: 'happier.agent.codex', localId: 'codex' },
-            agentGeneration: 'generation-socket-loss',
-            sessionBridgeId: 'bridge-socket-loss',
-            applicationAttemptId: 'attempt-socket-loss',
-        });
-        expect(voiceMediaPeerApplicationEncryptionRegistry.admitAgentRealtimeAttempt({
-            authority: agentAuthority,
-        }).ok).toBe(true);
-        const agentSocket = createUserServerSocket('relay_socket_agent');
-        const agentTunnelId = 'voice-media:machine_1:relay-socket-loss-agent';
-        const agentAuthorization = createRelayAuthorization(agentTunnelId, {
-            flowKind: 'voice_media',
-            relaySocketId: 'relay_socket_agent',
-            applicationKind: 'agent_realtime',
-            applicationAttemptId: agentAuthority.applicationAttemptId,
-            applicationAuthorityDigest: agentAuthority.applicationAuthorityDigest,
-        });
-        const agentOpen = createOpenEnvelope(agentTunnelId, {
-            relaySocketId: 'relay_socket_agent',
-            relayAuthorization: agentAuthorization,
-        });
-        if (agentOpen.frame.kind !== 'open') throw new Error('expected open frame fixture');
-        await agentSocket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, {
-            ...agentOpen,
-            frame: {
-                v: 1,
-                kind: 'open',
-                open: {
-                    ...agentOpen.frame.open,
-                    selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-                },
-            },
-        });
-        await agentSocket.trigger('disconnect');
-        await agentSocket.trigger('disconnect');
-
-        expect(agentRealtimeConsumer.close).toHaveBeenCalledTimes(1);
-        expect(agentRealtimeConsumer.close).toHaveBeenCalledWith(expect.objectContaining({
-            authority: expect.objectContaining({
-                applicationKind: 'agent_realtime',
-                applicationAttemptId: 'attempt-socket-loss',
-                tunnelId: agentTunnelId,
-            }),
-            substreamId: 'agent.realtime.attempt-socket-loss',
-            reasonCode: 'tunnel_closed',
-        }));
-        expect(speechTerminal).toHaveBeenCalledTimes(2);
         expect(userDeliveries.length).toBeGreaterThan(0);
-        voiceMediaPeerApplicationEncryptionRegistry.closeAgentRealtimeAttempt(agentAuthority);
     });
 
     it('opens authorized relay tunnels and bridges client frames to loopback TCP', async () => {
@@ -1027,79 +965,6 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
 
         expect(connectTcp).toHaveBeenCalledTimes(2);
         expect(writesByConnection[1]).toEqual(['twelve-bytes']);
-    });
-
-    it('routes prepared Agent realtime relay attempts through encrypted application dispatch and rejects plaintext', async () => {
-        const mod = await loadRelayModule();
-        if (!mod?.registerPeerTcpTunnelRelayTerminator) {
-            throw new Error('expected relay terminator');
-        }
-        const authority = createAgentRealtimeApplicationAuthorityV1({
-            v: 1,
-            happierSessionId: 'session-1',
-            agentRef: { pluginId: 'happier.agent.codex', localId: 'codex' },
-            agentGeneration: 'generation-1',
-            sessionBridgeId: 'bridge-1',
-            applicationAttemptId: 'attempt-1',
-        });
-        expect(voiceMediaPeerApplicationEncryptionRegistry.admitAgentRealtimeAttempt({
-            authority,
-        }).ok).toBe(true);
-        const socket = createSocket();
-        const consumer = {
-            dispatchFrame: vi.fn(async () => null),
-            close: vi.fn(async () => {}),
-        };
-        mod.registerPeerTcpTunnelRelayTerminator({
-            accountId: 'user_1',
-            machineId: 'machine_1',
-            socket,
-            nowMs: () => 2_000,
-            relayAuthorizationTrustRoots,
-            connectTcp: vi.fn(),
-            voiceMediaAgentRealtimeConsumer: consumer,
-        });
-        const tunnelId = 'voice-media:machine_1:agent_realtime';
-        const relayAuthorization = createRelayAuthorization(tunnelId, {
-            flowKind: 'voice_media',
-            applicationKind: 'agent_realtime',
-            applicationAttemptId: authority.applicationAttemptId,
-            applicationAuthorityDigest: authority.applicationAuthorityDigest,
-        });
-        const openEnvelope = createOpenEnvelope(tunnelId, { relayAuthorization });
-        if (openEnvelope.frame.kind !== 'open') throw new Error('expected open envelope');
-        await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, {
-            ...openEnvelope,
-            frame: {
-                v: 1,
-                kind: 'open',
-                open: {
-                    ...openEnvelope.frame.open,
-                    selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-                },
-            },
-        });
-        const plaintext = encodeVoiceMediaAgentRealtimeFrameV1({
-            v: 1,
-            kind: 'input_audio',
-            applicationSequence: 0,
-            format: VOICE_MEDIA_AGENT_REALTIME_PCM_FORMAT_V1,
-            samplesPerChannel: 2,
-            payload: new Uint8Array([1, 2, 3, 4]),
-        });
-        await expect(socket.trigger(
-            PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-            createBinarySubstreamEnvelope({
-                tunnelId,
-                substreamId: 'agent.realtime.attempt-1',
-                kind: 'data',
-                sequence: 0,
-                payload: plaintext,
-            }),
-        )).rejects.toThrow('Agent realtime relay frame was rejected');
-        expect(consumer.dispatchFrame).not.toHaveBeenCalled();
-        expect(consumer.close).toHaveBeenCalledOnce();
-        voiceMediaPeerApplicationEncryptionRegistry.closeAgentRealtimeAttempt(authority);
     });
 
     it('dispatches voice-bound relay binary_frame_v2 substream data to the append consumer without opening a substream TCP socket', async () => {

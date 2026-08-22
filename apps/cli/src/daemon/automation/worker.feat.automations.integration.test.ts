@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { AddressInfo } from 'node:net';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { SessionPendingEnqueueByMachineRequestV1 } from '@happier-dev/protocol';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 
@@ -58,6 +59,7 @@ type RecordedState = {
   failed: unknown[];
   pendingEnqueue: unknown[];
   pendingMaterialize: unknown[];
+  discarded: unknown[];
 };
 
 function buildDefaultAssignments(params: {
@@ -109,6 +111,7 @@ async function startAutomationServer(params: {
     failed: [],
     pendingEnqueue: [],
     pendingMaterialize: [],
+    discarded: [],
   };
 
   let claimConsumed = false;
@@ -160,6 +163,50 @@ async function startAutomationServer(params: {
       return;
     }
 
+    if (request.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+      writeJson(response, 200, {
+        mode: 'plain',
+        version: 1,
+        signingKeyFingerprint: null,
+        contentKeyFingerprint: null,
+        updatedAt: 1,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && /^\/v2\/sessions\/[^/]+$/.test(url.pathname)) {
+      const sessionId = decodeURIComponent(url.pathname.slice('/v2/sessions/'.length));
+      writeJson(response, 200, {
+        session: {
+          id: sessionId,
+          seq: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          active: true,
+          activeAt: 1,
+          encryptionMode: 'plain',
+          metadata: '{}',
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+          machineId: 'machine-7',
+        },
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && /^\/v2\/sessions\/[^/]+\/pending\/[^/]+\/discard$/.test(url.pathname)) {
+      const segments = url.pathname.split('/');
+      state.discarded.push({
+        sessionId: decodeURIComponent(segments[3] ?? ''),
+        localId: decodeURIComponent(segments[5] ?? ''),
+        body: await readJsonBody(request),
+      });
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
     if (request.method === 'POST' && /\/v2\/sessions\/.+\/pending$/.test(url.pathname)) {
       state.pendingEnqueue.push(await readJsonBody(request));
       writeJson(response, 200, { didWrite: true });
@@ -184,6 +231,7 @@ async function startAutomationServer(params: {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     close: async () => {
+      server.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error) reject(error);
@@ -195,10 +243,21 @@ async function startAutomationServer(params: {
   };
 }
 
+function createAcceptedMachineAdmissionTransport(state: RecordedState) {
+  return vi.fn(async (request: SessionPendingEnqueueByMachineRequestV1) => {
+    state.pendingEnqueue.push(request);
+    return {
+      status: 'accepted' as const,
+      localId: String(request.localId),
+    };
+  });
+}
+
 describe('automationWorker integration', () => {
   const previousHome = process.env.HAPPIER_HOME_DIR;
   const previousServer = process.env.HAPPIER_SERVER_URL;
   const previousWebapp = process.env.HAPPIER_WEBAPP_URL;
+  const previousLogLevel = process.env.HAPPIER_LOG_LEVEL;
 
   afterEach(async () => {
     if (previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
@@ -209,6 +268,9 @@ describe('automationWorker integration', () => {
 
     if (previousWebapp === undefined) delete process.env.HAPPIER_WEBAPP_URL;
     else process.env.HAPPIER_WEBAPP_URL = previousWebapp;
+
+    if (previousLogLevel === undefined) delete process.env.HAPPIER_LOG_LEVEL;
+    else process.env.HAPPIER_LOG_LEVEL = previousLogLevel;
 
     vi.resetModules();
   });
@@ -306,9 +368,11 @@ describe('automationWorker integration', () => {
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = server.baseUrl;
     process.env.HAPPIER_WEBAPP_URL = server.baseUrl;
+    process.env.HAPPIER_LOG_LEVEL = 'debug';
 
     vi.resetModules();
     const { startAutomationWorker } = await import('./automationWorker');
+    const { logger } = await import('@/ui/logger');
 
     const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-1' }));
     const worker = startAutomationWorker({
@@ -317,22 +381,38 @@ describe('automationWorker integration', () => {
       encryption: TEST_ENCRYPTION,
       spawnSession,
       env: {
+        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
       } as NodeJS.ProcessEnv,
     });
 
-    await waitForCondition(() => server.state.requests.some((entry) => entry.includes('/v2/automations/')), 1_000);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    let serverClosed = false;
+    try {
+      await waitForCondition(() => server.state.requests.some((entry) => entry.includes('/v2/automations/')), 1_000);
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
-    // If the worker doesn't self-disable on 404 route-missing errors, we'd see the claim/assignment routes
-    // spammed on a tight interval.
-    const automationRequests = server.state.requests.filter((entry) => entry.includes('/v2/automations/'));
-    expect(automationRequests.length).toBeLessThanOrEqual(4);
+      // If the worker doesn't self-disable on 404 route-missing errors, we'd see the claim/assignment routes
+      // spammed on a tight interval.
+      const automationRequests = server.state.requests.filter((entry) => entry.includes('/v2/automations/'));
+      expect(automationRequests.length).toBeLessThanOrEqual(4);
 
-    worker.stop();
-    await server.close();
-    await rm(homeDir, { recursive: true, force: true });
+      worker.stop();
+      // Lifecycle telemetry uses this buffered home-directory writer. Drain it
+      // before removing the test home so its delayed ENOENT recovery cannot
+      // recreate `logs/` during recursive removal.
+      logger.flushSync();
+      await server.close();
+      serverClosed = true;
+      await rm(homeDir, { recursive: true, force: true });
+    } finally {
+      worker.stop();
+      logger.flushSync();
+      if (!serverClosed) {
+        await server.close();
+      }
+      await rm(homeDir, { recursive: true, force: true });
+    }
   });
 
   it('marks claimed run as failed when template payload is invalid', async () => {
@@ -562,7 +642,7 @@ describe('automationWorker integration', () => {
     }
   });
 
-  it('enqueues an existing_session automation prompt without daemon-side materialization', async () => {
+  it('enqueues an existing_session automation prompt through authenticated machine admission without daemon-side materialization', async () => {
     const now = Date.now();
     const template = buildEncryptedTemplateCiphertext({
       directory: '/tmp/happier-automation',
@@ -612,12 +692,15 @@ describe('automationWorker integration', () => {
     const { startAutomationWorker } = await import('./automationWorker');
 
     const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-existing' }));
+    const machineAdmissionTransport = createAcceptedMachineAdmissionTransport(server.state);
 
     const worker = startAutomationWorker({
       token: 'token-6',
+      credentials: { token: 'token-6', encryption: null },
       machineId: 'machine-6',
       encryption: TEST_ENCRYPTION,
       spawnSession,
+      machineAdmissionTransport,
       env: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
@@ -635,6 +718,15 @@ describe('automationWorker integration', () => {
         }),
       );
       expect(server.state.pendingEnqueue).toHaveLength(1);
+      expect(machineAdmissionTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 'session-existing',
+          targetMachineId: 'machine-7',
+          localId: 'automation:run:run-6',
+        }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(server.state.requests).not.toContain('POST /v2/sessions/session-existing/pending');
       expect(server.state.pendingMaterialize).toHaveLength(0);
       expect(server.state.failed).toHaveLength(0);
     } finally {
@@ -693,12 +785,15 @@ describe('automationWorker integration', () => {
     const { startAutomationWorker } = await import('./automationWorker');
 
     const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-existing' }));
+    const machineAdmissionTransport = createAcceptedMachineAdmissionTransport(server.state);
 
     const worker = startAutomationWorker({
       token: 'token-6-plain',
+      credentials: { token: 'token-6-plain', encryption: null },
       machineId: 'machine-6-plain',
       encryption: TEST_ENCRYPTION,
       spawnSession,
+      machineAdmissionTransport,
       env: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
@@ -783,12 +878,15 @@ describe('automationWorker integration', () => {
     const { startAutomationWorker } = await import('./automationWorker');
 
     const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-existing' }));
+    const machineAdmissionTransport = createAcceptedMachineAdmissionTransport(server.state);
 
     const worker = startAutomationWorker({
       token: 'token-6b',
+      credentials: { token: 'token-6b', encryption: null },
       machineId: 'machine-6b',
       encryption: TEST_ENCRYPTION,
       spawnSession,
+      machineAdmissionTransport,
       env: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
@@ -894,7 +992,7 @@ describe('automationWorker integration', () => {
     }
   });
 
-  it('spawns first and promotes a new_session automation prompt through Pending', async () => {
+  it('spawns first then admits a new_session automation prompt through the daemon machine transport', async () => {
     const now = Date.now();
     const template = buildEncryptedTemplateCiphertext({
       directory: '/tmp/happier-automation',
@@ -944,12 +1042,15 @@ describe('automationWorker integration', () => {
       type: 'success' as const,
       sessionId: 'session-automation-new-prompt',
     }));
+    const machineAdmissionTransport = createAcceptedMachineAdmissionTransport(server.state);
 
     const worker = startAutomationWorker({
       token: 'token-7',
+      credentials: { token: 'token-7', encryption: null },
       machineId: 'machine-7',
       encryption: TEST_ENCRYPTION,
       spawnSession,
+      machineAdmissionTransport,
       env: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
@@ -965,16 +1066,457 @@ describe('automationWorker integration', () => {
         expect.objectContaining({
           directory: '/tmp/happier-automation',
           spawnNonce: 'automation:run-7',
-          pendingFirstInput: {
-            text: 'Generate the daily maintenance summary.',
-            localId: 'spawn-first-turn:automation:run-7',
-          },
         }),
       );
       expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
-      expect(server.state.pendingEnqueue).toHaveLength(0);
+      expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('pendingFirstInput');
+      expect(machineAdmissionTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 'session-automation-new-prompt',
+          targetMachineId: 'machine-7',
+          localId: 'automation:run:run-7',
+          requestedAction: { v: 1, kind: 'enqueue' },
+          content: {
+            t: 'plain',
+            v: expect.objectContaining({
+              meta: expect.objectContaining({
+                source: 'automation',
+                happierInputRequestV1: expect.objectContaining({
+                  producer: 'automation',
+                  automation: { automationId: 'automation-7', runId: 'run-7' },
+                }),
+              }),
+            }),
+          },
+        }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(server.state.pendingEnqueue).toHaveLength(1);
       expect(server.state.pendingMaterialize).toHaveLength(0);
       expect(server.state.failed).toHaveLength(0);
+    } finally {
+      worker.stop();
+      await server.close();
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retains the V2-created Session in each terminal initial-prompt failure', async () => {
+    const cases = [
+      {
+        suffix: 'rejected',
+        errorCode: 'prompt_delivery_failed',
+        machineResult: { status: 'rejected' as const, code: 'session_input_untrusted_assertion' as const },
+      },
+      {
+        suffix: 'unknown',
+        errorCode: 'prompt_delivery_outcome_unknown',
+        machineResult: {
+          status: 'outcomeUnknown' as const,
+          localId: 'automation:run:run-v2-known-unknown',
+          code: 'response_lost' as const,
+        },
+      },
+      {
+        suffix: 'missing-transport',
+        errorCode: 'prompt_delivery_failed',
+        machineResult: null,
+      },
+      {
+        suffix: 'thrown-admission',
+        errorCode: 'prompt_delivery_outcome_unknown',
+        machineResult: 'throw' as const,
+      },
+    ] as const;
+
+    for (const scenario of cases) {
+      const now = Date.now();
+      const runId = `run-v2-known-${scenario.suffix}`;
+      const sessionId = `session-v2-known-${scenario.suffix}`;
+      const template = buildEncryptedTemplateCiphertext({
+        directory: '/tmp/happier-automation',
+        prompt: 'Deliver this only after Session creation.',
+      });
+      const server = await startAutomationServer({
+        claimRunOnce: {
+          run: {
+            id: runId,
+            automationId: `automation-v2-known-${scenario.suffix}`,
+            state: 'queued',
+            scheduledAt: now,
+            dueAt: now,
+            claimedAt: null,
+            startedAt: null,
+            finishedAt: null,
+            claimedByMachineId: null,
+            leaseExpiresAt: null,
+            attempt: 1,
+            summaryCiphertext: null,
+            errorCode: null,
+            errorMessage: null,
+            producedSessionId: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+          automation: {
+            id: `automation-v2-known-${scenario.suffix}`,
+            name: `V2 known Session ${scenario.suffix}`,
+            enabled: true,
+            targetType: 'new_session',
+            templateCiphertext: template,
+          },
+        },
+      });
+      const homeDir = await mkdtemp(join(tmpdir(), `happier-automation-worker-${scenario.suffix}-`));
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      process.env.HAPPIER_SERVER_URL = server.baseUrl;
+      process.env.HAPPIER_WEBAPP_URL = server.baseUrl;
+
+      vi.resetModules();
+      const { startAutomationWorker } = await import('./automationWorker');
+      const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId }));
+      const machineAdmissionTransport = scenario.machineResult === null
+        ? undefined
+        : vi.fn(async (request: SessionPendingEnqueueByMachineRequestV1) => {
+          server.state.pendingEnqueue.push(request);
+          if (scenario.machineResult === 'throw') {
+            throw new Error('machine admission transport failed after Session creation');
+          }
+          return scenario.machineResult;
+        });
+      const worker = startAutomationWorker({
+        token: `token-v2-known-${scenario.suffix}`,
+        credentials: { token: `token-v2-known-${scenario.suffix}`, encryption: null },
+        machineId: 'machine-7',
+        encryption: TEST_ENCRYPTION,
+        spawnSession,
+        ...(machineAdmissionTransport ? { machineAdmissionTransport } : {}),
+        env: {
+          HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+          HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
+          HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
+          HAPPIER_AUTOMATION_LEASE_MS: '200',
+          HAPPIER_AUTOMATION_HEARTBEAT_MS: '50',
+        } as NodeJS.ProcessEnv,
+      });
+
+      try {
+        await waitForCondition(
+          () => server.state.failed.length === 1 || server.state.succeeded.length === 1,
+          30_000,
+        );
+        expect(server.state.succeeded, scenario.suffix).toHaveLength(0);
+        expect(server.state.failed, scenario.suffix).toEqual([
+          expect.objectContaining({
+            errorCode: scenario.errorCode,
+            producedSessionId: sessionId,
+          }),
+        ]);
+        expect(spawnSession).toHaveBeenCalledOnce();
+        if (scenario.machineResult === null) {
+          expect(machineAdmissionTransport).toBeUndefined();
+        } else {
+          expect(machineAdmissionTransport).toHaveBeenCalledOnce();
+        }
+      } finally {
+        worker.stop();
+        await server.close();
+        await rm(homeDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('retains and discards only the stable V2 prompt when authoritative cancellation wins after machine emission', async () => {
+    const now = Date.now();
+    const runId = 'run-v2-post-emit-cancel';
+    const sessionId = 'session-v2-post-emit-cancel';
+    const template = buildEncryptedTemplateCiphertext({
+      directory: '/tmp/happier-automation',
+      prompt: 'This prompt is emitted before cancellation.',
+    });
+    const server = await startAutomationServer({
+      claimRunOnce: {
+        run: {
+          id: runId,
+          automationId: 'automation-v2-post-emit-cancel',
+          state: 'queued',
+          scheduledAt: now,
+          dueAt: now,
+          claimedAt: null,
+          startedAt: null,
+          finishedAt: null,
+          claimedByMachineId: null,
+          leaseExpiresAt: null,
+          attempt: 1,
+          summaryCiphertext: null,
+          errorCode: null,
+          errorMessage: null,
+          producedSessionId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        automation: {
+          id: 'automation-v2-post-emit-cancel',
+          name: 'V2 post-emit cancellation',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: template,
+        },
+      },
+    });
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-automation-worker-post-emit-cancel-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_SERVER_URL = server.baseUrl;
+    process.env.HAPPIER_WEBAPP_URL = server.baseUrl;
+
+    vi.resetModules();
+    const { startAutomationWorker } = await import('./automationWorker');
+    const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId }));
+    let worker: ReturnType<typeof startAutomationWorker> | null = null;
+    const machineAdmissionTransport = vi.fn(async (request: SessionPendingEnqueueByMachineRequestV1) => {
+      server.state.pendingEnqueue.push(request);
+      worker!.handleServerUpdate({
+        id: 'update-v2-post-emit-cancel',
+        seq: 1,
+        createdAt: Date.now(),
+        body: {
+          t: 'automation-run-updated',
+          runId,
+          automationId: 'automation-v2-post-emit-cancel',
+          state: 'cancelled',
+          scheduledAt: now,
+          startedAt: now,
+          finishedAt: Date.now(),
+          updatedAt: Date.now(),
+          machineId: 'machine-7',
+          attempt: 1,
+        },
+      });
+      return { status: 'accepted' as const, localId: String(request.localId) };
+    });
+    worker = startAutomationWorker({
+      token: 'token-v2-post-emit-cancel',
+      credentials: { token: 'token-v2-post-emit-cancel', encryption: null },
+      machineId: 'machine-7',
+      encryption: TEST_ENCRYPTION,
+      spawnSession,
+      machineAdmissionTransport,
+      env: {
+        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+        HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
+        HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
+        HAPPIER_AUTOMATION_LEASE_MS: '200',
+        HAPPIER_AUTOMATION_HEARTBEAT_MS: '50',
+      } as NodeJS.ProcessEnv,
+    });
+
+    try {
+      await waitForCondition(
+        () => server.state.failed.length === 1 && server.state.discarded.length === 1,
+        30_000,
+      );
+      expect(server.state.succeeded).toHaveLength(0);
+      expect(server.state.failed).toEqual([
+        expect.objectContaining({
+          errorCode: 'session_start_cancelled_after_create',
+          producedSessionId: sessionId,
+        }),
+      ]);
+      expect(spawnSession).toHaveBeenCalledOnce();
+      expect(machineAdmissionTransport).toHaveBeenCalledOnce();
+      expect(server.state.discarded).toEqual([{
+        sessionId,
+        localId: `automation:run:${runId}`,
+        body: { reason: 'session_input_cancelled' },
+      }]);
+    } finally {
+      worker.stop();
+      await server.close();
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not settle or discard an emitted V2 prompt after a wrong-machine generic invalidation', async () => {
+    const now = Date.now();
+    const runId = 'run-v2-post-emit-wrong-machine';
+    const template = buildEncryptedTemplateCiphertext({
+      directory: '/tmp/happier-automation',
+      prompt: 'This prompt loses currentness on another machine.',
+    });
+    const server = await startAutomationServer({
+      claimRunOnce: {
+        run: {
+          id: runId,
+          automationId: 'automation-v2-post-emit-wrong-machine',
+          state: 'queued',
+          scheduledAt: now,
+          dueAt: now,
+          claimedAt: null,
+          startedAt: null,
+          finishedAt: null,
+          claimedByMachineId: null,
+          leaseExpiresAt: null,
+          attempt: 1,
+          summaryCiphertext: null,
+          errorCode: null,
+          errorMessage: null,
+          producedSessionId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        automation: {
+          id: 'automation-v2-post-emit-wrong-machine',
+          name: 'V2 wrong-machine invalidation',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: template,
+        },
+      },
+    });
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-automation-worker-post-emit-wrong-machine-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_SERVER_URL = server.baseUrl;
+    process.env.HAPPIER_WEBAPP_URL = server.baseUrl;
+
+    vi.resetModules();
+    const { startAutomationWorker } = await import('./automationWorker');
+    let worker: ReturnType<typeof startAutomationWorker> | null = null;
+    const spawnSession = vi.fn(async () => ({
+      type: 'success' as const,
+      sessionId: 'session-v2-post-emit-wrong-machine',
+    }));
+    const machineAdmissionTransport = vi.fn(async (request: SessionPendingEnqueueByMachineRequestV1) => {
+      server.state.pendingEnqueue.push(request);
+      worker!.handleServerUpdate({
+        id: 'update-v2-post-emit-wrong-machine',
+        seq: 1,
+        createdAt: Date.now(),
+        body: {
+          t: 'automation-run-updated',
+          runId,
+          automationId: 'automation-v2-post-emit-wrong-machine',
+          state: 'running',
+          scheduledAt: now,
+          startedAt: now,
+          finishedAt: null,
+          updatedAt: Date.now(),
+          machineId: 'machine-elsewhere',
+          attempt: 1,
+        },
+      });
+      return { status: 'accepted' as const, localId: String(request.localId) };
+    });
+    worker = startAutomationWorker({
+      token: 'token-v2-post-emit-wrong-machine',
+      credentials: { token: 'token-v2-post-emit-wrong-machine', encryption: null },
+      machineId: 'machine-7',
+      encryption: TEST_ENCRYPTION,
+      spawnSession,
+      machineAdmissionTransport,
+      env: {
+        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+        HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
+        HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
+        HAPPIER_AUTOMATION_LEASE_MS: '200',
+        HAPPIER_AUTOMATION_HEARTBEAT_MS: '50',
+      } as NodeJS.ProcessEnv,
+    });
+
+    try {
+      await waitForCondition(() => machineAdmissionTransport.mock.calls.length === 1, 30_000);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(spawnSession).toHaveBeenCalledOnce();
+      expect(machineAdmissionTransport).toHaveBeenCalledOnce();
+      expect(server.state.failed).toEqual([]);
+      expect(server.state.succeeded).toEqual([]);
+      expect(server.state.discarded).toEqual([]);
+    } finally {
+      worker.stop();
+      await server.close();
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails a prompted new_session run without an authoritative spawned Session id', async () => {
+    const now = Date.now();
+    const template = buildEncryptedTemplateCiphertext({
+      directory: '/tmp/happier-automation',
+      prompt: 'Generate the daily maintenance summary.',
+    });
+
+    const server = await startAutomationServer({
+      claimRunOnce: {
+        run: {
+          id: 'run-7-missing-session-id',
+          automationId: 'automation-7-missing-session-id',
+          state: 'queued',
+          scheduledAt: now,
+          dueAt: now,
+          claimedAt: null,
+          startedAt: null,
+          finishedAt: null,
+          claimedByMachineId: null,
+          leaseExpiresAt: null,
+          attempt: 1,
+          summaryCiphertext: null,
+          errorCode: null,
+          errorMessage: null,
+          producedSessionId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        automation: {
+          id: 'automation-7-missing-session-id',
+          name: 'New session prompt requires Session id',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: template,
+        },
+      },
+    });
+
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-automation-worker-new-prompt-missing-session-id-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_SERVER_URL = server.baseUrl;
+    process.env.HAPPIER_WEBAPP_URL = server.baseUrl;
+
+    vi.resetModules();
+    const { startAutomationWorker } = await import('./automationWorker');
+
+    const spawnSession = vi.fn<Parameters<typeof startAutomationWorker>[0]['spawnSession']>(async () => ({
+      type: 'success' as const,
+    }));
+    const machineAdmissionTransport = createAcceptedMachineAdmissionTransport(server.state);
+
+    const worker = startAutomationWorker({
+      token: 'token-7-missing-session-id',
+      credentials: { token: 'token-7-missing-session-id', encryption: null },
+      machineId: 'machine-7',
+      encryption: TEST_ENCRYPTION,
+      spawnSession,
+      machineAdmissionTransport,
+      env: {
+        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+        HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
+        HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
+        HAPPIER_AUTOMATION_LEASE_MS: '200',
+        HAPPIER_AUTOMATION_HEARTBEAT_MS: '50',
+      } as NodeJS.ProcessEnv,
+    });
+
+    try {
+      await waitForCondition(
+        () => server.state.failed.length === 1 || server.state.succeeded.length === 1,
+        2_000,
+      );
+      expect(server.state.failed).toEqual([
+        expect.objectContaining({
+          errorCode: 'prompt_delivery_failed',
+        }),
+      ]);
+      expect(server.state.succeeded).toHaveLength(0);
+      expect(machineAdmissionTransport).not.toHaveBeenCalled();
+      expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('pendingFirstInput');
     } finally {
       worker.stop();
       await server.close();

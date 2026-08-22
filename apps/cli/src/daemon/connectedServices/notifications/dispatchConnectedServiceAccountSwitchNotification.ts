@@ -10,6 +10,7 @@ import type { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../acco
 import { isBackgroundConnectedServiceSwitchReason } from '../connectedServiceSwitchEventVisibility';
 import {
   loadConnectedServiceNotificationProfilesById,
+  resolveConnectedServiceNotificationDisplayName,
   resolveConnectedServiceNotificationProfileLabel,
   type ConnectedServiceNotificationProfileSummary,
 } from './connectedServiceNotificationLabels';
@@ -79,6 +80,7 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
   // The transcript event still commits (the visibility policy above owns full silence).
   if (params.source.reason === 'manual') return;
 
+  const serviceId = ConnectedServiceIdSchema.safeParse(params.source.serviceId);
   const profilesById = await loadConnectedServiceNotificationProfilesById({
     serviceId: params.source.serviceId,
     listConnectedServiceProfiles: params.listConnectedServiceProfiles,
@@ -92,6 +94,10 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
       sessionId: params.source.sessionId,
       sessionTitle: params.source.sessionTitle ?? null,
       serviceId: params.source.serviceId,
+      serviceDisplayName:
+        serviceId.success
+          ? resolveConnectedServiceNotificationDisplayName(serviceId.data)
+          : null,
       groupId: params.source.groupId,
       fromProfileId: params.source.fromProfileId,
       toProfileId: params.source.toProfileId,

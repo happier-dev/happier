@@ -19,7 +19,7 @@ import {
   buildDoctorSnapshotFromInventory,
   type DoctorSnapshot,
 } from '@/doctor/inv/snapshot';
-import { readCredentials, readSettings } from '@/persistence';
+import { readSettings, readStoredCredentials } from '@/persistence';
 
 import type { AuthSignalsForProfile } from './classifyAuth';
 import { checkAuthLive } from './authLiveCheck';
@@ -480,7 +480,7 @@ async function resolveAuthContext(params: Readonly<{
 }>> {
   const [settings, credentials] = await Promise.all([
     readSettings().catch(() => null),
-    readCredentials().catch(() => null),
+    readStoredCredentials().catch(() => null),
   ]);
   const servers = settings?.servers ?? {};
   const settingsActiveServerId = String(settings?.activeServerId ?? '').trim();

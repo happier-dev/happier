@@ -6,8 +6,14 @@ import type { FileHandle } from 'node:fs/promises';
 import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
+  ComposerContentDisplayNameV1Schema,
+  ComposerContentHandleV1Schema,
+  ComposerContentMediaKindV1Schema,
+  ComposerContentMimeTypeV1Schema,
   DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER,
   isSafeDirectTransferEndpointCandidate,
+  PluginContributionIdentityV1Schema,
+  SessionExecutionTargetV1Schema,
   TransferChunkEnvelopeSchema,
   type TransferEndpointCandidate,
 } from '@happier-dev/protocol';
@@ -59,6 +65,7 @@ import {
   type DirectTransferImportSessionManager,
 } from './directTransferImportSession';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/resolveComposerMediaStageUploadTarget';
 import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
 import { TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE } from '@/transfers/targets/uploadTransferTarget';
 
@@ -539,6 +546,38 @@ const DirectPeerTransferResponseSchema = z
   })
   .strict();
 
+const ComposerMediaStageUploadOpenRequestSchema = z
+  .object({
+    t: z.literal('composer_media_stage_upload_v1'),
+    executionTarget: SessionExecutionTargetV1Schema,
+    owner: PluginContributionIdentityV1Schema,
+    mediaKind: ComposerContentMediaKindV1Schema,
+    mimeType: ComposerContentMimeTypeV1Schema,
+    name: ComposerContentDisplayNameV1Schema,
+    sizeBytes: z.number().int().positive(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/iu),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const canonical = ComposerContentHandleV1Schema.safeParse({
+      v: 1,
+      id: 'direct-import-request',
+      executionTarget: value.executionTarget,
+      owner: value.owner,
+      mediaKind: value.mediaKind,
+      mimeType: value.mimeType,
+      name: value.name,
+      sizeBytes: value.sizeBytes,
+      sha256: value.sha256,
+    });
+    if (!canonical.success) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid Composer media stage upload request',
+      });
+    }
+  });
+
 const DirectTransferImportOpenRequestSchema = z
   .intersection(
     z.object({
@@ -569,6 +608,7 @@ const DirectTransferImportOpenRequestSchema = z
         t: z.literal('prompt_asset_upload_v1'),
         sizeBytes: z.unknown(),
       }).strict(),
+      ComposerMediaStageUploadOpenRequestSchema,
     ]),
   );
 
@@ -1132,6 +1172,7 @@ export async function startDirectPeerTransferServer(params: Readonly<{
   bindHost?: string;
   onImportSessionCountChanged?: (count: number) => void;
   onImportSessionActivity?: () => void;
+  composerMediaStage?: ComposerMediaStageUploadTargetDeps;
   promptAssetUpload?: Parameters<typeof createDirectTransferImportSessionManager>[0] extends infer T
     ? T extends Readonly<object>
       ? T extends { promptAssetUpload?: infer P }
@@ -1161,6 +1202,7 @@ export async function startDirectPeerTransferServer(params: Readonly<{
     onActiveSessionCountChanged: params.onImportSessionCountChanged,
     onActivity: params.onImportSessionActivity,
     accessPolicy: params.accessPolicy,
+    ...(params.composerMediaStage ? { composerMediaStage: params.composerMediaStage } : {}),
     ...(params.promptAssetUpload ? { promptAssetUpload: params.promptAssetUpload } : {}),
     ...(params.finalizeFileOperations
       ? { finalizeFileOperations: params.finalizeFileOperations }

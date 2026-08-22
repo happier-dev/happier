@@ -1,3 +1,8 @@
+import {
+  isBaseCredentialDiagnosticKey,
+  splitSensitiveDiagnosticKeySegments,
+} from '@happier-dev/protocol';
+
 export const CONNECTED_SERVICE_SECRET_REDACTION_MARKER = '[REDACTED]';
 export const CONNECTED_SERVICE_PROVIDER_RESUME_ID_REDACTION_MARKER = '[REDACTED_PROVIDER_RESUME_ID]';
 export const CONNECTED_SERVICE_LOCAL_PATH_REDACTION_MARKER = '[REDACTED_LOCAL_PATH]';
@@ -48,6 +53,25 @@ const LOCAL_PATH_KEYS = new Set([
   'location',
 ]);
 
+const CONNECTED_SERVICE_CREDENTIAL_SEGMENTS = new Set([
+  'auth',
+  'authentication',
+  'credential',
+  'credentials',
+  'secret',
+]);
+
+const CONNECTED_SERVICE_CREDENTIAL_SUFFIXES = new Set([
+  'token',
+]);
+
+function isConnectedServiceCredentialDiagnosticKey(key: string): boolean {
+  if (isBaseCredentialDiagnosticKey(key)) return true;
+  const segments = splitSensitiveDiagnosticKeySegments(key);
+  return segments.some((segment) => CONNECTED_SERVICE_CREDENTIAL_SEGMENTS.has(segment))
+    || CONNECTED_SERVICE_CREDENTIAL_SUFFIXES.has(segments.at(-1) ?? '');
+}
+
 export function classifyConnectedServiceSensitiveDiagnosticKey(
   key: string | undefined,
 ): ConnectedServiceSensitiveDiagnosticKeyCategory | null {
@@ -56,23 +80,7 @@ export function classifyConnectedServiceSensitiveDiagnosticKey(
   if (normalized === 'notsecret' || normalized === 'notauthentication') return null;
   if (PROVIDER_RESUME_ID_KEYS.has(normalized)) return 'provider_resume_id';
   if (LOCAL_PATH_KEYS.has(normalized)) return 'local_path';
-  if (
-    normalized.includes('token')
-    || normalized === 'secret'
-    || normalized.includes('secret')
-    || normalized.includes('password')
-    || normalized.includes('apikey')
-    || normalized === 'auth'
-    || normalized.endsWith('auth')
-    || normalized.includes('authentication')
-    || normalized.includes('authheader')
-    || normalized.includes('authorization')
-    || normalized.includes('cookie')
-    || normalized.includes('credential')
-    || normalized.includes('privatekey')
-  ) {
-    return 'secret';
-  }
+  if (isConnectedServiceCredentialDiagnosticKey(key)) return 'secret';
   return null;
 }
 

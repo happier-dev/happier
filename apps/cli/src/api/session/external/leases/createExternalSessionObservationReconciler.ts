@@ -9,15 +9,17 @@ import type {
 } from '@happier-dev/protocol';
 import type {
     AgentExternalSessionObservationObserveResourceRequest,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+    AgentExternalSessionSource,
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import {
     startDirectoryTopologyWatchers,
     type DirectoryTopologyWatchTarget,
 } from '@/integrations/watcher/startDirectoryTopologyWatcher';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
-import { computeExponentialBackoffMs } from '@/subprocess/supervision/backoff';
 
 export type ExternalSessionObservationResourceIdentity = Readonly<{
     pluginId: string;
@@ -57,15 +59,9 @@ type LinkRedescription = Readonly<{
 }>;
 
 type LinkRedescriptionResult =
-    | Readonly<{
+    Readonly<{
         original: LinkRecord;
-        failed: false;
         result: LinkRedescription | null;
-    }>
-    | Readonly<{
-        original: LinkRecord;
-        failed: true;
-        result: null;
     }>;
 
 type ObserverRecord = {
@@ -107,10 +103,7 @@ type ObservationEvidenceReconcileResult = Extract<
 >;
 
 const RESOURCE_REDESCRIPTION_TOPOLOGY = 1;
-const RESOURCE_REDESCRIPTION_REFRESH_ALL = 2;
 const RESOURCE_REDESCRIPTION_INITIAL = 4;
-const TOPOLOGY_WATCH_RETRY_BASE_DELAY_MS = 1_000;
-const TOPOLOGY_WATCH_RETRY_MAX_DELAY_MS = 30_000;
 
 type ResourceReconciliationResult =
     | Readonly<{ state: 'reconciled'; requestedLinkKeys: number }>
@@ -130,8 +123,6 @@ type ResourceRecord = {
     observer: ObserverRecord | null;
     fileWatchersByPath: Map<string, FileWatcherRecord>;
     topologyWatcherBatch: TopologyWatcherBatchRecord | null;
-    topologyWatcherRetryAttempt: number;
-    topologyWatcherRetryTimer: ReturnType<typeof setTimeout> | null;
     topologyWatcherRecoveryPending: boolean;
     reconciliationAbortController: AbortController | null;
     redescriptionAbortController: AbortController | null;
@@ -141,13 +132,13 @@ type ResourceRecord = {
     redescriptionPromise: Promise<void> | null;
     pendingResourceRedescriptionReasons: number;
     pendingChangedFiles: Set<string>;
-    redescribingFiles: Set<string>;
     retirementListener: (() => void) | null;
 };
 
 type ExternalSessionObservationReconcilerParams = Readonly<{
     acquireObserver: (input: Readonly<{
         resource: ExternalSessionObservationResourceIdentity;
+        managedEndpointSource: AgentExternalSessionSource;
         requestTranscriptRefresh(
             linkKey: ExternalAgentObservationLinkKeyV1,
         ): void;
@@ -319,6 +310,7 @@ export function createExternalSessionObservationReconciler(
                 ) => startDirectoryTopologyWatchers(targets, lifecycle)
         );
     let disposed = false;
+    let disposalPromise: Promise<void> | null = null;
 
     const isCurrentLink = (link: LinkRecord): boolean => (
         link.resource.active
@@ -373,8 +365,8 @@ export function createExternalSessionObservationReconciler(
         if (!observer.observer || observer.observerReleased) {
             return;
         }
+        await observer.observer.dispose();
         observer.observerReleased = true;
-        await Promise.resolve(observer.observer.dispose()).catch(() => undefined);
     };
 
     const releaseFileWatcher = (watcher: FileWatcherRecord): void => {
@@ -400,20 +392,6 @@ export function createExternalSessionObservationReconciler(
         watcher.dispose();
     };
 
-    const cancelTopologyWatcherRetry = (
-        resource: ResourceRecord,
-        resetAttempt: boolean,
-    ): void => {
-        const timer = resource.topologyWatcherRetryTimer;
-        resource.topologyWatcherRetryTimer = null;
-        if (timer) {
-            clearTimeout(timer);
-        }
-        if (resetAttempt) {
-            resource.topologyWatcherRetryAttempt = 0;
-        }
-    };
-
     const stopTopologyWatcherBatch = (resource: ResourceRecord): void => {
         const watcher = resource.topologyWatcherBatch;
         resource.topologyWatcherBatch = null;
@@ -424,7 +402,6 @@ export function createExternalSessionObservationReconciler(
 
     const stopTopologyWatchers = (resource: ResourceRecord): void => {
         stopTopologyWatcherBatch(resource);
-        cancelTopologyWatcherRetry(resource, true);
         resource.topologyWatcherRecoveryPending = false;
     };
 
@@ -531,45 +508,7 @@ export function createExternalSessionObservationReconciler(
         return desired;
     };
 
-    const scheduleTopologyWatcherRetry = (resource: ResourceRecord): void => {
-        if (
-            disposed
-            || !resource.active
-            || resourcesByKey.get(resource.key) !== resource
-            || resource.identity.retirementSignal?.aborted
-            || resource.topologyWatcherRetryTimer
-        ) {
-            return;
-        }
-        resource.topologyWatcherRetryAttempt += 1;
-        const delayMs = computeExponentialBackoffMs({
-            attempt: resource.topologyWatcherRetryAttempt,
-            baseDelayMs: TOPOLOGY_WATCH_RETRY_BASE_DELAY_MS,
-            maxDelayMs: TOPOLOGY_WATCH_RETRY_MAX_DELAY_MS,
-        });
-        const timer = setTimeout(() => {
-            if (resource.topologyWatcherRetryTimer !== timer) {
-                return;
-            }
-            resource.topologyWatcherRetryTimer = null;
-            if (
-                disposed
-                || !resource.active
-                || resourcesByKey.get(resource.key) !== resource
-                || resource.identity.retirementSignal?.aborted
-            ) {
-                return;
-            }
-            reconcileTopologyWatchDemand(resource, true);
-        }, delayMs);
-        resource.topologyWatcherRetryTimer = timer;
-        timer.unref?.();
-    };
-
-    const reconcileTopologyWatchDemand = (
-        resource: ResourceRecord,
-        retryFailedBatch = false,
-    ): void => {
+    const reconcileTopologyWatchDemand = (resource: ResourceRecord): void => {
         if (
             disposed
             || !resource.active
@@ -590,17 +529,12 @@ export function createExternalSessionObservationReconciler(
             && current.directories.every(
                 (directory, index) => directory === desired[index],
             )
-            && (!retryFailedBatch || current.state !== 'failed')
+            && current.state !== 'failed'
         ) {
             return;
         }
-        const replacingFailedBatch = (
-            retryFailedBatch
-            && current?.state === 'failed'
-        );
         stopTopologyWatcherBatch(resource);
-        cancelTopologyWatcherRetry(resource, !replacingFailedBatch);
-        if (!replacingFailedBatch && current?.state !== 'failed') {
+        if (current?.state !== 'failed') {
             resource.topologyWatcherRecoveryPending = false;
         }
         const watcher: TopologyWatcherBatchRecord = {
@@ -624,7 +558,6 @@ export function createExternalSessionObservationReconciler(
                     return;
                 }
                 watcher.state = 'ready';
-                cancelTopologyWatcherRetry(resource, true);
                 if (!resource.topologyWatcherRecoveryPending) {
                     return;
                 }
@@ -645,7 +578,6 @@ export function createExternalSessionObservationReconciler(
                 watcher.state = 'failed';
                 resource.topologyWatcherRecoveryPending = true;
                 releaseTopologyWatcherBatch(watcher);
-                scheduleTopologyWatcherRetry(resource);
             },
         };
         let disposeTopologyWatch: () => void;
@@ -703,14 +635,20 @@ export function createExternalSessionObservationReconciler(
 
         observer.active = false;
         observer.abortController.abort();
-        observer.stopPromise = (async () => {
+        const stopPromise = (async () => {
             await observer.startPromise.catch(() => undefined);
             await releaseObserver(observer);
             if (resource.observer === observer) {
                 resource.observer = null;
             }
         })();
-        return observer.stopPromise;
+        observer.stopPromise = stopPromise;
+        void stopPromise.catch(() => {
+            if (observer.stopPromise === stopPromise) {
+                observer.stopPromise = null;
+            }
+        });
+        return stopPromise;
     };
 
     const hasObserverDemand = (resource: ResourceRecord): boolean => {
@@ -747,9 +685,17 @@ export function createExternalSessionObservationReconciler(
             resource,
         };
         resource.observer = observer;
+        const managedEndpointSource = [...resource.links]
+            .find((link) => isCurrentLink(link))
+            ?.identity.linkedSource.source;
+        if (!managedEndpointSource) {
+            resource.observer = null;
+            return;
+        }
         observer.startPromise = Promise.resolve()
             .then(() => params.acquireObserver({
                 resource: resource.identity,
+                managedEndpointSource,
                 signal: observer.abortController.signal,
                 emit: (batch) => {
                     if (
@@ -838,8 +784,6 @@ export function createExternalSessionObservationReconciler(
             observer: null,
             fileWatchersByPath: new Map(),
             topologyWatcherBatch: null,
-            topologyWatcherRetryAttempt: 0,
-            topologyWatcherRetryTimer: null,
             topologyWatcherRecoveryPending: false,
             reconciliationAbortController: null,
             redescriptionAbortController: null,
@@ -849,13 +793,20 @@ export function createExternalSessionObservationReconciler(
             redescriptionPromise: null,
             pendingResourceRedescriptionReasons: 0,
             pendingChangedFiles: new Set(),
-            redescribingFiles: new Set(),
             retirementListener: null,
         };
         const retirementSignal = identity.retirementSignal;
         if (retirementSignal) {
             const retire = () => {
-                void deactivateResource(resource);
+                // Abort-triggered retirement is owner-driven cleanup, not a caller
+                // promise: the daemon turns an unhandled rejection into
+                // `requestShutdown('exception')`, so one plugin observer whose
+                // disposal failed must not take the daemon down. The failure is not
+                // discarded — a rejected deactivation leaves this resource in
+                // `resourcesByKey` with its observer unreleased, so `dispose()` and
+                // the next reconcile retry the exact same cleanup and surface the
+                // failure to that caller.
+                void deactivateResource(resource).catch(() => undefined);
             };
             resource.retirementListener = retire;
             retirementSignal.addEventListener('abort', retire, { once: true });
@@ -884,29 +835,9 @@ export function createExternalSessionObservationReconciler(
     };
 
     const deactivateResource = async (resource: ResourceRecord): Promise<void> => {
-        if (!resource.active) {
-            await stopObserver(resource);
-            return;
-        }
-
         resource.active = false;
-        if (resourcesByKey.get(resource.key) === resource) {
-            resourcesByKey.delete(resource.key);
-        }
         resource.reconciliationAbortController?.abort();
         resource.redescriptionAbortController?.abort();
-        for (const link of resource.links) {
-            if (linksBySessionId.get(link.identity.sessionId) === link) {
-                linksBySessionId.delete(link.identity.sessionId);
-            }
-        }
-        resource.links.clear();
-        resource.linksByLinkKey.clear();
-        if (!resource.redescriptionPromise) {
-            resource.pendingResourceRedescriptionReasons = 0;
-        }
-        resource.pendingChangedFiles.clear();
-        resource.redescribingFiles.clear();
         stopFileWatchers(resource);
         stopTopologyWatchers(resource);
         if (resource.identity.retirementSignal && resource.retirementListener) {
@@ -918,6 +849,20 @@ export function createExternalSessionObservationReconciler(
         }
         await stopObserver(resource);
         await resource.reconciliationPromise?.catch(() => undefined);
+        if (resourcesByKey.get(resource.key) === resource) {
+            resourcesByKey.delete(resource.key);
+        }
+        for (const link of resource.links) {
+            if (linksBySessionId.get(link.identity.sessionId) === link) {
+                linksBySessionId.delete(link.identity.sessionId);
+            }
+        }
+        resource.links.clear();
+        resource.linksByLinkKey.clear();
+        if (!resource.redescriptionPromise) {
+            resource.pendingResourceRedescriptionReasons = 0;
+        }
+        resource.pendingChangedFiles.clear();
     };
 
     const reconcileObserverDemand = async (resource: ResourceRecord): Promise<void> => {
@@ -936,15 +881,28 @@ export function createExternalSessionObservationReconciler(
         await stopObserver(resource);
     };
 
-    const detachLink = async (link: LinkRecord): Promise<void> => {
+    /**
+     * `retainResource` is set when the caller is about to attach a replacement
+     * link to this exact pooled resource. Deactivating it in that window would
+     * release the shared observer and every file/topology watcher, drop the
+     * pending redescription reasons, and abort in-flight reconciliation, only
+     * for the replacement to reacquire them — losing every change observed
+     * across the gap. The caller reconciles observer demand once the
+     * replacement link is attached.
+     */
+    const detachLink = async (
+        link: LinkRecord,
+        options?: Readonly<{ retainResource?: boolean }>,
+    ): Promise<void> => {
+        if (!options?.retainResource && link.resource.links.size === 1) {
+            await deactivateResource(link.resource);
+            return;
+        }
         if (linksBySessionId.get(link.identity.sessionId) === link) {
             linksBySessionId.delete(link.identity.sessionId);
         }
         removeLinkFromResource(link);
-        if (link.resource.links.size === 0) {
-            await deactivateResource(link.resource);
-            return;
-        }
+        if (options?.retainResource) return;
         await reconcileObserverDemand(link.resource);
     };
 
@@ -1204,14 +1162,30 @@ export function createExternalSessionObservationReconciler(
             return resolveStartedLinkState(existingLink);
         }
 
+        const existingResource = resourcesByKey.get(nextResourceKey);
+        if (
+            existingResource
+            && input.link.changeObservation !== undefined
+            && existingResource.changeObservation !== null
+            && existingResource.changeObservation !== input.link.changeObservation
+        ) {
+            if (existingLink) {
+                await detachLink(existingLink);
+            }
+            return { state: 'disposition-mismatch' } as const;
+        }
+
+        if (existingLink) {
+            await detachLink(existingLink, {
+                retainResource: existingLink.resource.key === nextResourceKey,
+            });
+        }
+
         const nextResource = getOrCreateResource(
             input.resource,
             input.link.changeObservation,
         );
         if (!nextResource) {
-            if (existingLink) {
-                await detachLink(existingLink);
-            }
             return { state: 'disposition-mismatch' } as const;
         }
         const nextLink: LinkRecord = {
@@ -1235,9 +1209,6 @@ export function createExternalSessionObservationReconciler(
             initialRedescription = requestResourceRedescription(nextResource);
         }
 
-        if (existingLink) {
-            await detachLink(existingLink);
-        }
         await reconcileObserverDemand(nextResource);
         if (input.awaitObserverAdmission && initialRedescription) {
             await initialRedescription;
@@ -1314,9 +1285,6 @@ export function createExternalSessionObservationReconciler(
                 const redescriptionReasons =
                     resource.pendingResourceRedescriptionReasons;
                 const redescribeWholeResource = redescriptionReasons !== 0;
-                const refreshWholeResource = (
-                    redescriptionReasons & RESOURCE_REDESCRIPTION_REFRESH_ALL
-                ) !== 0;
                 const topologyRedescription = (
                     redescriptionReasons & RESOURCE_REDESCRIPTION_TOPOLOGY
                 ) !== 0;
@@ -1327,7 +1295,6 @@ export function createExternalSessionObservationReconciler(
                     &= ~redescriptionReasons;
                 const changedFiles = new Set(resource.pendingChangedFiles);
                 resource.pendingChangedFiles.clear();
-                resource.redescribingFiles = changedFiles;
                 const currentLinks = [...resource.links].filter((link) => {
                     if (
                         !isCurrentLink(link)
@@ -1352,9 +1319,6 @@ export function createExternalSessionObservationReconciler(
                 }
                 if (!reconcileResource) {
                     requestObservedResourceReconciliation(resource);
-                    if (refreshWholeResource) {
-                        requestObservedResourceTranscriptRefresh(resource);
-                    }
                     continue;
                 }
                 const redescribed = await (async () => {
@@ -1415,7 +1379,6 @@ export function createExternalSessionObservationReconciler(
                                     for (const original of originals) {
                                         redescribed.push({
                                             original,
-                                            failed: false,
                                             result: null,
                                         });
                                     }
@@ -1425,7 +1388,6 @@ export function createExternalSessionObservationReconciler(
                                 for (const original of originals) {
                                     redescribed.push({
                                         original,
-                                        failed: false,
                                         result: {
                                             resource: {
                                                 ...resource.identity,
@@ -1471,22 +1433,12 @@ export function createExternalSessionObservationReconciler(
                     ) {
                         continue;
                     }
-                    if (entry.failed) {
-                        const changedCurrentPath =
-                            entry.original.identity.watchFileChanges?.files.some(
-                                (file) => changedFiles.has(file),
-                            ) === true;
-                        if (refreshWholeResource || changedCurrentPath) {
-                            requestTranscriptRefreshForLink(entry.original);
-                        }
-                        continue;
-                    }
                     if (!entry.result) {
                         const changedCurrentPath =
                             entry.original.identity.watchFileChanges?.files.some(
                                 (file) => changedFiles.has(file),
                             ) === true;
-                        if (refreshWholeResource || changedCurrentPath) {
+                        if (changedCurrentPath) {
                             affectedResources.add(entry.original.resource);
                             requestTranscriptRefreshForLink(entry.original);
                         }
@@ -1530,9 +1482,6 @@ export function createExternalSessionObservationReconciler(
                     if (!topologyRedescription) {
                         requestObservedResourceReconciliation(affected);
                     }
-                    if (refreshWholeResource) {
-                        requestObservedResourceTranscriptRefresh(affected);
-                    }
                 }
                 if (
                     topologyRedescription
@@ -1551,10 +1500,8 @@ export function createExternalSessionObservationReconciler(
                             &= ~RESOURCE_REDESCRIPTION_TOPOLOGY;
                     }
                 }
-                resource.redescribingFiles.clear();
             }
         })().finally(() => {
-            resource.redescribingFiles.clear();
             if (resource.redescriptionPromise === redescriptionPromise) {
                 resource.redescriptionPromise = null;
             }
@@ -1620,11 +1567,24 @@ export function createExternalSessionObservationReconciler(
         },
 
         async dispose() {
-            if (disposed) return;
+            if (disposalPromise) {
+                return disposalPromise;
+            }
+            if (disposed && resourcesByKey.size === 0) {
+                return;
+            }
             disposed = true;
-            await Promise.all(
+            const pendingDisposal: Promise<void> = Promise.all(
                 [...resourcesByKey.values()].map((resource) => deactivateResource(resource)),
-            );
+            ).then(() => undefined);
+            disposalPromise = pendingDisposal;
+            try {
+                await pendingDisposal;
+            } finally {
+                if (disposalPromise === pendingDisposal) {
+                    disposalPromise = null;
+                }
+            }
         },
     };
 }

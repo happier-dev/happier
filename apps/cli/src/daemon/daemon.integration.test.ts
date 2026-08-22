@@ -16,17 +16,19 @@ import { configuration, reloadConfiguration } from '@/configuration';
 import { 
   listDaemonSessions, 
   stopDaemonSession, 
-  spawnDaemonSession, 
+  spawnDaemonSession,
+  resolveDaemonSpawnSessionByNonce,
   stopDaemonHttp, 
   notifyDaemonSessionStarted, 
   stopDaemon,
   checkIfDaemonRunningAndCleanupStaleState,
 } from '@/daemon/controlClient';
-import { readCredentials, readDaemonState, clearDaemonState, writeDaemonState } from '@/persistence';
+import { readCredentials, readDaemonState, clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { getLatestDaemonLog } from '@/ui/logger';
 import { waitForCondition } from '@/testkit/async/waitFor';
+import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { prepareIsolatedDaemonTestHome, type PreparedDaemonTestHome } from './testkit/realIntegration.testkit';
 
 type WaitForOptions = {
@@ -76,6 +78,50 @@ function debugIntegrationPreflight(message: string): void {
 
 async function listDaemonSessionsTyped(): Promise<DaemonSessionRecord[]> {
   return (await listDaemonSessions()) as DaemonSessionRecord[];
+}
+
+async function spawnDaemonSessionWithResolvedIdentity(
+  request: SpawnDaemonSessionRequest,
+): Promise<{ success: true; sessionId: string }> {
+  const response = await spawnDaemonSession(request) as {
+    success?: unknown;
+    sessionId?: unknown;
+    spawnNonce?: unknown;
+  };
+  if (response.success !== true) {
+    throw new Error(`daemon spawn failed: ${JSON.stringify(response)}`);
+  }
+  if (typeof response.sessionId === 'string' && response.sessionId.length > 0) {
+    return { success: true, sessionId: response.sessionId };
+  }
+
+  const spawnNonce = typeof response.spawnNonce === 'string' ? response.spawnNonce.trim() : '';
+  if (!spawnNonce) {
+    throw new Error(`accepted daemon spawn did not provide a resolution nonce: ${JSON.stringify(response)}`);
+  }
+
+  let resolvedSessionId: string | null = null;
+  let terminalError: string | null = null;
+  await waitForCondition(async () => {
+    const resolution = await resolveDaemonSpawnSessionByNonce(spawnNonce);
+    if (resolution.status === 'success') {
+      resolvedSessionId = resolution.sessionId;
+      return true;
+    }
+    if (resolution.status === 'error') {
+      terminalError = `${resolution.errorCode}: ${resolution.errorMessage}`;
+      return true;
+    }
+    return false;
+  }, {
+    ...SESSION_CONSISTENCY_WAIT,
+    label: 'accepted daemon spawn identity resolution',
+  });
+
+  if (!resolvedSessionId) {
+    throw new Error(terminalError ?? `daemon spawn identity did not resolve for nonce ${spawnNonce}`);
+  }
+  return { success: true, sessionId: resolvedSessionId };
 }
 
 function startDaemonProcessForStartSync(): ReturnType<typeof spawn> {
@@ -147,7 +193,7 @@ describe('ensureDaemonFullyStoppedBeforeRestart helper', () => {
     try {
       process.env.HAPPIER_HOME_DIR = tempHomeDir;
       reloadConfiguration();
-      await clearDaemonState();
+      await clearDaemonStateForTestTeardown();
 
       child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
         stdio: 'ignore',
@@ -477,7 +523,10 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
   });
 
   it('should spawn & stop a session via HTTP (not testing RPC route, but similar enough)', { timeout: 60_000 }, async () => {
-    const response = await spawnDaemonSession({ directory: '/tmp', sessionId: 'spawned-test-456' });
+    const response = await spawnDaemonSessionWithResolvedIdentity({
+      directory: '/tmp',
+      sessionId: 'spawned-test-456',
+    });
 
     expect(response, `spawnDaemonSession(/tmp) response=${JSON.stringify(response)}`).toHaveProperty('success', true);
     expect(response).toHaveProperty('sessionId');
@@ -533,7 +582,10 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     });
 
     // Spawn a daemon session
-    const spawnResponse = await spawnDaemonSession({ directory: '/tmp', sessionId: 'daemon-session-bbb' });
+    const spawnResponse = await spawnDaemonSessionWithResolvedIdentity({
+      directory: '/tmp',
+      sessionId: 'daemon-session-bbb',
+    });
 
     // List all sessions
     await waitForSessionCount(2, {
@@ -576,7 +628,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
 
   it('should update session metadata when webhook is called', { timeout: 60_000 }, async () => {
     // Spawn a session
-    const spawnResponse = await spawnDaemonSession({ directory: '/tmp' });
+    const spawnResponse = await spawnDaemonSessionWithResolvedIdentity({ directory: '/tmp' });
 
     // Verify webhook was processed (session ID updated)
     await waitForSessionById(spawnResponse.sessionId, {
@@ -617,7 +669,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
       promises.push(
         // Ensure each request is distinct; otherwise the daemon coalesces identical spawn requests
         // to prevent accidental double-spawns (e.g. user double-clicks).
-        spawnDaemonSession({ directory: '/tmp', spawnNonce: randomUUID() })
+        spawnDaemonSessionWithResolvedIdentity({ directory: '/tmp', spawnNonce: randomUUID() })
       );
     }
 
@@ -689,7 +741,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     expect(finalLogs.length).toBeGreaterThanOrEqual(initialLogs.length);
     
     // Clean up state file manually since daemon couldn't do it
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
   });
 
   it('should die with cleanup logs when SIGTERM is sent', async () => {
@@ -720,7 +772,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     expect(logContent).toContain('cleanup');
     
     // Clean up state file if it still exists (should have been cleaned by SIGTERM handler)
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
   });
 
   it('should detect daemon version mismatch and restart without workspace mutation', { timeout: 120_000 }, async () => {

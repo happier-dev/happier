@@ -49,6 +49,67 @@ describe('accountSettingsCache', () => {
     expect(path).not.toBe(join(root, 'account.settings.cache.json'));
   });
 
+  it('ignores a legacy v2 disk cache containing raw plain settings', async () => {
+    const root = join(tmpdir(), `happier-account-settings-cache-${randomUUID()}`);
+    const path = join(root, 'account.settings.cache.json');
+    await mkdir(root, { recursive: true });
+    await writeFile(path, JSON.stringify({
+      version: 2,
+      cachedAt: 123,
+      settingsContent: {
+        t: 'plain',
+        v: {
+          savedSecret: {
+            _isSecretValue: true,
+            value: 'raw-local-secret',
+          },
+        },
+      },
+      settingsVersion: 9,
+    }));
+
+    await expect(readAccountSettingsCache(path)).resolves.toBeNull();
+  });
+
+  it('refuses to durably persist raw plain settings envelopes', async () => {
+    const root = join(tmpdir(), `happier-account-settings-cache-${randomUUID()}`);
+    const path = join(root, 'account.settings.cache.json');
+
+    await expect(writeAccountSettingsCacheAtomic(path, {
+      version: 2,
+      cachedAt: 123,
+      settingsContent: {
+        t: 'plain',
+        v: {
+          savedSecret: {
+            _isSecretValue: true,
+            value: 'raw-local-secret',
+          },
+        },
+      },
+      settingsVersion: 9,
+    })).rejects.toMatchObject({
+      code: 'ACCOUNT_SETTINGS_PLAIN_CACHE_PERSISTENCE_REFUSED',
+    });
+  });
+
+  it('does not publish a staged cache when its owner retires before the rename', async () => {
+    const root = join(tmpdir(), `happier-account-settings-cache-${randomUUID()}`);
+    const path = join(root, 'account.settings.cache.json');
+    const shouldCommit = vi.fn(() => false);
+
+    await expect(writeAccountSettingsCacheAtomic(path, {
+      version: 2,
+      cachedAt: 123,
+      settingsContent: { t: 'encrypted', c: 'cipher' },
+      settingsVersion: 9,
+    }, { shouldCommit })).resolves.toBeUndefined();
+
+    expect(shouldCommit).toHaveBeenCalledTimes(1);
+    await expect(readAccountSettingsCache(path)).resolves.toBeNull();
+    await expect(stat(`${path}.tmp`)).rejects.toBeTruthy();
+  });
+
   it('removes stale lock files and completes write', async () => {
     const root = join(tmpdir(), `happier-account-settings-cache-${randomUUID()}`);
     await mkdir(root, { recursive: true });
@@ -96,19 +157,19 @@ describe('accountSettingsCache', () => {
     await writeAccountSettingsCacheAtomic(path, {
       version: 2,
       cachedAt: 200,
-      settingsContent: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' } },
+      settingsContent: { t: 'encrypted', c: 'cipher-5-first' },
       settingsVersion: 5,
     });
     await writeAccountSettingsCacheAtomic(path, {
       version: 2,
       cachedAt: 201,
-      settingsContent: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' } },
+      settingsContent: { t: 'encrypted', c: 'cipher-5-second' },
       settingsVersion: 5,
     });
     await writeAccountSettingsCacheAtomic(path, {
       version: 2,
       cachedAt: 100,
-      settingsContent: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' } },
+      settingsContent: { t: 'encrypted', c: 'cipher-3' },
       settingsVersion: 3,
     });
 
@@ -116,8 +177,8 @@ describe('accountSettingsCache', () => {
       cachedAt: 200,
       settingsVersion: 5,
       settingsContent: {
-        t: 'plain',
-        v: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' },
+        t: 'encrypted',
+        c: 'cipher-5-first',
       },
     });
   });

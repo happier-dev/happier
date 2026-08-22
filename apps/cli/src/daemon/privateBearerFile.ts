@@ -1,41 +1,80 @@
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { constants, rmSync } from 'node:fs';
-import { chmod, lstat, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { lstat, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
+
+import {
+  createProtectedLocalStateFileExclusive,
+  ensureProtectedLocalStateDirectory,
+  publishProtectedLocalStateFileIfAbsent,
+  readProtectedLocalStateFile,
+  readProtectedLocalStateFileSync,
+  writeProtectedLocalStateFileAtomic,
+  type ProtectedLocalStateOptions,
+} from '@/utils/fs/protectedLocalState';
+
+/**
+ * Bearer credentials the daemon mints and consumes on this machine.
+ *
+ * Every on-disk guarantee here — owner-only permissions, symbolic-link refusal,
+ * no-follow reads, the Windows protected DACL — belongs to
+ * `utils/fs/protectedLocalState`, the single owner of what "protected" means on
+ * each platform. This module owns only what is specific to a bearer credential:
+ * its hash/compare primitives and the typed `private_*_unsafe` codes callers and
+ * their tests already discriminate on. It makes no protection decision of its
+ * own, so Windows and POSIX cannot drift apart between a bearer file and any
+ * other protected local state.
+ */
 
 const PRIVATE_BEARER_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
-async function ensurePrivateParent(path: string): Promise<void> {
-  const parent = dirname(path);
+/**
+ * The daemon creates and maintains its own bearer state, so a path left looser
+ * by an older release is repaired rather than treated as someone else's.
+ */
+const BEARER_STATE: ProtectedLocalStateOptions = Object.freeze({ authority: 'owned' });
+
+/**
+ * Filesystem failures (`ENOENT`, `EACCES`, `EEXIST`, …) stay verbatim so callers
+ * can branch on them; a refusal from the protection owner becomes this domain's
+ * typed code.
+ */
+function asTypedUnsafeFailure(error: unknown, unsafeCode: string): unknown {
+  if (
+    typeof error === 'object'
+    && error !== null
+    && typeof (error as NodeJS.ErrnoException).code === 'string'
+  ) {
+    return error;
+  }
+  return new Error(unsafeCode);
+}
+
+async function ensureProtectedBearerDirectory(path: string, unsafeCode: string): Promise<void> {
   try {
-    const existing = await lstat(parent);
-    if (existing.isSymbolicLink() || !existing.isDirectory()) {
-      throw new Error('private_bearer_parent_unsafe');
-    }
+    await ensureProtectedLocalStateDirectory(path, BEARER_STATE);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    await mkdir(parent, { recursive: true, mode: 0o700 });
-  }
-  const beforeModeChange = await lstat(parent);
-  if (beforeModeChange.isSymbolicLink() || !beforeModeChange.isDirectory()) {
-    throw new Error('private_bearer_parent_unsafe');
-  }
-  try {
-    await chmod(parent, 0o700);
-  } catch {
-    // Windows does not expose POSIX modes. The caller still owns the containing runtime root.
-  }
-  const afterModeChange = await lstat(parent);
-  if (afterModeChange.isSymbolicLink() || !afterModeChange.isDirectory()) {
-    throw new Error('private_bearer_parent_unsafe');
+    throw asTypedUnsafeFailure(error, unsafeCode);
   }
 }
 
-async function enforcePrivateFileMode(path: string): Promise<void> {
+export async function ensurePrivateOwnerDirectory(path: string): Promise<void> {
+  await ensureProtectedBearerDirectory(path, 'private_owner_directory_unsafe');
+}
+
+export async function readPrivateOwnerFile(path: string): Promise<string> {
   try {
-    await chmod(path, 0o600);
-  } catch {
-    // Windows does not expose POSIX modes.
+    return await readProtectedLocalStateFile(path, BEARER_STATE);
+  } catch (error) {
+    throw asTypedUnsafeFailure(error, 'private_owner_file_unsafe');
+  }
+}
+
+export function readPrivateOwnerFileSync(path: string): string {
+  try {
+    return readProtectedLocalStateFileSync(path, BEARER_STATE);
+  } catch (error) {
+    throw asTypedUnsafeFailure(error, 'private_owner_file_unsafe');
   }
 }
 
@@ -58,71 +97,57 @@ export function verifyPrivateBearer(input: Readonly<{
   return constantTimeEqualUtf8(hashPrivateBearer(input.provided), input.expectedHash);
 }
 
+export async function writePrivateOwnerFile(input: Readonly<{
+  path: string;
+  contents: string | Uint8Array;
+}>): Promise<void> {
+  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe');
+  await createProtectedLocalStateFileExclusive(input.path, input.contents, BEARER_STATE);
+}
+
 export async function writePrivateBearerFile(input: Readonly<{
   path: string;
   contents: string;
 }>): Promise<void> {
-  await ensurePrivateParent(input.path);
-  await writeFile(input.path, input.contents, {
-    encoding: 'utf8',
-    mode: 0o600,
-    flag: 'wx',
-  });
-  await enforcePrivateFileMode(input.path);
+  await writePrivateOwnerFile(input);
+}
+
+export async function publishPrivateBearerFileIfAbsent(input: Readonly<{
+  path: string;
+  contents: string;
+}>): Promise<boolean> {
+  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe');
+  return await publishProtectedLocalStateFileIfAbsent(
+    input.path,
+    input.contents,
+    BEARER_STATE,
+  );
 }
 
 export async function replacePrivateBearerFile(input: Readonly<{
   path: string;
   contents: string;
 }>): Promise<void> {
-  await ensurePrivateParent(input.path);
-  const temporaryPath = `${input.path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writePrivateBearerFile({
-      path: temporaryPath,
-      contents: input.contents,
-    });
-    await rename(temporaryPath, input.path);
-    await enforcePrivateFileMode(input.path);
-  } catch (error) {
-    await rm(temporaryPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
+  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe');
+  await writeProtectedLocalStateFileAtomic(input.path, input.contents, BEARER_STATE);
 }
 
+/**
+ * A bearer file that is simply not there is an ordinary `ENOENT` the caller
+ * handles; anything else — including a dangling symbolic link, whose target
+ * resolution fails with `ENOENT` too — is a refusal, never an absence.
+ */
 export async function readPrivateBearerFile(path: string): Promise<string> {
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
-    const pathStat = await lstat(path);
-    if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
-      throw new Error('private_bearer_file_unsafe');
-    }
-    const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
-    handle = await open(path, constants.O_RDONLY | noFollow);
-    const openedStat = await handle.stat();
-    const currentUid = typeof process.getuid === 'function' ? process.getuid() : null;
-    if (
-      !openedStat.isFile()
-      || (process.platform !== 'win32' && (openedStat.mode & 0o777) !== 0o600)
-      || (currentUid !== null && openedStat.uid !== currentUid)
-      || (pathStat.dev !== 0 && openedStat.dev !== 0 && pathStat.dev !== openedStat.dev)
-      || (pathStat.ino !== 0 && openedStat.ino !== 0 && pathStat.ino !== openedStat.ino)
-    ) {
-      throw new Error('private_bearer_file_unsafe');
-    }
-    const contents = await handle.readFile({ encoding: 'utf8' });
-    const finalStat = await lstat(path);
-    if (
-      finalStat.isSymbolicLink()
-      || !finalStat.isFile()
-      || (finalStat.dev !== 0 && openedStat.dev !== 0 && finalStat.dev !== openedStat.dev)
-      || (finalStat.ino !== 0 && openedStat.ino !== 0 && finalStat.ino !== openedStat.ino)
-    ) {
-      throw new Error('private_bearer_file_unsafe');
-    }
-    return contents;
-  } finally {
-    await handle?.close().catch(() => undefined);
+    await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw error;
+    throw new Error('private_bearer_file_unsafe');
+  }
+  try {
+    return await readPrivateOwnerFile(path);
+  } catch {
+    throw new Error('private_bearer_file_unsafe');
   }
 }
 

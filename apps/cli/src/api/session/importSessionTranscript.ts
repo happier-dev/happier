@@ -17,7 +17,24 @@ export async function importSessionTranscript<TItem>(
         return { ok: false, errorCode: 'missing_items', message: 'Transcript import items are required.' };
     }
     const maxItems = normalizeBoundedInt(input.maxItems, 500, 500);
-    const writeResult = await params.writeItems(input.items.slice(0, maxItems) as TItem[]);
+    let writeResult: Readonly<{ imported: number; cursor: string | null }>;
+    try {
+        writeResult = await params.writeItems(input.items.slice(0, maxItems) as TItem[]);
+    } catch (error) {
+        if (
+            error !== null
+            && typeof error === 'object'
+            && !Array.isArray(error)
+            && (error as { code?: unknown }).code === 'upgrade_required'
+        ) {
+            return {
+                ok: false,
+                errorCode: 'upgrade_required',
+                message: 'Server upgrade required before transcript import.',
+            };
+        }
+        throw error;
+    }
     return {
         ok: true,
         imported: writeResult.imported,

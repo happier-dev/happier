@@ -9,6 +9,7 @@ import {
     waitForExecutionRun,
 } from '@/session/services/executionRuns';
 import { normalizeExecutionRunWaitTimeoutMs } from '@/session/services/executionRunWaitTiming';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 function readUnknownRecordProperty(value: unknown, key: string): unknown {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -19,19 +20,19 @@ export function createSessionClientExecutionRunService(
     params: Readonly<{
         token: string;
         sessionId: string;
-        getSessionEncryptionMode: () => 'e2ee' | 'plain';
-        getEncryptionContext: () => {
-            encryptionKey: Uint8Array;
-            encryptionVariant: 'legacy' | 'dataKey';
-        };
+        getStoredContentCryptoContext: () => SessionStoredContentCryptoContext;
     }>,
 ): HappyMcpExecutionRunService {
-    const readExecutionRunServiceContext = () => ({
-        token: params.token,
-        sessionId: params.sessionId,
-        mode: params.getSessionEncryptionMode(),
-        ctx: params.getEncryptionContext(),
-    });
+    const readExecutionRunServiceContext = (): Readonly<{
+        token: string;
+        sessionId: string;
+    }> & SessionStoredContentCryptoContext => {
+        return {
+            token: params.token,
+            sessionId: params.sessionId,
+            ...params.getStoredContentCryptoContext(),
+        };
+    };
 
     return {
         start: async (request: unknown) =>

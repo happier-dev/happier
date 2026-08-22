@@ -1,5 +1,5 @@
 import { dirname, join } from 'node:path';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { describe, expect, it, vi } from 'vitest';
 import { buildLaunchdPlistXml, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
@@ -230,7 +230,7 @@ describe('multi-daemon helpers', () => {
     );
   });
 
-  it('stops all running daemons best-effort via /stop and clears stale state', async () => {
+  it('stops all running daemons best-effort via /stop without externally deleting owner state', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-multi-daemon-stop-' }, async ({ homeDir }) => {
       await writeDaemonSettingsFixture(homeDir);
 
@@ -248,7 +248,7 @@ describe('multi-daemon helpers', () => {
         await stopAllDaemonsBestEffort();
 
         expect(await waitForProcessExit(daemon.pid, { timeoutMs: 3_000 })).toBe(true);
-        expect(existsSync(statePath)).toBe(false);
+        expect(existsSync(statePath)).toBe(true);
       } finally {
         await daemon.kill();
       }
@@ -286,7 +286,7 @@ describe('multi-daemon helpers', () => {
         expect(String((observed[0]?.headers ?? ({} as any)).Connection ?? '')).toBe('close');
         expect(String((observed[0]?.headers ?? ({} as any))['x-happier-daemon-token'] ?? '')).toBe('test-token');
         expect(await waitForProcessExit(sleepy.pid, { timeoutMs: 3_000 })).toBe(true);
-        expect(existsSync(statePath)).toBe(false);
+        expect(existsSync(statePath)).toBe(true);
       } finally {
         fetchSpy.mockRestore();
         await sleepy.kill();
@@ -318,14 +318,12 @@ describe('multi-daemon helpers', () => {
       });
 
       try {
-        await stopAllDaemonsBestEffort({ transferManagedLocalServices: true });
+        await stopAllDaemonsBestEffort();
 
         expect(fetchSpy).toHaveBeenCalledTimes(1);
-        expect(JSON.parse(String(observed[0]?.body ?? ''))).toEqual({
-          transferManagedLocalServices: true,
-        });
+        expect(JSON.parse(String(observed[0]?.body ?? ''))).toEqual({});
         expect(await waitForProcessExit(sleepy.pid, { timeoutMs: 3_000 })).toBe(true);
-        expect(existsSync(statePath)).toBe(false);
+        expect(existsSync(statePath)).toBe(true);
       } finally {
         fetchSpy.mockRestore();
         await sleepy.kill();
@@ -365,7 +363,7 @@ describe('multi-daemon helpers', () => {
 
           expect(fetchSpy).toHaveBeenCalledTimes(1);
           expect(await waitForProcessExit(sleepy.pid, { timeoutMs: 3_000 })).toBe(true);
-          expect(existsSync(statePath)).toBe(false);
+          expect(existsSync(statePath)).toBe(true);
         } finally {
           fetchSpy.mockRestore();
           await sleepy.kill();
@@ -373,4 +371,50 @@ describe('multi-daemon helpers', () => {
       },
     );
   }, 15_000);
+
+  it('fails closed when a successor publication appears while a predecessor stop completes', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-multi-daemon-successor-' }, async ({ homeDir }) => {
+      await writeDaemonSettingsFixture(homeDir);
+
+      const port = await reserveEphemeralPort();
+      const predecessor = spawnSleepyDetachedProcess();
+      const statePath = await writeDaemonStateFixture(homeDir, 'company', {
+        pid: predecessor.pid,
+        httpPort: port,
+        controlToken: 'predecessor-control-token',
+      });
+      const successorStateRaw = `${JSON.stringify({
+        pid: process.pid,
+        httpPort: port + 1,
+        startedAt: 8_888,
+        startedWithCliVersion: '0.0.0-successor',
+        controlToken: 'successor-control-token',
+      }, null, 2)}\n`;
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        try {
+          process.kill(predecessor.pid, 'SIGTERM');
+        } catch {
+          // already exited
+        }
+        writeFileSync(statePath, successorStateRaw, 'utf-8');
+        return { ok: true, status: 200, json: async () => ({ ok: true }) } as Response;
+      });
+
+      try {
+        await expect(stopAllDaemonsBestEffort()).rejects.toMatchObject({
+          code: 'daemon_stop_incomplete',
+          reason: 'graceful_stop_unconfirmed',
+          pid: process.pid,
+        });
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(await waitForProcessExit(predecessor.pid, { timeoutMs: 3_000 })).toBe(true);
+        expect(readFileSync(statePath, 'utf-8')).toBe(successorStateRaw);
+      } finally {
+        fetchSpy.mockRestore();
+        await predecessor.kill();
+      }
+    });
+  });
 });

@@ -1,9 +1,9 @@
 import type {
   AgentExternalSessionsFailureCode,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
   AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import {
@@ -86,6 +86,7 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
     registry: ResolvedExecutablePluginRuntimeRegistry;
     linked: LoadedLinkedExternalSession;
     sessionId: string;
+    targetDirectory: string;
     signal: AbortSignal;
   }>,
 ): Promise<ExternalTakeoverSpawnResolution> {
@@ -148,6 +149,7 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
       source: resolvedIdentity.value.source,
       remoteSessionId: resolvedIdentity.value.remoteSessionId,
       linkData: resolvedIdentity.value.linkData,
+      targetDirectory: params.targetDirectory,
       ...(params.linked.sessionPath
         ? { linkedDirectory: params.linked.sessionPath }
         : {}),
@@ -169,6 +171,7 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
 
     const options = mapExternalTakeoverLaunchPlanToSpawnOptions({
       plan: launch.value,
+      targetDirectory: params.targetDirectory,
       resolvedIdentity: resolvedIdentity.value,
       linkedSessionId: params.sessionId,
       targetAgent,
@@ -203,6 +206,7 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
 export async function resolveExternalTakeoverSpawnOptions(params: Readonly<{
   linked: LoadedLinkedExternalSession;
   sessionId: string;
+  targetDirectory: string;
   signal?: AbortSignal;
 }>): Promise<ExternalTakeoverSpawnResolution> {
   const signal = params.signal ?? new AbortController().signal;
@@ -221,6 +225,7 @@ export async function resolveExternalTakeoverSpawnOptions(params: Readonly<{
         registry: runtimeRegistryLease.registry,
         linked: params.linked,
         sessionId: params.sessionId,
+        targetDirectory: params.targetDirectory,
         signal,
       });
   } finally {
@@ -234,7 +239,6 @@ export async function resolveExternalTakeoverSpawnOptions(params: Readonly<{
       agentId: params.linked.agentId,
       remoteSessionId: resolved.value.options.resume
         ?? params.linked.remoteSessionId,
-      directoryHint: resolved.value.options.directory,
     }),
   );
   return hasConnectedServiceBindings(snapshot)

@@ -1,10 +1,13 @@
 import type { AgentState, Metadata } from '../types';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { decodeBase64, decrypt } from '../encryption';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { isDeepStrictEqual } from 'node:util';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
-import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol';
+import {
+    SESSION_METADATA_LAYOUT_VERSION_V1,
+    type AccountEncryptionCurrentnessResponse,
+} from '@happier-dev/protocol';
 import {
     readSessionMetadataLayoutVersion,
     tryReadApiSessionMetadataForLayout,
@@ -19,6 +22,7 @@ import {
     readLatestTurnStatusSnapshot,
     type LatestTurnStatusSnapshot,
 } from './sessionTurnStatusSnapshot';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 export function shouldSyncSessionSnapshotOnConnect(opts: { metadataVersion: number; agentStateVersion: number }): boolean {
     return opts.metadataVersion < 0 || opts.agentStateVersion < 0;
@@ -53,16 +57,15 @@ async function fetchRawSessionSnapshotOnce(opts: { token: string; sessionId: str
 export async function fetchSessionSnapshotUpdateFromServer(opts: {
     token: string;
     sessionId: string;
-    credentials?: Credentials | null;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
+    credentials?: StoredCredentials | null;
+    accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
     currentMetadataLayoutVersion?: number;
     currentMetadataVersion: number;
     currentAgentStateVersion: number;
     currentMetadata?: Metadata | null;
     currentAgentState?: AgentState | null;
     reason?: SessionSnapshotRefreshReason;
-}): Promise<{
+} & SessionStoredContentCryptoContext): Promise<{
     metadataLayoutVersion?: number;
     metadataTuple?: SessionMetadataEnvelopeTupleSnapshot;
     metadata?: { metadata: Metadata | null; metadataVersion: number };
@@ -116,9 +119,12 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
     }
 
     if (nextMetadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
-        if (!opts.credentials || opts.credentials.token !== opts.token) {
+        if (
+            !opts.credentials
+            || opts.credentials.token !== opts.token
+        ) {
             throw Object.assign(
-                new Error('Owner session metadata encryption material is unavailable'),
+                new Error('Owner session credentials are unavailable'),
                 {
                     code: 'metadata_privacy_upgrade_required',
                     retryable: false,
@@ -129,6 +135,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
         out.metadataTuple = readSessionMetadataEnvelopeTupleSnapshot({
             credentials: opts.credentials,
             rawSession: raw,
+            accountEncryptionCurrentness: opts.accountEncryptionCurrentness,
         });
         return out;
     }
@@ -153,10 +160,11 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
                     nextMetadataLayoutVersion,
                 );
             }
+            if (opts.mode !== 'e2ee') return undefined;
             try {
                 const decrypted = decrypt(
-                    opts.encryptionKey,
-                    opts.encryptionVariant,
+                    opts.ctx.encryptionKey,
+                    opts.ctx.encryptionVariant,
                     decodeBase64(rawMetadata),
                 );
                 return tryReadApiSessionMetadataForLayout(
@@ -197,8 +205,13 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
                 const parsed = tryParseJsonRecord(rawAgentState);
                 return parsed ? (parsed as unknown as AgentState) : undefined;
             }
+            if (opts.mode !== 'e2ee') return undefined;
             try {
-                return decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(rawAgentState)) as AgentState;
+                return decrypt(
+                    opts.ctx.encryptionKey,
+                    opts.ctx.encryptionVariant,
+                    decodeBase64(rawAgentState),
+                ) as AgentState;
             } catch {
                 return undefined;
             }

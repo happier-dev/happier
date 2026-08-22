@@ -1,19 +1,24 @@
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type {
-  PluginConnectedAccountBindingSummary,
-  PluginConnectedAccountMaterialization,
-  PluginConnectedAccountMaterializationRequest,
+  ConnectedAccountMetadataList as PluginConnectedAccountMetadataList,
+  ConnectedAccountMaterializationRequest,
+  ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
+  ConnectedAccountMaterialization as PluginConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
   PluginContributionRef,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk';
 import {
   QualifiedConnectedAccountPurposeBindingsV1Schema,
   QualifiedConnectedAccountPurposeBindingV1Schema,
   QualifiedConnectedAccountPurposeBindingTargetV1Schema,
   QualifiedConnectedAccountPurposeV1Schema,
   QualifiedConnectedAccountRequestAuthUseV1Schema,
+  ConnectedServiceCredentialRevisionV1Schema,
   PluginContributionIdentityV1Schema,
   qualifiedPurposeKey,
+  readAccountSettingsConnectedAccountPurposeBindings,
   type PluginContributionIdentityV1,
+  type ConnectedServiceCredentialRevisionV1,
   type QualifiedConnectedAccountPurposeBindingsV1,
   type QualifiedConnectedAccountPurposeBindingV1,
   type QualifiedConnectedAccountPurposeBindingTargetV1,
@@ -26,21 +31,31 @@ import {
   readActivePluginAccountSettings,
   updateActivePluginAccountSettings,
 } from '@/plugins/runtime/context/accountSettingsStorage';
+import type {
+  AccountSettingsMutationResult,
+} from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import {
   subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type {
   HostCurrentSessionUiServices,
 } from '@/agent/runtime/state/currentSessionUiTypes';
+import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type {
+  ConnectedAccountMaterializationCredentialRevisionBasis,
   StablePluginConnectedAccountsOwner,
 } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import {
   ConnectedAccountRequestAuthError,
+  type BearerMaterial,
+  type ConnectedAccountRequestAuthResolvedBinding,
   type ConnectedAccountRequestAuthPurposeUse,
   type ConnectedAccountRequestAuthSubject,
 } from '../requestAuth/ConnectedAccountRequestAuthService';
+import {
+  parseHttpHeadersRequestAuthBearer,
+} from '../requestAuth/parseHttpHeadersRequestAuthBearer';
 
 export type ConnectedAccountPurposeBindingStore = Readonly<{
   read(signal?: AbortSignal): Promise<QualifiedConnectedAccountPurposeBindingsV1>;
@@ -57,6 +72,11 @@ export type ConnectedAccountPurposeResolvedTarget = Readonly<{
   displayName: string;
   /** Exact current account. Group intent is resolved here, at read/materialization time. */
   account: QualifiedConnectedAccountRef;
+  /** Present only when the resolved target is a qualified group. */
+  group?: Readonly<{
+    groupId: string;
+    generation: number;
+  }>;
 }>;
 
 export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
@@ -66,6 +86,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
     serviceRefs: readonly PluginContributionRef[];
     currentSession?: HostCurrentSessionUiServices;
+    permissionOwner?: PermissionRequestOwner;
     reason: string;
     signal: AbortSignal;
   }>): Promise<QualifiedConnectedAccountPurposeBindingTargetV1>;
@@ -77,9 +98,35 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
   /** Producer-owned materializer boundary for the exact resolved current account. */
   materializeAccount(input: Readonly<{
     account: QualifiedConnectedAccountRef;
-    request: PluginConnectedAccountMaterializationRequest;
+    credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
+    request: ConnectedAccountMaterializationRequest;
     signal: AbortSignal;
   }>): Promise<PluginConnectedAccountMaterialization>;
+  /**
+   * Credential-free projection from one exact binding target. The runtime owns
+   * account/group transport and metadata; this binding owner remains the sole
+   * authority that decides which target may be projected.
+   */
+  projectTargetAccounts(input: Readonly<{
+    target: QualifiedConnectedAccountPurposeBindingTargetV1;
+    limit: number;
+    signal: AbortSignal;
+  }>): Promise<PluginConnectedAccountMetadataList>;
+  /**
+   * Rechecks that one exact account remains admitted by the same exact binding
+   * target and its configured-origin projection before credential disclosure.
+   */
+  assertTargetAccountMaterializable(input: Readonly<{
+    target: QualifiedConnectedAccountPurposeBindingTargetV1;
+    account: QualifiedConnectedAccountRef;
+    request: ConnectedAccountMaterializationRequest;
+    signal: AbortSignal;
+  }>): Promise<void>;
+  /** Host-private revision reader used by the daemon request-auth broker. */
+  resolveCredentialRevision?: (
+    account: QualifiedConnectedAccountRef,
+    signal: AbortSignal,
+  ) => Promise<ConnectedServiceCredentialRevisionV1 | null>;
   /** Account/group/credential/materializer invalidations not represented by the binding store. */
   subscribeInvalidations?: (listener: () => void) => Disposable;
 }>;
@@ -102,7 +149,25 @@ export type ConnectedAccountPurposeBindingSubject =
       isCurrent(): boolean;
     }>
   | Readonly<{
+      kind: 'managed_provider_operation';
+      operationId: string;
+      pluginId: string;
+      providerLocalId: string;
+      isCurrent(): boolean;
+    }>
+  | Readonly<{
       kind: 'agent_catalog_observation';
+      operationId: string;
+      consumer: PluginContributionIdentityV1;
+      isCurrent(): boolean;
+    }>
+  /**
+   * One host-private, correlation-scoped operation subject. Target Actions use
+   * this for one invocation lifetime; it never represents a generation or a
+   * background service.
+   */
+  | Readonly<{
+      kind: 'operation';
       operationId: string;
       consumer: PluginContributionIdentityV1;
       isCurrent(): boolean;
@@ -190,6 +255,12 @@ export function scopeConnectedAccountPurposeBindingLease(input: Readonly<{
   subjectId: string;
   uses: readonly QualifiedConnectedAccountRequestAuthUseV1[];
   registerRedaction: ConnectedAccountRequestAuthSubject['registerRedaction'];
+  /**
+   * Host-issued certificate for the catalog-Agent-only legacy service-keyed adapter.
+   * Every other caller, including manifest-qualified external Agents, remains on the
+   * qualified binding owner even when its target service has a legacy projection.
+   */
+  legacyServiceKeyedCompatibility?: true;
 }>): ConnectedAccountRequestAuthSubject {
   const subjectId = input.subjectId.trim();
   if (!subjectId) {
@@ -225,6 +296,9 @@ export function scopeConnectedAccountPurposeBindingLease(input: Readonly<{
   const isCurrent = (): boolean => input.lease.isCurrent();
   return Object.freeze({
     subjectId,
+    ...(input.legacyServiceKeyedCompatibility === true
+      ? { legacyServiceKeyedCompatibility: true as const }
+      : {}),
     isCurrent,
     registerRedaction(values) {
       if (!isCurrent()) {
@@ -254,6 +328,12 @@ export function scopeConnectedAccountPurposeBindingLease(input: Readonly<{
 export const scopeConnectedAccountSessionPurposeBindingLease =
   scopeConnectedAccountPurposeBindingLease;
 
+/**
+ * Binding-scoped Connected Accounts authority. Purpose-scoped account inventory
+ * and exact-listed materialization are not binding decisions, so they stay with
+ * the daemon runtime that owns the account inventory rather than being mirrored
+ * here.
+ */
 export type ConnectedAccountPurposeBindingOwner =
   StablePluginConnectedAccountsOwner & Readonly<{
     /**
@@ -282,6 +362,36 @@ export type ConnectedAccountPurposeBindingOwner =
       serviceRefs: readonly PluginContributionRef[];
       signal: AbortSignal;
     }>): Promise<QualifiedConnectedAccountPurposeBindingV1>;
+    /**
+     * Resolves one current, immutable launch snapshot from already-authorized qualified
+     * purpose declarations. This is a read of the canonical selection owner; it neither
+     * persists a selection nor activates a session lease.
+     */
+    resolveCurrentSessionPurposeBindingSnapshot(input: Readonly<{
+      authorizedPurposes: readonly ConnectedAccountPurposeAuthorizationScope[];
+      signal: AbortSignal;
+    }>): Promise<ConnectedAccountSessionPurposeBindingSnapshot>;
+    /**
+     * Host-private broker bridge. It reads only one active exact session binding through this
+     * owner, then fences it to the current credential revision without exposing either to a
+     * plugin contribution.
+     */
+    resolveCurrentRequestAuthBinding(input: Readonly<{
+      subjectId: string;
+      binding: QualifiedConnectedAccountPurposeBindingV1;
+      signal: AbortSignal;
+    }>): Promise<ConnectedAccountRequestAuthResolvedBinding | null>;
+    /**
+     * Host-private broker bridge that delegates the actual materialization to this owner's one
+     * canonical account materializer, with the previously resolved credential revision fenced.
+     */
+    materializeRequestAuthBearer(input: Readonly<{
+      subjectId: string;
+      binding: QualifiedConnectedAccountPurposeBindingV1;
+      resolved: ConnectedAccountRequestAuthResolvedBinding;
+      materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
+      signal: AbortSignal;
+    }>): Promise<BearerMaterial>;
     /**
      * Atomic generation-adoption contraction for the complete previous/current consumer union.
      * Call once after candidate validation and before publication. A removed consumer is
@@ -326,6 +436,51 @@ function bindingOutOfScope(): PluginError {
   });
 }
 
+function accountSettingsMutationFailure(
+  result: Exclude<AccountSettingsMutationResult, Readonly<{
+    status: 'applied' | 'satisfied' | 'unchanged';
+  }>>,
+): PluginError {
+  switch (result.status) {
+    case 'conflict':
+      return new PluginError({
+        code: 'plugin_connected_account_settings_conflict',
+        message: 'Connected Account bindings changed before the Settings mutation could settle',
+        retryable: true,
+        details: { currentVersion: String(result.currentVersion) },
+      });
+    case 'outcomeUnknown':
+      return new PluginError({
+        code: 'plugin_connected_account_settings_outcome_unknown',
+        message: 'Connected Account binding write outcome is unknown',
+        details: { lastKnownVersion: String(result.lastKnownVersion) },
+      });
+    case 'cancelled':
+      return new PluginError({
+        code: 'plugin_connected_account_settings_cancelled',
+        message: 'Connected Account binding mutation was cancelled before submission',
+      });
+    case 'locked':
+      return new PluginError({
+        code: 'plugin_connected_account_settings_locked',
+        message: 'Connected Account binding settings are locked',
+        details: { reason: result.reason },
+      });
+    case 'invalid':
+      return new PluginError({
+        code: 'plugin_connected_account_settings_invalid',
+        message: 'Connected Account binding settings mutation is invalid',
+        details: { reason: result.reason },
+      });
+    case 'unavailable':
+      return new PluginError({
+        code: 'plugin_connected_account_settings_unavailable',
+        message: 'Connected Account binding settings are unavailable',
+        retryable: result.retryable,
+      });
+  }
+}
+
 function assertTargetAuthorized(
   target: QualifiedConnectedAccountPurposeBindingTargetV1,
   serviceRefs: readonly PluginContributionRef[],
@@ -363,11 +518,6 @@ function readPurposeBinding(
     ?.target ?? null;
 }
 
-function parsePurposeBindingsOrEmpty(value: unknown): QualifiedConnectedAccountPurposeBindingsV1 {
-  const parsed = QualifiedConnectedAccountPurposeBindingsV1Schema.safeParse(value);
-  return parsed.success ? parsed.data : { v: 1, bindings: [] };
-}
-
 function assertResolvedTargetMatchesIntent(
   target: QualifiedConnectedAccountPurposeBindingTargetV1,
   resolved: ConnectedAccountPurposeResolvedTarget,
@@ -399,7 +549,35 @@ function summary(
       kind: target.kind,
       displayName: resolved.displayName,
     }),
+    account: Object.freeze({
+      service: Object.freeze({ ...resolved.account.service }),
+      accountId: resolved.account.accountId,
+    }),
   });
+}
+
+function sameResolvedAccount(
+  left: QualifiedConnectedAccountRef,
+  right: QualifiedConnectedAccountRef,
+): boolean {
+  return contributionKey(left.service) === contributionKey(right.service)
+    && left.accountId === right.accountId;
+}
+
+function sameResolvedTarget(
+  left: Readonly<{
+    target: QualifiedConnectedAccountPurposeBindingTargetV1;
+    resolved: ConnectedAccountPurposeResolvedTarget;
+  }>,
+  right: Readonly<{
+    target: QualifiedConnectedAccountPurposeBindingTargetV1;
+    resolved: ConnectedAccountPurposeResolvedTarget;
+  }>,
+): boolean {
+  return targetKey(left.target) === targetKey(right.target)
+    && sameResolvedAccount(left.resolved.account, right.resolved.account)
+    && left.resolved.group?.groupId === right.resolved.group?.groupId
+    && left.resolved.group?.generation === right.resolved.group?.generation;
 }
 
 function immutableBinding(
@@ -438,6 +616,7 @@ export function createConnectedAccountPurposeBindingOwner(
     bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
   }>;
   const purposeBindingsBySubjectKey = new Map<string, PurposeBindingState>();
+  const purposeBindingsBySubjectId = new Map<string, PurposeBindingState>();
   const sessionInvalidationListenersBySessionId = new Map<string, Set<() => void>>();
   const sessionSubjectKey = (sessionId: string): string =>
     JSON.stringify(['session', sessionId]);
@@ -447,12 +626,31 @@ export function createConnectedAccountPurposeBindingOwner(
     }
   };
   const readSessionPurposeBinding = (input: Readonly<{
+    exactPurposeBindingSubjectId?: string;
     sessionId?: string;
     purpose: QualifiedConnectedAccountPurposeV1;
   }>): Readonly<{
     covered: boolean;
     binding: QualifiedConnectedAccountPurposeBindingV1 | null;
   }> => {
+    if (input.exactPurposeBindingSubjectId) {
+      const state = purposeBindingsBySubjectId.get(
+        input.exactPurposeBindingSubjectId,
+      );
+      const purposeKey = qualifiedPurposeKey(input.purpose);
+      let current = false;
+      try {
+        current = state?.isSubjectCurrent() === true;
+      } catch {
+        current = false;
+      }
+      return {
+        covered: true,
+        binding: current && state?.coveredPurposeKeys.has(purposeKey)
+          ? state.bindingByPurposeKey.get(purposeKey) ?? null
+          : null,
+      };
+    }
     if (!input.sessionId) return { covered: false, binding: null };
     const state = purposeBindingsBySubjectKey.get(
       sessionSubjectKey(input.sessionId),
@@ -504,77 +702,126 @@ export function createConnectedAccountPurposeBindingOwner(
       release();
     }
   };
-  const cleanupSignal = new AbortController().signal;
 
   const activatePurposeBindings: ConnectedAccountPurposeBindingOwner[
     'activatePurposeBindings'
   ] = (input) => {
     const subject = input.subject;
-    const normalized = subject.kind === 'session'
-      ? (() => {
-          const sessionId = subject.sessionId.trim();
-          if (!sessionId) {
-            throw new Error(
-              'connected_account_session_binding_session_id_required',
-            );
-          }
-          return {
-            subjectKey: sessionSubjectKey(sessionId),
-            subjectId: `agent-session:${sessionId}`,
-            isSubjectCurrent: () => true,
-            sessionId,
-            errorPrefix: 'connected_account_session_binding',
-            expectedConsumer: null,
-          };
-        })()
-      : subject.kind === 'execution_run'
-        ? (() => {
-            const runId = subject.runId.trim();
-            const agentId = subject.agentId.trim();
-            if (!runId) {
-              throw new Error(
-                'connected_account_execution_run_binding_run_id_required',
-              );
-            }
-            if (!Number.isInteger(subject.runnerPid) || subject.runnerPid <= 0) {
-              throw new Error(
-                'connected_account_execution_run_binding_runner_pid_required',
-              );
-            }
-            if (!agentId) {
-              throw new Error(
-                'connected_account_execution_run_binding_agent_id_required',
-              );
-            }
-            return {
-              subjectKey: JSON.stringify(['execution_run', runId]),
-              subjectId:
-                `execution-run:${runId}/runner:${subject.runnerPid}/agent:${agentId}`,
-              isSubjectCurrent: subject.isCurrent,
-              sessionId: null,
-              errorPrefix: 'connected_account_execution_run_binding',
-              expectedConsumer: null,
-            };
-          })()
-        : (() => {
-            const operationId = subject.operationId.trim();
-            const consumer = PluginContributionIdentityV1Schema.parse(subject.consumer);
-            if (!operationId) {
-              throw new Error(
-                'connected_account_agent_catalog_observation_binding_operation_id_required',
-              );
-            }
-            return {
-              subjectKey: JSON.stringify(['agent_catalog_observation', operationId]),
-              subjectId:
-                `agent-catalog-observation:${operationId}/agent:${consumer.pluginId}/${consumer.localId}`,
-              isSubjectCurrent: subject.isCurrent,
-              sessionId: null,
-              errorPrefix: 'connected_account_agent_catalog_observation_binding',
-              expectedConsumer: Object.freeze({ ...consumer }),
-            };
-          })();
-    if (purposeBindingsBySubjectKey.has(normalized.subjectKey)) {
+    const normalized = (() => {
+      if (subject.kind === 'session') {
+        const sessionId = subject.sessionId.trim();
+        if (!sessionId) {
+          throw new Error(
+            'connected_account_session_binding_session_id_required',
+          );
+        }
+        return {
+          subjectKey: sessionSubjectKey(sessionId),
+          subjectId: `agent-session:${sessionId}`,
+          isSubjectCurrent: () => true,
+          sessionId,
+          errorPrefix: 'connected_account_session_binding',
+          expectedConsumer: null,
+        };
+      }
+      if (subject.kind === 'execution_run') {
+        const runId = subject.runId.trim();
+        const agentId = subject.agentId.trim();
+        if (!runId) {
+          throw new Error(
+            'connected_account_execution_run_binding_run_id_required',
+          );
+        }
+        if (!Number.isInteger(subject.runnerPid) || subject.runnerPid <= 0) {
+          throw new Error(
+            'connected_account_execution_run_binding_runner_pid_required',
+          );
+        }
+        if (!agentId) {
+          throw new Error(
+            'connected_account_execution_run_binding_agent_id_required',
+          );
+        }
+        return {
+          subjectKey: JSON.stringify(['execution_run', runId]),
+          subjectId:
+            `execution-run:${runId}/runner:${subject.runnerPid}/agent:${agentId}`,
+          isSubjectCurrent: subject.isCurrent,
+          sessionId: null,
+          errorPrefix: 'connected_account_execution_run_binding',
+          expectedConsumer: null,
+        };
+      }
+      if (subject.kind === 'agent_catalog_observation') {
+        const operationId = subject.operationId.trim();
+        const consumer = PluginContributionIdentityV1Schema.parse(subject.consumer);
+        if (!operationId) {
+          throw new Error(
+            'connected_account_agent_catalog_observation_binding_operation_id_required',
+          );
+        }
+        return {
+          subjectKey: JSON.stringify(['agent_catalog_observation', operationId]),
+          subjectId:
+            `agent-catalog-observation:${operationId}/agent:${consumer.pluginId}/${consumer.localId}`,
+          isSubjectCurrent: subject.isCurrent,
+          sessionId: null,
+          errorPrefix: 'connected_account_agent_catalog_observation_binding',
+          expectedConsumer: Object.freeze({ ...consumer }),
+        };
+      }
+      if (subject.kind === 'operation') {
+        const operationId = subject.operationId.trim();
+        const consumer = PluginContributionIdentityV1Schema.parse(subject.consumer);
+        if (!operationId) {
+          throw new Error(
+            'connected_account_operation_binding_operation_id_required',
+          );
+        }
+        return {
+          subjectKey: JSON.stringify(['operation', operationId]),
+          subjectId:
+            `operation:${operationId}/consumer:${consumer.pluginId}/${consumer.localId}`,
+          isSubjectCurrent: subject.isCurrent,
+          sessionId: null,
+          errorPrefix: 'connected_account_operation_binding',
+          expectedConsumer: Object.freeze({ ...consumer }),
+        };
+      }
+      const operationId = subject.operationId.trim();
+      const pluginId = subject.pluginId.trim();
+      const providerLocalId = subject.providerLocalId.trim();
+      if (!operationId) {
+        throw new Error(
+          'connected_account_managed_provider_operation_binding_operation_id_required',
+        );
+      }
+      if (!pluginId || !providerLocalId) {
+        throw new Error(
+          'connected_account_managed_provider_operation_binding_identity_required',
+        );
+      }
+      return {
+        subjectKey: JSON.stringify([
+          'managed_provider_operation',
+          operationId,
+        ]),
+        subjectId:
+          `managed-provider-operation:${operationId}/provider:${pluginId}/${providerLocalId}`,
+        isSubjectCurrent: subject.isCurrent,
+        sessionId: null,
+        errorPrefix:
+          'connected_account_managed_provider_operation_binding',
+        expectedConsumer: Object.freeze({
+          pluginId,
+          localId: providerLocalId,
+        }),
+      };
+    })();
+    if (
+      purposeBindingsBySubjectKey.has(normalized.subjectKey)
+      || purposeBindingsBySubjectId.has(normalized.subjectId)
+    ) {
       throw new Error(`${normalized.errorPrefix}_already_active`);
     }
     const purposes = input.purposes.map((purpose) =>
@@ -621,6 +868,7 @@ export function createConnectedAccountPurposeBindingOwner(
       bindings: Object.freeze(parsedBindings),
     });
     purposeBindingsBySubjectKey.set(normalized.subjectKey, state);
+    purposeBindingsBySubjectId.set(normalized.subjectId, state);
     if (normalized.sessionId) {
       notifySessionInvalidations(normalized.sessionId);
     }
@@ -629,6 +877,7 @@ export function createConnectedAccountPurposeBindingOwner(
       if (
         !active
         || purposeBindingsBySubjectKey.get(normalized.subjectKey) !== state
+        || purposeBindingsBySubjectId.get(normalized.subjectId) !== state
       ) {
         return false;
       }
@@ -656,6 +905,9 @@ export function createConnectedAccountPurposeBindingOwner(
           purposeBindingsBySubjectKey.get(normalized.subjectKey) === state
         ) {
           purposeBindingsBySubjectKey.delete(normalized.subjectKey);
+          if (purposeBindingsBySubjectId.get(normalized.subjectId) === state) {
+            purposeBindingsBySubjectId.delete(normalized.subjectId);
+          }
           if (normalized.sessionId) {
             notifySessionInvalidations(normalized.sessionId);
           }
@@ -681,6 +933,7 @@ export function createConnectedAccountPurposeBindingOwner(
   const readAuthorizedResolvedLocked = async (input: Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
     serviceRefs: readonly PluginContributionRef[];
+    exactPurposeBindingSubjectId?: string;
     sessionId?: string;
     signal: AbortSignal;
   }>): Promise<Readonly<{
@@ -690,6 +943,12 @@ export function createConnectedAccountPurposeBindingOwner(
     input.signal.throwIfAborted();
     const purpose = QualifiedConnectedAccountPurposeV1Schema.parse(input.purpose);
     const sessionBinding = readSessionPurposeBinding({
+      ...(input.exactPurposeBindingSubjectId
+        ? {
+            exactPurposeBindingSubjectId:
+              input.exactPurposeBindingSubjectId,
+          }
+        : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       purpose,
     });
@@ -757,6 +1016,7 @@ export function createConnectedAccountPurposeBindingOwner(
   const readAuthorizedResolved = async (input: Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
     serviceRefs: readonly PluginContributionRef[];
+    exactPurposeBindingSubjectId?: string;
     sessionId?: string;
     signal: AbortSignal;
   }>): Promise<Readonly<{
@@ -766,6 +1026,358 @@ export function createConnectedAccountPurposeBindingOwner(
     [contributionKey(QualifiedConnectedAccountPurposeV1Schema.parse(input.purpose).consumer)],
     async () => await readAuthorizedResolvedLocked(input),
   );
+  const resolveCurrentSessionPurposeBindingSnapshot = async (input: Readonly<{
+    authorizedPurposes: readonly ConnectedAccountPurposeAuthorizationScope[];
+    signal: AbortSignal;
+  }>): Promise<ConnectedAccountSessionPurposeBindingSnapshot> => {
+    input.signal.throwIfAborted();
+    const scopeByPurposeKey = new Map<string, ConnectedAccountPurposeAuthorizationScope>();
+    for (const scopeLike of input.authorizedPurposes) {
+      const purpose = Object.freeze(
+        QualifiedConnectedAccountPurposeV1Schema.parse(scopeLike.purpose),
+      );
+      const key = qualifiedPurposeKey(purpose);
+      if (scopeByPurposeKey.has(key)) {
+        throw new Error(
+          'connected_account_session_binding_snapshot_duplicate_purpose',
+        );
+      }
+      const serviceRefs = Object.freeze(scopeLike.serviceRefs.map((service) => (
+        Object.freeze(PluginContributionIdentityV1Schema.parse(service))
+      )));
+      scopeByPurposeKey.set(key, Object.freeze({ purpose, serviceRefs }));
+    }
+    const scopes = [...scopeByPurposeKey.values()];
+    return await withSerializedConsumerMutations(
+      scopes.map((scope) => contributionKey(scope.purpose.consumer)),
+      async () => {
+        const bindings: QualifiedConnectedAccountPurposeBindingV1[] = [];
+        for (const scope of scopes) {
+          const resolved = await readAuthorizedResolvedLocked({
+            purpose: scope.purpose,
+            serviceRefs: scope.serviceRefs,
+            signal: input.signal,
+          });
+          if (resolved) {
+            bindings.push(immutableBinding({
+              purpose: scope.purpose,
+              target: resolved.target,
+            }));
+          }
+        }
+        return Object.freeze({
+          purposes: Object.freeze(scopes.map((scope) => scope.purpose)),
+          bindings: Object.freeze(bindings),
+        });
+      },
+    );
+  };
+
+  const materialize = async (
+    input: Parameters<StablePluginConnectedAccountsOwner['materialize']>[0],
+  ): Promise<PluginConnectedAccountMaterialization> => {
+    const authorizationInput = Object.freeze({
+      purpose: input.purpose,
+      serviceRefs: input.serviceRefs,
+      ...(input.exactPurposeBindingSubjectId
+        ? { exactPurposeBindingSubjectId: input.exactPurposeBindingSubjectId }
+        : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      signal: input.signal,
+    });
+    const readMaterializationTarget = async () => await readAuthorizedResolved(authorizationInput);
+    const resolved = await readMaterializationTarget();
+    if (!resolved) throw resourceNotSelected(input.purpose);
+    if (
+      input.expectedAccount
+      && !sameResolvedAccount(input.expectedAccount, resolved.resolved.account)
+    ) {
+      throw resourceNotSelected(input.purpose);
+    }
+    let materializedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
+    const credentialRevisionBasis = input.credentialRevisionBasis
+      ? Object.freeze({
+          expectedCredentialRevision:
+            input.credentialRevisionBasis.expectedCredentialRevision,
+          captureCredentialRevision(credentialRevision: ConnectedServiceCredentialRevisionV1) {
+            materializedCredentialRevision = credentialRevision;
+          },
+        })
+      : null;
+    const materialization = await dependencies.materializeAccount({
+      account: resolved.resolved.account,
+      ...(credentialRevisionBasis ? { credentialRevisionBasis } : {}),
+      request: input.request,
+      signal: input.signal,
+    });
+    input.signal.throwIfAborted();
+    const current = await readMaterializationTarget();
+    if (
+      !current
+      || targetKey(current.target) !== targetKey(resolved.target)
+      || contributionKey(current.resolved.account.service)
+        !== contributionKey(resolved.resolved.account.service)
+      || current.resolved.account.accountId
+        !== resolved.resolved.account.accountId
+      || (
+        input.expectedAccount
+        && !sameResolvedAccount(input.expectedAccount, current.resolved.account)
+      )
+    ) {
+      throw resourceNotSelected(input.purpose);
+    }
+    if (input.credentialRevisionBasis) {
+      if (materializedCredentialRevision === null) throw bindingOutOfScope();
+      input.credentialRevisionBasis.captureCredentialRevision(
+        materializedCredentialRevision,
+      );
+    }
+    return materialization;
+  };
+
+  const listAccounts = async (
+    input: Parameters<StablePluginConnectedAccountsOwner['listAccounts']>[0],
+  ): Promise<PluginConnectedAccountMetadataList> => {
+    const authorizationInput = Object.freeze({
+      purpose: input.purpose,
+      serviceRefs: input.serviceRefs,
+      ...(input.exactPurposeBindingSubjectId
+        ? { exactPurposeBindingSubjectId: input.exactPurposeBindingSubjectId }
+        : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      signal: input.signal,
+    });
+    const before = await readAuthorizedResolved(authorizationInput);
+    if (!before) throw resourceNotSelected(input.purpose);
+    const listing = await dependencies.projectTargetAccounts({
+      target: before.target,
+      limit: input.limit,
+      signal: input.signal,
+    });
+    input.signal.throwIfAborted();
+    const after = await readAuthorizedResolved(authorizationInput);
+    if (!after || !sameResolvedTarget(before, after)) {
+      throw bindingOutOfScope();
+    }
+    return listing;
+  };
+
+  const materializeListedAccount = async (
+    input: Parameters<StablePluginConnectedAccountsOwner['materializeListedAccount']>[0],
+  ): Promise<PluginConnectedAccountMaterialization> => {
+    const authorizationInput = Object.freeze({
+      purpose: input.purpose,
+      serviceRefs: input.serviceRefs,
+      ...(input.exactPurposeBindingSubjectId
+        ? { exactPurposeBindingSubjectId: input.exactPurposeBindingSubjectId }
+        : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      signal: input.signal,
+    });
+    const before = await readAuthorizedResolved(authorizationInput);
+    if (!before) throw bindingOutOfScope();
+    await dependencies.assertTargetAccountMaterializable({
+      target: before.target,
+      account: input.account,
+      request: input.request,
+      signal: input.signal,
+    });
+    const materialization = await dependencies.materializeAccount({
+      account: input.account,
+      request: input.request,
+      signal: input.signal,
+    });
+    input.signal.throwIfAborted();
+    await dependencies.assertTargetAccountMaterializable({
+      target: before.target,
+      account: input.account,
+      request: input.request,
+      signal: input.signal,
+    });
+    const after = await readAuthorizedResolved(authorizationInput);
+    if (!after || !sameResolvedTarget(before, after)) {
+      throw bindingOutOfScope();
+    }
+    return materialization;
+  };
+
+  const groupForRequestAuthTarget = (
+    target: QualifiedConnectedAccountPurposeBindingTargetV1,
+    resolved: ConnectedAccountPurposeResolvedTarget,
+  ): ConnectedAccountRequestAuthResolvedBinding['group'] | null => {
+    if (target.kind === 'account') {
+      return resolved.group === undefined ? undefined : null;
+    }
+    if (
+      !resolved.group
+      || resolved.group.groupId !== target.groupId
+    ) {
+      return null;
+    }
+    return Object.freeze({
+      groupId: resolved.group.groupId,
+      generation: resolved.group.generation,
+    });
+  };
+
+  const resolveCurrentRequestAuthBinding = async (input: Readonly<{
+    subjectId: string;
+    binding: QualifiedConnectedAccountPurposeBindingV1;
+    signal: AbortSignal;
+  }>): Promise<ConnectedAccountRequestAuthResolvedBinding | null> => {
+    const subjectId = input.subjectId.trim();
+    if (!subjectId || !dependencies.resolveCredentialRevision) return null;
+    const binding = QualifiedConnectedAccountPurposeBindingV1Schema.parse(
+      input.binding,
+    );
+    const service = Object.freeze({ ...targetService(binding.target) });
+    const readCurrent = async () => {
+      const current = await readAuthorizedResolvedLocked({
+        purpose: binding.purpose,
+        serviceRefs: Object.freeze([service]),
+        exactPurposeBindingSubjectId: subjectId,
+        signal: input.signal,
+      });
+      if (
+        !current
+        || targetKey(current.target) !== targetKey(binding.target)
+      ) {
+        return null;
+      }
+      const group = groupForRequestAuthTarget(
+        current.target,
+        current.resolved,
+      );
+      return group === null
+        ? null
+        : Object.freeze({ current, group });
+    };
+    return await withSerializedConsumerMutations(
+      [contributionKey(binding.purpose.consumer)],
+      async () => {
+        const before = await readCurrent();
+        if (!before) return null;
+        const revisionLike = await dependencies.resolveCredentialRevision!(
+          before.current.resolved.account,
+          input.signal,
+        );
+        input.signal.throwIfAborted();
+        const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
+          revisionLike,
+        );
+        if (!revision.success) return null;
+        const after = await readCurrent();
+        if (
+          !after
+          || !sameResolvedAccount(
+            before.current.resolved.account,
+            after.current.resolved.account,
+          )
+          || before.group?.groupId !== after.group?.groupId
+          || before.group?.generation !== after.group?.generation
+        ) {
+          return null;
+        }
+        return Object.freeze({
+          account: Object.freeze({
+            service: Object.freeze({ ...after.current.resolved.account.service }),
+            accountId: after.current.resolved.account.accountId,
+          }),
+          credentialRevision: revision.data,
+          ...(after.group ? { group: after.group } : {}),
+        });
+      },
+    );
+  };
+
+  const materializeRequestAuthBearer = async (input: Readonly<{
+    subjectId: string;
+    binding: QualifiedConnectedAccountPurposeBindingV1;
+    resolved: ConnectedAccountRequestAuthResolvedBinding;
+    materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
+    signal: AbortSignal;
+  }>): Promise<BearerMaterial> => {
+    const subjectId = input.subjectId.trim();
+    if (!subjectId) throw bindingOutOfScope();
+    const binding = QualifiedConnectedAccountPurposeBindingV1Schema.parse(
+      input.binding,
+    );
+    const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
+      input.resolved.credentialRevision,
+    );
+    if (!revision.success) throw bindingOutOfScope();
+    const expectedCredentialRevision = revision.data;
+    if (
+      contributionKey(input.resolved.account.service)
+      !== contributionKey(targetService(binding.target))
+    ) {
+      throw bindingOutOfScope();
+    }
+    const expectedGroup = groupForRequestAuthTarget(binding.target, {
+      displayName: '',
+      account: input.resolved.account,
+      ...(input.resolved.group ? { group: input.resolved.group } : {}),
+    });
+    if (expectedGroup === null) throw bindingOutOfScope();
+    if (
+      binding.target.kind === 'account'
+      && !sameResolvedAccount(binding.target.account, input.resolved.account)
+    ) {
+      throw bindingOutOfScope();
+    }
+    const currentBefore = await resolveCurrentRequestAuthBinding({
+      subjectId,
+      binding,
+      signal: input.signal,
+    });
+    if (
+      !currentBefore
+      || !sameResolvedAccount(currentBefore.account, input.resolved.account)
+      || currentBefore.credentialRevision !== expectedCredentialRevision
+      || currentBefore.group?.groupId !== input.resolved.group?.groupId
+      || currentBefore.group?.generation !== input.resolved.group?.generation
+    ) {
+      throw bindingOutOfScope();
+    }
+    let materializedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
+    const materialization = await materialize({
+      purpose: binding.purpose,
+      serviceRefs: Object.freeze([
+        Object.freeze({ ...targetService(binding.target) }),
+      ]),
+      exactPurposeBindingSubjectId: subjectId,
+      expectedAccount: input.resolved.account,
+      credentialRevisionBasis: Object.freeze({
+        expectedCredentialRevision,
+        captureCredentialRevision(credentialRevision) {
+          materializedCredentialRevision = credentialRevision;
+        },
+      }),
+      request: input.materialization,
+      signal: input.signal,
+    });
+    if (materializedCredentialRevision !== expectedCredentialRevision) {
+      throw bindingOutOfScope();
+    }
+    const currentAfter = await resolveCurrentRequestAuthBinding({
+      subjectId,
+      binding,
+      signal: input.signal,
+    });
+    if (
+      !currentAfter
+      || !sameResolvedAccount(currentAfter.account, input.resolved.account)
+      || currentAfter.credentialRevision !== expectedCredentialRevision
+      || currentAfter.group?.groupId !== input.resolved.group?.groupId
+      || currentAfter.group?.generation !== input.resolved.group?.generation
+    ) {
+      throw bindingOutOfScope();
+    }
+    return parseHttpHeadersRequestAuthBearer(
+      input.materialization,
+      materialization,
+    );
+  };
 
   return Object.freeze({
     activatePurposeBindings,
@@ -790,6 +1402,9 @@ export function createConnectedAccountPurposeBindingOwner(
       assertResolvedTargetMatchesIntent(target, resolved);
       return immutableBinding({ purpose, target });
     },
+    resolveCurrentSessionPurposeBindingSnapshot,
+    resolveCurrentRequestAuthBinding,
+    materializeRequestAuthBearer,
     async reconcileAuthorizedPurposes(input) {
       input.signal.throwIfAborted();
       const authorizedByConsumerKey = new Map<
@@ -838,6 +1453,10 @@ export function createConnectedAccountPurposeBindingOwner(
           authorizedServiceKeysByPurposeKey,
         );
       }
+      if (authorizedByConsumerKey.size === 0) {
+        input.publish();
+        return;
+      }
       const release = await acquireSerializedConsumerMutations(
         [...authorizedByConsumerKey.keys()],
       );
@@ -881,6 +1500,7 @@ export function createConnectedAccountPurposeBindingOwner(
           purpose,
           serviceRefs: input.serviceRefs,
           ...(input.currentSession ? { currentSession: input.currentSession } : {}),
+          ...(input.permissionOwner ? { permissionOwner: input.permissionOwner } : {}),
           reason: input.reason,
           signal: input.signal,
         }),
@@ -891,56 +1511,29 @@ export function createConnectedAccountPurposeBindingOwner(
         async () => {
           input.assertGenerationCurrent();
           input.signal.throwIfAborted();
-          let priorTarget: QualifiedConnectedAccountPurposeBindingTargetV1 | null = null;
-          let writePrepared = false;
-          try {
-            await dependencies.store.update(
-              (current) => {
-                input.assertGenerationCurrent();
-                priorTarget = readPurposeBinding(current, purpose);
-                writePrepared = true;
-                return replacePurposeBinding(current, purpose, target);
-              },
-              input.signal,
-            );
-            input.assertGenerationCurrent();
-            input.signal.throwIfAborted();
-            const resolved = await dependencies.resolveTarget(target, input.signal);
-            input.assertGenerationCurrent();
-            input.signal.throwIfAborted();
-            if (!resolved) {
-              throw resourceNotSelected(purpose);
-            }
-            assertResolvedTargetMatchesIntent(target, resolved);
-            return summary(purpose, target, resolved);
-          } catch (error) {
-            // The write may already be durable when retirement/cancellation becomes observable.
-            // Compensate while this consumer's mutation lock is still held so a newer generation
-            // cannot select the same target between this compare-restore and lock release.
-            if (writePrepared) {
-              await replaceTargetIfStillCurrent({
-                purpose,
-                expectedTarget: target,
-                replacementTarget: priorTarget,
-                signal: cleanupSignal,
-              });
-            }
-            throw error;
+          const resolved = await dependencies.resolveTarget(target, input.signal);
+          input.assertGenerationCurrent();
+          input.signal.throwIfAborted();
+          if (!resolved) {
+            throw resourceNotSelected(purpose);
           }
+          assertResolvedTargetMatchesIntent(target, resolved);
+          await dependencies.store.update(
+            (current) => {
+              input.assertGenerationCurrent();
+              return replacePurposeBinding(current, purpose, target);
+            },
+            input.signal,
+          );
+          input.assertGenerationCurrent();
+          input.signal.throwIfAborted();
+          return summary(purpose, target, resolved);
         },
       );
     },
-    async materialize(input) {
-      const resolved = await readAuthorizedResolved(input);
-      if (!resolved) throw resourceNotSelected(input.purpose);
-      const materialization = await dependencies.materializeAccount({
-        account: resolved.resolved.account,
-        request: input.request,
-        signal: input.signal,
-      });
-      input.signal.throwIfAborted();
-      return materialization;
-    },
+    materialize,
+    listAccounts,
+    materializeListedAccount,
     watch(input) {
       QualifiedConnectedAccountPurposeV1Schema.parse(input.purpose);
       let disposed = false;
@@ -978,23 +1571,37 @@ export function createActiveAccountSettingsConnectedAccountPurposeBindingStore()
   return Object.freeze({
     async read(signal) {
       signal?.throwIfAborted();
-      const bindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
-        readActivePluginAccountSettings()?.connectedAccountPurposeBindingsV1
-          ?? { v: 1, bindings: [] },
+      const bindings = readAccountSettingsConnectedAccountPurposeBindings(
+        readActivePluginAccountSettings() ?? {},
       );
       signal?.throwIfAborted();
       return bindings;
     },
     async update(mutate, signal) {
       signal?.throwIfAborted();
-      const settings = await updateActivePluginAccountSettings((current) => ({
-        ...current,
-        connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
-          mutate(parsePurposeBindingsOrEmpty(current.connectedAccountPurposeBindingsV1)),
-        ),
-      }));
+      // Validate the observed root before entering the retrying Settings CAS.
+      // A malformed present root is retained evidence, never an empty binding
+      // collection that an unrelated selection or reconciliation may overwrite.
+      const current = readActivePluginAccountSettings() ?? {};
+      readAccountSettingsConnectedAccountPurposeBindings(current);
+      const result = await updateActivePluginAccountSettings((settings) => {
+        const next = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
+          mutate(readAccountSettingsConnectedAccountPurposeBindings(settings)),
+        );
+        return Object.freeze({
+          ...settings,
+          connectedAccountPurposeBindingsV1: next,
+        });
+      }, { signal });
+      if (
+        result.status !== 'applied'
+        && result.status !== 'satisfied'
+        && result.status !== 'unchanged'
+      ) {
+        throw accountSettingsMutationFailure(result);
+      }
       return QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
-        settings.connectedAccountPurposeBindingsV1,
+        result.settings.connectedAccountPurposeBindingsV1,
       );
     },
     subscribe(listener) {

@@ -179,7 +179,7 @@ describe('session client durable mutation custody', () => {
         }
     });
 
-    it('admits only exact-turn settlement and usage-limit recovery at the daemon parsed seam', () => {
+    it('admits exact-turn settlement, usage-limit recovery, and canonical transcript rows at the daemon parsed seam', () => {
         const exactTurnEnd = queued({
             v: 1,
             sessionId: 's1',
@@ -218,9 +218,21 @@ describe('session client durable mutation custody', () => {
             op: { kind: 'set', value: { state: 'unknown', activeCount: 0, sourceClass: 'runtime_unknown' } },
         });
         const nonDaemonUsageMutation = { ...usageMutation, source: 'runtime' as const };
+        const transcript = queued({
+            v: 1,
+            sessionId: 's1',
+            mutationId: 'transcript:s1:l1',
+            source: 'transcript_message_append',
+            localId: 'l1',
+            content: 'text',
+            createdAt: 1,
+            updatedAt: 1,
+            provenance: { kind: 'non_dependent', source: 'background' },
+        }, 'transcript_message_append');
 
         expect(parseDaemonSessionClientDurableMutation(exactTurnEnd, 's1').mutations).toHaveLength(1);
         expect(parseDaemonSessionClientDurableMutation(queued(usageMutation as unknown as Record<string, unknown>, 'registered_session_state_field'), 's1').mutations).toHaveLength(1);
+        expect(parseDaemonSessionClientDurableMutation(transcript, 's1').mutations).toHaveLength(1);
         for (const rejected of [
             broadTurnEnd,
             ordinaryTurn,
@@ -232,16 +244,7 @@ describe('session client durable mutation custody', () => {
                 ...exactTurnEnd,
                 payload: { ...(exactTurnEnd.payload as Record<string, unknown>), provider: 'codex' },
             },
-            queued({
-                v: 1,
-                sessionId: 's1',
-                mutationId: 'transcript:s1:l1',
-                source: 'transcript_message_append',
-                localId: 'l1',
-                content: 'text',
-                createdAt: 1,
-                updatedAt: 1,
-            }, 'transcript_message_append'),
+            { ...transcript, kind: 'unknown_mutation_kind' },
         ]) {
             const parsed = parseDaemonSessionClientDurableMutation(rejected, 's1');
             expect(parsed.mutations).toEqual([]);

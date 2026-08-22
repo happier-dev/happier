@@ -70,5 +70,8 @@ export function spawnVoiceInferenceWorkerChannel(): VoiceInferenceWorkerChannel 
       }
       child.kill('SIGTERM');
     },
+    forceTerminate: () => {
+      child.kill('SIGKILL');
+    },
   };
 }

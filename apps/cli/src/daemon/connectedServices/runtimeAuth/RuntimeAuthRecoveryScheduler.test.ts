@@ -2246,6 +2246,62 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     });
   });
 
+  it('preserves terminal settlement only for the same attempt and re-arms a fresh report epoch', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => 1_000,
+      recover: async () => ({
+        status: 'recovery_action_required' as const,
+        action: {
+          kind: 'reconnect_profile' as const,
+          serviceId: 'openai-codex',
+          profileId: 'primary',
+          groupId: 'codex-main',
+          reason: 'usage_limit' as const,
+        },
+      }),
+    });
+    const first = await scheduler.beginClassifiedFailure({
+      reportId: 'runtime-auth-report:terminal-a',
+      sessionId: 'session-terminal-new-attempt',
+      switchesThisTurn: 0,
+      classification: usageLimitClassification(),
+    });
+    await scheduler.wake({ sessionId: 'session-terminal-new-attempt', reason: 'manual' });
+    expect(scheduler.read('session-terminal-new-attempt')).toMatchObject({
+      status: 'cancelled',
+      attemptId: first.attemptId,
+    });
+
+    await scheduler.beginClassifiedFailure({
+      reportId: 'runtime-auth-report:terminal-a',
+      sessionId: 'session-terminal-new-attempt',
+      switchesThisTurn: 0,
+      classification: usageLimitClassification(),
+    });
+    expect(scheduler.read('session-terminal-new-attempt')).toMatchObject({
+      status: 'cancelled',
+      attemptId: first.attemptId,
+    });
+
+    const fresh = await scheduler.beginClassifiedFailure({
+      reportId: 'runtime-auth-report:terminal-b',
+      sessionId: 'session-terminal-new-attempt',
+      switchesThisTurn: 0,
+      classification: usageLimitClassification(),
+    });
+    expect(fresh.attemptId).not.toBe(first.attemptId);
+    expect(scheduler.read('session-terminal-new-attempt')).toMatchObject({
+      status: 'waiting',
+      attemptId: fresh.attemptId,
+    });
+    expect(scheduler.read('session-terminal-new-attempt')).not.toMatchObject({
+      pendingVisibleEvents: expect.arrayContaining([
+        expect.objectContaining({ attemptId: first.attemptId, transition: 'terminal' }),
+      ]),
+    });
+  });
+
   it('coalesces group-backed recoveries even when the reported profile changes within the same group', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const scheduler = new RuntimeAuthRecoveryScheduler({

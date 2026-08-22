@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   getPreferredHostName: vi.fn(),
   isDaemonRunningCurrentlyInstalledHappyVersion: vi.fn(),
   stopDaemon: vi.fn(),
-  setRespawnDescriptorEncryptionMaterialForRestore: vi.fn(),
+  readOrCreateDeviceLocalSecretStorage: vi.fn(),
   startCaffeinate: vi.fn(),
   acquireDaemonLock: vi.fn(),
   loggerDebug: vi.fn(),
@@ -53,8 +53,8 @@ vi.mock('../controlClient', () => ({
   stopDaemon: mocks.stopDaemon,
 }));
 
-vi.mock('../reattach', () => ({
-  setRespawnDescriptorEncryptionMaterialForRestore: mocks.setRespawnDescriptorEncryptionMaterialForRestore,
+vi.mock('../deviceLocalSecretStorage', () => ({
+  readOrCreateDeviceLocalSecretStorage: mocks.readOrCreateDeviceLocalSecretStorage,
 }));
 
 describe('prepareDaemonBootstrapContext', () => {
@@ -71,6 +71,10 @@ describe('prepareDaemonBootstrapContext', () => {
     });
     mocks.getPreferredHostName.mockResolvedValue('host.local');
     mocks.isDaemonRunningCurrentlyInstalledHappyVersion.mockResolvedValue(true);
+    mocks.readOrCreateDeviceLocalSecretStorage.mockResolvedValue({
+      sealJson: vi.fn(),
+      openJson: vi.fn(),
+    });
     mocks.startCaffeinate.mockReturnValue(false);
   });
 

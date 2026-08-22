@@ -3,7 +3,6 @@ import type { LocalServiceLauncherSnapshotV1, LocalServiceLaunchTargetV1 } from 
 import { expandHomeDirPath } from '../../../../utils/path/expandHomeDirPath';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { ManagedLocalServiceRegistry } from '../managed/registry';
-import type { ManagedLocalServiceStartDeclarationRegistry } from '../managed/startDeclarations';
 import { listLocalServicePreviewResources, type LocalServicePreviewRegistry } from '../preview/registry';
 import type { LocalServiceRunTarget } from '../managed/scripts';
 import { buildLocalServiceLauncherSnapshot } from './suggestions';
@@ -40,7 +39,6 @@ export type CreateLocalServiceLauncherFeedInput = Readonly<{
     managedRegistry: ManagedLocalServiceRegistry;
     isManagedServiceVisible?: (serviceId: string) => boolean;
     previewRegistry: LocalServicePreviewRegistry;
-    startDeclarations?: Pick<ManagedLocalServiceStartDeclarationRegistry, 'listLaunchTargets'>;
     runTargets?: readonly LocalServiceRunTarget[] | LocalServiceRunTargetsProvider;
     runTargetsTimeoutMs?: number;
     onRunTargetsError?: (error: unknown) => void;
@@ -199,7 +197,6 @@ export function createLocalServiceLauncherFeed(
             const sessionId = request?.sessionId ?? input.sessionId;
             const managedServices = input.managedRegistry.listServices()
                 .filter((service) => input.isManagedServiceVisible?.(service.id) !== false);
-            const activeServiceIds = new Set(managedServices.map((service) => service.id));
             const workspaceScopePaths = await resolveScopePaths({
                 scope: request?.scope,
                 workspaceRoot: request?.workspaceRoot,
@@ -220,14 +217,10 @@ export function createLocalServiceLauncherFeed(
                 previewResources: listLocalServicePreviewResources(input.previewRegistry),
                 terminateDetectedEnabled: input.terminateDetectedEnabled?.() === true,
             });
-            const startDeclarationTargets = input.startDeclarations?.listLaunchTargets({
-                activeServiceIds,
-            }) ?? [];
             return {
                 ...snapshot,
                 targets: [...sortTargets([
                     ...snapshot.targets,
-                    ...startDeclarationTargets,
                 ].map(fenceExecutableAuthority))],
             };
         },

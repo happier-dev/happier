@@ -1075,72 +1075,8 @@ describe('ApiSessionClient connection handling', () => {
         expect(onUserMessage).not.toHaveBeenCalled();
     });
 
-    it('sends plaintext session messages when session.encryptionMode is plain', async () => {
-        connectSessionSocket();
-        const client = createClient('fake-token', { ...mockSession, encryptionMode: 'plain' as const });
 
-        client.sendUserTextMessage('hello');
 
-        await flushClientQueue(client);
-
-        expect(getLastCommittedMessagePayload(mockSocket)).toEqual(
-            expect.objectContaining({
-                sid: mockSession.id,
-                message: expect.objectContaining({ t: 'plain', v: expect.anything() }),
-                localId: expect.any(String),
-            }),
-        );
-    });
-
-    it('normalizes outbound ACP tool-call names and inputs to V2 canonical keys', async () => {
-        connectSessionSocket();
-        const client = createClient('fake-token', mockSession);
-        client.sendAgentMessage('opencode', {
-            type: 'tool-call',
-            callId: 'call-1',
-            name: 'execute',
-            input: { command: ['bash', '-lc', 'echo hi'] },
-            id: 'msg-1',
-        });
-
-        await flushClientQueue(client);
-
-        const decrypted = getLastDecryptedOutboundMessage(mockSession);
-
-        expect(decrypted.content.type).toBe('acp');
-        expect(decrypted.content.agentId).toBe('opencode');
-        expect(decrypted.content.data).toMatchObject({
-            type: 'tool-call',
-            name: 'Bash',
-            input: expect.objectContaining({ command: 'echo hi' }),
-        });
-    });
-
-    it('bounds unresolved ACP tool-call input caches so aborted calls cannot retain inputs forever', async () => {
-        connectSessionSocket();
-        const client = createClient('fake-token', mockSession);
-
-        for (let index = 0; index < 1_050; index += 1) {
-            client.sendAgentMessage('opencode', {
-                type: 'tool-call',
-                callId: `call-${index}`,
-                name: 'execute',
-                input: { command: ['bash', '-lc', `echo ${index}`], retained: 'x'.repeat(512) },
-                id: `msg-${index}`,
-            });
-        }
-
-        await flushClientQueue(client);
-
-        const toolInputs = (client as any).toolCallInputByProviderAndId as Map<string, unknown>;
-        const toolNames = (client as any).toolCallCanonicalNameByProviderAndId as Map<string, unknown>;
-        expect(toolInputs.size).toBeLessThanOrEqual(1_000);
-        expect(toolNames.size).toBeLessThanOrEqual(1_000);
-        expect(toolInputs.has('opencode:call-0')).toBe(false);
-        expect(toolNames.has('opencode:call-0')).toBe(false);
-        expect(toolInputs.has('opencode:call-1049')).toBe(true);
-        expect(toolNames.has('opencode:call-1049')).toBe(true);
-    });
 
     it('does not emit metadata-updated after close() when a snapshot sync resolves late', async () => {
         const snapshotSync = await import('./session/snapshotSync');
@@ -1316,46 +1252,6 @@ describe('ApiSessionClient connection handling', () => {
         }
     });
 
-    it('backfills missing Read tool-call input details from permission-request toolCall.rawInput', async () => {
-        connectSessionSocket();
-        const client = createClient('fake-token', mockSession);
-
-        client.sendAgentMessage('opencode', {
-            type: 'permission-request',
-            permissionId: 'call-1',
-            toolName: 'read',
-            description: 'read',
-            options: {
-                toolCall: {
-                    rawInput: { filepath: '/etc/hosts' },
-                },
-            },
-        });
-
-        client.sendAgentMessage('opencode', {
-            type: 'tool-call',
-            callId: 'call-1',
-            name: 'read',
-            input: {
-                locations: [],
-                description: 'read',
-                _acp: { kind: 'read', title: 'read', rawInput: {} },
-            },
-            id: 'msg-1',
-        });
-
-        await flushClientQueue(client);
-
-        const decryptedToolCall = getDecryptedOutboundMessages(mockSession)
-            .find((msg: any) => msg?.content?.type === 'acp' && msg?.content?.data?.type === 'tool-call');
-
-        expect(decryptedToolCall).toBeTruthy();
-        expect(decryptedToolCall.content.data).toMatchObject({
-            type: 'tool-call',
-            name: 'Read',
-            input: expect.objectContaining({ file_path: '/etc/hosts' }),
-        });
-    });
 
     it('includes server-createdAt on delivered user messages so permission precedence can be timestamped', () => {
         const client = createClient('fake-token', mockSession);
@@ -1765,272 +1661,12 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
-    it('normalizes outbound ACP permission-request toolName to V2 canonical keys (supports TodoWrite)', async () => {
-        connectSessionSocket();
-        const client = createClient('fake-token', mockSession);
 
-        client.sendAgentMessage('gemini', {
-            type: 'permission-request',
-            permissionId: 'write_todos-1',
-            toolName: 'write',
-            description: 'write',
-            options: {},
-        });
 
-        await flushClientQueue(client);
 
-        const decrypted = getLastDecryptedOutboundMessage(mockSession);
 
-        expect(decrypted.content.type).toBe('acp');
-        expect(decrypted.content.data).toMatchObject({
-            type: 'permission-request',
-            toolName: 'TodoWrite',
-        });
-    });
 
-    it('mirrors execution-run ACP permission requests into agentState with the response target intact', async () => {
-        connectSessionSocket();
-        mockSocket.timeout = vi.fn().mockReturnThis();
-        mockSocket.emitWithAck = vi.fn(async (event: string, payload: unknown) => {
-            if (event === 'update-state') {
-                const request = payload as { agentState?: string };
-                return {
-                    result: 'success',
-                    version: mockSession.agentStateVersion + 1,
-                    agentState: request.agentState ?? null,
-                };
-            }
-            return { ok: true, id: 'm1', seq: 1, localId: 'l1' };
-        });
-        const client = createClient('fake-token', mockSession);
 
-        client.sendAgentMessage('claude', {
-            type: 'permission-request',
-            permissionId: 'perm-1',
-            toolName: 'write',
-            description: 'write',
-            options: {
-                input: {
-                    filepath: '/tmp/outside.txt',
-                },
-                executionRun: {
-                    responseTarget: {
-                        kind: 'execution_run_host_bridge',
-                        sessionId: 'sess_1',
-                        runId: 'run-1',
-                        callId: 'call-1',
-                        sidechainId: 'sidechain-1',
-                        backendId: 'claude',
-                        runtimeKind: 'sdk',
-                        providerRequestId: 'perm-1',
-                    },
-                },
-            },
-        });
-
-        await flushClientQueue(client);
-
-        await vi.waitFor(() => {
-            expect(client.getAgentStateSnapshot()?.requests?.['perm-1']).toMatchObject({
-                tool: 'Write',
-                arguments: {
-                    input: {
-                        filepath: '/tmp/outside.txt',
-                    },
-                    executionRun: {
-                        responseTarget: {
-                            kind: 'execution_run_host_bridge',
-                            sessionId: 'sess_1',
-                            runId: 'run-1',
-                            callId: 'call-1',
-                            sidechainId: 'sidechain-1',
-                            backendId: 'claude',
-                            runtimeKind: 'sdk',
-                            providerRequestId: 'perm-1',
-                        },
-                    },
-                },
-            });
-        });
-    });
-
-    it('backfills missing permission-request input details from nested options.toolCall.content (Gemini ACP)', async () => {
-        connectSessionSocket();
-        const client = createClient('fake-token', mockSession);
-
-        client.sendAgentMessage('gemini', {
-            type: 'permission-request',
-            permissionId: 'replace-1',
-            toolName: 'edit',
-            description: 'edit',
-            options: {
-                options: {
-                    toolCall: {
-                        kind: 'edit',
-                        title: 'Editing /tmp/a.txt',
-                        locations: [{ path: '/tmp/a.txt' }],
-                        content: [{ path: 'a.txt', oldText: 'hello', newText: 'hi', type: 'diff' }],
-                    },
-                    input: {},
-                },
-            },
-        });
-
-        await flushClientQueue(client);
-
-        const decrypted = getLastDecryptedOutboundMessage(mockSession);
-
-        expect(decrypted.content.type).toBe('acp');
-        expect(decrypted.content.agentId).toBe('gemini');
-        expect(decrypted.content.data.type).toBe('permission-request');
-        expect(decrypted.content.data.options).toMatchObject({
-            options: {
-                input: {
-                    items: [{ path: 'a.txt', oldText: 'hello', newText: 'hi', type: 'diff' }],
-                },
-            },
-        });
-    });
-
-    it('normalizes outbound ACP tool-result outputs using the canonical tool name for the callId', async () => {
-        connectSessionSocket();
-        const client = createClient('fake-token', mockSession);
-
-        client.sendAgentMessage('opencode', {
-            type: 'tool-call',
-            callId: 'call-1',
-            name: 'execute',
-            input: { command: ['bash', '-lc', 'echo hi'] },
-            id: 'msg-1',
-        });
-
-        client.sendAgentMessage('opencode', {
-            type: 'tool-result',
-            callId: 'call-1',
-            output: 'TRACE_OK\n',
-            id: 'msg-2',
-        });
-
-        await flushClientQueue(client);
-
-        const messages = getDecryptedOutboundMessages(mockSession);
-        expect(messages).toHaveLength(2);
-        const decrypted = messages[1];
-
-        expect(decrypted.content.type).toBe('acp');
-        expect(decrypted.content.data).toMatchObject({
-            type: 'tool-result',
-            callId: 'call-1',
-            output: expect.objectContaining({
-                stdout: 'TRACE_OK\n',
-                _happier: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
-                _raw: expect.anything(),
-            }),
-        });
-    });
-
-    it('backfills empty TodoWrite tool-result outputs with the requested todos', async () => {
-        connectSessionSocket();
-        const client = createClient('fake-token', mockSession);
-
-        client.sendAgentMessage('gemini', {
-            type: 'tool-call',
-            callId: 'write_todos-1',
-            name: 'write',
-            input: { todos: [{ content: 'a', status: 'pending' }] },
-            id: 'msg-1',
-        });
-
-        client.sendAgentMessage('gemini', {
-            type: 'tool-result',
-            callId: 'write_todos-1',
-            output: [],
-            id: 'msg-2',
-        });
-
-        await flushClientQueue(client);
-
-        const messages = getDecryptedOutboundMessages(mockSession);
-        expect(messages).toHaveLength(2);
-        const decrypted = messages[1];
-
-        expect(decrypted.content.type).toBe('acp');
-        expect(decrypted.content.agentId).toBe('gemini');
-        expect(decrypted.content.data).toMatchObject({
-            type: 'tool-result',
-            callId: 'write_todos-1',
-            output: expect.objectContaining({
-                todos: [{ content: 'a', status: 'pending' }],
-            }),
-        });
-    });
-
-    it('normalizes outbound Codex MCP tool-call names to V2 canonical keys', async () => {
-        connectSessionSocket();
-        selectRuntimeBackend(mockSession, { backendId: 'codex', providerId: 'codex', backendMode: 'appServer' });
-        const client = createClient('fake-token', mockSession);
-        client.sendProviderMessage({
-            body: {
-                type: 'tool-call',
-                callId: 'call-1',
-                name: 'CodexBash',
-                input: { command: ['bash', '-lc', 'echo hi'] },
-                id: 'msg-1',
-            },
-        });
-
-        await flushClientQueue(client);
-
-        const decrypted = getLastDecryptedOutboundMessage(mockSession);
-
-        expect(decrypted.content.type).toBe('codex');
-        expect(decrypted.content.data).toMatchObject({
-            type: 'tool-call',
-            name: 'Bash',
-        });
-    });
-
-    it('normalizes outbound Codex MCP tool-call-result outputs using the canonical tool name for the callId', async () => {
-        connectSessionSocket();
-        selectRuntimeBackend(mockSession, { backendId: 'codex', providerId: 'codex', backendMode: 'appServer' });
-        const client = createClient('fake-token', mockSession);
-
-        client.sendProviderMessage({
-            body: {
-                type: 'tool-call',
-                callId: 'call-1',
-                name: 'CodexBash',
-                input: { command: ['bash', '-lc', 'echo hi'] },
-                id: 'msg-1',
-            },
-        });
-
-        client.sendProviderMessage({
-            body: {
-                type: 'tool-call-result',
-                callId: 'call-1',
-                output: { stdout: 'TRACE_OK\n', exit_code: 0 },
-                id: 'msg-2',
-            },
-        });
-
-        await flushClientQueue(client);
-
-        const messages = getDecryptedOutboundMessages(mockSession);
-        expect(messages).toHaveLength(2);
-        const decrypted = messages[1];
-
-        expect(decrypted.content.type).toBe('codex');
-        expect(decrypted.content.data).toMatchObject({
-            type: 'tool-call-result',
-            callId: 'call-1',
-            output: expect.objectContaining({
-                stdout: 'TRACE_OK\n',
-                _happier: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
-                _raw: expect.anything(),
-            }),
-        });
-    });
 
     it('should handle socket connection failure gracefully', async () => {
         // Should not throw during client creation
@@ -2050,7 +1686,7 @@ describe('ApiSessionClient connection handling', () => {
         expect(mockSocket.on).toHaveBeenCalledWith('error', expect.any(Function));
     });
 
-    it('fails closed when the server rejects a provider-starting RPC registration as upgrade-required', () => {
+    it('keeps account-storage RPC upgrade results operation-scoped', () => {
         const client = createClient('fake-token', mockSession);
         const reportProbeResult = vi.fn();
         overrideSessionSupervisor(client, reportProbeResult);
@@ -2060,18 +1696,12 @@ describe('ApiSessionClient connection handling', () => {
             error: 'client-upgrade-required',
             requirement: {
                 v: 1,
-                minimumSessionSyncProtocolVersion: 2,
-                clientKind: 'session-runner',
-                minimumAppVersion: '0.3.0',
-                updateUrl: null,
+                kind: 'account-stored-content',
+                minimumProtocolVersion: 2,
             },
         });
 
-        expect(reportProbeResult).toHaveBeenCalledWith({
-            status: 'auth_failed',
-            statusCode: 426,
-            errorMessage: 'This Happier session runner must be upgraded before it can sync sessions.',
-        }, { generation: 1 });
+        expect(reportProbeResult).not.toHaveBeenCalled();
     });
 
     it('close tears down the supervised session socket and closes the user-scoped socket', async () => {
@@ -2101,82 +1731,7 @@ describe('ApiSessionClient connection handling', () => {
         await expect(promise).resolves.toBe(false);
     });
 
-    it('queues outbound messages while disconnected and flushes them after reconnect', async () => {
-        replaceSocketPair({
-            sessionSocket: createConfiguredSocket({
-                connected: false,
-                emitWithAckResult: {
-                    ok: true,
-                    id: 'msg-1',
-                    seq: 1,
-                    localId: 'queued-local-id',
-                },
-            }),
-            userSocket: mockUserSocket,
-        });
 
-        selectRuntimeBackend(mockSession, { backendId: 'claude', providerId: 'claude', backendMode: 'sdk' });
-        const client = createClient('fake-token', mockSession);
-
-        const payload: RawJSONLines = {
-            type: 'user',
-            uuid: 'test-uuid',
-            message: {
-                content: 'hello',
-            },
-        } as const;
-
-        client.sendProviderMessage({ body: payload });
-        await flushClientQueue(client);
-
-        expect(mockSocket.emit).not.toHaveBeenCalledWith(
-            'message',
-            expect.objectContaining({
-                sid: mockSession.id,
-            }),
-        );
-        expect(mockSocket.emitWithAck).not.toHaveBeenCalled();
-
-        mockSocket.connected = true;
-        mockSocket.trigger('connect');
-
-        await vi.waitFor(() => {
-            expect(getLastCommittedMessagePayload(mockSocket)).toEqual(
-                expect.objectContaining({
-                    sid: mockSession.id,
-                    message: expect.any(String),
-                    localId: expect.any(String),
-                }),
-            );
-        });
-    });
-
-    it('merges optional meta into outbound Claude session messages', async () => {
-        connectSessionSocket();
-        selectRuntimeBackend(mockSession, { backendId: 'claude', providerId: 'claude', backendMode: 'sdk' });
-        const client = createClient('fake-token', mockSession);
-
-        const payload: RawJSONLines = {
-            type: 'assistant',
-            uuid: 'test-uuid',
-            message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: 'hi' }],
-            },
-        } as const;
-
-        client.sendProviderMessage({ body: payload, meta: { importedFrom: 'claude-taskoutput' } });
-
-        await flushClientQueue(client);
-
-        const decrypted = getLastDecryptedOutboundMessage(mockSession);
-
-        expect(decrypted.meta).toMatchObject({
-            sentFrom: 'cli',
-            source: 'cli',
-            importedFrom: 'claude-taskoutput',
-        });
-    });
 
     it('sends keepAlive(thinking=true) as a non-volatile emit so UIs that connect mid-turn still receive it', () => {
         connectSessionSocket();
@@ -2309,7 +1864,10 @@ describe('ApiSessionClient connection handling', () => {
             const onUserMessageEvent = vi.fn();
             client.on('user-message', onUserMessageEvent);
 
-            await client.sendUserTextMessageCommitted('hello', { localId: 'local-1' });
+            await client.enqueueUserTextMessageCommitted('hello', {
+                localId: 'local-1',
+                provenance: { kind: 'non_dependent', source: 'external' },
+            });
 
             expect(onUserMessageEvent).not.toHaveBeenCalled();
         });
@@ -2354,7 +1912,10 @@ describe('ApiSessionClient connection handling', () => {
             const onUserMessage = vi.fn();
             client.onUserMessage(onUserMessage);
 
-            await client.sendUserTextMessageCommitted('hello from cli', { localId: 'local-2' });
+            await client.enqueueUserTextMessageCommitted('hello from cli', {
+                localId: 'local-2',
+                provenance: { kind: 'non_dependent', source: 'external' },
+            });
 
             emitEncryptedSessionMessageUpdate(mockSocket, {
                 session: mockSession,
@@ -2498,7 +2059,7 @@ describe('ApiSessionClient connection handling', () => {
                         version: 6,
                     },
                     ownerMetadata: {
-                        value: payload.ownerMetadata.ciphertext,
+                        value: payload.ownerMetadata,
                         version: 0,
                     },
                     agentState: {

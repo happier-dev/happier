@@ -1,7 +1,9 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import { z } from 'zod';
 
 import {
+  AccountEncryptionCurrentnessResponseSchema,
   AccountEncryptionModeResponseSchema,
   assertConnectedServiceCredentialRecordBinding,
   ConnectedServiceCredentialRecordV1Schema,
@@ -14,6 +16,7 @@ import {
   type ConnectedServiceCredentialRevisionBoundaryV1,
   type ConnectedServiceId,
   type SealedConnectedServiceCredentialV1,
+  type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol';
 
 import { logger } from '@/ui/logger';
@@ -61,14 +64,17 @@ export type ConnectedServiceCredentialSealedResponse = Readonly<{
 }> & ConnectedServiceCredentialRevisionBoundaryV1;
 
 export type ConnectedServiceCredentialApi = Readonly<{
-  getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean }>): Promise<ConnectedServiceAccountEncryptionMode>;
+  getAccountEncryptionCurrentness(): Promise<AccountEncryptionCurrentnessResponse>;
+  getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>): Promise<ConnectedServiceAccountEncryptionMode>;
   getConnectedServiceCredentialPlain(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceCredentialPlainResponse | null>;
   getConnectedServiceCredentialSealed(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceCredentialSealedResponse | null>;
   listConnectedServiceProfiles(params: Readonly<{
     serviceId: ConnectedServiceId;
@@ -105,6 +111,15 @@ export class ConnectedServiceCredentialUnsupportedFormatError extends Error {
   }
 }
 
+export class AccountEncryptionCurrentnessUnavailableError extends Error {
+  readonly code = 'account_encryption_currentness_unavailable' as const;
+
+  constructor(message = 'Account encryption currentness is unavailable') {
+    super(message);
+    this.name = 'AccountEncryptionCurrentnessUnavailableError';
+  }
+}
+
 function readAxiosErrorCode(error: unknown): string | undefined {
   if (!axios.isAxiosError(error)) return undefined;
   const data = error.response?.data;
@@ -115,8 +130,48 @@ function readAxiosErrorCode(error: unknown): string | undefined {
 
 function createHeaders(token: string): Readonly<Record<string, string>> {
   return {
+    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
     Authorization: `Bearer ${token}`,
   };
+}
+
+export async function fetchAccountEncryptionCurrentness(params: Readonly<{
+  token: string;
+  serverBaseUrl?: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}>): Promise<AccountEncryptionCurrentnessResponse> {
+  const serverBaseUrl = (params.serverBaseUrl ?? resolveServerHttpBaseUrl())
+    .replace(/\/+$/, '');
+  let response;
+  try {
+    response = await axios.get(
+      `${serverBaseUrl}/v1/account/encryption/currentness`,
+      {
+        headers: createHeaders(params.token),
+        timeout: params.timeoutMs ?? resolveConnectedServicesServerApiTimeoutMs(),
+        validateStatus: () => true,
+        ...(params.signal ? { signal: params.signal } : {}),
+      },
+    );
+  } catch (error) {
+    if (params.signal?.aborted) throw error;
+    throw new AccountEncryptionCurrentnessUnavailableError();
+  }
+  if (response.status !== 200) {
+    throw new AccountEncryptionCurrentnessUnavailableError(
+      `Account encryption currentness is unavailable (${response.status})`,
+    );
+  }
+  const parsed = AccountEncryptionCurrentnessResponseSchema.safeParse(
+    response.data,
+  );
+  if (!parsed.success) {
+    throw new AccountEncryptionCurrentnessUnavailableError(
+      'Account encryption currentness response is invalid',
+    );
+  }
+  return parsed.data;
 }
 
 export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCredentialApi {
@@ -136,9 +191,14 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
     this.connectedServiceProfileListCache.clear();
   }
 
+  async getAccountEncryptionCurrentness(): Promise<AccountEncryptionCurrentnessResponse> {
+    return await fetchAccountEncryptionCurrentness({ token: this.token });
+  }
+
   async getConnectedServiceCredentialSealed(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceCredentialSealedResponse | null> {
     const serverUrl = resolveServerHttpBaseUrl();
     const serviceId = encodeURIComponent(params.serviceId);
@@ -150,6 +210,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
         {
           headers: createHeaders(this.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
+          ...(params.signal ? { signal: params.signal } : {}),
         },
       );
       if (response.status !== 200) {
@@ -339,7 +400,8 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
     return { serviceId: serviceIdParsed.data, profiles: profilesParsed.data };
   }
 
-  async getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean }>): Promise<ConnectedServiceAccountEncryptionMode> {
+  async getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>): Promise<ConnectedServiceAccountEncryptionMode> {
+    if (options?.signal) return await this.fetchAccountEncryptionModeFromServer(options.signal);
     const cached = this.accountEncryptionModeCache;
     const nowMs = Date.now();
     if (!options?.refresh && cached?.kind === 'value' && cached.expiresAtMs > nowMs) return cached.value;
@@ -363,7 +425,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
     }
   }
 
-  private async fetchAccountEncryptionModeFromServer(): Promise<ConnectedServiceAccountEncryptionMode> {
+  private async fetchAccountEncryptionModeFromServer(signal?: AbortSignal): Promise<ConnectedServiceAccountEncryptionMode> {
     const serverUrl = resolveServerHttpBaseUrl();
     try {
       const response = await axios.get(
@@ -371,15 +433,15 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
         {
           headers: createHeaders(this.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
+          ...(signal ? { signal } : {}),
         },
       );
-      if (response.status !== 200) return 'e2ee';
+      if (response.status !== 200) return 'unknown';
       const parsed = AccountEncryptionModeResponseSchema.safeParse(response.data);
-      if (!parsed.success) return 'e2ee';
+      if (!parsed.success) return 'unknown';
       return parsed.data.mode === 'plain' ? 'plain' : 'e2ee';
     } catch (error: unknown) {
-      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-      if (status === 404) return 'e2ee';
+      if (signal?.aborted) throw error;
       logServerEndpointFailure({
         logger,
         operation: 'Failed to get account encryption mode',
@@ -392,6 +454,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
   async getConnectedServiceCredentialPlain(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceCredentialPlainResponse | null> {
     const serverUrl = resolveServerHttpBaseUrl();
     const serviceId = encodeURIComponent(params.serviceId);
@@ -403,6 +466,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
         {
           headers: createHeaders(this.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
+          ...(params.signal ? { signal: params.signal } : {}),
         },
       );
       if (response.status !== 200) {
@@ -447,7 +511,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
         return null;
       }
       if (status === 409 && readAxiosErrorCode(error) === 'connect_credential_unsupported_format') {
-        return null;
+        throw new ConnectedServiceCredentialUnsupportedFormatError(params.serviceId, params.profileId);
       }
       logServerEndpointFailure({
         logger,

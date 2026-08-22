@@ -35,7 +35,7 @@ type ConnectedServiceSwitchRequest = Readonly<{
 type ConnectedServiceSwitchDeferralQueueParams = Readonly<{
     timeoutMs: number;
     disableDeferral: boolean;
-    emitSessionEvent?: (sessionId: string, event: unknown) => void;
+    emitSessionEvent?: (sessionId: string, event: unknown) => void | Promise<void>;
     nowMs?: () => number;
 }>;
 
@@ -57,6 +57,13 @@ type PendingSwitch = {
     // Claimed synchronously when execution begins (before the runSwitch await) so a second terminal
     // turn event arriving during that await cannot re-invoke runSwitch on the same pending.
     executing: boolean;
+    // POST-EFFECT SETTLEMENT: set once runSwitch has RESOLVED, i.e. the switch already produced its
+    // (possibly irreversible) effect — for a planned runner restart that is the emitted signal. From
+    // that moment the request can only be applied or applied-with-incomplete-evidence, never
+    // rollback-safe-failed, so `settlePending` refuses to reject it. A still-pending runSwitch
+    // (execution timeout, CL-1) is NOT proven applied and keeps rejecting.
+    effectApplied: boolean;
+    admissionTail: Promise<void>;
 };
 
 type SessionTurnState = {
@@ -145,11 +152,15 @@ function createDeferredPromise(): Readonly<{
 
 export type ConnectedServiceSwitchDeferralQueue = Readonly<{
     requestSwitch: (input: ConnectedServiceSwitchRequest) => Promise<void>;
-    recordTurnLifecycleEvent: (input: Readonly<{ sessionId: string; event: ConnectedServiceTurnLifecycleEvent }>) => void;
+    recordTurnLifecycleEvent: (input: Readonly<{
+        sessionId: string;
+        event: ConnectedServiceTurnLifecycleEvent;
+        activeTurnIdWitness?: string | null;
+    }>) => void;
     isTurnInFlight: (sessionId: string) => boolean;
     getTurnLifecycleState: (sessionId: string) => ConnectedServiceSwitchTurnLifecycleState;
-    cancelSession: (sessionId: string, reason: 'session_terminated' | 'session_restarting') => void;
-    cancelAll: (reason: 'daemon_shutdown') => void;
+    cancelSession: (sessionId: string, reason: 'session_terminated' | 'session_restarting') => Promise<void>;
+    cancelAll: (reason: 'daemon_shutdown') => Promise<void>;
 }>;
 
 export function createConnectedServiceSwitchDeferralQueue(
@@ -160,9 +171,9 @@ export function createConnectedServiceSwitchDeferralQueue(
     const turnStateBySessionId = new Map<string, SessionTurnState>();
     const pendingBySessionId = new Map<string, PendingSwitch>();
 
-    const emit = (sessionId: string, event: unknown): void => {
-        params.emitSessionEvent?.(sessionId, event);
-    };
+    const emit = (sessionId: string, event: unknown): void | Promise<void> => (
+        params.emitSessionEvent?.(sessionId, event)
+    );
 
     const readTurnState = (sessionId: string): SessionTurnState => {
         const existing = turnStateBySessionId.get(sessionId);
@@ -187,16 +198,32 @@ export function createConnectedServiceSwitchDeferralQueue(
         if (pending.settled) return;
         pending.settled = true;
         clearPendingTimer(pending);
-        pendingBySessionId.delete(pending.sessionId);
+        if (pendingBySessionId.get(pending.sessionId) === pending) {
+            pendingBySessionId.delete(pending.sessionId);
+        }
+        // Once the switch effect has landed, every later failure (completion-event admission,
+        // execution deadline, session teardown, daemon shutdown) is missing EVIDENCE, not an
+        // un-happened switch. Rejecting here would tell the caller the switch can be rolled back
+        // over an effect it can no longer undo, so the post-effect witness wins at this one seam.
+        const settledAction = pending.effectApplied ? 'resolve' : action;
         const requests = [...pending.requests];
         pending.requests.length = 0;
         for (const request of requests) {
-            if (action === 'resolve') {
+            if (settledAction === 'resolve') {
                 request.resolve();
             } else {
                 request.reject(error);
             }
         }
+    };
+
+    const admitPendingEvent = (pending: PendingSwitch, event: unknown): void => {
+        const admission = emit(pending.sessionId, event);
+        if (!admission) return;
+        pending.admissionTail = pending.admissionTail.then(async () => await admission);
+        void pending.admissionTail.catch((error) => {
+            settlePending(pending, 'reject', error);
+        });
     };
 
     const executePendingSwitch = async (
@@ -216,24 +243,33 @@ export function createConnectedServiceSwitchDeferralQueue(
         // reuses the existing wire reason 'aborted_after_timeout' — no new wire enum member.
         const executionDeadline = setTimeout(() => {
             if (pending.settled) return;
-            emit(pending.sessionId, {
-                type: 'connected_service_account_switch_deferral_completed',
-                policy: pending.policy,
-                reason: 'aborted_after_timeout',
-            });
-            settlePending(pending, 'reject', new ConnectedServiceSwitchDeferralConflictError({
-                code: 'switch_execution_timeout',
-                message: `Connected-service deferred switch execution exceeded ${timeoutMs}ms`,
-            }));
+            void (async () => {
+                try {
+                    admitPendingEvent(pending, {
+                        type: 'connected_service_account_switch_deferral_completed',
+                        policy: pending.policy,
+                        reason: 'aborted_after_timeout',
+                    });
+                    await pending.admissionTail;
+                    settlePending(pending, 'reject', new ConnectedServiceSwitchDeferralConflictError({
+                        code: 'switch_execution_timeout',
+                        message: `Connected-service deferred switch execution exceeded ${timeoutMs}ms`,
+                    }));
+                } catch (error) {
+                    settlePending(pending, 'reject', error);
+                }
+            })();
         }, timeoutMs);
         try {
             await pending.runSwitch();
+            pending.effectApplied = true;
             if (pending.settled) return;
-            emit(pending.sessionId, {
+            admitPendingEvent(pending, {
                 type: 'connected_service_account_switch_deferral_completed',
                 policy: pending.policy,
                 reason,
             });
+            await pending.admissionTail;
             settlePending(pending, 'resolve');
         } catch (error) {
             if (pending.settled) return;
@@ -243,16 +279,17 @@ export function createConnectedServiceSwitchDeferralQueue(
         }
     };
 
-    const rejectPending = (
+    const rejectPending = async (
         pending: PendingSwitch,
         reason: Extract<ConnectedServiceSwitchDeferralCompletionReason, 'session_terminated' | 'daemon_shutdown'>,
-    ): void => {
+    ): Promise<void> => {
         if (pending.settled) return;
-        emit(pending.sessionId, {
+        admitPendingEvent(pending, {
             type: 'connected_service_account_switch_deferral_completed',
             policy: pending.policy,
             reason,
         });
+        await pending.admissionTail;
         const error = new ConnectedServiceSwitchDeferralConflictError({
             code: reason,
             message: `Connected-service deferred switch cancelled: ${reason}`,
@@ -260,13 +297,14 @@ export function createConnectedServiceSwitchDeferralQueue(
         settlePending(pending, 'reject', error);
     };
 
-    const rejectSupersededPending = (pending: PendingSwitch): void => {
+    const rejectSupersededPending = async (pending: PendingSwitch): Promise<void> => {
         if (pending.settled) return;
-        emit(pending.sessionId, {
+        admitPendingEvent(pending, {
             type: 'connected_service_account_switch_deferral_completed',
             policy: pending.policy,
             reason: 'switch_cancelled',
         });
+        await pending.admissionTail;
         const error = new ConnectedServiceSwitchDeferralConflictError({
             code: 'switch_cancelled',
             message: 'Connected-service deferred switch was superseded by a newer request',
@@ -328,10 +366,12 @@ export function createConnectedServiceSwitchDeferralQueue(
                 requests: [deferred.request],
                 settled: false,
                 executing: false,
+                effectApplied: false,
+                admissionTail: Promise.resolve(),
             };
             pendingBySessionId.set(sessionId, created);
             schedulePendingTimeout(created);
-            emit(sessionId, {
+            admitPendingEvent(created, {
                 type: 'connected_service_account_switch_deferred',
                 policy: input.policy,
                 awaitingBoundary: input.policy === 'defer_until_turn_boundary',
@@ -357,13 +397,6 @@ export function createConnectedServiceSwitchDeferralQueue(
             return await deferred.promise;
         }
 
-        emit(sessionId, {
-            type: 'connected_service_account_switch_deferral_superseded',
-            policy: input.policy,
-            timeoutMs,
-        });
-        rejectSupersededPending(pending);
-
         const replacement: PendingSwitch = {
             sessionId,
             policy: input.policy,
@@ -375,22 +408,35 @@ export function createConnectedServiceSwitchDeferralQueue(
             requests: [deferred.request],
             settled: false,
             executing: false,
+            effectApplied: false,
+            admissionTail: Promise.resolve(),
         };
         pendingBySessionId.set(sessionId, replacement);
         schedulePendingTimeout(replacement);
+        admitPendingEvent(pending, {
+            type: 'connected_service_account_switch_deferral_superseded',
+            policy: input.policy,
+            timeoutMs,
+        });
+        void rejectSupersededPending(pending).catch((error) => {
+            settlePending(pending, 'reject', error);
+        });
         return await deferred.promise;
     };
 
     const recordTurnLifecycleEvent = (input: Readonly<{
         sessionId: string;
         event: ConnectedServiceTurnLifecycleEvent;
+        activeTurnIdWitness?: string | null;
     }>): void => {
         const sessionId = String(input.sessionId ?? '').trim();
         if (!sessionId) return;
         const state = readTurnState(sessionId);
         state.lastEvent = input.event;
         if (input.event === 'prompt_or_steer' || input.event === 'task_started') {
-            state.inFlight = true;
+            state.inFlight = input.event === 'prompt_or_steer'
+                ? input.activeTurnIdWitness !== null
+                : true;
             // A new turn supersedes any recorded forced-boundary interruption of a previous turn.
             state.forcedSwitchInterruptedLiveTurn = false;
             if (input.event === 'prompt_or_steer') {
@@ -436,25 +482,38 @@ export function createConnectedServiceSwitchDeferralQueue(
         };
     };
 
-    const cancelSession = (sessionId: string, reason: 'session_terminated' | 'session_restarting'): void => {
+    const cancelSession = async (
+        sessionId: string,
+        reason: 'session_terminated' | 'session_restarting',
+    ): Promise<void> => {
         const normalizedSessionId = String(sessionId ?? '').trim();
         if (!normalizedSessionId) return;
-        turnStateBySessionId.delete(normalizedSessionId);
+        if (reason === 'session_restarting') {
+            // The runner is going away BECAUSE this switch restarted it. The old process's turn is
+            // over, but the fact that a forced boundary interrupted a LIVE turn is the evidence the
+            // continuation replay plan consumes AFTER the exit — dropping it here silently loses the
+            // user's turn. Close the turn, keep the interruption witness until the next turn starts.
+            const state = turnStateBySessionId.get(normalizedSessionId);
+            if (state) {
+                state.inFlight = false;
+                state.hasProviderActivityThisTurn = false;
+            }
+        } else {
+            turnStateBySessionId.delete(normalizedSessionId);
+        }
         const pending = pendingBySessionId.get(normalizedSessionId);
         if (!pending) return;
         if (reason === 'session_restarting') {
             settlePending(pending, 'resolve');
             return;
         }
-        rejectPending(pending, reason);
+        await rejectPending(pending, reason);
     };
 
-    const cancelAll = (reason: 'daemon_shutdown'): void => {
+    const cancelAll = async (reason: 'daemon_shutdown'): Promise<void> => {
         const pendingEntries = [...pendingBySessionId.values()];
         turnStateBySessionId.clear();
-        for (const pending of pendingEntries) {
-            rejectPending(pending, reason);
-        }
+        await Promise.all(pendingEntries.map(async (pending) => await rejectPending(pending, reason)));
     };
 
     return {

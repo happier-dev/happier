@@ -24,6 +24,7 @@ import type {
   TerminalHostAttachmentInfo,
   TerminalHostAttachmentReadState,
 } from '@/terminal/attachment/terminalAttachmentInfo';
+import { resolveRequestAuthSourceCutoverRequirement } from '../plannedRunnerRestart/requestAuthSourceCutover';
 
 const terminalHostAttachmentMocks = vi.hoisted(() => ({
   read: vi.fn<() => Promise<TerminalHostAttachmentInfo | null>>(async () => null),
@@ -925,119 +926,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       reattachedFromDiskMarker: true,
     }));
     expect(result.connectedServiceRestartIntents).toEqual([]);
+    expect(result.recoveredLiveSessionIds).toEqual(['session-live-restart']);
     expect(clearSessionMarkerConnectedServiceRestartIntent).toHaveBeenCalledWith(43210);
     expect(removeSessionMarker).not.toHaveBeenCalledWith(43210);
-  });
-
-  it('returns an exact retained managed Provider candidate only after marker adoption proves the runner identity', async () => {
-    const processCommandHash = 'b'.repeat(64);
-    const processStartTimeMs = 1_717_171_717_321;
-    const attachment = {
-      v: 1 as const,
-      process: {
-        pid: 54321,
-        processStartTimeMs: 1_717_171_717_654,
-        processCommandHash: 'c'.repeat(64),
-      },
-      endpoint: {
-        host: '127.0.0.1' as const,
-        port: 45_321,
-      },
-      materialization: {
-        rootDir: '/tmp/managed-provider-session-retained',
-        materializationId: 'managed-provider-session-retained',
-      },
-    };
-    const marker = {
-      pid: 54321,
-      happySessionId: 'session-managed-provider-retained',
-      happyHomeDir: '/tmp/happy',
-      createdAt: 1,
-      updatedAt: 1,
-      startedBy: 'daemon',
-      cwd: '/tmp/project',
-      processCommandHash,
-      processStartTimeMs,
-      managedLocalServiceRunAttachment: attachment,
-    };
-    vi.mocked(listSessionMarkers).mockResolvedValue([marker as never]);
-    mockHappyProcessesForDiscovery([{
-      pid: marker.pid,
-      type: 'daemon-spawned-session',
-      cwd: marker.cwd,
-      command:
-        'happier codex --started-by daemon --existing-session session-managed-provider-retained',
-    }]);
-    vi.mocked(adoptSessionsFromMarkers).mockImplementationOnce(
-      ({ pidToTrackedSession }) => {
-        pidToTrackedSession.set(marker.pid, {
-          pid: marker.pid,
-          startedBy: 'daemon',
-          happySessionId: marker.happySessionId,
-          processCommandHash,
-          processStartTimeMs,
-          reattachedFromDiskMarker: true,
-        });
-        return { adopted: 1, eligible: 1 };
-      },
-    );
-    vi.spyOn(process, 'kill').mockImplementation(() => true as never);
-
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
-      readProcessIdentityByPidFn: vi.fn(async () => ({
-        pid: marker.pid,
-        ppid: 1,
-        processStartTimeMs,
-        command: 'happier codex',
-        executablePath: '/tmp/happier',
-      })),
-    });
-
-    expect(result.managedProviderRecoveryCandidates).toEqual([{
-      pid: marker.pid,
-      sessionId: marker.happySessionId,
-      attachment,
-      markerOwnership: {
-        happySessionId: marker.happySessionId,
-        processCommandHash,
-        processStartTimeMs,
-      },
-    }]);
-
-    const placeholderSessionId = `PID-${marker.pid}`;
-    vi.mocked(listSessionMarkers).mockResolvedValue([{
-      ...marker,
-      happySessionId: placeholderSessionId,
-    } as never]);
-    vi.mocked(adoptSessionsFromMarkers).mockImplementationOnce(
-      ({ pidToTrackedSession }) => {
-        pidToTrackedSession.set(marker.pid, {
-          pid: marker.pid,
-          startedBy: 'daemon',
-          happySessionId: placeholderSessionId,
-          processCommandHash,
-          processStartTimeMs,
-          reattachedFromDiskMarker: true,
-        });
-        return { adopted: 1, eligible: 1 };
-      },
-    );
-    const placeholderResult =
-      await reattachTrackedSessionsFromMarkers({
-        pidToTrackedSession: new Map<number, any>(),
-        readProcessIdentityByPidFn: vi.fn(async () => ({
-          pid: marker.pid,
-          ppid: 1,
-          processStartTimeMs,
-          command: 'happier codex',
-          executablePath: '/tmp/happier',
-        })),
-      });
-    expect(
-      placeholderResult.managedProviderRecoveryCandidates,
-    ).toBeUndefined();
   });
 
   it('retains a dead connected-service restart marker for downstream release without returning respawn inputs', async () => {
@@ -1251,6 +1142,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
     expect(result).toEqual({
       orphanedDeadDaemonSessions: [],
+      recoveredLiveSessionIds: ['session-terminal-live'],
       connectedServiceRestartIntents: [],
     });
   });
@@ -1273,7 +1165,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     const pidToTrackedSession = new Map<number, any>();
     const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
 
-    expect(result).toEqual({ orphanedDeadDaemonSessions: [], connectedServiceRestartIntents: [] });
+    expect(result).toEqual({
+      orphanedDeadDaemonSessions: [],
+      recoveredLiveSessionIds: ['session-123'],
+      connectedServiceRestartIntents: [],
+    });
     expect(pidToTrackedSession.get(54321)).toMatchObject({
       pid: 54321,
       startedBy: 'daemon',
@@ -1315,6 +1211,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
   });
 
   it('recovers a live daemon-spawned process when its live marker is missing process identity fields', async () => {
+    const processStartTimeMs = 1_717_171_717_126;
+    const command =
+      '/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123';
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
         pid: 12345,
@@ -1331,14 +1230,22 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         pid: 12345,
         type: 'daemon-spawned-session',
         cwd: '/tmp/project',
-        command:
-          '/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123',
+        command,
       } as any,
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
     const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    await reattachTrackedSessionsFromMarkers({
+      pidToTrackedSession,
+      readProcessIdentityByPidFn: vi.fn(async () => ({
+        pid: 12345,
+        ppid: 1,
+        processStartTimeMs,
+        command,
+        executablePath: '/tmp/happier',
+      })),
+    });
 
     expect(pidToTrackedSession.get(12345)).toEqual(
       expect.objectContaining({
@@ -1352,6 +1259,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
           resume: 'vendor-1',
         },
         reattachedFromDiskMarker: true,
+        processStartTimeMs,
         processCommand:
           '/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123',
         processCommandHash:
@@ -1363,6 +1271,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       happySessionId: 'session-123',
       startedBy: 'daemon',
       cwd: '/tmp/project',
+      processStartTimeMs,
       processCommandHash:
         'hash:/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123',
       processCommand:
@@ -1516,58 +1425,24 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     }));
   });
 
-  it('restores local-services bridge authorization from a live incomplete daemon marker', async () => {
-    const localServicesBridgeAuthorization = {
-      v: 1,
-      tokenHash: `sha256:${'a'.repeat(64)}`,
-      pluginId: 'acme.plugin',
-      contributionId: 'acme.plugin.backend',
-      tokenFilePath: '/tmp/happier-bridge-token',
+  it('recovers a daemon session from a non-adopted marker with direct active-turn and retained Provider custody when takeover adoption returns zero', async () => {
+    const activeAdmission = {
+      turnId: 'turn-direct-custody',
+      inputId: 'input-direct-custody',
+      userMessageSeq: 17,
+      userMessageSeqs: [17],
+    } as const;
+    const retainedProviderCustody = {
+      v: 1 as const,
+      adoptedManagedProviderAuthority: {
+        pluginId: 'happier.provider.cliproxyapi',
+        immutableGenerationId: 'provider-generation-1',
+        manifestAuthority: 'bundled_first_party' as const,
+        hardRevocationRevisionAtAdmission: 9,
+      },
+      sourceGenerationIds: ['provider-generation-1'],
+      qualifiedDependencyIds: ['happier.provider.cliproxyapi'],
     };
-    vi.mocked(listSessionMarkers).mockResolvedValue([
-      {
-        pid: 12346,
-        happySessionId: 'session-bridge',
-        happyHomeDir: '/tmp/happy',
-        createdAt: 1,
-        updatedAt: 1,
-        startedBy: 'daemon',
-        cwd: '/tmp/project',
-        localServicesBridgeAuthorization,
-      } as any,
-    ]);
-    mockHappyProcessesForDiscovery([
-      {
-        pid: 12346,
-        type: 'daemon-spawned-session',
-        cwd: '/tmp/project',
-        command:
-          '/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --existing-session session-bridge',
-      } as any,
-    ]);
-    vi.spyOn(process, 'kill').mockImplementation(() => true as any);
-
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
-
-    expect(pidToTrackedSession.get(12346)).toEqual(
-      expect.objectContaining({
-        startedBy: 'daemon',
-        happySessionId: 'session-bridge',
-        localServicesBridgeTokenHash: `sha256:${'a'.repeat(64)}`,
-        localServicesBridgePluginId: 'acme.plugin',
-        localServicesBridgeContributionId: 'acme.plugin.backend',
-        localServicesBridgeTokenFilePath: '/tmp/happier-bridge-token',
-      }),
-    );
-    expect(writeSessionMarker).toHaveBeenCalledWith(expect.objectContaining({
-      pid: 12346,
-      happySessionId: 'session-bridge',
-      localServicesBridgeAuthorization,
-    }));
-  });
-
-  it('recovers a daemon session from a non-adopted hashed marker when takeover adoption returns zero', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
         pid: 23456,
@@ -1578,6 +1453,12 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         startedBy: 'daemon',
         cwd: '/tmp/project',
         processCommandHash: 'a'.repeat(64),
+        activeTurnId: activeAdmission.turnId,
+        agentRuntimeDaemonServiceAuthorityFilePath:
+          '/tmp/happier/runner-authority.json',
+        agentRuntimeDaemonServiceActiveAdmission: activeAdmission,
+        runnerAgentImmutableGenerationId: 'agent-generation-1',
+        runnerManagedDependencyRetentionV1: retainedProviderCustody,
         respawn: {
           version: 1,
           directory: '/tmp/project',
@@ -1605,6 +1486,17 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         happySessionId: 'session-hash-fallback',
         pid: 23456,
         reattachedFromDiskMarker: true,
+        reattachedInterruptedTurnId: activeAdmission.turnId,
+        agentRuntimeDaemonServiceAuthorityFilePath:
+          '/tmp/happier/runner-authority.json',
+        agentRuntimeDaemonServiceAdmittedTurnId: activeAdmission.turnId,
+        agentRuntimeDaemonServiceAdmittedInputId: activeAdmission.inputId,
+        agentRuntimeDaemonServiceAdmittedUserMessageSeq:
+          activeAdmission.userMessageSeq,
+        agentRuntimeDaemonServiceAdmittedUserMessageSeqs:
+          activeAdmission.userMessageSeqs,
+        runnerAgentImmutableGenerationId: 'agent-generation-1',
+        runnerManagedDependencyRetentionV1: retainedProviderCustody,
       }),
     );
     expect(writeSessionMarker).toHaveBeenCalledWith(
@@ -1612,6 +1504,12 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         pid: 23456,
         happySessionId: 'session-hash-fallback',
         startedBy: 'daemon',
+        activeTurnId: activeAdmission.turnId,
+        agentRuntimeDaemonServiceAuthorityFilePath:
+          '/tmp/happier/runner-authority.json',
+        agentRuntimeDaemonServiceActiveAdmission: activeAdmission,
+        runnerAgentImmutableGenerationId: 'agent-generation-1',
+        runnerManagedDependencyRetentionV1: retainedProviderCustody,
       }),
     );
   });
@@ -2082,6 +1980,109 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ).toBe(5);
   });
 
+  it('hydrates an observed PID birth for a retained Remote request-auth source from a predecessor marker', async () => {
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const command =
+      'happier opencode --happy-starting-mode remote --started-by daemon --existing-session session-remote-cutover';
+    const processStartTimeMs = 1_717_171_717_125;
+    const predecessorStatePath =
+      '/tmp/materialized/csm-1/connected-service-broker.state.json';
+    vi.mocked(listSessionMarkers).mockResolvedValue([{
+      pid: 12348,
+      happySessionId: 'session-remote-cutover',
+      happyHomeDir: '/tmp/happy',
+      createdAt: 1,
+      updatedAt: 1,
+      startedBy: 'daemon',
+      cwd: '/tmp/project',
+      processCommandHash: `hash:${command}`,
+      processCommand: command,
+      respawn: {
+        version: 1,
+        directory: '/tmp/project',
+        backendTarget: {
+          kind: 'builtInAgent',
+          agentId: 'opencode',
+        },
+        sealedEnvironmentVariables: {
+          format: 'account_scoped_v1',
+          ciphertext:
+            sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext({
+              material: credentials.encryption,
+              payload: {
+                HAPPIER_OPENCODE_BROKER_STATE_PATH:
+                  predecessorStatePath,
+              },
+              randomBytes: (length) =>
+                new Uint8Array(length).fill(4),
+            }),
+        },
+      },
+    } as any]);
+    mockHappyProcessesForDiscovery([{
+      pid: 12348,
+      type: 'daemon-spawned-session',
+      cwd: '/tmp/project',
+      command,
+    }]);
+    const actualReattach =
+      await vi.importActual<typeof import('../reattach')>(
+        '../reattach',
+      );
+    vi.mocked(adoptSessionsFromMarkers).mockImplementationOnce(
+      actualReattach.adoptSessionsFromMarkers,
+    );
+    vi.spyOn(process, 'kill').mockImplementation(
+      () => true as never,
+    );
+
+    const pidToTrackedSession = new Map<number, any>();
+    await reattachTrackedSessionsFromMarkers({
+      pidToTrackedSession,
+      credentials,
+      readProcessIdentityByPidFn: vi.fn(async () => ({
+        pid: 12348,
+        ppid: 1,
+        processStartTimeMs,
+        command,
+        executablePath: '/tmp/happier',
+      })),
+    });
+
+    const tracked = pidToTrackedSession.get(12348);
+    expect(tracked).toMatchObject({
+      happySessionId: 'session-remote-cutover',
+      pid: 12348,
+      processCommandHash: `hash:${command}`,
+      processStartTimeMs,
+      spawnOptions: {
+        environmentVariables: {
+          HAPPIER_OPENCODE_BROKER_STATE_PATH:
+            predecessorStatePath,
+        },
+      },
+    });
+    expect(resolveRequestAuthSourceCutoverRequirement({
+      tracked,
+      currentCapabilityPath:
+        '/tmp/materialized/csm-1/request-auth/capability.json',
+    })).toMatchObject({
+      status: 'required',
+      requirement: {
+        runnerPid: 12348,
+        processStartTimeMs,
+        source: {
+          kind: 'remote_opencode_broker_state',
+          path: predecessorStatePath,
+        },
+      },
+    });
+    expect(writeSessionMarker).not.toHaveBeenCalled();
+  });
+
   it('continues startup restart-intent reconciliation when an exact adopted respawn alias rewrite fails', async () => {
     const credentials: Credentials = {
       token: 't',
@@ -2183,7 +2184,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ).toHaveBeenCalledWith(marker.pid);
   });
 
-  it('does not rewrite a respawn alias when the live PID has a different process birth identity', async () => {
+  it('does not recover or rewrite a marker when the live PID has a different process birth identity', async () => {
     const credentials: Credentials = {
       token: 't',
       encryption: {
@@ -2249,18 +2250,8 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       })),
     });
 
-    expect(pidToTrackedSession.has(12346)).toBe(true);
-    const preservedRespawn =
-      vi.mocked(writeSessionMarker).mock.calls[0]?.[0].respawn;
-    expect(
-      preservedRespawn?.sealedEnvironmentVariables?.ciphertext,
-    ).toBe(aliasCiphertext);
-    expect(
-      readAccountScopedCiphertextKindByte(
-        preservedRespawn?.sealedEnvironmentVariables
-          ?.ciphertext ?? '',
-      ),
-    ).toBe(6);
+    expect(pidToTrackedSession.has(12346)).toBe(false);
+    expect(writeSessionMarker).not.toHaveBeenCalled();
     expect(
       rewriteSessionMarkerRespawnEnvironmentCiphertextIfOwned,
     ).not.toHaveBeenCalled();

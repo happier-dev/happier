@@ -215,7 +215,76 @@ describe('runtime provider services', () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it('single-flights identical explicit draft probes through the shared scheduler', async () => {
+  it('drops queued saved work when the root feature is revoked before scheduler dispatch', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-revoked-queue-'));
+    temporaryPaths.push(happyHomeDir);
+    const settings = grantedSettings();
+    let enabled = true;
+    const transport = vi.fn(async () => {
+      throw new Error('a revoked queued saved probe must not reach transport');
+    });
+    let runtimeState = createEmptyProviderRuntimeStateFileV1('machine-a');
+    const runtimeStore: ProviderRuntimeStateStore = {
+      path: '/virtual/provider-runtime-revoked-queue.json',
+      read: vi.fn(async () => runtimeState),
+      update: vi.fn(async (transform) => {
+        runtimeState = await transform(runtimeState);
+        return runtimeState;
+      }),
+      touch: vi.fn(),
+      flushTouches: vi.fn(async () => runtimeState),
+    };
+    const getAccountSettingsSnapshot = vi.fn(() => ({
+      source: 'cache' as const,
+      settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      scopeKey: 'account-a',
+    }));
+    const services = createRuntimeProviderServices({
+      machineId: 'machine-a',
+      happyHomeDir,
+      registry,
+      runtimeStore,
+      resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => ['1.1.1.1'],
+        transport,
+      }),
+      getAccountSettingsSnapshot,
+      featureGate: { isEnabled: () => enabled },
+    });
+    const scheduler = services.probeInfrastructure.scheduler;
+    const scheduled = vi.spyOn(scheduler, 'runCatalog');
+    const releases: Array<() => void> = [];
+    const occupied = [0, 1, 2, 3].map((index) => scheduler.runCatalog(
+      `occupied-${index}`,
+      'manual_refresh',
+      () => new Promise<Readonly<{ status: 'not_supported' }>>((resolve) => {
+        releases.push(() => resolve({ status: 'not_supported' }));
+      }),
+      { unavailable: () => ({ status: 'not_supported' as const }) },
+    ));
+    await vi.waitFor(() => expect(releases).toHaveLength(4));
+
+    const queued = services.probe({ connectionId, machineId: 'machine-a' });
+    await vi.waitFor(() => expect(scheduled).toHaveBeenCalledTimes(5));
+    const settingsReadsAtAdmission = getAccountSettingsSnapshot.mock.calls.length;
+    enabled = false;
+    for (const release of releases.splice(0)) release();
+
+    await expect(queued).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'provider_endpoint_unavailable' },
+    });
+    await expect(Promise.all(occupied)).resolves.toHaveLength(4);
+    expect(getAccountSettingsSnapshot).toHaveBeenCalledTimes(settingsReadsAtAdmission);
+    expect(transport).not.toHaveBeenCalled();
+    expect(runtimeStore.update).not.toHaveBeenCalled();
+  });
+
+  it('detaches an aborted draft-probe caller while a second caller retains the shared transport', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-draft-scheduler-'));
     temporaryPaths.push(happyHomeDir);
     let releaseTransport!: () => void;
@@ -263,18 +332,62 @@ describe('runtime provider services', () => {
       actionNonce: 'draft-action-coalesce-0001',
     };
 
-    const first = services.probeDraft(request);
+    const firstController = new AbortController();
+    const first = services.probeDraft(request, { signal: firstController.signal });
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
     const second = services.probeDraft(request);
+    firstController.abort();
     releaseTransport();
     await expect(Promise.all([first, second])).resolves.toEqual([
-      expect.objectContaining({ status: 'success', models: [{ id: 'draft-model' }] }),
+      expect.objectContaining({
+        status: 'error', error: expect.objectContaining({ code: 'provider_endpoint_unavailable' }),
+      }),
       expect.objectContaining({ status: 'success', models: [{ id: 'draft-model' }] }),
     ]);
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('single-flights identical post-load catalog refreshes without giving one caller ownership of shared cancellation', async () => {
+  it('detaches an aborted saved-probe caller while a second caller retains the shared transport', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-saved-probe-cancellation-'));
+    temporaryPaths.push(happyHomeDir);
+    const settings = grantedSettings();
+    let releaseTransport!: () => void;
+    const transportGate = new Promise<void>((resolve) => { releaseTransport = resolve; });
+    const transport = vi.fn(async () => {
+      await transportGate;
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify({ data: [{ id: 'probe-a' }] }), 'utf8'),
+      };
+    });
+    const services = createRuntimeProviderServices({
+      machineId: 'machine-a', happyHomeDir, registry,
+      resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+      getAccountSettingsSnapshot: () => ({
+        source: 'cache', settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
+        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
+      }),
+      featureGate: { isEnabled: () => true },
+    });
+    const identity = { connectionId, machineId: 'machine-a' };
+    const firstController = new AbortController();
+    const first = services.probe(identity, 'manual_refresh', { signal: firstController.signal });
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce());
+    const second = services.probe(identity);
+
+    firstController.abort();
+    releaseTransport();
+
+    await expect(first).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_endpoint_unavailable' },
+    });
+    await expect(second).resolves.toMatchObject({ status: 'success' });
+    expect(transport).toHaveBeenCalledOnce();
+  });
+
+  it('keeps identical post-load work live for a current caller while a cancelled waiter gets typed unavailable', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-model-load-scheduler-'));
     temporaryPaths.push(happyHomeDir);
     const settings = grantedSettings();
@@ -324,7 +437,10 @@ describe('runtime provider services', () => {
     releaseTransport();
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
     await expect(Promise.all([first, second, retryAfterAnotherDispatch])).resolves.toEqual([
-      expect.objectContaining({ status: 'success' }),
+      expect.objectContaining({
+        status: 'error',
+        error: expect.objectContaining({ code: 'provider_endpoint_unavailable' }),
+      }),
       expect.objectContaining({ status: 'success' }),
       expect.objectContaining({ status: 'success' }),
     ]);
@@ -600,7 +716,11 @@ describe('runtime provider services', () => {
           providerSettingsV1: settings,
           secrets: [{
             id: 'secret-identity',
+            name: 'Identity API key',
+            kind: 'apiKey',
             encryptedValue: { _isSecretValue: true, encryptedValue },
+            createdAt: 1,
+            updatedAt: 1,
           }],
         }),
         settingsVersion: 1,
@@ -622,6 +742,33 @@ describe('runtime provider services', () => {
     };
 
     const initialIdentity = await readIdentity();
+    const initialProviderSettings = settings;
+    const initialAccountSettings = AccountSettingsSchema.parse({
+      providerSettingsV1: initialProviderSettings,
+      secrets: [{
+        id: 'secret-identity',
+        name: 'Identity API key',
+        kind: 'apiKey',
+        encryptedValue: { _isSecretValue: true, encryptedValue },
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    });
+    const initialRegistry = {
+      providersByContributionKey: new Map(identityRegistry.providersByContributionKey),
+    };
+    const initialDnsEvidenceByEndpointUrl = new Map([
+      ['https://identity.example/v1', ['1.1.1.1']],
+    ]);
+    const initialResolution = resolveProviderConnectionForMachine({
+      ...requestIdentity,
+      accountSettings: initialAccountSettings,
+      registry: initialRegistry,
+      dnsEvidenceByEndpointUrl: initialDnsEvidenceByEndpointUrl,
+    });
+    if (initialResolution.status !== 'resolved') {
+      throw new Error('Expected the initial Provider connection resolution');
+    }
     connection = ProviderSettingsV1Schema.parse({
       ...DEFAULT_PROVIDER_SETTINGS_V1,
       connections: [{
@@ -685,6 +832,16 @@ describe('runtime provider services', () => {
     ]);
     expect(serializedIdentities).not.toContain('secret-one');
     expect(serializedIdentities).not.toContain('secret-two');
+    await expect(services.summary({
+      ...requestIdentity,
+      resolution: initialResolution,
+      accountSettings: initialAccountSettings,
+      registry: initialRegistry,
+      dnsEvidence: initialDnsEvidenceByEndpointUrl,
+    })).resolves.toMatchObject({
+      status: 'success',
+      probeObservationIdentity: initialIdentity,
+    });
   });
 
   it('refreshes declared endpoint health on picker demand without replacing fresher catalog or load state', async () => {

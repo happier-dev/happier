@@ -11,7 +11,7 @@ import {
 
 import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessionNotificationContext';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
 import {
     getActiveAccountSettingsSnapshot,
@@ -32,7 +32,7 @@ type ReadyNotificationInput = Readonly<{
 
 type ExternalAgentObservationFieldPublisherParams = Readonly<{
     shouldSendReadyNotification(sessionId: string): boolean;
-    readCredentials?: typeof readCredentials;
+    readCredentials?: typeof readStoredCredentials;
     updateMetadataForTarget?: typeof updateSessionMetadataForTarget;
     dispatchReadyNotification?: (input: ReadyNotificationInput) => Promise<void>;
 }>;
@@ -102,7 +102,8 @@ async function dispatchExternalSessionReadyNotification(
 export function createExternalAgentObservationFieldPublisher(
     params: ExternalAgentObservationFieldPublisherParams,
 ) {
-    const readCurrentCredentials = params.readCredentials ?? readCredentials;
+    const readCurrentCredentials =
+        params.readCredentials ?? readStoredCredentials;
     const updateMetadata = params.updateMetadataForTarget
         ?? updateSessionMetadataForTarget;
     const dispatchReadyNotification = params.dispatchReadyNotification

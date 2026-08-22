@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readCredentials, readDaemonState, readSettings } from '@/persistence';
+import { readDaemonState, readSettings, readStoredCredentials } from '@/persistence';
 import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
 import { isBun } from '@/utils/runtime';
 import { buildMissingLocalRelayError, resolveLocalRelay } from '@/utils/localRelay';
@@ -56,6 +56,7 @@ import {
 import { stopDaemon } from '@/daemon/controlClient';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
 import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
+import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 
 import { discoverInstalledDaemonServiceEntries } from './discoverInstalledDaemonServiceEntries';
 import { isValidInstalledDaemonServiceFile } from './discoverInstalledDaemonServiceEntries';
@@ -173,7 +174,6 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
     replaceExisting: 'ring' | 'all' | null;
     ring: PublicReleaseRingId | null;
     instanceId: string | null;
-    transferManagedLocalServices: boolean;
   }>;
   action: DaemonServiceCliAction;
   mode: DaemonServiceMode;
@@ -189,7 +189,6 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
   let replaceExisting: 'ring' | 'all' | null = null;
   let ring: PublicReleaseRingId | null = null;
   let instanceId: string | null = null;
-  let transferManagedLocalServices = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const a = String(argv[i] ?? '');
@@ -225,10 +224,6 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
     }
     if (a === '--takeover') {
       takeover = true;
-      continue;
-    }
-    if (a === '--transfer-managed-local-services') {
-      transferManagedLocalServices = true;
       continue;
     }
     if (a === '--ring') {
@@ -307,9 +302,6 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
     throw new Error('--replace-existing requires --yes');
   }
   const action = resolveAction(filtered);
-  if (transferManagedLocalServices && action !== 'stop') {
-    throw new Error('--transfer-managed-local-services is only valid with `happier service stop`');
-  }
   const mode = modeFromArgs ?? resolveOptionalModeFromText(process.env.HAPPIER_DAEMON_SERVICE_MODE ?? '', 'HAPPIER_DAEMON_SERVICE_MODE') ?? 'user';
   const systemUser = systemUserFromArgs ?? String(process.env.HAPPIER_DAEMON_SERVICE_SYSTEM_USER ?? '').trim();
 
@@ -322,7 +314,6 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
       replaceExisting,
       ring,
       instanceId,
-      transferManagedLocalServices,
     },
     action,
     mode,
@@ -339,8 +330,8 @@ function resolveAction(argv: readonly string[]): DaemonServiceCliAction {
   return action as DaemonServiceCliAction;
 }
 
-function printJson(data: unknown): void {
-  process.stdout.write(`${JSON.stringify(data)}\n`);
+async function printJson(data: unknown): Promise<void> {
+  await writeJsonStdout(data);
 }
 
 function shouldStopCurrentWindowsServiceOwnerBeforeLifecycleAction(params: Readonly<{
@@ -385,18 +376,13 @@ async function stopCurrentWindowsServiceOwnerIfNeeded(params: Readonly<{
   ownership: Awaited<ReturnType<typeof evaluateCurrentDaemonOwner>>;
   expectedServiceLabel: string;
   action: 'install' | 'uninstall' | 'start' | 'stop' | 'restart';
-  transferManagedLocalServices?: boolean;
 }>): Promise<void> {
   if (!shouldStopCurrentWindowsServiceOwnerBeforeLifecycleAction(params)) {
     return;
   }
 
   try {
-    if (params.transferManagedLocalServices) {
-      await stopDaemon({ transferManagedLocalServices: true });
-    } else {
-      await stopDaemon();
-    }
+    await stopDaemon();
   } catch (error) {
     const actionText = describeDaemonServiceLifecycleAction(params.action);
     const detail = error instanceof Error ? error.message : String(error);
@@ -478,7 +464,7 @@ async function isExpectedDaemonServiceWaitingForInitialAuth(params: Readonly<{
   installedServicePath?: string | null;
   healthCommand?: Readonly<{ cmd: string; args: readonly string[] }> | null;
 }>): Promise<boolean> {
-  const credentials = await readCredentials().catch(() => null);
+  const credentials = await readStoredCredentials().catch(() => null);
   if (credentials) {
     return false;
   }
@@ -512,7 +498,7 @@ async function shouldRestartRunningDefaultFollowingServiceForSelectedRelay(param
     return false;
   }
 
-  const credentials = await readCredentials().catch(() => null);
+  const credentials = await readStoredCredentials().catch(() => null);
   if (!credentials) {
     return false;
   }
@@ -1291,9 +1277,6 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
   }
   const paths = resolveDaemonServicePaths(runtime, { mode });
   const action = parsed.action;
-  if (flags.transferManagedLocalServices && runtime.platform !== 'win32') {
-    throw new Error('--transfer-managed-local-services is only supported for Windows service updates');
-  }
   const commandPath = params.commandPath ?? `${resolveInvokerName() ?? 'happier'} service`;
 
   if (action === 'install' && params.argv.includes('--local-relay')) {
@@ -1305,7 +1288,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
   if (flags.help) {
       if (flags.json) {
-        printJson({
+        await printJson({
           ok: true,
           commands: ['list', 'paths', 'install', 'uninstall', 'repair', 'start', 'stop', 'restart', 'status', 'logs', 'tail'],
           flags: ['--json', '--dry-run', '--yes', '--takeover', '--replace-existing=ring|all', '--ring', '--instance', '--all'],
@@ -1343,7 +1326,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       includeAllModes,
     });
     if (flags.json) {
-      printJson({
+      await printJson({
         entries,
         services: await resolveDaemonServiceInventoryEntries({
           runtime,
@@ -1370,7 +1353,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
   if (action === 'paths') {
     if (flags.json) {
-      printJson({
+      await printJson({
         ok: true,
         platform: runtime.platform,
         targetMode: runtime.targetMode,
@@ -1439,7 +1422,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
         ? [...message.lines, buildDaemonServiceTakeoverHint({ commandPath: 'happier service', action: 'install' })]
         : [...message.lines];
       if (flags.json) {
-        printJson({
+        await printJson({
           ok: false,
           error: 'owner_conflict',
           message: `${message.title} ${lines.join(' ')}`.trim(),
@@ -1508,7 +1491,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
         conflictPlan: preview.conflictPlan,
       });
       if (flags.json) {
-        printJson({
+        await printJson({
           ok: true,
           platform: installRuntime.platform,
           plan: preview.plan,
@@ -1601,7 +1584,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
     } catch (error) {
       const conflict = error as Error & { code?: string; conflicts?: Array<{ label?: string }> };
       if (flags.json && conflict.code === 'daemon_service_conflict') {
-        printJson({
+        await printJson({
           ok: false,
           error: conflict.code,
           message: conflict.message,
@@ -1614,7 +1597,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
     }
 
     if (flags.json) {
-      printJson({
+      await printJson({
         ok: true,
         platform: installRuntime.platform,
         takeover: takeoverNotice ? `${takeoverNotice.title} ${takeoverNotice.lines.join(' ')}`.trim() : undefined,
@@ -1676,7 +1659,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
       if (flags.dryRun || !confirmed) {
         if (flags.json) {
-          printJson({ ok: true, platform: runtime.platform, removed: entries.length, plans });
+          await printJson({ ok: true, platform: runtime.platform, removed: entries.length, plans });
           return;
         }
         for (const plan of plans) {
@@ -1714,7 +1697,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       }
 
       if (flags.json) {
-        printJson({ ok: true, platform: runtime.platform, removed: entries.length });
+        await printJson({ ok: true, platform: runtime.platform, removed: entries.length });
         return;
       }
       process.stdout.write(`Removed ${entries.length} background services.\n`);
@@ -1734,7 +1717,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
     if (flags.dryRun) {
       if (flags.json) {
-        printJson({ ok: true, platform: runtime.platform, plan });
+        await printJson({ ok: true, platform: runtime.platform, plan });
         return;
       }
       process.stdout.write(`[dry-run] would remove: ${plan.filesToRemove.join(', ')}\n`);
@@ -1761,7 +1744,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
     });
 
     if (flags.json) {
-      printJson({ ok: true, platform: runtime.platform });
+      await printJson({ ok: true, platform: runtime.platform });
       return;
     }
     process.stdout.write('Background service uninstalled.\n');
@@ -1781,7 +1764,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       expectedLabel: paths.label,
     })) {
       const msg = `Background service is not installed (${paths.installedPath}). Run: happier service install`;
-      if (flags.json) printJson({ ok: false, error: 'not_installed', message: msg, platform: runtime.platform });
+      if (flags.json) await printJson({ ok: false, error: 'not_installed', message: msg, platform: runtime.platform });
       else process.stderr.write(`${msg}\n`);
       return;
     }
@@ -1906,7 +1889,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
           ? [...message.lines, buildDaemonServiceTakeoverHint({ commandPath: 'happier service', action })]
           : [...message.lines];
         if (flags.json) {
-          printJson({
+          await printJson({
             ok: false,
             error: 'owner_conflict',
             message: `${message.title} ${lines.join(' ')}`.trim(),
@@ -1926,7 +1909,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
       if (flags.dryRun) {
         if (flags.json) {
-          printJson({
+          await printJson({
             ok: true,
             platform: runtime.platform,
             plan,
@@ -1993,7 +1976,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       });
 
       if (flags.json) {
-        printJson({
+        await printJson({
           ok: true,
           platform: runtime.platform,
           warning: warningText,
@@ -2023,7 +2006,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
     if (flags.dryRun) {
       if (flags.json) {
-        printJson({
+        await printJson({
           ok: true,
           platform: runtime.platform,
           plan,
@@ -2048,12 +2031,11 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       ownership,
       expectedServiceLabel: paths.label,
       action: 'stop',
-      transferManagedLocalServices: flags.transferManagedLocalServices,
     });
     runDaemonServiceCommands(plan.commands, { failureMode: 'strict' });
 
     if (flags.json) {
-      printJson({
+      await printJson({
         ok: true,
         platform: runtime.platform,
         warning: stopOwnershipNote
@@ -2128,7 +2110,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
     } : null;
 
     if (flags.json) {
-      printJson({
+      await printJson({
         ok: true,
         platform: runtime.platform,
         installed,
@@ -2177,7 +2159,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
   if (action === 'logs') {
     if (flags.json) {
-      printJson({ ok: true, platform: runtime.platform, logs: { stdoutPath: paths.stdoutPath, stderrPath: paths.stderrPath } });
+      await printJson({ ok: true, platform: runtime.platform, logs: { stdoutPath: paths.stdoutPath, stderrPath: paths.stderrPath } });
       return;
     }
     process.stdout.write(`${paths.stdoutPath}\n${paths.stderrPath}\n`);
@@ -2186,7 +2168,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
 
   if (action === 'tail') {
     if (flags.json) {
-      printJson({ ok: false, error: 'not_supported', message: 'tail is interactive; omit --json', platform: runtime.platform });
+      await printJson({ ok: false, error: 'not_supported', message: 'tail is interactive; omit --json', platform: runtime.platform });
       return;
     }
     if (runtime.platform === 'win32') {
@@ -2203,6 +2185,6 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
   }
 
   const msg = `Unknown background service subcommand: ${action}`;
-  if (flags.json) printJson({ ok: false, error: 'invalid_subcommand', message: msg });
+  if (flags.json) await printJson({ ok: false, error: 'invalid_subcommand', message: msg });
   else process.stderr.write(`${msg}\n`);
 }

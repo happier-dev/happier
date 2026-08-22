@@ -18,7 +18,7 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import type {
   SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import {
   parseConnectedServiceBindingSelections,
@@ -37,6 +37,7 @@ import { resolveConnectedServiceTargetMaterializedRoot } from './materialize/res
 import { verifySpawnResumeReachability } from './verifySpawnResumeReachability';
 import type {
   ConnectedServiceResolvedSelection,
+  ConnectedServicesMaterializationAuthority,
   ConnectedServicesMaterialization,
   ConnectedServicesMaterializationDiagnostic,
 } from './materialization/materializer';
@@ -56,6 +57,7 @@ import type {
   ConnectedServiceAuthGroupMemberRuntimeStateOverride,
   ConnectedServiceAuthGroupSwitchState,
 } from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './accountGroups/quotas/preTurnQuotaProbe';
 import {
   persistConnectedServiceCredentialHealthForMaterializationFailure,
   type ConnectedServiceCredentialRefreshResult,
@@ -67,6 +69,16 @@ import type {
 import {
   resolveFirstPartyConnectedAccountServiceId,
 } from './requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
+import {
+  resolveQualifiedRequestAuthPurposeBindingsFromSnapshot,
+  type AgentSpawnQualifiedPurposeBindingSnapshot,
+} from './requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import {
+  assertQualifiedPurposeAuthorityForSelections,
+  ConnectedServiceQualifiedPurposeAuthorityError,
+} from './requestAuth/qualifiedPurposeAuthority';
+
+export { ConnectedServiceQualifiedPurposeAuthorityError } from './requestAuth/qualifiedPurposeAuthority';
 type ConnectedServiceAuthGroupResponse = Readonly<{
   v?: number;
   serviceId?: string;
@@ -114,6 +126,7 @@ type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
     serviceId: string;
     groupId: string;
     reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
+    observedProfileId?: string | null;
     memberStateOverridesByProfileId?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
   }>): Promise<Readonly<{
     status: string;
@@ -670,20 +683,31 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   }
 
   if (params.authGroupSwitchCoordinator) {
-    const switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
-      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-      serviceId: params.serviceId,
-      groupId: params.groupId,
-      reason: activeIssueReason,
-      ...(memberStateOverridesByProfileId.length > 0 ? { memberStateOverridesByProfileId } : {}),
-    });
-    return await resolveGroupAfterSpawnSwitchResult({
-      group: params.group,
-      serviceId: params.serviceId,
-      groupId: params.groupId,
-      api: params.api,
-      result: switched,
-    }) ?? params.group;
+    try {
+      const switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+        serviceId: params.serviceId,
+        groupId: params.groupId,
+        reason: activeIssueReason,
+        observedProfileId: state.activeProfileId,
+        ...(memberStateOverridesByProfileId.length > 0 ? { memberStateOverridesByProfileId } : {}),
+      });
+      return await resolveGroupAfterSpawnSwitchResult({
+        group: params.group,
+        serviceId: params.serviceId,
+        groupId: params.groupId,
+        api: params.api,
+        result: switched,
+      }) ?? params.group;
+    } catch (error) {
+      if (
+        activeIssueReason === 'soft_threshold'
+        && error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError
+      ) {
+        return params.group;
+      }
+      throw error;
+    }
   }
 
   if (!selectedProfileId) return params.group;
@@ -795,7 +819,7 @@ async function maybeRecoverGroupAfterSpawnPreflightRefreshFailure(params: Readon
   groupSelections: Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
   recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   credentialResolutionsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialResolution>;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   api: ApiClient;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
@@ -822,7 +846,7 @@ async function applyCanonicalSpawnFailureSwitch(params: Readonly<{
   groupSelections: Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
   recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   credentialResolutionsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialResolution>;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   api: ApiClient;
   sessionId?: string;
   authGroupSwitchCoordinator: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
@@ -910,7 +934,7 @@ async function maybeRecoverGroupAfterSpawnMaterializationFailure(params: Readonl
   groupSelections: Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
   recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   credentialResolutionsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialResolution>;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   api: ApiClient;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
@@ -1078,7 +1102,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   sessionDirectory: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
-  requestAuthPurposeBindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
   accountSettings: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv: NodeJS.ProcessEnv;
   vendorResumeId: string | null;
@@ -1093,7 +1117,8 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
     sessionDirectory: params.sessionDirectory,
     recordsByServiceId: params.recordsByServiceId,
     selectionsByServiceId: params.selectionsByServiceId,
-    requestAuthPurposeBindings: params.requestAuthPurposeBindings,
+    connectedAccountMaterializationAuthority:
+      params.connectedAccountMaterializationAuthority,
     accountSettings: params.accountSettings,
     processEnv: params.processEnv,
   });
@@ -1118,7 +1143,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   activeServerDir: string;
   baseDir: string;
   sessionDirectory?: string | null;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   api: ApiClient;
   allowGroupBindingProfileFallback?: boolean;
   accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState | null;
@@ -1148,9 +1173,9 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
    * hard-fail.
    */
   candidatePersistedSessionFile?: string | null;
-  resolveRequestAuthPurposeBindings?: (
+  resolveQualifiedPurposeBindingSnapshot?: (
     bindings: ConnectedServicesBindingsV1,
-  ) => readonly QualifiedConnectedAccountPurposeBindingV1[];
+  ) => AgentSpawnQualifiedPurposeBindingSnapshot | null;
   /**
    * Allows the ordinary Agent spawn owner to downgrade an exact-old-server
    * profile selection to its bounded legacy materializer. The resolved
@@ -1166,8 +1191,10 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   cleanupOnExit: (() => void) | null;
   connectedServicesBindings: ConnectedServicesBindingsV1;
   targetMaterializedRoot?: string | null;
+  requestAuthMaterializedRoot?: string | null;
   diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
   requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  qualifiedPurposeBindingSnapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null;
   ongoingRuntimeRegistrationAllowed?: false;
 }> | null> {
   const selections = parseConnectedServiceBindingSelections(params.connectedServicesBindingsRaw);
@@ -1211,6 +1238,14 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   const hasLegacyUnfencedCredential = [
     ...credentialResolutionsByServiceId.values(),
   ].some((resolution) => resolution.revisionSemantics === 'legacy_unfenced');
+  const hasRevisionedCredential = [
+    ...credentialResolutionsByServiceId.values(),
+  ].some((resolution) => resolution.revisionSemantics === 'revisioned');
+  if (hasLegacyUnfencedCredential && hasRevisionedCredential) {
+    throw new ConnectedServiceLegacyUnfencedAuthorityError(
+      'materialization',
+    );
+  }
   if (
     hasLegacyUnfencedCredential
     && selections.some((selection) => selection.kind === 'group')
@@ -1241,10 +1276,16 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       selections,
       groupSelections,
     });
+  const initialQualifiedPurposeBindingSnapshot =
+    hasLegacyUnfencedCredential
+      ? params.resolveQualifiedPurposeBindingSnapshot?.(
+          initialConnectedServicesBindings,
+        ) ?? null
+      : null;
   const initialRequestAuthPurposeBindings =
-    params.resolveRequestAuthPurposeBindings?.(
-      initialConnectedServicesBindings,
-    ) ?? Object.freeze([]);
+    resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
+      initialQualifiedPurposeBindingSnapshot,
+    );
   if (
     hasLegacyUnfencedCredential
     && params.allowLegacyUnfencedOneShotMaterialization !== true
@@ -1255,11 +1296,6 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         : 'materialization',
     );
   }
-  const legacyUnfencedRequestAuthPurposeBindings =
-    hasLegacyUnfencedCredential
-    && params.allowLegacyUnfencedOneShotMaterialization === true
-      ? Object.freeze([]) as readonly QualifiedConnectedAccountPurposeBindingV1[]
-      : initialRequestAuthPurposeBindings;
   const maxPreflightAttempts = hasLegacyUnfencedCredential
     ? 1
     : resolveSpawnMaterializationAttemptLimit(groupSelections);
@@ -1328,13 +1364,21 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       selections,
       groupSelections,
     });
-    const requestAuthPurposeBindings = hasLegacyUnfencedCredential
-      ? legacyUnfencedRequestAuthPurposeBindings
-      : (
-          params.resolveRequestAuthPurposeBindings?.(
-            connectedServicesBindings,
-          ) ?? Object.freeze([])
-        );
+    const qualifiedPurposeBindingSnapshot = hasLegacyUnfencedCredential
+      ? null
+      : params.resolveQualifiedPurposeBindingSnapshot?.(
+          connectedServicesBindings,
+        ) ?? null;
+    if (!hasLegacyUnfencedCredential) {
+      assertQualifiedPurposeAuthorityForSelections({
+        selections,
+        snapshot: qualifiedPurposeBindingSnapshot,
+      });
+    }
+    const requestAuthPurposeBindings =
+      resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
+        qualifiedPurposeBindingSnapshot,
+      );
     assertRequestAuthCredentialRevisions({
       purposeBindings: requestAuthPurposeBindings,
       credentialResolutionsByServiceId,
@@ -1349,7 +1393,15 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         sessionDirectory: params.sessionDirectory ?? null,
         recordsByServiceId,
         selectionsByServiceId,
-        requestAuthPurposeBindings,
+        connectedAccountMaterializationAuthority: hasLegacyUnfencedCredential
+          ? { kind: 'legacy_unfenced_one_shot' }
+          : {
+              kind: 'qualified',
+              purposeBindings:
+                qualifiedPurposeBindingSnapshot?.bindings
+                ?? Object.freeze([]),
+              requestAuthPurposeBindings,
+            },
         accountSettings: params.accountSettings ?? null,
         processEnv: params.processEnv ?? process.env,
         vendorResumeId: params.vendorResumeId ?? null,
@@ -1361,6 +1413,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         ...materialized,
         connectedServicesBindings,
         requestAuthPurposeBindings,
+        qualifiedPurposeBindingSnapshot,
         ...(hasLegacyUnfencedCredential
           ? { ongoingRuntimeRegistrationAllowed: false as const }
           : {}),

@@ -1,4 +1,6 @@
 import {
+  addSafeEpochMilliseconds,
+  normalizeNonNegativeSafeMilliseconds,
   parseCompactDurationMs,
   parseProviderTimestampMs,
   parseRetryAfterHeader,
@@ -29,27 +31,33 @@ function readCaseInsensitive(record: Record<string, unknown> | null, name: strin
 
 function timingFromDuration(value: unknown, nowMs: number): ProviderResetTiming | null {
   const durationMs = parseCompactDurationMs(value);
-  return durationMs === null ? null : { retryAfterMs: durationMs, resetAtMs: nowMs + durationMs };
+  const resetAtMs = durationMs === null ? null : addSafeEpochMilliseconds(nowMs, durationMs);
+  return durationMs === null || resetAtMs === null ? null : { retryAfterMs: durationMs, resetAtMs };
 }
 
 function timingFromSeconds(value: unknown, nowMs: number): ProviderResetTiming | null {
   const text = normalizeString(value);
   const numeric = typeof value === 'number' ? value : text === null ? Number.NaN : Number(text);
   if (!Number.isFinite(numeric) || numeric < 0) return null;
-  const durationMs = Math.trunc(numeric * 1_000);
-  return { retryAfterMs: durationMs, resetAtMs: nowMs + durationMs };
+  const durationMs = normalizeNonNegativeSafeMilliseconds(numeric * 1_000);
+  const resetAtMs = durationMs === null ? null : addSafeEpochMilliseconds(nowMs, durationMs);
+  return durationMs === null || resetAtMs === null ? null : { retryAfterMs: durationMs, resetAtMs };
 }
 
 function timingFromMilliseconds(value: unknown): ProviderResetTiming | null {
   const text = normalizeString(value);
   const numeric = typeof value === 'number' ? value : text === null ? Number.NaN : Number(text);
   if (!Number.isFinite(numeric) || numeric < 0) return null;
-  return { retryAfterMs: Math.trunc(numeric), resetAtMs: null };
+  const retryAfterMs = normalizeNonNegativeSafeMilliseconds(numeric);
+  return retryAfterMs === null ? null : { retryAfterMs, resetAtMs: null };
 }
 
 function timingFromTimestamp(value: unknown, nowMs: number): ProviderResetTiming | null {
   const resetAtMs = parseProviderTimestampMs(value);
-  return resetAtMs === null ? null : { retryAfterMs: Math.max(0, resetAtMs - nowMs), resetAtMs };
+  const normalizedNowMs = normalizeNonNegativeSafeMilliseconds(nowMs);
+  if (resetAtMs === null || normalizedNowMs === null) return null;
+  const retryAfterMs = normalizeNonNegativeSafeMilliseconds(Math.max(0, resetAtMs - normalizedNowMs));
+  return retryAfterMs === null ? null : { retryAfterMs, resetAtMs };
 }
 
 function extractResetDelayText(value: unknown): string | null {

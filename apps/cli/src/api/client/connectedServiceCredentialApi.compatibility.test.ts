@@ -9,7 +9,10 @@ vi.mock('./serverEndpointFailureLog', () => ({
   logServerEndpointFailure: vi.fn(),
 }));
 
-import { ConnectedServiceCredentialHttpClient } from './connectedServiceCredentialApi';
+import {
+  AccountEncryptionCurrentnessUnavailableError,
+  ConnectedServiceCredentialHttpClient,
+} from './connectedServiceCredentialApi';
 
 describe('connected-service credential exact 0.2.1 response boundary', () => {
   beforeEach(() => {
@@ -37,6 +40,126 @@ describe('connected-service credential exact 0.2.1 response boundary', () => {
       sealed: { format: 'account_scoped_v1', ciphertext: 'ciphertext' },
       metadata: { kind: 'token' },
     });
+  });
+
+  it('reads Account encryption currentness strictly without caching it', async () => {
+    vi.mocked(axios.get)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          mode: 'plain',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 10,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          mode: 'e2ee',
+          version: 2,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: 'content-fingerprint',
+          updatedAt: 20,
+        },
+      });
+
+    const api = new ConnectedServiceCredentialHttpClient({ token: 'token' });
+    await expect(api.getAccountEncryptionCurrentness()).resolves.toMatchObject({
+      mode: 'plain',
+      version: 1,
+    });
+    await expect(api.getAccountEncryptionCurrentness()).resolves.toMatchObject({
+      mode: 'e2ee',
+      version: 2,
+    });
+
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    expect(axios.get).toHaveBeenNthCalledWith(
+      1,
+      'https://server.example/v1/account/encryption/currentness',
+      expect.objectContaining({
+        headers: {
+          Authorization: 'Bearer token',
+          'x-happier-account-stored-content-protocol': '2',
+        },
+        validateStatus: expect.any(Function),
+      }),
+    );
+  });
+
+  it('rejects malformed Account encryption currentness without inferring a mode', async () => {
+    vi.mocked(axios.get).mockResolvedValue({
+      status: 200,
+      data: { mode: 'plain' },
+    });
+
+    const api = new ConnectedServiceCredentialHttpClient({ token: 'token' });
+    await expect(api.getAccountEncryptionCurrentness()).rejects.toBeInstanceOf(
+      AccountEncryptionCurrentnessUnavailableError,
+    );
+  });
+
+  it('reports transport failure through the typed currentness boundary', async () => {
+    vi.mocked(axios.get).mockRejectedValue(new Error('network unavailable'));
+
+    const api = new ConnectedServiceCredentialHttpClient({ token: 'token' });
+    await expect(api.getAccountEncryptionCurrentness()).rejects.toBeInstanceOf(
+      AccountEncryptionCurrentnessUnavailableError,
+    );
+  });
+
+  it('does not infer E2EE from a malformed Account-mode response', async () => {
+    vi.mocked(axios.get).mockResolvedValue({
+      status: 200,
+      data: { mode: 'unexpected' },
+    });
+
+    const api = new ConnectedServiceCredentialHttpClient({ token: 'token' });
+    await expect(api.getAccountEncryptionMode()).resolves.toBe('unknown');
+  });
+
+  it('does not infer E2EE from Axios 404 while resolving Account mode', async () => {
+    const error = { response: { status: 404 } };
+    vi.mocked(axios.get).mockRejectedValue(error);
+    vi.mocked(axios.isAxiosError).mockImplementation(
+      (candidate) => candidate === error,
+    );
+
+    const api = new ConnectedServiceCredentialHttpClient({ token: 'token' });
+    await expect(api.getAccountEncryptionMode()).resolves.toBe('unknown');
+    expect(axios.get).toHaveBeenCalledWith(
+      'https://server.example/v1/account/encryption',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer token' }),
+      }),
+    );
+  });
+
+  it.each([400, 500])(
+    'does not infer E2EE from Axios status %i while resolving Account mode',
+    async (status) => {
+      const error = { response: { status } };
+      vi.mocked(axios.get).mockRejectedValue(error);
+      vi.mocked(axios.isAxiosError).mockImplementation(
+        (candidate) => candidate === error,
+      );
+
+      const api = new ConnectedServiceCredentialHttpClient({ token: 'token' });
+      await expect(api.getAccountEncryptionMode()).resolves.toBe('unknown');
+    },
+  );
+
+  it('does not infer E2EE from an Account-mode transport failure', async () => {
+    const error = { request: {}, message: 'network unavailable' };
+    vi.mocked(axios.get).mockRejectedValue(error);
+    vi.mocked(axios.isAxiosError).mockImplementation(
+      (candidate) => candidate === error,
+    );
+
+    const api = new ConnectedServiceCredentialHttpClient({ token: 'token' });
+    await expect(api.getAccountEncryptionMode()).resolves.toBe('unknown');
   });
 
   it.each([
@@ -81,6 +204,7 @@ describe('connected-service credential exact 0.2.1 response boundary', () => {
         expect.objectContaining({
           headers: {
             Authorization: 'Bearer token',
+            'x-happier-account-stored-content-protocol': '2',
           },
         }),
       );

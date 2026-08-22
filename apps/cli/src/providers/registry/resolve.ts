@@ -10,6 +10,7 @@ import {
   QualifiedConnectedAccountPurposeBindingsV1Schema,
   PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1,
   readOwnRecordValue,
+  resolveProviderManagedRuntimeDeclarationV1,
   resolveProviderGrantV1,
   type CustomProviderTemplateV1,
   type ProviderCatalogProbeV1,
@@ -265,7 +266,7 @@ function resolveManagedPurposeBindingIntents(
 ) {
   const defaults = connection.purposeBindingDefaults ?? {};
   const declarationsByPurpose = new Map(
-    deployment.facet.connectedAccounts.map((declaration) => [
+    (deployment.managedRuntime.connectedAccounts ?? []).map((declaration) => [
       declaration.purpose,
       declaration,
     ]),
@@ -279,7 +280,7 @@ function resolveManagedPurposeBindingIntents(
       return null;
     }
   }
-  if (deployment.facet.connectedAccounts.some(
+  if ((deployment.managedRuntime.connectedAccounts ?? []).some(
     (declaration) => declaration.required === true && defaults[declaration.purpose] === undefined,
   )) {
     return null;
@@ -343,21 +344,23 @@ function resolveProviderConnectionFromSettings(
     };
     facts = factsFromContribution(resolvedContribution.definition);
     if (connection.deployment.kind === 'managedLocal') {
-      if (
-        resolvedContribution.provenance !== 'first_party'
-        || resolvedContribution.source.kind !== 'bundled'
-        || !resolvedContribution.managed
-      ) {
+      const declaredManagedRuntime =
+        resolvedContribution.definition.managedRuntime;
+      if (!declaredManagedRuntime) {
         return invalidResolution(
           connectionId,
           diagnostics,
           'managed_deployment_unavailable',
         );
       }
+      const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+        implementationIdentity: resolvedContribution.identity,
+        managedRuntime: declaredManagedRuntime,
+      });
       managedDeployment = {
         kind: 'managedLocal',
         implementationIdentity: resolvedContribution.identity,
-        facet: resolvedContribution.managed,
+        managedRuntime,
       };
     }
     if (connection.displayNameMode === 'automatic') displayName = resolvedContribution.definition.name;
@@ -397,9 +400,7 @@ function resolveProviderConnectionFromSettings(
       ...(facts.modelLoad ? { modelLoad: facts.modelLoad } : {}),
       managedDeployment: {
         implementationIdentity: resolvedManagedDeployment.implementationIdentity,
-        managedEndpoint: resolvedManagedDeployment.facet.managedEndpoint,
-        connectedAccounts: [...resolvedManagedDeployment.facet.connectedAccounts],
-        requestAuthUses: [...resolvedManagedDeployment.facet.requestAuthUses],
+        managedRuntime: resolvedManagedDeployment.managedRuntime,
       },
     });
     const endpointSetFingerprint = createProviderEndpointSetFingerprintV1({

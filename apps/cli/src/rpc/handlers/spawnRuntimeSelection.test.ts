@@ -138,4 +138,50 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
       },
     });
   });
+
+  it('projects Antigravity persisted runtime mode through the generated host owner', () => {
+    expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'antigravity',
+        provider: {
+          runtimeMode: 'cliPrint',
+          providerSessionId: 'stale-cli-conversation',
+          providerExtra: {
+            owner: 'antigravity',
+            schemaId: 'antigravity.agentRuntimeDescriptorExtra',
+            v: 1,
+            runtimeHandle: {
+              runtimeMode: 'sdk',
+              providerSessionId: 'localharness-session-1',
+              localharnessSessionId: 'localharness-session-1',
+            },
+          },
+        },
+      },
+    })).toEqual({
+      providerBackendMode: 'sdk',
+      providerRuntimeSelection: {
+        antigravityRuntimeMode: 'sdk',
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'antigravity',
+        agent: {
+          runtimeMode: 'cliPrint',
+          providerSessionId: 'stale-cli-conversation',
+          agentExtra: {
+            owner: 'antigravity',
+            schemaId: 'antigravity.agentRuntimeDescriptorExtra',
+            v: 1,
+            runtimeHandle: {
+              runtimeMode: 'sdk',
+              providerSessionId: 'localharness-session-1',
+              localharnessSessionId: 'localharness-session-1',
+            },
+          },
+        },
+      },
+    });
+  });
 });

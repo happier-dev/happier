@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DaemonExecutionRunMarkerSchema } from '@happier-dev/protocol';
 
 describe('executionRunRegistry', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
@@ -49,21 +50,23 @@ describe('executionRunRegistry', () => {
     const { configuration } = await import('@/configuration');
     const { listExecutionRunMarkers, writeExecutionRunMarker } = await import('./executionRunRegistry');
 
-    await writeExecutionRunMarker({
+    const marker = {
       pid: 123,
       happySessionId: 'sess-1',
       runId: 'run_1',
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'backend' as const, backendId: 'claude' },
+      permissionMode: 'read_only',
       runClass: 'bounded',
       ioMode: 'request_response',
       retentionPolicy: 'ephemeral',
       status: 'running',
       startedAtMs: 1,
       updatedAtMs: 1,
-    });
+    } satisfies Parameters<typeof writeExecutionRunMarker>[0];
+    await writeExecutionRunMarker(marker);
 
     const markers = await listExecutionRunMarkers();
     expect(markers).toHaveLength(1);
@@ -71,14 +74,81 @@ describe('executionRunRegistry', () => {
     expect(markers[0].happySessionId).toBe('sess-1');
     expect(markers[0].runId).toBe('run_1');
     expect(markers[0].intent).toBe('review');
-    expect(markers[0].backendId).toBe('claude');
+    expect(markers[0].backendTarget).toEqual({ kind: 'backend', backendId: 'claude' });
+    expect(markers[0]).not.toHaveProperty('backendId');
 
-    // Disk shape includes happyHomeDir filtering key.
     const filePath = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs', 'run-run_1.json');
     const raw = readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
-    expect(parsed.happyHomeDir).toBe(configuration.happyHomeDir);
-    expect(parsed.runId).toBe('run_1');
+    expect(parsed).toEqual({
+      pid: 123,
+      happySessionId: 'sess-1',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'review',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
+      permissionMode: 'read_only',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: 1,
+      updatedAtMs: 1,
+    });
+    expect(raw).not.toContain(configuration.happyHomeDir);
+  });
+
+  it('strips raw output summaries and diagnostics before marker persistence', async () => {
+    const { configuration } = await import('@/configuration');
+    const { listExecutionRunMarkers, writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const marker = DaemonExecutionRunMarkerSchema.parse({
+      pid: 123,
+      happySessionId: null,
+      runId: 'run_bounded_marker',
+      callId: 'call_bounded_marker',
+      sidechainId: 'side_bounded_marker',
+      intent: 'memory_hints' as const,
+      backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' as const },
+      permissionMode: 'full_access',
+      runClass: 'bounded' as const,
+      ioMode: 'request_response' as const,
+      retentionPolicy: 'ephemeral' as const,
+      status: 'failed' as const,
+      startedAtMs: 1,
+      updatedAtMs: 2,
+      finishedAtMs: 2,
+      errorCode: 'execution_run_output_limit_exceeded',
+      resultSizeBytes: 1024,
+      summary: 'raw task output must not persist',
+      diagnostics: { rawOutput: 'must-not-persist' },
+    });
+
+    await writeExecutionRunMarker(marker);
+
+    const filePath = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs', 'run-run_bounded_marker.json');
+    const persisted = JSON.parse(readFileSync(filePath, 'utf-8'));
+    expect(persisted).toMatchObject({
+      permissionMode: 'full_access',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'failed',
+      errorCode: 'execution_run_output_limit_exceeded',
+      resultSizeBytes: 1024,
+    });
+    expect(persisted).not.toHaveProperty('summary');
+    expect(persisted).not.toHaveProperty('diagnostics');
+    expect(persisted).not.toHaveProperty('happyHomeDir');
+    expect(persisted).not.toHaveProperty('resumeHandle');
+
+    const outward = await listExecutionRunMarkers();
+    expect(outward[0]).toMatchObject({
+      runId: 'run_bounded_marker',
+      resultSizeBytes: 1024,
+    });
+    expect(outward[0]).not.toHaveProperty('summary');
+    expect(outward[0]).not.toHaveProperty('diagnostics');
   });
 
   it('keeps predecessor launch evidence owner-local and omits it from outward marker lists', async () => {
@@ -168,10 +238,7 @@ describe('executionRunRegistry', () => {
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'running',
       startedAtMs: 1,
       updatedAtMs: 1,
@@ -204,10 +271,7 @@ describe('executionRunRegistry', () => {
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'running',
       startedAtMs: 1,
       updatedAtMs: 1,
@@ -220,10 +284,7 @@ describe('executionRunRegistry', () => {
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'succeeded',
       startedAtMs: 1,
       updatedAtMs: 2,
@@ -246,10 +307,7 @@ describe('executionRunRegistry', () => {
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'succeeded',
       startedAtMs: 1,
       updatedAtMs: 2,
@@ -263,10 +321,7 @@ describe('executionRunRegistry', () => {
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'running',
       startedAtMs: 1,
       updatedAtMs: 3,
@@ -375,10 +430,7 @@ describe('executionRunRegistry', () => {
       callId: 'call_1',
       sidechainId: 'side_1',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'running',
       startedAtMs: nowMs - 10_000,
       updatedAtMs: nowMs - 5_000,
@@ -391,10 +443,7 @@ describe('executionRunRegistry', () => {
       callId: 'call_2',
       sidechainId: 'side_2',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'succeeded',
       startedAtMs: nowMs - 50_000,
       updatedAtMs: nowMs - 40_000,
@@ -408,10 +457,7 @@ describe('executionRunRegistry', () => {
       callId: 'call_3',
       sidechainId: 'side_3',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'running',
       startedAtMs: nowMs - 10_000,
       updatedAtMs: nowMs - 9_000,

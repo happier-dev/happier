@@ -5,6 +5,7 @@ import {
   type ConnectedServiceQuotaSnapshotV1,
   type ConnectedServiceUsageSourceV1,
 } from '@happier-dev/protocol';
+import type { AgentAccountUsageSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoordinator';
@@ -41,6 +42,26 @@ describe('ConnectedServiceQuotasCoordinator startup current-source refresh sched
       accountLabel: 'cold@example.test',
       meters: [],
     };
+    const refreshedUsageSnapshot = {
+      v: 1,
+      recordKey: {
+        providerId: 'openai-codex',
+        accountSubjectId: 'acct-cold',
+        subjectKind: 'account',
+        quotaScope: 'account',
+      },
+      providerId: 'openai-codex',
+      accountSubject: { kind: 'providerSubject', id: 'acct-cold' },
+      observedAtMs: now,
+      fetchedAtMs: now,
+      staleAfterMs: freshSnapshot.staleAfterMs,
+      source: 'providerHttp',
+      confidence: 'confirmed',
+      state: 'loaded_empty',
+      planLabel: freshSnapshot.planLabel,
+      accountLabel: freshSnapshot.accountLabel,
+      meters: [],
+    } satisfies AgentAccountUsageSnapshot;
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => ({
@@ -53,17 +74,16 @@ describe('ConnectedServiceQuotasCoordinator startup current-source refresh sched
       })),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({
         content: { t: 'plain' as const, v: record },
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
       })),
       registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    } as unknown as QuotaApi;
+    } satisfies QuotaApi;
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
-      loadQuota: vi.fn(async () => ({
-        ...freshSnapshot,
-        fetchedAt: now,
-      })),
+      loadQuota: vi.fn(async () => refreshedUsageSnapshot),
     };
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,

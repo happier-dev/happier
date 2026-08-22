@@ -9,6 +9,7 @@ import {
 
 import type { Credentials } from '@/persistence';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { ConnectedServiceCredentialUnsupportedFormatError } from '@/api/client/connectedServiceCredentialApi';
 import {
   storeConnectedServiceCredentialForAccount,
   type ConnectedServiceCredentialStorageApi,
@@ -29,31 +30,16 @@ function readyServerFeatures(payload: unknown): CliServerFeaturesSnapshot {
   };
 }
 
-const sessionSyncCurrent = {
-  v: 1,
-  enforcement: 'observe',
-  minimumSessionSyncProtocolVersion: 1,
-  currentSessionSyncProtocolVersion: 2,
-  declarationTransport: 'headers-v1',
-  minimumVersionsByClientKind: {
-    daemon: '0.2.10',
-    'session-runner': '0.2.10-preview.1',
-  },
-  upgradeUrlsByClientKind: {
-    daemon: 'https://app.happier.dev/update?client=daemon',
-    'session-runner': 'https://app.happier.dev/update?client=session-runner',
-  },
-} as const;
 const currentServerFeatures = readyServerFeatures({
   features: {},
   capabilities: {
     connectedServices: {
       credentialDelete: { revisionGuard: true },
     },
-    compatibility: {
-      v: 1,
-      sessionSync: sessionSyncCurrent,
-      pendingInput: { currentPendingInputProtocolVersion: 1 },
+    session: {
+      runtimeActivity: { protocolVersion: 2 },
+      pendingInput: { protocolVersion: 1 },
+      publisherAuthority: { protocolVersion: 1 },
     },
   },
 });
@@ -74,13 +60,10 @@ const laterServerFeatures = readyServerFeatures({
     connectedServices: {
       credentialDelete: { revisionGuard: true },
     },
-    compatibility: {
-      v: 1,
-      sessionSync: {
-        ...sessionSyncCurrent,
-        currentSessionSyncProtocolVersion: 3,
-      },
-      pendingInput: { currentPendingInputProtocolVersion: 2 },
+    session: {
+      runtimeActivity: { protocolVersion: 3 },
+      pendingInput: { protocolVersion: 2 },
+      publisherAuthority: { protocolVersion: 2 },
     },
   },
 });
@@ -95,11 +78,17 @@ const nonmatchingServerFeatures = readyServerFeatures({
 });
 const exactV021ServerContract = {
   mode: 'released_server_v0_2_1',
+  runtimeActivity: 'legacy',
+  pendingInput: 'released_server_v0_2_1',
+  publisherAuthority: 'indeterminate',
   sessionConnectionEpoch: 1,
   socket: { connected: true },
 } as const;
 const currentServerContract = {
   mode: 'session_sync_v2_pending_input_v1',
+  runtimeActivity: 'v2',
+  pendingInput: 'v1',
+  publisherAuthority: 'indeterminate',
   sessionConnectionEpoch: 2,
   socket: { connected: true },
 } as const;
@@ -141,6 +130,31 @@ function createApi(overrides: Partial<ConnectedServiceCredentialStorageApi>): Co
 }
 
 describe('storeConnectedServiceCredentialForAccount', () => {
+  it('does not overwrite an unsupported authoritative plaintext credential', async () => {
+    const unsupported = new ConnectedServiceCredentialUnsupportedFormatError(
+      'github',
+      'work',
+    );
+    const registerPlain = vi.fn(async () => ({
+      success: true as const,
+      credentialRevision: revision,
+    }));
+    const api = createApi({
+      getAccountEncryptionMode: async () => 'plain',
+      getConnectedServiceCredentialPlain: async () => {
+        throw unsupported;
+      },
+      registerConnectedServiceCredentialPlain: registerPlain,
+    });
+
+    await expect(storeConnectedServiceCredentialForAccount({
+      api,
+      credentials: createCredentials(),
+      record: createRecord('replacement-token'),
+    })).rejects.toBe(unsupported);
+    expect(registerPlain).not.toHaveBeenCalled();
+  });
+
   it('refuses a missing plaintext mutation on exact v0.2.1 before the content-only POST', async () => {
     const record = createRecord();
     const getServerFeaturesSnapshot = vi.fn(async () => releasedServerV021Features);
@@ -163,7 +177,10 @@ describe('storeConnectedServiceCredentialForAccount', () => {
 
     await expect(storeConnectedServiceCredentialForAccount({
       api,
-      credentials: createCredentials(),
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
       record,
       serverContract: exactV021ServerContract,
     })).rejects.toMatchObject({

@@ -25,6 +25,27 @@ const launch = {
 };
 
 describe('rehydrateLiveExecutionRunTargets', () => {
+  it('leaves a detached marker inactive without attempting Session liveness or target adoption', async () => {
+    const proveRunnerLive = vi.fn(async () => true);
+    const adopt = vi.fn(async () => true);
+
+    const result = await rehydrateLiveExecutionRunTargets({
+      markers: [{
+        runId: 'run_detached',
+        happySessionId: null,
+        pid: 4321,
+        status: 'running',
+        executionRunConnectedServicesLaunchV1: launch,
+      }],
+      proveRunnerLive,
+      adopt,
+    });
+
+    expect(result).toEqual({ registeredRunIds: [], inactiveRunIds: ['run_detached'] });
+    expect(proveRunnerLive).not.toHaveBeenCalled();
+    expect(adopt).not.toHaveBeenCalled();
+  });
+
   it('passively adopts the exact remote-dev launch marker with its distinct materialization key', async () => {
     const adopt = vi.fn(async () => true);
     const markerRunId = 'run_22222222-2222-4222-8222-222222222222';

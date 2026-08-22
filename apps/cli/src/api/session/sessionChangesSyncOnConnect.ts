@@ -5,6 +5,10 @@ import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupe
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
 import type { SessionSnapshotRefreshReason } from './sessionSnapshotRefreshReason';
 import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/accountSettingsVersion';
+import {
+    publishPluginAccountSettingsWatchInvalidation,
+    readPluginAccountSettingsWatchInvalidations,
+} from '@/plugins/runtime/context/pluginAccountSettingsChangeBroker';
 
 export type SessionCatchUpRequest = Readonly<{
     afterSeq: number;
@@ -74,6 +78,7 @@ export async function runSessionChangesSyncOnConnect(params: {
             }
         }
         await params.refreshAccountSettingsForMinimumVersion?.(null);
+        publishPluginAccountSettingsWatchInvalidation({ kind: 'full' });
         const snapshotSucceeded = await params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
         if (transcriptCatchUpSucceeded && snapshotSucceeded) {
             await params.writeChangesCursor(accountId, result.currentCursor);
@@ -107,6 +112,7 @@ export async function runSessionChangesSyncOnConnect(params: {
 
     const changes = result.response.changes;
     const nextCursor = result.response.nextCursor;
+    const pluginAccountSettingsInvalidations = readPluginAccountSettingsWatchInvalidations(changes);
     const accountSettingsVersions = changes
         .filter((change) => change.kind === 'account' && change.entityId === 'self')
         .map((change) => readAccountSettingsVersionFromHint(change.hint))
@@ -120,6 +126,13 @@ export async function runSessionChangesSyncOnConnect(params: {
         await params.refreshAccountSettingsForMinimumVersion?.(highestAccountSettingsVersion);
     } else if (params.reason === 'reconnect' || changes.length >= CHANGES_PAGE_LIMIT) {
         await params.refreshAccountSettingsForMinimumVersion?.(null);
+    }
+    if (changes.length >= CHANGES_PAGE_LIMIT) {
+        publishPluginAccountSettingsWatchInvalidation({ kind: 'full' });
+    } else {
+        for (const invalidation of pluginAccountSettingsInvalidations) {
+            publishPluginAccountSettingsWatchInvalidation(invalidation);
+        }
     }
 
     let transcriptCatchUpFailed = false;

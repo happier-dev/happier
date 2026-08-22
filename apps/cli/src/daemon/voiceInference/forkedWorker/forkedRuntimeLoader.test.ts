@@ -46,10 +46,97 @@ function createInMemoryWorkerChannel(runtime: VoiceInferenceRuntime): VoiceInfer
     },
     waitForTermination: () => termination,
     terminate: () => resolveTermination({ type: 'signaled', signal: 'SIGTERM' }),
+    forceTerminate: () => resolveTermination({ type: 'signaled', signal: 'SIGKILL' }),
   };
 }
 
 describe('forked voice inference runtime loader', () => {
+  it('force-terminates and awaits the exact spawned child when its observer throws', async () => {
+    let forceTerminateCalls = 0;
+    let waitForTerminationCalls = 0;
+    let live = true;
+    let settleTermination!: () => void;
+    let markObserverEntered!: () => void;
+    const termination = new Promise<TerminationEvent>((resolve) => {
+      settleTermination = () => {
+        live = false;
+        resolve({ type: 'signaled', signal: 'SIGKILL' });
+      };
+    });
+    const observerEntered = new Promise<void>((resolve) => {
+      markObserverEntered = resolve;
+    });
+    const channel: VoiceInferenceWorkerChannel = {
+      pid: 17_777,
+      send: () => {},
+      onData: () => {},
+      waitForTermination: () => {
+        waitForTerminationCalls += 1;
+        return termination;
+      },
+      terminate: () => {},
+      forceTerminate: () => {
+        forceTerminateCalls += 1;
+      },
+    };
+    const handle = createForkedVoiceInferenceRuntimeHandle({
+      channelFactory: async () => channel,
+      onWorkerProcess: () => {
+        markObserverEntered();
+        throw new Error('observer failed');
+      },
+    });
+
+    const engine = await handle.runtimeLoader();
+    if (!engine) throw new Error('expected runtime');
+    const synthesis = engine.synthesizeTts({
+      requestId: 'observer-throws', text: 'hi', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+    // Attach a rejection handler while the assertion deliberately keeps termination pending.
+    void synthesis.catch(() => {});
+    await observerEntered;
+
+    expect(forceTerminateCalls).toBe(1);
+    expect(waitForTerminationCalls).toBe(1);
+    expect(live).toBe(true);
+
+    settleTermination();
+    await expect(synthesis).rejects.toMatchObject({
+      code: 'runtime_unavailable',
+      message: 'voice_inference_worker_spawn_failed',
+    });
+    expect(live).toBe(false);
+    await handle.dispose();
+  });
+
+  it('observes the exact canonical worker process without enumerating ambient processes', async () => {
+    const observations: Array<Readonly<{
+      pid: number | null;
+      waitForTermination: VoiceInferenceWorkerChannel['waitForTermination'];
+    }>> = [];
+    const runtime: VoiceInferenceRuntime = {
+      synthesizeTts: async () => ({ bytes: Buffer.from('x'), output: { codec: 'wav', mimeType: 'audio/wav' }, name: 'x.wav' }),
+      transcribeAudio: async () => ({ text: '', language: null }),
+    };
+    const handle = createForkedVoiceInferenceRuntimeHandle({
+      channelFactory: async () => createInMemoryWorkerChannel(runtime),
+      onWorkerProcess: (observation) => observations.push(observation),
+    });
+
+    const engine = await handle.runtimeLoader();
+    await engine?.synthesizeTts({
+      requestId: 'observe-worker', text: 'hi', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.pid).toBe(9999);
+
+    await handle.dispose();
+    await expect(observations[0]?.waitForTermination()).resolves.toEqual({
+      type: 'signaled',
+      signal: 'SIGTERM',
+    });
+  });
+
   it('drives the engine through the forked client + runner over the IPC boundary', async () => {
     const snapshots: string[] = [];
     const runtime: VoiceInferenceRuntime = {

@@ -10,8 +10,11 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureStderr, captureStdout, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import type { DaemonLocallyPersistedState } from '@/persistence';
+import type { DaemonStopResult } from '@/daemon/controlClient';
 import { planDaemonServiceInstall } from './plan';
-const stopDaemonMock = vi.fn(async () => undefined);
+const stopDaemonMock = vi.fn<
+  (params?: { stopSessions?: boolean }) => Promise<DaemonStopResult>
+>(async () => ({ status: 'not_running' }));
 const restartDaemonAndWaitMock = vi.fn(async () => true);
 
 function doMockChildProcessSpawnSync(
@@ -832,11 +835,11 @@ describe('runDaemonServiceCliCommand', () => {
         commandExistsInPath: vi.fn(() => true),
       }));
 
-      const [{ runDaemonServiceCliCommand }, { clearDaemonState }] = await Promise.all([
+      const [{ runDaemonServiceCliCommand }, { clearDaemonStateForTestTeardown }] = await Promise.all([
         loadCliModule(),
         import('@/persistence'),
       ]);
-      clearDaemonState();
+      clearDaemonStateForTestTeardown();
 
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {
@@ -892,11 +895,11 @@ describe('runDaemonServiceCliCommand', () => {
       }));
 
       try {
-        const [{ runDaemonServiceCliCommand }, { clearDaemonState }] = await Promise.all([
+        const [{ runDaemonServiceCliCommand }, { clearDaemonStateForTestTeardown }] = await Promise.all([
           loadCliModule(),
           import('@/persistence'),
         ]);
-        clearDaemonState();
+        clearDaemonStateForTestTeardown();
 
         const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
         try {
@@ -962,12 +965,12 @@ describe('runDaemonServiceCliCommand', () => {
       const controlClient = await import('@/daemon/controlClient');
       vi.spyOn(controlClient, 'stopDaemon').mockImplementation(stopDaemonMock);
 
-      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { writeDaemonState, clearDaemonState }] = await Promise.all([
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { writeDaemonState, clearDaemonStateForTestTeardown }] = await Promise.all([
         loadCliModule(),
         import('@/persistence'),
       ]);
       writeDaemonStateImpl = writeDaemonState;
-      clearDaemonStateImpl = clearDaemonState;
+      clearDaemonStateImpl = clearDaemonStateForTestTeardown;
 
       const runtime = resolveDaemonServiceCliRuntimeFromEnv({ targetMode: 'default-following' });
       const paths = resolveDaemonServicePaths(runtime);
@@ -1192,7 +1195,7 @@ describe('runDaemonServiceCliCommand', () => {
         commandExistsInPath: vi.fn(() => true),
       }));
 
-      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonState }] = await Promise.all([
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonStateForTestTeardown }] = await Promise.all([
         loadCliModule(),
         import('@/persistence'),
       ]);
@@ -1200,7 +1203,7 @@ describe('runDaemonServiceCliCommand', () => {
       const paths = resolveDaemonServicePaths(runtime);
       mkdirSync(dirname(paths.installedPath), { recursive: true });
       writeValidInstalledDaemonServiceFile(paths.installedPath);
-      clearDaemonState();
+      clearDaemonStateForTestTeardown();
 
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {
@@ -1262,7 +1265,7 @@ describe('runDaemonServiceCliCommand', () => {
         commandExistsInPath: vi.fn(() => true),
       }));
 
-      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonState, writeCredentialsLegacy, writeDaemonState }, { configuration }] = await Promise.all([
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonStateForTestTeardown, writeCredentialsLegacy, writeDaemonState }, { configuration }] = await Promise.all([
         loadCliModule(),
         import('@/persistence'),
         import('@/configuration'),
@@ -1276,7 +1279,7 @@ describe('runDaemonServiceCliCommand', () => {
       mkdirSync(dirname(paths.installedPath), { recursive: true });
       writeValidInstalledDaemonServiceFile(paths.installedPath);
       await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(1), token: 'token-delayed-owner' });
-      clearDaemonState();
+      clearDaemonStateForTestTeardown();
 
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {
@@ -1334,7 +1337,7 @@ describe('runDaemonServiceCliCommand', () => {
         commandExistsInPath: vi.fn(() => true),
       }));
 
-      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonState, writeCredentialsLegacy, writeDaemonState }, { configuration }] = await Promise.all([
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonStateForTestTeardown, writeCredentialsLegacy, writeDaemonState }, { configuration }] = await Promise.all([
         loadCliModule(),
         import('@/persistence'),
         import('@/configuration'),
@@ -1351,7 +1354,7 @@ describe('runDaemonServiceCliCommand', () => {
         targetMode: 'default-following',
       });
       await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(1), token: 'token-drifted-active-unit' });
-      clearDaemonState();
+      clearDaemonStateForTestTeardown();
 
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {
@@ -1410,7 +1413,7 @@ describe('runDaemonServiceCliCommand', () => {
         commandExistsInPath: vi.fn(() => true),
       }));
 
-      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonState, writeCredentialsLegacy, writeDaemonState }, { configuration }] = await Promise.all([
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonStateForTestTeardown, writeCredentialsLegacy, writeDaemonState }, { configuration }] = await Promise.all([
         loadCliModule(),
         import('@/persistence'),
         import('@/configuration'),
@@ -1439,7 +1442,7 @@ describe('runDaemonServiceCliCommand', () => {
       });
       writeFileSync(paths.installedPath, expectedPlan.files[0]?.content ?? '', 'utf-8');
       await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(1), token: 'token-default-following-wrong-relay' });
-      clearDaemonState();
+      clearDaemonStateForTestTeardown();
 
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {
@@ -1611,13 +1614,14 @@ describe('runDaemonServiceCliCommand', () => {
       }));
 
       const controlClient = await import('@/daemon/controlClient');
-      const [{ clearDaemonState, writeDaemonState }, { configuration }] = await Promise.all([
+      const [{ clearDaemonStateForTestTeardown, writeDaemonState }, { configuration }] = await Promise.all([
         import('@/persistence'),
         import('@/configuration'),
       ]);
       vi.spyOn(controlClient, 'stopDaemon').mockImplementation(async () => {
         lifecycleEvents.push('stopDaemon');
-        await clearDaemonState();
+        await clearDaemonStateForTestTeardown();
+        return { status: 'stopped', method: 'graceful' };
       });
 
       const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }] = await Promise.all([
@@ -1716,13 +1720,14 @@ describe('runDaemonServiceCliCommand', () => {
       }));
 
       const controlClient = await import('@/daemon/controlClient');
-      const [{ clearDaemonState, writeDaemonState }, { configuration }] = await Promise.all([
+      const [{ clearDaemonStateForTestTeardown, writeDaemonState }, { configuration }] = await Promise.all([
         import('@/persistence'),
         import('@/configuration'),
       ]);
       vi.spyOn(controlClient, 'stopDaemon').mockImplementation(async () => {
         lifecycleEvents.push('stopDaemon');
-        await clearDaemonState();
+        await clearDaemonStateForTestTeardown();
+        return { status: 'stopped', method: 'graceful' };
       });
 
       const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }] = await Promise.all([
@@ -1789,13 +1794,14 @@ describe('runDaemonServiceCliCommand', () => {
       }));
 
       const controlClient = await import('@/daemon/controlClient');
-      const [{ clearDaemonState, writeDaemonState }, { configuration }] = await Promise.all([
+      const [{ clearDaemonStateForTestTeardown, writeDaemonState }, { configuration }] = await Promise.all([
         import('@/persistence'),
         import('@/configuration'),
       ]);
       const stopSpy = vi.spyOn(controlClient, 'stopDaemon').mockImplementation(async () => {
         lifecycleEvents.push('stopDaemon');
-        await clearDaemonState();
+        await clearDaemonStateForTestTeardown();
+        return { status: 'stopped', method: 'graceful' };
       });
 
       const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }] = await Promise.all([
@@ -1818,14 +1824,14 @@ describe('runDaemonServiceCliCommand', () => {
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {
         await runDaemonServiceCliCommand({
-          argv: ['stop', '--transfer-managed-local-services', '--json'],
+          argv: ['stop', '--json'],
         });
         expect(output.json()).toEqual(expect.objectContaining({ ok: true, platform: 'win32' }));
       } finally {
         output.restore();
       }
 
-      expect(stopSpy).toHaveBeenCalledWith({ transferManagedLocalServices: true });
+      expect(stopSpy).toHaveBeenCalledWith();
       expect(lifecycleEvents.slice(0, 2)).toEqual(['stopDaemon', '/End']);
 
       stopSpy.mockClear();
@@ -2200,7 +2206,7 @@ describe('runDaemonServiceCliCommand', () => {
         commandExistsInPath: vi.fn(() => true),
       }));
 
-      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonState }] = await Promise.all([
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonStateForTestTeardown }] = await Promise.all([
         loadCliModule(),
         import('@/persistence'),
       ]);
@@ -2208,7 +2214,7 @@ describe('runDaemonServiceCliCommand', () => {
       const paths = resolveDaemonServicePaths(runtime);
       mkdirSync(dirname(paths.installedPath), { recursive: true });
       writeValidInstalledDaemonServiceFile(paths.installedPath);
-      clearDaemonState();
+      clearDaemonStateForTestTeardown();
 
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {

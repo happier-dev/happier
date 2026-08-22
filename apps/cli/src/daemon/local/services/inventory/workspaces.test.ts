@@ -13,4 +13,25 @@ describe('resolveLocalServiceWorkspaceFactsFromSessionMarkers', () => {
 
         expect(facts).toEqual([{ path: '/repo/app' }]);
     });
+
+    it('collapses an agent marker path onto the current daemon workspace root', () => {
+        const facts = resolveLocalServiceWorkspaceFactsFromSessionMarkers([
+            {
+                happySessionId: 'session-sandboxed',
+                cwd: '/home/coder/project',
+                metadata: {
+                    path: '/home/coder/project',
+                    sessionWorkspaceLocationV1: {
+                        v: 1,
+                        machineId: 'machine-local',
+                        agentPath: '/home/coder/project',
+                        machinePath: '/Users/alice/project',
+                    },
+                },
+                respawn: { directory: '/Users/alice/project' },
+            },
+        ], 'machine-local');
+
+        expect(facts).toEqual([{ path: '/Users/alice/project' }]);
+    });
 });

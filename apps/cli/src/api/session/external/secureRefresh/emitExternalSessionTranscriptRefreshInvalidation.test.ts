@@ -32,10 +32,14 @@ describe('emitExternalSessionTranscriptRefreshInvalidation', () => {
         };
         const resolveTranscriptRefreshBinding = vi.fn(async () => binding);
         const emitExternalSessionTranscriptUpdate = vi.fn(async () => {});
+        const deviceLocalSecretStorage = {
+            deriveOpaqueIdentity: vi.fn(() => 'a'.repeat(64)),
+        } as never;
 
         await emitExternalSessionTranscriptRefreshInvalidation({
             sessionId: 'session-1',
             cursor: 'cursor-1',
+            deviceLocalSecretStorage,
             resolveTranscriptRefreshBinding,
             emitExternalSessionTranscriptUpdate,
         });
@@ -43,6 +47,7 @@ describe('emitExternalSessionTranscriptRefreshInvalidation', () => {
         expect(resolveTranscriptRefreshBinding).toHaveBeenCalledWith({
             sessionId: 'session-1',
             cursor: 'cursor-1',
+            deviceLocalSecretStorage,
         });
         expect(emitExternalSessionTranscriptUpdate).toHaveBeenCalledWith({
             v: 1,

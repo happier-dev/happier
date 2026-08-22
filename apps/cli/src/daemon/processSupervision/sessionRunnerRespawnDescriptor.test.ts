@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import {
   buildTrackedSessionRespawnEnvironmentVariables,
@@ -18,6 +21,7 @@ import {
 import {
   sealHistoricalSessionRespawnEnvironmentAliasFixtureCiphertext,
 } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
+import { readOrCreateDeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
   'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
@@ -1141,6 +1145,42 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(restored.environmentVariables).toMatchObject({
       OPENAI_API_KEY: 'test-key',
     });
+  });
+
+  it('seals respawn-only secrets with device-local custody and restores them without account encryption material', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-respawn-device-secret-'));
+    try {
+      const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({
+        path: join(home, 'device-local-secret-key.json'),
+      });
+      const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
+        {
+          directory: '/tmp/repo',
+          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+          environmentVariables: {
+            CODEX_HOME: '/tmp/codex-home',
+            OPENAI_API_KEY: 'token-only-secret',
+          },
+        },
+        { deviceLocalSecretStorage },
+      );
+
+      expect(descriptor?.sealedEnvironmentVariables).toMatchObject({
+        format: 'device_local_v1',
+        ciphertext: expect.any(String),
+      });
+      expect(descriptor?.sealedEnvironmentVariables?.ciphertext).not.toContain(
+        'token-only-secret',
+      );
+      expect(buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!, {
+        deviceLocalSecretStorage,
+      }).environmentVariables).toEqual({
+        CODEX_HOME: '/tmp/codex-home',
+        OPENAI_API_KEY: 'token-only-secret',
+      });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('reseals the respawn alias once and preserves canonical ciphertext on later owned-marker recovery', () => {

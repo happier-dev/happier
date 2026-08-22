@@ -9,6 +9,7 @@ import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from '@happier-dev/plugins-claude
 import type { Machine } from '@/api/types';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { configuration } from '@/configuration';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
@@ -24,7 +25,16 @@ import { ApiMachineClient } from './apiMachine';
 const { claudeProvenanceReplaceCount } = vi.hoisted(() => ({
     claudeProvenanceReplaceCount: { current: 0 },
 }));
-const { mockIo, axiosGet, axiosIsAxiosError, readAccountChangesCursor, writeAccountChangesCursor } = vi.hoisted(() => {
+const {
+    mockIo,
+    axiosGet,
+    axiosIsAxiosError,
+        readAccountChangesCursor,
+        retirePluginAccountCollectionWatchScope,
+        writeAccountChangesCursor,
+        publishPluginAccountCollectionWatchInvalidation,
+        publishPluginAccountSettingsWatchInvalidation,
+} = vi.hoisted(() => {
     return {
         mockIo: vi.fn(),
         axiosGet: vi.fn(),
@@ -32,7 +42,10 @@ const { mockIo, axiosGet, axiosIsAxiosError, readAccountChangesCursor, writeAcco
             typeof error === 'object' && error !== null && (error as { isAxiosError?: unknown }).isAxiosError === true
         )),
         readAccountChangesCursor: vi.fn(async () => 0),
+        retirePluginAccountCollectionWatchScope: vi.fn(),
         writeAccountChangesCursor: vi.fn(async () => {}),
+        publishPluginAccountCollectionWatchInvalidation: vi.fn(),
+        publishPluginAccountSettingsWatchInvalidation: vi.fn(),
     };
 });
 
@@ -80,6 +93,47 @@ vi.mock('@/ui/logger', () => ({
     },
 }));
 
+vi.mock('@/plugins/runtime/context/pluginAccountSettingsChangeBroker', () => ({
+    publishPluginAccountCollectionWatchInvalidation,
+    publishPluginAccountSettingsWatchInvalidation,
+    retirePluginAccountCollectionWatchScope,
+    readPluginAccountCollectionWatchInvalidations: (changes: readonly unknown[]) => changes.flatMap((change) => {
+        if (!change || typeof change !== 'object') return [];
+        const entry = change as { cursor?: unknown; kind?: unknown; hint?: unknown };
+        if (entry.kind !== 'pluginDomain' || !entry.hint || typeof entry.hint !== 'object') return [];
+        const hint = entry.hint as {
+            pluginDomain?: unknown;
+            pluginId?: unknown;
+            collectionId?: unknown;
+            contractDigest?: unknown;
+        };
+        return hint.pluginDomain === 'dataCollection'
+            && typeof entry.cursor === 'number'
+            && typeof hint.pluginId === 'string'
+            && typeof hint.collectionId === 'string'
+            && typeof hint.contractDigest === 'string'
+            ? [{
+                kind: 'collection' as const,
+                pluginId: hint.pluginId,
+                collectionId: hint.collectionId,
+                contractDigest: hint.contractDigest,
+                changeCursor: entry.cursor,
+            }]
+            : [];
+    }),
+    readPluginAccountSettingsWatchInvalidations: (changes: readonly unknown[]) => changes.flatMap((change) => {
+        if (!change || typeof change !== 'object') return [];
+        const entry = change as { kind?: unknown; hint?: unknown };
+        if (entry.kind !== 'pluginDomain' || !entry.hint || typeof entry.hint !== 'object') return [];
+        const hint = entry.hint as { pluginDomain?: unknown; pluginId?: unknown; revision?: unknown };
+        return hint.pluginDomain === 'settings'
+            && typeof hint.pluginId === 'string'
+            && typeof hint.revision === 'number'
+            ? [{ kind: 'record' as const, pluginId: hint.pluginId, revision: hint.revision }]
+            : [];
+    }),
+}));
+
 function createMachineSocket(options: {
     emitWithAck?: (event: string, payload: unknown) => Promise<unknown> | unknown;
 } = {}) {
@@ -111,6 +165,78 @@ function createMachineSocket(options: {
 }
 
 describe('ApiMachineClient /v2/changes reconnect', () => {
+    it('resolves an exact Session Resource admission without acknowledging the returned Account cursor', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        axiosGet.mockImplementation(async (url: string, options?: Readonly<{ params?: unknown }>) => {
+            if (url.endsWith('/v1/account/profile')) {
+                return { status: 200, data: { id: 'account-1' } };
+            }
+            expect(options?.params).toEqual({
+                after: 0,
+                limit: 1,
+                sessionAccessSessionId: 'session-1',
+            });
+            return {
+                status: 200,
+                data: {
+                    changes: [],
+                    nextCursor: 44,
+                    sessionAccessProbe: {
+                        v: 1,
+                        sessionId: 'session-1',
+                        throughCursor: 44,
+                        status: 'available',
+                    },
+                },
+            };
+        });
+        const client = new ApiMachineClient('token', machine);
+
+        await expect(client.resolvePluginResourceSessionAccess({
+            accountId: 'account-1',
+            sessionId: 'session-1',
+            signal: new AbortController().signal,
+        })).resolves.toEqual({
+            accountId: 'account-1',
+            throughCursor: 44,
+            status: 'available',
+        });
+        expect(writeAccountChangesCursor).not.toHaveBeenCalled();
+    });
+
+    it('fails only the exact Session Resource admission closed when an older server omits the probe', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        axiosGet.mockImplementation(async (url: string) => (
+            url.endsWith('/v1/account/profile')
+                ? { status: 200, data: { id: 'account-1' } }
+                : { status: 200, data: { changes: [], nextCursor: 0 } }
+        ));
+        const client = new ApiMachineClient('token', machine);
+
+        await expect(client.resolvePluginResourceSessionAccess({
+            accountId: 'account-1',
+            sessionId: 'session-1',
+            signal: new AbortController().signal,
+        })).rejects.toThrow('plugin_resource_session_access_unavailable');
+        expect(writeAccountChangesCursor).not.toHaveBeenCalled();
+    });
+
     it('connect uses an http(s) base URL and explicitly connects the socket', async () => {
         const machine: Machine = {
             id: 'machine-1',
@@ -283,6 +409,90 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             source: 'changes',
         });
         expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 2);
+    });
+
+    it('wakes only the matching Account plugin Settings record watcher from the closed settings change arm', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [
+                            {
+                                cursor: 6,
+                                kind: 'pluginDomain',
+                                entityId: 'pluginDomain/example.tasks/settings',
+                                changedAt: 6,
+                                hint: {
+                                    pluginDomain: 'settings',
+                                    pluginId: 'example.tasks',
+                                    scope: 'account',
+                                    revision: 11,
+                                },
+                            },
+                            {
+                                cursor: 7,
+                                kind: 'pluginDomain',
+                                entityId: 'pluginDomain/example.tasks/data-kv',
+                                changedAt: 7,
+                                hint: {
+                                    pluginDomain: 'dataKv',
+                                    pluginId: 'example.tasks',
+                                    full: true,
+                                },
+                            },
+                            {
+                                cursor: 8,
+                                kind: 'pluginDomain',
+                                entityId: 'pluginDomain/example.tasks/data-collection/tasks',
+                                changedAt: 8,
+                                hint: {
+                                    pluginDomain: 'dataCollection',
+                                    pluginId: 'example.tasks',
+                                    collectionId: 'tasks',
+                                    contractDigest: 'a'.repeat(43),
+                                    revision: 4,
+                                    full: true,
+                                },
+                            },
+                        ],
+                        nextCursor: 8,
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        publishPluginAccountCollectionWatchInvalidation.mockClear();
+        publishPluginAccountSettingsWatchInvalidation.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+
+        expect(publishPluginAccountSettingsWatchInvalidation).toHaveBeenCalledTimes(1);
+        expect(publishPluginAccountSettingsWatchInvalidation).toHaveBeenCalledWith({
+            kind: 'record',
+            pluginId: 'example.tasks',
+            revision: 11,
+        });
+        expect(publishPluginAccountCollectionWatchInvalidation).toHaveBeenCalledWith({
+            accountScopeKey: resolveAccountSettingsScopeKeyForToken('token'),
+            kind: 'collection',
+            pluginId: 'example.tasks',
+            collectionId: 'tasks',
+            contractDigest: 'a'.repeat(43),
+            changeCursor: 8,
+        });
     });
 
     it('replays one exact inactive Pending activation before advancing the durable cursor', async () => {
@@ -503,6 +713,9 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             credentials: {
                 token: 'token',
                 encryption: { type: 'legacy', secret: machine.encryptionKey },
+            },
+            daemonSessionMutationCustody: {
+                stageTranscriptEvent: async () => ({ persisted: true, delivered: true }),
             },
             api: {
                 getAccountEncryptionMode: vi.fn(async () => 'plain'),
@@ -729,6 +942,124 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ source: 'startup' }));
         expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 8);
         expect(reconcile.mock.invocationCallOrder[0]).toBeLessThan(writeAccountChangesCursor.mock.invocationCallOrder[0]!);
+    });
+
+    it('forwards novel qualified Account V4 projection truth without downconverting it to V2', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const service = {
+            pluginId: 'acme.connected-accounts',
+            localId: 'external-service',
+        } as const;
+        const account = {
+            ref: { service, accountId: 'external-account' },
+            status: 'connected',
+            authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+            configurationReady: false,
+            configurationRevision: null,
+            displayName: 'External account',
+            scopes: [],
+        } as const;
+        const group = {
+            v: 1,
+            ref: { service, groupId: 'external-fallbacks' },
+            incarnation: 'qualified-group-row-external-fallbacks',
+            displayName: null,
+            policy: {},
+            activeConnectedAccountId: 'external-account',
+            generation: 4,
+            runtimeStateRevision: 2,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+            members: [],
+        } as const;
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return {
+                    status: 200,
+                    data: {
+                        id: 'acc-1',
+                        connectedServicesV2: [],
+                        connectedServiceCredentialRevisionsV1: [],
+                        connectedAccountsV4: [account],
+                        connectedAccountGroupsV4: [group],
+                    },
+                };
+            }
+            if (url.includes('/v2/changes')) {
+                return { status: 200, data: { changes: [], nextCursor: 8 } };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        const reconcile = vi.fn(async () => {});
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(reconcile);
+
+        await (client as any).syncChangesOnConnect({ reason: 'connect' });
+
+        expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({
+            source: 'startup',
+            connectedServicesV2: [],
+            connectedAccountsV4: [expect.objectContaining({
+                ref: account.ref,
+                credentialRevision: account.credentialRevision,
+            })],
+            connectedAccountGroupsV4: [expect.objectContaining({
+                ref: group.ref,
+                activeConnectedAccountId: group.activeConnectedAccountId,
+                generation: group.generation,
+            })],
+        }));
+    });
+
+    it('preserves live connected-service projection authority instead of downgrading it to reconnect catch-up', async () => {
+        const previousV2Changes = process.env.HAPPY_ENABLE_V2_CHANGES;
+        process.env.HAPPY_ENABLE_V2_CHANGES = 'false';
+        try {
+            const machine: Machine = {
+                id: 'machine-1',
+                encryptionKey: new Uint8Array(32).fill(7),
+                encryptionVariant: 'legacy',
+                metadata: null,
+                metadataVersion: 0,
+                daemonState: null,
+                daemonStateVersion: 0,
+            };
+            axiosGet.mockImplementation(async (url: string) => {
+                if (url.includes('/v1/account/profile')) return {
+                    status: 200,
+                    data: {
+                        id: 'acc-1',
+                        connectedServicesV2: [],
+                        connectedServiceCredentialRevisionsV1: [],
+                    },
+                };
+                throw new Error(`unexpected url: ${url}`);
+            });
+            const reconcile = vi.fn(async () => {});
+            const client = new ApiMachineClient('token', machine);
+            client.onConnectedServicesProjection(reconcile);
+
+            await (client as any).syncChangesOnConnect({ reason: 'live' });
+
+            expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({
+                source: 'live',
+                executionAuthority: 'runtime_recovery',
+            }));
+        } finally {
+            if (previousV2Changes === undefined) delete process.env.HAPPY_ENABLE_V2_CHANGES;
+            else process.env.HAPPY_ENABLE_V2_CHANGES = previousV2Changes;
+        }
     });
 
     it('continues /v2/changes catch-up without timer retry when generation reconciliation awaits another domain event', async () => {
@@ -1269,6 +1600,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         axiosGet.mockClear();
         writeAccountChangesCursor.mockClear();
         readAccountChangesCursor.mockClear();
+        publishPluginAccountCollectionWatchInvalidation.mockClear();
 
         const onAccountSettingsVersionHint = vi.fn(async () => {});
         const client = new ApiMachineClient('token', machine);
@@ -1281,8 +1613,514 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             settingsVersion: null,
             source: 'cursor-gone',
         });
+        expect(publishPluginAccountCollectionWatchInvalidation).toHaveBeenCalledExactlyOnceWith({
+            accountScopeKey: resolveAccountSettingsScopeKeyForToken('token'),
+            kind: 'reset',
+            changeCursor: 9,
+        });
         expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 9);
+        expect(
+            publishPluginAccountCollectionWatchInvalidation.mock.invocationCallOrder[0],
+        ).toBeLessThan(writeAccountChangesCursor.mock.invocationCallOrder[0]!);
     });
+
+    it('applies a live permanent-removal witness before acknowledging its Account cursor without a Session detail read', async () => {
+        const machine: Machine = {
+            id: 'machine-resource-session-live',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        let phase: 'initial' | 'live' = 'initial';
+        const order: string[] = [];
+        const applyResourceSessionAccessWitness = vi.fn(() => {
+            order.push('witness');
+        });
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
+            if (url.includes('/v2/changes')) {
+                return phase === 'initial'
+                    ? {
+                        status: 200,
+                        data: {
+                            changes: [],
+                            nextCursor: 0,
+                            sessionAccessWitness: { v: 1, throughCursor: 0, entries: [] },
+                        },
+                    }
+                    : {
+                        status: 200,
+                        data: {
+                            changes: [{
+                                cursor: 7,
+                                kind: 'session',
+                                entityId: 'session-removed',
+                                changedAt: 7,
+                                hint: null,
+                            }],
+                            nextCursor: 7,
+                            sessionAccessWitness: {
+                                v: 1,
+                                throughCursor: 7,
+                                entries: [{
+                                    sessionId: 'session-removed',
+                                    cursor: 7,
+                                    status: 'unavailable',
+                                }],
+                            },
+                        },
+                    };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        const client = new ApiMachineClient('token', machine, undefined, {
+            resourceSessionLifecycle: {
+                applyResourceSessionAccessWitness,
+            },
+        });
+        client.onConnectedServicesProjection(async () => {});
+        client.connect();
+        socket.trigger('connect');
+        await vi.waitFor(() => {
+            expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 0);
+        });
+
+        phase = 'live';
+        writeAccountChangesCursor.mockClear();
+        applyResourceSessionAccessWitness.mockClear();
+        order.length = 0;
+        writeAccountChangesCursor.mockImplementation(async () => {
+            order.push('cursor');
+        });
+        socket.trigger('update', {
+            id: 'account-change-resource-session',
+            seq: 7,
+            createdAt: 7,
+            body: { t: 'account-change' },
+        });
+
+        await vi.waitFor(() => {
+            expect(applyResourceSessionAccessWitness).toHaveBeenCalledExactlyOnceWith({
+                accountId: 'acc-1',
+                witness: {
+                    v: 1,
+                    throughCursor: 7,
+                    entries: [{
+                        sessionId: 'session-removed',
+                        cursor: 7,
+                        status: 'unavailable',
+                    }],
+                },
+            });
+        });
+        expect(axiosGet.mock.calls.some(([url]) => String(url).includes('/v1/sessions/'))).toBe(false);
+        expect(order).toEqual(['witness', 'cursor']);
+        await client.shutdown();
+    });
+
+    it('forwards a page-saturated witness before acknowledging the cursor without enumerating Resource Sessions', async () => {
+        const machine: Machine = {
+            id: 'machine-resource-session-page-limit',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const order: string[] = [];
+        const applyResourceSessionAccessWitness = vi.fn(() => {
+            order.push('witness');
+        });
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: Array.from({ length: 200 }, (_unused, index) => ({
+                            cursor: index + 1,
+                            kind: 'account',
+                            entityId: 'self',
+                            changedAt: index + 1,
+                            hint: null,
+                        })),
+                        nextCursor: 200,
+                        sessionAccessWitness: { v: 1, throughCursor: 200, entries: [] },
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        writeAccountChangesCursor.mockImplementation(async () => {
+            order.push('cursor');
+        });
+        const client = new ApiMachineClient('token', machine, undefined, {
+            resourceSessionLifecycle: {
+                applyResourceSessionAccessWitness,
+            },
+        });
+        client.onConnectedServicesProjection(async () => {});
+
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+
+        expect(applyResourceSessionAccessWitness).toHaveBeenCalledExactlyOnceWith({
+            accountId: 'acc-1',
+            witness: { v: 1, throughCursor: 200, entries: [] },
+        });
+        expect(order).toEqual(['witness', 'cursor']);
+    });
+
+    it('marks Session Resources unavailable before acknowledging a cursor-gone reset', async () => {
+        const machine: Machine = {
+            id: 'machine-resource-session-cursor-gone',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const order: string[] = [];
+        const applyResourceSessionAccessWitness = vi.fn(() => {
+            order.push('witness');
+        });
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
+            if (url.includes('/v2/changes')) {
+                return { status: 410, data: { error: 'cursor-gone', currentCursor: 11 } };
+            }
+            if (url.includes('/v1/machines/machine-resource-session-cursor-gone')) {
+                return {
+                    status: 200,
+                    data: {
+                        machine: {
+                            id: 'machine-resource-session-cursor-gone',
+                            metadata: null,
+                            metadataVersion: 0,
+                            daemonState: null,
+                            daemonStateVersion: 0,
+                        },
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        writeAccountChangesCursor.mockImplementation(async () => {
+            order.push('cursor');
+        });
+        const client = new ApiMachineClient('token', machine, undefined, {
+            resourceSessionLifecycle: {
+                applyResourceSessionAccessWitness,
+            },
+        });
+        client.onConnectedServicesProjection(async () => {});
+
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+
+        expect(applyResourceSessionAccessWitness).toHaveBeenCalledExactlyOnceWith({ accountId: 'acc-1' });
+        expect(order).toEqual(['witness', 'cursor']);
+    });
+
+    it('does not change Session Resource access for a malformed cursor-gone response', async () => {
+        const machine: Machine = {
+            id: 'machine-resource-session-malformed-cursor-gone',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const applyResourceSessionAccessWitness = vi.fn();
+        axiosGet.mockClear();
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
+            if (url.includes('/v2/changes')) return { status: 410, data: { error: 'not-cursor-gone' } };
+            if (url.includes('/v1/machines/machine-resource-session-malformed-cursor-gone')) {
+                return {
+                    status: 200,
+                    data: {
+                        machine: {
+                            id: 'machine-resource-session-malformed-cursor-gone',
+                            metadata: null,
+                            metadataVersion: 0,
+                            daemonState: null,
+                            daemonStateVersion: 0,
+                        },
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        readAccountChangesCursor.mockClear();
+        readAccountChangesCursor.mockResolvedValueOnce(17);
+        writeAccountChangesCursor.mockClear();
+        publishPluginAccountSettingsWatchInvalidation.mockClear();
+        publishPluginAccountCollectionWatchInvalidation.mockClear();
+        const client = new ApiMachineClient('token', machine, undefined, {
+            resourceSessionLifecycle: {
+                applyResourceSessionAccessWitness,
+            },
+        });
+        client.onConnectedServicesProjection(async () => {});
+
+        let failure: unknown = null;
+        try {
+            await (client as any).syncChangesOnConnect({ reason: 'connect' });
+        } catch (error) {
+            failure = error;
+        }
+
+        expect(applyResourceSessionAccessWitness).not.toHaveBeenCalled();
+        expect(axiosGet.mock.calls.some(([url]) => String(url).includes('/v1/machines/'))).toBe(false);
+        expect(publishPluginAccountSettingsWatchInvalidation).not.toHaveBeenCalled();
+        expect(publishPluginAccountCollectionWatchInvalidation).not.toHaveBeenCalled();
+        // A zero write deletes the prior persisted cursor entry.
+        expect(writeAccountChangesCursor).not.toHaveBeenCalled();
+        expect(failure).toBeInstanceOf(Error);
+    });
+
+    it('applies an empty first Account-lifetime witness before acknowledging its cursor', async () => {
+        const machine: Machine = {
+            id: 'machine-resource-session-account-transition',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const order: string[] = [];
+        const applyResourceSessionAccessWitness = vi.fn(() => {
+            order.push('witness');
+        });
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'account-b' } };
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [],
+                        nextCursor: 12,
+                        sessionAccessWitness: { v: 1, throughCursor: 12, entries: [] },
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        writeAccountChangesCursor.mockImplementation(async () => {
+            order.push('cursor');
+        });
+        const client = new ApiMachineClient('account-b-token', machine, undefined, {
+            resourceSessionLifecycle: {
+                applyResourceSessionAccessWitness,
+            },
+        });
+        client.onConnectedServicesProjection(async () => {});
+
+        await (client as any).syncChangesOnConnect({ reason: 'connect' });
+
+        expect(applyResourceSessionAccessWitness).toHaveBeenCalledExactlyOnceWith({
+            accountId: 'account-b',
+            witness: { v: 1, throughCursor: 12, entries: [] },
+        });
+        expect(order).toEqual(['witness', 'cursor']);
+    });
+
+    it('retries a transient /v2/changes response without changing Session Resource access before proof arrives', async () => {
+        vi.useFakeTimers();
+        try {
+            const machine: Machine = {
+                id: 'machine-resource-session-transient',
+                encryptionKey: new Uint8Array(32).fill(7),
+                encryptionVariant: 'legacy',
+                metadata: null,
+                metadataVersion: 0,
+                daemonState: null,
+                daemonStateVersion: 0,
+            };
+            const order: string[] = [];
+            const applyResourceSessionAccessWitness = vi.fn(() => {
+                order.push('witness');
+            });
+            let changesAttempts = 0;
+            axiosGet.mockImplementation(async (url: string) => {
+                if (url.includes('/v1/account/profile')) {
+                    return {
+                        status: 200,
+                        data: { id: 'acc-1', connectedServicesV2: [], connectedServiceCredentialRevisionsV1: [] },
+                    };
+                }
+                if (url.includes('/v2/changes')) {
+                    changesAttempts += 1;
+                    return changesAttempts === 1
+                        ? { status: 503, data: { error: 'busy' } }
+                        : {
+                            status: 200,
+                            data: {
+                                changes: [{
+                                    cursor: 1,
+                                    kind: 'session',
+                                    entityId: 'session-removed',
+                                    changedAt: 1,
+                                    hint: null,
+                                }],
+                                nextCursor: 1,
+                                sessionAccessWitness: {
+                                    v: 1,
+                                    throughCursor: 1,
+                                    entries: [{
+                                        sessionId: 'session-removed',
+                                        cursor: 1,
+                                        status: 'unavailable',
+                                    }],
+                                },
+                            },
+                        };
+                }
+                if (url.includes('/v1/machines/machine-resource-session-transient')) {
+                    return {
+                        status: 200,
+                        data: {
+                            machine: {
+                                id: 'machine-resource-session-transient',
+                                metadata: null,
+                                metadataVersion: 0,
+                                daemonState: null,
+                                daemonStateVersion: 0,
+                            },
+                        },
+                    };
+                }
+                throw new Error(`unexpected url: ${url}`);
+            });
+            writeAccountChangesCursor.mockClear();
+            writeAccountChangesCursor.mockImplementation(async () => {
+                order.push('cursor');
+            });
+            const client = new ApiMachineClient('token', machine, undefined, {
+                resourceSessionLifecycle: {
+                    applyResourceSessionAccessWitness,
+                },
+            });
+            client.onConnectedServicesProjection(async () => {});
+
+            (client as any).startChangesSyncWithRetry({ reason: 'reconnect' });
+            await vi.waitFor(() => expect(changesAttempts).toBe(1));
+
+            expect(applyResourceSessionAccessWitness).not.toHaveBeenCalled();
+            expect(writeAccountChangesCursor).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(2_000);
+            await vi.waitFor(() => expect(changesAttempts).toBe(2));
+
+            expect(applyResourceSessionAccessWitness).toHaveBeenCalledExactlyOnceWith({
+                accountId: 'acc-1',
+                witness: {
+                    v: 1,
+                    throughCursor: 1,
+                    entries: [{
+                        sessionId: 'session-removed',
+                        cursor: 1,
+                        status: 'unavailable',
+                    }],
+                },
+            });
+            expect(order).toEqual(['witness', 'cursor']);
+            await client.shutdown();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it.each([401, 403] as const)(
+        'reports changes-feed auth status %i without changing Session Resource access, cursor advance, or retry',
+        async (status) => {
+            vi.useFakeTimers();
+            let client: ApiMachineClient | null = null;
+            try {
+                const machine: Machine = {
+                    id: 'machine-resource-session-detail-auth',
+                    encryptionKey: new Uint8Array(32).fill(7),
+                    encryptionVariant: 'legacy',
+                    metadata: null,
+                    metadataVersion: 0,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                };
+                const applyResourceSessionAccessWitness = vi.fn();
+                let changesAttempts = 0;
+                axiosGet.mockImplementation(async (url: string) => {
+                    if (url.includes('/v1/account/profile')) {
+                        return {
+                            status: 200,
+                            data: { id: 'acc-1', connectedServicesV2: [], connectedServiceCredentialRevisionsV1: [] },
+                        };
+                    }
+                    if (url.includes('/v2/changes')) {
+                        changesAttempts += 1;
+                        return {
+                            status,
+                            data: { error: 'not-authenticated' },
+                        };
+                    }
+                    throw new Error(`unexpected url: ${url}`);
+                });
+                writeAccountChangesCursor.mockClear();
+                const reportProbeResult = vi.fn();
+                client = new ApiMachineClient('token', machine, undefined, {
+                    resourceSessionLifecycle: {
+                        applyResourceSessionAccessWitness,
+                    },
+                });
+                client.onConnectedServicesProjection(async () => {});
+                Object.defineProperty(client, 'connectionSupervisor', {
+                    configurable: true,
+                    value: {
+                        getState: () => ({
+                            phase: 'online',
+                            reason: null,
+                            attempt: 0,
+                            nextRetryAt: null,
+                            lastConnectedAt: Date.now(),
+                            lastDisconnectedAt: null,
+                            lastErrorMessage: null,
+                        }),
+                        reportProbeResult,
+                        stop: vi.fn(async () => {}),
+                    },
+                });
+
+                (client as any).startChangesSyncWithRetry({ reason: 'reconnect' });
+                await vi.advanceTimersByTimeAsync(0);
+
+                expect(reportProbeResult).toHaveBeenCalledWith({
+                    status: 'auth_failed',
+                    statusCode: status,
+                    errorMessage: `Authentication failed while fetching changes (${status})`,
+                } satisfies ReadinessProbeResult);
+                expect(applyResourceSessionAccessWitness).not.toHaveBeenCalled();
+                expect(writeAccountChangesCursor).not.toHaveBeenCalled();
+
+                await vi.advanceTimersByTimeAsync(2_000);
+                expect(changesAttempts).toBe(1);
+                expect((client as any).connectedServicesProjectionRetry.hasPendingWork()).toBe(false);
+            } finally {
+                await client?.shutdown();
+                vi.useRealTimers();
+            }
+        },
+    );
 
     it('advances a cursor-gone cursor when conservative account settings refresh fails', async () => {
         const machine: Machine = {
@@ -1328,7 +2166,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 9);
     });
 
-    it('refreshes machine snapshot when /v2/changes is missing (e.g. old server 404) on reconnect', async () => {
+    it('refreshes machine snapshot when /v2/changes is missing while disabling only Session Resource access', async () => {
         const machine: Machine = {
             id: 'machine-1',
             encryptionKey: new Uint8Array(32).fill(7),
@@ -1383,7 +2221,10 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         writeAccountChangesCursor.mockClear();
         readAccountChangesCursor.mockClear();
 
-        const client = new ApiMachineClient('token', machine);
+        const applyResourceSessionAccessWitness = vi.fn();
+        const client = new ApiMachineClient('token', machine, undefined, {
+            resourceSessionLifecycle: { applyResourceSessionAccessWitness },
+        });
         client.onConnectedServicesProjection(async () => {});
         await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
 
@@ -1394,6 +2235,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             }),
         );
         expect(writeAccountChangesCursor).not.toHaveBeenCalled();
+        expect(applyResourceSessionAccessWitness).toHaveBeenCalledExactlyOnceWith({ accountId: 'acc-1' });
     });
 
     it.each([401, 403] as const)('reports /v2/changes auth status %i to the machine supervisor without snapshot fallback', async (status) => {
@@ -1725,5 +2567,134 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             status: 'retry_later',
             errorMessage: expect.any(String),
         } satisfies ReadinessProbeResult);
+    });
+
+    it('catches up the existing AccountChange cursor after a live content-free wake', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        let phase: 'initial' | 'live' = 'initial';
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return { status: 200, data: { id: 'acc-1' } };
+            }
+            if (url.includes('/v2/changes')) {
+                if (phase === 'initial') {
+                    return { status: 200, data: { changes: [], nextCursor: 0 } };
+                }
+                return {
+                    status: 200,
+                    data: {
+                        changes: [
+                            {
+                                cursor: 6,
+                                kind: 'pluginDomain',
+                                entityId: 'pluginDomain/example.tasks/settings',
+                                changedAt: 6,
+                                hint: {
+                                    pluginDomain: 'settings',
+                                    pluginId: 'example.tasks',
+                                    scope: 'account',
+                                    revision: 11,
+                                },
+                            },
+                            {
+                                cursor: 8,
+                                kind: 'pluginDomain',
+                                entityId: 'pluginDomain/example.tasks/data-collection/tasks',
+                                changedAt: 8,
+                                hint: {
+                                    pluginDomain: 'dataCollection',
+                                    pluginId: 'example.tasks',
+                                    collectionId: 'tasks',
+                                    contractDigest: 'a'.repeat(43),
+                                    revision: 4,
+                                    full: true,
+                                },
+                            },
+                            {
+                                cursor: 9,
+                                kind: 'pluginDomain',
+                                entityId: 'pluginDomain/example.tasks/availability',
+                                changedAt: 9,
+                                hint: {
+                                    pluginDomain: 'availability',
+                                    pluginId: 'example.tasks',
+                                },
+                            },
+                        ],
+                        nextCursor: 9,
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        client.connect();
+        socket.trigger('connect');
+        await vi.waitFor(() => {
+            expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 0);
+        });
+
+        phase = 'live';
+        axiosGet.mockClear();
+        writeAccountChangesCursor.mockClear();
+        publishPluginAccountSettingsWatchInvalidation.mockClear();
+        publishPluginAccountCollectionWatchInvalidation.mockClear();
+        socket.trigger('update', {
+            id: 'account-change-9',
+            seq: 9,
+            createdAt: 9,
+            body: { t: 'account-change' },
+        });
+
+        await vi.waitFor(() => {
+            expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 9);
+        });
+        expect(axiosGet).toHaveBeenCalledWith(expect.stringContaining('/v2/changes'), expect.anything());
+        expect(publishPluginAccountSettingsWatchInvalidation).toHaveBeenCalledWith({
+            kind: 'record',
+            pluginId: 'example.tasks',
+            revision: 11,
+        });
+        expect(publishPluginAccountCollectionWatchInvalidation).toHaveBeenCalledWith({
+            accountScopeKey: resolveAccountSettingsScopeKeyForToken('token'),
+            kind: 'collection',
+            pluginId: 'example.tasks',
+            collectionId: 'tasks',
+            contractDigest: 'a'.repeat(43),
+            changeCursor: 8,
+        });
+        await client.shutdown();
+    });
+
+    it('retires Collection watch retention only when the ApiMachine Account lifetime shuts down', async () => {
+        const machine: Machine = {
+            id: 'machine-collection-watch-retirement',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        retirePluginAccountCollectionWatchScope.mockClear();
+        const client = new ApiMachineClient('account-token-retirement', machine);
+
+        await client.shutdown();
+
+        expect(retirePluginAccountCollectionWatchScope).toHaveBeenCalledExactlyOnceWith(
+            resolveAccountSettingsScopeKeyForToken('account-token-retirement'),
+        );
     });
 });

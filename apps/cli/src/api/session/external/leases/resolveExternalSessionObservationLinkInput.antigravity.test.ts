@@ -98,7 +98,7 @@ describe('Antigravity production observation admission', () => {
                 );
                 const externalSession =
                     resolution?.executionSurfaces.externalSession;
-                if (!externalSession) {
+                if (!externalSession?.validateSource) {
                     throw new Error(
                         'Expected Antigravity External Sessions execution surface',
                     );
@@ -119,6 +119,21 @@ describe('Antigravity production observation admission', () => {
                     remoteSessionId: candidate.remoteSessionId,
                     metadata: {
                         linkData: candidate.linkData,
+                    },
+                });
+                expect(resolvedLink.source).toMatchObject({
+                    kind: 'antigravityCliPrint',
+                    conversationId,
+                    sourceRevision: candidate.linkData.sourceRevision,
+                });
+                const normalizedSource = await externalSession.validateSource({
+                    source: resolvedLink.source,
+                });
+                expect(normalizedSource).toEqual({
+                    ok: true,
+                    source: {
+                        kind: 'antigravityCliPrint',
+                        brainDir: resolvedLink.source.brainDir,
                     },
                 });
                 const qualifiedIdentity =
@@ -165,6 +180,12 @@ describe('Antigravity production observation admission', () => {
                     },
                     link: {
                         sessionId: 'session-1',
+                        linkedSource: {
+                            source: resolvedLink.source,
+                            remoteSessionId: resolvedLink.remoteSessionId,
+                            // The transcript revision is canonical on the resolved source only.
+                            linkData: {},
+                        },
                     },
                 });
                 if (!resolved) {
@@ -176,10 +197,11 @@ describe('Antigravity production observation admission', () => {
                         watchFile: vi.fn(() => () => {}),
                     });
                 await expect(
-                    projection.reconcileStatusLink(resolved),
-                ).resolves.toMatchObject({
-                    reconciliation: { state: 'reconciled' },
-                });
+                    projection.reconcileTranscriptDemand({
+                        resolved,
+                        demanded: true,
+                    }),
+                ).resolves.toMatchObject({ state: 'observing' });
                 await projection.dispose();
 
                 const runtime = runtimeRegistry.agentRuntimesByAgentId.get(
@@ -228,7 +250,10 @@ describe('Antigravity production observation admission', () => {
                         watchFile: vi.fn(() => () => {}),
                     });
                 await expect(
-                    outsideProjection.reconcileStatusLink(resolved),
+                    outsideProjection.reconcileTranscriptDemand({
+                        resolved,
+                        demanded: true,
+                    }),
                 ).rejects.toThrow('unauthorized file set');
                 await outsideProjection.dispose();
             } finally {

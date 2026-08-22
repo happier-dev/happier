@@ -2,13 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentRuntimeFactory,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+  AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type {
   AgentExternalSessionTakeoverContribution,
-  AgentExternalSessionsContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { prepareExecuteSpawnSessionRequest } from '@/daemon/startup/prepareExecuteSpawnSessionRequest';
+import { logger } from '@/ui/logger';
 import type { ActivationTarget } from '@/plugins/runtime/lifecycle/activation/targets';
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 import {
@@ -21,9 +25,19 @@ import {
   spawnResolvedExternalTakeoverSessionFromRuntimeRegistry,
 } from './resolveExternalTakeoverSpawnOptions';
 
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    debugLargeJson: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+  },
+}));
+
 const PLUGIN_ID = 'happier.agent.fixture';
 const AGENT_ID = 'fixture-agent';
 const GENERATION = 'generation-7';
+const TARGET_DIRECTORY = '/local/selected/workspace';
 
 function target(): ActivationTarget {
   return {
@@ -31,7 +45,6 @@ function target(): ActivationTarget {
     source: { kind: 'path' },
     pluginId: PLUGIN_ID,
     manifestPath: `/plugins/${PLUGIN_ID}/plugin.json`,
-    manifestDigest: `digest-${PLUGIN_ID}`,
     daemonEntryPath: `/plugins/${PLUGIN_ID}/daemon.js`,
     devDaemonEntryPath: null,
     sourceSpec: {
@@ -222,6 +235,7 @@ describe('External Session takeover launch consumption', () => {
       registry,
       linked: linked(),
       sessionId: 'linked-session-1',
+      targetDirectory: TARGET_DIRECTORY,
       signal: new AbortController().signal,
     });
 
@@ -229,7 +243,7 @@ describe('External Session takeover launch consumption', () => {
       ok: true,
       value: {
         options: {
-          directory: '/fresh/workspace',
+          directory: TARGET_DIRECTORY,
           backendTarget: {
             kind: 'backend',
             backendId: AGENT_ID,
@@ -265,6 +279,7 @@ describe('External Session takeover launch consumption', () => {
     expect(fixture.resolveLaunch).toHaveBeenCalledWith(
       expect.objectContaining({
         linkedSessionId: 'linked-session-1',
+        targetDirectory: TARGET_DIRECTORY,
         linkedDirectory: '/linked/workspace',
         source: {
           kind: 'fixtureSource',
@@ -280,6 +295,67 @@ describe('External Session takeover launch consumption', () => {
       .toBeLessThan(fixture.resolveLaunch.mock.invocationCallOrder[0] ?? 0);
   });
 
+  it('keeps the resolved takeover plan private when it enters generic spawn preparation', async () => {
+    const privateDirectory = '/Users/private-user/work/client-project';
+    const privateMachineId = 'machine-private-identity';
+    const privateProfileId = 'profile-private-identity';
+    const privateEnvironmentValue = 'private-environment-value';
+    const fixture = contributions({
+      resolveLaunch: async () => ({
+        ok: true,
+        value: {
+          directory: privateDirectory,
+          environmentVariables: {
+            FIXTURE_HOME: privateEnvironmentValue,
+          },
+        },
+      }),
+    });
+    const resolved = await resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry({
+      registry: runtimeRegistry(fixture),
+      linked: linked(),
+      sessionId: 'linked-session-1',
+      targetDirectory: privateDirectory,
+      signal: new AbortController().signal,
+    });
+    if (!resolved.ok) throw new Error(`Unexpected resolution failure: ${resolved.code}`);
+
+    const result = await prepareExecuteSpawnSessionRequest({
+      request: {
+        options: {
+          ...resolved.value.options,
+          machineId: privateMachineId,
+          profileId: privateProfileId,
+        },
+        credentials: { token: 'token', encryption: null },
+        loadLocalHandoffMetadataByVendorResumeId: async () => null,
+      },
+      validateEnvVarRecordStrict: () => ({
+        ok: false,
+        error: `Invalid environment variable FIXTURE_HOME=${privateEnvironmentValue}`,
+      }),
+    });
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: 'INVALID_ENVIRONMENT_VARIABLES',
+    });
+    const persistentDiagnostics = JSON.stringify({
+      debug: vi.mocked(logger.debug).mock.calls,
+      debugLargeJson: vi.mocked(logger.debugLargeJson).mock.calls,
+    });
+    for (const privateFact of [
+      privateDirectory,
+      privateMachineId,
+      privateProfileId,
+      AGENT_ID,
+      'FIXTURE_HOME',
+      privateEnvironmentValue,
+    ]) {
+      expect(persistentDiagnostics).not.toContain(privateFact);
+    }
+  });
+
   it('maps a typed leaf refusal and rejects an invalid host launch plan without a spawn ticket', async () => {
     const unavailable = contributions({
       resolveLaunch: async () => ({
@@ -291,6 +367,7 @@ describe('External Session takeover launch consumption', () => {
       registry: runtimeRegistry(unavailable),
       linked: linked(),
       sessionId: 'linked-session-1',
+      targetDirectory: TARGET_DIRECTORY,
       signal: new AbortController().signal,
     })).resolves.toEqual({
       ok: false,
@@ -312,6 +389,7 @@ describe('External Session takeover launch consumption', () => {
       registry: runtimeRegistry(smuggling),
       linked: linked(),
       sessionId: 'linked-session-1',
+      targetDirectory: TARGET_DIRECTORY,
       signal: new AbortController().signal,
     })).resolves.toEqual({
       ok: false,
@@ -330,6 +408,7 @@ describe('External Session takeover launch consumption', () => {
       registry,
       linked: linked(),
       sessionId: 'linked-session-1',
+      targetDirectory: TARGET_DIRECTORY,
       signal: new AbortController().signal,
     });
     if (!resolved.ok) throw new Error(`Unexpected resolution failure: ${resolved.code}`);
@@ -361,6 +440,7 @@ describe('External Session takeover launch consumption', () => {
       registry,
       linked: linked(),
       sessionId: 'linked-session-1',
+      targetDirectory: TARGET_DIRECTORY,
       signal: new AbortController().signal,
     });
     if (!resolved.ok) throw new Error(`Unexpected resolution failure: ${resolved.code}`);
@@ -400,6 +480,7 @@ describe('External Session takeover launch consumption', () => {
       registry: auxiliary,
       linked: linked(),
       sessionId: 'linked-session-1',
+      targetDirectory: TARGET_DIRECTORY,
       signal: new AbortController().signal,
     });
     if (!resolved.ok) throw new Error(`Unexpected resolution failure: ${resolved.code}`);
@@ -414,6 +495,7 @@ describe('External Session takeover launch consumption', () => {
       options: {
         transcriptStorage: 'persisted',
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: 'operation-1',
           attemptId: 'attempt-1',
         },
@@ -434,6 +516,7 @@ describe('External Session takeover launch consumption', () => {
       options: {
         transcriptStorage: 'persisted',
         persistedTakeoverAdmission: {
+          mode: 'persisted',
           operationId: 'operation-1',
           attemptId: 'attempt-1',
         },
@@ -451,6 +534,7 @@ describe('External Session takeover launch consumption', () => {
       ...resolved.value.options,
       transcriptStorage: 'persisted',
       persistedTakeoverAdmission: {
+        mode: 'persisted',
         operationId: 'operation-1',
         attemptId: 'attempt-1',
       },

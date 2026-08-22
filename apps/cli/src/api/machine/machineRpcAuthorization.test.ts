@@ -52,6 +52,18 @@ describe('authorizeMachineRpcRequest', () => {
     });
   });
 
+  it('requires the same session-write authorization for recovery restart V2', async () => {
+    await expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2}`,
+      params: { sessionId: 'sess_1' },
+      authorization: undefined,
+    })).resolves.toEqual({
+      ok: false,
+      error: RPC_ERROR_MESSAGES.FORBIDDEN,
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+  });
+
   it('rejects session-write RPCs when decrypted params target another session', async () => {
     await expect(authorizeMachineRpcRequest({
       method: `machine-1:${RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART}`,
@@ -77,4 +89,43 @@ describe('authorizeMachineRpcRequest', () => {
       },
     })).resolves.toEqual({ ok: true });
   });
+
+  it('rejects a Session Agent transition with no server-provided edit proof', async () => {
+    await expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.SESSION_AGENT_TRANSITION}`,
+      params: { sessionId: 'sess_1' },
+      authorization: undefined,
+    })).resolves.toEqual({
+      ok: false,
+      error: RPC_ERROR_MESSAGES.FORBIDDEN,
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+  });
+
+  it('rejects a Session Agent transition whose edit proof names another Session', async () => {
+    await expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.SESSION_AGENT_TRANSITION}`,
+      params: { sessionId: 'sess_2' },
+      authorization: {
+        kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+        sessionId: 'sess_1',
+      },
+    })).resolves.toEqual({
+      ok: false,
+      error: RPC_ERROR_MESSAGES.FORBIDDEN,
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+  });
+
+  it('allows a Session Agent transition whose edit proof matches the decrypted request', async () => {
+    await expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.SESSION_AGENT_TRANSITION}`,
+      params: { sessionId: 'sess_1' },
+      authorization: {
+        kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+        sessionId: 'sess_1',
+      },
+    })).resolves.toEqual({ ok: true });
+  });
+
 });

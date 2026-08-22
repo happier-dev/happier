@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
@@ -12,6 +12,8 @@ import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/servic
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { resolveDaemonStateCandidatePaths } from '@/daemon/ownership/daemonOwnershipPaths';
 import { buildDaemonControlHttpHeaders } from '@/daemon/controlHttp';
+import { DaemonStopIncompleteError } from '@/daemon/controlClient';
+import { isPidAliveBySignal } from '@/daemon/processRunState';
 import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
 type NormalizedDaemonState = Readonly<{
   pid: number;
@@ -25,7 +27,6 @@ type NormalizedDaemonState = Readonly<{
 
 type StopDaemonOptions = Readonly<{
   stopSessions?: boolean;
-  transferManagedLocalServices?: boolean;
 }>;
 
 function parseDaemonStateFromJson(value: unknown): NormalizedDaemonState | null {
@@ -51,15 +52,6 @@ function parseDaemonStateFromJson(value: unknown): NormalizedDaemonState | null 
     startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
     startedWithCliVersion: data.startedWithCliVersion,
   };
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function readDaemonStateFromPath(path: string): Promise<NormalizedDaemonState | null> {
@@ -91,7 +83,7 @@ async function resolveDaemonStateForServer(serverId: string): Promise<Readonly<{
     if (!state) {
       continue;
     }
-    if (isPidAlive(state.pid)) {
+    if (isPidAliveBySignal(state.pid)) {
       return {
         daemonStatePath: candidatePath,
         state,
@@ -109,6 +101,30 @@ async function resolveDaemonStateForServer(serverId: string): Promise<Readonly<{
     daemonStatePath: candidatePaths[0]!,
     state: null,
   };
+}
+
+/**
+ * The servers directory, rather than the mutable profile registry, is the
+ * durable inventory of daemon publications. A removed profile can still own a
+ * live daemon, and each release-ring basename is independently reachable
+ * until its owner retires it.
+ */
+async function listDaemonStatePathsForStop(): Promise<readonly string[]> {
+  try {
+    const entries = await readdir(configuration.serversDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+      .flatMap((serverId) => resolveDaemonStateCandidatePaths({
+        serverDir: join(configuration.serversDir, serverId),
+        preferredRing: configuration.publicReleaseRing,
+      }))
+      .filter((path) => existsSync(path));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
+    throw error;
+  }
 }
 
 export type DaemonStatusEntry = Readonly<{
@@ -225,7 +241,7 @@ export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStat
       (profile?.serverUrl ?? '').toString().trim() ||
       (serverId === activeServerId ? (configuration.serverUrl ?? '').toString().trim() : '');
     const { daemonStatePath, state } = await resolveDaemonStateForServer(serverId);
-    const running = state ? isPidAlive(state.pid) : false;
+    const running = state ? isPidAliveBySignal(state.pid) : false;
     const serviceManagedDaemonRunning = running
       && resolveDaemonStartupSourceServiceManagedState(state?.startupSource) === true;
     const staleStateFile = Boolean(state && !running);
@@ -274,10 +290,10 @@ export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStat
 async function waitForProcessDeath(pid: number, timeoutMs: number): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (!isPidAlive(pid)) return true;
+    if (!isPidAliveBySignal(pid)) return true;
     await new Promise((r) => setTimeout(r, 75));
   }
-  return !isPidAlive(pid);
+  return !isPidAliveBySignal(pid);
 }
 
 async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState, opts: StopDaemonOptions): Promise<boolean> {
@@ -292,7 +308,6 @@ async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState, opts: S
       headers,
       body: JSON.stringify({
         ...(opts.stopSessions ? { stopSessions: true } : {}),
-        ...(opts.transferManagedLocalServices ? { transferManagedLocalServices: true } : {}),
       }),
       signal: AbortSignal.timeout(timeout),
     });
@@ -302,37 +317,73 @@ async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState, opts: S
   }
 }
 
+async function assertNoLiveDaemonPublicationAfterStop(): Promise<void> {
+  let statePaths: readonly string[];
+  try {
+    // Re-enumerate through the same durable state owner after every originally
+    // observed daemon has stopped. A successor can replace a predecessor's
+    // state publication during its graceful shutdown, and this observer must
+    // fail closed rather than let logout remove that successor's home.
+    statePaths = await listDaemonStatePathsForStop();
+  } catch (error) {
+    logger.debug('[multi-daemon] failed to re-enumerate daemon stop targets', error);
+    throw new DaemonStopIncompleteError({ reason: 'control_client_failure' });
+  }
+
+  for (const statePath of statePaths) {
+    const state = await readDaemonStateFromPath(statePath);
+    if (!state) {
+      throw new DaemonStopIncompleteError({ reason: 'control_client_failure' });
+    }
+    if (isPidAliveBySignal(state.pid)) {
+      throw new DaemonStopIncompleteError({
+        reason: 'graceful_stop_unconfirmed',
+        pid: state.pid,
+      });
+    }
+  }
+}
+
 /**
- * Best-effort stop for all daemons found in known server profiles.
+ * Best-effort stop for every published daemon state in the current home.
  * Safety: does not force-kill processes; uses the daemon control HTTP endpoint.
- * Also clears stale state files when the PID is not alive.
+ * State and lifecycle-lock cleanup remain owned by the exact daemon lock holder or the next
+ * CLI lock acquisition; this cross-profile observer must not delete a successor publication.
  */
 export async function stopAllDaemonsBestEffort(opts: StopDaemonOptions = {}): Promise<void> {
-  const statuses = await listDaemonStatusesForAllKnownServers();
-  for (const entry of statuses) {
-    const statePath = entry.daemonStatePath;
+  let statePaths: readonly string[];
+  try {
+    statePaths = await listDaemonStatePathsForStop();
+  } catch (error) {
+    logger.debug('[multi-daemon] failed to enumerate daemon stop targets', error);
+    throw new DaemonStopIncompleteError({ reason: 'control_client_failure' });
+  }
+  let incomplete: DaemonStopIncompleteError | null = null;
+  for (const statePath of statePaths) {
     const state = await readDaemonStateFromPath(statePath);
-    if (!state) continue;
-
-    if (!isPidAlive(state.pid)) {
-      try {
-        await unlink(statePath);
-      } catch {
-        // ignore
-      }
+    if (!state) {
+      incomplete ??= new DaemonStopIncompleteError({ reason: 'control_client_failure' });
       continue;
     }
 
+    if (!isPidAliveBySignal(state.pid)) continue;
+
     const stopped = await stopDaemonViaHttpBestEffort(state, opts);
-    if (!stopped) continue;
+    if (!stopped) {
+      incomplete ??= new DaemonStopIncompleteError({
+        reason: 'control_client_failure',
+        pid: state.pid,
+      });
+      continue;
+    }
 
-    const exited = await waitForProcessDeath(state.pid, 2500);
-    if (!exited) continue;
-
-    try {
-      await unlink(statePath);
-    } catch {
-      // ignore
+    if (!await waitForProcessDeath(state.pid, 2500)) {
+      incomplete ??= new DaemonStopIncompleteError({
+        reason: 'graceful_stop_unconfirmed',
+        pid: state.pid,
+      });
     }
   }
+  if (incomplete) throw incomplete;
+  await assertNoLiveDaemonPublicationAfterStop();
 }

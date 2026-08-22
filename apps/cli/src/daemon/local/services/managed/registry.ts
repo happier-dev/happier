@@ -53,6 +53,23 @@ function isCorrelatedProcess(entry: ManagedInventoryCandidate, managedPid: numbe
         || process.lineagePids?.includes(managedPid) === true;
 }
 
+export function selectManagedOwnedTreeEndpoint(input: Readonly<{
+    entries: readonly ManagedInventoryCandidate[];
+    managedPid: number;
+    minimumConfidence: Confidence;
+}>): ManagedInventoryCandidate | null {
+    const matches = input.entries.filter((entry) => (
+        isCorrelatedProcess(entry, input.managedPid)
+        && confidenceRank(
+            entry.provenance?.process?.pid === input.managedPid
+                ? 'high'
+                : entry.processOwnershipConfidence,
+        )
+            >= confidenceRank(input.minimumConfidence)
+    ));
+    return matches.length === 1 ? matches[0]! : null;
+}
+
 export type ManagedLocalServiceRegistry = Readonly<{
     getService(serviceId: string): ManagedLocalServiceRuntimeState | null;
     listServices(): readonly ManagedLocalServiceRuntimeState[];
@@ -77,6 +94,9 @@ export type ManagedLocalServiceRegistry = Readonly<{
         port: number;
     }>): ManagedLocalServiceRuntimeState;
     applyInventoryEntry(entry: ManagedInventoryCandidate): ManagedLocalServiceRuntimeState | null;
+    applyInventoryEntries(
+        entries: readonly ManagedInventoryCandidate[],
+    ): readonly ManagedLocalServiceRuntimeState[];
     /**
      * Transition a live assign-and-inject service between `running` and `unhealthy`
      * (driven by the daemon-internal health monitor). Ignored for services that are not
@@ -151,10 +171,18 @@ export function createManagedLocalServiceRegistry(): ManagedLocalServiceRegistry
             return state;
         },
         applyInventoryEntry(entry) {
+            return this.applyInventoryEntries([entry])[0] ?? null;
+        },
+        applyInventoryEntries(entries) {
+            const transitions: ManagedLocalServiceRuntimeState[] = [];
             for (const [serviceId, state] of live) {
                 if (state.phase !== 'detecting') continue;
-                if (!isCorrelatedProcess(entry, state.process.pid)) continue;
-                if (confidenceRank(entry.processOwnershipConfidence) < confidenceRank(state.minimumConfidence)) continue;
+                const entry = selectManagedOwnedTreeEndpoint({
+                    entries,
+                    managedPid: state.process.pid,
+                    minimumConfidence: state.minimumConfidence,
+                });
+                if (!entry) continue;
                 const next: ManagedLocalServiceRuntimeState = {
                     ...state,
                     phase: 'running',
@@ -163,9 +191,9 @@ export function createManagedLocalServiceRegistry(): ManagedLocalServiceRegistry
                     diagnostics: [],
                 };
                 live.set(serviceId, next);
-                return next;
+                transitions.push(next);
             }
-            return null;
+            return Object.freeze(transitions);
         },
         markHealthPhase(input) {
             const state = live.get(input.serviceId);

@@ -109,12 +109,6 @@ function createParams(overrides: Partial<Parameters<typeof import('./spawnWindow
     normalizedExistingSessionId: '',
     effectiveResume: '',
     reservedSessionId: 'reserved-session',
-    localServicesBridgeAuthorization: {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
-      pluginId: 'happier.agent.codex',
-      contributionId: 'codex',
-      tokenFilePath: 'C:\\Users\\test\\.happier\\tmp\\bridge-token',
-    },
     directoryCreated: false,
     extraEnvForChildWithMessage: {},
     processEnv: {
@@ -202,6 +196,42 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
     if (originalPlatformDescriptor) {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     }
+  });
+
+  it('tracks the stable V2 authority path and exact bootstrap identity for a Windows runner bootstrap', async () => {
+    const input = createParams({
+      windowsLaunchMode: 'windows_terminal',
+      runnerAgentSessionBootstrapAuthorization: {
+        authorityFilePath: '/private/runner-authority.json',
+        bootstrapFilePath: '/private/runner-bootstrap.json',
+        descriptor: {
+          v: 1,
+          pluginId: 'plugin.acme',
+          pluginVersion: '1.0.0',
+          agentId: 'agent',
+          backendId: 'agent',
+          generation: 'generation-1',
+        },
+      },
+    });
+
+    await expect(resolveWindowsTerminalWebhook(
+      input,
+      (tracked) => {
+        expect(tracked).toMatchObject({
+          agentRuntimeDaemonServiceAuthorityFilePath:
+            '/private/runner-authority.json',
+          runnerAgentBootstrapIdentity: {
+            agentId: 'agent',
+            backendId: 'agent',
+          },
+        });
+        tracked.happySessionId = 'session-8888';
+      },
+    )).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'session-8888',
+    });
   });
 
   async function withPackagedWindowsCli<T>(fn: (binaryPath: string) => Promise<T> | T): Promise<T> {

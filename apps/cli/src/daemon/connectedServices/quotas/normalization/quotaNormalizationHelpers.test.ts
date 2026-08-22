@@ -84,6 +84,82 @@ describe('quota normalization helpers', () => {
     });
   });
 
+  it('normalizes absolute provider reset epochs at the shared seconds/ms boundary', async () => {
+    const helpers = await loadNormalizationHelpers();
+    const cases: ReadonlyArray<readonly [unknown, number | null]> = [
+      [1_700_000_000, 1_700_000_000_000],
+      [1_700_000_000_000, 1_700_000_000_000],
+      [1_000_000_000_000, 1_000_000_000_000],
+      ['1700000000', 1_700_000_000_000],
+      ['1700000000000', 1_700_000_000_000],
+      [Number.NaN, null],
+      [Number.POSITIVE_INFINITY, null],
+      [-1, null],
+      ['not-a-timestamp', null],
+    ];
+
+    for (const [value, expected] of cases) {
+      const timing = helpers.parseProviderResetAt({
+        nowMs: 0,
+        headers: { 'x-ratelimit-reset': value },
+      });
+      if (expected === null) {
+        expect(timing).toEqual({ retryAfterMs: null, resetAtMs: null });
+      } else {
+        expect(timing).toEqual({ retryAfterMs: expected, resetAtMs: expected });
+      }
+    }
+  });
+
+  it('rejects retry delays whose finite conversion cannot be represented safely', async () => {
+    const helpers = await loadNormalizationHelpers();
+
+    expect(helpers.parseRetryAfterHeader(Number.MAX_VALUE, { nowMs: 0 })).toEqual({
+      retryAfterMs: null,
+      resetAtMs: null,
+    });
+    expect(helpers.parseCompactDurationMs(`${Number.MAX_SAFE_INTEGER}d`)).toBeNull();
+    expect(helpers.parseCompactDurationMs(`${Number.MAX_SAFE_INTEGER}ms 1ms`)).toBeNull();
+    expect(helpers.parseProviderTimestampMs(Number.MAX_SAFE_INTEGER + 1)).toBeNull();
+    expect(helpers.parseProviderResetAt({
+      nowMs: 0,
+      headers: { 'retry-after-ms': Number.MAX_VALUE },
+    })).toEqual({
+      retryAfterMs: null,
+      resetAtMs: null,
+    });
+  });
+
+  it('rejects a reset delay when adding it to now exceeds safe millisecond precision', async () => {
+    const helpers = await loadNormalizationHelpers();
+
+    expect(helpers.parseProviderResetAt({
+      nowMs: Number.MAX_SAFE_INTEGER - 500,
+      headers: { 'x-ratelimit-reset-after': '1' },
+    })).toEqual({
+      retryAfterMs: null,
+      resetAtMs: null,
+    });
+  });
+
+  it('keeps valid large, date, and negative retry-after evidence distinct', async () => {
+    const helpers = await loadNormalizationHelpers();
+    const nowMs = Date.parse('2026-05-17T12:00:00.000Z');
+
+    expect(helpers.parseRetryAfterHeader(Math.floor(Number.MAX_SAFE_INTEGER / 1_000), { nowMs: 0 })).toEqual({
+      retryAfterMs: 9_007_199_254_740_000,
+      resetAtMs: null,
+    });
+    expect(helpers.parseRetryAfterHeader('Sun, 17 May 2026 12:00:10 GMT', { nowMs })).toEqual({
+      retryAfterMs: 10_000,
+      resetAtMs: Date.parse('2026-05-17T12:00:10.000Z'),
+    });
+    expect(helpers.parseRetryAfterHeader('-1', { nowMs })).toEqual({
+      retryAfterMs: null,
+      resetAtMs: null,
+    });
+  });
+
   it('keeps provider-specific reset parsers out of generic daemon normalization', async () => {
     const source = await readFile(new URL('./parseProviderResetAt.ts', import.meta.url), 'utf8');
 

@@ -9,7 +9,7 @@ import type { ExecutionRunConnectedServicesBridge } from './executionRunMaterial
 
 type CandidateMarker = Readonly<{
   runId: string;
-  happySessionId: string;
+  happySessionId: string | null;
   pid: number;
   status: unknown;
   finishedAtMs?: unknown;
@@ -44,6 +44,12 @@ export async function rehydrateLiveExecutionRunTargets(input: Readonly<{
   const inactiveRunIds: string[] = [];
   for (const candidate of candidates) {
     const { marker, normalized } = candidate;
+    // A detached run has no Session runner to prove or re-adopt. Its marker is
+    // observability only; daemon loss does not manufacture a restart owner.
+    if (marker.happySessionId === null) {
+      inactiveRunIds.push(marker.runId);
+      continue;
+    }
     const isRunning = marker.status === 'running' && typeof marker.finishedAtMs !== 'number';
     const registration = normalized?.registration;
     const isExact = Boolean(

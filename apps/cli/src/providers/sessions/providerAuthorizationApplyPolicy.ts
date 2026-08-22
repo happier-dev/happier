@@ -1,10 +1,11 @@
 import {
   compareProviderCanonicalStringsV1,
+  createProviderManagedPurposeBindingsEqualityKeyV1,
+  sessionProviderBindingMetadataMatchesRuntimeBasisV1,
   type ModelSelectionApplyPolicy,
   type ProviderBoundModelRef,
-  type ProviderManagedDeploymentSecurityFactsV1,
   type ProviderRuntimeBindingBasisV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
+  type ResolvedProviderManagedRuntimeDeclarationV1,
   type SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
 
@@ -27,28 +28,12 @@ function canonicalize(value: unknown): unknown {
   );
 }
 
-function canonicalManagedPurposeBindingList(
-  purposeBindings: QualifiedConnectedAccountPurposeBindingsV1,
-): QualifiedConnectedAccountPurposeBindingsV1['bindings'] {
-  return [...purposeBindings.bindings].sort((left, right) =>
-    compareProviderCanonicalStringsV1(JSON.stringify(left), JSON.stringify(right)),
-  );
-}
-
-function canonicalManagedPurposeBindings(
-  purposeBindings: QualifiedConnectedAccountPurposeBindingsV1 | undefined,
-): string | null {
-  return purposeBindings
-    ? JSON.stringify(canonicalManagedPurposeBindingList(purposeBindings))
-    : null;
-}
-
 function canonicalManagedConnectedAccounts(
-  connectedAccounts: ProviderManagedDeploymentSecurityFactsV1['connectedAccounts'],
-): ProviderManagedDeploymentSecurityFactsV1['connectedAccounts'] {
+  connectedAccounts: ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'],
+): ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'] {
   // Purpose ids are unique within one consumer by schema, so purpose is the
-  // complete canonical order key while the full declaration remains identity.
-  return connectedAccounts.map((declaration) => ({
+  // complete canonical order key for runtime-relevant declaration facts.
+  return connectedAccounts.map(({ title: _title, ...declaration }) => ({
     ...declaration,
     ...(declaration.materializationKinds !== undefined
       ? {
@@ -62,8 +47,8 @@ function canonicalManagedConnectedAccounts(
 }
 
 function canonicalManagedRequestAuthUses(
-  requestAuthUses: ProviderManagedDeploymentSecurityFactsV1['requestAuthUses'],
-): ProviderManagedDeploymentSecurityFactsV1['requestAuthUses'] {
+  requestAuthUses: ResolvedProviderManagedRuntimeDeclarationV1['requestAuthUses'],
+): ResolvedProviderManagedRuntimeDeclarationV1['requestAuthUses'] {
   return [...requestAuthUses].sort((left, right) =>
     compareProviderCanonicalStringsV1(left.purpose, right.purpose));
 }
@@ -77,21 +62,22 @@ function canonicalRuntimeBindingBasis(
           ...basis,
           deployment: {
             ...basis.deployment,
-            securityFacts: {
-              ...basis.deployment.securityFacts,
+            managedRuntime: {
+              ...basis.deployment.managedRuntime,
+              dependencies: [
+                ...basis.deployment.managedRuntime.dependencies,
+              ].sort(compareProviderCanonicalStringsV1),
               connectedAccounts: canonicalManagedConnectedAccounts(
-                basis.deployment.securityFacts.connectedAccounts,
+                basis.deployment.managedRuntime.connectedAccounts,
               ),
               requestAuthUses: canonicalManagedRequestAuthUses(
-                basis.deployment.securityFacts.requestAuthUses,
+                basis.deployment.managedRuntime.requestAuthUses,
               ),
             },
-            purposeBindings: {
-              ...basis.deployment.purposeBindings,
-              bindings: canonicalManagedPurposeBindingList(
+            purposeBindings:
+              createProviderManagedPurposeBindingsEqualityKeyV1(
                 basis.deployment.purposeBindings,
               ),
-            },
           },
         }
       : basis,
@@ -122,32 +108,10 @@ export function activeProviderBindingMetadataMatchesRuntimeBasis(
     activeSessionBindingMetadata: SessionProviderBindingMetadataV1;
   }>,
 ): boolean {
-  const activeBasis =
-    input.activeSessionBindingMetadata.runtimeBindingBasis;
-  if (!activeBasis) return false;
-  return input.activeSelection.agentTargetKey === activeBasis.agentTargetKey
-    && input.activeSelection.providerConnectionId
-      === activeBasis.connectionId
-    && input.activeSessionBindingMetadata.connectionId
-      === activeBasis.connectionId
-    && input.activeSessionBindingMetadata.contributionKey
-      === activeBasis.contributionKey
-    && input.activeSessionBindingMetadata.protocol
-      === activeBasis.endpoint.protocol
-    && input.activeSessionBindingMetadata.materialization
-      === activeBasis.prepared.materialization
-    && (input.activeSessionBindingMetadata.adapterBindingKey ?? null)
-      === (activeBasis.prepared.adapterBindingKey ?? null)
-    && canonicalManagedPurposeBindings(
-      input.activeSessionBindingMetadata.managedPurposeBindings,
-    )
-      === (
-        activeBasis.deployment.kind === 'managedLocal'
-          ? canonicalManagedPurposeBindings(
-              activeBasis.deployment.purposeBindings,
-            )
-          : null
-      );
+  return sessionProviderBindingMetadataMatchesRuntimeBasisV1({
+    selection: input.activeSelection,
+    binding: input.activeSessionBindingMetadata,
+  });
 }
 
 export function resolveProviderAuthorizationApplyPolicy(

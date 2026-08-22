@@ -105,4 +105,28 @@ describe('classifyHappyProcess', () => {
     expect(res).not.toBeNull();
     expect(res!.type).toBe('daemon-spawned-session');
   });
+
+  it('should detect a quoted Windows daemon-spawned session from a published source-copy snapshot', () => {
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: 'C:\\Program Files\\nodejs\\node.exe',
+      cmd: '"C:\\Program Files\\nodejs\\node.exe" --import C:\\repo\\node_modules\\tsx\\dist\\esm\\index.mjs --no-warnings --no-deprecation "C:\\repo\\.project\\tmp\\cli-source-snapshot-source-51405-1785848300000-1\\src\\index.ts" pi --happy-starting-mode remote --started-by daemon',
+    });
+    expect(res).not.toBeNull();
+    expect(res!.type).toBe('dev-daemon-spawned');
+  });
+
+  it.each([
+    '/repo/.project/tmp/arbitrary-source-51405-1785848300000-1/src/index.ts',
+    '/repo/.project/tmp/cli-dist-source-51405-1785848300000-1/src/index.ts',
+    '/repo/.project/tmp/cli-source-snapshot-source-current/src/index.ts',
+    '/repo/.project/tmp/cli-source-snapshot-source-51405-1785848300000-1-extra/src/index.ts',
+  ])('does not classify a non-canonical source-copy snapshot path: %s', (entrypoint) => {
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: 'node',
+      cmd: `/usr/bin/node --import /repo/node_modules/tsx/dist/esm/index.mjs ${entrypoint} pi --happy-starting-mode remote --started-by daemon`,
+    });
+    expect(res).toBeNull();
+  });
 });

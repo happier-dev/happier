@@ -12,6 +12,8 @@ import {
 import type { Credentials } from '@/persistence';
 import type { ApiClient } from '@/api/api';
 import { formatPiSessionDirectoryForCwd } from '@happier-dev/plugins-pi/agent/sessionFiles';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 
 import {
   ConnectedServiceSpawnResumeUnreachableError,
@@ -77,11 +79,14 @@ function buildPiTokenCredentialApiAndCredentials(): Readonly<{ api: ApiClient; c
   });
 
   const api = {
+    getAccountEncryptionMode: async () => 'e2ee' as const,
     getConnectedServiceCredentialSealed: async (params: { serviceId: string; profileId: string }) => {
       if (params.serviceId !== 'openai' || params.profileId !== 'work') return null;
       return {
         sealed: { format: 'account_scoped_v1', ciphertext },
         metadata: { kind: 'token', providerEmail: null, providerAccountId: null, expiresAt: null },
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' as const,
       };
     },
   } as unknown as ApiClient;
@@ -145,6 +150,12 @@ async function callSpawn(params: Readonly<{
     vendorResumeId: params.vendorResumeId ?? null,
     resumeReachabilityRequired: params.resumeReachabilityRequired ?? false,
     candidatePersistedSessionFile: params.candidatePersistedSessionFile ?? null,
+    resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+      resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+        agentId: 'pi',
+        bindings,
+        contributions: getResolvedContributionRegistry(),
+      }),
   });
 }
 

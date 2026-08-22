@@ -6,24 +6,36 @@ import {
   type ConnectedServiceId,
   type QualifiedConnectedAccountGroupV4,
   type QualifiedConnectedAccountProfileV4,
+  type QualifiedConnectedAccountPurposeV1,
   type QualifiedConnectedAccountPurposeBindingTargetV1,
   type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
-  PluginConnectedAccountMaterialization,
-  PluginConnectedAccountMaterializationRequest,
+  ConnectedAccountMaterializationRequest,
+  ConnectedAccountListedAccount as PluginConnectedAccountListedAccount,
+  ConnectedAccountListedState as PluginConnectedAccountListedState,
+  ConnectedAccountMaterialization as PluginConnectedAccountMaterialization,
+  ConnectedAccountMetadataList as PluginConnectedAccountMetadataList } from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
   PluginContributionRef,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk';
 
 import type { ApiClient } from '@/api/api';
+import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
 import type {
   QualifiedConnectedAccountPeerOperationTransport,
 } from '@/api/client/qualifiedConnectedAccountApi';
 import { connectedAccountProjectionFamily } from '@/plugins/projection/registry/connectedAccounts';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { createPluginInvocationUi } from '@/plugins/runtime/invocation/services/ui';
-import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
+import type {
+  ConnectedAccountConfiguredEndpoint,
+} from '@/plugins/runtime/connectedAccounts/configuredOrigins';
+import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
+import type {
+  ConnectedAccountMaterializationCredentialRevisionBasis,
+  StablePluginConnectedAccountsOwner,
+} from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeRegistry';
 
@@ -41,6 +53,7 @@ import type {
   QualifiedConnectedAccountV4Support,
 } from '../qualifiedConnectedAccountV4Support';
 import type {
+  QualifiedConnectedAccountEstablishedRuntimeOwner,
   RevisionedLegacyConnectedAccountMaterializationOwner,
 } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 
@@ -54,16 +67,13 @@ type ConnectedAccountPurposeBindingApi = Pick<
   | 'listConnectedServiceProfiles'
 >;
 
-type QualifiedConnectedAccountMaterializationOwner = Readonly<{
-  invoke(input: Readonly<{
-    account: QualifiedConnectedAccountRef;
-    operation: Readonly<{
-      kind: 'materialize';
-      request: PluginConnectedAccountMaterializationRequest;
-    }>;
-    signal?: AbortSignal;
-  }>): Promise<PluginConnectedAccountMaterialization>;
-}>;
+type QualifiedConnectedAccountMaterializationOwner = Pick<
+  QualifiedConnectedAccountEstablishedRuntimeOwner,
+  'invokeWithReceipt'
+> & Partial<Pick<
+  QualifiedConnectedAccountEstablishedRuntimeOwner,
+  'readCredentialRevision'
+>>;
 
 type ResolvedDaemonConnectedAccountService = Readonly<{
   service: QualifiedConnectedAccountRef['service'];
@@ -73,6 +83,7 @@ type ResolvedDaemonConnectedAccountService = Readonly<{
 type DaemonConnectedAccountSelectionProfile = Readonly<{
   profileId: string;
   status: string;
+  expiresAt?: number | null;
   providerAccountId?: string | null;
   providerEmail?: string | null;
   displayName?: string;
@@ -88,7 +99,6 @@ type DaemonConnectedAccountSelectionGroup = Readonly<{
 }>;
 
 type DaemonConnectedAccountRegistryLease = Readonly<{
-  generation: string;
   isCurrent(): boolean;
   resolveService(service: PluginContributionRef): ResolvedDaemonConnectedAccountService | null;
   listServices?(): readonly ResolvedDaemonConnectedAccountService[];
@@ -100,19 +110,51 @@ export type DaemonConnectedAccountRuntimeRegistry = Readonly<{
   subscribe(listener: () => void): () => void;
 }>;
 
+/** A transient Action-form choice; credentials and service authority stay private. */
+export type DaemonConnectedAccountActionFormOption = Readonly<{
+  value: QualifiedConnectedAccountRef;
+  label: string;
+}>;
+
 export type DaemonConnectedAccountPurposeBindingRuntime = Readonly<{
   owner: StablePluginConnectedAccountsOwner;
   activatePurposeBindings:
     ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
   activateSessionPurposeBindings:
     ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings'];
+  resolveCurrentSessionPurposeBindingSnapshot:
+    ConnectedAccountPurposeBindingOwner['resolveCurrentSessionPurposeBindingSnapshot'];
+  resolveCurrentRequestAuthBinding:
+    ConnectedAccountPurposeBindingOwner['resolveCurrentRequestAuthBinding'];
+  materializeRequestAuthBearer:
+    ConnectedAccountPurposeBindingOwner['materializeRequestAuthBearer'];
   resolveBindingIntent: ConnectedAccountPurposeBindingOwner['resolveBindingIntent'];
+  /**
+   * Lists account targets for one purpose already authorized by the caller.
+   * This is intentionally account-only: group selection remains the separate
+   * interactive Connected Account binding flow.
+   */
+  listActionFormConnectedAccountOptions(input: Readonly<{
+    purpose: QualifiedConnectedAccountPurposeV1;
+    serviceRefs: readonly PluginContributionRef[];
+    signal: AbortSignal;
+  }>): Promise<readonly DaemonConnectedAccountActionFormOption[]>;
   listCoordinatorAccounts(
     signal?: AbortSignal,
   ): Promise<readonly QualifiedConnectedAccountProfileV4[]>;
+  listGroupQuotaTargets(input: Readonly<{
+    service: QualifiedConnectedAccountRef['service'];
+    groupId: string;
+    accountIds: ReadonlyArray<string>;
+    signal: AbortSignal;
+  }>): Promise<readonly Readonly<{
+    profile: QualifiedConnectedAccountProfileV4;
+    groupGeneration: number;
+  }>[]>;
   reconcileRegistryPublication(input: Readonly<{
     previous: ResolvedContributionRegistry | null;
     candidate: ResolvedContributionRegistry;
+    candidateActivePluginIds?: ReadonlySet<string>;
     resolveOptionalAccess(pluginId: string): readonly PluginAccessSelection[];
     publish(): void;
   }>): Promise<void>;
@@ -154,7 +196,6 @@ function createRuntimeRegistryAccess(
         registry: lease.registry.contributes,
       });
       return Object.freeze({
-        generation: lease.registry.contributes.generationId ?? 'current',
         isCurrent: () => reloadController.isRuntimeRegistryCurrent(lease.registry),
         resolveService(service: PluginContributionRef) {
           const parsedEntry = ConnectedAccountUiProjectionEntryV1Schema.safeParse(
@@ -208,6 +249,91 @@ function createRuntimeRegistryAccess(
   return Object.freeze(access);
 }
 
+/**
+ * The V4 account list response is bounded by its canonical projection schema and
+ * publishes no resumable cursor, so a response at that bound cannot be proven
+ * complete.
+ */
+const QUALIFIED_CONNECTED_ACCOUNT_LIST_RESPONSE_BOUND = 500;
+/** Shared ceiling for the authorized account inventory exposed to one purpose. */
+const CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND = 256;
+const CONNECTED_ACCOUNT_DISPLAY_NAME_MAX_LENGTH = 512;
+
+type DaemonConnectedAccountInventoryEntry = Readonly<{
+  account: QualifiedConnectedAccountRef;
+  displayName: string;
+  state: PluginConnectedAccountListedState;
+  /** Only a qualified V4 account owns a projectable configured-origin snapshot. */
+  qualified: boolean;
+}>;
+
+type DaemonConnectedAccountInventory = Readonly<{
+  entries: readonly DaemonConnectedAccountInventoryEntry[];
+  /** True when a bounded upstream response may have elided authorized rows. */
+  elided: boolean;
+}>;
+
+function inventoryKey(account: QualifiedConnectedAccountRef): string {
+  return JSON.stringify([
+    account.service.pluginId,
+    account.service.localId,
+    account.accountId,
+  ]);
+}
+
+function boundedDisplayName(labelLike: unknown, fallback: string): string {
+  return typeof labelLike === 'string'
+    && labelLike.trim().length > 0
+    && labelLike.length <= CONNECTED_ACCOUNT_DISPLAY_NAME_MAX_LENGTH
+    ? labelLike.trim()
+    : fallback;
+}
+
+/**
+ * The one usability rule shared by binding resolution, interactive selection,
+ * Action-form options, and the public listing: a connected account whose
+ * credential has not already expired.
+ */
+function isConnectedUnexpiredProfile(profile: Readonly<{
+  status: string;
+  expiresAt?: number | null;
+}>): boolean {
+  return profile.status === 'connected'
+    && (typeof profile.expiresAt !== 'number' || profile.expiresAt > Date.now());
+}
+
+/**
+ * One canonical projection from the host's connection facts to the public
+ * listed state. A non-connected account stays visible with an honest state
+ * instead of being silently dropped.
+ */
+function listedConnectedAccountState(profile: Readonly<{
+  status: 'connected' | 'refreshing' | 'needs_reauth' | 'refresh_failed_retryable';
+  expiresAt?: number | null;
+  configurationReady?: boolean;
+}>): PluginConnectedAccountListedState {
+  if (profile.status === 'needs_reauth') return 'reconnectRequired';
+  if (profile.status !== 'connected') return 'unavailable';
+  if (!isConnectedUnexpiredProfile(profile)) return 'expired';
+  if (profile.configurationReady === false) return 'unavailable';
+  return 'connected';
+}
+
+function configuredOriginsUnavailable(): PluginError {
+  return new PluginError({
+    code: 'connected_account_configured_origins_unavailable',
+    message:
+      'Connected Account configured-origin projection is unavailable for this daemon runtime',
+  });
+}
+
+function listedAccountOutOfScope(): PluginError {
+  return new PluginError({
+    code: 'plugin_connected_account_binding_out_of_scope',
+    message: 'Connected Account is not currently authorized for this purpose',
+  });
+}
+
 function unavailableSelection(): never {
   throw new PluginError({
     code: 'plugin_ui_unavailable',
@@ -221,9 +347,7 @@ function assertCurrentRegistry(
 ): void {
   signal.throwIfAborted();
   if (!registryLease.isCurrent()) {
-    throw new Error(
-      `Connected-account registry generation '${registryLease.generation}' is no longer current`,
-    );
+    throw new Error('Connected-account runtime registry is no longer current');
   }
 }
 
@@ -242,6 +366,20 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
   >;
   runtimeRegistry?: DaemonConnectedAccountRuntimeRegistry;
   store?: ConnectedAccountPurposeBindingStore;
+  /**
+   * Host-private projection of the incumbent configured-endpoint owner for one
+   * exact qualified account. It returns bounded, unique, host-normalized,
+   * credential-free endpoints — the network origin paired with the configured
+   * service base — and never a preferred one. Absent it, the purpose-scoped
+   * listing and exact-listed materialization fail closed rather than reporting
+   * an unverified empty endpoint set.
+   */
+  resolveConnectedAccountEndpoints?: (
+    input: Readonly<{
+      account: QualifiedConnectedAccountRef;
+      signal: AbortSignal;
+    }>,
+  ) => Promise<readonly ConnectedAccountConfiguredEndpoint[]>;
   qualifiedApi?: Readonly<{
     listAccounts(
       service: QualifiedConnectedAccountRef['service'],
@@ -267,6 +405,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       purpose: Parameters<StablePluginConnectedAccountsOwner['requestSelection']>[0]['purpose'];
       serviceRefs: readonly PluginContributionRef[];
       currentSession?: Parameters<StablePluginConnectedAccountsOwner['requestSelection']>[0]['currentSession'];
+      permissionOwner?: PermissionRequestOwner;
       reason: string;
       signal: AbortSignal;
     }>,
@@ -332,7 +471,9 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         && candidate.ref.service.localId === account.service.localId
         && candidate.ref.accountId === account.accountId
       ));
-      if (!profile || profile.status !== 'connected') return null;
+      if (!profile || !isConnectedUnexpiredProfile(profile)) {
+        return null;
+      }
       return Object.freeze({
         displayName: profile.displayName
           ?? profile.providerIdentity?.email
@@ -364,11 +505,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     signal.throwIfAborted();
     if (result.serviceId !== transport.serviceId) return null;
     const profile = result.profiles.find((candidate) => candidate.profileId === account.accountId);
-    if (
-      !profile
-      || profile.status !== 'connected'
-      || (typeof profile.expiresAt === 'number' && profile.expiresAt <= Date.now())
-    ) {
+    if (!profile || !isConnectedUnexpiredProfile(profile)) {
       return null;
     }
     return Object.freeze({
@@ -422,6 +559,10 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
           ...resolvedAccount,
           displayName: group.displayName
             ?? group.ref.groupId,
+          group: Object.freeze({
+            groupId: group.ref.groupId,
+            generation: group.generation,
+          }),
         })
       : null;
   };
@@ -473,6 +614,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
                 providerAccountId: profile.providerIdentity?.accountId,
                 providerEmail: profile.providerIdentity?.email,
                 displayName: profile.displayName,
+                expiresAt: profile.expiresAt,
               }))),
             params.qualifiedApi!.listGroups(service.service, input.signal)
               .then((result) => result.groups.map((group) => Object.freeze({
@@ -499,12 +641,13 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
               status: profile.status,
               providerAccountId: profile.providerAccountId,
               providerEmail: profile.providerEmail,
+              expiresAt: profile.expiresAt,
             }))),
             Object.freeze([]),
           ];
       input.signal.throwIfAborted();
       const availableProfiles = new Map(profiles.flatMap((profile) => (
-        profile.status === 'connected'
+        isConnectedUnexpiredProfile(profile)
           ? [[profile.profileId, profile] as const]
           : []
       )));
@@ -562,38 +705,40 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         message: 'Connected Account selection is unavailable because the authorized target inventory is too large',
       });
     }
-    const result = await createPluginInvocationUi({
+    const result = await createPluginInteractionsService({
       currentSession: input.currentSession ?? null,
       signal: input.signal,
       isGenerationCurrent: () => !input.signal.aborted,
-    }).askQuestions([{
-      id: 'connected-account-target',
-      prompt: input.reason,
-      type: 'single',
-      required: true,
-      choices: candidates.map((candidate, index) => ({
-        id: `target-${index}`,
-        label: candidate.label,
-        description: candidate.description,
-      })) as [
-        { id: string; label: string; description: string },
-        ...{ id: string; label: string; description: string }[],
-      ],
-    }], { title: 'Choose Connected Account' });
+      ...(input.permissionOwner ? { permissionOwner: input.permissionOwner } : {}),
+    }).askQuestions({
+      kind: 'questions',
+      title: 'Choose Connected Account',
+      questions: [{
+        id: 'connected-account-target',
+        prompt: input.reason,
+        type: 'singleChoice',
+        required: true,
+        choices: candidates.map((candidate, index) => ({
+          id: `target-${index}`,
+          label: candidate.label,
+          description: candidate.description,
+        })) as [
+          { id: string; label: string; description: string },
+          ...{ id: string; label: string; description: string }[],
+        ],
+      }],
+    });
     input.signal.throwIfAborted();
     if (result.status !== 'answered') {
       throw new PluginError({
-        code: result.status === 'cancelled' ? 'plugin_ui_cancelled' : 'plugin_ui_unavailable',
-        message: result.status === 'cancelled'
+        code: result.status === 'userCancelled' ? 'plugin_ui_cancelled' : 'plugin_ui_unavailable',
+        message: result.status === 'userCancelled'
           ? 'Connected Account selection was cancelled'
           : 'Connected Account selection is unavailable',
-        ...('diagnostic' in result && result.diagnostic
-          ? { diagnostics: [result.diagnostic] }
-          : {}),
       });
     }
     const answer = result.answers['connected-account-target'];
-    const selectedId = answer?.type === 'single' && answer.answer.type === 'choice'
+    const selectedId = answer?.kind === 'singleChoice' && answer.answer.kind === 'choice'
       ? answer.answer.choiceId
       : null;
     const selected = selectedId === null
@@ -608,9 +753,297 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     return selected.target;
   };
 
+  /**
+   * The one purpose-scoped account inventory. Every consumer of "which accounts
+   * are authorized for this purpose" reads it here, so a bounded upstream
+   * response, service identity mismatch, and state projection cannot diverge
+   * between the interactive Action form and the public bounded listing.
+   */
+  const readAuthorizedAccountInventory = async (input: Readonly<{
+    lease: DaemonConnectedAccountRegistryLease;
+    serviceRefs: readonly PluginContributionRef[];
+    signal: AbortSignal;
+  }>): Promise<DaemonConnectedAccountInventory> => {
+    const entries = new Map<string, DaemonConnectedAccountInventoryEntry>();
+    let elided = false;
+    const add = (entry: DaemonConnectedAccountInventoryEntry): void => {
+      entries.set(inventoryKey(entry.account), entry);
+    };
+
+    for (const serviceRef of input.serviceRefs) {
+      assertCurrentRegistry(input.lease, input.signal);
+      const service = input.lease.resolveService(serviceRef);
+      if (!service || service.availability !== 'available') continue;
+      let transport: QualifiedConnectedAccountPeerOperationTransport;
+      try {
+        transport = params.resolveQualifiedConnectedAccountMaterializationTransport(
+          service.service,
+        );
+      } catch {
+        continue;
+      }
+
+      if (transport.kind === 'v4') {
+        if (!params.qualifiedApi) continue;
+        const result = await params.qualifiedApi.listAccounts(service.service, input.signal);
+        assertCurrentRegistry(input.lease, input.signal);
+        if (
+          result.service.pluginId !== service.service.pluginId
+          || result.service.localId !== service.service.localId
+        ) {
+          throw new Error('Qualified Connected Account inventory returned a different service');
+        }
+        if (result.accounts.length >= QUALIFIED_CONNECTED_ACCOUNT_LIST_RESPONSE_BOUND) {
+          elided = true;
+        }
+        for (const profile of result.accounts) {
+          if (
+            profile.ref.service.pluginId !== service.service.pluginId
+            || profile.ref.service.localId !== service.service.localId
+          ) continue;
+          add({
+            account: Object.freeze({
+              service: Object.freeze({ ...profile.ref.service }),
+              accountId: profile.ref.accountId,
+            }),
+            displayName: boundedDisplayName(
+              profile.displayName
+                ?? profile.providerIdentity?.email
+                ?? profile.providerIdentity?.accountId,
+              profile.ref.accountId,
+            ),
+            state: listedConnectedAccountState(profile),
+            qualified: true,
+          });
+        }
+        continue;
+      }
+
+      if (
+        transport.peerClass !== 'revisioned_v2_v3'
+        || !service.legacyServiceId
+        || transport.serviceId !== service.legacyServiceId
+      ) continue;
+      const result = await params.api.listConnectedServiceProfiles({
+        serviceId: transport.serviceId,
+        forceRefresh: true,
+      });
+      assertCurrentRegistry(input.lease, input.signal);
+      if (result.serviceId !== transport.serviceId) {
+        throw new Error('Connected Account inventory returned a different legacy service');
+      }
+      for (const profile of result.profiles) {
+        add({
+          account: Object.freeze({
+            service: Object.freeze({ ...service.service }),
+            accountId: profile.profileId,
+          }),
+          displayName: boundedDisplayName(
+            profile.providerEmail ?? profile.providerAccountId,
+            profile.profileId,
+          ),
+          state: listedConnectedAccountState(profile),
+          qualified: false,
+        });
+      }
+    }
+    assertCurrentRegistry(input.lease, input.signal);
+    return Object.freeze({
+      entries: Object.freeze(
+        [...entries.entries()]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([, entry]) => entry),
+      ),
+      elided,
+    });
+  };
+
+  const listActionFormConnectedAccountOptions = async (input: Readonly<{
+    purpose: QualifiedConnectedAccountPurposeV1;
+    serviceRefs: readonly PluginContributionRef[];
+    signal: AbortSignal;
+  }>): Promise<readonly DaemonConnectedAccountActionFormOption[]> => {
+    input.signal.throwIfAborted();
+    const lease = await runtimeRegistry.acquire();
+    try {
+      assertCurrentRegistry(lease, input.signal);
+      const inventory = await readAuthorizedAccountInventory({
+        lease,
+        serviceRefs: input.serviceRefs,
+        signal: input.signal,
+      });
+      const selectable = inventory.entries.filter((entry) => entry.state === 'connected');
+      if (selectable.length > CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND) {
+        throw new PluginError({
+          code: 'plugin_ui_unavailable',
+          message: 'Connected Account Action-form selection is unavailable because the authorized account inventory is too large',
+        });
+      }
+      return Object.freeze(selectable.map((entry) => Object.freeze({
+        value: entry.account,
+        label: entry.displayName,
+      })));
+    } finally {
+      await lease.release();
+    }
+  };
+
+  /**
+   * Raw account/group projection for an already-selected binding target. This
+   * deliberately has no purpose lookup or grant state: the binding owner
+   * supplies the exact target and rechecks it around every public operation.
+   */
+  const readTargetAccountInventory = async (input: Readonly<{
+    target: QualifiedConnectedAccountPurposeBindingTargetV1;
+    signal: AbortSignal;
+  }>): Promise<DaemonConnectedAccountInventory> => {
+    input.signal.throwIfAborted();
+    const target = input.target;
+    const lease = await runtimeRegistry.acquire();
+    try {
+      assertCurrentRegistry(lease, input.signal);
+      const serviceRef = target.kind === 'account'
+        ? target.account.service
+        : target.service;
+      const inventory = await readAuthorizedAccountInventory({
+        lease,
+        serviceRefs: Object.freeze([serviceRef]),
+        signal: input.signal,
+      });
+      if (target.kind === 'account') {
+        const targetAccountKey = inventoryKey(target.account);
+        return Object.freeze({
+          entries: Object.freeze(inventory.entries.filter((entry) => (
+            inventoryKey(entry.account) === targetAccountKey
+          ))),
+          elided: inventory.elided,
+        });
+      }
+      if (!params.qualifiedApi) {
+        return Object.freeze({ entries: Object.freeze([]), elided: inventory.elided });
+      }
+      const targetService = target.service;
+      const targetGroupId = target.groupId;
+      const service = lease.resolveService(targetService);
+      if (!service || service.availability !== 'available') {
+        return Object.freeze({ entries: Object.freeze([]), elided: inventory.elided });
+      }
+      const group = await params.qualifiedApi.readGroup({
+        service: service.service,
+        groupId: targetGroupId,
+      }, input.signal);
+      assertCurrentRegistry(lease, input.signal);
+      if (
+        !group
+        || group.ref.groupId !== targetGroupId
+        || group.ref.service.pluginId !== targetService.pluginId
+        || group.ref.service.localId !== targetService.localId
+      ) {
+        return Object.freeze({ entries: Object.freeze([]), elided: inventory.elided });
+      }
+      const memberIds = new Set(
+        group.members
+          .filter((member) => member.enabled !== false)
+          .map((member) => member.connectedAccountId),
+      );
+      return Object.freeze({
+        entries: Object.freeze(inventory.entries.filter((entry) => (
+          entry.account.service.pluginId === targetService.pluginId
+          && entry.account.service.localId === targetService.localId
+          && memberIds.has(entry.account.accountId)
+        ))),
+        elided: inventory.elided,
+      });
+    } finally {
+      await lease.release();
+    }
+  };
+
+  const readListedAccountEndpoints = async (input: Readonly<{
+    entry: DaemonConnectedAccountInventoryEntry;
+    signal: AbortSignal;
+  }>): Promise<readonly ConnectedAccountConfiguredEndpoint[]> => {
+    if (!params.resolveConnectedAccountEndpoints) throw configuredOriginsUnavailable();
+    // A legacy account carries no qualified configuration snapshot, so it owns no
+    // projectable configured endpoint. That is an honest empty, not an elision.
+    if (!input.entry.qualified) return Object.freeze([]);
+    const endpoints = await params.resolveConnectedAccountEndpoints({
+      account: input.entry.account,
+      signal: input.signal,
+    });
+    input.signal.throwIfAborted();
+    const byBase = new Map(endpoints.map((endpoint) => [endpoint.base, endpoint]));
+    return Object.freeze(
+      [...byBase.values()].sort((left, right) => (left.base < right.base ? -1 : 1)),
+    );
+  };
+
+  const projectTargetAccounts = async (
+    input: Readonly<{
+      target: QualifiedConnectedAccountPurposeBindingTargetV1;
+      limit: number;
+      signal: AbortSignal;
+    }>,
+  ): Promise<PluginConnectedAccountMetadataList> => {
+    if (!params.resolveConnectedAccountEndpoints) throw configuredOriginsUnavailable();
+    const inventory = await readTargetAccountInventory(input);
+    const page = inventory.entries.slice(0, Math.max(0, Math.trunc(input.limit)));
+    const accounts: PluginConnectedAccountListedAccount[] = [];
+    for (const entry of page) {
+      const endpoints = await readListedAccountEndpoints({
+        entry,
+        signal: input.signal,
+      });
+      accounts.push(Object.freeze({
+        account: entry.account,
+        displayName: entry.displayName,
+        state: entry.state,
+        // Both facts project together: HostAccess still governs by origin while
+        // a source routes by the configured base.
+        connectedAccountOrigins: Object.freeze(
+          [...new Set(endpoints.map((endpoint) => endpoint.origin))].sort(),
+        ),
+        connectedAccountBases: Object.freeze(endpoints.map((endpoint) => endpoint.base)),
+      }));
+    }
+    return Object.freeze({
+      status: inventory.elided || page.length < inventory.entries.length
+        ? 'truncated' as const
+        : 'complete' as const,
+      accounts: Object.freeze(accounts),
+    });
+  };
+
+  const assertTargetAccountMaterializable = async (input: Readonly<{
+    target: QualifiedConnectedAccountPurposeBindingTargetV1;
+    account: QualifiedConnectedAccountRef;
+    request: ConnectedAccountMaterializationRequest;
+    signal: AbortSignal;
+  }>): Promise<void> => {
+    const inventory = await readTargetAccountInventory(input);
+    const entry = inventory.entries.find((candidate) => (
+      qualifiedContributionKey(candidate.account.service)
+        === qualifiedContributionKey(input.account.service)
+      && candidate.account.accountId === input.account.accountId
+    ));
+    if (!entry || entry.state !== 'connected') throw listedAccountOutOfScope();
+    if (input.request.kind !== 'httpHeaders') return;
+    const origins = new Set(
+      (await readListedAccountEndpoints({ entry, signal: input.signal }))
+        .map((endpoint) => endpoint.origin),
+    );
+    // An account with no configured origin is a fixed-origin or non-HTTP
+    // materialization: the incumbent HostAccess fixed-origin admission remains
+    // the sole authority there. A configured-origin account is constrained to
+    // exactly the origins the host currently projects for it.
+    if (origins.size === 0) return;
+    if (!origins.has(input.request.origin)) throw listedAccountOutOfScope();
+  };
+
   const materializeAccount = async (input: Readonly<{
     account: QualifiedConnectedAccountRef;
-    request: PluginConnectedAccountMaterializationRequest;
+    credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
+    request: ConnectedAccountMaterializationRequest;
     signal: AbortSignal;
   }>): Promise<PluginConnectedAccountMaterialization> => {
     input.signal.throwIfAborted();
@@ -626,21 +1059,41 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
             'Connected Account purpose materialization requires revision-fenced credential state',
         });
       }
-      return await params.revisionedLegacyMaterializationOwner.invoke({
+      const receipt = await params.revisionedLegacyMaterializationOwner.invokeWithReceipt({
         account: input.account,
         serviceId: transport.serviceId,
         request: input.request,
+        ...(input.credentialRevisionBasis?.expectedCredentialRevision
+          ? {
+              expectedCredentialRevision:
+                input.credentialRevisionBasis.expectedCredentialRevision,
+            }
+          : {}),
         signal: input.signal,
       });
+      input.credentialRevisionBasis?.captureCredentialRevision(
+        receipt.basis.credentialRevision,
+      );
+      return receipt.result;
     }
-    return await params.establishedRuntimeOwner.invoke({
+    const receipt = await params.establishedRuntimeOwner.invokeWithReceipt({
       account: input.account,
       operation: Object.freeze({
         kind: 'materialize',
         request: input.request,
       }),
+      ...(input.credentialRevisionBasis?.expectedCredentialRevision
+        ? {
+            expectedCredentialRevision:
+              input.credentialRevisionBasis.expectedCredentialRevision,
+          }
+        : {}),
       signal: input.signal,
     });
+    input.credentialRevisionBasis?.captureCredentialRevision(
+      receipt.basis.credentialRevision,
+    );
+    return receipt.result;
   };
 
   const bindingStore =
@@ -650,6 +1103,31 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     selectTarget,
     resolveTarget,
     materializeAccount,
+    projectTargetAccounts,
+    assertTargetAccountMaterializable,
+    async resolveCredentialRevision(account, signal) {
+      signal.throwIfAborted();
+      let transport: QualifiedConnectedAccountPeerOperationTransport;
+      try {
+        transport = params.resolveQualifiedConnectedAccountMaterializationTransport(
+          account.service,
+        );
+      } catch {
+        return null;
+      }
+      if (
+        transport.kind !== 'v4'
+        || !params.establishedRuntimeOwner.readCredentialRevision
+      ) {
+        // External request-auth never re-enters the service-keyed compatibility adapter. A
+        // revisioned V4 read is the only qualified source of a cache/currentness fence here.
+        return null;
+      }
+      const revision = await params.establishedRuntimeOwner
+        .readCredentialRevision({ account, signal });
+      signal.throwIfAborted();
+      return revision;
+    },
     subscribeInvalidations(listener) {
       invalidationListeners.add(listener);
       const unsubscribeReload = runtimeRegistry.subscribe(listener);
@@ -703,7 +1181,14 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     owner,
     activatePurposeBindings: bindingOwner.activatePurposeBindings,
     activateSessionPurposeBindings: bindingOwner.activateSessionPurposeBindings,
+    resolveCurrentSessionPurposeBindingSnapshot:
+      bindingOwner.resolveCurrentSessionPurposeBindingSnapshot,
+    resolveCurrentRequestAuthBinding:
+      bindingOwner.resolveCurrentRequestAuthBinding,
+    materializeRequestAuthBearer:
+      bindingOwner.materializeRequestAuthBearer,
     resolveBindingIntent: bindingOwner.resolveBindingIntent,
+    listActionFormConnectedAccountOptions,
     async listCoordinatorAccounts(signal = new AbortController().signal) {
       signal.throwIfAborted();
       if (
@@ -740,15 +1225,48 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         await lease.release();
       }
     },
+    async listGroupQuotaTargets(input) {
+      input.signal.throwIfAborted();
+      if (params.resolveQualifiedConnectedAccountV4Support() !== 'advertised' || !params.qualifiedApi) {
+        return Object.freeze([]);
+      }
+      const group = await params.qualifiedApi.readGroup({
+        service: input.service,
+        groupId: input.groupId,
+      }, input.signal);
+      input.signal.throwIfAborted();
+      const accountsResult = await params.qualifiedApi.listAccounts(input.service, input.signal);
+      input.signal.throwIfAborted();
+      if (!group) return Object.freeze([]);
+      if (
+        group.ref.groupId !== input.groupId
+        || group.ref.service.pluginId !== input.service.pluginId
+        || group.ref.service.localId !== input.service.localId
+        || accountsResult.service.pluginId !== input.service.pluginId
+        || accountsResult.service.localId !== input.service.localId
+      ) {
+        throw new Error('Qualified Connected Account group quota target identity mismatch');
+      }
+      const groupMemberIds = new Set(group.members.map((member) => member.connectedAccountId));
+      const requestedIds = new Set(input.accountIds);
+      return Object.freeze(accountsResult.accounts.filter((profile) => (
+        profile.ref.service.pluginId === input.service.pluginId
+        && profile.ref.service.localId === input.service.localId
+        && requestedIds.has(profile.ref.accountId)
+        && groupMemberIds.has(profile.ref.accountId)
+      )).map((profile) => Object.freeze({
+        profile,
+        groupGeneration: group.generation,
+      })));
+    },
     async reconcileRegistryPublication(input) {
       const signal = new AbortController().signal;
-      const persistedBindings = await bindingStore.read(signal);
       await bindingOwner.reconcileAuthorizedPurposes({
         consumerScopes: deriveRegistryConnectedAccountPurposeReconciliationScopes(
           input.previous,
           input.candidate,
-          persistedBindings.bindings.map((binding) => binding.purpose.consumer),
           input.resolveOptionalAccess,
+          { candidateActivePluginIds: input.candidateActivePluginIds },
         ),
         signal,
         publish: input.publish,

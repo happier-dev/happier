@@ -17,6 +17,7 @@ vi.mock('node:child_process', async () => {
 vi.mock('@/agent/catalog/registry', () => ({
   AGENTS: {
     ohMyPi: {},
+    'acme-agent': {},
   },
 }));
 
@@ -62,6 +63,43 @@ describe('probeAgentModelsBestEffort (authoritative preflight unavailable)', () 
       timeoutMs: 100,
     })).resolves.toEqual({
       agentId: 'ohMyPi',
+      availableModels: [],
+      supportsFreeform: false,
+      source: 'unavailable',
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('uses an external Agent\'s declared preflight capability without a bundled static fallback', async () => {
+    probeModelsRawMock.mockResolvedValueOnce([
+      { id: 'acme-model', name: 'Acme Model' },
+    ]);
+
+    await expect(probeAgentModelsBestEffort({
+      agentId: 'acme-agent',
+      cwd: '/repo',
+      timeoutMs: 100,
+    })).resolves.toEqual({
+      agentId: 'acme-agent',
+      availableModels: [
+        { id: 'default', name: 'Default' },
+        { id: 'acme-model', name: 'Acme Model' },
+      ],
+      supportsFreeform: false,
+      source: 'dynamic',
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('returns typed unavailability when an external Agent has no current preflight capability', async () => {
+    resolvePreflightSessionControlsProbeAdapterMock.mockResolvedValueOnce(null);
+
+    await expect(probeAgentModelsBestEffort({
+      agentId: 'acme-agent',
+      cwd: '/repo',
+      timeoutMs: 100,
+    })).resolves.toEqual({
+      agentId: 'acme-agent',
       availableModels: [],
       supportsFreeform: false,
       source: 'unavailable',

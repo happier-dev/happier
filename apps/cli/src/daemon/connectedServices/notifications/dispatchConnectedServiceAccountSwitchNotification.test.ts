@@ -93,10 +93,10 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
 
         expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
             'Fix checkout flow',
-            expect.stringContaining('Happier switched OpenAI accounts'),
+            expect.stringContaining('switched Codex accounts'),
             expect.objectContaining({
                 sessionId: 'session-1',
-                serviceDisplayName: 'OpenAI',
+                serviceDisplayName: 'Codex',
                 fromProfileLabel: 'main@example.test',
                 toProfileLabel: 'backup@example.test',
                 fromUsagePercent: 100,

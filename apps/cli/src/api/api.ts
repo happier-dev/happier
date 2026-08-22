@@ -1,4 +1,11 @@
 import axios from 'axios'
+import {
+  buildCurrentAccountStoredContentCompatibilityHttpHeaders,
+  readCliClientUpgradeRequired,
+} from '@/api/clientCompatibility/cliClientCompatibility';
+import {
+  AccountStoredContentClientUpgradeRequiredError,
+} from '@/api/clientCompatibility/accountStoredContentActivation';
 import { z } from 'zod';
 import { logger } from '@/ui/logger'
 import type {
@@ -10,6 +17,7 @@ import type {
   MachineRegistrationIdentity,
   Metadata,
   Session,
+  SessionCreateOrLoadResult,
 } from '@/api/types'
 import { MachineRegistrationIdentitySchema } from '@/api/types'
 import { ApiSessionClient, type ApiSessionClientOptions } from './session/sessionClient';
@@ -22,6 +30,8 @@ import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
 import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
 import type { BrowserDiagnosticsActionRoutes } from '@/daemon/browser/diagnostics/actionRoutes';
 import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
+import { createBrowserDaemonRuntimeActionExecutor } from '@/daemon/browser/actions/runtimeActionExecutor';
+import { createBrowserDaemonFeatureGate } from '@/daemon/browser/featureGate';
 import type {
   BrowserRecordingComposerAttachInput,
   BrowserRecordingComposerAttachResult,
@@ -36,20 +46,31 @@ import {
 import { decodeBase64, encodeBase64, encrypt, decrypt } from './encryption';
 import { PushNotificationClient } from './pushNotifications';
 import { configuration } from '@/configuration';
-import { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import {
   readSessionMetadataLayoutVersion,
   tryReadApiSessionMetadataForLayout,
 } from '@/session/metadata/sessionMetadataLayout';
 
-import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from './client/encryptionKey';
+import {
+  requireAccountEncryptionCredentials,
+  resolveMachineEncryptionContext,
+  resolveSessionEncryptionContext,
+} from './client/encryptionKey';
 import { openSessionDataEncryptionKey } from './client/openSessionDataEncryptionKey';
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
 import { logServerEndpointFailure } from './client/serverEndpointFailureLog';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
+import {
+  requireCurrentAccountStoredContentServerCompatibility,
+} from './clientCompatibility/accountStoredContentActivation';
 import { resolveConnectedServicesServerApiTimeoutMs } from './client/connectedServicesServerApiTimeout';
 import { getConnectedServiceAuthGroup as getConnectedServiceAuthGroupFromServer } from './client/connectedServiceAuthGroupApi';
 import { readAxiosResponseErrorCode } from './client/readAxiosResponseErrorCode';
+import { SessionCreationPlacementError } from './session/sessionCreationPlacementError';
+import {
+  SessionCreationCorrespondenceConflictError,
+} from './session/sessionCreationCorrespondenceConflictError';
 import { transformSessionInputThroughPluginHooks } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import {
   createConnectedServiceCredentialApi,
@@ -76,6 +97,9 @@ import {
   MachineReplacedError,
   MachineRevokedError,
 } from './machine/machineRegistrationErrors';
+import {
+  readMachineOperationProtocolCapabilitiesProjectionV1,
+} from './machine/machineOperationProtocolCapabilities';
 export {
   MachineContentPublicKeyMismatchError,
   MachineIdConflictError,
@@ -105,8 +129,14 @@ import {
   SealedConnectedServiceQuotaSnapshotV1Schema,
   SealedProviderAccountUsageSnapshotV1Schema,
   StoredJsonContentEnvelopeSchema,
+  MACHINE_PLAIN_DATA_KEY_MARKER,
+  decodePlainMachineStoredContent,
+  encodePlainMachineStoredContent,
   SESSION_METADATA_LAYOUT_VERSION_V1,
+  SessionOwnerMetadataEnvelopeV1Schema,
   SessionSharedMetadataV1Schema,
+  SessionOrganizationPlacementV1Schema,
+  sessionCreationCorrespondenceMatchesV1,
   projectSessionOwnerCompatibilityViewV1,
 } from '@happier-dev/protocol';
 import type {
@@ -126,6 +156,8 @@ import type {
   SealedConnectedServiceCredentialV1,
   SealedConnectedServiceQuotaSnapshotV1,
   SealedProviderAccountUsageSnapshotV1,
+  RuntimeActionExecute,
+  SessionOwnerMetadataV1,
 } from '@happier-dev/protocol';
 import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
 import { consumeMachineReplacementCandidateAfterRegistration } from '@/daemon/machineIdentity/machineReplacementCandidates';
@@ -136,6 +168,20 @@ import {
   SessionMetadataPrivacyUpgradeRequiredError,
 } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 export { SessionMetadataPrivacyUpgradeRequiredError } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+
+function assertSessionCreationCorrespondenceMatches(
+  requested: unknown,
+  ownerMetadata: SessionOwnerMetadataV1 | null | undefined,
+): void {
+  if (requested === undefined) return;
+  if (sessionCreationCorrespondenceMatchesV1(
+    requested,
+    ownerMetadata?.system?.sessionCreationCorrespondenceV1,
+  )) {
+    return;
+  }
+  throw new SessionCreationCorrespondenceConflictError();
+}
 
 const ExactProviderAccountUsageSourceResolutionSchema = z.object({
   source: ConnectedServiceUsageSourceV1Schema,
@@ -264,11 +310,11 @@ function normalizeLocalMachineId(value: string | null | undefined): string | nul
 
 export class ApiClient {
 
-  static async create(credential: Credentials) {
+  static async create(credential: StoredCredentials) {
     return new ApiClient(credential);
   }
 
-  private readonly credential: Credentials;
+  private readonly credential: StoredCredentials;
   private readonly pushClient: PushNotificationClient;
   private readonly connectedServiceCredentialApi: ReturnType<typeof createConnectedServiceCredentialApi>;
   private getBrowserDaemonControlRoutes: (() => BrowserDaemonControlRoutes | null) | null = null;
@@ -289,7 +335,7 @@ export class ApiClient {
   private getCachedServerFeaturesSnapshot: (() => CliServerFeaturesSnapshot | undefined) | null = null;
   private localMachineId: string | null = null;
 
-  private constructor(credential: Credentials) {
+  private constructor(credential: StoredCredentials) {
     this.credential = credential
     this.pushClient = new PushNotificationClient(credential.token, resolveServerHttpBaseUrl())
     this.connectedServiceCredentialApi = createConnectedServiceCredentialApi(credential)
@@ -344,12 +390,39 @@ export class ApiClient {
     this.getCachedServerFeaturesSnapshot = provider;
   }
 
+  /**
+   * Returns a daemon-owned browser action executor that resolves the current route owner at
+   * invocation time. Plugin registries survive browser route replacement and plugin reloads, so
+   * capturing a route object here would make the Plugin action surface stale.
+   */
+  createBrowserRuntimeActionExecutor(): RuntimeActionExecute {
+    const featureGate = createBrowserDaemonFeatureGate({
+      env: process.env,
+      resolveServerFeaturesSnapshot: () => this.getCachedServerFeaturesSnapshot?.(),
+    });
+
+    return async (args) => {
+      args.context.signal?.throwIfAborted();
+      await featureGate.refresh();
+      args.context.signal?.throwIfAborted();
+      const control = this.getBrowserDaemonControlRoutes?.() ?? null;
+      const execute = createBrowserDaemonRuntimeActionExecutor({
+        ...(control ? { control } : {}),
+        featureGate,
+      });
+      const result = await execute(args);
+      args.context.signal?.throwIfAborted();
+      return result;
+    };
+  }
+
   async getServerFeaturesSnapshot(
-    options?: Readonly<{ refresh?: boolean }>,
+    options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>,
   ): Promise<CliServerFeaturesSnapshot | undefined> {
     if (options?.refresh === true) {
       return await fetchServerFeaturesSnapshot({
         serverUrl: resolveServerHttpBaseUrl(),
+        signal: options.signal,
       });
     }
     return this.getCachedServerFeaturesSnapshot?.();
@@ -366,6 +439,7 @@ export class ApiClient {
         `${resolveServerHttpBaseUrl()}/v2/connect/provider-account-usage/${recordId}`,
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -406,19 +480,26 @@ export class ApiClient {
     tag: string,
     metadata: Metadata,
     state: AgentState | null,
+    organizationPlacement?: import('@happier-dev/protocol').SessionOrganizationPlacementV1,
     signal?: AbortSignal,
-  }): Promise<Session | null> {
+  }): Promise<SessionCreateOrLoadResult | null> {
     opts.signal?.throwIfAborted();
-    const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveSessionEncryptionContext(this.credential);
     const sessionsUrl = `${resolveServerHttpBaseUrl()}/v1/sessions`;
 
     const serverBaseUrl = resolveServerHttpBaseUrl();
-    const { desiredSessionEncryptionMode, serverSupportsFeatureSnapshot } = await resolveSessionCreateEncryptionMode({
+    const {
+      desiredSessionEncryptionMode,
+      accountEncryptionCurrentness,
+      serverSupportsFeatureSnapshot,
+    } = await resolveSessionCreateEncryptionMode({
       token: this.credential.token,
       serverBaseUrl,
       featuresTimeoutMs: 800,
       accountTimeoutMs: 10_000,
     });
+    const encryptionContext = desiredSessionEncryptionMode === 'e2ee'
+      ? resolveSessionEncryptionContext(this.credential)
+      : null;
 
     const resolvePositiveIntEnv = (raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number => {
       const value = (raw ?? '').trim();
@@ -464,14 +545,28 @@ export class ApiClient {
     for (let attempt = 1; attempt <= retryMaxAttempts; attempt += 1) {
       opts.signal?.throwIfAborted();
       try {
-        const metadataEnvelopeFields = buildSessionMetadataEnvelopeCreateFields({
-          credentials: this.credential,
-          metadata: opts.metadata,
-          agentState: opts.state,
-          storedContentMode: desiredSessionEncryptionMode,
-          encryptionKey,
-          encryptionVariant,
-        });
+        const metadataEnvelopeFields = desiredSessionEncryptionMode === 'plain'
+          ? buildSessionMetadataEnvelopeCreateFields({
+              credentials: this.credential,
+              accountEncryptionMode: accountEncryptionCurrentness.mode,
+              metadata: opts.metadata,
+              agentState: opts.state,
+              storedContentMode: 'plain',
+            })
+          : (() => {
+              if (!encryptionContext) {
+                throw new Error('Session encryption context is unavailable');
+              }
+              return buildSessionMetadataEnvelopeCreateFields({
+                credentials: this.credential,
+                accountEncryptionMode: accountEncryptionCurrentness.mode,
+                metadata: opts.metadata,
+                agentState: opts.state,
+                storedContentMode: 'e2ee',
+                encryptionKey: encryptionContext.encryptionKey,
+                encryptionVariant: encryptionContext.encryptionVariant,
+              });
+            })();
 
         const response = await axios.post<CreateSessionResponse>(
           sessionsUrl,
@@ -481,13 +576,15 @@ export class ApiClient {
             dataEncryptionKey:
               desiredSessionEncryptionMode === 'plain'
                 ? null
-                : dataEncryptionKey
-                  ? encodeBase64(dataEncryptionKey)
+                : encryptionContext?.dataEncryptionKey
+                  ? encodeBase64(encryptionContext.dataEncryptionKey)
                   : null,
             ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
+            ...(opts.organizationPlacement ? { organizationPlacement: opts.organizationPlacement } : {}),
           },
           {
             headers: {
+              ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
               'Authorization': `Bearer ${this.credential.token}`,
               'Content-Type': 'application/json'
             },
@@ -498,118 +595,198 @@ export class ApiClient {
 
         logger.debug(`Session created/loaded: ${response.data.session.id} (tag: ${opts.tag})`)
         let raw = response.data.session;
-
-      const sessionEncryptionMode: 'e2ee' | 'plain' =
-        (raw as any)?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
-
-      // Prefer the session's published data key, but keep backward compatibility with
-      // older sessions that have no dataEncryptionKey (machineKey-as-session-key fallback).
-      let sessionEncryptionKey = encryptionKey;
-      if (sessionEncryptionMode === 'e2ee' && this.credential.encryption.type === 'dataKey') {
-        const serverEncryptedDataKeyRaw = (raw as any).dataEncryptionKey;
-        const opened = openSessionDataEncryptionKey({
-          credential: this.credential,
-          encryptedDataEncryptionKeyBase64: serverEncryptedDataKeyRaw,
-        });
-        if (typeof serverEncryptedDataKeyRaw === 'string' && serverEncryptedDataKeyRaw.trim().length > 0 && !opened) {
-          logger.debug('[API] Failed to open session dataEncryptionKey (dataKey account)', {
-            sessionId: raw.id,
-          });
-          throw new Error('Failed to open session dataEncryptionKey');
-        }
-        sessionEncryptionKey = opened ?? this.credential.encryption.machineKey;
-      }
-
-	      const decodedMetadata =
-	        sessionEncryptionMode === 'plain'
-	          ? JSON.parse(String(raw.metadata ?? 'null'))
-	          : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.metadata));
-        const metadataLayoutVersion = readSessionMetadataLayoutVersion(raw.metadataLayoutVersion);
-        const metadata = tryReadApiSessionMetadataForLayout(
-          decodedMetadata,
-          metadataLayoutVersion,
+        const parsedOrganizationPlacement = SessionOrganizationPlacementV1Schema.safeParse(
+          response.data.organizationPlacement,
         );
-        if (!metadata) {
-          throw new Error('Session metadata does not match its declared privacy layout');
-        }
+        const sessionCreationOutcome = typeof response.data.created === 'boolean'
+          && parsedOrganizationPlacement.success
+          ? {
+              disposition: response.data.created ? 'created' as const : 'rejoined' as const,
+              organizationPlacement: parsedOrganizationPlacement.data,
+            }
+          : undefined;
+
+        const sessionEncryptionMode: 'e2ee' | 'plain' =
+          (raw as any)?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+        const metadataLayoutVersion = readSessionMetadataLayoutVersion(raw.metadataLayoutVersion);
         const rawOwnerMetadata =
           (raw as Readonly<{ ownerMetadata?: unknown }>).ownerMetadata;
+        const parsedOwnerMetadataEnvelope =
+          SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+            rawOwnerMetadata,
+          );
+        const resolveRuntimeMetadata = (decodedMetadata: unknown): Metadata => {
+          const metadata = tryReadApiSessionMetadataForLayout(
+            decodedMetadata,
+            metadataLayoutVersion,
+          );
+          if (!metadata) {
+            throw new Error('Session metadata does not match its declared privacy layout');
+          }
+          if (metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1) {
+            return metadata;
+          }
+          const ownerMetadata = tryDecryptSessionOwnerMetadata({
+            credentials: this.credential,
+            accountEncryptionMode: accountEncryptionCurrentness.mode,
+            rawSession: {
+              metadataLayoutVersion,
+              ownerMetadata: rawOwnerMetadata,
+            },
+          });
+          if (!ownerMetadata) {
+            throw new SessionMetadataPrivacyUpgradeRequiredError([]);
+          }
+          return projectSessionOwnerCompatibilityViewV1({
+            sharedMetadata: SessionSharedMetadataV1Schema.parse(decodedMetadata),
+            ownerMetadata,
+          }) as Metadata;
+        };
+
+        if (sessionEncryptionMode === 'plain') {
+          const decodedMetadata = JSON.parse(String(raw.metadata ?? 'null'));
+          const runtimeMetadata = resolveRuntimeMetadata(decodedMetadata);
+          const ownerMetadata = metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
+            ? tryDecryptSessionOwnerMetadata({
+                credentials: this.credential,
+                accountEncryptionMode: accountEncryptionCurrentness.mode,
+                rawSession: {
+                  metadataLayoutVersion,
+                  ownerMetadata: rawOwnerMetadata,
+                },
+              })
+            : null;
+          assertSessionCreationCorrespondenceMatches(
+            opts.metadata.sessionCreationCorrespondenceV1,
+            ownerMetadata,
+          );
+          return {
+            id: raw.id,
+            seq: raw.seq,
+            encryptionMode: 'plain' as const,
+            metadata: runtimeMetadata,
+            metadataLayoutVersion,
+            ...(ownerMetadata && parsedOwnerMetadataEnvelope.success
+              ? {
+                  ownerMetadata,
+                  ownerMetadataEnvelope:
+                    parsedOwnerMetadataEnvelope.data,
+                }
+              : {}),
+            metadataVersion: raw.metadataVersion,
+            agentState: raw.agentState
+              ? JSON.parse(String(raw.agentState))
+              : null,
+            agentStateVersion: raw.agentStateVersion,
+            ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+          };
+        }
+
+        const responseEncryptionContext =
+          encryptionContext ?? resolveSessionEncryptionContext(this.credential);
+        const keyedCredential = requireAccountEncryptionCredentials(this.credential);
+
+        // Prefer the Session's published data key, but retain the released
+        // machine-key fallback for older E2EE Sessions without a published DEK.
+        let sessionEncryptionKey = responseEncryptionContext.encryptionKey;
+        if (keyedCredential.encryption.type === 'dataKey') {
+          const serverEncryptedDataKeyRaw = (raw as any).dataEncryptionKey;
+          const opened = openSessionDataEncryptionKey({
+            credential: keyedCredential,
+            encryptedDataEncryptionKeyBase64: serverEncryptedDataKeyRaw,
+          });
+          if (
+            typeof serverEncryptedDataKeyRaw === 'string'
+            && serverEncryptedDataKeyRaw.trim().length > 0
+            && !opened
+          ) {
+            logger.debug('[API] Failed to open session dataEncryptionKey (dataKey account)', {
+              sessionId: raw.id,
+            });
+            throw new Error('Failed to open session dataEncryptionKey');
+          }
+          sessionEncryptionKey = opened ?? keyedCredential.encryption.machineKey;
+        }
+        const decodedMetadata = decrypt(
+          sessionEncryptionKey,
+          responseEncryptionContext.encryptionVariant,
+          decodeBase64(raw.metadata),
+        );
+        const runtimeMetadata = resolveRuntimeMetadata(decodedMetadata);
         const ownerMetadata = metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
           ? tryDecryptSessionOwnerMetadata({
-              credentials: this.credential,
+              credentials: keyedCredential,
+              accountEncryptionMode: accountEncryptionCurrentness.mode,
               rawSession: {
                 metadataLayoutVersion,
                 ownerMetadata: rawOwnerMetadata,
-                encryptionMode:
-                  (raw as Readonly<{ encryptionMode?: unknown }>).encryptionMode,
               },
             })
           : null;
-        if (
-          metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
-          && !ownerMetadata
-        ) {
-          throw new SessionMetadataPrivacyUpgradeRequiredError([]);
-        }
-        const responseSharedMetadata =
-          metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
-            ? SessionSharedMetadataV1Schema.parse(decodedMetadata)
-            : null;
-        const runtimeMetadata = ownerMetadata
-          ? projectSessionOwnerCompatibilityViewV1({
-              sharedMetadata: responseSharedMetadata!,
-              ownerMetadata,
-            }) as Metadata
-          : metadata;
-	      const agentState =
-	        !raw.agentState
-	          ? null
-	          : sessionEncryptionMode === 'plain'
-	            ? JSON.parse(String(raw.agentState))
-	            : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.agentState));
+        assertSessionCreationCorrespondenceMatches(
+          opts.metadata.sessionCreationCorrespondenceV1,
+          ownerMetadata,
+        );
+        const agentState = raw.agentState
+          ? decrypt(
+              sessionEncryptionKey,
+              responseEncryptionContext.encryptionVariant,
+              decodeBase64(raw.agentState),
+            )
+          : null;
 
-	      if (sessionEncryptionMode === 'plain') {
-	        return {
-	          id: raw.id,
-	          seq: raw.seq,
-	          encryptionMode: 'plain' as const,
-	          metadata: runtimeMetadata,
-	          metadataLayoutVersion,
-	          ...(ownerMetadata
-	            ? {
-	              ownerMetadata,
-	              ownerMetadataCiphertext: String(rawOwnerMetadata),
-	            }
-	            : {}),
-	          metadataVersion: raw.metadataVersion,
-	          agentState,
-	          agentStateVersion: raw.agentStateVersion,
-	        };
-	      }
-
-	      return {
-	        id: raw.id,
-	        seq: raw.seq,
-	        encryptionMode: 'e2ee' as const,
-	        encryptionKey: sessionEncryptionKey,
-	        encryptionVariant,
-	        metadata: runtimeMetadata,
-	        metadataLayoutVersion,
-	        ...(ownerMetadata
-	          ? {
-	            ownerMetadata,
-	            ownerMetadataCiphertext: String(rawOwnerMetadata),
-	          }
-	          : {}),
-	        metadataVersion: raw.metadataVersion,
-	        agentState,
-	        agentStateVersion: raw.agentStateVersion,
-	      };
+        return {
+          id: raw.id,
+          seq: raw.seq,
+          encryptionMode: 'e2ee' as const,
+          encryptionKey: sessionEncryptionKey,
+          encryptionVariant: responseEncryptionContext.encryptionVariant,
+          metadata: runtimeMetadata,
+          metadataLayoutVersion,
+          ...(ownerMetadata && parsedOwnerMetadataEnvelope.success
+            ? {
+                ownerMetadata,
+                ownerMetadataEnvelope:
+                  parsedOwnerMetadataEnvelope.data,
+              }
+            : {}),
+          metadataVersion: raw.metadataVersion,
+          agentState,
+          agentStateVersion: raw.agentStateVersion,
+          ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+        };
       } catch (error) {
         if (opts.signal?.aborted) {
           throw opts.signal.reason ?? error;
         }
+        if (error instanceof SessionCreationCorrespondenceConflictError) {
+          throw error;
+        }
+        const upgradeRequired = readCliClientUpgradeRequired(error);
+        if (
+          upgradeRequired?.requirement
+          && 'kind' in upgradeRequired.requirement
+          && upgradeRequired.requirement.kind
+            === 'account-stored-content'
+        ) {
+          throw Object.assign(
+            new Error(
+              'Session creation requires a stored-content-compatible server',
+            ),
+            {
+              code: 'client-upgrade-required' as const,
+              retryable: false as const,
+              requirement: upgradeRequired.requirement,
+            },
+          );
+        }
         const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        if (
+          error
+          instanceof AccountStoredContentClientUpgradeRequiredError
+        ) {
+          throw error;
+        }
         const isRetryable5xx = typeof status === 'number' && status >= 500 && status < 600;
         if (isRetryable5xx && attempt < retryMaxAttempts) {
           // Do not log raw Axios errors: they can contain bearer tokens or vendor keys.
@@ -626,6 +803,22 @@ export class ApiClient {
         if (terminalAuthStatus === 401 || terminalAuthStatus === 403) {
           // Preserve status for offline reconnection stop conditions without leaking request config.
           throw new HttpStatusError(terminalAuthStatus, 'Authentication failed');
+        }
+
+        if (
+          axios.isAxiosError(error)
+          && error.response?.status === 400
+          && error.response.data
+          && typeof error.response.data === 'object'
+          && !Array.isArray(error.response.data)
+          && (error.response.data as Readonly<Record<string, unknown>>).error === 'invalid-params'
+          && (error.response.data as Readonly<Record<string, unknown>>).code
+            === 'invalid-session-organization-placement'
+        ) {
+          // This is the sole server-originated creation-placement result. Do
+          // not broaden it to generic 4xx/network failures: callers use the
+          // bounded code as an actionable final outcome.
+          throw new SessionCreationPlacementError();
         }
 
         if (shouldTreatGetOrCreateSessionErrorAsOffline(error, { url: sessionsUrl })) {
@@ -651,7 +844,43 @@ export class ApiClient {
     timeoutMs?: number,
     registrationIdentity?: MachineRegistrationIdentity,
   }): Promise<Machine> {
-    const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveMachineEncryptionContext(this.credential);
+    const accountMode = await this.getAccountEncryptionMode();
+    const machineStorageMode = accountMode === 'plain' ? 'plain' : 'e2ee';
+    if (machineStorageMode === 'plain') {
+      await requireCurrentAccountStoredContentServerCompatibility({
+        resolveSnapshot: async () =>
+          await this.getServerFeaturesSnapshot({ refresh: true }),
+      });
+    }
+    const encryptionContext = machineStorageMode === 'e2ee'
+      ? resolveMachineEncryptionContext(this.credential)
+      : null;
+    const encodeMachineContent = (value: unknown): string => {
+      if (machineStorageMode === 'plain') {
+        return encodePlainMachineStoredContent(value);
+      }
+      if (!encryptionContext) {
+        throw new Error('Machine encryption context is unavailable for encrypted storage');
+      }
+      return encodeBase64(encrypt(
+        encryptionContext.encryptionKey,
+        encryptionContext.encryptionVariant,
+        value,
+      ));
+    };
+    const decodeMachineContent = (value: string): unknown => {
+      if (machineStorageMode === 'plain') {
+        return decodePlainMachineStoredContent(value);
+      }
+      if (!encryptionContext) {
+        throw new Error('Machine encryption context is unavailable for encrypted storage');
+      }
+      return decrypt(
+        encryptionContext.encryptionKey,
+        encryptionContext.encryptionVariant,
+        decodeBase64(value),
+      );
+    };
     const registrationIdentity = opts.registrationIdentity
       ? MachineRegistrationIdentitySchema.parse(opts.registrationIdentity)
       : await this.resolveMachineRegistrationIdentity(opts.machineId);
@@ -667,13 +896,18 @@ export class ApiClient {
         machinesUrl,
         {
           id: opts.machineId,
-          metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
-          daemonState: opts.daemonState ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.daemonState)) : undefined,
-          dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : undefined,
-          contentPublicKey:
-            this.credential.encryption.type === 'dataKey'
-              ? encodeBase64(this.credential.encryption.publicKey)
+          metadata: encodeMachineContent(opts.metadata),
+          daemonState: opts.daemonState
+            ? encodeMachineContent(opts.daemonState)
+            : undefined,
+          dataEncryptionKey: machineStorageMode === 'plain'
+            ? MACHINE_PLAIN_DATA_KEY_MARKER
+            : encryptionContext?.dataEncryptionKey
+              ? encodeBase64(encryptionContext.dataEncryptionKey)
               : undefined,
+          ...(machineStorageMode === 'e2ee' && this.credential.encryption?.type === 'dataKey'
+            ? { contentPublicKey: encodeBase64(this.credential.encryption.publicKey) }
+            : null),
           ...(registrationIdentity
             ? {
                 installationId: registrationIdentity.installationId,
@@ -687,6 +921,7 @@ export class ApiClient {
         },
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json'
           },
@@ -720,17 +955,42 @@ export class ApiClient {
         });
       }
 
-      // Return decrypted machine like we do for sessions
-      const machine: Machine = {
+      const operationProtocolCapabilities = readMachineOperationProtocolCapabilitiesProjectionV1({
+        machineId: opts.machineId,
+        value: raw,
+      });
+
+      // Return decrypted machine like we do for sessions.
+      const machineCommon = {
         id: raw.id,
-        encryptionKey: encryptionKey,
-        encryptionVariant: encryptionVariant,
-        metadata: raw.metadata ? decrypt(encryptionKey, encryptionVariant, decodeBase64(raw.metadata)) : null,
+        metadata: raw.metadata
+          ? decodeMachineContent(raw.metadata) as MachineMetadata
+          : null,
         metadataVersion: raw.metadataVersion || 0,
-        daemonState: raw.daemonState ? decrypt(encryptionKey, encryptionVariant, decodeBase64(raw.daemonState)) : null,
+        daemonState: raw.daemonState
+          ? decodeMachineContent(raw.daemonState) as DaemonState
+          : null,
         daemonStateVersion: raw.daemonStateVersion || 0,
+        operationProtocolCapabilities:
+          operationProtocolCapabilities?.capabilities ?? null,
+        operationProtocolCapabilitiesRevision:
+          operationProtocolCapabilities?.revision ?? null,
       };
-      return machine;
+      if (machineStorageMode === 'plain') {
+        return {
+          ...machineCommon,
+          encryptionMode: 'plain',
+        };
+      }
+      if (!encryptionContext) {
+        throw new Error('Machine encryption context is unavailable for encrypted storage');
+      }
+      return {
+        ...machineCommon,
+        encryptionMode: 'e2ee',
+        encryptionKey: encryptionContext.encryptionKey,
+        encryptionVariant: encryptionContext.encryptionVariant,
+      };
     } catch (error) {
       if (
         axios.isAxiosError(error)
@@ -787,6 +1047,7 @@ export class ApiClient {
         `${resolveServerHttpBaseUrl()}/v1/machines/${encodeURIComponent(params.replacesMachineId)}`,
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
           },
           timeout: params.timeoutMs,
@@ -803,7 +1064,7 @@ export class ApiClient {
     const identity = await resolveMachineRegistrationIdentity({
       machineId,
       token: this.credential.token,
-      contentPublicKey: this.credential.encryption.type === 'dataKey'
+      contentPublicKey: this.credential.encryption?.type === 'dataKey'
         ? this.credential.encryption.publicKey
         : undefined,
     });
@@ -825,10 +1086,13 @@ export class ApiClient {
       | 'initialRegisteredSessionStateFieldMutations'
       | 'durableMutationDeliveryInitiallyActive'
       | 'transformSessionInputBeforeCommit'
+      | 'afterComposerAttachmentMessageAccepted'
+      | 'machineAdmissionTransport'
     > = {},
   ): ApiSessionClient {
     return new ApiSessionClient(this.credential.token, session, {
       credentials: this.credential,
+      getAccountEncryptionCurrentness: async () => await this.getAccountEncryptionCurrentness(),
       getBrowserDaemonControlRoutes: this.getBrowserDaemonControlRoutes,
       getBrowserDaemonContextRoutes: this.getBrowserDaemonContextRoutes,
       getBrowserDaemonAutomationRoutes: this.getBrowserDaemonAutomationRoutes,
@@ -839,9 +1103,14 @@ export class ApiClient {
       getSimulatorPreviewRoutes: this.getSimulatorPreviewRoutes,
       getPeerMediationObservabilityRuntimeActionContext: this.getPeerMediationObservabilityRuntimeActionContext,
       getServerFeaturesSnapshot: this.getCachedServerFeaturesSnapshot,
+      createCapabilitiesApiClient: async (credentials) => await ApiClient.create(credentials),
       transformSessionInputBeforeCommit:
         sessionOptions.transformSessionInputBeforeCommit
         ?? transformSessionInputThroughPluginHooks,
+      afterComposerAttachmentMessageAccepted:
+        sessionOptions.afterComposerAttachmentMessageAccepted,
+      machineAdmissionTransport:
+        sessionOptions.machineAdmissionTransport,
       localMachineId: this.localMachineId,
       initialRegisteredSessionStateFieldMutations: sessionOptions.initialRegisteredSessionStateFieldMutations,
       durableMutationDeliveryInitiallyActive: sessionOptions.durableMutationDeliveryInitiallyActive,
@@ -864,7 +1133,12 @@ export class ApiClient {
       this.credential.token,
       machine,
       ownershipMetadata,
-      lifecycleDependencies,
+      {
+        ...lifecycleDependencies,
+        createCapabilitiesApiClient:
+          lifecycleDependencies?.createCapabilitiesApiClient
+          ?? (async (credentials) => await ApiClient.create(credentials)),
+      },
     );
   }
 
@@ -907,6 +1181,7 @@ export class ApiClient {
         },
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -949,6 +1224,7 @@ export class ApiClient {
   async getConnectedServiceCredentialSealed(params: {
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }): Promise<ConnectedServiceCredentialSealedResponse | null> {
     return await this.connectedServiceCredentialApi.getConnectedServiceCredentialSealed(params);
   }
@@ -970,6 +1246,7 @@ export class ApiClient {
         `${serverUrl}/v3/connect/${serviceId}/groups`,
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1004,6 +1281,7 @@ export class ApiClient {
   async getConnectedServiceAuthGroup(params: {
     serviceId: ConnectedServiceId;
     groupId: string;
+    signal?: AbortSignal;
   }): Promise<ConnectedServiceAuthGroupV1 | null> {
     return await getConnectedServiceAuthGroupFromServer({
       token: this.credential.token,
@@ -1032,6 +1310,7 @@ export class ApiClient {
         },
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1081,6 +1360,7 @@ export class ApiClient {
         },
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1107,13 +1387,27 @@ export class ApiClient {
     }
   }
 
-  async getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean }>): Promise<ConnectedServiceAccountEncryptionMode> {
-    return await this.connectedServiceCredentialApi.getAccountEncryptionMode(options);
+  async getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>): Promise<ConnectedServiceAccountEncryptionMode> {
+    const mode = await this.connectedServiceCredentialApi.getAccountEncryptionMode(options);
+    if (mode === 'plain') {
+      options?.signal?.throwIfAborted();
+      await requireCurrentAccountStoredContentServerCompatibility({
+        resolveSnapshot: async () =>
+          await this.getServerFeaturesSnapshot({ refresh: true, signal: options?.signal }),
+      });
+      options?.signal?.throwIfAborted();
+    }
+    return mode;
+  }
+
+  async getAccountEncryptionCurrentness() {
+    return await this.connectedServiceCredentialApi.getAccountEncryptionCurrentness();
   }
 
   async getConnectedServiceCredentialPlain(params: {
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }): Promise<ConnectedServiceCredentialPlainResponse | null> {
     return await this.connectedServiceCredentialApi.getConnectedServiceCredentialPlain(params);
   }
@@ -1152,6 +1446,7 @@ export class ApiClient {
         },
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1215,6 +1510,7 @@ export class ApiClient {
         },
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1255,6 +1551,7 @@ export class ApiClient {
         `${serverUrl}/v2/connect/${serviceId}/profiles/${profileId}/quotas`,
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1325,6 +1622,7 @@ export class ApiClient {
         `${serverUrl}/v3/connect/${serviceId}/profiles/${profileId}/quotas`,
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1425,6 +1723,7 @@ export class ApiClient {
         },
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1472,6 +1771,7 @@ export class ApiClient {
         `${serverUrl}/v2/connect/provider-account-usage/${recordId}`,
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1552,6 +1852,7 @@ export class ApiClient {
         },
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1589,6 +1890,7 @@ export class ApiClient {
         {
           params: source,
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1643,6 +1945,7 @@ export class ApiClient {
         `${serverUrl}/v3/connect/provider-account-usage/${recordId}`,
         {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
           },
@@ -1732,6 +2035,7 @@ export class ApiClient {
       },
       {
         headers: {
+          ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
           'Authorization': `Bearer ${this.credential.token}`,
           'Content-Type': 'application/json',
         },

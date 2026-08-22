@@ -24,7 +24,7 @@ export function createDisconnectedTerminalHostResumeLifecycle(input: Readonly<{
   clearUnresolvedTerminalHostSession: (sessionId: string) => void;
   findDisconnectedCandidate: (sessionId: string) => DisconnectedTerminalHostCandidate | null;
   resolveResumeGateForCandidate: (candidate: DisconnectedTerminalHostCandidate) => Promise<ResumeGate>;
-  retireCandidate: (input: RetireCandidateInput) => void;
+  retireCandidate: (input: RetireCandidateInput) => void | Promise<void>;
 }>) {
   const barrier = createSessionStopOperationBarrier();
 
@@ -77,7 +77,7 @@ export function createDisconnectedTerminalHostResumeLifecycle(input: Readonly<{
       await barrier.run(sessionId, async () => {
         const result = await stop();
         if (result.retireCandidate && isTerminalHostPhysicallyRetiredStopResult(result.stopResult)) {
-          input.retireCandidate(result.retireCandidate);
+          await input.retireCandidate(result.retireCandidate);
         }
         return result.stopResult;
       }),

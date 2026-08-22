@@ -1,35 +1,35 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { CloudConnectTargetStatus, CloudVendorKey } from '@happier-dev/agents';
 import type {
-  CloudAuthCredentialWriteInputV1,
-  CloudAuthCredentialWriteResultV1,
-  CloudConnectAuthenticateOptionsV1,
-  CloudConnectAuthenticateResultV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+  AuthCredentialWriteInput as CloudAuthCredentialWriteInputV1,
+  AuthCredentialWriteResult as CloudAuthCredentialWriteResultV1,
+  AuthenticateOptions as CloudConnectAuthenticateOptionsV1,
+  AuthenticateResult as CloudConnectAuthenticateResultV1,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export type {
-  CloudAuthCallbackCreateInputV1,
-  CloudAuthCallbackCreateResultV1,
-  CloudAuthCallbackModeV1,
-  CloudAuthCallbackResultV1,
-  CloudAuthCallbackServiceV1,
-  CloudAuthCallbackSessionV1,
-  CloudAuthCallbackWaitInputV1,
-  CloudAuthCredentialWriteInputV1,
-  CloudAuthCredentialWriteResultV1,
-  CloudAuthDiagnosticV1,
-  CloudAuthFailureCodeV1,
-  CloudAuthLoopbackInputV1,
-  CloudAuthLoopbackResultV1,
-  CloudAuthOpenBrowserResultV1,
-  CloudAuthPkceChallengeV1,
-  CloudAuthPromptTextInputV1,
-  CloudAuthPromptTextResultV1,
-  CloudConnectAuthenticateOptionsV1,
-  CloudConnectAuthenticateResultV1,
-  CloudCustomAuthenticatorContextV1,
-  CloudCustomAuthenticatorV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+  AuthCallbackCreateInput,
+  AuthCallbackCreateResult,
+  AuthCallbackMode,
+  AuthCallbackResult,
+  AuthCallbackService,
+  AuthCallbackSession,
+  AuthCallbackWaitInput,
+  AuthCredentialWriteInput,
+  AuthCredentialWriteResult,
+  AuthDiagnostic,
+  AuthFailureCode,
+  AuthLoopbackInput,
+  AuthLoopbackResult,
+  AuthOpenBrowserResult,
+  AuthPkceChallenge,
+  AuthPromptTextInput,
+  AuthPromptTextResult,
+  AuthenticateOptions,
+  AuthenticateResult,
+  AuthenticatorContext,
+  Authenticator,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export type { CloudConnectTargetStatus, CloudVendorKey };
 

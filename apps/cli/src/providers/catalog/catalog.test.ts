@@ -156,28 +156,9 @@ function managedResolvedConnection(): ResolvedProviderConnectionRecord {
         pluginId: 'acme.gateway',
         localId: 'gateway',
       },
-      facet: {
-        managedEndpoint: {
-          localService: {
-            id: 'gateway-managed',
-            launch: {
-              kind: 'packaged-runtime-binary',
-              directorySegments: ['tools', 'unpacked'],
-              executableBaseName: 'gateway-managed',
-              privateConfigPathFlag: '--config',
-            },
-            launchMode: {
-              kind: 'assignAndInject',
-              portPolicy: { kind: 'allocated' },
-            },
-            hostPolicy: { kind: 'loopback' },
-            name: { strategy: 'fixed', name: 'Gateway' },
-            healthCheck: { kind: 'http', path: '/healthz' },
-            restart: { kind: 'never' },
-            cleanup: { staleAfterMs: 60_000 },
-          },
-          protocols: ['openai-responses'],
-        },
+      managedRuntime: {
+        kind: 'managed',
+        dependencies: [],
         connectedAccounts: [{
           purpose: 'upstream',
           service: {
@@ -185,6 +166,7 @@ function managedResolvedConnection(): ResolvedProviderConnectionRecord {
             localId: 'example',
           },
           required: true,
+          materializationKinds: ['httpHeaders'],
         }],
         requestAuthUses: [{
           purpose: 'upstream',
@@ -194,6 +176,7 @@ function managedResolvedConnection(): ResolvedProviderConnectionRecord {
             headerNames: ['authorization'],
           },
         }],
+        endpointTemplateIds: ['responses'],
       },
       purposeBindingIntents: {
         v: 1,

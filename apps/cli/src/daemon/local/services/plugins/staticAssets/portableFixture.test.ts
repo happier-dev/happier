@@ -5,13 +5,15 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+    PLUGIN_UI_HOST_API_VERSION_V1,
     computePluginUiArtifactFileSetSha256DigestV1,
     computePluginUiArtifactSha256DigestV1,
     PluginUiArtifactsManifestV1Schema,
-    type PluginHostedWebSecurityPolicyV1,
+    type PluginUiArtifactDigestV1,
+    type PluginUiArtifactsManifestV1,
 } from '@happier-dev/protocol/plugins/ui';
 import {
-    definePluginUiBuildConfig,
+    defineBuildConfig,
 } from '@happier-dev/plugin-sdk/ui/build';
 
 import {
@@ -26,42 +28,22 @@ const FIXTURE_SOURCE = join(
     '../../../../../plugins/testkit/fixtures/authoring-examples/plugin-ui-portable',
 );
 
-const hostUiApiVersion = '1.0.0';
-const reactVersion = '19.0.0';
-
-const hostedWebSecurity: PluginHostedWebSecurityPolicyV1 = {
-    allowedNavigationOrigins: [],
-    allowedCallbackOrigins: [],
-    allowedConnectOrigins: [],
-    csp: {
-        scriptSrc: 'selfOnly',
-        styleSrc: 'selfOnly',
-        imgSrc: 'selfOnly',
-        fontSrc: 'selfOnly',
-        connectSrc: 'declaredOrigins',
-        allowDataUrls: false,
-        allowBlobUrls: false,
-        allowInlineStyles: false,
-        allowEval: false,
-    },
-    sourceMaps: 'declaredDigestOnly',
-    mixedContent: 'deny',
-};
+const hostUiApiVersion = PLUGIN_UI_HOST_API_VERSION_V1;
 
 let pluginRoot: string;
-let builtDigest: string;
+let builtDigest: PluginUiArtifactDigestV1;
+let builtManifest: PluginUiArtifactsManifestV1;
 
 function encode(text: string): Uint8Array {
     return new TextEncoder().encode(text);
 }
 
 async function buildPortableFixture(): Promise<void> {
-    const buildConfig = definePluginUiBuildConfig({
+    const buildConfig = defineBuildConfig({
         targets: [{
             rendererId: 'preview-web',
             entry: 'ui/reviewPanel.web.tsx',
             kind: 'hostedWeb',
-            platforms: ['web'],
         }],
     });
     const target = buildConfig.targets[0];
@@ -93,7 +75,7 @@ async function buildPortableFixture(): Promise<void> {
             digest,
             builtWith: { bundler: 'vite', version: viteVersion },
             hostUiApiVersion,
-            compat: { react: reactVersion },
+            compat: {},
         }],
     });
     const artifactsRoot = join(pluginRoot, ...HOSTED_WEB_UI_ARTIFACTS_ROOT_RELATIVE_PATH.split('/'));
@@ -104,16 +86,16 @@ async function buildPortableFixture(): Promise<void> {
     }
     await writeFile(join(artifactsRoot, 'ui-artifacts.json'), `${JSON.stringify(manifest, null, 2)}\n`);
     builtDigest = digest;
+    builtManifest = manifest;
 }
 
-function registry(): Pick<ResolvedContributionRegistry, 'hostedWeb' | 'uiArtifacts'> {
+function registry(): Pick<ResolvedContributionRegistry, 'uiViewsV2' | 'uiRenderersV2'> {
     const base = {
         provenance: 'external' as const,
         source: { kind: 'path' as const },
         pluginId: 'examples.plugin-ui-portable',
         pluginRootPath: pluginRoot,
         manifestPath: join(pluginRoot, '.happier-plugin/plugin.json'),
-        manifestDigest: 'sha256:manifest',
         daemonEntryPath: null,
         sourceSpec: {
             kind: 'path' as const,
@@ -123,49 +105,28 @@ function registry(): Pick<ResolvedContributionRegistry, 'hostedWeb' | 'uiArtifac
         },
     };
     return {
-        hostedWeb: [{
+        uiViewsV2: [{
             ...base,
+            identity: { pluginId: base.pluginId, localId: 'preview-web-view' },
+            definition: {
+                id: 'preview-web-view',
+                container: 'rightPane',
+                target: { kind: 'session' },
+                renderer: 'preview-web',
+                title: 'Portable preview web',
+            },
+        }],
+        uiRenderersV2: [{
+            ...base,
+            identity: { pluginId: base.pluginId, localId: 'preview-web' },
+            generatedUiArtifactsManifest: builtManifest,
             definition: {
                 id: 'preview-web',
-                service: { kind: 'staticAssets' as const, assetRootId: 'hosted-web/preview-web' },
-                entry: { routeMode: 'pathFallback' as const, path: '/' },
-                bridge: { allowedMessages: ['ready' as const] },
-                sandbox: {
-                    scripts: true,
-                    sameOrigin: false,
-                    popups: false,
-                    topNavigation: false,
-                    mixedContent: false,
-                },
-                security: hostedWebSecurity,
-                fallback: { kind: 'unavailable' as const },
-                display: {
-                    titleKey: 'plugin.portable.title',
-                    developerFallback: 'Portable preview web',
-                },
+                kind: 'hostedWeb',
+                source: { kind: 'artifact', artifact: 'preview-web' },
             },
         }],
-        uiArtifacts: [{
-            ...base,
-            definition: {
-                id: 'preview-web-static',
-                contributionId: 'preview-web',
-                contributionFamily: 'hostedWeb' as const,
-                artifactKind: 'hostedWebAsset' as const,
-                platform: 'web' as const,
-                channel: 'internal' as const,
-                integrity: { digest: builtDigest },
-                compatibility: {
-                    hostAppVersion: '1.0.0',
-                    hostUiApiVersion,
-                    reactVersion,
-                    nativeCapabilities: [],
-                },
-                byteSize: 1024,
-                contentType: 'text/html',
-            },
-        }],
-    };
+    } as unknown as Pick<ResolvedContributionRegistry, 'uiViewsV2' | 'uiRenderersV2'>;
 }
 
 describe('plugin-ui-portable fixture is consumed by the daemon static-asset source after build', () => {
@@ -179,18 +140,13 @@ describe('plugin-ui-portable fixture is consumed by the daemon static-asset sour
         await rm(pluginRoot, { recursive: true, force: true });
     });
 
-    it('resolves the built hosted-web contribution with zero manifest-read-failed diagnostics', async () => {
+    it('resolves the built generated hosted-web renderer with zero diagnostics', async () => {
         const result = await resolveHostedWebStaticAssetLifecycleSource({
             registry: registry(),
             sessionId: 'session-1',
             machineId: 'machine-1',
         });
 
-        expect(
-            result.diagnostics.filter(
-                (entry) => entry.code === 'hosted_web_ui_artifacts_manifest_read_failed',
-            ),
-        ).toEqual([]);
         expect(result.diagnostics).toEqual([]);
         expect(result.contributions).toHaveLength(1);
         expect(result.contributions[0]).toEqual(

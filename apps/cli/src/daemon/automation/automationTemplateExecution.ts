@@ -1,10 +1,16 @@
 import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
+  AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
+  AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
+  AutomationRunExecutionInputV1Schema,
   BackendTargetRefV2Schema,
+  MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
+  materializeAutomationRunPromptV1,
   type CodexBackendMode,
   normalizeBackendTargetRefV2InputToV2,
   normalizeCodexBackendMode,
+  normalizeAutomationTemplateEnvelopeStoredRead,
   openAccountScopedBlobCiphertext,
   SessionMcpSelectionV1Schema,
   SessionModelSelectionV1Schema,
@@ -17,11 +23,9 @@ import {
 } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { decodeBase64, decryptLegacy } from '@/api/encryption';
 
-const ENCRYPTED_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_encrypted_v1';
-const PLAINTEXT_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_plain_v1';
 const MAX_TEMPLATE_CIPHERTEXT_CHARS = 220_000;
-const MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS = 200_000;
-const MAX_TEMPLATE_PAYLOAD_PLAINTEXT_CHARS = 200_000;
+const MAX_EXECUTION_INPUT_ENVELOPE_CHARS = MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES;
+const UTF8_ENCODER = new TextEncoder();
 
 const CheckoutCreationDraftSchema = z.object({
   kind: z.literal('git_worktree'),
@@ -65,23 +69,6 @@ const TemplateSchema = z.object({
   displayText: z.string().optional(),
 }).strict();
 
-const TemplateEnvelopeSchema = z.object({
-  kind: z.literal(ENCRYPTED_TEMPLATE_ENVELOPE_KIND),
-  payloadCiphertext: z.string().trim().min(1),
-  existingSessionId: z.string().trim().min(1).optional(),
-}).strict();
-
-const PlainTemplateEnvelopeSchema = z.object({
-  kind: z.literal(PLAINTEXT_TEMPLATE_ENVELOPE_KIND),
-  payload: z.unknown(),
-  existingSessionId: z.string().trim().min(1).optional(),
-}).strict();
-
-const AnyTemplateEnvelopeSchema = z.discriminatedUnion('kind', [
-  TemplateEnvelopeSchema,
-  PlainTemplateEnvelopeSchema,
-]);
-
 export type AutomationTemplateEncryption =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>
   | Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
@@ -97,6 +84,14 @@ export type AutomationClaimedRunPayload = Readonly<{
     enabled: boolean;
     targetType: 'new_session' | 'existing_session';
     templateCiphertext: string;
+  };
+}>;
+
+export type AutomationFrozenRunPayload = Readonly<{
+  run: {
+    id: string;
+    automationId: string;
+    executionInputEnvelope: string | null;
   };
 }>;
 
@@ -136,60 +131,93 @@ export type ParsedAutomationExecution = Readonly<{
   displayText?: string;
 }>;
 
+export type AutomationTemplateExecutionParseResult =
+  | Readonly<{ ok: true; value: ParsedAutomationExecution }>
+  | Readonly<{
+      ok: false;
+      code: 'invalid_template' | 'encryption_material_unavailable';
+      error: string;
+    }>;
+
+function invalidAutomationTemplate(
+  error: string,
+): Extract<AutomationTemplateExecutionParseResult, { ok: false }> {
+  return { ok: false, code: 'invalid_template', error };
+}
+
+type AutomationTemplatePromptMaterializationResult =
+  | Readonly<{ ok: true; prompt?: string }>
+  | Extract<AutomationTemplateExecutionParseResult, { ok: false }>;
+
+/**
+ * Renders a released V2 Definition's prompt through the one Protocol token
+ * materializer. This adapter never carries trigger evidence: its only writer
+ * freezes `scheduled`/`manual` Runs, which `parseAutomationRunExecutionInput`
+ * rechecks before reaching here. The template is built locally, so the only
+ * way it can fail the Protocol template shape is its prompt byte ceiling.
+ */
+export function materializeAutomationTemplatePrompt(params: Readonly<{
+  prompt: string | undefined;
+}>): AutomationTemplatePromptMaterializationResult {
+  const materialized = materializeAutomationRunPromptV1({
+    template: { v: 1, prompt: params.prompt ?? '' },
+    triggerEvidence: null,
+  });
+  if (materialized.kind !== 'available') {
+    switch (materialized.reason) {
+      case 'malformedToken':
+        return invalidAutomationTemplate('Invalid automation template: malformed token');
+      case 'unsupportedToken':
+        return invalidAutomationTemplate(
+          `Invalid automation template: unsupported token ${materialized.token}`,
+        );
+      default:
+        return invalidAutomationTemplate('Invalid automation template: materialized input exceeds its UTF-8 byte limit');
+    }
+  }
+
+  return materialized.prompt.length > 0 ? { ok: true, prompt: materialized.prompt } : { ok: true };
+}
+
 export function parseAutomationTemplateExecution(
   payload: AutomationClaimedRunPayload,
   encryption?: AutomationTemplateEncryption,
-): { ok: true; value: ParsedAutomationExecution } | { ok: false; error: string } {
+): AutomationTemplateExecutionParseResult {
   if (payload.automation.templateCiphertext.length > MAX_TEMPLATE_CIPHERTEXT_CHARS) {
-    return { ok: false, error: 'Invalid automation template: envelope too large' };
+    return invalidAutomationTemplate('Invalid automation template: envelope too large');
   }
 
   let parsedEnvelope: unknown;
   try {
     parsedEnvelope = JSON.parse(payload.automation.templateCiphertext);
   } catch {
-    return { ok: false, error: 'Invalid automation template JSON' };
+    return invalidAutomationTemplate('Invalid automation template JSON');
   }
 
-  const envelope = TemplateEnvelopeSchema.safeParse(parsedEnvelope);
-  const anyEnvelope = AnyTemplateEnvelopeSchema.safeParse(parsedEnvelope);
-  if (!anyEnvelope.success) {
-    return { ok: false, error: 'Invalid automation template envelope' };
+  const storedRead = normalizeAutomationTemplateEnvelopeStoredRead(parsedEnvelope);
+  if (!storedRead) {
+    return invalidAutomationTemplate('Invalid automation template envelope');
   }
-  if (anyEnvelope.data.kind === ENCRYPTED_TEMPLATE_ENVELOPE_KIND) {
-    if (anyEnvelope.data.payloadCiphertext.length > MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS) {
-      return { ok: false, error: 'Invalid automation template: payloadCiphertext too large' };
-    }
-  } else {
-    const payloadJson = (() => {
-      try {
-        return JSON.stringify(anyEnvelope.data.payload);
-      } catch {
-        return null;
-      }
-    })();
-    if (!payloadJson) {
-      return { ok: false, error: 'Invalid automation template: payload must be JSON-serializable' };
-    }
-    if (payloadJson.length > MAX_TEMPLATE_PAYLOAD_PLAINTEXT_CHARS) {
-      return { ok: false, error: 'Invalid automation template: payload too large' };
-    }
+  if (
+    payload.automation.targetType === 'new_session'
+    && storedRead.legacyExistingSessionId
+  ) {
+    return invalidAutomationTemplate('Invalid automation template: existingSessionId is not allowed for new_session target');
   }
-
-  if (payload.automation.targetType === 'existing_session') {
-    if (!anyEnvelope.data.existingSessionId) {
-      return { ok: false, error: 'Invalid automation template: existingSessionId is required for existing_session target' };
-    }
-  } else if (anyEnvelope.data.existingSessionId) {
-    return { ok: false, error: 'Invalid automation template: existingSessionId is not allowed for new_session target' };
-  }
+  const anyEnvelope = storedRead.envelope;
 
   let parsedPayload: unknown;
-  if (anyEnvelope.data.kind === PLAINTEXT_TEMPLATE_ENVELOPE_KIND) {
-    parsedPayload = anyEnvelope.data.payload;
-  } else {
+  if (anyEnvelope.kind === AUTOMATION_TEMPLATE_PLAIN_V1_KIND) {
+    parsedPayload = anyEnvelope.payload;
+  } else if (
+    anyEnvelope.kind === AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND
+  ) {
     if (!encryption) {
-      return { ok: false, error: 'Encrypted automation template cannot be decrypted without machine encryption context' };
+      return {
+        ok: false,
+        code: 'encryption_material_unavailable',
+        error: 'Encrypted automation template cannot be decrypted without account encryption material',
+      };
     }
 
     const opened = (() => {
@@ -199,7 +227,7 @@ export function parseAutomationTemplateExecution(
           material: encryption.type === 'legacy'
             ? { type: 'legacy', secret: encryption.secret }
             : { type: 'dataKey', machineKey: encryption.machineKey },
-          ciphertext: anyEnvelope.data.payloadCiphertext,
+          ciphertext: anyEnvelope.payloadCiphertext,
         });
         const decrypted = opened?.value;
         if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) {
@@ -216,15 +244,15 @@ export function parseAutomationTemplateExecution(
     } else {
       // Legacy fallback: some older templates were sealed with a raw secretbox (base64 of encryptLegacy).
       try {
-        const ciphertextBytes = decodeBase64(anyEnvelope.data.payloadCiphertext, 'base64');
+        const ciphertextBytes = decodeBase64(anyEnvelope.payloadCiphertext, 'base64');
         const secret = encryption.type === 'legacy' ? encryption.secret : encryption.machineKey;
         const decrypted = decryptLegacy(ciphertextBytes, secret);
         if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) {
-          return { ok: false, error: 'Invalid encrypted automation template payload' };
+          return invalidAutomationTemplate('Invalid encrypted automation template payload');
         }
         parsedPayload = decrypted;
       } catch {
-        return { ok: false, error: 'Invalid encrypted automation template payload' };
+        return invalidAutomationTemplate('Invalid encrypted automation template payload');
       }
     }
   }
@@ -233,17 +261,24 @@ export function parseAutomationTemplateExecution(
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const path = issue?.path?.join('.') ?? 'template';
-    return { ok: false, error: `Invalid automation template: ${path}` };
+    return invalidAutomationTemplate(`Invalid automation template: ${path}`);
   }
 
   const template = parsed.data;
   const codexBackendMode = normalizeCodexBackendMode(template.codexBackendMode);
 
   if (payload.automation.targetType === 'existing_session' && !template.existingSessionId) {
-    return { ok: false, error: 'Invalid automation template: existingSessionId is required for existing_session target' };
+    return invalidAutomationTemplate('Invalid automation template: existingSessionId is required for existing_session target');
   }
-  if (payload.automation.targetType === 'existing_session' && anyEnvelope.data.existingSessionId !== template.existingSessionId) {
-    return { ok: false, error: 'Invalid automation template: existingSessionId mismatch' };
+  if (
+    payload.automation.targetType === 'existing_session'
+    && storedRead.legacyExistingSessionId
+    && storedRead.legacyExistingSessionId !== template.existingSessionId
+  ) {
+    return invalidAutomationTemplate('Invalid automation template: existingSessionId mismatch');
+  }
+  if (payload.automation.targetType === 'new_session' && template.existingSessionId) {
+    return invalidAutomationTemplate('Invalid automation template: existingSessionId is not allowed for new_session target');
   }
 
   return {
@@ -298,6 +333,75 @@ export function parseAutomationTemplateExecution(
       ...(typeof template.displayText === 'string' && template.displayText.trim().length > 0
         ? { displayText: template.displayText }
         : {}),
+    },
+  };
+}
+
+/**
+ * V3 execution reads only the immutable Run recipe. Retained Runs without one
+ * are deliberately not reconstructed from the current Automation definition.
+ */
+export function parseAutomationRunExecutionInput(
+  payload: AutomationFrozenRunPayload,
+  encryption?: AutomationTemplateEncryption,
+): AutomationTemplateExecutionParseResult {
+  const raw = payload.run.executionInputEnvelope;
+  if (raw === null) {
+    return invalidAutomationTemplate('Frozen automation execution input is unavailable');
+  }
+  if (
+    raw.length > MAX_EXECUTION_INPUT_ENVELOPE_CHARS
+    || UTF8_ENCODER.encode(raw).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
+  ) {
+    return invalidAutomationTemplate('Invalid frozen automation execution input: envelope too large');
+  }
+
+  let parsedRaw: unknown;
+  try {
+    parsedRaw = JSON.parse(raw);
+  } catch {
+    return invalidAutomationTemplate('Invalid frozen automation execution input JSON');
+  }
+  const recipe = AutomationRunExecutionInputV1Schema.safeParse(parsedRaw);
+  if (!recipe.success) {
+    return invalidAutomationTemplate('Invalid frozen automation execution input');
+  }
+  // The only V2 writer freezes `scheduled`/`manual` Runs. Refuse any other
+  // origin rather than silently materializing its evidence as empty input.
+  if (recipe.data.origin.kind !== 'scheduled' && recipe.data.origin.kind !== 'manual') {
+    return invalidAutomationTemplate('Invalid frozen automation execution input: unsupported origin');
+  }
+
+  const parsedTemplate = parseAutomationTemplateExecution({
+    run: {
+      id: payload.run.id,
+      automationId: payload.run.automationId,
+    },
+    automation: {
+      id: payload.run.automationId,
+      name: 'Frozen automation execution input',
+      enabled: true,
+      targetType: recipe.data.targetType,
+      templateCiphertext: recipe.data.templateCiphertext,
+    },
+  }, encryption);
+  if (!parsedTemplate.ok) {
+    return parsedTemplate;
+  }
+
+  const materialized = materializeAutomationTemplatePrompt({
+    prompt: parsedTemplate.value.prompt,
+  });
+  if (!materialized.ok) {
+    return materialized;
+  }
+
+  const { prompt: _prompt, ...executionWithoutPrompt } = parsedTemplate.value;
+  return {
+    ok: true,
+    value: {
+      ...executionWithoutPrompt,
+      ...(materialized.prompt !== undefined ? { prompt: materialized.prompt } : {}),
     },
   };
 }

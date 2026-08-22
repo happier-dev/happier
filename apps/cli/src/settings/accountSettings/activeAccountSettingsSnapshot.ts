@@ -3,6 +3,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 export type ActiveAccountSettingsSnapshot = Readonly<{
   source: 'network' | 'cache' | 'none';
   settings: AccountSettings;
+  rawSettings?: Readonly<Record<string, unknown>>;
   settingsVersion: number;
   loadedAtMs: number;
   settingsSecretsReadKeys: readonly Uint8Array[];
@@ -11,7 +12,7 @@ export type ActiveAccountSettingsSnapshot = Readonly<{
 
 export type ActiveAccountSettingsSnapshotListener = (
   previous: ActiveAccountSettingsSnapshot | null,
-  next: ActiveAccountSettingsSnapshot,
+  next: ActiveAccountSettingsSnapshot | null,
 ) => void;
 
 export type ActiveAccountSettingsSnapshotCommit = Readonly<{
@@ -20,11 +21,25 @@ export type ActiveAccountSettingsSnapshotCommit = Readonly<{
 }>;
 
 let active: ActiveAccountSettingsSnapshot | null = null;
+// This token is intentionally owner-local: it advances at Account lifetime
+// boundaries, not when the active Account receives a newer settings revision.
+let activeLifetimeToken = 0;
 const listeners = new Set<ActiveAccountSettingsSnapshotListener>();
+
+function belongsToSameAccount(
+  previous: ActiveAccountSettingsSnapshot,
+  next: ActiveAccountSettingsSnapshot,
+): boolean {
+  if (previous.scopeKey && next.scopeKey) {
+    return previous.scopeKey === next.scopeKey;
+  }
+  // An unscoped replacement cannot prove that it belongs to the same Account.
+  return previous === next;
+}
 
 function emitActiveAccountSettingsSnapshot(
   previous: ActiveAccountSettingsSnapshot | null,
-  next: ActiveAccountSettingsSnapshot,
+  next: ActiveAccountSettingsSnapshot | null,
 ): void {
   for (const listener of listeners) {
     try {
@@ -48,6 +63,9 @@ export function commitActiveAccountSettingsSnapshot(
     return { snapshot: previous, didCommit: false };
   }
   active = next;
+  if (!previous || !belongsToSameAccount(previous, next)) {
+    activeLifetimeToken += 1;
+  }
   emitActiveAccountSettingsSnapshot(previous, next);
   return { snapshot: next, didCommit: true };
 }
@@ -58,6 +76,28 @@ export function setActiveAccountSettingsSnapshot(next: ActiveAccountSettingsSnap
 
 export function getActiveAccountSettingsSnapshot(): ActiveAccountSettingsSnapshot | null {
   return active;
+}
+
+/**
+ * Identifies the current process-local Account incumbent.  Consumers that bind
+ * authority across async work must capture this token, rather than treating a
+ * matching scope key as proof that a retired Account lifetime is current again.
+ */
+export function getActiveAccountSettingsSnapshotLifetimeToken(): number {
+  return activeLifetimeToken;
+}
+
+/**
+ * Revokes the current process-local Account Settings incumbent at logout.
+ * Subscribers observe this transition so custody bound to the prior Account
+ * cannot become current again if that Account is later selected anew.
+ */
+export function clearActiveAccountSettingsSnapshot(): void {
+  const previous = active;
+  if (!previous) return;
+  active = null;
+  activeLifetimeToken += 1;
+  emitActiveAccountSettingsSnapshot(previous, null);
 }
 
 export function resolveActiveAccountSettingsSnapshotRevision(
@@ -72,7 +112,9 @@ export function resolveActiveAccountSettingsSnapshotRevision(
 }
 
 export function resetActiveAccountSettingsSnapshotForTests(): void {
+  const previous = active;
   active = null;
+  if (previous) activeLifetimeToken += 1;
 }
 
 export function subscribeActiveAccountSettingsSnapshot(listener: ActiveAccountSettingsSnapshotListener): () => void {

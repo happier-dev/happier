@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 
-vi.mock('fs/promises', () => ({
+vi.mock('fs/promises', async (importOriginal) => ({
+  ...await importOriginal<typeof import('fs/promises')>(),
   readFile: vi.fn(async () => Buffer.from('hello')),
   writeFile: vi.fn(async () => undefined),
   mkdir: vi.fn(async () => undefined),
@@ -158,6 +159,30 @@ describe('registerFileSystemHandlers', () => {
     expect(String((writeResult as { error?: string }).error ?? '')).toContain('outside the allowed directories');
     expect(readFile).not.toHaveBeenCalled();
     expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('allows only an exact transient file grant for restricted reads', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    const grantedPath = '/tmp/transient-media/granted.png';
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir', {
+      accessPolicy: restrictedWorkDirPolicy,
+      getAdditionalAllowedReadFiles: () => [{ path: grantedPath, realPath: grantedPath }],
+    });
+
+    const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
+    if (!read) throw new Error('expected read handler');
+
+    vi.mocked(stat).mockResolvedValueOnce({
+      size: 5,
+      mtime: new Date(),
+      isDirectory: () => false,
+    } as any);
+    await expect(read({ path: grantedPath })).resolves.toMatchObject({ success: true });
+    await expect(read({ path: '/tmp/transient-media/sibling-secret.png' })).resolves.toMatchObject({
+      success: false,
+    });
+    expect(readFile).toHaveBeenCalledTimes(1);
   });
 
   it('does not allow writing outside working directory even when additional read roots are configured', async () => {

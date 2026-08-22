@@ -4,9 +4,12 @@ import { lookup } from 'node:dns/promises';
 import {
   createProviderEndpointFingerprintV1,
   createProviderErrorV1,
+  readContributedProviderCatalogParserIds,
+  createProviderManagedRuntimeDeclarationEqualityKeyV1,
   createProviderProbeRequestFingerprintV1,
   createProviderManagedProbeRequestFingerprintV1,
   readOwnRecordValue,
+  resolveProviderManagedRuntimeDeclarationV1,
   serializeModelVisibilityRefV1,
   type ProviderErrorV1,
   type ProviderCatalogRuntimeStateRecordV1,
@@ -50,6 +53,8 @@ import {
 import {
   createProviderCatalogRefreshFingerprint,
   createProviderCatalogService,
+  type ContributedProviderCatalogParserBinding,
+  type ContributedProviderCatalogParsers,
   type ProviderCatalogRefreshResult,
   type ProviderManagedCatalogRuntimePort,
   type ProviderProbeEndpoint,
@@ -62,10 +67,12 @@ import {
   createProviderSavedModelsRpcHandler,
   createProviderSavedProbeRpcHandler,
   ProviderProbeRpcResolutionError,
+  type ProviderProbeWaiterLifetime,
   type ProviderSavedModelsRpcResult,
   type ResolvedProviderProbeRpcRequest,
 } from './rpc';
 import {
+  PROVIDER_CATALOG_REFRESH_TTL_MS,
   PROVIDER_HEALTH_REFRESH_TTL_MS,
   createProviderProbeScheduler,
 } from './scheduler';
@@ -75,7 +82,10 @@ import {
 } from './draft';
 import { createProviderHealthProbeService } from './health';
 import { selectProviderConnectionRuntimeSummary } from '@/providers/connections/runtimeSummary';
-import type { ProviderConnectionRuntimeSummary } from '@/providers/connections/service';
+import type {
+  ProviderConnectionRuntimeSummary,
+  ProviderConnectionRuntimeSummaryInput,
+} from '@/providers/connections/service/types';
 import type { ProviderLocalCatalogFallbackResult } from './localCommand';
 import type {
   ResolveManagedProviderPurposeBindingIntent,
@@ -101,6 +111,10 @@ type RuntimeProviderIdentity = Readonly<{
   machineId: string;
 }>;
 
+type RuntimeProviderSummaryInput =
+  | RuntimeProviderIdentity
+  | ProviderConnectionRuntimeSummaryInput;
+
 export type RuntimeProviderCatalogContext =
   | Readonly<{ status: 'error'; error: ProviderErrorV1 }>
   | Readonly<{
@@ -121,10 +135,14 @@ export type RuntimeProviderServices = Readonly<{
   probe(
     rawInput: unknown,
     trigger?: 'manual_refresh' | 'enable',
+    waiterLifetime?: ProviderProbeWaiterLifetime,
   ): Promise<ProviderCatalogRefreshResult>;
-  probeDraft(request: DaemonProviderDraftProbeRequestV1): Promise<ProviderCatalogRefreshResult>;
+  probeDraft(
+    request: DaemonProviderDraftProbeRequestV1,
+    waiterLifetime?: ProviderProbeWaiterLifetime,
+  ): Promise<ProviderCatalogRefreshResult>;
   models: ReturnType<typeof createProviderSavedModelsRpcHandler>;
-  summary(identity: RuntimeProviderIdentity): Promise<
+  summary(input: RuntimeProviderSummaryInput): Promise<
     | Readonly<{ status: 'error'; error: ProviderErrorV1 }>
     | Readonly<{
         status: 'success';
@@ -145,9 +163,43 @@ export type RuntimeProviderServices = Readonly<{
   scheduleDemandRefresh(
     identity: RuntimeProviderIdentity,
     trigger: 'detail_open' | 'picker_open',
-  ): void;
+  ): Promise<void>;
   runtimeStore: ProviderRuntimeStateStore;
+  probeInfrastructure: Readonly<{
+    client: ReturnType<typeof createProviderProbeHttpClient>;
+    scheduler: ReturnType<typeof createProviderProbeScheduler>;
+  }>;
 }>;
+
+/**
+ * Acquires the exact catalog wire formats a Provider's plugin contributes.
+ * Provider contributions activate on demand, so this reaches the authoritative
+ * plugin runtime rather than reading a stale projection.
+ */
+export type ResolveContributedProviderCatalogParsers = (
+  identity: Readonly<{ pluginId: string; localId: string }>,
+) => Promise<ContributedProviderCatalogParserBinding | null>;
+
+async function acquireContributedProviderCatalogParsers(
+  happyHomeDir: string,
+  identity: Readonly<{ pluginId: string; localId: string }>,
+): Promise<ContributedProviderCatalogParserBinding | null> {
+  const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir });
+  try {
+    const acquired = await lease.registry.acquireProviderCatalogParsers?.(identity);
+    // The registry lease ends here, so the acquired generation handle travels
+    // with the implementations: probe work admitted or queued before a plugin
+    // replacement must still refuse before parsing or persisting its output.
+    return acquired
+      ? Object.freeze({
+          parsersByFormat: acquired.parsersByFormat,
+          isCurrent: () => acquired.isCurrent(),
+        })
+      : null;
+  } finally {
+    await lease.release();
+  }
+}
 
 function sourceCatalog(connection: ResolvedProviderConnectionRecord) {
   return connection.source.kind === 'contribution'
@@ -223,12 +275,14 @@ export function createRuntimeProviderServices(input: Readonly<{
     run(input: Readonly<{
       descriptor: NonNullable<ReturnType<typeof sourceCatalogFallback>>;
       endpointUrl: string;
+      contributedCatalogParsers?: ContributedProviderCatalogParsers;
     }>): Promise<ProviderLocalCatalogFallbackResult>;
   }>;
   managedCatalogRuntime?: ProviderManagedCatalogRuntimePort<
     ProviderProbeHostAuthorizationTicket
   >;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+  resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
 }>): RuntimeProviderServices {
   const happyHomeDir = input.happyHomeDir ?? configuration.happyHomeDir;
   const resolveRegistry = input.resolveRegistry ?? (input.registry
@@ -241,6 +295,9 @@ export function createRuntimeProviderServices(input: Readonly<{
           await lease.release();
         }
       });
+  const resolveContributedCatalogParsers = input.resolveContributedCatalogParsers
+    ?? ((identity: Readonly<{ pluginId: string; localId: string }>) =>
+      acquireContributedProviderCatalogParsers(happyHomeDir, identity));
   const getSnapshot = input.getAccountSettingsSnapshot ?? getActiveAccountSettingsSnapshot;
   const client = input.client ?? createProviderProbeHttpClient({});
   const runtimeStore = input.runtimeStore ?? createProviderRuntimeStateStore({
@@ -274,7 +331,6 @@ export function createRuntimeProviderServices(input: Readonly<{
     authorization,
     runtimeStore,
     createObservationId: input.createObservationId ?? randomUUID,
-    retryDelayMs: (failureCount) => Math.min(24 * 60 * 60_000, 30_000 * (2 ** Math.max(0, failureCount - 1))),
     ...(input.localCatalogFallback ? { localCatalogFallback: input.localCatalogFallback } : {}),
     ...(input.managedCatalogRuntime
       ? { managedCatalogRuntime: input.managedCatalogRuntime }
@@ -295,17 +351,48 @@ export function createRuntimeProviderServices(input: Readonly<{
     status: 'error' as const,
     error: createProviderErrorV1('provider_feature_disabled', identity),
   });
+  const providerProbeUnavailable = (
+    identity: Readonly<{ connectionId: string; machineId: string }>,
+  ): ProviderCatalogRefreshResult => ({
+    status: 'error',
+    error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+  });
+  // Local probe admission being full is a host capacity fact: no endpoint
+  // request was attempted, so explicit refresh and model-load confirmation
+  // report it separately from an endpoint outage.
+  const providerProbeCapacityExhausted = (
+    identity: Readonly<{ connectionId: string; machineId: string }>,
+  ): ProviderCatalogRefreshResult => ({
+    status: 'error',
+    error: createProviderErrorV1('provider_probe_capacity_exhausted', identity),
+  });
   const isProviderFeatureEnabled = () => input.featureGate?.isEnabled('providers') === true;
+  const withProviderFeatureCurrentness = (
+    waiterLifetime: ProviderProbeWaiterLifetime = {},
+  ): ProviderProbeWaiterLifetime => ({
+    ...waiterLifetime,
+    isCurrent: () => isProviderFeatureEnabled()
+      && (waiterLifetime.isCurrent?.() ?? true),
+  });
 
   async function resolveConnectionContext(
     identity: Readonly<{ connectionId: string; machineId: string }>,
   ) {
+    if (!isProviderFeatureEnabled()) {
+      return { ok: false as const, error: providerFeatureDisabled(identity).error };
+    }
     const snapshot = getSnapshot();
+    if (!isProviderFeatureEnabled()) {
+      return { ok: false as const, error: providerFeatureDisabled(identity).error };
+    }
     if (!snapshot) {
       return { ok: false as const, error: createProviderErrorV1('provider_connection_not_found', identity) };
     }
     const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
     const registry = await resolveRegistry();
+    if (!isProviderFeatureEnabled()) {
+      return { ok: false as const, error: providerFeatureDisabled(identity).error };
+    }
     const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
       connectionId: identity.connectionId,
       machineId: identity.machineId,
@@ -313,6 +400,9 @@ export function createRuntimeProviderServices(input: Readonly<{
       registry,
       ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
     });
+    if (!isProviderFeatureEnabled()) {
+      return { ok: false as const, error: providerFeatureDisabled(identity).error };
+    }
     const resolution = resolveProviderConnectionForMachine({
       ...identity,
       accountSettings: snapshot.settings,
@@ -349,6 +439,9 @@ export function createRuntimeProviderServices(input: Readonly<{
       registry,
       dnsEvidenceByEndpointUrl,
     } = context;
+    if (!isProviderFeatureEnabled()) {
+      return { ok: false, error: providerFeatureDisabled(identity).error };
+    }
     if (!connection.authorization.authorized) {
       return { ok: false, error: createProviderErrorV1(connection.authorization.errorCode, identity) };
     }
@@ -372,6 +465,26 @@ export function createRuntimeProviderServices(input: Readonly<{
       ? []
       : selectedProbes;
     const catalogFallback = mode === 'catalog' ? sourceCatalogFallback(connection) : undefined;
+    // A declared catalog format the host does not bundle is implemented by the
+    // declaring plugin. Resolve it once per request so both deployments reach
+    // exactly the same implementation the declaration names.
+    const contributedFormats = connection.source.kind === 'contribution'
+      ? readContributedProviderCatalogParserIds(
+          connection.source.definition as unknown as Readonly<Record<string, unknown>>,
+        )
+      : [];
+    const contributedCatalogParsers = contributedFormats.length > 0
+      && connection.source.kind === 'contribution'
+      && (probes.some((probe) => contributedFormats.includes(probe.parser))
+        // The command fallback declares a format from the same contributed
+        // vocabulary, so a plugin whose only contributed format serves the
+        // fallback must still reach its own implementation.
+        || (catalogFallback ? contributedFormats.includes(catalogFallback.parser) : false))
+      ? await resolveContributedCatalogParsers({
+          pluginId: connection.source.pluginId,
+          localId: connection.source.definition.id,
+        })
+      : null;
     if (connection.deployment.kind === 'managedLocal') {
       if (mode === 'health') {
         return {
@@ -402,18 +515,31 @@ export function createRuntimeProviderServices(input: Readonly<{
             (candidate) => candidate.id === probe.endpointTemplateId,
           )
         : undefined;
+      const contributionManagedRuntime =
+        contribution?.definition.managedRuntime
+          ? resolveProviderManagedRuntimeDeclarationV1({
+              implementationIdentity: contribution.identity,
+              managedRuntime: contribution.definition.managedRuntime,
+            })
+          : null;
       if (
         connection.source.kind !== 'contribution'
-        || connection.source.provenance !== 'first_party'
-        || contribution?.provenance !== 'first_party'
-        || contribution.source.kind !== 'bundled'
-        || !contribution.managed
-        || !contribution.managedRuntimeAdapter
+        || !contribution
+        || !contribution.definition.managedRuntime
+        || !contributionManagedRuntime
         || !probe
         || !endpointTemplate
-        || !connection.deployment.facet.managedEndpoint.protocols.includes(
-          endpointTemplate.protocol,
+        || !connection.deployment.managedRuntime.endpointTemplateIds.includes(
+          endpointTemplate.id,
         )
+        || createProviderManagedRuntimeDeclarationEqualityKeyV1({
+          implementationIdentity: contribution.identity,
+          managedRuntime: contributionManagedRuntime,
+        })
+          !== createProviderManagedRuntimeDeclarationEqualityKeyV1({
+            implementationIdentity: connection.deployment.implementationIdentity,
+            managedRuntime: connection.deployment.managedRuntime,
+          })
       ) {
         return {
           ok: false,
@@ -435,7 +561,8 @@ export function createRuntimeProviderServices(input: Readonly<{
           await resolveManagedProviderPurposeBindingSnapshot({
           implementationIdentity:
             connection.deployment.implementationIdentity,
-          facet: connection.deployment.facet,
+          connectedAccounts:
+            connection.deployment.managedRuntime.connectedAccounts ?? [],
           purposeBindingIntents:
             connection.deployment.purposeBindingIntents,
           resolveBindingIntent: input.resolveManagedPurposeBindingIntent,
@@ -449,18 +576,16 @@ export function createRuntimeProviderServices(input: Readonly<{
           ),
         };
       }
+      if (!isProviderFeatureEnabled()) {
+        return { ok: false, error: providerFeatureDisabled(identity).error };
+      }
       const managedSource = {
         implementationIdentity: connection.deployment.implementationIdentity,
-        managedFacet: connection.deployment.facet,
+        managedRuntime: connection.deployment.managedRuntime,
         purposeBindings: purposeBindingResolution,
-        catalogSource: contribution.managedRuntimeAdapter.catalogSource,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
         publicHeaders: {},
-        runtimeBinding: {
-          contribution,
-          runtimeAdapter: contribution.managedRuntimeAdapter,
-        },
       } as const;
       const probeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
         ...managedSource,
@@ -473,9 +598,8 @@ export function createRuntimeProviderServices(input: Readonly<{
           deployment: 'managedLocal',
           ...identity,
           implementationIdentity: managedSource.implementationIdentity,
-          managedFacet: managedSource.managedFacet,
+          managedRuntime: managedSource.managedRuntime,
           purposeBindings: managedSource.purposeBindings,
-          catalogSource: managedSource.catalogSource,
           endpointTemplateId: managedSource.endpointTemplateId,
           protocol: managedSource.protocol,
           path: probe.path,
@@ -505,6 +629,7 @@ export function createRuntimeProviderServices(input: Readonly<{
             endpoints: [],
             probes,
             managedSource,
+            ...(contributedCatalogParsers ? { contributedCatalogParsers } : {}),
             observationAuthorizationFingerprints: [
               resolvedAuthorization.observationAuthorizationFingerprint,
             ],
@@ -571,6 +696,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           endpoints,
           probes,
           ...(catalogFallback ? { catalogFallback } : {}),
+          ...(contributedCatalogParsers ? { contributedCatalogParsers } : {}),
           observationAuthorizationFingerprints: Object.freeze([...authorizationFingerprints].sort()),
           authorizationGrant: {
             kind: connection.authorization.grantKind,
@@ -586,7 +712,13 @@ export function createRuntimeProviderServices(input: Readonly<{
     identity: Readonly<{ connectionId: string; machineId: string }>,
     mode: SavedProbeMode = 'catalog',
   ): Promise<SavedResolutionResult> {
+    if (!isProviderFeatureEnabled()) {
+      return { ok: false, error: providerFeatureDisabled(identity).error };
+    }
     const context = await resolveConnectionContext(identity);
+    if (!isProviderFeatureEnabled()) {
+      return { ok: false, error: providerFeatureDisabled(identity).error };
+    }
     return context.ok
       ? resolveSavedFromConnectionContext(identity, context.value, mode)
       : context;
@@ -626,7 +758,9 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     const resolved = await resolveSaved(identity);
     if (!resolved.ok) return { status: 'error' as const, error: resolved.error };
+    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     const runtimeState = runtimeStateOverride ?? await runtimeStore.read();
+    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     return projectResolvedCatalogContext(identity, resolved.value, runtimeState);
   };
 
@@ -639,7 +773,9 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!connectionContext.ok) {
       return { status: 'error' as const, error: connectionContext.error };
     }
+    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     const runtimeState = runtimeStateOverride ?? await runtimeStore.read();
+    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     if (!connectionContext.value.connection.authorization.authorized) {
       return {
         status: 'success' as const,
@@ -654,6 +790,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     }
     const resolved = await resolveSavedFromConnectionContext(identity, connectionContext.value, 'catalog');
     if (!resolved.ok) return { status: 'error' as const, error: resolved.error };
+    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     return projectResolvedCatalogContext(identity, resolved.value, runtimeState);
   };
 
@@ -664,14 +801,14 @@ export function createRuntimeProviderServices(input: Readonly<{
       return resolved.value.request;
     },
     refresh: (request) => catalogService.refresh(request),
-    schedule: (key, trigger, operation) => scheduler.runCatalog(key, trigger, operation),
+    schedule: (key, trigger, operation, options) => scheduler.runCatalog(key, trigger, operation, options),
   });
 
   const runResolvedHealthProbe = createResolvedProviderProbeRunner({
     refresh: (request) => request.probes.length === 1
       ? healthProbeService.refresh(request)
       : Promise.resolve({ status: 'not_supported' as const }),
-    schedule: (key, trigger, operation) => scheduler.runHealth(key, trigger, operation),
+    schedule: (key, trigger, operation, options) => scheduler.runHealth(key, trigger, operation, options),
   });
 
   const hasFreshExactHealthObservation = async (
@@ -696,34 +833,79 @@ export function createRuntimeProviderServices(input: Readonly<{
       && Date.now() < record.state.observedAt + PROVIDER_HEALTH_REFRESH_TTL_MS;
   };
 
+  const hasFreshExactCatalogObservation = async (
+    request: ResolvedProviderProbeRpcRequest,
+  ): Promise<boolean> => {
+    if (request.probes.length === 0) return false;
+    const state = await runtimeStore.read();
+    const record = selectCurrentProviderCatalogRuntimeRecord({
+      state,
+      machineId: request.machineId,
+      connectionId: request.connectionId,
+      catalogFingerprint: createProviderCatalogRefreshFingerprint(request),
+      allowedObservationAuthorizationFingerprints: request.observationAuthorizationFingerprints,
+    });
+    const snapshot = record?.state.snapshot;
+    return snapshot !== null
+      && snapshot !== undefined
+      && !snapshot.stale
+      && Date.now() < snapshot.observedAt + PROVIDER_CATALOG_REFRESH_TTL_MS;
+  };
+
   const manualProbe = createProviderSavedProbeRpcHandler({
     machineId: input.machineId,
-    probe: (identity) => isProviderFeatureEnabled()
-      ? lowLevelProbe({ ...identity, kind: 'saved', trigger: 'manual_refresh' })
+    probe: (identity, waiterLifetime) => isProviderFeatureEnabled()
+      ? lowLevelProbe(
+          { ...identity, kind: 'saved', trigger: 'manual_refresh' },
+          withProviderFeatureCurrentness(waiterLifetime),
+        )
       : Promise.resolve(providerFeatureDisabled(identity)),
   });
   const enableProbe = createProviderSavedProbeRpcHandler({
     machineId: input.machineId,
-    probe: (identity) => isProviderFeatureEnabled()
-      ? lowLevelProbe({ ...identity, kind: 'saved', trigger: 'enable' })
+    probe: (identity, waiterLifetime) => isProviderFeatureEnabled()
+      ? lowLevelProbe(
+          { ...identity, kind: 'saved', trigger: 'enable' },
+          withProviderFeatureCurrentness(waiterLifetime),
+        )
       : Promise.resolve(providerFeatureDisabled(identity)),
   });
   const probe = (
     rawInput: unknown,
     trigger: 'manual_refresh' | 'enable' = 'manual_refresh',
-  ) => trigger === 'enable' ? enableProbe(rawInput) : manualProbe(rawInput);
+    waiterLifetime?: ProviderProbeWaiterLifetime,
+  ) => trigger === 'enable'
+    ? enableProbe(rawInput, waiterLifetime)
+    : manualProbe(rawInput, waiterLifetime);
 
-  const scheduleDemandRefresh = (
+  const scheduleDemandRefresh = async (
     identity: Readonly<{ connectionId: string; machineId: string }>,
     trigger: 'detail_open' | 'picker_open',
-  ): void => {
-    void (async () => {
-      await lowLevelProbe({ ...identity, kind: 'saved', trigger });
-      const resolved = await resolveSaved(identity, 'health');
-      if (!resolved.ok || resolved.value.request.probes.length !== 1) return;
-      if (await hasFreshExactHealthObservation(resolved.value.request)) return;
-      await runResolvedHealthProbe(resolved.value.request, trigger);
-    })().catch(() => undefined);
+  ): Promise<void> => {
+    try {
+      if (!isProviderFeatureEnabled()) return;
+      const catalog = await resolveSaved(identity);
+      if (!catalog.ok || !isProviderFeatureEnabled()) return;
+      if (!await hasFreshExactCatalogObservation(catalog.value.request)) {
+        if (!isProviderFeatureEnabled()) return;
+        await lowLevelProbe(
+          { ...identity, kind: 'saved', trigger },
+          withProviderFeatureCurrentness(),
+        );
+      }
+      if (!isProviderFeatureEnabled()) return;
+      const health = await resolveSaved(identity, 'health');
+      if (!health.ok || !isProviderFeatureEnabled() || health.value.request.probes.length !== 1) return;
+      if (await hasFreshExactHealthObservation(health.value.request)) return;
+      if (!isProviderFeatureEnabled()) return;
+      await runResolvedHealthProbe(
+        health.value.request,
+        trigger,
+        withProviderFeatureCurrentness(),
+      );
+    } catch {
+      // Demand refresh is advisory; callers project the current cached state.
+    }
   };
 
   const modelLoadCatalog = createProviderModelLoadCatalogPort<unknown>({
@@ -733,109 +915,159 @@ export function createRuntimeProviderServices(input: Readonly<{
       return resolved.value.request;
     },
     runtimeStore,
-    // The scheduler owns the shared operation lifetime. The model-load service
-    // applies caller cancellation to that caller after the coalesced refresh.
-    refresh: ({ signal: _callerSignal, modelId, refreshFrontier, ...request }) => scheduler.runCatalogAfter(
+    refresh: ({ signal, modelId, refreshFrontier, ...request }) => scheduler.runCatalogAfter(
       createResolvedProviderProbeObservationIdentity(request),
       JSON.stringify(['post-model-load', modelId, refreshFrontier]),
       () => catalogService.refresh(request),
+      {
+        signal,
+        isCurrent: isProviderFeatureEnabled,
+        unavailable: () => providerProbeUnavailable({
+          connectionId: request.connectionId,
+          machineId: request.machineId,
+        }),
+        localCapacityUnavailable: () => providerProbeCapacityExhausted({
+          connectionId: request.connectionId,
+          machineId: request.machineId,
+        }),
+      },
     ),
   });
+
+  const projectModels = (
+    identity: RuntimeProviderIdentity,
+    context: Extract<RuntimeProviderCatalogContext, { status: 'success' }>,
+  ): ProviderSavedModelsRpcResult => {
+    const catalog = sourceCatalog(context.connection);
+    const record = context.catalogRuntimeRecord;
+    const projected = projectProviderCatalogPresentation({
+      staticModels: staticModels(catalog),
+      ...(catalogMembershipPolicy(catalog)
+        ? { membershipPolicy: catalogMembershipPolicy(catalog) }
+        : {}),
+      manualModels: readOwnRecordValue(
+        context.providerSettings.manualModelsByConnectionId,
+        identity.connectionId,
+      ) ?? [],
+      probeState: record
+        ? { snapshot: record.state.snapshot, staleProbeModels: record.state.staleProbeModels }
+        : { snapshot: null, staleProbeModels: [] },
+      connectionId: identity.connectionId,
+      machineId: identity.machineId,
+      catalogRecord: record,
+      loadRecords: context.runtimeState.modelLoadStates,
+      probeConfidence: context.connection.deployment.kind === 'managedLocal'
+        ? 'account_unverified'
+        : 'probe',
+    });
+    const visibility = (modelId: string): 'visible' | 'hidden_all_agents' => {
+      const key = serializeModelVisibilityRefV1({
+        scope: 'allAgents', providerConnectionId: context.connection.connectionId, modelId,
+      });
+      return Object.prototype.hasOwnProperty.call(context.providerSettings.modelVisibilityByRef, key)
+        ? 'hidden_all_agents'
+        : 'visible';
+    };
+    const models = [
+      ...projected.rows.map(({ row, catalog: rowCatalog, loadState }) => ({
+        id: row.descriptor.id,
+        ...(row.descriptor.name ? { name: row.descriptor.name } : {}),
+        source: sourceForRow(row),
+        stale: rowCatalog.stale
+          && row.sources.probe
+          && !row.sources.manual
+          && row.confidence !== 'verified_static',
+        loadState,
+        visibility: visibility(row.descriptor.id),
+      })),
+      ...projected.staleRows.map(({ row, loadState }) => ({
+        id: row.descriptor.id,
+        ...(row.descriptor.name ? { name: row.descriptor.name } : {}),
+        source: sourceForRow(row),
+        stale: true,
+        loadState,
+        visibility: visibility(row.descriptor.id),
+      })),
+    ];
+    return {
+      status: 'success' as const,
+      connectionId: identity.connectionId,
+      connectionRevision: context.connection.connection.revision,
+      manualModelPolicy: sourceCatalog(context.connection).manualModelPolicy,
+      modelLoadAction: context.connection.source.kind !== 'contribution'
+        || context.connection.source.definition.modelLoad === undefined
+        ? 'descriptor_absent' as const
+        : input.modelLoadEnabled?.() === true
+          ? 'available' as const
+          : 'feature_disabled' as const,
+      models,
+    };
+  };
 
   const models = createProviderSavedModelsRpcHandler({
     machineId: input.machineId,
     models: async (identity): Promise<ProviderSavedModelsRpcResult> => {
       const context = await resolveCatalogContext(identity);
       if (context.status === 'error') return context;
-      scheduleDemandRefresh(identity, 'picker_open');
-      const catalog = sourceCatalog(context.connection);
-      const record = context.catalogRuntimeRecord;
-      const projected = projectProviderCatalogPresentation({
-        staticModels: staticModels(catalog),
-        ...(catalogMembershipPolicy(catalog)
-          ? { membershipPolicy: catalogMembershipPolicy(catalog) }
-          : {}),
-        manualModels: readOwnRecordValue(
-          context.providerSettings.manualModelsByConnectionId,
-          identity.connectionId,
-        ) ?? [],
-        probeState: record
-          ? { snapshot: record.state.snapshot, staleProbeModels: record.state.staleProbeModels }
-          : { snapshot: null, staleProbeModels: [] },
-        connectionId: identity.connectionId,
-        machineId: identity.machineId,
-        catalogRecord: record,
-        loadRecords: context.runtimeState.modelLoadStates,
-        probeConfidence: context.connection.deployment.kind === 'managedLocal'
-          ? 'account_unverified'
-          : 'probe',
-      });
-      const visibility = (modelId: string): 'visible' | 'hidden_all_agents' => {
-        const key = serializeModelVisibilityRefV1({
-          scope: 'allAgents', providerConnectionId: context.connection.connectionId, modelId,
-        });
-        return Object.prototype.hasOwnProperty.call(context.providerSettings.modelVisibilityByRef, key)
-          ? 'hidden_all_agents'
-          : 'visible';
-      };
-      const models = [
-        ...projected.rows.map(({ row, catalog: rowCatalog, loadState }) => ({
-          id: row.descriptor.id,
-          ...(row.descriptor.name ? { name: row.descriptor.name } : {}),
-          source: sourceForRow(row),
-          stale: rowCatalog.stale
-            && row.sources.probe
-            && !row.sources.manual
-            && row.confidence !== 'verified_static',
-          loadState,
-          visibility: visibility(row.descriptor.id),
-        })),
-        ...projected.staleRows.map(({ row, loadState }) => ({
-          id: row.descriptor.id,
-          ...(row.descriptor.name ? { name: row.descriptor.name } : {}),
-          source: sourceForRow(row),
-          stale: true,
-          loadState,
-          visibility: visibility(row.descriptor.id),
-        })),
-      ];
-      return {
-        status: 'success' as const,
-        connectionId: identity.connectionId,
-        connectionRevision: context.connection.connection.revision,
-        manualModelPolicy: sourceCatalog(context.connection).manualModelPolicy,
-        modelLoadAction: context.connection.source.kind !== 'contribution'
-          || context.connection.source.definition.modelLoad === undefined
-          ? 'descriptor_absent' as const
-          : input.modelLoadEnabled?.() === true
-            ? 'available' as const
-            : 'feature_disabled' as const,
-        models,
-      };
+      void scheduleDemandRefresh(identity, 'picker_open');
+      return projectModels(identity, context);
     },
   });
 
-  const probeDraft = (request: DaemonProviderDraftProbeRequestV1) => isProviderFeatureEnabled()
+  const probeDraft = (
+    request: DaemonProviderDraftProbeRequestV1,
+    waiterLifetime?: ProviderProbeWaiterLifetime,
+  ) => isProviderFeatureEnabled()
     ? scheduler.runCatalog(
         createProviderDraftProbeSchedulerKey(request),
         'manual_refresh',
         () => draftProbeService.probe(request),
+        {
+          ...withProviderFeatureCurrentness(waiterLifetime),
+          unavailable: () => providerProbeUnavailable({
+            connectionId: request.draftConnectionId,
+            machineId: request.machineId,
+          }),
+          localCapacityUnavailable: () => providerProbeCapacityExhausted({
+            connectionId: request.draftConnectionId,
+            machineId: request.machineId,
+          }),
+        },
       )
     : Promise.resolve(providerFeatureDisabled({
         connectionId: request.draftConnectionId,
         machineId: request.machineId,
       }));
 
-  const summary = async (identity: Readonly<{ connectionId: string; machineId: string }>) => {
+  const summary = async (input: RuntimeProviderSummaryInput) => {
+    const identity: RuntimeProviderIdentity = {
+      connectionId: input.connectionId,
+      machineId: input.machineId,
+    };
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
-    const resolved = await resolveSaved(identity);
+    // Connection description is a point-in-time projection. Reuse its exact
+    // settings resolution instead of replacing it with the latest snapshot.
+    const resolved = 'resolution' in input
+      ? await resolveSavedFromConnectionContext(identity, {
+          connection: input.resolution.record,
+          providerSettings: readProviderSettingsForCli(input.accountSettings).settings,
+          accountSettings: input.accountSettings,
+          registry: input.registry,
+          dnsEvidenceByEndpointUrl: input.dnsEvidence,
+        }, 'catalog')
+      : await resolveSaved(identity);
     if (!resolved.ok) return { status: 'error' as const, error: resolved.error };
-    scheduleDemandRefresh(identity, 'detail_open');
+    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
+    void scheduleDemandRefresh(identity, 'detail_open');
     const state = await runtimeStore.read();
+    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     const request = resolved.value.request;
     const probeObservationIdentity = createResolvedProviderProbeObservationIdentity(request);
     const expectedEndpoints = expectedEndpointObservations(request);
-    const modelResult = await models(identity);
+    const modelResult = projectModels(
+      identity,
+      projectResolvedCatalogContext(identity, resolved.value, state),
+    );
     return {
       status: 'success' as const,
       probeObservationIdentity,

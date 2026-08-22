@@ -72,7 +72,7 @@ export function registerPathMutationHandlers(
         exists: true,
         kind,
         sizeBytes: stats.size,
-        modifiedMs: stats.mtime.getTime(),
+        modifiedMs: stats.mtimeMs,
       };
     } catch (error) {
       const nodeError = error as NodeJS.ErrnoException;

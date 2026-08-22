@@ -56,7 +56,7 @@ describe('hosted-web static asset resolver', () => {
             contentType: 'text/javascript; charset=utf-8',
             headers: {
                 'Cache-Control': 'public, max-age=31536000, immutable',
-                'Content-Security-Policy': "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; navigate-to 'none'; block-all-mixed-content",
+                'Content-Security-Policy': "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; worker-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; block-all-mixed-content",
                 ETag: '"sha256:web"',
                 'X-Content-Type-Options': 'nosniff',
             },
@@ -72,6 +72,16 @@ describe('hosted-web static asset resolver', () => {
     });
 
     it('rejects directory listing, unknown MIME types, revoked digests, and source maps unless policy allows them', async () => {
+        await expect(resolveHostedWebStaticAssetRequest(baseRequest({
+            entryPath: 'outside.js',
+            files: ['outside.js'],
+            requestPath: '/',
+        }))).resolves.toEqual({
+            ok: false,
+            code: 'invalid_request_path',
+            status: 400,
+        });
+
         await expect(resolveHostedWebStaticAssetRequest(baseRequest({
             requestPath: '/assets/',
         }))).resolves.toEqual({

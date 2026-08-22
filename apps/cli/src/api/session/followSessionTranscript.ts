@@ -14,7 +14,8 @@ type SessionTranscriptFollowLease = Readonly<{
 
 export type SessionTranscriptFollowLeaseRegistry = Readonly<{
     retain: (lease: SessionTranscriptFollowLease) => boolean;
-    release: (leaseId: string) => Promise<void>;
+    release: (leaseId: string, expectedLease?: SessionTranscriptFollowLease) => Promise<void>;
+    dispose: () => Promise<void>;
     activeCount: () => number;
     resolveIdleTtlMs: (requestedIdleTtlMs: unknown) => number;
 }>;
@@ -45,6 +46,8 @@ export function createSessionTranscriptFollowLeaseRegistry(
 ): SessionTranscriptFollowLeaseRegistry {
     const leases = new Map<string, SessionTranscriptFollowLease>();
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
+    let disposed = false;
+    let disposePromise: Promise<void> | null = null;
 
     const clearLeaseTimer = (leaseId: string): void => {
         const timer = timers.get(leaseId);
@@ -54,9 +57,13 @@ export function createSessionTranscriptFollowLeaseRegistry(
         }
     };
 
-    const release = async (leaseId: string): Promise<void> => {
-        clearLeaseTimer(leaseId);
+    const release = async (
+        leaseId: string,
+        expectedLease?: SessionTranscriptFollowLease,
+    ): Promise<void> => {
         const lease = leases.get(leaseId);
+        if (expectedLease !== undefined && lease !== expectedLease) return;
+        clearLeaseTimer(leaseId);
         if (!lease) return;
         leases.delete(leaseId);
         await lease.release();
@@ -78,8 +85,26 @@ export function createSessionTranscriptFollowLeaseRegistry(
         return normalizeBoundedInt(requestedIdleTtlMs, params.idleTtlMs, params.idleTtlMs);
     };
 
+    const dispose = (): Promise<void> => {
+        disposePromise ??= (async () => {
+            disposed = true;
+            const results = await Promise.allSettled(
+                [...leases.keys()].map((leaseId) => release(leaseId)),
+            );
+            for (const leaseId of [...timers.keys()]) clearLeaseTimer(leaseId);
+            const failures = results
+                .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+                .map((result) => result.reason);
+            if (failures.length > 0) {
+                throw new AggregateError(failures, 'Failed to dispose transcript follow leases');
+            }
+        })();
+        return disposePromise;
+    };
+
     return {
         retain: (lease) => {
+            if (disposed) return false;
             if (leases.has(lease.leaseId)) {
                 void release(lease.leaseId);
             } else if (leases.size >= params.maxLeases) {
@@ -90,6 +115,7 @@ export function createSessionTranscriptFollowLeaseRegistry(
             return true;
         },
         release,
+        dispose,
         activeCount: () => leases.size,
         resolveIdleTtlMs,
     };
@@ -164,11 +190,20 @@ export async function followSessionTranscript<TItem>(
         };
     }
 
-    const read = await params.store.readAfter({
-        cursor,
-        maxBytes: normalizeBoundedInt(input.maxBytes, 64 * 1024, 1024 * 1024),
-        maxItems: normalizeBoundedInt(input.maxItems, 100, 500),
-    });
+    let read: Awaited<ReturnType<typeof params.store.readAfter>>;
+    try {
+        read = await params.store.readAfter({
+            cursor,
+            maxBytes: normalizeBoundedInt(input.maxBytes, 64 * 1024, 1024 * 1024),
+            maxItems: normalizeBoundedInt(input.maxItems, 100, 500),
+        });
+    } catch (readError) {
+        try {
+            await params.registry.release(leaseId, lease);
+        } finally {
+            throw readError;
+        }
+    }
     return {
         ok: true,
         leaseId,

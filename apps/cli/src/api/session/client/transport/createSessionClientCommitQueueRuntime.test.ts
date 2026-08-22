@@ -5,14 +5,16 @@ import {
     isDefinitiveSessionMessageCommitError,
 } from './createSessionClientCommitQueueRuntime';
 
-function createRuntime(overrides: Partial<Parameters<typeof createSessionClientCommitQueueRuntime>[0]> = {}) {
+function createRuntime(
+    overrides: Partial<Omit<
+        Parameters<typeof createSessionClientCommitQueueRuntime>[0],
+        'mode' | 'ctx'
+    >> = {},
+) {
     return createSessionClientCommitQueueRuntime({
         token: 'token-1',
         sessionId: 'session-1',
         transcriptStorage: 'persisted',
-        sessionEncryptionMode: 'plain',
-        encryptionKey: new Uint8Array(),
-        encryptionVariant: 'dataKey',
         getSocket: () => ({
             connected: true,
             timeout: () => ({
@@ -27,6 +29,8 @@ function createRuntime(overrides: Partial<Parameters<typeof createSessionClientC
         deleteMaterializedLocalId: vi.fn(),
         observeCommittedAck: vi.fn(),
         ...overrides,
+        mode: 'plain',
+        ctx: null,
     });
 }
 

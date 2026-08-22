@@ -8,6 +8,7 @@ import type { MaterializeNextPendingResult } from './sessionClientPort';
 import { materializeNextPendingQueueV2MessageViaReleasedServerSocket } from './pendingQueueV2Transport';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from './transcriptMessageLookup';
 import { delayUnref } from '@/utils/time';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 type SessionSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -47,13 +48,11 @@ export async function runPendingQueueV2ReleasedServerAdapter(params: Readonly<{
     getSessionConnectionEpoch: () => number;
     getSocket: () => SessionSyncPendingInputServerContractResult['socket'];
     isRuntimeAuthorityCurrent: () => boolean;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
     deliverMaterializedUserMessageToAgentQueue: (message: UserMessage, providerAction: 'send') => boolean | void;
-}>): Promise<MaterializeNextPendingResult> {
+}> & SessionStoredContentCryptoContext): Promise<MaterializeNextPendingResult> {
     const contractSocket = params.contractResult.socket as SessionSocket;
     const hasCurrentAuthority = (): boolean => (
-        params.contractResult.mode === 'released_server_v0_2_1'
+        params.contractResult.pendingInput === 'released_server_v0_2_1'
         && params.getContractResult() === params.contractResult
         && params.getSessionConnectionEpoch() === params.contractResult.sessionConnectionEpoch
         && params.getSocket() === contractSocket
@@ -115,10 +114,11 @@ export async function runPendingQueueV2ReleasedServerAdapter(params: Readonly<{
     if (message.content.t === 'plain') {
         body = message.content.v;
     } else {
+        if (params.mode !== 'e2ee') return { type: 'no_pending' };
         try {
             body = decrypt(
-                params.encryptionKey,
-                params.encryptionVariant,
+                params.ctx.encryptionKey,
+                params.ctx.encryptionVariant,
                 decodeBase64(message.content.c),
             );
         } catch {

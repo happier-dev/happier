@@ -7,10 +7,11 @@ import {
 } from '@happier-dev/protocol';
 import type {
     AgentExternalSessionObservationContribution,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
     AgentExternalSessionSource,
-    AgentExternalSessionsContribution,
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     resolveLinkedExternalSessionQualifiedIdentity,
@@ -24,12 +25,18 @@ import type {
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
-import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
+import {
+    EXTERNAL_SESSIONS_INVOCATION_POLICY,
+    type BoundedAgentExternalSessionsContribution,
+} from '@/session/external/agentExternalSessionsInvocation';
+import {
+    preservesExternalSessionSourceIdentity,
+} from '@/session/external/sourceIdentity';
 import {
     resolveExternalSessionSourceConnectedServiceProfile,
 } from '@/plugins/projection/registry/externalSessionSources';
 import { fetchAccountProfile } from '@/api/accountProfile';
-import { readCredentials as readStoredCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 
 import type {
     ExternalSessionObservationLinkIdentity,
@@ -105,7 +112,7 @@ export async function resolveExternalSessionObservationLinkInput(
     if (!runtimeRegistryLease) return null;
     let runtimeSnapshot: Readonly<{
         currentAgent: CurrentExternalSessionAgentIdentity;
-        externalSessions: AgentExternalSessionsContribution;
+        externalSessions: BoundedAgentExternalSessionsContribution;
         externalSessionObservation: AgentExternalSessionObservationContribution;
         pluginGeneration: string;
         sourceDeclaration: PluginBackendExternalSessionSourceDeclarationV1;
@@ -171,18 +178,40 @@ export async function resolveExternalSessionObservationLinkInput(
             },
         );
         if (!qualified.ok || !qualified.link.qualifiedIdentity) return null;
+        const signal = params.signal ?? new AbortController().signal;
+        const deadlineAtMs = params.deadlineAtMs
+            ?? Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs;
+        const resolved = await runtimeSnapshot.externalSessions.resolveLinkedIdentity({
+            source: qualified.link.source as AgentExternalSessionSource,
+            remoteSessionId: qualified.link.remoteSessionId,
+            linkData: qualified.link.linkData ?? {},
+            signal,
+            deadlineAtMs,
+            maxSerializedBytes:
+                EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkedIdentity.maxSerializedBytes,
+        });
+        if (
+            !resolved.ok
+            || resolved.value.remoteSessionId !== qualified.link.remoteSessionId
+            || resolved.value.source.kind
+                !== qualified.link.qualifiedIdentity.source.kind
+            || !preservesExternalSessionSourceIdentity(
+                qualified.link.source as AgentExternalSessionSource,
+                resolved.value.source,
+            )
+        ) {
+            return null;
+        }
         const connectedServiceProfile =
             resolveExternalSessionSourceConnectedServiceProfile({
                 declaration: runtimeSnapshot.sourceDeclaration,
-                source: qualified.link.source,
+                source: resolved.value.source,
             });
         if (connectedServiceProfile.kind === 'invalid') return null;
         if (connectedServiceProfile.kind === 'resolved') {
             const accountProjection = Object.hasOwn(params, 'accountProjection')
                 ? params.accountProjection ?? null
-                : await readCurrentAccountProjection(
-                    params.signal ?? new AbortController().signal,
-                );
+                : await readCurrentAccountProjection(signal);
             if (
                 !accountProjection
                 || !isConnectedServiceProfileCurrent(
@@ -192,23 +221,6 @@ export async function resolveExternalSessionObservationLinkInput(
             ) {
                 return null;
             }
-        }
-
-        const resolved = await runtimeSnapshot.externalSessions.resolveLinkedIdentity({
-            source: qualified.link.source as AgentExternalSessionSource,
-            remoteSessionId: qualified.link.remoteSessionId,
-            linkData: qualified.link.linkData ?? {},
-            signal: params.signal ?? new AbortController().signal,
-            deadlineAtMs: params.deadlineAtMs
-                ?? Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-            maxSerializedBytes:
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkedIdentity.maxSerializedBytes,
-        });
-        if (
-            !resolved.ok
-            || resolved.value.source.kind !== qualified.link.qualifiedIdentity.source.kind
-        ) {
-            return null;
         }
 
         const grouping = ExternalAgentObservationResourceGroupingV1Schema.parse(

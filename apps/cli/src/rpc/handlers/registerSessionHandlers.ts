@@ -15,6 +15,10 @@ import {
     registerDaemonContributionRegistryProjectionHandler,
     type DaemonContributionRegistryProjectionRegistrationOptions,
 } from './daemonContributionRegistryProjection';
+import {
+    registerDaemonPluginInvocationLogReadHandler,
+    type DaemonPluginInvocationLogReadHandlerOptions,
+} from './daemonPluginInvocationLogs';
 import { registerDaemonLocalServicePreviewSnapshotHandler } from './daemonLocalServicePreviewSnapshot';
 import { registerDaemonBrowserControlHandler } from './daemonBrowserControl';
 import { registerDaemonBrowserDiagnosticsSnapshotHandler } from './daemonBrowserDiagnosticsSnapshot';
@@ -29,8 +33,10 @@ import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewR
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
 import type { BrowserDiagnosticsRoutes } from '@/daemon/browser/diagnostics/routes';
 import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
-import { readCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import type { SessionStructuredInputAdmissionPolicyV1 } from '@/session/services/admitSessionStructuredInputV1';
 export {
     readCanonicalSpawnRuntimeSelection,
     readSpawnRuntimeDescriptorV1,
@@ -57,8 +63,11 @@ export function registerSessionTranscriptRpcHandlers(params: Readonly<{
 async function resolveProductionTranscriptActionExecutor(params: Readonly<{
     workingDirectory: string;
     accessPolicy: FilesystemAccessPolicy;
+    machineAdmissionTransport?: NonNullable<
+        Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
+    >;
 }>): Promise<RpcActionExecutor> {
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return {
             execute: async () => ({
@@ -74,6 +83,9 @@ async function resolveProductionTranscriptActionExecutor(params: Readonly<{
             workingDirectory: params.workingDirectory,
             accessPolicy: params.accessPolicy,
         },
+        ...(params.machineAdmissionTransport
+            ? { machineAdmissionTransport: params.machineAdmissionTransport }
+            : {}),
     });
 }
 
@@ -95,6 +107,7 @@ export function registerSessionHandlers(
             text: string;
             localId?: string;
             meta: Record<string, unknown>;
+            structuredInputAdmissionPolicy?: SessionStructuredInputAdmissionPolicyV1;
         }) => Promise<void> | void) | null;
         sessionRuntimeControls?: SessionRuntimeControls | null;
         accessPolicy?: FilesystemAccessPolicy;
@@ -105,10 +118,17 @@ export function registerSessionHandlers(
         browserRecording?: BrowserRecordingRoutes | null;
         simulatorPreview?: SimulatorPreviewRoutes | null;
         daemonContributionRegistryProjection?: DaemonContributionRegistryProjectionRegistrationOptions;
+        daemonPluginInvocationLogs?: DaemonPluginInvocationLogReadHandlerOptions;
+        machineAdmissionTransport?: NonNullable<
+            Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
+        >;
         getAgentCatalogObservation?: () => Readonly<{
             machineId: string;
             service: AgentProviderCatalogObservationService;
         }> | null;
+        createCapabilitiesApiClient?: NonNullable<
+            Parameters<typeof registerCapabilitiesHandlers>[1]
+        >['createApiClient'];
     }>,
 ) {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
@@ -119,10 +139,19 @@ export function registerSessionHandlers(
         ...(opts?.getAgentCatalogObservation
             ? { getAgentCatalogObservation: opts.getAgentCatalogObservation }
             : {}),
+        ...(opts?.createCapabilitiesApiClient
+            ? { createApiClient: opts.createCapabilitiesApiClient }
+            : {}),
     });
     registerDaemonContributionRegistryProjectionHandler(
         rpcHandlerManager,
         opts?.daemonContributionRegistryProjection,
+    );
+    registerDaemonPluginInvocationLogReadHandler(
+        rpcHandlerManager,
+        opts?.daemonPluginInvocationLogs ?? {
+            resolveCurrentTarget: async () => null,
+        },
     );
     registerDaemonLocalServicePreviewSnapshotHandler(rpcHandlerManager, {
         localServicesPreview: opts?.localServicesPreview ?? null,
@@ -158,6 +187,12 @@ export function registerSessionHandlers(
     registerSessionTranscriptRpcHandlers({
         rpcHandlerManager,
         ...(opts?.transcriptActionExecutor ? { actionExecutor: opts.transcriptActionExecutor } : {}),
-        resolveActionExecutor: () => resolveProductionTranscriptActionExecutor({ workingDirectory, accessPolicy }),
+        resolveActionExecutor: () => resolveProductionTranscriptActionExecutor({
+            workingDirectory,
+            accessPolicy,
+            ...(opts?.machineAdmissionTransport
+                ? { machineAdmissionTransport: opts.machineAdmissionTransport }
+                : {}),
+        }),
     });
 }

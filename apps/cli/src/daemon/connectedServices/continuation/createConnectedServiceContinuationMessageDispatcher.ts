@@ -4,7 +4,7 @@ import {
   readPendingLocalId,
   type SessionContinuationResumePromptModeV1,
 } from '@happier-dev/protocol';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 
 import { buildContinuationResumePrompt } from './continuationResumePrompt';
@@ -17,7 +17,7 @@ export type ConnectedServiceContinuationInterruption =
   | 'provider_failed_turn';
 
 type ConnectedServiceContinuationMessageDispatcherDeps = Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sendMessage?: typeof sendSessionMessage;
 }>;
 
@@ -54,6 +54,7 @@ export function createConnectedServiceContinuationMessageDispatcher(
         message: input.prompt,
         localId: input.localId,
         pendingAdmissionMode: 'continuation_if_no_queued_user_input',
+        requestedAction: { v: 1, kind: 'send_now' },
         resumeInactiveSession: false,
         wait: false,
         timeoutMs: 1,

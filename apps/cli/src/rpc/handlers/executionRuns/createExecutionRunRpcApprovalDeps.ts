@@ -1,9 +1,8 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { getSharedBlockingApprovalCoordinator } from '@/session/actions/approvals/blockingApprovalCoordinator';
 import {
   ApprovalRequestV1Schema,
-  type ApprovalRequestV1,
   type ReviewCommentPrincipalHeaderV1,
 } from '@happier-dev/protocol';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
@@ -18,13 +17,6 @@ function normalizePollIntervalMs(raw: unknown): number {
   const parsed = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return 250;
   return Math.max(1, Math.min(60_000, Math.floor(parsed)));
-}
-
-function shouldNotifyApprovalUpdated(request: ApprovalRequestV1): boolean {
-  return request.status === 'rejected'
-    || request.status === 'canceled'
-    || request.status === 'executed'
-    || request.status === 'failed';
 }
 
 function staleReviewHostActionError(): Error & { code: string } {
@@ -49,8 +41,6 @@ function assertReviewCommentPrincipalCurrent(
     if (
       !authority
       || authority.immutableGenerationId !== currentIntent.immutableGenerationId
-      || authority.packageDigest !== currentIntent.packageDigest
-      || authority.manifestDigest !== currentIntent.manifestDigest
     ) {
       throw staleReviewHostActionError();
     }
@@ -60,7 +50,7 @@ function assertReviewCommentPrincipalCurrent(
 }
 
 export function createExecutionRunRpcApprovalDeps(params: Readonly<{
-  readCredentials: () => Promise<Credentials | null>;
+  readCredentials: () => Promise<StoredCredentials | null>;
 }>): ExecutionRunRpcApprovalDeps {
   const coordinator = getSharedBlockingApprovalCoordinator();
 
@@ -103,7 +93,12 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
     },
     approvalsCreate: async (args) => {
       const store = await resolveStore();
-      return await store.approvalsCreate(args);
+      const result = await store.approvalsCreate(args);
+      coordinator.notifyApprovalUpdated({
+        artifactId: result.artifactId,
+        request: args.request,
+      });
+      return result;
     },
     approvalsGet: async (args) => {
       const store = await resolveStore();
@@ -112,7 +107,7 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
     approvalsUpdate: async (args) => {
       const store = await resolveStore();
       const result = await store.approvalsUpdate(args);
-      if (result.ok && shouldNotifyApprovalUpdated(args.request)) {
+      if (result.ok) {
         coordinator.notifyApprovalUpdated({
           artifactId: args.artifactId,
           request: args.request,

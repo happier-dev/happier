@@ -4,9 +4,9 @@ import type {
   PluginContributionIdentityV1,
   QualifiedConnectedAccountPurposeBindingTargetV1,
   QualifiedConnectedAccountPurposeV1,
+  ResolvedProviderManagedRuntimeDeclarationV1,
 } from '@happier-dev/protocol';
 
-import type { ResolvedFirstPartyManagedProviderFacet } from './types';
 import {
   resolveManagedProviderPurposeBindingSnapshot,
   type ResolveManagedProviderPurposeBindingIntent,
@@ -42,29 +42,7 @@ function accountTarget(
   };
 }
 
-const facet = {
-  managedEndpoint: {
-    localService: {
-      id: 'gateway-managed',
-      launch: {
-        kind: 'packaged-runtime-binary',
-        directorySegments: ['tools', 'unpacked'],
-        executableBaseName: 'gateway-managed',
-        privateConfigPathFlag: '--config',
-      },
-      launchMode: {
-        kind: 'assignAndInject',
-        portPolicy: { kind: 'allocated' },
-      },
-      hostPolicy: { kind: 'loopback' },
-      name: { strategy: 'fixed', name: 'Gateway' },
-      healthCheck: { kind: 'http', path: '/healthz' },
-      restart: { kind: 'never' },
-      cleanup: { staleAfterMs: 60_000 },
-    },
-    protocols: ['openai-responses'],
-  },
-  connectedAccounts: [{
+const connectedAccounts = [{
     purpose: 'required-upstream',
     service: requiredService,
     required: true,
@@ -72,25 +50,20 @@ const facet = {
     purpose: 'optional-upstream',
     service: optionalService,
     required: false,
-  }],
-  requestAuthUses: [{
-    purpose: 'required-upstream',
-    materialization: {
-      kind: 'httpHeaders',
-      origin: 'https://required.example.test',
-      headerNames: ['authorization'],
-    },
-  }, {
-    purpose: 'optional-upstream',
-    materialization: {
-      kind: 'httpHeaders',
-      origin: 'https://optional.example.test',
-      headerNames: ['authorization'],
-    },
-  }],
-} satisfies ResolvedFirstPartyManagedProviderFacet;
+  }] satisfies ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'];
 
 describe('resolveManagedProviderPurposeBindingSnapshot', () => {
+  it('accepts a zero-purpose public managed declaration without invoking the binding owner', async () => {
+    const resolveBindingIntent = vi.fn<ResolveManagedProviderPurposeBindingIntent>();
+    await expect(resolveManagedProviderPurposeBindingSnapshot({
+      implementationIdentity,
+      connectedAccounts: [],
+      purposeBindingIntents: { v: 1, bindings: [] },
+      resolveBindingIntent,
+    })).resolves.toEqual({ v: 1, bindings: [] });
+    expect(resolveBindingIntent).not.toHaveBeenCalled();
+  });
+
   it('delegates every declared intent exactly once to C with only its declared service scope', async () => {
     const requiredIntent = {
       purpose: purpose('required-upstream'),
@@ -110,7 +83,7 @@ describe('resolveManagedProviderPurposeBindingSnapshot', () => {
 
     await expect(resolveManagedProviderPurposeBindingSnapshot({
       implementationIdentity,
-      facet,
+      connectedAccounts,
       purposeBindingIntents: {
         v: 1,
         bindings: [requiredIntent, optionalIntent],
@@ -142,7 +115,7 @@ describe('resolveManagedProviderPurposeBindingSnapshot', () => {
 
     await expect(resolveManagedProviderPurposeBindingSnapshot({
       implementationIdentity,
-      facet,
+      connectedAccounts,
       purposeBindingIntents: { v: 1, bindings: [intent] },
       resolveBindingIntent: async (input) => ({
         purpose: input.purpose,
@@ -157,7 +130,7 @@ describe('resolveManagedProviderPurposeBindingSnapshot', () => {
     );
     await expect(resolveManagedProviderPurposeBindingSnapshot({
       implementationIdentity,
-      facet,
+      connectedAccounts,
       purposeBindingIntents: {
         v: 1,
         bindings: [{
@@ -171,7 +144,7 @@ describe('resolveManagedProviderPurposeBindingSnapshot', () => {
 
     await expect(resolveManagedProviderPurposeBindingSnapshot({
       implementationIdentity,
-      facet,
+      connectedAccounts,
       purposeBindingIntents: {
         v: 1,
         bindings: [{

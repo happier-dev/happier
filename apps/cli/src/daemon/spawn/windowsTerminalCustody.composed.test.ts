@@ -6,6 +6,15 @@ import { join } from 'node:path';
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '../types';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
+
+const testDeviceLocalSecretStorage: DeviceLocalSecretStorage = {
+  sealJson: ({ value }) => `test.${Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')}`,
+  openJson: ({ ciphertext }) => JSON.parse(Buffer.from(ciphertext.slice('test.'.length), 'base64url').toString('utf8')) as unknown,
+  deriveOpaqueIdentity: ({ value }) =>
+    Buffer.from(value, 'utf8').toString('hex').padEnd(64, '0').slice(0, 64),
+  deriveSecretKey: () => new Uint8Array(32).fill(7),
+};
 
 type LauncherInput = Readonly<{
   filePath: string;
@@ -55,7 +64,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
     }
   });
 
-  it('pretracks before dispatcher settlement, persists the exact managed Agent marker, transfers custody, and completes readiness', async () => {
+  it('pretracks before dispatcher settlement, persists the exact Agent marker, transfers custody, and completes readiness', async () => {
     if (!originalPlatform) {
       throw new Error('Expected process.platform descriptor');
     }
@@ -119,7 +128,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
       { persistAcceptedSpawnMarker },
       {
         listSessionMarkers,
-        managedLocalServiceRunAttachmentsEqual,
         removeSessionMarkerIfOwned,
         writeSessionMarker,
       },
@@ -138,22 +146,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
       import('../platform/windows/windowsProcessCustody'),
     ]);
 
-    const managedAttachment = {
-      v: 1 as const,
-      process: {
-        pid: 7_001,
-        processStartTimeMs: 1_717_171_700_001,
-        processCommandHash: 'b'.repeat(64),
-      },
-      endpoint: {
-        host: '127.0.0.1' as const,
-        port: 47_001,
-      },
-      materialization: {
-        rootDir: 'C:\\managed',
-        materializationId: 'managed-wt',
-      },
-    };
     const pidToTrackedSession =
       new Map<number, TrackedSession>();
     const pidToAwaiter =
@@ -171,33 +163,9 @@ describe('Windows Terminal exact Agent custody composition', () => {
         processCommandHash: string;
         processStartTimeMs: number;
       }>;
-      attachment: typeof managedAttachment;
     }> | null = null;
     let markerPersistenceAfterCommit:
       Promise<void> | null = null;
-    const markerCustodyPromoted = vi.fn(
-      async (input: Readonly<{
-        toPid: number;
-        ownership: Readonly<{
-          happySessionId: string;
-          processCommandHash: string;
-          processStartTimeMs: number;
-        }>;
-      }>) => {
-        const custody = persistedMarkerCustody;
-        return custody?.pid === input.toPid
-          && custody.ownership.happySessionId
-            === input.ownership.happySessionId
-          && custody.ownership.processCommandHash
-            === input.ownership.processCommandHash
-          && custody.ownership.processStartTimeMs
-            === input.ownership.processStartTimeMs
-          && managedLocalServiceRunAttachmentsEqual(
-            custody.attachment,
-            managedAttachment,
-          );
-      },
-    );
     let agentCommand = '';
     let agentExecutablePath = '';
     const readAgentIdentity = async (pid: number) =>
@@ -214,14 +182,9 @@ describe('Windows Terminal exact Agent custody composition', () => {
         tracked,
         options,
       ) => {
-        tracked.managedLocalServiceRunAttachment =
-          managedAttachment;
-        tracked.onManagedLocalServiceMarkerPidPromoted =
-          markerCustodyPromoted;
         await persistAcceptedSpawnMarker({
           trackedSession: tracked,
-          managedLocalServiceRunAttachment:
-            managedAttachment,
+          deviceLocalSecretStorage: testDeviceLocalSecretStorage,
           ...(options?.processPid !== undefined
             ? { processPid: options.processPid }
             : {}),
@@ -249,7 +212,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
               ?? `PID-${options.processPid}`,
             ...options.expectedProcessIdentity,
           },
-          attachment: managedAttachment,
         };
         if (markerPersistenceAfterCommit) {
           await markerPersistenceAfterCommit;
@@ -297,12 +259,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
         reservedSessionId: 'reserved-wt',
         directoryCreated: false,
         extraEnvForChildWithMessage: {},
-        localServicesBridgeAuthorization: {
-          tokenHash: `sha256:${'a'.repeat(64)}`,
-          pluginId: 'happier.agent.codex',
-          contributionId: 'codex',
-          tokenFilePath: join(testRoot, 'bridge-token'),
-        },
         processEnv: {
           ...process.env,
           HAPPIER_WINDOWS_SESSION_RUNNER_BINARY:
@@ -437,9 +393,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
           reject(new Error(
             `Webhook stalled: pidKeys=${[
               ...pidToTrackedSession.keys(),
-            ].join(',')}, markerCalls=${
-              markerCustodyPromoted.mock.calls.length
-            }, persisted=${
+            ].join(',')}, persisted=${
               persistedMarkerCustody ? 'yes' : 'no'
             }`,
           ));
@@ -477,7 +431,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
     expect(activate).toHaveBeenCalledWith(
       'session-wt-composed',
     );
-    expect(markerCustodyPromoted).toHaveBeenCalledOnce();
     expect(pidToTrackedSession.has(8_888)).toBe(false);
     expect(pidToTrackedSession.get(9_999)).toBe(tracked);
     const markers = await listSessionMarkers();
@@ -490,14 +443,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
         spawnNonce: 'nonce-wt-composed',
       }),
     }));
-    expect(
-      markers[0]?.managedLocalServiceRunAttachment
-      && managedLocalServiceRunAttachmentsEqual(
-        markers[0].managedLocalServiceRunAttachment,
-        managedAttachment,
-      ),
-    ).toBe(true);
-
     settleDispatcher({
       ok: true,
       pid: 8_889,
@@ -565,15 +510,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
           'reserved-wt-timeout',
         directoryCreated: false,
         extraEnvForChildWithMessage: {},
-        localServicesBridgeAuthorization: {
-          tokenHash: `sha256:${'a'.repeat(64)}`,
-          pluginId: 'happier.agent.codex',
-          contributionId: 'codex',
-          tokenFilePath: join(
-            testRoot,
-            'bridge-token-timeout',
-          ),
-        },
         processEnv: {
           ...process.env,
           HAPPIER_WINDOWS_SESSION_RUNNER_BINARY:
@@ -653,10 +589,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
       const committedMarkers =
         await listSessionMarkers();
       expect(committedMarkers).toHaveLength(1);
-      expect(
-        committedMarkers[0]
-          ?.managedLocalServiceRunAttachment,
-      ).toBeDefined();
     });
     timeoutTracked.sessionWebhookTimedOutAtMs =
       Date.now();

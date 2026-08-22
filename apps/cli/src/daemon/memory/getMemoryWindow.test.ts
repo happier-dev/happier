@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import { encryptSessionPayload, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
@@ -8,8 +8,7 @@ describe('getMemoryWindow', () => {
   it('uses semantic extraction for provider messages and excludes events', async () => {
     const { getMemoryWindow } = await import('./getMemoryWindow');
 
-    const key = new Uint8Array(32).fill(7);
-    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: key } };
+    const credentials: StoredCredentials = { token: 't', encryption: null };
 
     const window = await getMemoryWindow({
       credentials,
@@ -18,7 +17,13 @@ describe('getMemoryWindow', () => {
       seqTo: 3,
       paddingMessages: 0,
       deps: {
-        fetchSessionById: async () => createSessionRecordFixture({ id: 'sess-provider', active: true, activeAt: 1, metadata: '{}' }),
+        fetchSessionById: async () => createSessionRecordFixture({
+          id: 'sess-provider',
+          active: true,
+          activeAt: 1,
+          metadata: '{}',
+          encryptionMode: 'plain',
+        }),
         fetchEncryptedTranscriptMessagesPage: async () => ({
           messages: [
             {
@@ -49,8 +54,11 @@ describe('getMemoryWindow', () => {
   it('decrypts a bounded transcript range and returns a redacted snippet window', async () => {
     const { getMemoryWindow } = await import('./getMemoryWindow');
 
-    const key = new Uint8Array(32).fill(7);
-    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: key } };
+    const key = new Uint8Array(32).fill(9);
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'legacy', secret: key },
+    };
     const ctx: SessionEncryptionContext = { encryptionKey: key, encryptionVariant: 'legacy' };
 
     const ciphertext1 = encryptSessionPayload({
@@ -102,7 +110,13 @@ describe('getMemoryWindow', () => {
       seqTo: 2,
       paddingMessages: 0,
       deps: {
-        fetchSessionById: async () => createSessionRecordFixture({ id: 'sess-plain', active: true, activeAt: 1, metadata: '{}' }),
+        fetchSessionById: async () => createSessionRecordFixture({
+          id: 'sess-plain',
+          active: true,
+          activeAt: 1,
+          metadata: '{}',
+          encryptionMode: 'plain',
+        }),
         fetchEncryptedTranscriptMessagesPage: async () => ({
           messages: [
             {
@@ -127,5 +141,33 @@ describe('getMemoryWindow', () => {
     expect(window.snippets.length).toBe(1);
     expect(window.snippets[0]!.text).toContain('User: hello');
     expect(window.snippets[0]!.text).toContain('Assistant: world');
+  });
+
+  it('rejects retained encrypted transcript windows when account encryption material is unavailable', async () => {
+    const { getMemoryWindow } = await import('./getMemoryWindow');
+
+    const credentials: StoredCredentials = { token: 't', encryption: null };
+
+    await expect(getMemoryWindow({
+      credentials,
+      sessionId: 'sess-encrypted',
+      seqFrom: 1,
+      seqTo: 2,
+      paddingMessages: 0,
+      deps: {
+        fetchSessionById: async () => createSessionRecordFixture({
+          id: 'sess-encrypted',
+          active: true,
+          activeAt: 1,
+          metadata: 'encrypted',
+          encryptionMode: 'e2ee',
+        }),
+        fetchEncryptedTranscriptMessagesPage: async () => {
+          throw new Error('transcript should not be fetched without encryption material');
+        },
+      },
+    })).rejects.toMatchObject({
+      code: 'encryption_material_unavailable',
+    });
   });
 });

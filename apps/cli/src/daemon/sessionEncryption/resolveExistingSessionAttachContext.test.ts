@@ -3,7 +3,12 @@ import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import {
+  createPlainSessionOwnerMetadataEnvelopeV1,
+  sealEncryptedDataKeyEnvelopeV1,
+  sealSessionOwnerMetadataEnvelopeV1,
+  type SessionOwnerMetadataV1,
+} from '@happier-dev/protocol';
 
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -16,8 +21,19 @@ vi.mock('@/api/session/external/linking/qualifiedLinkIdentityRegistry', () => ({
   resolveCurrentExternalSessionAgentIdentity: vi.fn(async () => null),
 }));
 
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness: vi.fn(async () => ({
+    mode: 'plain',
+    version: 1,
+    signingKeyFingerprint: null,
+    contentKeyFingerprint: null,
+    updatedAt: 1,
+  })),
+}));
+
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { resolveCurrentExternalSessionAgentIdentity } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
 import type { Credentials } from '@/persistence';
 import { resolveExistingSessionAttachContext } from './resolveExistingSessionAttachContext';
@@ -87,6 +103,67 @@ describe('resolveExistingSessionAttachContext', () => {
       token: 't',
       sessionId: 'sess_plain',
       reason: 'manual-recovery',
+    });
+  });
+
+  it('uses token-only credentials for a plaintext session attach without requiring account encryption material', async () => {
+    const ownerMetadata: SessionOwnerMetadataV1 = {
+      v: 1,
+      workspace: { path: '/tmp/plain-token-only' },
+      nativeSession: { codexSessionId: 'vendor-plain-token-only' },
+    };
+    const ownerMetadataEnvelope =
+      createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_plain_token_only',
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify({
+          v: 1,
+          agentPresentation: { agentId: 'codex' },
+        }),
+        ownerMetadata: ownerMetadataEnvelope,
+        agentState: null,
+        dataEncryptionKey: null,
+      }),
+    );
+
+    await expect(resolveExistingSessionAttachContext({
+      token: 'plain-token',
+      sessionId: 'sess_plain_token_only',
+      credentials: { token: 'plain-token', encryption: null },
+    })).resolves.toMatchObject({
+      ok: true,
+      attachPayload: {
+        encryptionMode: 'plain',
+        snapshot: {
+          metadataLayoutVersion: 1,
+          ownerMetadata,
+          ownerMetadataEnvelope,
+        },
+      },
+      vendorResumeId: 'vendor-plain-token-only',
+    });
+  });
+
+  it('reports missing encryption material for a retained e2ee session with token-only credentials', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_e2ee_token_only',
+        encryptionMode: 'e2ee',
+        metadata: 'retained-ciphertext',
+        dataEncryptionKey: null,
+      }),
+    );
+
+    await expect(resolveExistingSessionAttachContext({
+      token: 'plain-token',
+      sessionId: 'sess_e2ee_token_only',
+      credentials: { token: 'plain-token', encryption: null },
+    })).resolves.toEqual({
+      ok: false,
+      reason: 'missingCredentials',
     });
   });
 
@@ -400,9 +477,69 @@ describe('resolveExistingSessionAttachContext', () => {
     expect(out).toMatchObject({
       ok: true,
       vendorResumeId: 'conversation-1',
+      linkedVendorResumeId: 'conversation-1',
       backendTarget: { kind: 'builtInAgent', agentId: 'antigravity' },
     });
     expect(vi.mocked(resolveCurrentExternalSessionAgentIdentity)).not.toHaveBeenCalled();
+  });
+
+  it('rejects released directSessionV1 when its remote session id does not match resume state', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_released_direct_antigravity_mismatch',
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          directSessionV1: {
+            v: 1,
+            providerId: 'antigravity',
+            machineId: 'machine-1',
+            remoteSessionId: 'conversation-2',
+            source: {
+              kind: 'antigravityCliPrint',
+              brainDir: '/tmp/antigravity-brain',
+            },
+          },
+          antigravitySessionId: 'conversation-1',
+        }),
+        dataEncryptionKey: null,
+      }),
+    );
+
+    await expect(resolveExistingSessionAttachContext({
+      token: 't',
+      sessionId: 'sess_released_direct_antigravity_mismatch',
+      credentials: null,
+    })).resolves.toEqual({
+      ok: false,
+      reason: 'linkedResumeIdentityUnavailable',
+    });
+    expect(vi.mocked(resolveCurrentExternalSessionAgentIdentity)).not.toHaveBeenCalled();
+  });
+
+  it('fails malformed released directSessionV1 attach metadata closed', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_malformed_released_direct_antigravity',
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          directSessionV1: {
+            v: 1,
+            providerId: 'antigravity',
+          },
+          antigravitySessionId: 'conversation-1',
+        }),
+        dataEncryptionKey: null,
+      }),
+    );
+
+    await expect(resolveExistingSessionAttachContext({
+      token: 't',
+      sessionId: 'sess_malformed_released_direct_antigravity',
+      credentials: null,
+    })).resolves.toEqual({
+      ok: false,
+      reason: 'linkedResumeIdentityUnavailable',
+    });
   });
 
   it('returns the configured ACP backend target from stored session metadata', async () => {
@@ -458,6 +595,13 @@ describe('resolveExistingSessionAttachContext', () => {
   });
 
   it('returns a v2 e2ee attach payload with an opened DEK and vendorResumeId for encrypted sessions', async () => {
+    vi.mocked(fetchAccountEncryptionCurrentness).mockResolvedValueOnce({
+      mode: 'e2ee',
+      version: 1,
+      signingKeyFingerprint: 'signing-fingerprint',
+      contentKeyFingerprint: 'content-fingerprint',
+      updatedAt: 1,
+    });
     const seed = new Uint8Array(32).fill(11);
     const compatSecretKey = createHash('sha512').update(seed).digest().subarray(0, 32);
     const recipientPublicKey = tweetnacl.box.keyPair.fromSecretKey(compatSecretKey).publicKey;
@@ -482,7 +626,23 @@ describe('resolveExistingSessionAttachContext', () => {
     const metadataCiphertext = encryptStoredSessionPayload({
       mode: 'e2ee',
       ctx: resolveSessionEncryptionContextFromCredentials(credentials, { dataEncryptionKey: encryptedEnvelopeBase64 }),
-      payload: { flavor: 'codex', codexSessionId: 'vendor-e2ee-1' },
+      payload: {
+        v: 1,
+        agentPresentation: { agentId: 'codex' },
+      },
+    });
+    const ownerMetadata: SessionOwnerMetadataV1 = {
+      v: 1,
+      workspace: { path: '/tmp/e2ee' },
+      nativeSession: { codexSessionId: 'vendor-e2ee-1' },
+    };
+    const ownerMetadataEnvelope = sealSessionOwnerMetadataEnvelopeV1({
+      material: {
+        type: 'dataKey',
+        machineKey: seed,
+      },
+      ownerMetadata,
+      randomBytes: deterministicRandomBytesFactory(),
     });
 
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
@@ -490,7 +650,9 @@ describe('resolveExistingSessionAttachContext', () => {
         id: 'sess_e2ee',
         seq: 77,
         encryptionMode: 'e2ee',
+        metadataLayoutVersion: 1,
         metadata: metadataCiphertext,
+        ownerMetadata: ownerMetadataEnvelope,
         dataEncryptionKey: encryptedEnvelopeBase64,
       }),
     );
@@ -506,7 +668,13 @@ describe('resolveExistingSessionAttachContext', () => {
     expect(out.attachPayload.encryptionMode).toBe('e2ee');
     expect(out.attachPayload.lastObservedMessageSeq).toBe(77);
     expect(out.attachPayload.snapshot).toEqual({
-      metadata: { flavor: 'codex', codexSessionId: 'vendor-e2ee-1' },
+      metadataLayoutVersion: 1,
+      metadata: {
+        v: 1,
+        agentPresentation: { agentId: 'codex' },
+      },
+      ownerMetadata,
+      ownerMetadataEnvelope,
       metadataVersion: 1,
       agentState: null,
       agentStateVersion: 0,

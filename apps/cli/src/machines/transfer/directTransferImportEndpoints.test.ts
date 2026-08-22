@@ -8,6 +8,8 @@ import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption'
 import { createDirectPeerTransferApp } from './directPeerTransport';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
 import type { DirectTransferImportOpenRequest, DirectTransferImportSessionManager } from './directTransferImportSession';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 
 async function expectPathMissing(path: string): Promise<void> {
   await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -153,6 +155,58 @@ describe('direct transfer import endpoints', () => {
       expect(open.json()).toMatchObject({
         uploadId: 'scoped-upload-id',
         destDisplayPath: 'payload.bin',
+      });
+    } finally {
+      await app.close();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('accepts a target- and owner-bound Composer stage open request through the direct HTTP route', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-composer-open-'));
+    const executionTarget = { serverId: 'server-current', machineId: 'machine-current' };
+    const request = {
+      t: 'composer_media_stage_upload_v1',
+      workingDirectory: '/',
+      executionTarget,
+      owner: { pluginId: 'com.example.media', localId: 'composer' },
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'camera.png',
+      sizeBytes: 12,
+      sha256: 'a'.repeat(64),
+    } as const;
+    const importSessionManager = createDirectTransferImportSessionManager({
+      composerMediaStage: {
+        executionTarget,
+        store: createComposerMediaStageStore({
+          rootDirectory: join(tempDir, 'composer-media-stages'),
+          executionTarget,
+        }),
+      },
+    } as Parameters<typeof createDirectTransferImportSessionManager>[0]);
+    const authorization = importSessionManager.issueImportOpenAuthorizationToken(
+      request as unknown as DirectTransferImportOpenRequest,
+    );
+    const app = createDirectPeerTransferApp({
+      readPublishedTransfer: () => null,
+      importSessionManager,
+    });
+
+    try {
+      await app.ready();
+      const opened = await app.inject({
+        method: 'POST',
+        url: '/machine-transfers/direct/imports/open',
+        headers: { authorization: `Bearer ${authorization.authorizationToken}` },
+        payload: request,
+      });
+
+      expect(opened.statusCode).toBe(200);
+      expect(opened.json()).toMatchObject({
+        destDisplayPath: 'Composer media stage',
+        expectedSizeBytes: 12,
+        uploadId: expect.any(String),
       });
     } finally {
       await app.close();
@@ -349,11 +403,15 @@ describe('direct transfer import endpoints', () => {
 
   it('disposes the direct import transfer store when the app closes', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-app-close-'));
-    const previousTmpdir = process.env.TMPDIR;
+    const tempEnv = createEnvKeyScope(['TEMP', 'TMP', 'TMPDIR']);
     const payload = Buffer.from('app-close-payload', 'utf8');
 
     try {
-      process.env.TMPDIR = tempDir;
+      tempEnv.patch({
+        TEMP: tempDir,
+        TMP: tempDir,
+        TMPDIR: tempDir,
+      });
       const importSessionManager = createDirectTransferImportSessionManager({
         ttlMs: 10_000,
       });
@@ -401,11 +459,7 @@ describe('direct transfer import endpoints', () => {
         overwrite: true,
       })).rejects.toThrow('Transfer session store is disposed');
     } finally {
-      if (previousTmpdir == null) {
-        delete process.env.TMPDIR;
-      } else {
-        process.env.TMPDIR = previousTmpdir;
-      }
+      tempEnv.restore();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });

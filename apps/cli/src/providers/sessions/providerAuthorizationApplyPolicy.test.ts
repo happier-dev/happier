@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import {
+  createProviderBindingSecurityFingerprintV1,
+  ProviderConnectionIdSchema,
+  type ProviderRuntimeBindingBasisV1,
+} from '@happier-dev/protocol';
 import type { ProviderSpawnAuthorization } from '../spawn/resolve';
 import { projectProviderRuntimeBindingBasis } from '../spawn/runtimeBindingBasis';
 
@@ -155,31 +159,10 @@ function managedAuthorization(
               pluginId: 'provider.test',
               localId: 'gateway',
             },
-            facet: {
-              managedEndpoint: {
-                localService: {
-                  id: 'gateway',
-                  launch: {
-                    kind: 'packaged-runtime-binary',
-                    directorySegments: ['cliproxyapi'],
-                    executableBaseName: 'cliproxyapi',
-                    privateConfigPathFlag: '--config',
-                  },
-                  launchMode: {
-                    kind: 'assignAndInject',
-                    portPolicy: { kind: 'allocated' },
-                  },
-                  hostPolicy: { kind: 'loopback' },
-                  name: { strategy: 'fixed', name: 'Gateway' },
-                  healthCheck: {
-                    kind: 'http',
-                    path: '/health',
-                  },
-                  restart: { kind: 'never' },
-                  cleanup: { staleAfterMs: 60_000 },
-                },
-                protocols: ['anthropic'],
-              },
+            managedRuntime: {
+              kind: 'managed',
+              dependencies: [],
+              endpointTemplateIds: ['messages'],
               connectedAccounts: purposes.map((purpose) => ({
                 purpose,
                 service: {
@@ -198,6 +181,8 @@ function managedAuthorization(
                 },
               })),
             },
+            facet: null,
+            runtime: {} as never,
             purposeBindings,
           } as never,
     },
@@ -243,10 +228,10 @@ function withReversedManagedConnectedAccounts(
       ...input.deployment,
       implementation: {
         ...input.deployment.implementation,
-        facet: {
-          ...input.deployment.implementation.facet,
+        managedRuntime: {
+          ...input.deployment.implementation.managedRuntime,
           connectedAccounts: [
-            ...input.deployment.implementation.facet.connectedAccounts,
+            ...input.deployment.implementation.managedRuntime.connectedAccounts,
           ].reverse(),
         },
       },
@@ -258,7 +243,7 @@ function withChangedManagedConnectedAccountService(
   input: ManagedAuthorization,
 ): ManagedAuthorization {
   const [first, ...rest] =
-    input.deployment.implementation.facet.connectedAccounts;
+    input.deployment.implementation.managedRuntime.connectedAccounts;
   if (!first) throw new TypeError('Expected a managed connected-account declaration');
   return {
     ...input,
@@ -266,8 +251,8 @@ function withChangedManagedConnectedAccountService(
       ...input.deployment,
       implementation: {
         ...input.deployment.implementation,
-        facet: {
-          ...input.deployment.implementation.facet,
+        managedRuntime: {
+          ...input.deployment.implementation.managedRuntime,
           connectedAccounts: [{
             ...first,
             service: {
@@ -285,7 +270,7 @@ function withChangedManagedConnectedAccountMaterializationKinds(
   input: ManagedAuthorization,
 ): ManagedAuthorization {
   const [first, ...rest] =
-    input.deployment.implementation.facet.connectedAccounts;
+    input.deployment.implementation.managedRuntime.connectedAccounts;
   if (!first) throw new TypeError('Expected a managed connected-account declaration');
   return {
     ...input,
@@ -293,11 +278,35 @@ function withChangedManagedConnectedAccountMaterializationKinds(
       ...input.deployment,
       implementation: {
         ...input.deployment.implementation,
-        facet: {
-          ...input.deployment.implementation.facet,
+        managedRuntime: {
+          ...input.deployment.implementation.managedRuntime,
           connectedAccounts: [{
             ...first,
             materializationKinds: ['httpHeaders', 'environment'],
+          }, ...rest],
+        },
+      },
+    },
+  };
+}
+
+function withChangedManagedConnectedAccountTitle(
+  input: ManagedAuthorization,
+): ManagedAuthorization {
+  const [first, ...rest] =
+    input.deployment.implementation.managedRuntime.connectedAccounts;
+  if (!first) throw new TypeError('Expected a managed connected-account declaration');
+  return {
+    ...input,
+    deployment: {
+      ...input.deployment,
+      implementation: {
+        ...input.deployment.implementation,
+        managedRuntime: {
+          ...input.deployment.implementation.managedRuntime,
+          connectedAccounts: [{
+            ...first,
+            title: 'Use the renamed upstream account',
           }, ...rest],
         },
       },
@@ -314,10 +323,10 @@ function withReversedManagedRequestAuthUses(
       ...input.deployment,
       implementation: {
         ...input.deployment.implementation,
-        facet: {
-          ...input.deployment.implementation.facet,
+        managedRuntime: {
+          ...input.deployment.implementation.managedRuntime,
           requestAuthUses: [
-            ...input.deployment.implementation.facet.requestAuthUses,
+            ...input.deployment.implementation.managedRuntime.requestAuthUses,
           ].reverse(),
         },
       },
@@ -329,7 +338,7 @@ function withChangedManagedRequestAuthOrigin(
   input: ManagedAuthorization,
 ): ManagedAuthorization {
   const [first, ...rest] =
-    input.deployment.implementation.facet.requestAuthUses;
+    input.deployment.implementation.managedRuntime.requestAuthUses;
   if (!first) throw new TypeError('Expected a managed request-auth use');
   return {
     ...input,
@@ -337,8 +346,8 @@ function withChangedManagedRequestAuthOrigin(
       ...input.deployment,
       implementation: {
         ...input.deployment.implementation,
-        facet: {
-          ...input.deployment.implementation.facet,
+        managedRuntime: {
+          ...input.deployment.implementation.managedRuntime,
           requestAuthUses: [{
             ...first,
             materialization: {
@@ -357,13 +366,75 @@ function withRuntimeBindingBasis(input: ManagedAuthorization): ManagedAuthorizat
 function withRuntimeBindingBasis(
   input: ProviderSpawnAuthorization,
 ): ProviderSpawnAuthorization {
+  const runtimeBindingBasis = projectProviderRuntimeBindingBasis(input);
+  const model = input.sessionBindingMetadata.model;
+  if (!model) throw new TypeError('Expected launch model metadata');
+  const sharedFingerprintInput = {
+    agentTargetKey: runtimeBindingBasis.agentTargetKey,
+    connectionId: runtimeBindingBasis.connectionId,
+    modelId: model.id,
+    modelCapabilities: {
+      ...(model.capabilities?.reasoningControls
+        ? { reasoningControls: model.capabilities.reasoningControls }
+        : {}),
+    },
+    endpointTemplateId: runtimeBindingBasis.endpoint.endpointTemplateId,
+    protocol: runtimeBindingBasis.endpoint.protocol,
+    publicHeaders: runtimeBindingBasis.endpoint.publicHeaders,
+    materialization: runtimeBindingBasis.prepared.materialization,
+    ...(runtimeBindingBasis.prepared.adapterBindingKey
+      ? { adapterBindingKey: runtimeBindingBasis.prepared.adapterBindingKey }
+      : {}),
+    ...(runtimeBindingBasis.runtimeCredentialTransport
+      ? {
+          credentialDestination:
+            runtimeBindingBasis.runtimeCredentialTransport.destination,
+        }
+      : {}),
+    compatibilityFingerprint:
+      input.sessionBindingMetadata.compatibilityFingerprint,
+    adapterVersion: runtimeBindingBasis.adapterVersion,
+  };
+  const bindingSecurityFingerprint =
+    createLaunchBindingSecurityFingerprint(
+      runtimeBindingBasis,
+      sharedFingerprintInput,
+    );
   return {
     ...input,
     sessionBindingMetadata: {
       ...input.sessionBindingMetadata,
-      runtimeBindingBasis: projectProviderRuntimeBindingBasis(input),
+      bindingSecurityFingerprint,
+      runtimeBindingBasis,
     },
   };
+}
+
+function createLaunchBindingSecurityFingerprint(
+  runtimeBindingBasis: ProviderRuntimeBindingBasisV1,
+  sharedFingerprintInput: Omit<
+    Parameters<typeof createProviderBindingSecurityFingerprintV1>[0],
+    'deployment' | 'endpointUrl'
+  >,
+): string {
+  if (runtimeBindingBasis.deployment.kind === 'managedLocal') {
+    return createProviderBindingSecurityFingerprintV1({
+      ...sharedFingerprintInput,
+      deployment: {
+        kind: 'managedLocal',
+        implementationIdentity:
+          runtimeBindingBasis.deployment.implementationIdentity,
+        managedRuntime: runtimeBindingBasis.deployment.managedRuntime,
+      },
+    });
+  }
+  if (!('normalizedUrl' in runtimeBindingBasis.endpoint)) {
+    throw new TypeError('Expected external Provider runtime endpoint');
+  }
+  return createProviderBindingSecurityFingerprintV1({
+    ...sharedFingerprintInput,
+    endpointUrl: runtimeBindingBasis.endpoint.normalizedUrl,
+  });
 }
 
 describe('resolveProviderAuthorizationApplyPolicy', () => {
@@ -642,6 +713,19 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
         ['ä-upstream', 'Z-upstream'],
       ),
     );
+    const retitled = withChangedManagedConnectedAccountTitle(
+      managedAuthorization(
+        'next',
+        'account-a',
+        ['ä-upstream', 'Z-upstream'],
+      ),
+    );
+    const retitledRuntimeBinding = projectProviderRuntimeBindingBasis(retitled);
+    if (retitledRuntimeBinding.deployment.kind !== 'managedLocal') {
+      throw new TypeError('Expected a managed runtime binding');
+    }
+    expect(retitledRuntimeBinding.deployment.managedRuntime.connectedAccounts[0])
+      .not.toHaveProperty('title');
     const originalLocaleCompare = String.prototype.localeCompare;
     String.prototype.localeCompare = () => {
       throw new Error('localeCompare must not participate in Provider binding identity');
@@ -654,6 +738,10 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
       expect(resolveProviderAuthorizationApplyPolicy({
         current,
         next: reordered,
+      })).toBe('live');
+      expect(resolveProviderAuthorizationApplyPolicy({
+        current,
+        next: retitled,
       })).toBe('live');
       expect(resolveProviderAuthorizationApplyPolicyForActiveBinding({
         activeSelection: {

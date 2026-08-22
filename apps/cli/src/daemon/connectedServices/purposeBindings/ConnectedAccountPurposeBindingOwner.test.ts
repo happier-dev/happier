@@ -9,6 +9,8 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   composeConnectedAccountSessionPurposeBindingSnapshot,
   createConnectedAccountPurposeBindingOwner,
+  type ConnectedAccountPurposeBindingOwnerDependencies,
+  type ConnectedAccountPurposeBindingOwner,
   type ConnectedAccountPurposeBindingStore,
   type ConnectedAccountPurposeResolvedTarget,
 } from './ConnectedAccountPurposeBindingOwner';
@@ -63,15 +65,19 @@ function createOwner(input: Readonly<{
   resolveTarget?: (
     target: QualifiedConnectedAccountPurposeBindingTargetV1,
   ) => Promise<ConnectedAccountPurposeResolvedTarget | null>;
+  resolveCredentialRevision?: ConnectedAccountPurposeBindingOwnerDependencies[
+    'resolveCredentialRevision'
+  ];
+  materializeAccount?: ConnectedAccountPurposeBindingOwnerDependencies['materializeAccount'];
 }> = {}) {
   const store = input.store ?? memoryStore();
-  const materializeAccount = vi.fn(async ({ account, request }) => {
+  const materializeAccount = vi.fn(input.materializeAccount ?? (async ({ account, request }) => {
     if (request.kind !== 'environment') throw new Error('test only supports environment');
     return {
       kind: 'environment' as const,
       env: Object.fromEntries(request.keys.map((key: string) => [key, `token:${account.accountId}`])),
     };
-  });
+  }));
   const owner = createConnectedAccountPurposeBindingOwner({
     store,
     selectTarget: input.selectTarget ?? (async () => input.selected ?? ({
@@ -92,7 +98,14 @@ function createOwner(input: Readonly<{
               accountId: input.currentGroupAccountId?.() ?? 'alpha',
             },
           }),
+    resolveCredentialRevision: input.resolveCredentialRevision,
     materializeAccount,
+    async projectTargetAccounts() {
+      throw new Error('target-scoped listing is outside this binding-lifecycle fixture');
+    },
+    async assertTargetAccountMaterializable() {
+      throw new Error('listed-account materialization is outside this binding-lifecycle fixture');
+    },
   });
   return { owner, store, materializeAccount };
 }
@@ -211,6 +224,137 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
       code: 'plugin_host_access_resource_not_selected',
     });
     expect(unavailable.store.current().bindings).toEqual([]);
+  });
+
+  it('builds an immutable launch snapshot for a novel qualified service through the canonical selection owner', async () => {
+    const externalPurpose = {
+      consumer: { pluginId: 'acme.agent', localId: 'acme-agent' },
+      purpose: 'primary',
+    } as const;
+    const externalService = {
+      pluginId: 'acme.connected-account',
+      localId: 'credential',
+    } as const;
+    const store = memoryStore();
+    await store.update(() => ({
+      v: 1,
+      bindings: [{
+        purpose: externalPurpose,
+        target: {
+          kind: 'group',
+          service: externalService,
+          groupId: 'external-fallbacks',
+        },
+      }],
+    }));
+    const { owner } = createOwner({
+      store,
+      resolveTarget: async (target) => target.kind === 'group'
+        ? {
+            displayName: 'External fallbacks',
+            account: {
+              service: target.service,
+              accountId: 'current-external-account',
+            },
+          }
+        : {
+            displayName: `Account ${target.account.accountId}`,
+            account: target.account,
+          },
+    });
+
+    await expect(owner.resolveCurrentSessionPurposeBindingSnapshot({
+      authorizedPurposes: [{
+        purpose: externalPurpose,
+        serviceRefs: [externalService],
+      }],
+      signal: new AbortController().signal,
+    })).resolves.toEqual({
+      purposes: [externalPurpose],
+      bindings: [{
+        purpose: externalPurpose,
+        target: {
+          kind: 'group',
+          service: externalService,
+          groupId: 'external-fallbacks',
+        },
+      }],
+    });
+  });
+
+  it('resolves and materializes a manifest-qualified request-auth binding through the active canonical session owner', async () => {
+    const externalPurpose = {
+      consumer: { pluginId: 'acme.agent', localId: 'acme-agent' },
+      purpose: 'primary',
+    } as const;
+    const externalService = {
+      pluginId: 'acme.connected-account',
+      localId: 'credential',
+    } as const;
+    const externalBinding = {
+      purpose: externalPurpose,
+      target: {
+        kind: 'account' as const,
+        account: {
+          service: externalService,
+          accountId: 'external-account',
+        },
+      },
+    };
+    const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const { owner, materializeAccount } = createOwner({
+      resolveCredentialRevision: async () => revision,
+      materializeAccount: async ({ account, credentialRevisionBasis, request }) => {
+        if (request.kind !== 'httpHeaders') {
+          throw new Error('expected http header materialization');
+        }
+        credentialRevisionBasis?.captureCredentialRevision(revision);
+        return {
+          kind: 'httpHeaders',
+          headers: {
+            authorization: `Bearer ${account.accountId}-${revision}`,
+            'x-account': account.accountId,
+          },
+        };
+      },
+    });
+    const lease = owner.activateSessionPurposeBindings({
+      sessionId: 'external-session',
+      purposes: [externalPurpose],
+      bindings: [externalBinding],
+    });
+    const signal = new AbortController().signal;
+
+    const resolved = await owner.resolveCurrentRequestAuthBinding({
+      subjectId: lease.subjectId,
+      binding: externalBinding,
+      signal,
+    });
+    expect(resolved).toEqual({
+      account: externalBinding.target.account,
+      credentialRevision: revision,
+    });
+    await expect(owner.materializeRequestAuthBearer({
+      subjectId: lease.subjectId,
+      binding: externalBinding,
+      resolved: resolved!,
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://api.example.test',
+        headerNames: ['authorization', 'x-account'],
+      },
+      signal,
+    })).resolves.toEqual({
+      accessToken: `external-account-${revision}`,
+      requiredHeaders: { 'x-account': 'external-account' },
+    });
+    expect(materializeAccount).toHaveBeenCalledWith(expect.objectContaining({
+      account: externalBinding.target.account,
+      credentialRevisionBasis: expect.objectContaining({
+        expectedCredentialRevision: revision,
+      }),
+    }));
+    lease.dispose();
   });
 
   it('uses one immutable session lease for bound and explicitly unbound launch purposes without changing durable defaults', async () => {
@@ -358,6 +502,127 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     replacement.dispose();
   });
 
+  it('reads one managed Provider operation only from its immutable subject and never falls back to durable selection', async () => {
+    const store = memoryStore();
+    await store.update(() => ({
+      v: 1,
+      bindings: [{
+        purpose,
+        target: {
+          kind: 'account',
+          account: { service, accountId: 'durable-default' },
+        },
+      }],
+    }));
+    const { owner, materializeAccount } = createOwner({ store });
+    let operationCurrent = true;
+    const lease = owner.activatePurposeBindings({
+      subject: {
+        kind: 'managed_provider_operation',
+        operationId: 'catalog-probe-1',
+        pluginId: purpose.consumer.pluginId,
+        providerLocalId: purpose.consumer.localId,
+        isCurrent: () => operationCurrent,
+      },
+      purposes: [purpose],
+      bindings: [{
+        purpose,
+        target: {
+          kind: 'account',
+          account: { service, accountId: 'captured-operation' },
+        },
+      }],
+    });
+    const exact = {
+      ...authorized,
+      exactPurposeBindingSubjectId: lease.subjectId,
+      signal: new AbortController().signal,
+    };
+
+    await expect(owner.getBinding(exact)).resolves.toMatchObject({
+      target: { displayName: 'Account captured-operation' },
+    });
+    await expect(owner.materialize({
+      ...exact,
+      request: { kind: 'environment', keys: ['TOKEN'] },
+    })).resolves.toEqual({
+      kind: 'environment',
+      env: { TOKEN: 'token:captured-operation' },
+    });
+    expect(materializeAccount).toHaveBeenCalledWith(expect.objectContaining({
+      account: { service, accountId: 'captured-operation' },
+    }));
+
+    operationCurrent = false;
+    await expect(owner.getBinding(exact)).resolves.toBeNull();
+    await expect(owner.materialize({
+      ...exact,
+      request: { kind: 'environment', keys: ['TOKEN'] },
+    })).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    });
+    lease.dispose();
+  });
+
+  it('scopes one target-operation subject to its exact consumer and removes it at settlement', async () => {
+    const store = memoryStore();
+    await store.update(() => ({
+      v: 1,
+      bindings: [{
+        purpose,
+        target: {
+          kind: 'account',
+          account: { service, accountId: 'durable-default' },
+        },
+      }],
+    }));
+    const { owner, materializeAccount } = createOwner({ store });
+    const lease = owner.activatePurposeBindings({
+      subject: {
+        kind: 'operation',
+        operationId: 'target-action-correlation-1',
+        consumer: purpose.consumer,
+        isCurrent: () => true,
+      },
+      purposes: [purpose],
+      bindings: [{
+        purpose,
+        target: {
+          kind: 'account',
+          account: { service, accountId: 'target-action-account' },
+        },
+      }],
+    });
+    const exact = {
+      ...authorized,
+      exactPurposeBindingSubjectId: lease.subjectId,
+      signal: new AbortController().signal,
+    };
+
+    expect(lease.subjectId).toBe(
+      'operation:target-action-correlation-1/consumer:happier.agent.test/runtime',
+    );
+    await expect(owner.materialize({
+      ...exact,
+      request: { kind: 'environment', keys: ['TOKEN'] },
+    })).resolves.toMatchObject({
+      env: { TOKEN: 'token:target-action-account' },
+    });
+    expect(materializeAccount).toHaveBeenLastCalledWith(expect.objectContaining({
+      account: { service, accountId: 'target-action-account' },
+    }));
+
+    lease.dispose();
+    await expect(owner.getBinding(exact)).resolves.toBeNull();
+    await expect(owner.materialize({
+      ...exact,
+      request: { kind: 'environment', keys: ['TOKEN'] },
+    })).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    });
+    expect(materializeAccount).toHaveBeenCalledTimes(1);
+  });
+
   it('scopes a transient Agent catalog observation to its exact contribution consumer and currentness', () => {
     const { owner } = createOwner();
     let current = true;
@@ -409,6 +674,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     })).resolves.toEqual({
       purpose: 'model-request',
       service,
+      account: { service, accountId: 'fixed' },
       target: { kind: 'account', displayName: 'Account fixed' },
     });
     expect(store.current()).toEqual({
@@ -558,6 +824,75 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     }]);
   });
 
+  it('does not value-restore a prior target after another writer reselects the retired target', async () => {
+    const store = memoryStore();
+    const priorTarget = {
+      kind: 'account' as const,
+      account: { service, accountId: 'prior' },
+    };
+    const retiredTarget = {
+      kind: 'account' as const,
+      account: { service, accountId: 'candidate' },
+    };
+    const interveningTarget = {
+      kind: 'account' as const,
+      account: { service, accountId: 'intervening' },
+    };
+    await store.update(() => ({
+      v: 1,
+      bindings: [{ purpose, target: priorTarget }],
+    }));
+    let generationCurrent = true;
+    let updateCount = 0;
+    const interleavingStore: ReturnType<typeof memoryStore> = {
+      ...store,
+      async update(mutate, signal) {
+        updateCount += 1;
+        if (updateCount !== 1) return await store.update(mutate, signal);
+
+        const staged = mutate(store.current());
+        await store.update(() => staged, signal);
+        // A concurrent Account Settings winner may replace and later reselect
+        // the same target while this request awaits its durable settlement.
+        await store.update(() => ({
+          v: 1,
+          bindings: [{ purpose, target: interveningTarget }],
+        }), signal);
+        await store.update(() => ({
+          v: 1,
+          bindings: [{ purpose, target: retiredTarget }],
+        }), signal);
+        generationCurrent = false;
+        return store.current();
+      },
+    };
+    const { owner } = createOwner({
+      store: interleavingStore,
+      selected: retiredTarget,
+    });
+
+    await expect(owner.requestSelection({
+      purpose,
+      serviceRefs: [service],
+      assertGenerationCurrent() {
+        if (!generationCurrent) {
+          throw new PluginError({
+            code: 'plugin_final_generation_retired',
+            message: 'Selection retired after another writer reselected its target',
+          });
+        }
+      },
+      reason: 'Choose from retired generation',
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'plugin_final_generation_retired',
+    });
+    expect(store.current().bindings).toEqual([{
+      purpose,
+      target: retiredTarget,
+    }]);
+  });
+
   it('restores the prior durable target when its replacement cannot resolve', async () => {
     let selectedAccountId = 'prior';
     let available = true;
@@ -638,6 +973,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     await expect(staleRead).resolves.toEqual({
       purpose: purpose.purpose,
       service,
+      account: { service, accountId: 'same-target' },
       target: { kind: 'account', displayName: 'Same target' },
     });
     expect(store.current().bindings).toEqual([{
@@ -678,6 +1014,200 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     expect(JSON.stringify(store.current())).not.toContain('alpha');
     expect(JSON.stringify(store.current())).not.toContain('beta');
     expect(JSON.stringify(store.current())).not.toContain('generation');
+  });
+
+  it('publishes the exact currently resolved account beside a group binding summary', async () => {
+    let currentAccountId = 'bot:123';
+    const { owner } = createOwner({
+      selected: {
+        kind: 'group',
+        service,
+        groupId: 'fallbacks',
+      },
+      currentGroupAccountId: () => currentAccountId,
+    });
+    const signal = new AbortController().signal;
+    await owner.requestSelection({
+      ...authorized,
+      reason: 'Choose fallback group',
+      signal,
+    });
+
+    await expect(owner.getBinding({ ...authorized, signal })).resolves.toEqual({
+      purpose: purpose.purpose,
+      service,
+      target: { kind: 'group', displayName: 'Group fallbacks' },
+      account: { service, accountId: 'bot:123' },
+    });
+
+  });
+
+  it('rejects a mismatched or stale expected account before materialization', async () => {
+    let currentAccountId = 'bot:123';
+    const { owner, materializeAccount } = createOwner({
+      selected: {
+        kind: 'group',
+        service,
+        groupId: 'fallbacks',
+      },
+      currentGroupAccountId: () => currentAccountId,
+    });
+    const signal = new AbortController().signal;
+    await owner.requestSelection({
+      ...authorized,
+      reason: 'Choose fallback group',
+      signal,
+    });
+
+    await expect(owner.materialize({
+      ...authorized,
+      expectedAccount: { service, accountId: 'bot:other' },
+      request: { kind: 'environment', keys: ['TOKEN'] },
+      signal,
+    })).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    });
+    expect(materializeAccount).not.toHaveBeenCalled();
+
+    currentAccountId = 'bot:other';
+    await expect(owner.materialize({
+      ...authorized,
+      expectedAccount: { service, accountId: 'bot:123' },
+      request: { kind: 'environment', keys: ['TOKEN'] },
+      signal,
+    })).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    });
+    expect(materializeAccount).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a legacy account field as selection authority', async () => {
+    const { owner, materializeAccount } = createOwner();
+    const signal = new AbortController().signal;
+    const call = Reflect.apply(owner.materialize, owner, [Object.freeze({
+      ...authorized,
+      account: Object.freeze({ service, accountId: 'exact' }),
+      request: Object.freeze({ kind: 'environment' as const, keys: ['TOKEN'] }),
+      signal,
+    })]);
+
+    await expect(call).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    });
+    expect(materializeAccount).not.toHaveBeenCalled();
+  });
+
+  it('rejects an operation-bound target retired while provider materialization is pending', async () => {
+    let retiredAvailable = true;
+    let markMaterializationStarted!: () => void;
+    const materializationStarted = new Promise<void>((resolve) => {
+      markMaterializationStarted = resolve;
+    });
+    let releaseMaterialization!: () => void;
+    const materializationReleased = new Promise<void>((resolve) => {
+      releaseMaterialization = resolve;
+    });
+    const { owner, materializeAccount } = createOwner({
+      resolveTarget: async (target) => {
+        if (target.kind !== 'account') return null;
+        if (target.account.accountId === 'retired' && !retiredAvailable) return null;
+        return { displayName: target.account.accountId, account: target.account };
+      },
+      materializeAccount: async ({ account, request }) => {
+        markMaterializationStarted();
+        await materializationReleased;
+        if (request.kind !== 'environment') throw new Error('test only supports environment');
+        return {
+          kind: 'environment',
+          env: { TOKEN: `token:${account.accountId}` },
+        };
+      },
+    });
+    const lease = owner.activatePurposeBindings({
+      subject: {
+        kind: 'operation',
+        operationId: 'retired-target-attempt',
+        consumer: purpose.consumer,
+        isCurrent: () => true,
+      },
+      purposes: [purpose],
+      bindings: [{
+        purpose,
+        target: { kind: 'account', account: { service, accountId: 'retired' } },
+      }],
+    });
+    const pending = owner.materialize({
+      ...authorized,
+      exactPurposeBindingSubjectId: lease.subjectId,
+      request: { kind: 'environment', keys: ['TOKEN'] },
+      signal: new AbortController().signal,
+    });
+    await materializationStarted;
+    retiredAvailable = false;
+    releaseMaterialization();
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    });
+    expect(materializeAccount).toHaveBeenCalledWith(expect.objectContaining({
+      account: { service, accountId: 'retired' },
+    }));
+    lease.dispose();
+  });
+
+  it('rejects stale material when a group switches accounts while provider materialization is pending', async () => {
+    let currentAccountId = 'alpha';
+    let markMaterializationStarted!: () => void;
+    const materializationStarted = new Promise<void>((resolve) => {
+      markMaterializationStarted = resolve;
+    });
+    let releaseMaterialization!: () => void;
+    const materializationReleased = new Promise<void>((resolve) => {
+      releaseMaterialization = resolve;
+    });
+    const { owner, materializeAccount } = createOwner({
+      selected: {
+        kind: 'group',
+        service,
+        groupId: 'fallbacks',
+      },
+      currentGroupAccountId: () => currentAccountId,
+      materializeAccount: async ({ account, request }) => {
+        markMaterializationStarted();
+        await materializationReleased;
+        if (request.kind !== 'environment') {
+          throw new Error('test only supports environment');
+        }
+        return {
+          kind: 'environment',
+          env: Object.fromEntries(
+            request.keys.map((key) => [key, `token:${account.accountId}`]),
+          ),
+        };
+      },
+    });
+    const signal = new AbortController().signal;
+    await owner.requestSelection({
+      ...authorized,
+      reason: 'Choose fallback group',
+      signal,
+    });
+
+    const pending = owner.materialize({
+      ...authorized,
+      request: { kind: 'environment', keys: ['TOKEN'] },
+      signal,
+    });
+    await materializationStarted;
+    currentAccountId = 'beta';
+    releaseMaterialization();
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    });
+    expect(materializeAccount).toHaveBeenCalledWith(expect.objectContaining({
+      account: { service, accountId: 'alpha' },
+    }));
   });
 
   it('fails materialization closed when unbound and forwards binding/projection invalidations', async () => {
@@ -1074,6 +1604,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     })).resolves.toEqual({
       purpose: purpose.purpose,
       service: otherService,
+      account: { service: otherService, accountId: 'replacement' },
       target: {
         kind: 'account',
         displayName: 'Account replacement',

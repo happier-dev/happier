@@ -222,8 +222,8 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
         } catch {
           // best-effort
         }
-        const { readCredentials } = await import('@/persistence');
-        const credentials = await readCredentials();
+        const { readStoredCredentials } = await import('@/persistence');
+        const credentials = await readStoredCredentials();
         const { resolveEmbeddingsProvider } = await import('@/daemon/memory/deepIndex/embeddings/resolveEmbeddingsProvider');
         const provider = await resolveEmbeddingsProvider({
           settings: embeddingsProviderSettings,
@@ -257,8 +257,8 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       return MemoryWindowV1Schema.parse({ v: 1, snippets: [], citations: [] });
     }
 
-    const { readCredentials } = await import('@/persistence');
-    const credentials = await readCredentials();
+    const { readStoredCredentials } = await import('@/persistence');
+    const credentials = await readStoredCredentials();
     if (!credentials) {
       return MemoryWindowV1Schema.parse({
         v: 1,

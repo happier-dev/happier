@@ -133,7 +133,12 @@ describe('ApiMachineClient transports', () => {
 
   it('uses the strict machine terminal capture/finalize socket contract', async () => {
     const responses = [
-      { v: 1, status: 'captured', sessionId: 's1', committedFenceMs: 1_234 },
+      {
+        v: 1,
+        status: 'captured',
+        sessionId: 's1',
+        authority: { kind: 'generation', publisherGeneration: '7' },
+      },
       { v: 1, status: 'closed', sessionId: 's1' },
     ];
     const machineSocket = createApiSessionSocketStub({
@@ -160,11 +165,11 @@ describe('ApiMachineClient transports', () => {
       v: 1,
       status: 'captured',
       sessionId: 's1',
-      committedFenceMs: 1_234,
+      authority: { kind: 'generation', publisherGeneration: '7' },
     });
     await expect(client.finalizeMachineSessionTerminal({
       sessionId: 's1',
-      committedFenceMs: 1_234,
+      authority: { kind: 'generation', publisherGeneration: '7' },
     })).resolves.toEqual({ v: 1, status: 'closed', sessionId: 's1' });
     expect(machineSocket.emitWithAck).toHaveBeenNthCalledWith(
       1,
@@ -174,7 +179,11 @@ describe('ApiMachineClient transports', () => {
     expect(machineSocket.emitWithAck).toHaveBeenNthCalledWith(
       2,
       MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
-      { v: 1, sessionId: 's1', committedFenceMs: 1_234 },
+      {
+        v: 1,
+        sessionId: 's1',
+        authority: { kind: 'generation', publisherGeneration: '7' },
+      },
     );
   });
 

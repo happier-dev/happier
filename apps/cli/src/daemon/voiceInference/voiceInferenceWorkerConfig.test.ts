@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS } from '@happier-dev/protocol';
+import { VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS } from '@happier-dev/protocol';
 
 import {
   VOICE_INFERENCE_WORKER_HANG_DEFAULTS,
@@ -8,14 +8,14 @@ import {
   VOICE_INFERENCE_WORKER_MISSED_PING_THRESHOLD_BOUNDS,
   VOICE_INFERENCE_WORKER_PING_INTERVAL_MS_BOUNDS,
   VOICE_INFERENCE_WORKER_REQUEST_TIMEOUT_MS_BOUNDS,
-  resolveVoiceInferenceMaxResidentBytes,
+  resolveVoiceInferenceMaxLoadedArtifactBytes,
   resolveVoiceInferenceWorkerMaxFrameBytes,
   resolveVoiceInferenceWorkerMissedPingThreshold,
   resolveVoiceInferenceWorkerPingIntervalMs,
   resolveVoiceInferenceWorkerRequestTimeoutMs,
 } from './voiceInferenceWorkerConfig';
 
-const ENV_KEY = 'HAPPIER_VOICE_INFERENCE_MAX_RESIDENT_BYTES';
+const ENV_KEY = 'HAPPIER_VOICE_INFERENCE_MAX_LOADED_ARTIFACT_BYTES';
 
 function withEnv(key: string, value: string | undefined, run: () => void): void {
   const previous = process.env[key];
@@ -35,7 +35,7 @@ function withEnv(key: string, value: string | undefined, run: () => void): void 
   }
 }
 
-describe('resolveVoiceInferenceMaxResidentBytes', () => {
+describe('resolveVoiceInferenceMaxLoadedArtifactBytes', () => {
   let previous: string | undefined;
 
   beforeEach(() => {
@@ -51,24 +51,24 @@ describe('resolveVoiceInferenceMaxResidentBytes', () => {
     }
   });
 
-  it('defaults to 0 (memory budget disabled) when the env override is absent', () => {
-    expect(resolveVoiceInferenceMaxResidentBytes()).toBe(0);
+  it('defaults to 0 (declared loaded-artifact budget disabled) when the env override is absent', () => {
+    expect(resolveVoiceInferenceMaxLoadedArtifactBytes()).toBe(0);
   });
 
   it('accepts an in-bounds override', () => {
-    const value = VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.min + 1024;
+    const value = VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.min + 1024;
     process.env[ENV_KEY] = String(value);
-    expect(resolveVoiceInferenceMaxResidentBytes()).toBe(value);
+    expect(resolveVoiceInferenceMaxLoadedArtifactBytes()).toBe(value);
   });
 
   it('clamps an over-max override to the bound ceiling', () => {
-    process.env[ENV_KEY] = String(VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.max * 4);
-    expect(resolveVoiceInferenceMaxResidentBytes()).toBe(VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.max);
+    process.env[ENV_KEY] = String(VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.max * 4);
+    expect(resolveVoiceInferenceMaxLoadedArtifactBytes()).toBe(VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.max);
   });
 
   it('falls back to disabled (0) for a below-min override', () => {
-    process.env[ENV_KEY] = String(VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS.min - 1);
-    expect(resolveVoiceInferenceMaxResidentBytes()).toBe(0);
+    process.env[ENV_KEY] = String(VOICE_RUNTIME_LOADED_ARTIFACT_BUDGET_BYTES_BOUNDS.min - 1);
+    expect(resolveVoiceInferenceMaxLoadedArtifactBytes()).toBe(0);
   });
 });
 

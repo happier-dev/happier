@@ -1,19 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { ApiClient } from './api';
 import axios from 'axios';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
+import { ApiClient } from './api';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { logger } from '@/ui/logger';
 
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
-const { mockGet, mockPost, mockIsAxiosError, configurationMock } = vi.hoisted(() => {
+const {
+    mockGet,
+    mockPost,
+    mockIsAxiosError,
+    mockFetchServerFeaturesSnapshot,
+    configurationMock,
+} = vi.hoisted(() => {
     const happyHomeDir = `/tmp/happier-api-test-${process.pid}`;
     return {
         mockGet: vi.fn(),
         mockPost: vi.fn(),
         mockIsAxiosError: vi.fn(() => true),
+        mockFetchServerFeaturesSnapshot: vi.fn(),
         configurationMock: {
             activeServerId: 'cloud',
             apiServerUrl: 'https://api.example.com',
@@ -43,7 +51,7 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 vi.mock('@/features/serverFeaturesClient', () => ({
-    fetchServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+    fetchServerFeaturesSnapshot: mockFetchServerFeaturesSnapshot,
 }));
 
 // Mock encryption utilities
@@ -58,11 +66,6 @@ vi.mock('./encryption', () => ({
 // Mock configuration
 vi.mock('@/configuration', () => ({
     configuration: configurationMock
-}));
-
-// Mock libsodium encryption
-vi.mock('./libsodiumEncryption', () => ({
-    libsodiumEncryptForPublicKey: vi.fn((data: any) => new Uint8Array(32))
 }));
 
 // Global test metadata
@@ -109,6 +112,34 @@ describe('Api server error handling', () => {
 
     beforeEach(async () => {
         vi.clearAllMocks();
+        mockFetchServerFeaturesSnapshot.mockResolvedValue({
+            status: 'ready',
+            features: {
+                capabilities: {
+                    encryption: {
+                        storagePolicy: 'optional',
+                        allowAccountOptOut: true,
+                        defaultAccountMode: 'e2ee',
+                    },
+                    accountStoredContentCompatibility: {
+                        v: 1,
+                        minimumProtocolVersion: 2,
+                        currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                        declarationTransport: 'http-header-and-socket-auth-v1',
+                    },
+                },
+            },
+        });
+        mockGet.mockResolvedValue({
+            status: 200,
+            data: {
+                mode: 'e2ee',
+                version: 1,
+                signingKeyFingerprint: 'signing-fingerprint',
+                contentKeyFingerprint: 'content-fingerprint',
+                updatedAt: 1,
+            },
+        });
         connectionState.reset(); // Reset offline state between tests
         rmSync(configurationMock.happyHomeDir, { recursive: true, force: true });
         mkdirSync(configurationMock.happyHomeDir, { recursive: true });
@@ -388,6 +419,60 @@ describe('Api server error handling', () => {
             expect(connectionState.isOffline()).toBe(false);
         });
 
+        it('preserves the server\'s exact organization-placement refusal as a bounded creation error', async () => {
+            mockPost.mockRejectedValue({
+                response: {
+                    status: 400,
+                    data: {
+                        error: 'invalid-params',
+                        code: 'invalid-session-organization-placement',
+                    },
+                },
+                isAxiosError: true,
+            });
+
+            await expect(api.getOrCreateSession({
+                tag: 'test-tag',
+                metadata: testMetadata,
+                state: null,
+                organizationPlacement: { folderId: 'folder-1', tagIds: [] },
+            })).rejects.toMatchObject({
+                name: 'SessionCreationPlacementError',
+                code: 'organization_invalid',
+            });
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
+        it('does not infer a placement result from another invalid-params response', async () => {
+            mockPost.mockRejectedValue({
+                response: {
+                    status: 400,
+                    data: {
+                        error: 'invalid-params',
+                        code: 'another-invalid-parameter',
+                    },
+                },
+                isAxiosError: true,
+            });
+
+            const error = await api.getOrCreateSession({
+                tag: 'test-tag',
+                metadata: testMetadata,
+                state: null,
+                organizationPlacement: { folderId: 'folder-1', tagIds: [] },
+            }).then(
+                () => null,
+                (caught: unknown) => caught,
+            );
+
+            expect(error).toMatchObject({
+                name: 'Error',
+                message: expect.stringContaining('Failed to get or create session'),
+            });
+            expect(error).not.toMatchObject({ code: 'organization_invalid' });
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
         it('should re-throw non-connection errors', async () => {
             const output = captureConsoleText();
 
@@ -411,6 +496,36 @@ describe('Api server error handling', () => {
     });
 
     describe('getOrCreateMachine', () => {
+        it('retains only the server-validated exact-target operation capability snapshot', async () => {
+            mockPost.mockResolvedValue({
+                data: {
+                    machine: {
+                        id: 'test-machine',
+                        metadata: testMachineMetadata,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                        revokedAt: null,
+                        replacedByMachineId: null,
+                        operationProtocolCapabilities: {
+                            sessionSpawn: { protocolVersions: [1] },
+                        },
+                        operationProtocolCapabilitiesRevision: 4,
+                    },
+                },
+            });
+
+            await expect(api.getOrCreateMachine({
+                machineId: 'test-machine',
+                metadata: testMachineMetadata,
+            })).resolves.toMatchObject({
+                operationProtocolCapabilities: {
+                    sessionSpawn: { protocolVersions: [1] },
+                },
+                operationProtocolCapabilitiesRevision: 4,
+            });
+        });
+
         it('uses provided timeout override for machine registration request', async () => {
             mockPost.mockResolvedValue({
                 data: {

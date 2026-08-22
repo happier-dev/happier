@@ -236,7 +236,7 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(
       token: params.credentials.token,
     });
   const randomBytes = params.randomBytes ?? defaultRandomBytes;
-  const callbackUrl = params.callbackUrl ?? DEFAULT_CALLBACK_URL;
+  const defaultCallbackUrl = params.callbackUrl ?? DEFAULT_CALLBACK_URL;
   const transactionTtlMs =
     params.transactionTtlMs ?? DEFAULT_TRANSACTION_TTL_MS;
   const now = params.now ?? Date.now;
@@ -426,6 +426,7 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(
         );
       }
       const pkce = generatePkceCodes();
+      const callbackUrl = input.callbackUrl ?? defaultCallbackUrl;
       const payload = OAuthPayloadSchema.parse({
         version: 1,
         kind: 'oauth',

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +25,7 @@ import type { Credentials } from '@/persistence';
 import { DEFAULT_MEMORY_SETTINGS } from '@/settings/memorySettings';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
+import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 
 const {
   readCredentialsMock,
@@ -562,6 +563,93 @@ describe('registerMachineRpcHandlers', () => {
       savePreparedTargetLocalMetadata,
     }));
   });
+
+  it('injects one daemon operation exclusion owner into external-session and handoff handlers', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-machine-rpc-operation-owner-'));
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'machine-rpc-operation-owner',
+      claimMutationLockAcquisitionTimeoutMs: 10_000,
+    });
+    const externalSessions = await import('./rpcHandlers.externalSessions');
+    const sessionHandoff = await import('./sessionHandoff/handlers');
+    const registerExternalSessionsSpy = vi
+      .spyOn(externalSessions, 'registerMachineExternalSessionsRpcHandlers')
+      .mockImplementation(() => ({ dispose: async () => {} }));
+    const registerSessionHandoffSpy = vi
+      .spyOn(sessionHandoff, 'registerMachineSessionHandoffRpcHandlers')
+      .mockImplementation(() => {});
+    const rpcHandlerManager = {
+      registerHandler: vi.fn(),
+    } as any;
+
+    let releaseRepair!: () => void;
+    const repairRelease = new Promise<void>((resolve) => {
+      releaseRepair = resolve;
+    });
+    let signalRepairStarted!: () => void;
+    const repairStarted = new Promise<void>((resolve) => {
+      signalRepairStarted = resolve;
+    });
+    let repair: ReturnType<
+      typeof operationExclusion.withPassiveRepairClaimBarrier
+    > | null = null;
+    let acquisition: ReturnType<typeof operationExclusion.acquire> | null = null;
+    try {
+      registerMachineRpcHandlers({
+        rpcHandlerManager,
+        handlers: {
+          spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+          stopSession: async () => true,
+          requestShutdown: () => {},
+        } as any,
+        deps: { externalSessionOperationExclusion: operationExclusion },
+      });
+
+      const externalSessionsInput = registerExternalSessionsSpy.mock.calls[0]?.[0];
+      const sessionHandoffInput = registerSessionHandoffSpy.mock.calls[0]?.[0];
+      expect(externalSessionsInput?.operationExclusion).toBe(operationExclusion);
+      expect(sessionHandoffInput?.sessionOperationExclusion).toBe(
+        externalSessionsInput?.operationExclusion,
+      );
+
+      repair = externalSessionsInput!.operationExclusion!.withPassiveRepairClaimBarrier({
+        sessionId: 'shared-owner-session',
+        operationClaimId: 'passive-repair-claim',
+      }, async () => {
+        signalRepairStarted();
+        await repairRelease;
+      });
+      await repairStarted;
+      let acquisitionSettled = false;
+      acquisition = sessionHandoffInput!.sessionOperationExclusion!.acquire({
+        kind: 'handoff',
+        sessionId: 'shared-owner-session',
+        requestId: 'handoff-request',
+        sourceMachineId: 'source-machine',
+        targetMachineId: 'target-machine',
+        semanticRequest: 'handoff-semantic-request',
+      }).then((result) => {
+        acquisitionSettled = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5_100));
+      expect(acquisitionSettled).toBe(false);
+
+      releaseRepair();
+      await repair;
+      const acquired = await acquisition;
+      expect(acquired).toMatchObject({ status: 'acquired' });
+      if (acquired.status === 'acquired') {
+        await acquired.claim.release();
+      }
+    } finally {
+      releaseRepair();
+      await repair?.catch(() => undefined);
+      await acquisition?.catch(() => undefined);
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   it('normalizes legacy experimentalCodexAcp spawn requests onto canonical codexBackendMode', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
@@ -1482,10 +1570,7 @@ describe('registerMachineRpcHandlers', () => {
         callId: 'call-1',
         sidechainId: 'side-1',
         intent: 'review',
-        backendId: 'claude',
-        runClass: 'bounded',
-        ioMode: 'request_response',
-        retentionPolicy: 'ephemeral',
+        backendTarget: { kind: 'backend', backendId: 'claude' },
         status: 'running',
         startedAtMs: Date.now(),
         updatedAtMs: Date.now(),
@@ -1580,9 +1665,9 @@ describe('registerMachineRpcHandlers', () => {
         status: 200,
         data: {
           messages: [
-            { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
-            { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
-            { createdAt: 3, content: { t: 'encrypted', c: encryptedThree } },
+            { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
+            { seq: 2, createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
+            { seq: 3, createdAt: 3, content: { t: 'encrypted', c: encryptedThree } },
           ],
         },
       } as any);
@@ -2034,8 +2119,8 @@ describe('registerMachineRpcHandlers', () => {
         status: 200,
         data: {
           messages: [
-            { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
-            { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
+            { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
+            { seq: 2, createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
           ],
         },
       },
@@ -3052,7 +3137,7 @@ describe('registerMachineRpcHandlers', () => {
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('Summary:');
-    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('TITLE_ONLY_SUMMARY');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('Session title: TITLE_ONLY_SUMMARY');
   });
 
   it('does not use metadata.summary.text as replay summary fallback for continueWithReplay', async () => {
@@ -3129,8 +3214,8 @@ describe('registerMachineRpcHandlers', () => {
         status: 200,
         data: {
           messages: [
-            { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
-            { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
+            { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
+            { seq: 2, createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
           ],
         },
       },
@@ -3171,7 +3256,7 @@ describe('registerMachineRpcHandlers', () => {
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('Summary:');
-    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('TITLE_ONLY_SUMMARY');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('Session title: TITLE_ONLY_SUMMARY');
   });
 
   it('includes session synopsis artifacts in replay seed when replay summary is requested', async () => {
@@ -4608,17 +4693,6 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
-      // hydrateReplayDialogFromForkChain(root) -> fetchEncryptedTranscriptMessages
-      .mockResolvedValueOnce({
-        status: 200,
-        data: {
-          messages: encryptedRootMessages.map((ciphertext, idx) => ({
-            seq: idx + 1,
-            createdAt: idx + 1,
-            content: { t: 'encrypted', c: ciphertext },
-          })),
-        },
-      } as any)
       // hydrateReplayDialogFromForkChain(child) -> fetchEncryptedTranscriptMessages
       .mockResolvedValueOnce({
         status: 200,
@@ -4626,6 +4700,17 @@ describe('registerMachineRpcHandlers', () => {
           messages: encryptedChildMessages.map((ciphertext, idx) => ({
             seq: idx + 1,
             createdAt: 20 + idx,
+            content: { t: 'encrypted', c: ciphertext },
+          })),
+        },
+      } as any)
+      // hydrateReplayDialogFromForkChain(root) -> fetchEncryptedTranscriptMessages
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: encryptedRootMessages.map((ciphertext, idx) => ({
+            seq: idx + 1,
+            createdAt: idx + 1,
             content: { t: 'encrypted', c: ciphertext },
           })),
         },

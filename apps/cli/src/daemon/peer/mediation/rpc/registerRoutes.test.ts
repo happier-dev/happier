@@ -6,6 +6,7 @@ import {
     PEER_MACHINE_RPC_DIRECT_PATH_V2,
     PeerMachineRpcDirectResponseV2Schema,
     createDirectRouteGrantSigningInputV2,
+    createPeerMachineRpcRequestHashV1,
     createPeerRouteProofSigningInputV2,
     digestSignedDirectRouteGrantV2,
     type DirectRouteGrantPayloadV2,
@@ -14,6 +15,15 @@ import {
     type SignedDirectRouteGrantV2,
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+
+import type { Machine } from '@/api/types';
+import { ApiMachineClient } from '@/api/apiMachine';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import { registerDaemonContributionRegistryProjectionHandler } from '@/rpc/handlers/daemonContributionRegistryProjection';
+import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
+import { createTargetActionInvocationRegistry } from '@/plugins/runtime/invocation/targetActionRegistry';
+import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import { registerPeerMediationMachineRpcDirectRoutes } from './registerRoutes';
 
@@ -28,10 +38,12 @@ function createGrant(input: Readonly<{
     iat?: number;
     exp?: number;
     ephemeralSeed?: number;
+    method?: string;
 }> = {}): Readonly<{
     grant: SignedDirectRouteGrantV2;
     ephemeralSecretKey: Uint8Array;
 }> {
+    const method = input.method ?? RPC_METHODS.DAEMON_MEMORY_STATUS;
     const ephemeralKeyPair = tweetnacl.sign.keyPair.fromSeed(
         new Uint8Array(32).fill(input.ephemeralSeed ?? 8),
     );
@@ -45,8 +57,8 @@ function createGrant(input: Readonly<{
         routeKind: 'loopback_direct',
         scope: {
             kind: 'machine_rpc',
-            rpcScopeId: `machine_1:${RPC_METHODS.DAEMON_MEMORY_STATUS}`,
-            allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS],
+            rpcScopeId: `machine_1:${method}`,
+            allowedMethods: [method],
             maxCalls: 2,
             maxIdleMs: 30_000,
         },
@@ -96,12 +108,14 @@ function createRequest(input: Readonly<{
     requestId: string;
     grant: SignedDirectRouteGrantV2;
     proof: PeerRouteEphemeralProofV2;
+    method?: string;
+    params?: unknown;
 }>): PeerMachineRpcDirectRequestV2 {
     return {
         v: 2,
         requestId: input.requestId,
-        method: RPC_METHODS.DAEMON_MEMORY_STATUS,
-        params: {},
+        method: input.method ?? RPC_METHODS.DAEMON_MEMORY_STATUS,
+        params: input.params ?? {},
         routeKind: 'loopback_direct',
         flowKind: 'machine_rpc',
         endpointFingerprint: 'endpoint_1',
@@ -112,7 +126,11 @@ function createRequest(input: Readonly<{
 
 function createApp(input: Readonly<{
     nowMs: () => number;
-    invokeLocal: (method: string, params: unknown) => Promise<unknown>;
+    invokeLocal: (
+        method: string,
+        params: unknown,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ) => Promise<unknown>;
     localPerPeerMaxConcurrentCalls?: number;
 }>) {
     const app = fastify({ logger: false });
@@ -130,6 +148,48 @@ function createApp(input: Readonly<{
         localPerPeerMaxConcurrentCalls: input.localPerPeerMaxConcurrentCalls,
     });
     return app;
+}
+
+function createMachine(): Machine {
+    return {
+        id: 'machine_1',
+        encryptionKey: new Uint8Array(32).fill(7),
+        encryptionVariant: 'legacy',
+        metadata: null,
+        metadataVersion: 0,
+        daemonState: null,
+        daemonStateVersion: 0,
+    };
+}
+
+function createDeferred<T>(): Readonly<{
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+}> {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
+}
+
+async function listenOnLoopback(app: ReturnType<typeof createApp>): Promise<string> {
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') {
+        throw new Error('Expected direct peer RPC test server TCP address');
+    }
+    return `http://127.0.0.1:${address.port}`;
+}
+
+async function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+    return await new Promise<T | null>((resolve) => {
+        const timeout = setTimeout(() => resolve(null), timeoutMs);
+        void promise.then((value) => {
+            clearTimeout(timeout);
+            resolve(value);
+        });
+    });
 }
 
 describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () => {
@@ -295,5 +355,264 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
         })).json()).toMatchObject({ v: 2, ok: true });
         expect(invoked).toBe(2);
         await app.close();
+    });
+
+    it('propagates a cancelled direct peer request to the canonical contributed Action handler', async () => {
+        const actionId = 'acme.direct/run';
+        const client = new ApiMachineClient('token', createMachine());
+        const actionStarted = createDeferred<void>();
+        const actionAborted = createDeferred<boolean>();
+        let releaseAction = () => {};
+
+        const targetActionInvocations = createTargetActionInvocationRegistry({
+            actions: [{
+                pluginId: 'acme.direct',
+                pluginVersion: '1.0.0',
+                generation: '7',
+                localId: 'run',
+                definition: {
+                    id: 'run',
+                    dangerLevel: 'safe',
+                    scopes: ['global'],
+                    surfaces: ['ui'],
+                },
+                handler: async (_input, context) => {
+                    const signal = context.signal;
+                    actionStarted.resolve(undefined);
+                    await new Promise<void>((resolve) => {
+                        let settled = false;
+                        const finish = () => {
+                            if (settled) return;
+                            settled = true;
+                            signal.removeEventListener('abort', onAbort);
+                            resolve();
+                        };
+                        const onAbort = () => {
+                            actionAborted.resolve(signal.aborted);
+                            finish();
+                        };
+                        releaseAction = finish;
+                        if (signal.aborted) {
+                            onAbort();
+                        } else {
+                            signal.addEventListener('abort', onAbort, { once: true });
+                        }
+                    });
+                    return { cancelled: signal.aborted };
+                },
+            }],
+            resolveAuthorizationFacts: (action) => ({
+                packageTrust: {
+                    packageIdentity: action.qualifiedId,
+                    reviewedPackageIdentity: action.qualifiedId,
+                },
+                generation: {
+                    targetGeneration: action.generation,
+                    desiredGeneration: action.generation,
+                    appliedGeneration: action.generation,
+                },
+                resourceSelections: [],
+                scopedGrants: [],
+                operatingSystemAuthorization: [],
+            }),
+            createServices: createUnavailablePluginServicesFactory(),
+            resolveHostBinding: createTargetActionHostBindingResolver(),
+        });
+        // Fixture boundary: this production adapter reads only the canonical
+        // contribution lookup and target Action registry below.
+        const runtimeRegistry = {
+            contributes: {
+                actionsById: new Map([[
+                    actionId,
+                    {
+                        pluginId: 'acme.direct',
+                        definition: {
+                            id: 'run',
+                            surfaces: { ui: true },
+                        },
+                    },
+                ]]),
+            },
+            targetActionInvocations,
+        } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+        const handlerManager = (client as unknown as Readonly<{
+            rpcHandlerManager: RpcHandlerRegistrar;
+        }>).rpcHandlerManager;
+        registerDaemonContributionRegistryProjectionHandler(handlerManager, {
+            resolveRuntimeRegistry: async () => runtimeRegistry,
+            resolveGeneration: async () => 7,
+        });
+        const peerHandlerManager = client.getPeerMediationMachineRpcHandlerManager();
+        const app = createApp({
+            nowMs: () => 2_000,
+            invokeLocal: async (method, params, options) => await peerHandlerManager.invokeLocal(
+                method,
+                params,
+                options,
+            ),
+        });
+
+        try {
+            const baseUrl = await listenOnLoopback(app);
+            const signed = createGrant({
+                grantId: 'grant_direct_action_cancel',
+                method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+            });
+            const params = {
+                machineId: 'machine_1',
+                expectedGeneration: '7',
+                qualifiedActionId: actionId,
+                input: { title: 'Cancel me' },
+                executionSurface: 'ui',
+            };
+            const replayKey = 'direct_action_cancel_replay';
+            const request = {
+                ...createRequest({
+                    requestId: 'request_direct_action_cancel',
+                    grant: signed.grant,
+                    proof: createProof({ ...signed, nonceByte: 1 }),
+                    method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+                    params,
+                }),
+                commandReceipt: {
+                    v: 1 as const,
+                    issuer: 'ui' as const,
+                    issuedAtMs: 2_000,
+                    requestHash: createPeerMachineRpcRequestHashV1({
+                        method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+                        params,
+                        grantId: signed.grant.payload.grantId,
+                        endpointFingerprint: 'endpoint_1',
+                        replayKey,
+                    }),
+                    replayKey,
+                },
+            };
+            const controller = new AbortController();
+            const requestPromise = fetch(`${baseUrl}${PEER_MACHINE_RPC_DIRECT_PATH_V2}`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(request),
+                signal: controller.signal,
+            });
+
+            const started = await settleWithin(actionStarted.promise, 1_000);
+            if (started === null) {
+                const response = await settleWithin(requestPromise, 100);
+                const responseBody = response ? await response.text() : null;
+                controller.abort();
+                throw new Error(
+                    responseBody !== null
+                        ? `Canonical contributed Action did not start: ${responseBody}`
+                        : 'Canonical contributed Action did not start or settle',
+                );
+            }
+            controller.abort();
+
+            await expect(requestPromise).rejects.toMatchObject({ name: 'AbortError' });
+            expect(await settleWithin(actionAborted.promise, 500)).toBe(true);
+            await expect(settleWithin(client.awaitPendingRpcRequests(), 500)).resolves.toBeUndefined();
+        } finally {
+            releaseAction();
+            await settleWithin(client.awaitPendingRpcRequests(), 500);
+            await app.close().catch(() => undefined);
+            await client.shutdown().catch(() => undefined);
+        }
+    });
+
+    it('isolates concurrent direct request lifetimes so a cancelled peer does not abort a normal peer', async () => {
+        const firstStarted = createDeferred<void>();
+        const secondStarted = createDeferred<void>();
+        const firstAborted = createDeferred<boolean>();
+        const releaseFirst = createDeferred<void>();
+        const releaseSecond = createDeferred<void>();
+        let firstSignal: AbortSignal | undefined;
+        let secondSignal: AbortSignal | undefined;
+        const app = createApp({
+            nowMs: () => 2_000,
+            invokeLocal: async (_method, params, options) => {
+                const invocation = (params as Readonly<{ invocation: string }>).invocation;
+                if (invocation === 'cancelled') {
+                    firstSignal = options?.signal;
+                    firstStarted.resolve(undefined);
+                    await new Promise<void>((resolve) => {
+                        const finish = () => {
+                            firstSignal?.removeEventListener('abort', onAbort);
+                            resolve();
+                        };
+                        const onAbort = () => {
+                            firstAborted.resolve(firstSignal?.aborted === true);
+                            finish();
+                        };
+                        void releaseFirst.promise.then(finish);
+                        if (firstSignal?.aborted) {
+                            onAbort();
+                        } else {
+                            firstSignal?.addEventListener('abort', onAbort, { once: true });
+                        }
+                    });
+                    return { invocation };
+                }
+
+                secondSignal = options?.signal;
+                secondStarted.resolve(undefined);
+                await releaseSecond.promise;
+                return { invocation };
+            },
+        });
+
+        try {
+            const baseUrl = await listenOnLoopback(app);
+            const firstSigned = createGrant({
+                grantId: 'grant_direct_cancelled_peer',
+                ephemeralSeed: 9,
+            });
+            const secondSigned = createGrant({
+                grantId: 'grant_direct_normal_peer',
+                ephemeralSeed: 10,
+            });
+            const firstRequest = createRequest({
+                requestId: 'request_direct_cancelled_peer',
+                grant: firstSigned.grant,
+                proof: createProof({ ...firstSigned, nonceByte: 1 }),
+                params: { invocation: 'cancelled' },
+            });
+            const secondRequest = createRequest({
+                requestId: 'request_direct_normal_peer',
+                grant: secondSigned.grant,
+                proof: createProof({ ...secondSigned, nonceByte: 2 }),
+                params: { invocation: 'normal' },
+            });
+            const controller = new AbortController();
+            const firstResponse = fetch(`${baseUrl}${PEER_MACHINE_RPC_DIRECT_PATH_V2}`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(firstRequest),
+                signal: controller.signal,
+            });
+            const secondResponse = fetch(`${baseUrl}${PEER_MACHINE_RPC_DIRECT_PATH_V2}`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(secondRequest),
+            });
+
+            expect(await Promise.all([
+                settleWithin(firstStarted.promise, 1_000),
+                settleWithin(secondStarted.promise, 1_000),
+            ])).toEqual([undefined, undefined]);
+            controller.abort();
+
+            await expect(firstResponse).rejects.toMatchObject({ name: 'AbortError' });
+            expect(await settleWithin(firstAborted.promise, 500)).toBe(true);
+            expect(secondSignal?.aborted).toBe(false);
+
+            releaseSecond.resolve(undefined);
+            expect((await secondResponse).status).toBe(200);
+            expect(secondSignal?.aborted).toBe(false);
+        } finally {
+            releaseFirst.resolve(undefined);
+            releaseSecond.resolve(undefined);
+            await app.close().catch(() => undefined);
+        }
     });
 });

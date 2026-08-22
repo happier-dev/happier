@@ -1,7 +1,10 @@
 import { redactBugReportSensitiveText, type MemoryWindowV1 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
-import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { StoredCredentials } from '@/persistence';
+import {
+  resolveSessionEncryptionContextFromCredentials,
+  resolveSessionStoredContentEncryptionMode,
+} from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   extractMemoryIndexableTranscriptItem,
 } from './transcript/extractIndexableItem';
@@ -14,7 +17,7 @@ import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncr
 import { configuration } from '@/configuration';
 
 export async function getMemoryWindow(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sessionId: string;
   seqFrom: number;
   seqTo: number;
@@ -57,6 +60,11 @@ export async function getMemoryWindow(params: Readonly<{
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession);
+  if (resolveSessionStoredContentEncryptionMode(rawSession) === 'e2ee' && !ctx) {
+    throw Object.assign(new Error('Session encryption material is unavailable'), {
+      code: 'encryption_material_unavailable',
+    });
+  }
   const page = await fetchPage({
     token: params.credentials.token,
     sessionId,

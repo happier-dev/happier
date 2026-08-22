@@ -1,20 +1,19 @@
 import {
   getAgentResumeConfig,
-  inferAgentIdFromSessionMetadata,
+  resolveAgentIdFromSessionMetadata,
   isLinkedVendorResumeIdentityCurrent,
   resolveCanonicalAgentIdFromFlavor,
-  resolveObservedVendorResumeIdForResume,
   resolveVendorResumeIdFromSessionMetadata,
   type VendorResumeLinkedSessionCurrentAgent,
 } from '@happier-dev/agents';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 
 export function resolveVendorResumeIdForExistingSession(params: Readonly<{
   agent: unknown;
-  credentials: Credentials | null;
+  credentials: StoredCredentials | null;
   rawSession: Readonly<{ metadata?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown }>;
   metadataRecord?: Record<string, unknown> | null;
   linkedSessionCurrentAgent?: VendorResumeLinkedSessionCurrentAgent | null;
@@ -32,12 +31,13 @@ export function resolveVendorResumeIdForExistingSession(params: Readonly<{
   if (!metaRecord) return null;
 
   const explicitAgentId = resolveCanonicalAgentIdFromFlavor(params.agent);
-  const agentId = explicitAgentId ?? inferAgentIdFromSessionMetadata(metaRecord);
-  const resumeConfig = getAgentResumeConfig(agentId);
+  const agentId = explicitAgentId ?? resolveAgentIdFromSessionMetadata(metaRecord);
+  const resumeConfig = agentId ? getAgentResumeConfig(agentId) : null;
   const vendorResumeIdField =
     resumeConfig && 'vendorResumeIdField' in resumeConfig
       ? resumeConfig.vendorResumeIdField ?? null
       : null;
+  if (!agentId) return null;
   if (!isLinkedVendorResumeIdentityCurrent({
     agentId,
     metadata: metaRecord,
@@ -47,9 +47,5 @@ export function resolveVendorResumeIdForExistingSession(params: Readonly<{
     return null;
   }
 
-  return resolveObservedVendorResumeIdForResume({
-    agentId,
-    metadata: metaRecord,
-    vendorResumeId: resolveVendorResumeIdFromSessionMetadata(agentId, metaRecord),
-  });
+  return resolveVendorResumeIdFromSessionMetadata(agentId, metaRecord);
 }

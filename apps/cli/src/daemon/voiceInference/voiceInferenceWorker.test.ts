@@ -71,8 +71,13 @@ describe('voiceInferenceWorker', () => {
         kind: 'tts_sherpa' | 'stt_sherpa';
         model: string;
         modelBytes: Buffer;
+        supportFiles?: readonly Readonly<{ path: string; bytes: Buffer }>[];
     }>): Promise<void> {
         const { packId, kind, model, modelBytes } = params;
+        const files = [
+            { path: 'model.onnx', bytes: modelBytes },
+            ...(params.supportFiles ?? []),
+        ];
         const server = createServer();
         servers.push(server);
         await new Promise<void>((resolve, reject) => {
@@ -86,21 +91,20 @@ describe('voiceInferenceWorker', () => {
                         kind,
                         model,
                         version: '2026-04-17',
-                        files: [
-                            {
-                                path: 'model.onnx',
-                                url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/model.onnx`,
-                                sha256: sha256Hex(modelBytes),
-                                sizeBytes: modelBytes.byteLength,
-                            },
-                        ],
+                        files: files.map((file) => ({
+                            path: file.path,
+                            url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/${file.path}`,
+                            sha256: sha256Hex(file.bytes),
+                            sizeBytes: file.bytes.byteLength,
+                        })),
                     }));
                     return;
                 }
-                if (url === '/model.onnx') {
+                const file = files.find((candidate) => url === `/${candidate.path}`);
+                if (file) {
                     response.statusCode = 200;
-                    response.setHeader('content-length', String(modelBytes.byteLength));
-                    response.end(modelBytes);
+                    response.setHeader('content-length', String(file.bytes.byteLength));
+                    response.end(file.bytes);
                     return;
                 }
                 response.statusCode = 404;
@@ -886,11 +890,18 @@ describe('voiceInferenceWorker', () => {
         await worker.stop();
     });
 
-    it('exposes a daemon readiness snapshot with per-model runtimeState and resident memory', async () => {
+    it('exposes declared loaded artifact bytes, rather than process memory, for a ready model', async () => {
         const packId = 'kokoro-82m-v1.0-onnx-q8-wasm';
         const modelBytes = Buffer.from('tts-model-bytes');
+        const supportBytes = Buffer.from('tts-support-bytes');
         const homeDir = await createHomeDir();
-        await serveSinglePack({ packId, kind: 'tts_sherpa', model: 'kokoro', modelBytes });
+        await serveSinglePack({
+            packId,
+            kind: 'tts_sherpa',
+            model: 'kokoro',
+            modelBytes,
+            supportFiles: [{ path: 'voices.bin', bytes: supportBytes }],
+        });
 
         const { startVoiceInferenceWorker } = await importWorkerModuleForHome(homeDir);
         const worker = await startVoiceInferenceWorker({
@@ -907,10 +918,10 @@ describe('voiceInferenceWorker', () => {
 
         await worker.installModel({ packId });
 
-        // Installed but not yet loaded: cold, no resident memory reported.
+        // Installed but not yet loaded: cold, no loaded-artifact metric reported.
         const coldStatus = await worker.getStatus();
         expect(coldStatus.models[0]).toMatchObject({ packId, runtimeState: 'cold' });
-        expect('residentMemoryBytes' in coldStatus.models[0]!).toBe(false);
+        expect('loadedArtifactBytes' in coldStatus.models[0]!).toBe(false);
 
         await worker.warmModelPack(packId);
 
@@ -918,12 +929,13 @@ describe('voiceInferenceWorker', () => {
         expect(readyStatus.models[0]).toMatchObject({
             packId,
             runtimeState: 'ready',
-            residentMemoryBytes: modelBytes.byteLength,
+            loadedArtifactBytes: modelBytes.byteLength + supportBytes.byteLength,
         });
+        expect('residentMemoryBytes' in readyStatus.models[0]!).toBe(false);
         await worker.stop();
     });
 
-    it('evicts the least-recently-used loaded model when the resident memory budget is exceeded', async () => {
+    it('evicts the least-recently-used loaded model when the declared artifact-byte budget is exceeded', async () => {
         const ttsPackId = 'kokoro-82m-v1.0-onnx-q8-wasm';
         const sttPackId = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
         const ttsModelBytes = Buffer.from('tts-model-payload');
@@ -981,9 +993,9 @@ describe('voiceInferenceWorker', () => {
 
         const { startVoiceInferenceWorker } = await importWorkerModuleForHome(homeDir);
         const releaseCalls: string[] = [];
-        // Budget only fits one model at a time, forcing LRU eviction of the first.
+        // The declared-artifact budget only fits one model at a time, forcing LRU eviction of the first.
         const worker = await startVoiceInferenceWorker({
-            maxResidentBytes: Math.max(ttsModelBytes.byteLength, sttModelBytes.byteLength) + 1,
+            maxLoadedArtifactBytes: Math.max(ttsModelBytes.byteLength, sttModelBytes.byteLength) + 1,
             runtimeLoader: async () => ({
                 warmModel: async () => {},
                 releaseModel: async ({ packId }) => {
@@ -1003,7 +1015,7 @@ describe('voiceInferenceWorker', () => {
         await worker.warmModelPack(ttsPackId);
         await worker.warmModelPack(sttPackId);
 
-        // Loading the second model pushed the resident footprint over budget, evicting the first.
+        // Loading the second model pushed declared artifact bytes over budget, evicting the first.
         expect(releaseCalls).toEqual([ttsPackId]);
         const status = await worker.getStatus();
         const ttsStatus = status.models.find((entry) => entry.packId === ttsPackId);
@@ -1246,6 +1258,7 @@ describe('voiceInferenceWorker', () => {
 
     it('uses stored manifest metadata for model status when a manifest can no longer be resolved', async () => {
         const homeDir = await createHomeDir();
+        const privateFailure = 'provider failure for /Users/alice/private/model.bin with credential sk-private';
         process.env.HAPPIER_HOME_DIR = homeDir;
         vi.resetModules();
         const configurationModule = await import('@/configuration');
@@ -1265,9 +1278,9 @@ describe('voiceInferenceWorker', () => {
                         progress: {
                             phase: 'error',
                             progress: 1,
-                            message: 'install failed',
+                            message: privateFailure,
                         },
-                        lastError: 'install failed',
+                        lastError: privateFailure,
                         kind: 'stt_sherpa',
                         model: 'sherpa',
                     },
@@ -1289,9 +1302,11 @@ describe('voiceInferenceWorker', () => {
                     installState: 'error',
                     kind: 'stt_sherpa',
                     model: 'sherpa',
+                    lastError: 'inference_install_failed',
                 }),
             ],
         });
+        await expect(readFile(paths.installsStateFilePath, 'utf8')).resolves.not.toContain(privateFailure);
 
         await worker.stop();
     });
@@ -2439,7 +2454,10 @@ describe('voiceInferenceWorker', () => {
         }));
 
         const { startVoiceInferenceWorker } = await importWorkerModuleForHome(homeDir);
-        const worker = await startVoiceInferenceWorker();
+        // This case proves the IN-PROCESS runtime-facade module seam: the facade is written to
+        // disk and reached through a `vi.doMock`ed asset resolver, which a forked child could
+        // never observe. In-process is an explicit escape now that `forked` is the default.
+        const worker = await startVoiceInferenceWorker({ isolationMode: 'in_process' });
 
         await worker.installModel({ packId });
 

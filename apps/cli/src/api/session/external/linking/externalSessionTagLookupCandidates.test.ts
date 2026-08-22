@@ -69,7 +69,7 @@ describe('resolveExternalSessionTagLookupCandidates', () => {
 
     expect(candidates).toHaveLength(2);
     expect(candidates[1]).toEqual({
-      kind: 'codex-connected-service-predecessor',
+      kind: 'connected-service-group-predecessor',
       tag: tagFor(
         'machine-1|codex|thread-1|codexHome:connectedService:openai-codex:member-a:/tmp/codex-home',
       ),

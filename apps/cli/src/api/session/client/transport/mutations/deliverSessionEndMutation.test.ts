@@ -7,6 +7,7 @@ import type { SessionEndMutationV1 } from './sessionClientDurableMutationTypes';
 vi.mock('axios');
 
 const originalSessionEndDeliveryConcurrency = process.env.HAPPIER_SESSION_END_DELIVERY_CONCURRENCY;
+const legacyDeliveryAttemptAt = 700_001;
 
 const mutation = {
     v: 1,
@@ -21,10 +22,12 @@ describe('deliverSessionEndMutation', () => {
         vi.mocked(axios.post).mockReset();
         vi.mocked(axios.get).mockReset();
         vi.mocked(axios.get).mockRejectedValue(new Error('session-end proof unavailable'));
+        vi.spyOn(Date, 'now').mockReturnValue(legacyDeliveryAttemptAt);
         delete process.env.HAPPIER_SESSION_END_DELIVERY_CONCURRENCY;
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         if (originalSessionEndDeliveryConcurrency === undefined) {
             delete process.env.HAPPIER_SESSION_END_DELIVERY_CONCURRENCY;
         } else {
@@ -67,8 +70,31 @@ describe('deliverSessionEndMutation', () => {
 
         await expect(deliverSessionEndMutation({ token: 'tok', socket, mutation })).resolves.toBe(false);
 
-        expect(socket.emit).toHaveBeenCalledWith('session-end', { sid: 's1', time: 1_000 });
+        expect(socket.emit).toHaveBeenCalledWith('session-end', { sid: 's1', time: legacyDeliveryAttemptAt });
         expect(vi.mocked(axios.post).mock.calls[0]?.[0]).toContain('/v1/sessions/s1/end');
+    });
+
+    it('refreshes only the legacy socket attempt timestamp so v0.2.1 can accept an old durable end', async () => {
+        vi.mocked(axios.post).mockRejectedValue({ response: { status: 404 } });
+        let active = true;
+        vi.mocked(axios.get).mockImplementation(async () => ({
+            status: 200,
+            data: { session: { id: 's1', active } },
+        }) as never);
+        const socket = {
+            connected: true,
+            emit: vi.fn((_event: string, payload: { time: number }) => {
+                if (payload.time >= legacyDeliveryAttemptAt - 600_000) active = false;
+            }),
+        };
+
+        await expect(deliverSessionEndMutation({ token: 'tok', socket, mutation })).resolves.toBe(true);
+
+        expect(socket.emit).toHaveBeenCalledWith('session-end', {
+            sid: 's1',
+            time: legacyDeliveryAttemptAt,
+        });
+        expect(mutation.observedAt).toBe(1_000);
     });
 
     it('confirms unsupported HTTP session-end through socket ack before proof polling', async () => {
@@ -81,7 +107,7 @@ describe('deliverSessionEndMutation', () => {
 
         await expect(deliverSessionEndMutation({ token: 'tok', socket, mutation })).resolves.toBe(true);
 
-        expect(socket.emitWithAck).toHaveBeenCalledWith('session-end', { sid: 's1', time: 1_000 });
+        expect(socket.emitWithAck).toHaveBeenCalledWith('session-end', { sid: 's1', time: legacyDeliveryAttemptAt });
         expect(socket.emit).not.toHaveBeenCalled();
         expect(vi.mocked(axios.get)).not.toHaveBeenCalled();
     });
@@ -105,7 +131,7 @@ describe('deliverSessionEndMutation', () => {
 
         await expect(deliverSessionEndMutation({ token: 'tok', socket, mutation })).resolves.toBe(true);
 
-        expect(socket.emit).toHaveBeenCalledWith('session-end', { sid: 's1', time: 1_000 });
+        expect(socket.emit).toHaveBeenCalledWith('session-end', { sid: 's1', time: legacyDeliveryAttemptAt });
         expect(vi.mocked(axios.get).mock.calls.map(([url]) => String(url))).toEqual([
             expect.stringContaining('/v2/sessions/s1'),
             expect.stringContaining('/v1/sessions'),
@@ -125,7 +151,7 @@ describe('deliverSessionEndMutation', () => {
 
         await expect(deliverSessionEndMutation({ token: 'tok', socket, mutation })).resolves.toBe(true);
 
-        expect(socket.emit).toHaveBeenCalledWith('session-end', { sid: 's1', time: 1_000 });
+        expect(socket.emit).toHaveBeenCalledWith('session-end', { sid: 's1', time: legacyDeliveryAttemptAt });
         expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toEqual(expect.stringContaining('/v2/sessions/s1'));
         expect(vi.mocked(axios.get).mock.calls[0]?.[1]?.headers).toMatchObject({
             'X-Happier-Request-Purpose': 'session-detail:legacy-compat-proof',
@@ -145,7 +171,7 @@ describe('deliverSessionEndMutation', () => {
 
         await expect(deliverSessionEndMutation({ token: 'tok', socket, mutation })).resolves.toBe(false);
 
-        expect(socket.emit).toHaveBeenCalledWith('session-end', { sid: 's1', time: 1_000 });
+        expect(socket.emit).toHaveBeenCalledWith('session-end', { sid: 's1', time: legacyDeliveryAttemptAt });
     });
 
     it('confirms disconnected session-end delivery through HTTP', async () => {

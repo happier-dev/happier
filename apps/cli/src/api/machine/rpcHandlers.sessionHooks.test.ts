@@ -80,11 +80,17 @@ function createRpcHandlerManager(): Readonly<{
 
 describe('machine session-hook management RPC composition', () => {
   it('registers every A14 RPC through the existing ActionSpec registrar', async () => {
-    const actionExecutor: RpcActionExecutor = {
-      execute: vi.fn(async (actionId, input) => ({
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      result: {
         ok: true as const,
-        result: { actionId, input },
-      })),
+        rows: [],
+        nextCursor: null,
+        diagnostics: [],
+      },
+    }));
+    const actionExecutor: RpcActionExecutor = {
+      execute,
     };
     const rpcHandlerManager = createRpcHandlerManager();
     const registration = registerMachineExternalSessionsRpcHandlers({
@@ -108,8 +114,14 @@ describe('machine session-hook management RPC composition', () => {
       intent: 'passive_inventory',
       agent: codexAgent,
     })).resolves.toMatchObject({
-      actionId: 'plugins.sessionHooks.status.get',
+      ok: true,
+      rows: [],
     });
+    expect(execute).toHaveBeenCalledWith(
+      'plugins.sessionHooks.status.get',
+      expect.objectContaining({ machineId: 'machine-1', intent: 'passive_inventory' }),
+      expect.objectContaining({ surface: 'rpc' }),
+    );
 
     await registration.dispose();
   });

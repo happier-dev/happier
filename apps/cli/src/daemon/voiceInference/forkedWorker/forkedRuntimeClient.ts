@@ -48,7 +48,6 @@ import {
   encodeVoiceInferenceWorkerFrame,
   parseVoiceInferenceWorkerResponseFrame,
   type VoiceInferenceWorkerFrame,
-  type VoiceInferenceWorkerPartialFrame,
   type VoiceInferenceWorkerRequestFrame,
   type VoiceInferenceWorkerResponseFrame,
 } from './ipcProtocol';
@@ -68,6 +67,8 @@ export type VoiceInferenceWorkerChannel = Readonly<{
   waitForTermination: () => Promise<TerminationEvent>;
   /** Request termination (SIGTERM-style); best-effort. */
   terminate: () => void;
+  /** Force immediate termination when native work cannot service SIGTERM. */
+  forceTerminate: () => void;
 }>;
 
 export type VoiceInferenceWorkerChannelFactory = () => Promise<VoiceInferenceWorkerChannel>;
@@ -75,7 +76,6 @@ export type VoiceInferenceWorkerChannelFactory = () => Promise<VoiceInferenceWor
 export type ForkedVoiceInferenceRuntimeSnapshot = Readonly<{
   packId: string;
   runtimeState: DaemonVoiceInferenceModelRuntimeState;
-  residentMemoryBytes: number | null;
 }>;
 
 export type ForkedVoiceInferenceRuntimeClient = Readonly<
@@ -88,9 +88,6 @@ export type ForkedVoiceInferenceRuntimeClient = Readonly<
 type PendingRequest = Readonly<{
   resolve: (frame: VoiceInferenceWorkerResponseFrame) => void;
   reject: (error: unknown) => void;
-  onPartial?: (frame: VoiceInferenceWorkerPartialFrame) => void;
-  /** Activity-based liveness: called on every inbound frame for this request to push the deadline. */
-  resetDeadline?: () => void;
 }>;
 
 const DEFAULT_WORKER_POLICY: ManagedProcessPolicy = {
@@ -107,8 +104,6 @@ const DEFAULT_WORKER_POLICY: ManagedProcessPolicy = {
   terminateGraceMs: 2_000,
 };
 
-const MAX_TTS_PARTIAL_CHUNKS = 4_096;
-
 let requestSequence = 0;
 function nextRequestId(): string {
   requestSequence += 1;
@@ -123,8 +118,8 @@ export type CreateForkedVoiceInferenceRuntimeClientParams = Readonly<{
   loggerDebug?: (message: string, payload?: unknown) => void;
   /**
    * Per-request deadline. A wedged-but-alive child rejects the request with `runtime_timeout`
-   * and the channel is terminated so the supervisor respawns. Streaming requests reset this on
-   * each chunk (activity-based liveness). Defaults to the centralized config knob; `0` disables.
+   * and the channel is terminated so the supervisor respawns. Defaults to the centralized config
+   * knob; `0` disables.
    */
   requestTimeoutMs?: number;
   /** Heartbeat cadence for the liveness watchdog. Defaults to the config knob; `0` disables. */
@@ -146,6 +141,8 @@ export function createForkedVoiceInferenceRuntimeClient(
 
   let stopped = false;
   let activeChannel: VoiceInferenceWorkerChannel | null = null;
+  let retiringChannel: VoiceInferenceWorkerChannel | null = null;
+  let channelAtTermination: VoiceInferenceWorkerChannel | null = null;
   let channelReady: Promise<VoiceInferenceWorkerChannel> | null = null;
   let resolveChannelReady: ((channel: VoiceInferenceWorkerChannel) => void) | null = null;
   let rejectChannelReady: ((error: unknown) => void) | null = null;
@@ -177,6 +174,10 @@ export function createForkedVoiceInferenceRuntimeClient(
     // and can never resync — the length-prefixed decoder cannot advance past a bad prefix. Do NOT
     // swallow it (that wedges the channel). Terminate so the EXISTING supervisor fails in-flight
     // requests and respawns a clean child + decoder (M2 / L4); never build a parallel restart path.
+    const shouldTerminateChannel = retireUnhealthyChannelBeforeTermination(channel);
+    if (!shouldTerminateChannel) {
+      return;
+    }
     params.loggerDebug?.('[forkedVoiceInferenceClient] corrupt inbound frame — terminating channel', error);
     try {
       channel.terminate();
@@ -186,7 +187,10 @@ export function createForkedVoiceInferenceRuntimeClient(
   }
 
   function declareHungAndKill(channel: VoiceInferenceWorkerChannel): void {
-    disarmPingWatchdog();
+    const shouldTerminateChannel = retireUnhealthyChannelBeforeTermination(channel);
+    if (!shouldTerminateChannel) {
+      return;
+    }
     params.loggerDebug?.('[forkedVoiceInferenceClient] worker unresponsive — force-killing', {
       missedPingThreshold,
     });
@@ -194,7 +198,7 @@ export function createForkedVoiceInferenceRuntimeClient(
     // supervised restart path (waitForTermination → onTermination → failAllPending + respawn);
     // we do NOT build a parallel restart mechanism here.
     try {
-      channel.terminate();
+      channel.forceTerminate();
     } catch {
       // best-effort; if the channel is already gone, onTermination already fired.
     }
@@ -239,6 +243,23 @@ export function createForkedVoiceInferenceRuntimeClient(
     }
   }
 
+  function retireUnhealthyChannelBeforeTermination(channel: VoiceInferenceWorkerChannel): boolean {
+    if (activeChannel !== channel) {
+      return false;
+    }
+    // An unhealthy decision has made this exact child unusable. Remove it from admission before
+    // the caller settles or termination is requested: OS termination is asynchronous and must not
+    // leave a window where an immediate successor can reuse the doomed channel. The existing
+    // sequential supervisor remains the only replacement owner.
+    activeChannel = null;
+    retiringChannel = channel;
+    channelReady = null;
+    resolveChannelReady = null;
+    rejectChannelReady = null;
+    disarmPingWatchdog();
+    return true;
+  }
+
   function attachChannel(channel: VoiceInferenceWorkerChannel): void {
     const decoder = createVoiceInferenceWorkerFrameDecoder(maxFrameBytes);
     channel.onData((chunk) => {
@@ -252,6 +273,12 @@ export function createForkedVoiceInferenceRuntimeClient(
         return;
       }
       for (const rawFrame of rawFrames) {
+        // Retirement removes this exact child from authority immediately, while OS termination
+        // may still leave buffered frames in flight. Fence every decoded frame by channel identity
+        // before it can reset liveness or publish snapshots or terminal responses.
+        if (activeChannel !== channel) {
+          return;
+        }
         let frame: VoiceInferenceWorkerResponseFrame;
         try {
           // L4: validate each decoded frame against the response contract before trusting it. One
@@ -274,25 +301,11 @@ export function createForkedVoiceInferenceRuntimeClient(
       params.onSnapshot?.({
         packId: frame.packId,
         runtimeState: frame.runtimeState,
-        residentMemoryBytes: frame.residentMemoryBytes,
       });
       return;
     }
     const pending = pendingById.get(frame.id);
     if (!pending) {
-      return;
-    }
-    if (frame.kind === 'partial') {
-      // Streaming chunk = progress: push the per-request deadline so a long legit synthesis
-      // (STT partials / chunked TTS) is never falsely timed out while it is making progress.
-      pending.resetDeadline?.();
-      try {
-        pending.onPartial?.(frame);
-      } catch (error) {
-        pendingById.delete(frame.id);
-        pending.reject(error);
-        terminateCorruptChannel(channel, error);
-      }
       return;
     }
     if (frame.kind === 'ready') {
@@ -325,7 +338,15 @@ export function createForkedVoiceInferenceRuntimeClient(
       rejectChannelReady = null;
       return {
         pid: channel.pid,
-        waitForTermination: channel.waitForTermination,
+        waitForTermination: async () => {
+          try {
+            return await channel.waitForTermination();
+          } finally {
+            // createSupervisedProcess invokes onTermination only after this exact instance settles.
+            // Retain that identity so retirement bookkeeping cannot consume another channel's exit.
+            channelAtTermination = channel;
+          }
+        },
       };
     },
     onTermination: (event) => {
@@ -335,15 +356,25 @@ export function createForkedVoiceInferenceRuntimeClient(
           ? 'voice_inference_worker_spawn_failed'
           : 'voice_inference_worker_terminated',
       );
-      activeChannel = null;
+      const terminatedChannel = channelAtTermination;
+      channelAtTermination = null;
+      const replacementPending = terminatedChannel !== null && retiringChannel === terminatedChannel;
+      if (retiringChannel === terminatedChannel) {
+        retiringChannel = null;
+      }
+      if (terminatedChannel === null || activeChannel === terminatedChannel) {
+        activeChannel = null;
+      }
       // A spawn failure happens before there is an active channel or a pending request. Reject
       // the shared readiness gate itself; merely clearing it strands every caller currently
       // awaiting `ensureChannel()` forever and also prevents a supervised restart from settling
       // those original promises.
-      rejectChannelReady?.(unavailableError);
-      channelReady = null;
-      resolveChannelReady = null;
-      rejectChannelReady = null;
+      if (!replacementPending) {
+        rejectChannelReady?.(unavailableError);
+        channelReady = null;
+        resolveChannelReady = null;
+        rejectChannelReady = null;
+      }
       disarmPingWatchdog();
       // In-flight requests can never complete on a dead child — reject cleanly so callers
       // surface `runtime_unavailable` instead of hanging forever.
@@ -374,7 +405,12 @@ export function createForkedVoiceInferenceRuntimeClient(
     interpret: (frame: VoiceInferenceWorkerResponseFrame) => TResult,
     options?: Readonly<{
       signal?: AbortSignal | null;
-      onPartial?: (frame: VoiceInferenceWorkerPartialFrame) => void;
+      /**
+       * Synchronous native work can occupy the child's event loop, preventing it from consuming
+       * the cooperative abort frame. Terminate that exact supervised channel when cancellation
+       * must settle without waiting for the native call to return.
+       */
+      terminateChannelOnAbort?: boolean;
     }>,
   ): Promise<TResult> {
     if (options?.signal?.aborted) {
@@ -400,16 +436,18 @@ export function createForkedVoiceInferenceRuntimeClient(
 
       const onDeadline = () => {
         if (settled) return;
-        // A wedged-but-alive child blew the per-request deadline. Reject THIS request with a
-        // typed timeout, then mark the worker unhealthy by terminating the channel — its
-        // termination routes through the existing supervisor (failAllPending + respawn), so we
-        // never build a parallel restart path.
+        // A wedged-but-alive child blew the per-request deadline. Retire it before rejecting THIS
+        // request with a typed timeout, then terminate it through the existing supervisor
+        // (failAllPending + respawn); never build a parallel restart path.
+        const shouldTerminateChannel = retireUnhealthyChannelBeforeTermination(channel);
         pendingById.delete(id);
         finish(() => reject(createVoiceInferenceError('runtime_timeout', 'voice_inference_worker_request_timeout')));
-        try {
-          channel.terminate();
-        } catch {
-          // best-effort; if the channel is already gone, onTermination has already fired.
+        if (shouldTerminateChannel) {
+          try {
+            channel.forceTerminate();
+          } catch {
+            // best-effort; if the channel is already gone, onTermination has already fired.
+          }
         }
       };
 
@@ -430,11 +468,26 @@ export function createForkedVoiceInferenceRuntimeClient(
       };
 
       const onAbort = () => {
-        // Tell the child to cancel; the terminal `error: cancelled` will settle the promise.
+        // Tell cooperative runtimes to cancel first. Synchronous native TTS cannot consume this
+        // frame while generate() owns the event loop, so its caller also terminates the exact
+        // channel below and lets the existing supervisor replace it.
         try {
           channel.send(encodeVoiceInferenceWorkerFrame({ kind: 'abort', id: nextRequestId(), targetId: id }, maxFrameBytes));
         } catch {
           // If the channel is already gone, the pending request will be rejected by onTermination.
+        }
+        if (options?.terminateChannelOnAbort) {
+          const shouldTerminateChannel = retireUnhealthyChannelBeforeTermination(channel);
+          pendingById.delete(id);
+          finish(() => reject(createVoiceInferenceError('cancelled')));
+          if (shouldTerminateChannel) {
+            try {
+              channel.forceTerminate();
+            } catch {
+              // The caller is already settled as cancelled; an already-dead channel will still
+              // converge through onTermination and the existing supervisor.
+            }
+          }
         }
       };
 
@@ -460,8 +513,6 @@ export function createForkedVoiceInferenceRuntimeClient(
           });
         },
         reject: (error) => finish(() => reject(error)),
-        onPartial: options?.onPartial,
-        resetDeadline: armDeadline,
       });
 
       if (options?.signal) {
@@ -477,14 +528,17 @@ export function createForkedVoiceInferenceRuntimeClient(
         // Arm the deadline only after the request is actually on the wire.
         armDeadline();
       } catch (error) {
+        const shouldTerminateChannel = retireUnhealthyChannelBeforeTermination(channel);
         pendingById.delete(id);
         finish(() => reject(createVoiceInferenceError('runtime_unavailable', error instanceof Error ? error.message : 'voice_inference_worker_send_failed')));
         // A send failure leaves the child-side state unknowable. Terminate this exact channel so
         // its runner disposes any streaming sessions and supervision can replace the broken pipe.
-        try {
-          channel.terminate();
-        } catch {
-          // best-effort; an already-dead channel will settle through onTermination.
+        if (shouldTerminateChannel) {
+          try {
+            channel.terminate();
+          } catch {
+            // best-effort; an already-dead channel will settle through onTermination.
+          }
         }
       }
     });
@@ -541,8 +595,6 @@ export function createForkedVoiceInferenceRuntimeClient(
   async function synthesizeTts(
     input: VoiceInferenceRuntimeSynthesizeInput,
   ): Promise<VoiceInferenceRuntimeSynthesizeResult> {
-    const chunks: Buffer[] = [];
-    let nextChunkIndex = 0;
     return await request(
       (id) => ({
         kind: 'synthesize',
@@ -562,26 +614,15 @@ export function createForkedVoiceInferenceRuntimeClient(
         if (frame.kind !== 'result' || frame.result.kind !== 'synthesize') {
           throw createVoiceInferenceError('internal_error', 'voice_inference_worker_unexpected_result');
         }
-        // Prefer the streamed chunks (chunked TTS); fall back to the inline result bytes.
-        const inline = Buffer.from(frame.result.bytesBase64, 'base64');
-        const streamed = chunks.length > 0 ? Buffer.concat(chunks) : inline;
         return {
-          bytes: streamed,
+          bytes: Buffer.from(frame.result.bytesBase64, 'base64'),
           output: frame.result.output,
           name: frame.result.name,
         };
       },
       {
         signal: input.signal,
-        onPartial: (partial) => {
-          if (partial.partialKind === 'tts') {
-            if (partial.index !== nextChunkIndex || partial.index >= MAX_TTS_PARTIAL_CHUNKS) {
-              throw createVoiceInferenceError('internal_error', 'voice_inference_worker_invalid_tts_partial');
-            }
-            chunks.push(Buffer.from(partial.chunkBase64, 'base64'));
-            nextChunkIndex += 1;
-          }
-        },
+        terminateChannelOnAbort: true,
       },
     );
   }
@@ -610,7 +651,14 @@ export function createForkedVoiceInferenceRuntimeClient(
         }
         return { text: frame.result.text, language: frame.result.language };
       },
-      { signal: input.signal },
+      {
+        signal: input.signal,
+        // Batch STT decodes synchronously in the child exactly like direct TTS: the native
+        // call owns the event loop, so the cooperative abort frame cannot be consumed until
+        // it returns. Retire this exact channel so cancellation settles now and the aborted
+        // worker cannot serve the successor (its stale result is discarded on retirement).
+        terminateChannelOnAbort: true,
+      },
     );
   }
 
@@ -749,8 +797,9 @@ export function createForkedVoiceInferenceRuntimeClient(
       stopped = true;
       supervisor.markStopRequested({ reason: 'shutdown', requestedAtMs: Date.now() });
       disarmPingWatchdog();
-      const channel = activeChannel;
+      const channel = activeChannel ?? retiringChannel;
       activeChannel = null;
+      retiringChannel = null;
       rejectChannelReady?.(createVoiceInferenceError('runtime_unavailable', 'voice_inference_worker_stopped'));
       channelReady = null;
       resolveChannelReady = null;

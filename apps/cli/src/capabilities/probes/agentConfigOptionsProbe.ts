@@ -1,31 +1,22 @@
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
+import {
+  normalizeProbedCatalogOption,
+  type ProbedCatalogOption,
+  type ProbedCatalogOptionValue,
+} from './probedCatalogOption';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { resolveProviderOwnedPreflightControlsProbeDecision } from './providerOwnedPreflightControlsProbePolicy';
 import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
 import { runPreflightSessionControlsProbe } from './runPreflightSessionControlsProbe';
 import { withPreflightSessionControlsProbeEnvironment } from './preflightSessionControlsProbeEnvironment';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
-import { z } from 'zod';
 
-export type ProbedAgentConfigOptionValue = string | number | boolean | null;
+export type ProbedAgentConfigOptionValue = ProbedCatalogOptionValue;
 
-export type ProbedAgentConfigOption = Readonly<{
-  id: string;
-  name: string;
-  description?: string;
-  type: string;
-  currentValue: ProbedAgentConfigOptionValue;
-  options?: ReadonlyArray<Readonly<{
-    value: ProbedAgentConfigOptionValue;
-    name: string;
-    description?: string;
-  }>>;
-}>;
-
-type ProbedAgentConfigChoice = NonNullable<ProbedAgentConfigOption['options']>[number];
+export type ProbedAgentConfigOption = ProbedCatalogOption;
 
 export type ProbedAgentConfigOptionsResult = Readonly<{
   agentId: CatalogAgentLookupId;
@@ -40,23 +31,6 @@ const agentConfigOptionsProbeCache = new AsyncTtlCache<ProbedAgentConfigOptionsR
   successTtlMs: PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS,
   errorTtlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS,
 });
-const ProbeNonEmptyStringSchema = z.string().trim().min(1);
-const ProbeDescriptionSchema = z.string();
-const ProbeOptionValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-const ProbeConfigChoiceInputSchema = z.object({
-  value: z.unknown().optional(),
-  name: ProbeNonEmptyStringSchema,
-  description: ProbeDescriptionSchema.optional(),
-});
-const ProbeConfigOptionInputSchema = z.object({
-  id: ProbeNonEmptyStringSchema,
-  name: ProbeNonEmptyStringSchema,
-  description: ProbeDescriptionSchema.optional(),
-  type: ProbeNonEmptyStringSchema,
-  currentValue: z.unknown().optional(),
-  options: z.array(z.unknown()).optional(),
-});
-
 function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentConfigOptionsResult {
   return { agentId, configOptions: [], source: 'static' };
 }
@@ -73,42 +47,13 @@ function shouldFailClosedForMissingCli(params: {
   return resolveAgentCliLaunchSpec(params.agentId) === null;
 }
 
-function normalizeProbeConfigOptionValue(value: unknown): ProbedAgentConfigOptionValue {
-  const parsed = ProbeOptionValueSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
-}
-
-function normalizeProbeConfigChoice(choiceRaw: unknown): ProbedAgentConfigChoice | null {
-  const parsed = ProbeConfigChoiceInputSchema.safeParse(choiceRaw);
-  if (!parsed.success) return null;
-
-  return {
-    value: normalizeProbeConfigOptionValue(parsed.data.value),
-    name: parsed.data.name,
-    ...(parsed.data.description ? { description: parsed.data.description } : {}),
-  };
-}
-
 function normalizeDynamicConfigOptions(configOptionsRaw: unknown): ProbedAgentConfigOption[] | null {
   if (!Array.isArray(configOptionsRaw)) return null;
 
   const parsed: ProbedAgentConfigOption[] = [];
   for (const optionRaw of configOptionsRaw) {
-    const parsedOption = ProbeConfigOptionInputSchema.safeParse(optionRaw);
-    if (!parsedOption.success) continue;
-
-    const options = parsedOption.data.options
-      ?.map((choiceRaw) => normalizeProbeConfigChoice(choiceRaw))
-      .filter((choice): choice is ProbedAgentConfigChoice => choice !== null);
-
-    parsed.push({
-      id: parsedOption.data.id,
-      name: parsedOption.data.name,
-      type: parsedOption.data.type,
-      currentValue: normalizeProbeConfigOptionValue(parsedOption.data.currentValue),
-      ...(parsedOption.data.description ? { description: parsedOption.data.description } : {}),
-      ...(options ? { options } : {}),
-    });
+    const normalized = normalizeProbedCatalogOption(optionRaw);
+    if (normalized) parsed.push(normalized);
   }
 
   // If the probe returned entries but none were parseable, treat the payload as invalid so callers
@@ -123,9 +68,10 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   cwd: string;
   timeoutMs?: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
-  credentials?: Credentials | null;
-  connectedServices?: unknown;
+  credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
+  materializedEnv?: Readonly<Record<string, string>>;
+  connectedServiceSelectionCacheKey?: string | null;
 }): Promise<ProbedAgentConfigOptionsResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
@@ -140,7 +86,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     cwd,
     backendTarget: params.backendTarget,
     variant: probeVariant,
-    connectedServices: params.connectedServices,
+    connectedServiceSelection: params.connectedServiceSelectionCacheKey,
   });
 
   const cached = agentConfigOptionsProbeCache.get(cacheKey);
@@ -164,12 +110,8 @@ export async function probeAgentConfigOptionsBestEffort(params: {
       const probePreflightConfigOptionsOnce = async (): Promise<ProbedAgentConfigOption[] | null> => {
         const configOptionsRaw = await withPreflightSessionControlsProbeEnvironment({
           agentId: params.agentId,
-          probeKind: 'configOptions',
-          cwd,
-          connectedServices: params.connectedServices,
-          credentials: params.credentials ?? null,
-          accountSettings: params.accountSettings ?? null,
           processEnv: params.env ?? process.env,
+          materializedEnv: params.materializedEnv,
         }, async ({ env }) => await preflightAdapter.probeConfigOptionsRaw!({
           backendTarget: params.backendTarget,
           probeKind: 'configOptions',

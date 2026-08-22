@@ -52,12 +52,6 @@ function params() {
     sessionControlArgs: [],
     directoryCreated: false,
     extraEnvForChildWithMessage: {},
-    localServicesBridgeAuthorization: {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
-      pluginId: 'happier.agent.codex',
-      contributionId: 'codex',
-      tokenFilePath: '/tmp/token',
-    },
     pidToTrackedSession,
     pidToAwaiter: new Map(),
     pidToSpawnResultResolver: new Map(),
@@ -84,6 +78,70 @@ function params() {
 
 describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('tracks the stable V2 authority path and exact bootstrap identity for a runner bootstrap', async () => {
+    mocks.spawnInTmux.mockResolvedValueOnce({
+      success: true,
+      creationDisposition: 'created_or_uncertain',
+      sessionId: 'private-tmux-session:runner',
+      sessionName: 'private-tmux-session',
+      windowName: 'runner',
+      pid: 4242,
+    });
+    const input = {
+      ...params(),
+      terminalRequest: {
+        requested: 'tmux' as const,
+        tmux: {
+          sessionName: 'private-tmux-session',
+          isolated: true,
+          tmpDir: null,
+          source: 'typed' as const,
+        },
+      },
+      runnerAgentSessionBootstrapAuthorization: {
+        authorityFilePath: '/private/runner-authority.json',
+        bootstrapFilePath: '/private/runner-bootstrap.json',
+        descriptor: {
+          v: 1 as const,
+          pluginId: 'plugin.acme',
+          pluginVersion: '1.0.0',
+          agentId: 'agent',
+          backendId: 'agent',
+          generation: 'generation-1',
+        },
+      },
+    };
+    const pending = (await import(
+      './spawnTmuxHostedSessionAndWaitForWebhook'
+    )).spawnTmuxHostedSessionAndWaitForWebhook(input);
+
+    await vi.waitFor(() => {
+      expect(input.pidToAwaiter.has(4242)).toBe(true);
+    });
+    const tracked = input.pidToTrackedSession.get(4242)!;
+    expect(tracked).toMatchObject({
+      agentRuntimeDaemonServiceAuthorityFilePath:
+        '/private/runner-authority.json',
+      runnerAgentBootstrapIdentity: {
+        agentId: 'agent',
+        backendId: 'agent',
+      },
+    });
+    input.pidToAwaiter.get(4242)?.({
+      ...tracked,
+      happySessionId: 'session-4242',
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      spawnResult: {
+        type: 'success',
+        sessionId: 'session-4242',
+      },
+    });
+    expect(JSON.stringify(input.logDebug.mock.calls)).not.toContain('session-4242');
+    expect(JSON.stringify(input.logDebug.mock.calls)).not.toContain('private-tmux-session');
+  });
 
   it('runs the final provider authorization guard immediately before tmux child creation', async () => {
     const refusal = {

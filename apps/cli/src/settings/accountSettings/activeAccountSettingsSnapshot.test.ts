@@ -2,11 +2,13 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  commitActiveAccountSettingsSnapshot,
-  getActiveAccountSettingsSnapshot,
+    clearActiveAccountSettingsSnapshot,
+    commitActiveAccountSettingsSnapshot,
+    getActiveAccountSettingsSnapshot,
+    getActiveAccountSettingsSnapshotLifetimeToken,
   resetActiveAccountSettingsSnapshotForTests,
-  setActiveAccountSettingsSnapshot,
-  subscribeActiveAccountSettingsSnapshot,
+    setActiveAccountSettingsSnapshot,
+    subscribeActiveAccountSettingsSnapshot,
 } from './activeAccountSettingsSnapshot';
 
 function snapshot(params: Readonly<{
@@ -62,14 +64,70 @@ describe('active account settings snapshot publication', () => {
     unsubscribe();
   });
 
-  it('keeps a committed winner when a subscriber throws', () => {
-    const next = snapshot({ scopeKey: 'scope-a', version: 1, timing: 'after_runtime_idle' });
-    const unsubscribe = subscribeActiveAccountSettingsSnapshot(() => {
+    it('keeps a committed winner when a subscriber throws', () => {
+        const next = snapshot({ scopeKey: 'scope-a', version: 1, timing: 'after_runtime_idle' });
+        const unsubscribe = subscribeActiveAccountSettingsSnapshot(() => {
       throw new Error('consumer wake failed');
     });
 
     expect(commitActiveAccountSettingsSnapshot(next)).toEqual({ snapshot: next, didCommit: true });
-    expect(getActiveAccountSettingsSnapshot()).toBe(next);
-    unsubscribe();
-  });
+        expect(getActiveAccountSettingsSnapshot()).toBe(next);
+        unsubscribe();
+    });
+
+    it('publishes the null transition when logout clears the active Account snapshot', () => {
+        const previous = snapshot({ scopeKey: 'scope-a', version: 1, timing: 'after_runtime_idle' });
+        setActiveAccountSettingsSnapshot(previous);
+        const listener = vi.fn();
+        const unsubscribe = subscribeActiveAccountSettingsSnapshot(listener);
+
+        clearActiveAccountSettingsSnapshot();
+
+        expect(getActiveAccountSettingsSnapshot()).toBeNull();
+        expect(listener).toHaveBeenCalledWith(previous, null);
+        unsubscribe();
+    });
+
+    it('advances the incumbent lifetime only when an Account enters, changes, or is revoked', () => {
+        const before = getActiveAccountSettingsSnapshotLifetimeToken();
+
+        setActiveAccountSettingsSnapshot(
+            snapshot({ scopeKey: 'scope-a', version: 4, timing: 'after_runtime_idle' }),
+        );
+        const accountA = getActiveAccountSettingsSnapshotLifetimeToken();
+
+        setActiveAccountSettingsSnapshot(
+            snapshot({ scopeKey: 'scope-a', version: 5, timing: 'after_foreground_ready' }),
+        );
+        const accountARevision = getActiveAccountSettingsSnapshotLifetimeToken();
+
+        setActiveAccountSettingsSnapshot(
+            snapshot({ scopeKey: 'scope-b', version: 1, timing: 'after_foreground_ready' }),
+        );
+        const accountB = getActiveAccountSettingsSnapshotLifetimeToken();
+
+        setActiveAccountSettingsSnapshot(
+            snapshot({ scopeKey: 'scope-a', version: 2, timing: 'after_runtime_idle' }),
+        );
+        const accountAAgain = getActiveAccountSettingsSnapshotLifetimeToken();
+
+        clearActiveAccountSettingsSnapshot();
+        const cleared = getActiveAccountSettingsSnapshotLifetimeToken();
+
+        clearActiveAccountSettingsSnapshot();
+        const clearedAgain = getActiveAccountSettingsSnapshotLifetimeToken();
+
+        setActiveAccountSettingsSnapshot(
+            snapshot({ scopeKey: 'scope-a', version: 6, timing: 'after_runtime_idle' }),
+        );
+        const accountAReentered = getActiveAccountSettingsSnapshotLifetimeToken();
+
+        expect(accountA).toBeGreaterThan(before);
+        expect(accountARevision).toBe(accountA);
+        expect(accountB).toBeGreaterThan(accountA);
+        expect(accountAAgain).toBeGreaterThan(accountB);
+        expect(cleared).toBeGreaterThan(accountAAgain);
+        expect(clearedAgain).toBe(cleared);
+        expect(accountAReentered).toBeGreaterThan(cleared);
+    });
 });

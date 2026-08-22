@@ -70,12 +70,6 @@ function createParams() {
       sourceKind: 'built_in',
       backendId: 'opencode',
     },
-    localServicesBridgeAuthorization: {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
-      pluginId: 'happier.agent.opencode',
-      contributionId: 'opencode',
-      tokenFilePath: '/tmp/happier-bridge-token',
-    },
     directoryCreated: false,
     extraEnvForChildWithMessage: {},
     processEnv: process.env,

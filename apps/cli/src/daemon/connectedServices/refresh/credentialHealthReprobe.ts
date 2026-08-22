@@ -27,6 +27,7 @@ export function shouldReadCredentialHealthForRefresh(reason: ConnectedServiceCre
   return reason === 'scheduled'
     || reason === 'spawn_preflight'
     || reason === 'runtime_auth_failure'
+    || reason === 'provider_auth_bridge'
     || reason === 'quota_bridge';
 }
 

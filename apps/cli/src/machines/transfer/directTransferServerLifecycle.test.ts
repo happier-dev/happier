@@ -7,9 +7,12 @@ import { createBufferTransferPayloadSource } from './transferPayloadSource';
 import { createDirectTransferServerLifecycle } from './directTransferServerLifecycle';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
 import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
+import { createTailscaleTransferServeLifecycle } from './tailscaleTransferServeLifecycle';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 
 type StartServer = NonNullable<Parameters<typeof createDirectTransferServerLifecycle>[0]['startServer']>;
+type RunTailscaleServeEnable = NonNullable<Parameters<typeof createTailscaleTransferServeLifecycle>[0]['runTailscaleServeEnable']>;
 type StartServerParams = Parameters<StartServer>[0];
 type StartServerResult = Awaited<ReturnType<StartServer>>;
 type ImportExpiryStartServerParams = StartServerParams & Readonly<{
@@ -210,6 +213,51 @@ describe('createDirectTransferServerLifecycle', () => {
     await vi.advanceTimersByTimeAsync(20);
     expect(stop).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('forwards the daemon-owned Composer stage target to the direct transfer server', async () => {
+    const executionTarget = { serverId: 'server-current', machineId: 'machine-current' };
+    const composerMediaStage = {
+      executionTarget,
+      store: createComposerMediaStageStore({
+        rootDirectory: join(tmpdir(), 'happier-direct-transfer-lifecycle-composer-media'),
+        executionTarget,
+      }),
+    };
+    const startServer = vi.fn(async () => ({
+      port: 46001,
+      stop: async () => {},
+      issueImportOpenAuthorizationToken: () => ({ authorizationToken: 'unused-token', expiresAt: 2_000 }),
+      openTrustedImportSession: async () => ({
+        success: true as const,
+        response: {
+          uploadId: 'unused-upload-id',
+          destDisplayPath: 'unused',
+          expectedSizeBytes: 1,
+          chunkSizeBytes: 1,
+          recipientPublicKeyBase64: 'unused-key',
+          expiresAt: 2_000,
+        },
+      }),
+      abortImportTransferSession: async () => {},
+    }));
+    const lifecycle = createDirectTransferServerLifecycle({
+      bindPort: 46001,
+      listenerClasses: ['loopback_http'],
+      composerMediaStage,
+      startServer,
+    } as Parameters<typeof createDirectTransferServerLifecycle>[0]);
+
+    try {
+      await lifecycle.publishTransfer({
+        transferId: 'composer-stage-forwarding',
+        payload: Buffer.from('payload', 'utf8'),
+      });
+
+      expect(startServer).toHaveBeenCalledWith(expect.objectContaining({ composerMediaStage }));
+    } finally {
+      await lifecycle.stop();
+    }
   });
 
   it('can prepare a direct import session and advertise upload endpoint candidates through the same lazy server', async () => {
@@ -683,6 +731,246 @@ describe('createDirectTransferServerLifecycle', () => {
         url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/imports/upload-1',
         expiresAt: 5_000,
       },
+    ]);
+  });
+
+  it('waits for Tailscale Serve readiness before preparing an import and advertises only available candidates', async () => {
+    const createImportLifecycle = (runTailscaleServeEnable: RunTailscaleServeEnable) => {
+      const tailscaleLifecycle = createTailscaleTransferServeLifecycle({
+        enabled: true,
+        servePath: '/__happier/transfer',
+        httpsPort: 443,
+        runTailscaleServeEnable,
+        runTailscaleServeDisable: vi.fn(async () => undefined),
+      });
+      const openTrustedImportSession = vi.fn(async () => ({
+        success: true as const,
+        response: {
+          uploadId: 'upload-1',
+          destDisplayPath: 'payload.bin',
+          expectedSizeBytes: 4,
+          chunkSizeBytes: 8,
+          recipientPublicKeyBase64: 'recipient-key',
+          expiresAt: 5_000,
+        },
+      }));
+      const lifecycle = createDirectTransferServerLifecycle({
+        bindPort: 46001,
+        listenerClasses: ['loopback_http', 'tailscale_serve_https'],
+        advertisedHosts: ['127.0.0.1'],
+        startServer: vi.fn(async () => ({
+          port: 46001,
+          stop: vi.fn(async () => undefined),
+          issueImportOpenAuthorizationToken: vi.fn(() => ({
+            authorizationToken: 'unused-import-open-token',
+            expiresAt: 5_000,
+          })),
+          openTrustedImportSession,
+          abortImportTransferSession: vi.fn(async () => ({ aborted: false })),
+        })),
+        resolveTailscaleServeHttpsBaseUrl: () =>
+          tailscaleLifecycle.getHttpsBaseUrlWithServePath(),
+        onStateChange: async (state) => {
+          await tailscaleLifecycle.observeDirectTransferServerLifecycleState(state);
+        },
+      });
+
+      return { lifecycle, openTrustedImportSession, tailscaleLifecycle };
+    };
+    const importRequest = {
+      t: 'session_file_upload_v1' as const,
+      workingDirectory: '/repo',
+      path: 'payload.bin',
+      sizeBytes: 4,
+      overwrite: true,
+    };
+
+    let finishEnable!: () => void;
+    const enableGate = new Promise<void>((resolve) => {
+      finishEnable = resolve;
+    });
+    const delayedEnable = vi.fn(async () => {
+      await enableGate;
+      return {
+        approvalUrl: null,
+        httpsUrl: 'https://machine.tailnet.ts.net',
+        rawStatus: [
+          'https://machine.tailnet.ts.net',
+          '|-- /__happier/transfer proxy http://127.0.0.1:46001',
+        ].join('\n'),
+      };
+    });
+    const ready = createImportLifecycle(delayedEnable);
+    let preparationSettled = false;
+    const pendingPreparation = ready.lifecycle.prepareImportSession(importRequest).finally(() => {
+      preparationSettled = true;
+    });
+
+    await vi.waitFor(() => expect(delayedEnable).toHaveBeenCalledTimes(1));
+    expect(preparationSettled).toBe(false);
+    expect(ready.openTrustedImportSession).not.toHaveBeenCalled();
+
+    finishEnable();
+    await expect(pendingPreparation).resolves.toMatchObject({
+      uploadId: 'upload-1',
+      endpointCandidates: [
+        expect.objectContaining({
+          kind: 'http',
+          url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/),
+        }),
+        {
+          kind: 'https',
+          url: 'https://machine.tailnet.ts.net/__happier/transfer/machine-transfers/direct/imports/upload-1',
+          expiresAt: 5_000,
+        },
+      ],
+    });
+    await ready.lifecycle.stop();
+    await ready.tailscaleLifecycle.stop();
+
+    const unavailableEnable = vi.fn(async () => {
+      throw new Error('tailscale unavailable');
+    });
+    const unavailable = createImportLifecycle(unavailableEnable);
+
+    const unavailablePrepared = await unavailable.lifecycle.prepareImportSession(importRequest);
+    expect(unavailablePrepared.uploadId).toBe('upload-1');
+    expect(unavailablePrepared.endpointCandidates).toEqual([
+      expect.objectContaining({
+        kind: 'http',
+        url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/),
+      }),
+    ]);
+    expect(unavailableEnable).toHaveBeenCalled();
+    await unavailable.lifecycle.stop();
+    await unavailable.tailscaleLifecycle.stop();
+  });
+
+  it('waits for the owned Tailscale Serve path before resolving the first direct publication', async () => {
+    let finishEnable!: () => void;
+    const enableGate = new Promise<void>((resolve) => {
+      finishEnable = resolve;
+    });
+    const runTailscaleServeEnable = vi.fn(async () => {
+      await enableGate;
+      return {
+        approvalUrl: null,
+        httpsUrl: 'https://machine.tailnet.ts.net',
+        rawStatus: [
+          'https://machine.tailnet.ts.net',
+          '|-- /__happier/transfer proxy http://127.0.0.1:46001',
+        ].join('\n'),
+      };
+    });
+    const runTailscaleServeDisable = vi.fn(async () => undefined);
+    const tailscaleLifecycle = createTailscaleTransferServeLifecycle({
+      enabled: true,
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+      runTailscaleServeEnable,
+      runTailscaleServeDisable,
+    });
+    const lifecycle = createDirectTransferServerLifecycle({
+      bindPort: 46001,
+      listenerClasses: ['loopback_http', 'tailscale_serve_https'],
+      advertisedHosts: ['127.0.0.1'],
+      startServer: vi.fn(async () => ({
+        port: 46001,
+        stop: vi.fn(async () => undefined),
+        issueImportOpenAuthorizationToken: vi.fn(() => ({
+          authorizationToken: 'unused-import-open-token',
+          expiresAt: 5_000,
+        })),
+        openTrustedImportSession: vi.fn(async () => ({
+          success: false as const,
+          error: 'unused',
+        })),
+        abortImportTransferSession: vi.fn(async () => ({ aborted: false })),
+      })),
+      resolveTailscaleServeHttpsBaseUrl: () =>
+        tailscaleLifecycle.getHttpsBaseUrlWithServePath(),
+      onStateChange: async (state) => {
+        await tailscaleLifecycle.observeDirectTransferServerLifecycleState(state);
+      },
+    });
+
+    const publication = lifecycle.publishTransferWhenReady({
+      transferId: 'first-transfer',
+      payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
+    });
+    await vi.waitFor(() => expect(runTailscaleServeEnable).toHaveBeenCalledTimes(1));
+    const concurrentPublication = lifecycle.publishTransferWhenReady({
+      transferId: 'concurrent-first-transfer',
+      payloadSource: createBufferTransferPayloadSource(Buffer.from('concurrent', 'utf8')),
+    });
+    finishEnable();
+
+    for (const published of await Promise.all([publication, concurrentPublication])) {
+      expect(published).toMatchObject({
+        endpointCandidates: expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'https',
+            url: expect.stringContaining(
+              '/__happier/transfer/machine-transfers/direct/',
+            ),
+          }),
+        ]),
+      });
+    }
+
+    await lifecycle.stop();
+    await tailscaleLifecycle.stop();
+    expect(runTailscaleServeDisable).toHaveBeenCalledWith({
+      env: process.env,
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+    });
+  });
+
+  it('keeps the first direct publication local-only when Tailscale Serve is unavailable', async () => {
+    const tailscaleLifecycle = createTailscaleTransferServeLifecycle({
+      enabled: true,
+      servePath: '/__happier/transfer',
+      httpsPort: 443,
+      runTailscaleServeEnable: vi.fn(async () => {
+        throw new Error('tailscale unavailable');
+      }),
+      runTailscaleServeDisable: vi.fn(async () => undefined),
+    });
+    const lifecycle = createDirectTransferServerLifecycle({
+      bindPort: 46001,
+      listenerClasses: ['loopback_http', 'tailscale_serve_https'],
+      advertisedHosts: ['127.0.0.1'],
+      startServer: vi.fn(async () => ({
+        port: 46001,
+        stop: vi.fn(async () => undefined),
+        issueImportOpenAuthorizationToken: vi.fn(() => ({
+          authorizationToken: 'unused-import-open-token',
+          expiresAt: 5_000,
+        })),
+        openTrustedImportSession: vi.fn(async () => ({
+          success: false as const,
+          error: 'unused',
+        })),
+        abortImportTransferSession: vi.fn(async () => ({ aborted: false })),
+      })),
+      resolveTailscaleServeHttpsBaseUrl: () =>
+        tailscaleLifecycle.getHttpsBaseUrlWithServePath(),
+      onStateChange: async (state) => {
+        await tailscaleLifecycle.observeDirectTransferServerLifecycleState(state);
+      },
+    });
+
+    const publication = await lifecycle.publishTransferWhenReady({
+      transferId: 'local-first-transfer',
+      payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
+    });
+
+    expect(publication.endpointCandidates).toEqual([
+      expect.objectContaining({
+        kind: 'http',
+        url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/),
+      }),
     ]);
   });
 

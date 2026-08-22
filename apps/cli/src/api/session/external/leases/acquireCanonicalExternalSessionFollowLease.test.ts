@@ -1,15 +1,26 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+
 const {
     fetchSessionByIdMock,
+    fetchAccountEncryptionCurrentnessMock,
     tryDecryptSessionOwnerMetadataViewMock,
     updateSessionMetadataWithRetryMock,
 } = vi.hoisted(() => ({
     fetchSessionByIdMock: vi.fn(),
+    fetchAccountEncryptionCurrentnessMock: vi.fn(),
     tryDecryptSessionOwnerMetadataViewMock: vi.fn(),
     updateSessionMetadataWithRetryMock: vi.fn(async () => {}),
+}));
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+    fetchAccountEncryptionCurrentness: fetchAccountEncryptionCurrentnessMock,
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
@@ -115,10 +126,34 @@ const transcriptItem = (id: string, createdAtMs: number): ExternalSessionTranscr
 });
 
 describe('acquireCanonicalExternalSessionFollowLease background recovery', () => {
+    let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
+
+    beforeAll(async () => {
+        runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
+            resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
+                contributes: getResolvedContributionRegistry(),
+                pluginIds: ['happier.agent.claude'],
+            }),
+        });
+    });
+
+    afterAll(async () => {
+        await runtimeRegistryLease?.release();
+        runtimeRegistryLease = null;
+        await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
         vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', source.configDir);
         fetchSessionByIdMock.mockResolvedValue(rawSession);
+        fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+            mode: 'plain',
+            version: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: null,
+            updatedAt: 1,
+        });
         tryDecryptSessionOwnerMetadataViewMock.mockReturnValue(metadata);
     });
 
@@ -208,6 +243,39 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         ]);
     });
 
+    it.each([
+        {
+            label: 'older history remains below the bounded newest page',
+            page: { nextCursor: 'older-cursor-1', hasMore: true, truncated: false },
+        },
+        {
+            label: 'the bounded newest page is itself discontinuous',
+            page: { nextCursor: null, hasMore: false, truncated: true },
+        },
+    ])('retains the accepted cursor and requires a resync when $label', async ({ page }) => {
+        const readAfterTranscript = vi.fn(async () => ({
+            outcome: 'gap_or_cursor_expired' as const,
+        }));
+        const pageTranscript = vi.fn(async () => ({
+            items: [transcriptItem('unaccounted-tail-item', 20)],
+            tailCursor: 'cursor-unaccounted-tail',
+            ...page,
+        }));
+        const { lease } = await acquire(readAfterTranscript, pageTranscript);
+
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
+        const result = await lease.requestTranscriptRefresh?.();
+        if (!result || result.outcome !== 'gap_or_cursor_expired') {
+            throw new Error('Expected a bounded gap recovery');
+        }
+
+        await expect(result.recover()).resolves.toEqual({ outcome: 'resync_required' });
+        expect(pageTranscript).toHaveBeenCalledOnce();
+        // The unaccounted tail is never adopted as the accepted cursor.
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
+        expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+    });
+
     it('revalidates an exact hosted owner during gap recovery without persisting a second link', async () => {
         const hostedSource = {
             kind: 'codexHome' as const,
@@ -231,7 +299,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
             credentials,
             sessionId: hostedRawSession.id,
             machineId: 'machine-hosted-follow',
-            expectedHostedIdentity: {
+            expectedIdentity: {
                 agentId: 'codex',
                 machineId: 'machine-hosted-follow',
                 remoteSessionId: 'thread-hosted-follow',
@@ -442,7 +510,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         });
         fetchSessionByIdMock.mockImplementation(async () => {
             fetchCount += 1;
-            if (fetchCount === 4) {
+            if (fetchCount === 6) {
                 await finalValidation;
             }
             return rawSession;
@@ -485,7 +553,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
 
         const refresh = lease.requestTranscriptRefresh?.();
         await vi.waitFor(() => {
-            expect(fetchCount).toBe(4);
+            expect(fetchCount).toBe(6);
         });
         let releaseCompleted = false;
         const release = lease.release().then(() => {
@@ -536,11 +604,53 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
                 },
             },
             credentials,
-        })).rejects.toThrow(
-            'External Session live follow is unavailable: reconcile-only',
-        );
+        })).rejects.toMatchObject({
+            name: 'ExternalSessionFollowFailureError',
+            kind: 'follow_unavailable',
+            message: 'External Session live follow is unavailable: reconcile-only',
+        });
 
         expect(demanded).toEqual([true, false]);
+    });
+
+    it('rejects a same-kind relink before creating transcript demand or reading content', async () => {
+        const loaded = await loadLinkedExternalSession({
+            credentials,
+            sessionId: rawSession.id,
+            machineId: 'machine-background-follow',
+        });
+        if (!loaded.ok) throw new Error(loaded.error);
+        const reconcileTranscriptDemand = vi.fn();
+        const pageTranscript = vi.fn();
+        const readAfterTranscript = vi.fn();
+
+        await expect(acquireCanonicalExternalSessionFollowLease({
+            sessionId: rawSession.id,
+            machineId: 'machine-background-follow',
+            linked: {
+                ...loaded.session,
+                source: {
+                    ...loaded.session.source,
+                    configDir: '/tmp/relinked-claude-config',
+                },
+            },
+            resource,
+            observation,
+            providerOps: { pageTranscript, readAfterTranscript },
+            initialCursor: 'cursor-accepted',
+            maxBytes: 64_000,
+            maxItems: 200,
+            observationProjection: { reconcileTranscriptDemand },
+            credentials,
+        })).rejects.toMatchObject({
+            name: 'ExternalSessionFollowFailureError',
+            kind: 'source_changed',
+            message: 'External Session link changed before follow acquisition',
+        });
+
+        expect(reconcileTranscriptDemand).not.toHaveBeenCalled();
+        expect(pageTranscript).not.toHaveBeenCalled();
+        expect(readAfterTranscript).not.toHaveBeenCalled();
     });
 
     it('does not read a baseline after generation retirement during observer admission', async () => {
@@ -599,9 +709,11 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         retirement.abort();
         completeAdmission();
 
-        await expect(acquisition).rejects.toThrow(
-            'External Session follow generation retired during acquisition',
-        );
+        await expect(acquisition).rejects.toMatchObject({
+            name: 'ExternalSessionFollowFailureError',
+            kind: 'source_changed',
+            message: 'External Session follow generation retired during acquisition',
+        });
         expect(pageTranscript).not.toHaveBeenCalled();
         expect(demanded).toEqual([true, false]);
     });
@@ -683,6 +795,47 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         expect(demanded).toEqual([true, false]);
         expect(pageTranscript).not.toHaveBeenCalled();
         expect(readAfterTranscript).not.toHaveBeenCalled();
+    });
+
+    it('keeps release custody when transcript-demand cleanup rejects until the exact retry succeeds', async () => {
+        const loaded = await loadLinkedExternalSession({
+            credentials,
+            sessionId: rawSession.id,
+            machineId: 'machine-background-follow',
+        });
+        if (!loaded.ok) throw new Error(loaded.error);
+        const cleanupFailure = new Error('transcript demand cleanup rejected');
+        const demanded: boolean[] = [];
+        const reconcileTranscriptDemand = vi.fn(async (input: Readonly<{
+            demanded: boolean;
+        }>) => {
+            demanded.push(input.demanded);
+            if (!input.demanded && demanded.filter((value) => !value).length === 1) {
+                throw cleanupFailure;
+            }
+            return { state: input.demanded ? 'observing' : 'not-demanded' };
+        });
+        const lease = await acquireCanonicalExternalSessionFollowLease({
+            sessionId: rawSession.id,
+            machineId: 'machine-background-follow',
+            linked: loaded.session,
+            resource,
+            observation,
+            providerOps: {
+                pageTranscript: vi.fn(),
+                readAfterTranscript: vi.fn(),
+            },
+            initialCursor: 'cursor-accepted',
+            maxBytes: 64_000,
+            maxItems: 200,
+            observationProjection: { reconcileTranscriptDemand },
+            credentials,
+        });
+
+        await expect(lease.release()).rejects.toBe(cleanupFailure);
+        await expect(lease.release()).resolves.toBeUndefined();
+
+        expect(demanded).toEqual([true, false, false]);
     });
 
     it('allows grouping-only links to enter canonical descriptor admission', () => {

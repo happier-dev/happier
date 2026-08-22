@@ -1,6 +1,5 @@
 import {
     ConnectedServiceCredentialRevisionV1Schema,
-    RequestAuthRequiredHeadersV1Schema,
     type ConnectedAccountPurposeDeclarationV1,
     type ConnectedServiceBindingsV1,
     type ConnectedServiceCredentialRecordV1,
@@ -22,6 +21,9 @@ import {
 import type {
     QualifiedConnectedAccountPeerOperationTransport,
 } from '@/api/client/qualifiedConnectedAccountApi';
+import {
+    parseHttpHeadersRequestAuthBearer,
+} from './parseHttpHeadersRequestAuthBearer';
 
 /**
  * The sole compatibility map from the released service-keyed Connected Services namespace to the
@@ -177,6 +179,7 @@ type ConnectedAccountRequestAuthEstablishedMaterializer = Readonly<{
             kind: 'materialize';
             request: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
         }>;
+        signal?: AbortSignal;
     }>): Promise<Readonly<{
         result: unknown;
         basis: Readonly<{
@@ -186,79 +189,23 @@ type ConnectedAccountRequestAuthEstablishedMaterializer = Readonly<{
     }>>;
 }>;
 
-function materializeValidatedHttpHeaders(
-    materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'],
-    result: unknown,
-): Readonly<{
-    accessToken: string;
-    requiredHeaders?: Readonly<Record<string, string>>;
-}> {
-    if (!result || typeof result !== 'object' || Array.isArray(result)) {
-        throw new Error('request_auth_materialization_invalid');
-    }
-    const resultRecord = result as Readonly<Record<string, unknown>>;
-    if (
-        Reflect.ownKeys(resultRecord).some((key) =>
-            typeof key !== 'string' || (key !== 'kind' && key !== 'headers'))
-        || resultRecord.kind !== 'httpHeaders'
-        || !resultRecord.headers
-        || typeof resultRecord.headers !== 'object'
-        || Array.isArray(resultRecord.headers)
-    ) {
-        throw new Error('request_auth_materialization_invalid');
-    }
-    const headersRecord = resultRecord.headers as Readonly<Record<string, unknown>>;
-    const requestedNames = new Set(materialization.headerNames);
-    const returnedByName = new Map<string, string>();
-    for (const rawName of Reflect.ownKeys(headersRecord)) {
-        if (typeof rawName !== 'string') {
-            throw new Error('request_auth_materialization_invalid');
-        }
-        const name = rawName.toLowerCase();
-        const rawValue = headersRecord[rawName];
-        if (
-            !requestedNames.has(name)
-            || returnedByName.has(name)
-            || typeof rawValue !== 'string'
-            || rawValue.length === 0
-            || /[\r\n]/u.test(rawValue)
-        ) {
-            throw new Error('request_auth_materialization_invalid');
-        }
-        returnedByName.set(name, rawValue);
-    }
-    const authorization = returnedByName.get('authorization');
-    const bearer = authorization?.match(/^Bearer ([^\s\r\n]+)$/u);
-    if (!bearer) {
-        throw new Error('request_auth_oauth_bearer_required');
-    }
-    const requiredHeaders = RequestAuthRequiredHeadersV1Schema.parse(
-        Object.fromEntries(
-            [...returnedByName].filter(([name]) => name !== 'authorization'),
-        ),
-    );
-    return Object.freeze({
-        accessToken: bearer[1]!,
-        ...(Object.keys(requiredHeaders).length > 0
-            ? { requiredHeaders: Object.freeze(requiredHeaders) }
-            : {}),
-    });
-}
-
 export async function materializeFirstPartyConnectedAccountBearer(input: Readonly<{
     resolved: ConnectedAccountRequestAuthResolvedBinding;
     materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
     transport: QualifiedConnectedAccountPeerOperationTransport;
+    signal?: AbortSignal;
     establishedRuntimeOwner?: ConnectedAccountRequestAuthEstablishedMaterializer;
     resolveCredential: (input: Readonly<{
         serviceId: ConnectedServiceId;
         profileId: string;
+        signal?: AbortSignal;
     }>) => Promise<FirstPartyCredentialResolution | null>;
 }>): Promise<Readonly<{
     accessToken: string;
     requiredHeaders?: Readonly<Record<string, string>>;
     expiresAt?: number;
 }>> {
+    input.signal?.throwIfAborted();
     if (input.transport.kind === 'v4') {
         if (!input.establishedRuntimeOwner) {
             throw new Error('request_auth_established_runtime_unavailable');
@@ -269,7 +216,9 @@ export async function materializeFirstPartyConnectedAccountBearer(input: Readonl
                 kind: 'materialize' as const,
                 request: input.materialization,
             }),
+            ...(input.signal ? { signal: input.signal } : {}),
         });
+        input.signal?.throwIfAborted();
         if (
             invocation.basis.credentialRevision
                 !== input.resolved.credentialRevision
@@ -277,7 +226,7 @@ export async function materializeFirstPartyConnectedAccountBearer(input: Readonl
         ) {
             throw new Error('request_auth_credential_superseded');
         }
-        return materializeValidatedHttpHeaders(
+        return parseHttpHeadersRequestAuthBearer(
             input.materialization,
             invocation.result,
         );
@@ -293,7 +242,9 @@ export async function materializeFirstPartyConnectedAccountBearer(input: Readonl
     const resolution = await input.resolveCredential({
         serviceId,
         profileId: input.resolved.account.accountId,
+        ...(input.signal ? { signal: input.signal } : {}),
     });
+    input.signal?.throwIfAborted();
     if (!resolution) throw new Error('request_auth_credential_unavailable');
     if (resolution.credentialRevision !== input.resolved.credentialRevision) {
         throw new Error('request_auth_credential_superseded');
@@ -312,7 +263,7 @@ export async function materializeFirstPartyConnectedAccountBearer(input: Readonl
             headers[headerName] = providerAccountId;
         }
     }
-    const materialized = materializeValidatedHttpHeaders(
+    const materialized = parseHttpHeadersRequestAuthBearer(
         input.materialization,
         { kind: 'httpHeaders', headers },
     );

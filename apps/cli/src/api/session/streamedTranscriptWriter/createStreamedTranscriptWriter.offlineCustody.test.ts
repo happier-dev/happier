@@ -1,18 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createOfflineSessionStub } from '@/api/offline/offlineSessionStub';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 import { createCurrentSessionTranscriptPort } from '../createCurrentSessionTranscriptPort';
 import { createStreamedTranscriptWriter } from './createStreamedTranscriptWriter';
 
 describe('createStreamedTranscriptWriter offline custody', () => {
+  function createUnavailableSession() {
+    return createBasicSessionClientWithOverrides({
+      enqueueAgentMessageCommitted: async () => {
+        throw new Error('session transport is offline');
+      },
+    });
+  }
+
   it('retains a failed offline segment and retries the same identity after a real session attaches', async () => {
-    const offline = createOfflineSessionStub('transcript-custody');
+    const offline = createUnavailableSession();
     const enqueueAgentMessageCommitted = vi.fn(async () => ({
       persisted: true as const,
       delivered: false as const,
     }));
     const attached = {
-      sendAgentMessageCommitted: vi.fn(async () => undefined),
       enqueueAgentMessageCommitted,
     };
     let currentSession = offline;
@@ -45,13 +52,12 @@ describe('createStreamedTranscriptWriter offline custody', () => {
   });
 
   it('retains a failed terminal predecessor without absorbing or overwriting its successor', async () => {
-    const offline = createOfflineSessionStub('transcript-custody');
+    const offline = createUnavailableSession();
     const enqueueAgentMessageCommitted = vi.fn(async () => ({
       persisted: true as const,
       delivered: false as const,
     }));
     const attached = {
-      sendAgentMessageCommitted: vi.fn(async () => undefined),
       enqueueAgentMessageCommitted,
     };
     let currentSession = offline;

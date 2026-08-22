@@ -2,8 +2,8 @@ import type {
   QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 import type {
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+  ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
   QualifiedConnectedAccountCompatibilityError,
@@ -98,11 +98,12 @@ export async function revokeQualifiedConnectedAccount(input: Readonly<{
       cleanupGroupReferences: input.cleanupGroupReferences,
     }),
   });
-  if (!invocation.basis.isCurrent()) {
-    throw new Error(
-      'Qualified Connected Account revoke generation changed during guarded deletion',
-    );
-  }
+  // Generation currentness protects PRE-EFFECT authorization: it is checked
+  // above, before the remote revoke leaf runs and before the credential is
+  // deleted. Once the delete returns success the revocation is committed, so
+  // it must never be retroactively invalidated here - re-checking currentness
+  // after the effect would report failure for a fully successful operation and
+  // leave the caller with a retry that can only observe not-found.
   return Object.freeze({
     status: 'deleted' as const,
     remoteStatus: decision.remoteStatus,

@@ -13,9 +13,6 @@ import type { ResolvedProviderContribution } from '@/plugins/projection/registry
 import type {
   ResolveManagedProviderPurposeBindingIntent,
 } from '@/providers/managed/resolvePurposeBindingSnapshot';
-import type {
-  ResolvedFirstPartyManagedProviderFacet,
-} from '@/providers/managed/types';
 
 import { resolveProviderConnectionForMachine } from '../registry';
 import {
@@ -364,6 +361,27 @@ describe('provider spawn runtime catalog bridge', () => {
           parser: 'openai-models',
         }],
       },
+      managedRuntime: {
+        kind: 'managed',
+        endpointTemplateIds: ['responses'],
+        connectedAccounts: [{
+          purpose: 'upstream',
+          service: {
+            pluginId: 'happier.connected-account.example',
+            localId: 'example',
+          },
+          required: true,
+          materializationKinds: ['httpHeaders'],
+        }],
+        requestAuthUses: [{
+          purpose: 'upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.example.test',
+            headerNames: ['authorization'],
+          },
+        }],
+      },
       discovery: {
         v: 1,
         listener: {
@@ -377,66 +395,20 @@ describe('provider spawn runtime catalog bridge', () => {
         },
       },
     });
-    const managed: ResolvedFirstPartyManagedProviderFacet = {
-      managedEndpoint: {
-        localService: {
-          id: 'gateway-managed',
-          launch: {
-            kind: 'packaged-runtime-binary' as const,
-            directorySegments: ['tools', 'unpacked'],
-            executableBaseName: 'gateway-managed',
-            privateConfigPathFlag: '--config',
-          },
-          launchMode: {
-            kind: 'assignAndInject' as const,
-            portPolicy: { kind: 'allocated' as const },
-          },
-          hostPolicy: { kind: 'loopback' as const },
-          name: { strategy: 'fixed' as const, name: 'Gateway managed' },
-          healthCheck: { kind: 'http' as const, path: '/healthz' },
-          restart: { kind: 'never' as const },
-          cleanup: { staleAfterMs: 60_000 },
-        },
-        protocols: ['openai-responses' as const],
-      },
-      connectedAccounts: [{
-        purpose: 'upstream',
-        service: {
-          pluginId: 'happier.connected-account.example',
-          localId: 'example',
-        },
-        required: true,
-        materializationKinds: ['httpHeaders'],
-      }],
-      requestAuthUses: [{
-        purpose: 'upstream',
-        materialization: {
-          kind: 'httpHeaders' as const,
-          origin: 'https://api.example.test',
-          headerNames: ['authorization'],
-        },
-      }],
-    };
-    const catalogSource = {
-      kind: 'transientModelEndpoint' as const,
-      contractVersion: 'happier.gateway-managed/v1',
-      sdkVersion: 'v1.2.3',
-    };
+    const managedRuntime = definition.managedRuntime;
+    if (!managedRuntime) {
+      throw new Error('Expected public managed runtime declaration');
+    }
+    const connectedAccountService = managedRuntime.connectedAccounts?.[0]?.service;
+    if (!connectedAccountService) {
+      throw new Error('Expected public managed connected-account declaration');
+    }
     const contribution: ResolvedProviderContribution = {
       provenance: 'first_party',
       source: { kind: 'bundled' },
       pluginId: 'acme.gateway',
       identity: { pluginId: 'acme.gateway', localId: 'gateway' },
       definition,
-      managed,
-      managedRuntimeAdapter: {
-        v: 1,
-        catalogSource,
-        prepare: async () => {
-          throw new Error('not used by runtime catalog lookup');
-        },
-        resolveAgentEndpoint: () => 'http://127.0.0.1:45123/v1',
-      },
     };
     const registry = {
       providersByContributionKey: new Map([[contributionKey, contribution]]),
@@ -455,7 +427,7 @@ describe('provider spawn runtime catalog bridge', () => {
           upstream: {
             kind: 'account',
             account: {
-              service: managed.connectedAccounts[0]!.service,
+              service: connectedAccountService,
               accountId: 'account-a',
             },
           },
@@ -511,10 +483,9 @@ describe('provider spawn runtime catalog bridge', () => {
       createProviderManagedProbeRequestFingerprintV1({
         implementationIdentity:
           authorizedResolution.record.deployment.implementationIdentity,
-        managedFacet: authorizedResolution.record.deployment.facet,
+        managedRuntime: authorizedResolution.record.deployment.managedRuntime,
         purposeBindings:
           authorizedResolution.record.deployment.purposeBindingIntents,
-        catalogSource,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
         method: 'GET',
@@ -590,7 +561,7 @@ describe('provider spawn runtime catalog bridge', () => {
     expect(resolveManagedPurposeBindingIntent).toHaveBeenCalledWith({
       purpose: authorizedResolution.record.deployment.purposeBindingIntents.bindings[0]!.purpose,
       target: authorizedResolution.record.deployment.purposeBindingIntents.bindings[0]!.target,
-      serviceRefs: [managed.connectedAccounts[0]!.service],
+      serviceRefs: [connectedAccountService],
       signal: expect.any(AbortSignal),
     });
 

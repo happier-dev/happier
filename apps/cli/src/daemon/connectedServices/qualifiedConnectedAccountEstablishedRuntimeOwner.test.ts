@@ -25,6 +25,7 @@ const service = Object.freeze({
   localId: 'openai-codex',
 });
 const account = Object.freeze({ service, accountId: 'account-1' });
+const requestAuthCredentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
 type QualifiedConnectedAccountCredentialSnapshotV4 = ReturnType<
   typeof QualifiedConnectedAccountCredentialSnapshotV4Schema.parse
 >;
@@ -58,6 +59,41 @@ const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
   },
 });
 
+const originDescriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+  id: service.localId,
+  title: 'Acme',
+  authentication: {
+    defaultModeId: 'oauth',
+    modes: [{
+      id: 'oauth',
+      kind: 'oauthAuthorizationCode',
+      pkce: 'required',
+      outcomeReconciliation: 'none',
+      configuration: {
+        scope: 'account',
+        changeBehavior: 'refresh',
+        fields: [{
+          id: 'endpoint',
+          title: 'Endpoint',
+          schema: { type: 'string', minLength: 1 },
+          semantic: 'connectedAccountOrigin',
+          required: true,
+        }, {
+          id: 'label',
+          title: 'Label',
+          schema: { type: 'string' },
+        }, {
+          id: 'clientSecret',
+          title: 'Client secret',
+          schema: { type: 'string', minLength: 1 },
+          secret: true,
+          required: true,
+        }],
+      },
+    }],
+  },
+});
+
 function plainEnvelope(kind: 'credential' | 'configuration', payload: unknown) {
   return sealQualifiedConnectedAccountContentEnvelope({
     kind,
@@ -68,10 +104,115 @@ function plainEnvelope(kind: 'credential' | 'configuration', payload: unknown) {
 }
 
 describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
+  it('reads an exact credential revision for qualified request-auth currentness without invoking a runtime', async () => {
+    const credentialSnapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account,
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
+      credentialRevision: requestAuthCredentialRevision,
+      configurationRevision: null,
+      content: plainEnvelope('credential', {
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: 'account-1',
+        createdAt: 1,
+        updatedAt: 1,
+        expiresAt: null,
+        kind: 'oauth',
+        oauth: {
+          accessToken: 'access-1',
+          refreshToken: null,
+          idToken: null,
+          tokenType: null,
+          scope: null,
+          expiresAt: null,
+          providerAccountId: null,
+          providerEmail: null,
+          raw: null,
+        },
+        token: null,
+      }),
+      metadata: { scopes: [] },
+    });
+    const acquireRuntimeRegistry = vi.fn();
+    const readCredential = vi.fn(async () => credentialSnapshot);
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: {
+        acquireRuntimeRegistry,
+        isRuntimeRegistryCurrent: vi.fn(),
+      } as unknown as Pick<
+        PluginReloadController,
+        'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
+      >,
+      credentials: { token: 'token-1', encryption: null },
+      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+      readCredential,
+      configuration: {
+        read: vi.fn(async () => null),
+        secrets: {
+          has: vi.fn(async () => false),
+          read: vi.fn(async () => null),
+        },
+      },
+    });
+
+    const signal = new AbortController().signal;
+    await expect(owner.readCredentialRevision({
+      account,
+      signal,
+    })).resolves.toBe(requestAuthCredentialRevision);
+    // The caller's cancellation signal reaches the credential read itself, so an
+    // aborted request-auth currentness check cannot keep an in-flight read alive.
+    expect(readCredential).toHaveBeenCalledWith({ token: 'token-1', ref: account, signal });
+    expect(acquireRuntimeRegistry).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unfenced snapshot before request-auth currentness can acquire a runtime', async () => {
+    const credentialSnapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account,
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'legacy_unfenced',
+      credentialRevision: null,
+      configurationRevision: null,
+      content: plainEnvelope('credential', {
+        v: 1,
+        values: { accessToken: 'legacy-access' },
+      }),
+      metadata: { scopes: [] },
+    });
+    const acquireRuntimeRegistry = vi.fn();
+    const readCredential = vi.fn(async () => credentialSnapshot);
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: {
+        acquireRuntimeRegistry,
+        isRuntimeRegistryCurrent: vi.fn(),
+      } as unknown as Pick<
+        PluginReloadController,
+        'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
+      >,
+      credentials: { token: 'token-1', encryption: null },
+      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+      readCredential,
+      configuration: {
+        read: vi.fn(async () => null),
+        secrets: {
+          has: vi.fn(async () => false),
+          read: vi.fn(async () => null),
+        },
+      },
+    });
+
+    await expect(owner.readCredentialRevision({ account })).rejects
+      .toThrow('credential snapshot is unfenced');
+    expect(readCredential).toHaveBeenCalledWith({ token: 'token-1', ref: account });
+    expect(acquireRuntimeRegistry).not.toHaveBeenCalled();
+  });
+
   it('adopts exact qualified snapshots into the current invoker without rebuilding plugin context', async () => {
     const credentialSnapshot: QualifiedConnectedAccountCredentialSnapshotV4 = {
       ref: account,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: 'credential-1',
       configurationRevision: 'configuration-1',
       content: plainEnvelope('credential', {
@@ -100,6 +241,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const configurationSnapshot: QualifiedConnectedAccountConfigurationSnapshotV4 = {
       target: { kind: 'account', ref: account },
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
       credentialRevision: 'credential-1',
       configurationRevision: 'configuration-1',
       configurationContent: plainEnvelope('configuration', {
@@ -175,11 +317,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       reloadController,
       credentials: {
         token: 'token-1',
-        encryption: {
-          type: 'dataKey',
-          publicKey: new Uint8Array(32).fill(1),
-          machineKey: new Uint8Array(32).fill(2),
-        },
+        encryption: null,
       },
       getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
       readCredential,
@@ -277,6 +415,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const credentialSnapshot: QualifiedConnectedAccountCredentialSnapshotV4 = {
       ref: account,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
       credentialRevision: 'credential-2',
       configurationRevision: 'configuration-2',
       content: plainEnvelope('credential', {
@@ -288,6 +427,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const configurationSnapshot: QualifiedConnectedAccountConfigurationSnapshotV4 = {
       target: { kind: 'account', ref: account },
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
       credentialRevision: 'credential-stale',
       configurationRevision: 'configuration-2',
       configurationContent: plainEnvelope('configuration', {
@@ -381,6 +521,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const credentialSnapshot: QualifiedConnectedAccountCredentialSnapshotV4 = {
       ref: account,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
       credentialRevision: 'credential-service-1',
       configurationRevision: null,
       content: plainEnvelope('credential', {
@@ -487,5 +628,262 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       service,
       modeId: 'oauth',
     });
+  });
+
+  it('rejects a later materialization when the callback-pinned credential revision rotates', async () => {
+    const revisionA = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const revisionB = 'csr_ZYXWVUTSRQPONMLKJHGFEDCBA1';
+    let credentialRevision = revisionA;
+    const readCredential = vi.fn(async () => ({
+      ref: account,
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
+      credentialRevision,
+      configurationRevision: 'configuration-1',
+      content: plainEnvelope('credential', {
+        v: 1,
+        values: { accessToken: credentialRevision },
+      }),
+      metadata: { scopes: [] },
+    }));
+    const readConfiguration = vi.fn(async () => ({
+      target: { kind: 'account' as const, ref: account },
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
+      credentialRevision,
+      configurationRevision: 'configuration-1',
+      configurationContent: plainEnvelope('configuration', {
+        values: { endpoint: 'https://api.example.test' },
+        secretRefs: {},
+        secretValues: { clientSecret: 'secret-value' },
+      }),
+    }));
+    const invokeEstablished = vi.fn(async (
+      input: ConnectedAccountRuntimeEstablishedInvocation<{
+        kind: 'materialize';
+        request: { kind: 'httpHeaders'; origin: string; headerNames: readonly string[] };
+      }>,
+    ) => {
+      expect(input.target.expectedCredentialRevision).toBe(credentialRevision);
+      await expect(input.isCredentialRevisionCurrent()).resolves.toBe(true);
+      return {
+        kind: 'httpHeaders' as const,
+        headers: { authorization: `Bearer ${credentialRevision}` },
+      };
+    });
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: {
+        acquireRuntimeRegistry: vi.fn(async () => ({
+          registry: {
+            connectedAccountRuntimeInvoker: {
+              invokeAuthentication: vi.fn(),
+              invokeEstablished,
+            },
+            resolveConnectedAccountRuntime: vi.fn(async () => ({
+              ref: service,
+              generation: 'generation-1',
+              immutableGenerationId: 'artifact-1',
+              descriptor,
+              runtime: {},
+              isCurrent: () => true,
+            })),
+          },
+          source: 'active' as const,
+          release: vi.fn(async () => undefined),
+        })),
+        isRuntimeRegistryCurrent: vi.fn(() => true),
+      } as unknown as Pick<
+        PluginReloadController,
+        'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
+      >,
+      credentials: {
+        token: 'token-1',
+        encryption: null,
+      },
+      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+      readCredential,
+      readConfiguration,
+      configuration: {
+        read: vi.fn(async () => null),
+        secrets: {
+          has: vi.fn(async () => false),
+          read: vi.fn(async () => null),
+        },
+      },
+    });
+
+    const first = await owner.invokeWithReceipt({
+      account,
+      operation: {
+        kind: 'materialize',
+        request: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] },
+      },
+    });
+    expect(first.basis.credentialRevision).toBe(revisionA);
+
+    credentialRevision = revisionB;
+    await expect(owner.invoke({
+      account,
+      operation: {
+        kind: 'materialize',
+        request: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] },
+      },
+      // This host-private value is first available only after the first receipt.
+      expectedCredentialRevision: first.basis.credentialRevision,
+    })).rejects.toThrow('credential revision');
+    expect(invokeEstablished).toHaveBeenCalledTimes(1);
+
+    const nextCallback = await owner.invokeWithReceipt({
+      account,
+      operation: {
+        kind: 'materialize',
+        request: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] },
+      },
+    });
+    expect(nextCallback.basis.credentialRevision).toBe(revisionB);
+    expect(invokeEstablished).toHaveBeenCalledTimes(2);
+  });
+
+  it('projects only host-normalized credential-free configured origins for one exact account', async () => {
+    const credentialSnapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account,
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
+      credentialRevision: requestAuthCredentialRevision,
+      configurationRevision: 'configuration-1',
+      content: plainEnvelope('credential', {
+        v: 1,
+        values: { accessToken: 'access-1' },
+      }),
+      metadata: { scopes: [] },
+    });
+    const configurationSnapshot: QualifiedConnectedAccountConfigurationSnapshotV4 = {
+      target: { kind: 'account', ref: account },
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
+      credentialRevision: requestAuthCredentialRevision,
+      configurationRevision: 'configuration-1',
+      configurationContent: plainEnvelope('configuration', {
+        values: { endpoint: 'https://eu.example.test', label: 'Europe' },
+        secretRefs: {},
+        secretValues: { clientSecret: 'secret-value' },
+      }),
+    };
+    const invokeEstablished = vi.fn(async () => {
+      throw new Error('configured-origin projection must not invoke a plugin runtime');
+    });
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: {
+        acquireRuntimeRegistry: vi.fn(async () => ({
+          registry: {
+            connectedAccountRuntimeInvoker: {
+              invokeAuthentication: vi.fn(),
+              invokeEstablished,
+            },
+            resolveConnectedAccountRuntime: vi.fn(async () => Object.freeze({
+              ref: service,
+              generation: 'generation-1',
+              immutableGenerationId: 'artifact-1',
+              descriptor: originDescriptor,
+              runtime: {},
+              isCurrent: () => true,
+            })),
+          },
+          source: 'active' as const,
+          release: vi.fn(async () => undefined),
+        })),
+        isRuntimeRegistryCurrent: vi.fn(() => true),
+      } as unknown as Pick<
+        PluginReloadController,
+        'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
+      >,
+      credentials: { token: 'token-1', encryption: null },
+      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+      readCredential: vi.fn(async () => credentialSnapshot),
+      readConfiguration: vi.fn(async () => configurationSnapshot),
+      configuration: {
+        read: vi.fn(async () => null),
+        secrets: {
+          has: vi.fn(async () => false),
+          read: vi.fn(async () => null),
+        },
+      },
+    });
+
+    await expect(owner.readConfiguredEndpoints({ account }))
+      .resolves.toEqual([{
+        origin: 'https://eu.example.test',
+        base: 'https://eu.example.test',
+        privateNetwork: false,
+      }]);
+    expect(invokeEstablished).not.toHaveBeenCalled();
+  });
+
+  it('fails a configured-origin projection closed when the stored origin is not credential-free', async () => {
+    const credentialSnapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account,
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
+      credentialRevision: requestAuthCredentialRevision,
+      configurationRevision: 'configuration-1',
+      content: plainEnvelope('credential', {
+        v: 1,
+        values: { accessToken: 'access-1' },
+      }),
+      metadata: { scopes: [] },
+    });
+    const configurationSnapshot: QualifiedConnectedAccountConfigurationSnapshotV4 = {
+      target: { kind: 'account', ref: account },
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
+      credentialRevision: requestAuthCredentialRevision,
+      configurationRevision: 'configuration-1',
+      configurationContent: plainEnvelope('configuration', {
+        values: { endpoint: 'https://user:secret@eu.example.test' },
+        secretRefs: {},
+        secretValues: { clientSecret: 'secret-value' },
+      }),
+    };
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: {
+        acquireRuntimeRegistry: vi.fn(async () => ({
+          registry: {
+            connectedAccountRuntimeInvoker: {
+              invokeAuthentication: vi.fn(),
+              invokeEstablished: vi.fn(),
+            },
+            resolveConnectedAccountRuntime: vi.fn(async () => Object.freeze({
+              ref: service,
+              generation: 'generation-1',
+              immutableGenerationId: 'artifact-1',
+              descriptor: originDescriptor,
+              runtime: {},
+              isCurrent: () => true,
+            })),
+          },
+          source: 'active' as const,
+          release: vi.fn(async () => undefined),
+        })),
+        isRuntimeRegistryCurrent: vi.fn(() => true),
+      } as unknown as Pick<
+        PluginReloadController,
+        'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
+      >,
+      credentials: { token: 'token-1', encryption: null },
+      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+      readCredential: vi.fn(async () => credentialSnapshot),
+      readConfiguration: vi.fn(async () => configurationSnapshot),
+      configuration: {
+        read: vi.fn(async () => null),
+        secrets: {
+          has: vi.fn(async () => false),
+          read: vi.fn(async () => null),
+        },
+      },
+    });
+
+    await expect(owner.readConfiguredEndpoints({ account })).rejects.toThrow(
+      'credential-free HTTPS origin',
+    );
   });
 });

@@ -92,6 +92,71 @@ describe('resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence burn projecti
     });
     expect(evidence).toEqual({ status: 'at_or_below_threshold', remainingPercent: 15, thresholdPercent: 20 });
   });
+
+  it('keeps stale low source evidence actionable only until its known quota reset boundary', () => {
+    const memberStatesByProfileId = new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([[
+      'active',
+      {
+        quotaSnapshot: {
+          capturedAtMs: 1_000,
+          effectiveMeterId: 'weekly',
+          effectiveRemainingPercent: 5,
+          meters: [{
+            meterId: 'weekly',
+            limitCategory: 'usage_limit',
+            remainingPct: 5,
+            resetAtMs: 20_000,
+            providerLimitId: 'weekly',
+          }],
+        },
+      },
+    ]]);
+    const input = {
+      activeProfileId: 'active',
+      policy: softPolicy,
+      memberStatesByProfileId,
+      quotaFreshnessMs: 1_000,
+    } as const;
+
+    expect(resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      ...input,
+      nowMs: 10_000,
+    })).toEqual({
+      status: 'at_or_below_threshold',
+      remainingPercent: 5,
+      thresholdPercent: 20,
+    });
+    expect(resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      ...input,
+      nowMs: 20_000,
+    })).toEqual({ status: 'unknown', reason: 'missing_fresh_quota_snapshot' });
+  });
+
+  it('does not extend stale low source evidence when the effective quota reset is unknown', () => {
+    expect(resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      activeProfileId: 'active',
+      policy: softPolicy,
+      memberStatesByProfileId: new Map([[
+        'active',
+        {
+          quotaSnapshot: {
+            capturedAtMs: 1_000,
+            effectiveMeterId: 'weekly',
+            effectiveRemainingPercent: 5,
+            meters: [{
+              meterId: 'weekly',
+              limitCategory: 'usage_limit' as const,
+              remainingPct: 5,
+              resetAtMs: null,
+              providerLimitId: 'weekly',
+            }],
+          },
+        },
+      ]]),
+      nowMs: 10_000,
+      quotaFreshnessMs: 1_000,
+    })).toEqual({ status: 'unknown', reason: 'missing_fresh_quota_snapshot' });
+  });
 });
 
 describe('selectConnectedServiceAuthGroupCandidate', () => {

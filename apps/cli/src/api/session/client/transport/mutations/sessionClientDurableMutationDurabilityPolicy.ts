@@ -1,3 +1,9 @@
+import { getSessionStateFieldDescriptor } from '@happier-dev/agents';
+
+import {
+    SESSION_CLIENT_DURABLE_MUTATION_DELIVERY_CLASSIFICATION,
+    type SessionClientDurableMutationDeliveryClassification,
+} from './sessionClientDurableMutationClassification';
 import type { QueuedSessionClientDurableMutation } from './sessionClientDurableMutationTypes';
 
 export function isAuthoritativeSessionClientDurableMutationKind(
@@ -17,13 +23,20 @@ export function isAuthoritativeSessionClientDurableMutation(
 export function shouldDeadLetterSessionClientDurableMutation(
     mutation: QueuedSessionClientDurableMutation,
 ): boolean {
-    if (
-        mutation.kind === 'registered_session_state_field'
-        && mutation.payload.fieldId === 'runtime.usageLimitRecovery'
-        && mutation.payload.source === 'daemon'
-        && mutation.payload.deliveryClass === 'durable_required'
-    ) {
-        return false;
+    return resolveSessionClientDurableMutationDeliveryClass(mutation) !== 'durable_required';
+}
+
+export function resolveSessionClientDurableMutationDeliveryClass(
+    mutation: QueuedSessionClientDurableMutation,
+): SessionClientDurableMutationDeliveryClassification {
+    if (mutation.kind === 'registered_session_state_field') {
+        return getSessionStateFieldDescriptor(mutation.payload.fieldId).deliveryClass;
     }
-    return !isAuthoritativeSessionClientDurableMutation(mutation);
+    if (mutation.kind === 'transcript_message_append' || mutation.kind === 'voice_agent_transcript_turn') {
+        return SESSION_CLIENT_DURABLE_MUTATION_DELIVERY_CLASSIFICATION.transcript_message_append;
+    }
+    if (mutation.kind === 'session_end') {
+        return SESSION_CLIENT_DURABLE_MUTATION_DELIVERY_CLASSIFICATION.session_end;
+    }
+    return SESSION_CLIENT_DURABLE_MUTATION_DELIVERY_CLASSIFICATION.primary_turn_runtime_projection;
 }

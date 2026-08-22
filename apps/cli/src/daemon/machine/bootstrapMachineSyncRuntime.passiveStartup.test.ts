@@ -9,10 +9,8 @@ describe('bootstrapMachineSyncRuntime passive startup', () => {
     expect(source).not.toContain('inactiveUsageLimitRecoveryScheduler.hydrate();');
   });
 
-  it('keeps speech-transcription peer media while omitting the retired Agent-realtime PCM consumer', async () => {
+  it('keeps the speech-transcription peer media consumer wired into the relay terminator', async () => {
     const source = await readFile(new URL('./bootstrapMachineSyncRuntime.ts', import.meta.url), 'utf8');
     expect(source).toContain('voiceBinaryAppendConsumer');
-    expect(source).not.toContain('voiceMediaAgentRealtimeConsumer');
-    expect(source).not.toContain('agentSessionRealtimeVoiceMediaBridge');
   });
 });

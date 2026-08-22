@@ -3,14 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 
 vi.mock('@/configuration', () => ({
     configuration: { serverUrl: 'http://example.invalid', apiServerUrl: 'http://example.invalid' },
 }));
 
 import axios from 'axios';
-import { fetchSessionSnapshotUpdateFromServer } from './snapshotSync';
+import {
+    fetchSessionSnapshotUpdateFromServer as fetchSessionSnapshotUpdateFromServerOwner,
+} from './snapshotSync';
 import { encodeBase64, encrypt } from '../encryption';
 
 const ownerSecret = new Uint8Array(32).fill(7);
@@ -21,6 +23,39 @@ const ownerCredentials: Credentials = {
     secret: ownerSecret,
   },
 };
+
+const e2eeCurrentness = {
+  mode: 'e2ee' as const,
+  version: 1,
+  signingKeyFingerprint: null,
+  contentKeyFingerprint: 'content-fingerprint',
+  updatedAt: 1,
+};
+const plainCurrentness = {
+  mode: 'plain' as const,
+  version: 1,
+  signingKeyFingerprint: null,
+  contentKeyFingerprint: null,
+  updatedAt: 1,
+};
+
+type SnapshotUpdateParams = Parameters<
+  typeof fetchSessionSnapshotUpdateFromServerOwner
+>[0];
+type SnapshotUpdateTestParams<T> = T extends SnapshotUpdateParams
+  ? Omit<T, 'accountEncryptionCurrentness'> &
+      Partial<Pick<T, 'accountEncryptionCurrentness'>>
+  : never;
+
+function fetchSessionSnapshotUpdateFromServer(
+  params: SnapshotUpdateTestParams<SnapshotUpdateParams>,
+) {
+  return fetchSessionSnapshotUpdateFromServerOwner({
+    ...params,
+    accountEncryptionCurrentness:
+      params.accountEncryptionCurrentness ?? e2eeCurrentness,
+  });
+}
 
 describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     it('preserves unexpected non-auth HTTP statuses as HttpStatusError carriers', async () => {
@@ -33,8 +68,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
         await expect(fetchSessionSnapshotUpdateFromServer({
             token: 't',
             sessionId: 's1',
-            encryptionKey: new Uint8Array(32),
-            encryptionVariant: 'legacy',
+            mode: 'e2ee',
+
+            ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
             currentMetadataVersion: 0,
             currentAgentStateVersion: 0,
         })).rejects.toMatchObject({
@@ -62,8 +98,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
         const res = await fetchSessionSnapshotUpdateFromServer({
             token: 't',
             sessionId: 's1',
-            encryptionKey: new Uint8Array(32),
-            encryptionVariant: 'legacy',
+            mode: 'e2ee',
+
+            ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
             currentMetadataVersion: 1,
             currentAgentStateVersion: 0,
         });
@@ -97,8 +134,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     const res = await fetchSessionSnapshotUpdateFromServer({
       token: 't',
       sessionId: 's1',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
       currentMetadataVersion: 1,
       currentAgentStateVersion: 0,
     });
@@ -127,9 +165,10 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     };
     const tuple = buildSessionMetadataEnvelopeFields({
       credentials: ownerCredentials,
+      accountEncryptionMode: 'e2ee',
       metadata: authoritativeMetadata,
       agentState: authoritativeAgentState,
-      storedContentMode: 'plain',
+      storedContentMode: 'e2ee',
       encryptionKey: ownerSecret,
       encryptionVariant: 'legacy',
     });
@@ -138,11 +177,11 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
       data: {
         session: createSessionRecordFixture({
           id: 's-layout-contract',
-          encryptionMode: 'plain',
+          encryptionMode: 'e2ee',
           metadataLayoutVersion: 1,
           metadataVersion: 1,
           metadata: tuple.sharedMetadata.ciphertext,
-          ownerMetadata: tuple.ownerMetadata.ciphertext,
+          ownerMetadata: tuple.ownerMetadata,
           agentStateVersion: 1,
           agentState: tuple.agentState,
         }),
@@ -153,8 +192,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
       token: 't',
       sessionId: 's-layout-contract',
       credentials: ownerCredentials,
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: ownerSecret, encryptionVariant: 'legacy' },
       currentMetadataLayoutVersion: 0,
       currentMetadataVersion: 9,
       currentAgentStateVersion: 8,
@@ -184,26 +224,89 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     expect(res).toMatchObject({
       metadataLayoutVersion: 1,
       metadataTuple: {
-        metadata: authoritativeMetadata,
         metadataVersion: 1,
-        ownerMetadataCiphertext: tuple.ownerMetadata.ciphertext,
-        agentState: authoritativeAgentState,
+        ownerMetadataEnvelope: tuple.ownerMetadata,
         agentStateVersion: 1,
+        value: {
+          metadata: authoritativeMetadata,
+          agentState: authoritativeAgentState,
+        },
       },
     });
     expect(res).not.toHaveProperty('metadata');
     expect(res).not.toHaveProperty('agentState');
   });
 
+  it('opens a plaintext layout-v1 owner tuple with token-only credentials', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    const tokenOnlyCredentials = {
+      token: 'plain-token',
+      encryption: null,
+    } satisfies StoredCredentials;
+    const authoritativeMetadata = {
+      path: '/private/plain-owner',
+      host: 'plain-host',
+      flavor: 'codex',
+      summary: { text: 'Safe plaintext title', updatedAt: 10 },
+    };
+    const authoritativeAgentState = { controlledByUser: false };
+    const tuple = buildSessionMetadataEnvelopeFields({
+      credentials: tokenOnlyCredentials,
+      accountEncryptionMode: 'plain',
+      metadata: authoritativeMetadata,
+      agentState: authoritativeAgentState,
+      storedContentMode: 'plain',
+    });
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 's-layout-plain-token-only',
+          encryptionMode: 'plain',
+          metadataLayoutVersion: 1,
+          metadataVersion: 1,
+          metadata: tuple.sharedMetadata.ciphertext,
+          ownerMetadata: tuple.ownerMetadata,
+          agentStateVersion: 1,
+          agentState: tuple.agentState,
+        }),
+      },
+    });
+
+    const res = await fetchSessionSnapshotUpdateFromServer({
+      token: tokenOnlyCredentials.token,
+      sessionId: 's-layout-plain-token-only',
+      credentials: tokenOnlyCredentials,
+      accountEncryptionCurrentness: plainCurrentness,
+      mode: 'plain',
+      ctx: null,
+      currentMetadataLayoutVersion: 0,
+      currentMetadataVersion: 0,
+      currentAgentStateVersion: 0,
+    });
+
+    expect(res).toMatchObject({
+      metadataLayoutVersion: 1,
+      metadataTuple: {
+        metadataVersion: 1,
+        ownerMetadataEnvelope: tuple.ownerMetadata,
+        agentStateVersion: 1,
+        value: {
+          metadata: authoritativeMetadata,
+          agentState: authoritativeAgentState,
+        },
+      },
+    });
+  });
+
   it('strictly rejects private fields in layout-v1 shared metadata instead of partially hydrating the owner tuple', async () => {
     const getSpy = vi.spyOn(axios, 'get');
     const ownerTuple = buildSessionMetadataEnvelopeFields({
       credentials: ownerCredentials,
+      accountEncryptionMode: 'e2ee',
       metadata: createTestMetadata({ path: '/owner-path' }),
       agentState: { controlledByUser: false },
       storedContentMode: 'plain',
-      encryptionKey: ownerSecret,
-      encryptionVariant: 'legacy',
     });
     getSpy.mockResolvedValueOnce({
       status: 200,
@@ -218,7 +321,7 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
             summary: { text: 'Safe title', updatedAt: 10 },
             path: '/must-not-cross-the-shared-envelope',
           }),
-          ownerMetadata: ownerTuple.ownerMetadata.ciphertext,
+          ownerMetadata: ownerTuple.ownerMetadata,
           agentStateVersion: 1,
           agentState: JSON.stringify({ controlledByUser: false }),
         }),
@@ -229,8 +332,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
       token: 't',
       sessionId: 's-layout-strict',
       credentials: ownerCredentials,
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
       currentMetadataLayoutVersion: 0,
       currentMetadataVersion: 9,
       currentAgentStateVersion: 8,
@@ -262,8 +366,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     await expect(fetchSessionSnapshotUpdateFromServer({
       token: 't',
       sessionId: 's-layout-future',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
       currentMetadataLayoutVersion: 1,
       currentMetadataVersion: 1,
       currentAgentStateVersion: 1,
@@ -292,8 +397,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     const res = await fetchSessionSnapshotUpdateFromServer({
       token: 't',
       sessionId: 's-layout-downgrade',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
       currentMetadataLayoutVersion: 1,
       currentMetadataVersion: 1,
       currentAgentStateVersion: 1,
@@ -323,8 +429,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     const res = await fetchSessionSnapshotUpdateFromServer({
       token: 't',
       sessionId: 's1',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
       currentMetadataVersion: 999,
       currentAgentStateVersion: 999,
     });
@@ -348,8 +455,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     const res = await fetchSessionSnapshotUpdateFromServer({
       token: 't',
       sessionId: 's1',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
       currentMetadataVersion: 999,
       currentAgentStateVersion: 999,
     });
@@ -372,16 +480,18 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     const first = fetchSessionSnapshotUpdateFromServer({
       token: 't',
       sessionId: 's1',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
       currentMetadataVersion: 1,
       currentAgentStateVersion: 0,
     });
     const second = fetchSessionSnapshotUpdateFromServer({
       token: 't',
       sessionId: 's1',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
       currentMetadataVersion: 2,
       currentAgentStateVersion: 0,
       currentMetadata: serverMetadata,
@@ -429,8 +539,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
         const res = await fetchSessionSnapshotUpdateFromServer({
             token: 't',
             sessionId: 's1',
-            encryptionKey: new Uint8Array(32),
-            encryptionVariant: 'legacy',
+            mode: 'e2ee',
+
+            ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
             currentMetadataVersion: 999,
             currentAgentStateVersion: 999,
         });
@@ -453,8 +564,9 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
         const res = await fetchSessionSnapshotUpdateFromServer({
             token: 't',
             sessionId: 's1',
-            encryptionKey: new Uint8Array(32),
-            encryptionVariant: 'legacy',
+            mode: 'e2ee',
+
+            ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
             currentMetadataVersion: 999,
             currentAgentStateVersion: 999,
         });
@@ -484,8 +596,8 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     const res = await fetchSessionSnapshotUpdateFromServer({
       token: 't',
       sessionId: 's1',
-      encryptionKey,
-      encryptionVariant: 'legacy',
+      mode: 'e2ee',
+      ctx: { encryptionKey, encryptionVariant: 'legacy' },
       currentMetadataVersion: 4,
       currentAgentStateVersion: 0,
       currentMetadata: { path: '/tmp/local', host: 'localhost' } as any,

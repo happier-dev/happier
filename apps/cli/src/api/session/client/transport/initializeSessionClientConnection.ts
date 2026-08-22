@@ -17,8 +17,14 @@ import { serializeAxiosErrorForLog } from '../../../client/serializeAxiosErrorFo
 import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
 import {
     createSessionSyncPendingInputServerContractController,
-    type SessionSyncPendingInputServerContractResult,
+    supportsRuntimeActivityV2,
+    supportsSessionSyncPendingInputV1,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import {
+    composeInvalidatedSessionClientConnectionContract,
+    resolveSessionClientConnectionContract,
+    type SessionClientConnectionContractResult,
+} from './sessionClientConnectionContract';
 
 function normalizeMachineId(value: unknown): string | undefined {
     if (typeof value !== 'string') {
@@ -54,10 +60,17 @@ export function initializeSessionClientConnection(
         flushQueuedSessionMessagesOnReconnect: () => Promise<void>;
         flushDurableSessionMutationsOnReconnect: () => Promise<void>;
         replayLatestSessionPresenceOnReconnect?: () => void;
+        reofferAcceptedProviderInputSettlementsAfterConnection?: () => void;
         markConnected: () => Readonly<{ reason: 'connect' | 'reconnect'; epoch: number }> | 'connect' | 'reconnect';
         setSessionSyncPendingInputServerContractResult?: (
-            result: SessionSyncPendingInputServerContractResult | null,
+            result: SessionClientConnectionContractResult | null,
         ) => Promise<void> | void;
+        prepareSessionSyncPendingInputServerContractResult?: (
+            result: SessionClientConnectionContractResult,
+        ) => Promise<void> | void;
+        waitForRuntimeActivityPublisherReadiness?: (
+            signal: AbortSignal,
+        ) => Promise<boolean>;
     }>,
 ): Readonly<{
     userSocket: Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -69,6 +82,7 @@ export function initializeSessionClientConnection(
 
     let currentTransportSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
     let currentTransportMachineId: string | undefined;
+    let publisherReadinessAbortController: AbortController | null = null;
     const serverContractController = createSessionSyncPendingInputServerContractController({
         serverUrl: resolveServerHttpBaseUrl(),
         token: params.token,
@@ -123,8 +137,24 @@ export function initializeSessionClientConnection(
                 socket: currentTransportSocket,
                 machineId: currentTransportMachineId,
             };
+            publisherReadinessAbortController?.abort();
+            const connectionPublisherReadiness = new AbortController();
+            publisherReadinessAbortController = connectionPublisherReadiness;
+            let flushedDurableMutations = false;
             for (let attempt = 0; attempt < 2; attempt += 1) {
-                const contractResult = await serverContractController.resolve(contractProbe);
+                const serverContractResult = await serverContractController.resolve(contractProbe);
+                if (
+                    serverContractResult.sessionConnectionEpoch !== connected.epoch
+                    || serverContractResult.socket !== currentTransportSocket
+                    || currentTransportSocket.connected !== true
+                ) {
+                    return;
+                }
+                const contractResult = await resolveSessionClientConnectionContract({
+                    serverContract: serverContractResult,
+                    sessionId: params.sessionId,
+                    socket: currentTransportSocket,
+                });
                 if (
                     contractResult.sessionConnectionEpoch !== connected.epoch
                     || contractResult.socket !== currentTransportSocket
@@ -132,14 +162,42 @@ export function initializeSessionClientConnection(
                 ) {
                     return;
                 }
-                await params.setSessionSyncPendingInputServerContractResult?.(contractResult);
+                await params.prepareSessionSyncPendingInputServerContractResult?.(contractResult);
                 if (contractResult.mode === 'auth_failed') {
+                    await params.setSessionSyncPendingInputServerContractResult?.(contractResult);
                     sessionConnectionSupervisor.reportProbeResult?.({
                         status: 'auth_failed', statusCode: 401, errorMessage: 'Authentication failed while resolving session compatibility',
                     }, probeScope);
                     return;
                 }
-                if (contractResult.mode !== 'indeterminate') {
+                const requiresPublisherReadiness = supportsRuntimeActivityV2(contractResult)
+                    && supportsSessionSyncPendingInputV1(contractResult);
+                if (requiresPublisherReadiness) {
+                    await params.flushDurableSessionMutationsOnReconnect().catch((error) => {
+                        logger.debug('[API] Failed to flush durable session mutations on reconnect', {
+                            error: serializeAxiosErrorForLog(error),
+                        });
+                    });
+                    flushedDurableMutations = true;
+                    const ready = await params.waitForRuntimeActivityPublisherReadiness?.(
+                        connectionPublisherReadiness.signal,
+                    ) ?? true;
+                    if (!ready) return;
+                    if (
+                        connectionPublisherReadiness.signal.aborted
+                        || contractResult.sessionConnectionEpoch !== connected.epoch
+                        || contractResult.socket !== currentTransportSocket
+                        || currentTransportSocket.connected !== true
+                    ) {
+                        return;
+                    }
+                }
+                await params.setSessionSyncPendingInputServerContractResult?.(contractResult);
+                if (
+                    contractResult.runtimeActivity !== 'indeterminate'
+                    || contractResult.pendingInput !== 'indeterminate'
+                    || contractResult.publisherAuthority !== 'indeterminate'
+                ) {
                     break;
                 }
                 if (attempt === 1) {
@@ -154,6 +212,7 @@ export function initializeSessionClientConnection(
             if (params.shouldKeepUserSocketConnected()) {
                 params.kickUserSocketConnect();
             }
+            params.reofferAcceptedProviderInputSettlementsAfterConnection?.();
             params.replayLatestSessionPresenceOnReconnect?.();
             await params.syncChangesOnConnect({ reason: connected.reason }).catch((error) => {
                 logger.debug('[API] Session changes sync on connect failed (non-fatal)', {
@@ -168,18 +227,24 @@ export function initializeSessionClientConnection(
                     error: serializeAxiosErrorForLog(error),
                 });
             });
-            await params.flushDurableSessionMutationsOnReconnect().catch((error) => {
-                logger.debug('[API] Failed to flush durable session mutations on reconnect', {
-                    error: serializeAxiosErrorForLog(error),
+            if (!flushedDurableMutations) {
+                await params.flushDurableSessionMutationsOnReconnect().catch((error) => {
+                    logger.debug('[API] Failed to flush durable session mutations on reconnect', {
+                        error: serializeAxiosErrorForLog(error),
+                    });
                 });
-            });
+            }
         },
         onDisconnected: async ({ event }) => {
             logger.debug('[API] Socket disconnected:', event.reason ?? 'unknown');
+            publisherReadinessAbortController?.abort();
+            publisherReadinessAbortController = null;
             const invalidated = serverContractController.invalidate({
                 socket: currentTransportSocket ?? undefined,
             });
-            await params.setSessionSyncPendingInputServerContractResult?.(invalidated);
+            await params.setSessionSyncPendingInputServerContractResult?.(
+                invalidated ? composeInvalidatedSessionClientConnectionContract(invalidated) : null,
+            );
             params.rpcHandlerManager.onSocketDisconnect();
             try {
                 userSocket.disconnect();
@@ -188,10 +253,14 @@ export function initializeSessionClientConnection(
             }
         },
         onAuthFailed: async () => {
+            publisherReadinessAbortController?.abort();
+            publisherReadinessAbortController = null;
             const invalidated = serverContractController.invalidate({
                 socket: currentTransportSocket ?? undefined,
             });
-            await params.setSessionSyncPendingInputServerContractResult?.(invalidated);
+            await params.setSessionSyncPendingInputServerContractResult?.(
+                invalidated ? composeInvalidatedSessionClientConnectionContract(invalidated) : null,
+            );
             params.rpcHandlerManager.onSocketDisconnect();
             try {
                 userSocket.disconnect();

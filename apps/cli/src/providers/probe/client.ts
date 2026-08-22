@@ -20,7 +20,12 @@ import {
 
 import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 
-import { parseProviderCatalogResponse, type ParsedProviderCatalogResponse } from './parsers';
+import {
+  ProviderCatalogFormatUnavailableError,
+  parseProviderCatalogResponse,
+  type ParsedProviderCatalogResponse,
+  type ProviderCatalogFormatParser,
+} from './parsers';
 import { openPinnedHttpStream } from '../../network/pinnedHttp';
 
 export type ProviderProbeTransportRequest = Readonly<{
@@ -56,11 +61,25 @@ export type ProviderProbeHttpCredentialLease = Readonly<{
   close(): void;
 }>;
 
+export type ProviderProbeAuthenticatedFetch = (
+  input: string | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export type ProviderCatalogGetRequest = Readonly<{
   endpointUrl: string;
   path: string;
   parser: ProviderCatalogParserV1;
+  /**
+   * Implementations of the catalog wire formats the declaring Provider plugin
+   * contributes, keyed by format id. A format the host bundles is never taken
+   * from here, and an unresolvable format fails typed instead of falling back.
+   */
+  contributedCatalogParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>;
   publicHeaders: Readonly<Record<string, string>>;
+  /** Host-private authenticated transport. Credential material remains with
+   * the endpoint owner and is never projected into this request. */
+  authenticatedFetch?: ProviderProbeAuthenticatedFetch;
   resolveCredential?: () => Promise<ProviderProbeHttpCredentialLease>;
   credentialPolicy?: 'none' | 'optional' | 'required';
   authorizeDestination(destination: AssessedProviderEndpoint): Promise<void>;
@@ -98,7 +117,8 @@ export class ProviderProbeClientError extends Error {
     | 'provider_endpoint_rate_limited'
     | 'provider_endpoint_auth_required'
     | 'provider_endpoint_unauthorized'
-    | 'provider_probe_response_invalid'>;
+    | 'provider_probe_response_invalid'
+    | 'provider_contribution_unavailable'>;
   readonly retryAfterMs?: number;
   /** Exact response status for caller-owned recovery policy. No response or credential material is retained. */
   readonly httpStatus?: number;
@@ -231,6 +251,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     maxResponseBodyBytes: number;
     signal?: AbortSignal;
     authorizeDestination(destination: AssessedProviderEndpoint): Promise<void>;
+    authenticatedFetch?: ProviderProbeAuthenticatedFetch;
   }>): Promise<Readonly<{
     response: ProviderProbeTransportResponse;
     credential: ProviderProbeCredential | undefined;
@@ -265,19 +286,57 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         requestUrl = url.toString();
       }
       try {
-        const response = await transport({
-          url: requestUrl,
-          hostname: assessed.hostname,
-          servername: assessed.hostname,
-          validatedAddresses: assessed.resolvedAddresses,
-          headers,
-          method: input.method,
-          ...(input.body ? { body: input.body } : {}),
-          signal: input.signal ?? new AbortController().signal,
-          wallTimeMs: input.wallTimeMs,
-          idleTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs,
-          maxResponseBodyBytes: input.maxResponseBodyBytes,
-        });
+        const signal = input.signal ?? new AbortController().signal;
+        const requestBody = input.body === undefined
+          ? undefined
+          : new Uint8Array(input.body);
+        const response = input.authenticatedFetch
+          ? await (async (): Promise<ProviderProbeTransportResponse> => {
+              const fetched = await input.authenticatedFetch!(requestUrl, {
+                method: input.method,
+                headers,
+                ...(requestBody === undefined ? {} : { body: requestBody }),
+                signal,
+                redirect: 'manual',
+              });
+              const chunks: Uint8Array[] = [];
+              let encodedBytes = 0;
+              const reader = fetched.body?.getReader();
+              if (reader) {
+                try {
+                  for (;;) {
+                    const next = await reader.read();
+                    if (next.done) break;
+                    encodedBytes += next.value.byteLength;
+                    if (encodedBytes > input.maxResponseBodyBytes) {
+                      await reader.cancel();
+                      throw new Error('Provider probe response limit');
+                    }
+                    chunks.push(next.value);
+                  }
+                } finally {
+                  reader.releaseLock();
+                }
+              }
+              return {
+                status: fetched.status,
+                headers: Object.freeze(Object.fromEntries(fetched.headers)),
+                body: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))),
+              };
+            })()
+          : await transport({
+              url: requestUrl,
+              hostname: assessed.hostname,
+              servername: assessed.hostname,
+              validatedAddresses: assessed.resolvedAddresses,
+              headers,
+              method: input.method,
+              ...(input.body ? { body: input.body } : {}),
+              signal,
+              wallTimeMs: input.wallTimeMs,
+              idleTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs,
+              maxResponseBodyBytes: input.maxResponseBodyBytes,
+            });
         return { response, credential };
       } catch (error) {
         if (input.signal?.aborted || error instanceof ProviderProbeCancelledError) {
@@ -313,6 +372,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           maxResponseBodyBytes: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes,
           ...(input.signal ? { signal: input.signal } : {}),
           authorizeDestination: input.authorizeDestination,
+          ...(input.authenticatedFetch
+            ? { authenticatedFetch: input.authenticatedFetch }
+            : {}),
         });
         const { response, credential } = dispatched;
         throwIfCancelled(input.signal);
@@ -383,8 +445,17 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         }
         let catalog: ParsedProviderCatalogResponse;
         try {
-          catalog = parseProviderCatalogResponse(input.parser, json);
-        } catch {
+          catalog = parseProviderCatalogResponse(
+            input.parser,
+            json,
+            input.contributedCatalogParsers,
+          );
+        } catch (error) {
+          // A declared format with no reachable implementation is a plugin
+          // availability fact, not a malformed response from the endpoint.
+          if (error instanceof ProviderCatalogFormatUnavailableError) {
+            throw new ProviderProbeClientError('provider_contribution_unavailable');
+          }
           throw new ProviderProbeClientError('provider_probe_response_invalid');
         }
         if (catalogContainsSensitiveRequestValue(catalog, [

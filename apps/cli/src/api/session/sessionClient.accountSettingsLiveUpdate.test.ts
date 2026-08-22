@@ -9,9 +9,10 @@ import {
     createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
 
-const { mockIo, readCredentialsMock } = vi.hoisted(() => ({
+const { mockIo, readCredentialsMock, readStoredCredentialsMock } = vi.hoisted(() => ({
     mockIo: vi.fn(),
     readCredentialsMock: vi.fn(),
+    readStoredCredentialsMock: vi.fn(),
 }));
 
 vi.mock('socket.io-client', () => ({ io: mockIo }));
@@ -21,6 +22,7 @@ vi.mock('@/api/connection/createLoopbackReadinessProbe', () => ({
 vi.mock('@/persistence', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/persistence')>()),
     readCredentials: readCredentialsMock,
+    readStoredCredentials: readStoredCredentialsMock,
 }));
 
 import { ApiSessionClient } from './sessionClient';
@@ -46,11 +48,42 @@ describe('ApiSessionClient live account settings convergence', () => {
         process.env.HAPPY_ENABLE_V2_CHANGES = 'false';
         mockIo.mockReset();
         readCredentialsMock.mockReset();
-        readCredentialsMock.mockResolvedValue({
+        readStoredCredentialsMock.mockReset();
+        const credentials = {
             token: 'fake-token',
             encryption: { type: 'legacy', secret: new Uint8Array(32).fill(2) },
-        });
+        };
+        readCredentialsMock.mockResolvedValue(credentials);
+        readStoredCredentialsMock.mockResolvedValue(credentials);
         resetActiveAccountSettingsSnapshotForTests();
+    });
+
+    it('applies a plain settings update with token-only credentials', async () => {
+        readCredentialsMock.mockResolvedValue(null);
+        readStoredCredentialsMock.mockResolvedValue({
+            token: 'fake-token',
+            encryption: null,
+        });
+        const { client, userSocket } = createClient();
+        await vi.waitFor(() => expect((client as never as { currentConnectionState: { phase: string } }).currentConnectionState.phase).toBe('online'));
+        vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: { id: 'account-1' },
+        } as never);
+        const wake = vi.spyOn(client, 'wakePendingMaterialization');
+
+        userSocket.trigger('update', update({
+            t: 'update-account',
+            id: 'account-1',
+            settingsV2: {
+                content: { t: 'plain', v: { codexBackendMode: 'appServer' } },
+                version: 1,
+            },
+        }, 'plain-account-settings'));
+
+        await vi.waitFor(() => expect(wake).toHaveBeenCalledOnce());
+        expect(readStoredCredentialsMock).toHaveBeenCalled();
+        expect(readCredentialsMock).not.toHaveBeenCalled();
     });
 
     afterEach(async () => {

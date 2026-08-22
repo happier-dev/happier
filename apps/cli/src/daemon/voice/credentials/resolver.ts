@@ -1,7 +1,7 @@
 import {
-  VoiceCredentialBindingV1Schema,
+  type VoiceCredentialBindingIdentityV1,
   decryptSecretValueWithKeysV1,
-  resolveSavedSecretSlotBindingIdV1,
+  resolveAccountSettingsVoiceCredentialSource,
 } from '@happier-dev/protocol';
 
 import {
@@ -13,13 +13,13 @@ import { indexSavedSecretsByIdFromAccountSettings } from '@/settings/secrets/ind
 export type VoiceCredentialResolutionSource = 'account' | 'machine_override';
 
 export type VoiceCredentialResolver = Readonly<{
-  status(providerId: string, credentialSlotId: string): Readonly<{
+  status(identity: VoiceCredentialBindingIdentityV1): Readonly<{
     available: boolean;
     source: VoiceCredentialResolutionSource | null;
   }>;
   withSecret<T>(params: Readonly<{
-    providerId: string;
-    credentialSlotId: string;
+    identity: VoiceCredentialBindingIdentityV1;
+    recipientContractDigest?: string;
     use: (secret: string) => Promise<T>;
   }>): Promise<T>;
 }>;
@@ -28,37 +28,46 @@ function unavailable(): Error & { code: 'credential_unavailable' } {
   return Object.assign(new Error('credential_unavailable'), { code: 'credential_unavailable' as const });
 }
 
+/**
+ * Resolve the SavedSecret this Voice target may use right now.
+ *
+ * The selected credential source is owned by Account Settings: a target whose
+ * source is `none` or `connectedAccount` deliberately keeps its dormant
+ * SavedSecret bindings, so only the canonical resolution may decide that the
+ * saved-secret arm is the effective one. Any invalid or ambiguous stored shape
+ * fails closed rather than falling back to a raw binding read.
+ */
 function resolveReference(params: Readonly<{
   snapshot: ActiveAccountSettingsSnapshot | null;
   machineId: string | null;
-  providerId: string;
-  credentialSlotId: string;
+  identity: VoiceCredentialBindingIdentityV1;
+  recipientContractDigest?: string;
 }>): Readonly<{ secretId: string; source: VoiceCredentialResolutionSource }> | null {
   if (!params.snapshot) return null;
-  const settingsRecord = params.snapshot.settings as unknown as Record<string, unknown>;
-  const voice = settingsRecord.voice && typeof settingsRecord.voice === 'object' && !Array.isArray(settingsRecord.voice)
-    ? settingsRecord.voice as Record<string, unknown>
-    : null;
-  const rawBindings = Array.isArray(voice?.credentialBindings) ? voice.credentialBindings : [];
-  const binding = rawBindings
-    .map((candidate) => VoiceCredentialBindingV1Schema.safeParse(candidate))
-    .find((parsed) => parsed.success && parsed.data.providerId === params.providerId);
-  if (!binding?.success) return null;
-  const secretId = params.machineId === null
-    ? binding.data.credentialBindings.account?.[params.credentialSlotId] ?? null
-    : resolveSavedSecretSlotBindingIdV1(
-        binding.data.credentialBindings,
-        params.machineId,
-        params.credentialSlotId,
-      );
-  if (!secretId || !indexSavedSecretsByIdFromAccountSettings(params.snapshot.settings).has(secretId)) return null;
-  return {
-    secretId,
-    source: params.machineId !== null
-      && binding.data.credentialBindings.byMachineId?.[params.machineId]?.[params.credentialSlotId] === secretId
-      ? 'machine_override'
-      : 'account',
-  };
+  let resolved: ReturnType<typeof resolveAccountSettingsVoiceCredentialSource>;
+  try {
+    resolved = resolveAccountSettingsVoiceCredentialSource(
+      params.snapshot.settings as unknown as Readonly<Record<string, unknown>>,
+      {
+        contribution: params.identity.contribution,
+        credentialSlotId: params.identity.credentialSlotId,
+        purpose: params.identity.purpose,
+        machineId: params.machineId,
+      },
+    );
+  } catch {
+    return null;
+  }
+  if (resolved.selection.kind !== 'savedSecret' || !resolved.savedSecret) return null;
+  if (
+    params.recipientContractDigest
+    && resolved.approvedRecipientContractDigest !== params.recipientContractDigest
+  ) {
+    return null;
+  }
+  const secretId = resolved.savedSecret.secretId;
+  if (!indexSavedSecretsByIdFromAccountSettings(params.snapshot.settings).has(secretId)) return null;
+  return { secretId, source: resolved.savedSecret.source };
 }
 
 export function createVoiceCredentialResolver(params: Readonly<{
@@ -67,25 +76,29 @@ export function createVoiceCredentialResolver(params: Readonly<{
   getSnapshot?: () => ActiveAccountSettingsSnapshot | null;
 }>): VoiceCredentialResolver {
   const getSnapshot = params.getSnapshot ?? getActiveAccountSettingsSnapshot;
-  const reference = (providerId: string, credentialSlotId: string) => resolveReference({
-    snapshot: getSnapshot(), machineId: params.machineId, providerId, credentialSlotId,
-  });
   return Object.freeze({
-    status(providerId, credentialSlotId) {
-      const resolved = reference(providerId, credentialSlotId);
+    status(identity) {
+      const resolved = identity
+        ? resolveReference({ snapshot: getSnapshot(), machineId: params.machineId, identity })
+        : null;
       return resolved
         ? { available: true, source: resolved.source }
         : { available: false, source: null };
     },
     async withSecret<T>(input: Readonly<{
-      providerId: string;
-      credentialSlotId: string;
+      identity: VoiceCredentialBindingIdentityV1;
+      recipientContractDigest?: string;
       use: (secret: string) => Promise<T>;
     }>): Promise<T> {
+      if (!input.identity) throw unavailable();
       const snapshot = getSnapshot();
       const resolved = resolveReference({
-        snapshot, machineId: params.machineId,
-        providerId: input.providerId, credentialSlotId: input.credentialSlotId,
+        snapshot,
+        machineId: params.machineId,
+        identity: input.identity,
+        ...(input.recipientContractDigest
+          ? { recipientContractDigest: input.recipientContractDigest }
+          : {}),
       });
       if (!snapshot || !resolved) throw unavailable();
       const savedSecret = indexSavedSecretsByIdFromAccountSettings(snapshot.settings).get(resolved.secretId);

@@ -9,6 +9,10 @@ import type {
 
 import { createHostedWebStaticAssetPreviewResource } from '../hostedWeb';
 import {
+    createHostedWebFrameAncestorToken,
+    resolveHostedWebFrameAncestors,
+} from './frameAncestors';
+import {
     resolveHostedWebStaticAssetRequest,
     type HostedWebStaticAssetResolveInput,
 } from './resolve';
@@ -100,12 +104,19 @@ function sendFailure(response: ServerResponse, status: number, code: string): vo
     response.end();
 }
 
-function requestPath(request: IncomingMessage): string {
-    try {
-        return new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-    } catch {
-        return '/';
-    }
+function rawRequestPath(request: IncomingMessage): string {
+    // `resolveHostedWebStaticAssetRequest` owns decoding and path safety.  Do
+    // not send this through WHATWG URL first: it normalizes encoded dot
+    // segments, which would turn a rejected request into an SPA fallback.
+    const requestTarget = request.url ?? '/';
+    const queryOffset = requestTarget.indexOf('?');
+    const pathname = queryOffset === -1
+        ? requestTarget
+        : requestTarget.slice(0, queryOffset);
+    // Node normally supplies origin-form request targets.  An absolute-form or
+    // otherwise malformed target is deliberately made invalid for the canonical
+    // policy rather than being reinterpreted as a root request.
+    return pathname.startsWith('/') ? pathname : '/%00';
 }
 
 function normalizeArtifactPath(path: string): string {
@@ -175,6 +186,9 @@ export async function startHostedWebStaticAssetServer(
     const verifiedBytesByRelativePath = new Map(
         verifiedArtifactFiles.map((file) => [file.relativePath, file.bytes] as const),
     );
+    // One capability per server instance. It dies with the server, so a stale
+    // URL cannot authorize an ancestor for the next generation's assets.
+    const frameAncestorToken = createHostedWebFrameAncestorToken();
 
     const server = createServer(async (request, response) => {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -185,7 +199,11 @@ export async function startHostedWebStaticAssetServer(
         try {
             const resolved = await resolveHostedWebStaticAssetRequest({
                 ...input,
-                requestPath: requestPath(request),
+                requestPath: rawRequestPath(request),
+                frameAncestors: resolveHostedWebFrameAncestors({
+                    expectedToken: frameAncestorToken,
+                    requestUrl: request.url ?? '/',
+                }),
             });
             if (!resolved.ok) {
                 sendFailure(response, resolved.status, resolved.code);
@@ -223,6 +241,7 @@ export async function startHostedWebStaticAssetServer(
     const previewResource = createHostedWebStaticAssetPreviewResource({
         ...input.preview,
         endpoint,
+        frameAncestorToken,
     });
     let previewRegistration: unknown = null;
     try {

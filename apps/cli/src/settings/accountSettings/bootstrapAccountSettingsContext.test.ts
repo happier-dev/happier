@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials, TokenOnlyCredentials } from '@/persistence';
 
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from './bootstrapAccountSettingsContext';
 import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
@@ -20,6 +20,13 @@ function createCredentialsStubWithToken(token: string): Credentials {
   return {
     ...createCredentialsStub(),
     token,
+  };
+}
+
+function createTokenOnlyCredentialsStub(token = 'token-only'): TokenOnlyCredentials {
+  return {
+    token,
+    encryption: null,
   };
 }
 
@@ -187,7 +194,7 @@ describe('bootstrapAccountSettingsContext', () => {
     const nowMs = 1_000_000;
     const tokenA = 'token-account-a';
     const tokenB = 'token-account-b';
-    const resolveCachePath = vi.fn((credentials?: Credentials) => `/tmp/server/${credentials?.token ?? 'missing'}/account.settings.cache.json`);
+    const resolveCachePath = vi.fn((credentials?: StoredCredentials) => `/tmp/server/${credentials?.token ?? 'missing'}/account.settings.cache.json`);
 
     await bootstrapAccountSettingsContext({
       credentials: createCredentialsStubWithToken(tokenA),
@@ -249,14 +256,14 @@ describe('bootstrapAccountSettingsContext', () => {
       deps: {
         resolveCachePath: () => '/tmp/server/account.settings.cache.json',
         readCache: async () => ({
-          version: 2,
+          version: 1,
           cachedAt: nowMs - 1_000,
-          settingsContent: { t: 'plain', v: { schemaVersion: 5, codexBackendMode: 'mcp' } },
+          settingsCiphertext: 'cipher',
           settingsVersion: 123,
         }),
         writeCache: async () => {},
         fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
-        decryptCiphertext: async () => null,
+        decryptCiphertext: async () => ({ schemaVersion: 5, codexBackendMode: 'mcp' }),
         applySideEffects,
       },
     });
@@ -282,14 +289,14 @@ describe('bootstrapAccountSettingsContext', () => {
       deps: {
         resolveCachePath: () => '/tmp/server/account.settings.cache.json',
         readCache: async () => ({
-          version: 2,
+          version: 1,
           cachedAt: nowMs - 1_000,
-          settingsContent: { t: 'plain', v: { schemaVersion: 5, codexBackendMode: '  mcp_resume  ' } },
+          settingsCiphertext: 'cipher',
           settingsVersion: 123,
         }),
         writeCache: async () => {},
         fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
-        decryptCiphertext: async () => null,
+        decryptCiphertext: async () => ({ schemaVersion: 5, codexBackendMode: '  mcp_resume  ' }),
         applySideEffects,
       },
     });
@@ -314,21 +321,18 @@ describe('bootstrapAccountSettingsContext', () => {
       deps: {
         resolveCachePath: () => '/tmp/server/account.settings.cache.json',
         readCache: async () => ({
-          version: 2,
+          version: 1,
           cachedAt: nowMs - 1_000,
-          settingsContent: {
-            t: 'plain',
-            v: {
-              backendEnabledByTargetKey: {
-                'acpBackend:review-bot': false,
-              },
-            },
-          },
+          settingsCiphertext: 'cipher',
           settingsVersion: 123,
         }),
         writeCache: async () => {},
         fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
-        decryptCiphertext: async () => null,
+        decryptCiphertext: async () => ({
+          backendEnabledByTargetKey: {
+            'acpBackend:review-bot': false,
+          },
+        }),
       },
     })).rejects.toThrow(/review-bot/i);
   });
@@ -347,21 +351,18 @@ describe('bootstrapAccountSettingsContext', () => {
       deps: {
         resolveCachePath: () => '/tmp/server/account.settings.cache.json',
         readCache: async () => ({
-          version: 2,
+          version: 1,
           cachedAt: nowMs - 1_000,
-          settingsContent: {
-            t: 'plain',
-            v: {
-              backendEnabledByTargetKey: {
-                'acpBackend:review-bot': false,
-              },
-            },
-          },
+          settingsCiphertext: 'cipher',
           settingsVersion: 123,
         }),
         writeCache: async () => {},
         fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
-        decryptCiphertext: async () => null,
+        decryptCiphertext: async () => ({
+          backendEnabledByTargetKey: {
+            'acpBackend:review-bot': false,
+          },
+        }),
         applySideEffects,
       },
     }).catch(() => undefined);
@@ -570,10 +571,12 @@ describe('bootstrapAccountSettingsContext', () => {
         resolveCachePath: () => cachePath,
         readCache: async () => null,
         fetchFromServer: async () => ({
-          settingsContent: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' } },
+          settingsContent: { t: 'encrypted', c: 'older' },
           settingsVersion: 3,
         }),
-        decryptCiphertext: async () => ({}),
+        decryptCiphertext: async () => ({
+          sessionPendingQueueDeliveryTiming: 'after_foreground_ready',
+        }),
         writeCache,
         applySideEffects: vi.fn(),
       },
@@ -649,6 +652,138 @@ describe('bootstrapAccountSettingsContext', () => {
     });
     expect(res.settingsVersion).toBe(12);
     expect((res.settings as any).notificationsSettingsV1?.pushEnabled).toBe(false);
+  });
+
+  it('loads plain v2 settings with token-only credentials without writing a raw durable cache', async () => {
+    const writeCache = vi.fn(async () => {});
+    const decryptCiphertext = vi.fn(async () => {
+      throw new Error('unexpected decryptCiphertext');
+    });
+
+    const result = await bootstrapAccountSettingsContext({
+      credentials: createTokenOnlyCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs: 1_000_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        fetchFromServer: async () => ({
+          settingsContent: {
+            t: 'plain',
+            v: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' },
+          },
+          settingsVersion: 13,
+        }),
+        decryptCiphertext,
+        writeCache,
+        applySideEffects: () => {},
+      },
+    });
+
+    expect(result).toMatchObject({
+      source: 'network',
+      settingsVersion: 13,
+      settingsSecretsReadKeys: [],
+    });
+    expect(result.settings.sessionPendingQueueDeliveryTiming).toBe('after_runtime_idle');
+    expect(decryptCiphertext).not.toHaveBeenCalled();
+    expect(writeCache).not.toHaveBeenCalled();
+  });
+
+  it('reports retained encrypted settings as unavailable for token-only credentials', async () => {
+    await expect(bootstrapAccountSettingsContext({
+      credentials: createTokenOnlyCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs: 1_000_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        fetchFromServer: async () => ({
+          settingsContent: { t: 'encrypted', c: 'retained-e2ee-settings' },
+          settingsVersion: 14,
+        }),
+        decryptCiphertext: async () => {
+          throw new Error('token-only credentials must not enter account-cipher code');
+        },
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    })).rejects.toMatchObject({
+      code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE',
+    });
+  });
+
+  it('keeps a fast token-only refresh explicitly unavailable for retained encrypted settings', async () => {
+    const result = await bootstrapAccountSettingsContext({
+      credentials: createTokenOnlyCredentialsStub(),
+      mode: 'fast',
+      refresh: 'force',
+      nowMs: 1_000_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        fetchFromServer: async () => ({
+          settingsContent: { t: 'encrypted', c: 'retained-e2ee-settings' },
+          settingsVersion: 14,
+        }),
+        decryptCiphertext: async () => {
+          throw new Error('token-only credentials must not enter account-cipher code');
+        },
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    });
+
+    expect(result.source).toBe('none');
+    await expect(result.whenRefreshed).rejects.toMatchObject({
+      code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE',
+    });
+  });
+
+  it('does not replace unopenable encrypted settings with defaults', async () => {
+    await expect(bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs: 1_000_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        fetchFromServer: async () => ({
+          settingsContent: { t: 'encrypted', c: 'corrupt-e2ee-settings' },
+          settingsVersion: 15,
+        }),
+        decryptCiphertext: async () => null,
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    })).rejects.toMatchObject({
+      code: 'ACCOUNT_SETTINGS_DECRYPT_FAILED',
+    });
+  });
+
+  it('does not replace an empty encrypted envelope with defaults', async () => {
+    await expect(bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs: 1_000_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        fetchFromServer: async () => ({
+          settingsContent: { t: 'encrypted', c: '' },
+          settingsVersion: 16,
+        }),
+        decryptCiphertext: async () => null,
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    })).rejects.toMatchObject({
+      code: 'ACCOUNT_SETTINGS_DECRYPT_FAILED',
+    });
   });
 
   it('uses apiServerUrl for default v2 fetches when canonical serverUrl differs', async () => {

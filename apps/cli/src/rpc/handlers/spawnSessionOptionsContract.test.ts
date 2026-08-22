@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
+  readAgentCatalogSnapshot: vi.fn(),
+}));
+
+vi.mock('@/agent/catalog/snapshot', () => ({
+  readAgentCatalogSnapshot,
+}));
 
 import {
   mergeSpawnSessionOptions,
@@ -7,6 +15,20 @@ import {
 } from './spawnSessionOptionsContract';
 
 describe('SpawnDaemonSessionRequestSchema', () => {
+  beforeEach(() => {
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        codex: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'supported' },
+        'acme-agent': {
+          id: 'acme-agent',
+          cliSubcommand: 'acme-agent',
+          vendorResumeSupport: 'supported',
+        },
+      },
+    });
+  });
+
   it('preserves the strict V1 startup-instructions carrier and rejects it for forks', () => {
     const agentSessionStartupInstructionsV1 = {
       v: 1 as const,
@@ -177,6 +199,26 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     });
   });
 
+  it('accepts an installed external Session Agent from V2 and legacy transport input', () => {
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: { kind: 'backend', backendId: 'acme-agent', sourceKind: 'built_in' },
+    }).backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'acme-agent',
+      sourceKind: 'built_in',
+    });
+
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      agent: 'acme-agent',
+    }).backendTarget).toEqual({
+      kind: 'backend',
+      backendId: 'acme-agent',
+      sourceKind: 'built_in',
+    });
+  });
+
   it('preserves approvedNewDirectoryCreation in the canonical spawn request', () => {
     const parsed = SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp',
@@ -219,16 +261,28 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     }));
   });
 
-  it('does not accept first-turn content on the daemon spawn contract', () => {
-    const parsed = SpawnDaemonSessionRequestSchema.parse({
+  it('rejects synthetic Action fields rather than stripping them from the daemon spawn contract', () => {
+    const privateSpawn = {
       directory: '/tmp',
       spawnNonce: 'nonce-first-turn',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      initialPrompt: 'send this first turn',
-    });
+    };
 
-    expect(parsed.spawnNonce).toBe('nonce-first-turn');
-    expect(parsed).not.toHaveProperty('initialPrompt');
+    for (const syntheticActionInput of [
+      { tag: 'legacy-label' },
+      { initialPrompt: 'send this first turn' },
+      {
+        tag: 'legacy-label',
+        creationKey: 'create:feature-1',
+        executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+        agentTarget: { kind: 'agent', agentId: 'codex' },
+      },
+    ]) {
+      expect(SpawnDaemonSessionRequestSchema.safeParse({
+        ...privateSpawn,
+        ...syntheticActionInput,
+      }).success).toBe(false);
+    }
   });
 
   it('rejects unknown legacy built-in agent field when backendTarget is missing', () => {
@@ -399,6 +453,30 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       agent: {
         backendMode: 'appServer',
         providerSessionId: 'runtime-thread',
+      },
+    });
+    expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');
+  });
+
+  it('accepts the deployed agentRuntimeDescriptorV1 private transport alias', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'appServer',
+          providerSessionId: 'legacy-private-thread',
+        },
+      },
+    });
+
+    expect(parsed.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'codex',
+      agent: {
+        backendMode: 'appServer',
+        providerSessionId: 'legacy-private-thread',
       },
     });
     expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');

@@ -27,6 +27,7 @@ vi.mock('@/utils/spawnHappyCLI', () => {
         args: ['--no-warnings', '--no-deprecation', '/virtual/dist/index.mjs', ...args],
       };
     }),
+    pruneHappyCliRunnerSnapshots: vi.fn(),
   };
 });
 

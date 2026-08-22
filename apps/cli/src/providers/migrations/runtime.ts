@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Credentials } from '@/persistence';
 import {
   applyReviewedLegacyProfileMigrationConflictV1,
+  type AccountSettings,
   type LegacyProfileMigrationConflictResolutionV1,
   type LegacyProfileReviewedMappingV1,
 } from '@happier-dev/protocol';
@@ -49,10 +50,9 @@ export function confirmLegacyProfileMigration(input: Readonly<{
   expectedSourceFingerprint: string;
   reviewedMapping: LegacyProfileReviewedMappingV1;
   migratedAt: number;
-}>) {
+}>): Promise<Readonly<{ version: number; settings: AccountSettings }>> {
   return confirmLegacyProfileMigrationWithRetry({
     ...input,
-    acquireRegistryLease: acquireAuthoritativePluginRuntimeRegistryLease,
   });
 }
 
@@ -63,7 +63,6 @@ export function previewLegacyProfileMigration(input: Readonly<{
 }>) {
   return previewLegacyProfileMigrationWithRetry({
     ...input,
-    acquireRegistryLease: acquireAuthoritativePluginRuntimeRegistryLease,
   });
 }
 

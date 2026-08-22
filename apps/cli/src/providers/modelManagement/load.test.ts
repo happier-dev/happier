@@ -49,6 +49,7 @@ function authorization(overrides: Partial<ProviderModelLoadAuthorization<Ticket,
 
 function harness(input: Readonly<{
   enabled?: boolean;
+  isEnabled?: () => boolean;
   initialLoadState?: 'loaded' | 'unloaded' | 'unknown';
   confirmedLoadState?: 'loaded' | 'unloaded' | 'unknown';
   authorization?: ProviderModelLoadAuthorization<Ticket, CredentialRef> | ProviderErrorV1 | 'unavailable';
@@ -85,7 +86,7 @@ function harness(input: Readonly<{
     },
   }));
   const service = createProviderModelLoadService<Ticket, CredentialRef>({
-    isFeatureEnabled: () => input.enabled ?? true,
+    isFeatureEnabled: input.isEnabled ?? (() => input.enabled ?? true),
     authorization: {
       authorize,
       revalidate,
@@ -306,7 +307,7 @@ describe('explicit provider model loading', () => {
     expect(test.refresh).not.toHaveBeenCalled();
   });
 
-  it('coalesces concurrent clicks by machine, connection, endpoint fingerprint, and model', async () => {
+  it('coalesces concurrent clicks from authorization by machine, connection, and model', async () => {
     let release!: () => void;
     const test = harness({
       post: () => new Promise((resolve) => { release = () => resolve({ ok: true, statusCode: 200 }); }),
@@ -314,6 +315,7 @@ describe('explicit provider model loading', () => {
     const first = test.service.loadNow(request);
     const second = test.service.loadNow(request);
     await vi.waitFor(() => expect(test.postJsonModelId).toHaveBeenCalledTimes(1));
+    expect(test.authorize).toHaveBeenCalledTimes(1);
     release();
     await expect(Promise.all([first, second])).resolves.toEqual([
       { status: 'loaded', source: 'requested' },
@@ -321,7 +323,7 @@ describe('explicit provider model loading', () => {
     ]);
   });
 
-  it('does not coalesce requests with a different endpoint fingerprint or model id', async () => {
+  it('keeps distinct model ids separate even when their captured endpoint generations differ', async () => {
     let authorizations = 0;
     const test = harness({
       authorize: async () => ({
@@ -543,7 +545,95 @@ describe('explicit provider model loading', () => {
     expect(test.postJsonModelId).not.toHaveBeenCalled();
   });
 
-  it('lets an explicit cancel win while the original exact load is still authorizing', async () => {
+  it('cancels an existing authorization after the feature is disabled while rejecting a new load', async () => {
+    let enabled = true;
+    let releaseAuthorization!: () => void;
+    const test = harness({
+      isEnabled: () => enabled,
+      authorize: () => new Promise((resolve) => {
+        releaseAuthorization = () => resolve({ status: 'authorized', authorization: authorization() });
+      }),
+    });
+    const pending = test.service.loadNow(request);
+    await vi.waitFor(() => expect(test.authorize).toHaveBeenCalledOnce());
+
+    try {
+      enabled = false;
+      await expect(test.service.cancelNow(request)).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+      await expect(pending).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+      await expect(test.service.loadNow(request)).resolves.toEqual({
+        status: 'not_supported',
+        reason: 'feature_disabled',
+      });
+      releaseAuthorization();
+      await Promise.resolve();
+      expect(test.readCurrentModel).not.toHaveBeenCalled();
+      expect(test.postJsonModelId).not.toHaveBeenCalled();
+    } finally {
+      releaseAuthorization();
+      await pending;
+    }
+  });
+
+  it('cancels an existing transport after the feature is disabled', async () => {
+    let enabled = true;
+    const finishPosts = new Map<string, () => void>();
+    const abortedTransportKeys = new Set<string>();
+    const exactKey = (candidate: Readonly<{
+      machineId: string;
+      connectionId: string;
+      modelId: string;
+    }>) => `${candidate.machineId}\0${candidate.connectionId}\0${candidate.modelId}`;
+    const test = harness({
+      isEnabled: () => enabled,
+      post: ({ machineId, connectionId, body, signal }) => new Promise((resolve, reject) => {
+        const key = exactKey({ machineId, connectionId, modelId: body.model });
+        finishPosts.set(key, () => resolve({ ok: true as const, statusCode: 200 }));
+        signal.addEventListener('abort', () => {
+          abortedTransportKeys.add(key);
+          reject(new ProviderModelLoadCancelledError());
+        }, { once: true });
+      }),
+    });
+    const pending = test.service.loadNow(request);
+    const neighboringRequests = [
+      { ...request, machineId: 'machine-b' },
+      { ...request, connectionId: 'connection-b' },
+      { ...request, modelId: 'model-b' },
+    ];
+    const neighboringLoads = neighboringRequests.map((candidate) => test.service.loadNow(candidate));
+    await vi.waitFor(() => expect(test.postJsonModelId).toHaveBeenCalledTimes(4));
+
+    try {
+      enabled = false;
+      await expect(test.service.cancelNow(request)).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+      await expect(pending).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+      expect(abortedTransportKeys).toEqual(new Set([exactKey(request)]));
+      finishPosts.forEach((finish) => finish());
+      await expect(Promise.all(neighboringLoads)).resolves.toEqual([
+        { status: 'loaded', source: 'requested' },
+        { status: 'loaded', source: 'requested' },
+        { status: 'loaded', source: 'requested' },
+      ]);
+    } finally {
+      finishPosts.forEach((finish) => finish());
+      await Promise.all([pending, ...neighboringLoads]);
+    }
+  });
+
+  it('settles cancellation without reauthorizing when a logical load is hung and its endpoint disappears', async () => {
     let authorizeCalls = 0;
     let releaseOriginal!: () => void;
     const originalAuthorization = new Promise<Readonly<{
@@ -560,35 +650,89 @@ describe('explicit provider model loading', () => {
         authorizeCalls += 1;
         return authorizeCalls === 1
           ? originalAuthorization
-          : { status: 'authorized', authorization: authorization() };
+          : { status: 'unavailable' as const };
       },
     });
     const pending = test.service.loadNow(request);
     await vi.waitFor(() => expect(authorizeCalls).toBe(1));
 
-    await expect(test.service.cancelNow(request)).resolves.toEqual({
-      status: 'cancelled',
-      providerMayContinue: true,
-    });
-    releaseOriginal();
-
-    await expect(pending).resolves.toEqual({
-      status: 'cancelled',
-      providerMayContinue: true,
-    });
-    expect(test.readCurrentModel).not.toHaveBeenCalled();
-    expect(test.resolveCredential).not.toHaveBeenCalled();
-    expect(test.postJsonModelId).not.toHaveBeenCalled();
+    try {
+      await expect(test.service.cancelNow(request)).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+      await expect(pending).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+      expect(authorizeCalls).toBe(1);
+      releaseOriginal();
+      await Promise.resolve();
+      expect(test.readCurrentModel).not.toHaveBeenCalled();
+      expect(test.resolveCredential).not.toHaveBeenCalled();
+      expect(test.postJsonModelId).not.toHaveBeenCalled();
+    } finally {
+      releaseOriginal();
+      await pending;
+    }
   });
 
-  it('cancels every concurrent pending authorization for the same logical model identity', async () => {
+  it('cancels the captured endpoint generation instead of reauthorizing a changed endpoint', async () => {
+    let authorizeCalls = 0;
+    let releasePost!: () => void;
+    const test = harness({
+      authorize: async () => {
+        const endpointFingerprint = authorizeCalls === 0 ? 'endpoint-fingerprint-a' : 'endpoint-fingerprint-b';
+        authorizeCalls += 1;
+        return {
+          status: 'authorized' as const,
+          authorization: authorization({
+            endpoint: {
+              endpointTemplateId: 'management',
+              endpointUrl: endpointFingerprint === 'endpoint-fingerprint-a'
+                ? 'http://127.0.0.1:1234/'
+                : 'http://127.0.0.1:5678/',
+              endpointFingerprint,
+              publicHeaders: {},
+            },
+          }),
+        };
+      },
+      post: ({ signal }) => new Promise((resolve, reject) => {
+        releasePost = () => resolve({ ok: true as const, statusCode: 200 });
+        signal.addEventListener('abort', () => reject(new ProviderModelLoadCancelledError()), { once: true });
+      }),
+    });
+    const pending = test.service.loadNow(request);
+    await vi.waitFor(() => expect(test.postJsonModelId).toHaveBeenCalledTimes(1));
+    expect(test.postJsonModelId).toHaveBeenCalledWith(expect.objectContaining({
+      endpointUrl: 'http://127.0.0.1:1234/',
+    }));
+
+    try {
+      await expect(test.service.cancelNow(request)).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+      expect(authorizeCalls).toBe(1);
+      await expect(pending).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+    } finally {
+      releasePost();
+      await pending;
+    }
+  });
+
+  it('cancels the shared pending authorization for one logical model identity', async () => {
     const pendingAuthorizations: Array<() => void> = [];
     let authorizeCalls = 0;
     const test = harness({
       authorize: async () => {
         authorizeCalls += 1;
-        if (authorizeCalls > 2) {
-          return { status: 'authorized', authorization: authorization() };
+        if (authorizeCalls > 1) {
+          return { status: 'unavailable' as const };
         }
         return await new Promise<Readonly<{
           status: 'authorized';
@@ -603,20 +747,23 @@ describe('explicit provider model loading', () => {
     });
     const first = test.service.loadNow(request);
     const second = test.service.loadNow(request);
-    await vi.waitFor(() => expect(authorizeCalls).toBe(2));
+    await vi.waitFor(() => expect(authorizeCalls).toBe(1));
 
-    await expect(test.service.cancelNow(request)).resolves.toEqual({
-      status: 'cancelled',
-      providerMayContinue: true,
-    });
-    pendingAuthorizations.forEach((release) => release());
-
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      { status: 'cancelled', providerMayContinue: true },
-      { status: 'cancelled', providerMayContinue: true },
-    ]);
-    expect(test.readCurrentModel).not.toHaveBeenCalled();
-    expect(test.postJsonModelId).not.toHaveBeenCalled();
+    try {
+      await expect(test.service.cancelNow(request)).resolves.toEqual({
+        status: 'cancelled',
+        providerMayContinue: true,
+      });
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        { status: 'cancelled', providerMayContinue: true },
+        { status: 'cancelled', providerMayContinue: true },
+      ]);
+      expect(test.readCurrentModel).not.toHaveBeenCalled();
+      expect(test.postJsonModelId).not.toHaveBeenCalled();
+    } finally {
+      pendingAuthorizations.forEach((release) => release());
+      await Promise.all([first, second]);
+    }
   });
 
   it('isolates pre-authorization cancellation from a different exact model identity', async () => {

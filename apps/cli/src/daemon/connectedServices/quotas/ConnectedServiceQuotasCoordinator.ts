@@ -3,17 +3,15 @@ import {
   buildProviderAccountUsageRecordId,
   buildQualifiedPluginContributionKey,
   ConnectedServiceIdSchema,
-  ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
   ConnectedServiceUsageSourceV1Schema,
   isConnectedServiceCredentialHealthStatusUsable,
-  openConnectedServiceCredentialCiphertext,
   openConnectedServiceQuotaSnapshotCiphertext,
   openQualifiedConnectedAccountQuotaResponseV4,
   parseBuiltInLegacyConnectedServiceQuotaSnapshotV1,
+  projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
   projectBuiltInLegacyProviderAccountUsageSnapshotV1,
   ProviderAccountUsageSnapshotV1Schema,
-  ConnectedServiceQuotaSnapshotV1Schema,
   sealProviderAccountUsageSnapshotCiphertext,
   type BuiltInLegacyConnectedAccountOperation,
   type ConnectedServiceAuthGroupMemberStateV1,
@@ -32,13 +30,19 @@ import {
   type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 import type {
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+  ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
+  AgentAccountUsageSnapshot,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   createKeyedBackoffTracker,
   type KeyedBackoffTracker,
 } from '@/api/connection/scheduling';
+import {
+  canonicalizeAgentAccountUsageSnapshot,
+} from '@/agent/runtime/registry/engineRegistry/nativeAgentAccountUsage';
 import type {
   ConnectedServiceRuntimeAuthApplyCapability,
 } from '@/agent/catalog/types';
@@ -46,8 +50,17 @@ import type {
   ConnectedServiceCredentialPlainResponse,
   ConnectedServiceCredentialSealedResponse,
 } from '@/api/client/connectedServiceCredentialApi';
-import type { Credentials } from '@/persistence';
-import { assertConnectedServiceCredentialRecordBinding } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import type { StoredCredentials } from '@/persistence';
+import {
+  AccountEncryptionMaterialUnavailableError,
+} from '@/api/client/encryptionKey';
+import {
+  resolveConnectedServiceCredentialSource,
+} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import {
+  ConnectedServiceStoredContentUnavailableError,
+  isConnectedServiceStoredContentUnavailableError,
+} from '@/cloud/connectedServices/connectedServiceStoredContentUnavailable';
 import {
   invalidateConnectedServiceAccountMode,
   resolveConnectedServiceAccountMode,
@@ -94,6 +107,7 @@ import {
   reconcileMemberRuntimeStateWithFreshQuotaEvidence,
 } from '../accountGroups/state/memberRuntimeState';
 import { updateConnectedServiceAuthGroupRuntimeStateWithRetry } from '../accountGroups/runtimeState/updateConnectedServiceAuthGroupRuntimeStateWithRetry';
+import type { ConnectedServiceAuthGroupQuotaProbeResult } from '../accountGroups/quotas/preTurnQuotaProbe';
 
 type ConnectedServiceAccountUsageSwitchState = NonNullable<
   ReturnType<typeof buildConnectedServiceAuthGroupSwitchStateFromAccountUsage>
@@ -111,13 +125,13 @@ import {
   createConnectedServiceQuotaPersistenceScheduler,
   type ConnectedServiceQuotaPersistenceScheduler,
 } from './createConnectedServiceQuotaPersistenceScheduler';
-import { STANDARD_OAUTH_TERMINAL_AUTH_PROVIDER_CODES, type ConnectedServiceQuotaFetcher } from './types';
+import {
+  STANDARD_OAUTH_TERMINAL_AUTH_PROVIDER_CODES,
+  type ConnectedServiceQuotaFetcher,
+} from './types';
 import { RuntimeAccountIdentityIndex } from './identity/RuntimeAccountIdentityIndex';
 import { resolveSessionsSharingProviderAccount } from './identity/resolveSessionsSharingProviderAccount';
-import {
-  evaluatePredictiveSoftSwitchPolicy,
-  runtimeAuthApplyRequiresLiveIdentityProbe,
-} from '../accountGroups/switching/predictiveSoftSwitchPolicy';
+import { runtimeAuthApplyRequiresLiveIdentityProbe } from '../accountGroups/switching/predictiveSoftSwitchPolicy';
 import {
   normalizeConnectedServiceSameAccountFanoutStrategy,
   type ConnectedServiceSameAccountFanoutStrategy,
@@ -185,6 +199,15 @@ export type QualifiedConnectedAccountQuotaRuntime = Readonly<{
   listScheduledAccounts(): Promise<
     readonly QualifiedConnectedAccountProfileV4[]
   >;
+  listGroupQuotaTargets?(input: Readonly<{
+    service: QualifiedConnectedAccountRef['service'];
+    groupId: string;
+    accountIds: ReadonlyArray<string>;
+    signal: AbortSignal;
+  }>): Promise<readonly Readonly<{
+    profile: QualifiedConnectedAccountProfileV4;
+    groupGeneration: number;
+  }>[]>;
   readQuota?: typeof readQualifiedConnectedAccountQuotaV4;
   writeProviderAccountUsage?: typeof writeQualifiedProviderAccountUsageV4;
 }>;
@@ -306,7 +329,7 @@ type ConnectedServicesBindingsV1Like = Readonly<{
 }>;
 
 type QuotaApi = Readonly<{
-  getAccountEncryptionMode?: () => Promise<ConnectedServiceAccountMode>;
+  getAccountEncryptionMode?: (options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>) => Promise<ConnectedServiceAccountMode>;
   getConnectedServiceQuotaSnapshotSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
     | null
     | Readonly<{
@@ -333,10 +356,10 @@ type QuotaApi = Readonly<{
         }>;
       }>
   >;
-  getConnectedServiceCredentialSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
+  getConnectedServiceCredentialSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string; signal?: AbortSignal }>) => Promise<
     ConnectedServiceCredentialSealedResponse | null
   >;
-  getConnectedServiceCredentialPlain?: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
+  getConnectedServiceCredentialPlain?: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string; signal?: AbortSignal }>) => Promise<
     ConnectedServiceCredentialPlainResponse | null
   >;
   listConnectedServiceProfiles?: (args: Readonly<{ serviceId: ConnectedServiceId }>) => Promise<
@@ -384,6 +407,7 @@ type QuotaApi = Readonly<{
   getConnectedServiceAuthGroup?: (args: Readonly<{
     serviceId: ConnectedServiceId;
     groupId: string;
+    signal?: AbortSignal;
   }>) => Promise<ConnectedServiceAuthGroupV1 | null>;
   updateConnectedServiceAuthGroupRuntimeState?: (args: Readonly<{
     serviceId: ConnectedServiceId;
@@ -489,12 +513,19 @@ export type ConnectedServiceQuotaCoordinatorDiagnostic = Readonly<{
 type QuotaCredentialOpenMaterial =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>
   | Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
+function requireQuotaCredentialOpenMaterial(
+  material: QuotaCredentialOpenMaterial | null,
+): QuotaCredentialOpenMaterial {
+  if (!material) throw new AccountEncryptionMaterialUnavailableError();
+  return material;
+}
 type ResolvedQuotaFetchCredential = Readonly<{
   record: ConnectedServiceCredentialRecordV1;
   credentialRevision: ReturnType<
     typeof ConnectedServiceCredentialRevisionV1Schema.parse
   >;
   credentialStorageMode: 'e2ee' | 'plain';
+  sourceProviderAccountId: string;
 }>;
 function readCredentialProviderAccountId(record: ConnectedServiceCredentialRecordV1): string {
   const value = record.kind === 'oauth'
@@ -513,6 +544,54 @@ function canPersistUsageSourceLinkWithProviderIdentity(input: Readonly<{
     && Boolean(input.recordKey.accountSubjectId)
     && input.recordKey.accountSubjectId === input.sourceProviderAccountId;
 }
+
+function isUsageSnapshotBoundToFetchedCredential(input: Readonly<{
+  snapshot: ProviderAccountUsageSnapshotV1;
+  sourceProviderAccountId: string;
+}>): boolean {
+  // Older credential records may not retain the provider account id even though
+  // a provider response does. In that case the snapshot remains unlinked; a
+  // known credential identity, however, must agree exactly before accepting it.
+  if (!input.sourceProviderAccountId) return true;
+  return input.snapshot.accountSubject.kind === 'providerSubject'
+    && input.snapshot.accountSubject.id === input.sourceProviderAccountId
+    && canPersistUsageSourceLinkWithProviderIdentity({
+      sourceProviderAccountId: input.sourceProviderAccountId,
+      recordKey: input.snapshot.recordKey,
+    });
+}
+
+function canonicalizeDescriptorUsageSnapshot(input: Readonly<{
+  value: AgentAccountUsageSnapshot;
+  serviceId: ConnectedServiceId;
+  profileId: string;
+  sourceProviderAccountId: string;
+}>): Readonly<{
+  snapshot: ConnectedServiceQuotaSnapshotV1;
+  providerAccountUsageSnapshot: ProviderAccountUsageSnapshotV1;
+}> | null {
+  const providerAccountUsageSnapshot = canonicalizeAgentAccountUsageSnapshot(input.value);
+  if (!providerAccountUsageSnapshot) return null;
+  if (!isUsageSnapshotBoundToFetchedCredential({
+    snapshot: providerAccountUsageSnapshot,
+    sourceProviderAccountId: input.sourceProviderAccountId,
+  })) {
+    return null;
+  }
+  const snapshot = projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
+    snapshot: providerAccountUsageSnapshot,
+    source: {
+      serviceId: input.serviceId,
+      profileId: input.profileId,
+      bindingKind: 'profile',
+    },
+  });
+  if (!snapshot) return null;
+  return {
+    snapshot,
+    providerAccountUsageSnapshot,
+  };
+}
 type AuthGroupSwitchCoordinator = Readonly<{
   switchBeforeTurn(input: Readonly<{
     sessionId?: string;
@@ -520,7 +599,6 @@ type AuthGroupSwitchCoordinator = Readonly<{
     groupId: string;
     reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
     observedProfileId?: string | null;
-    deferUntilTurnBoundary?: boolean;
   }>): Promise<unknown>;
   applyCommittedGeneration?(input: Readonly<{
     sessionId: string;
@@ -552,7 +630,6 @@ type SameAccountFanoutCandidateIdentity = Readonly<{
   candidate: ActiveSameAccountFanoutCandidate;
   accountLabel: string | null;
   observedProfileId: string;
-  deferUntilTurnBoundary: boolean;
 }>;
 type SameAccountFanoutStrategyResolver = (
   input: Readonly<{
@@ -904,7 +981,7 @@ function normalizeNullableGeneration(value: unknown): number | null {
 
 export class ConnectedServiceQuotasCoordinator {
   private readonly api: QuotaApi;
-  private readonly credentials: Credentials;
+  private readonly credentials: StoredCredentials;
   private readonly quotaFetchersByServiceId: Map<ConnectedServiceId, ConnectedServiceQuotaFetcher>;
   private readonly now: () => number;
   private readonly randomBytes: (length: number) => Uint8Array;
@@ -962,7 +1039,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   public constructor(params: Readonly<{
     api: QuotaApi;
-    credentials: Credentials;
+    credentials: StoredCredentials;
     quotaFetchers: ReadonlyArray<ConnectedServiceQuotaFetcher>;
     now: () => number;
     randomBytes: (length: number) => Uint8Array;
@@ -983,22 +1060,6 @@ export class ConnectedServiceQuotasCoordinator {
     authGroupSwitchCoordinator?: AuthGroupSwitchCoordinator | null;
     consumeCommittedAuthGroupGeneration?: ConsumeCommittedAuthGroupGeneration | null;
     predictiveSwitchGuard?: ConnectedServiceQuotaPredictiveSwitchGuard | null;
-    /** @deprecated Ignored. Generation fan-out is live-only and never persists offline work. */
-    recordPendingAuthGroupGeneration?: ((input: Readonly<{
-      sessionId: string;
-      serviceId: ConnectedServiceId;
-      groupId: string;
-      activeProfileId: string;
-      generation: number;
-      credentialRevision?: import('@happier-dev/protocol').ConnectedServiceCredentialRevisionV1 | null;
-      disposition: 'superseded_after_apply' | 'deferred_restart' | 'failed';
-      errorCode: string | null;
-    }>) => Promise<void>) | null;
-    /** @deprecated Ignored. Exact current provider proof is runtime-owned and not persisted here. */
-    clearAdoptedAuthGroupGeneration?: ((input: Readonly<{
-      sessionId: string;
-      providerAdoptedTarget: ConnectedServiceProviderAdoptedGenerationTarget;
-    }>) => Promise<void>) | null;
     sameAccountFanoutStrategyResolver?: SameAccountFanoutStrategyResolver;
     runtimeAuthApplyCapabilityResolver?: RuntimeAuthApplyCapabilityResolver | null;
     readRuntimeAccountIdentityForFanout?: RuntimeAccountIdentityFanoutReader | null;
@@ -1275,17 +1336,73 @@ export class ConnectedServiceQuotasCoordinator {
     consecutiveFailures: number;
     nextAllowedAtMs: number;
   }> {
+    return this.recordRequestAuthProviderBackoffAtKey({
+      key: this.makeBindingKey(input),
+      serviceId: input.serviceId,
+      profileId: input.profileId,
+      groupId: input.groupId,
+      groupGeneration: input.groupGeneration,
+      limitCategory: input.limitCategory,
+      quotaScope: input.quotaScope,
+      retryAfterMs: input.retryAfterMs,
+      resetAtMs: input.resetAtMs,
+      providerCode: input.providerCode,
+    });
+  }
+
+  public recordQualifiedRequestAuthProviderBackoff(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    groupId: string | null;
+    groupGeneration: number | null;
+    limitCategory: ConnectedServiceLimitCategoryV1;
+    quotaScope: ProviderAccountUsageQuotaScopeV1;
+    retryAfterMs: number | null;
+    resetAtMs: number | null;
+    providerCode: string | null;
+  }>): Readonly<{
+    status: 'recorded';
+    consecutiveFailures: number;
+    nextAllowedAtMs: number;
+  }> {
+    return this.recordRequestAuthProviderBackoffAtKey({
+      key: `qualified:${qualifiedAccountQuotaKey(input.account)}`,
+      profileId: input.account.accountId,
+      groupId: input.groupId,
+      groupGeneration: input.groupGeneration,
+      limitCategory: input.limitCategory,
+      quotaScope: input.quotaScope,
+      retryAfterMs: input.retryAfterMs,
+      resetAtMs: input.resetAtMs,
+      providerCode: input.providerCode,
+    });
+  }
+
+  private recordRequestAuthProviderBackoffAtKey(input: Readonly<{
+    key: string;
+    serviceId?: ConnectedServiceId;
+    profileId: string;
+    groupId: string | null;
+    groupGeneration: number | null;
+    limitCategory: ConnectedServiceLimitCategoryV1;
+    quotaScope: ProviderAccountUsageQuotaScopeV1;
+    retryAfterMs: number | null;
+    resetAtMs: number | null;
+    providerCode: string | null;
+  }>): Readonly<{
+    status: 'recorded';
+    consecutiveFailures: number;
+    nextAllowedAtMs: number;
+  }> {
     const now = this.now();
-    const key = this.makeBindingKey(input);
     this.applyFailureBackoff({
       now,
-      key,
+      key: input.key,
       error: {
         retryAfterMs: input.retryAfterMs,
         resetAtMs: input.resetAtMs,
       },
     });
-    const state = this.failureStateByBindingKey.get(key);
+    const state = this.failureStateByBindingKey.get(input.key);
     if (!state) {
       throw new Error('Connected Service request-auth backoff was not recorded');
     }
@@ -1295,7 +1412,7 @@ export class ConnectedServiceQuotasCoordinator {
       phase: 'probe_group',
       reason: 'request_auth_provider_backoff',
       ...(retryAfterMs > 0 ? { retryAfterMs } : {}),
-      serviceId: input.serviceId,
+      ...(input.serviceId ? { serviceId: input.serviceId } : {}),
       ...(input.groupId ? { groupId: input.groupId } : {}),
       activeProfileId: input.profileId,
       decisionTrace: {
@@ -1476,10 +1593,12 @@ export class ConnectedServiceQuotasCoordinator {
     serviceId: ConnectedServiceId;
     profileId: string;
     snapshot: ConnectedServiceQuotaSnapshotV1;
+    providerAccountUsageSnapshot?: ProviderAccountUsageSnapshotV1;
     now: number;
     sourceProviderAccountId?: string | null;
     groupId?: string | null;
     authenticatedProbe?: boolean;
+    localOnly?: boolean;
     groupContexts?: ReadonlyArray<ConnectedServiceQuotaGroupContext> | null;
     groupTargets?: ReadonlyArray<ActiveGroupQuotaSwitchTarget> | null;
   }>): Promise<ProviderAccountUsageSnapshotV1 | null> {
@@ -1534,11 +1653,12 @@ export class ConnectedServiceQuotasCoordinator {
       persistenceSourcesByKey.set(key, parsed);
       return parsed;
     };
-    const profileSnapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
-      snapshot: input.snapshot,
-      observedAtMs: input.now,
-      sourceProviderAccountId: input.sourceProviderAccountId,
-    });
+    const profileSnapshot = input.providerAccountUsageSnapshot
+      ?? buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
+        snapshot: input.snapshot,
+        observedAtMs: input.now,
+        sourceProviderAccountId: input.sourceProviderAccountId,
+      });
     const sourceProviderAccountId = typeof input.sourceProviderAccountId === 'string'
       ? input.sourceProviderAccountId.trim()
       : '';
@@ -1560,11 +1680,7 @@ export class ConnectedServiceQuotasCoordinator {
     latest = store.resolveRecordId(profileRecord.recordId) ?? profileSnapshot;
 
     for (const groupId of displayOnlyGroupIds) {
-      const groupSnapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
-        snapshot: input.snapshot,
-        observedAtMs: input.now,
-        sourceProviderAccountId: input.sourceProviderAccountId,
-      });
+      const groupSnapshot = profileSnapshot;
       const groupRecord = store.recordSnapshot(groupSnapshot, {
         sources: canPersistSourceLinks
           ? [rememberPersistenceSource({
@@ -1581,11 +1697,7 @@ export class ConnectedServiceQuotasCoordinator {
     }
     for (const [groupId, groupGenerations] of groupGenerationsById.entries()) {
       for (const groupGeneration of groupGenerations) {
-        const groupSnapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
-          snapshot: input.snapshot,
-          observedAtMs: input.now,
-          sourceProviderAccountId: input.sourceProviderAccountId,
-        });
+        const groupSnapshot = profileSnapshot;
         const groupRecord = store.recordSnapshot(groupSnapshot, {
           sources: canPersistSourceLinks
             ? [rememberPersistenceSource({
@@ -1603,7 +1715,7 @@ export class ConnectedServiceQuotasCoordinator {
       }
     }
 
-    if (effectiveMutationRecorded) {
+    if (effectiveMutationRecorded && !input.localOnly) {
       await this.clearPersistedMemberRuntimeBlockersWithQuotaEvidence({
         serviceId: input.serviceId,
         profileId: input.profileId,
@@ -1620,13 +1732,14 @@ export class ConnectedServiceQuotasCoordinator {
       latest
       && persistenceObservationRecorded
       && this.accountUsagePersistence
+      && !input.localOnly
     ) {
       await this.accountUsagePersistence.recordInBandSnapshot(latest, {
         sources: [...persistenceSourcesByKey.values()],
       }).catch(() => null);
     }
 
-    if (latest && effectiveMutationRecorded) {
+    if (latest && effectiveMutationRecorded && !input.localOnly) {
       const notifiedTargets = new Set<string>();
       for (const target of input.groupTargets ?? []) {
         if (target.groupGeneration === null) continue;
@@ -1652,8 +1765,9 @@ export class ConnectedServiceQuotasCoordinator {
     return latest;
   }
 
-  private resolveCredentialOpenMaterial(): QuotaCredentialOpenMaterial {
+  private resolveCredentialOpenMaterial(): QuotaCredentialOpenMaterial | null {
     const encryption = this.credentials.encryption;
+    if (!encryption) return null;
     return encryption.type === 'legacy'
       ? ({ type: 'legacy' as const, secret: encryption.secret })
       : ({ type: 'dataKey' as const, machineKey: encryption.machineKey });
@@ -1662,7 +1776,7 @@ export class ConnectedServiceQuotasCoordinator {
   private openExistingQuotaSnapshot(input: Readonly<{
     accountMode: ConnectedServiceAccountMode;
     existing: ExistingQuotaSnapshotResponse;
-    material: QuotaCredentialOpenMaterial;
+    material: QuotaCredentialOpenMaterial | null;
   }>): ConnectedServiceQuotaSnapshotV1 | null {
     if (!input.existing) return null;
     if (
@@ -1675,20 +1789,49 @@ export class ConnectedServiceQuotasCoordinator {
           input.existing.content.v,
         );
       } catch {
-        return null;
+        throw new ConnectedServiceStoredContentUnavailableError(
+          'quota_snapshot',
+          'stored_content_corrupt',
+        );
       }
     }
-    if (!('sealed' in input.existing) || !input.existing.sealed?.ciphertext) return null;
-    const opened = openConnectedServiceQuotaSnapshotCiphertext({
-      material: input.material,
-      ciphertext: input.existing.sealed.ciphertext,
-    });
-    try {
-      return parseBuiltInLegacyConnectedServiceQuotaSnapshotV1(
-        opened?.value,
+    if (!('sealed' in input.existing) || !input.existing.sealed?.ciphertext) {
+      throw new ConnectedServiceStoredContentUnavailableError(
+        'quota_snapshot',
+        'stored_content_corrupt',
       );
+    }
+    if (!input.material) {
+      throw new ConnectedServiceStoredContentUnavailableError(
+        'quota_snapshot',
+        'encryption_material_unavailable',
+      );
+    }
+    let opened: ReturnType<typeof openConnectedServiceQuotaSnapshotCiphertext>;
+    try {
+      opened = openConnectedServiceQuotaSnapshotCiphertext({
+        material: input.material,
+        ciphertext: input.existing.sealed.ciphertext,
+      });
     } catch {
-      return null;
+      throw new ConnectedServiceStoredContentUnavailableError(
+        'quota_snapshot',
+        'stored_content_corrupt',
+      );
+    }
+    if (!opened?.value) {
+      throw new ConnectedServiceStoredContentUnavailableError(
+        'quota_snapshot',
+        'stored_content_corrupt',
+      );
+    }
+    try {
+      return parseBuiltInLegacyConnectedServiceQuotaSnapshotV1(opened.value);
+    } catch {
+      throw new ConnectedServiceStoredContentUnavailableError(
+        'quota_snapshot',
+        'stored_content_corrupt',
+      );
     }
   }
 
@@ -1698,7 +1841,7 @@ export class ConnectedServiceQuotasCoordinator {
     profileId: string;
     now: number;
     leaseUntil?: number;
-    material: QuotaCredentialOpenMaterial;
+    material: QuotaCredentialOpenMaterial | null;
   }>): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
     if (typeof input.leaseUntil === 'number' && Number.isFinite(input.leaseUntil)) {
       const waitMs = Math.min(
@@ -1707,7 +1850,10 @@ export class ConnectedServiceQuotasCoordinator {
       );
       if (waitMs > 0) await this.sleepMs(waitMs);
     }
-    const observed = await this.readExistingQuotaSnapshot(input).catch(() => null);
+    const observed = await this.readExistingQuotaSnapshot(input).catch((error: unknown) => {
+      if (isConnectedServiceStoredContentUnavailableError(error)) throw error;
+      return null;
+    });
     if (!this.isExistingQuotaSnapshotFresh({
       existing: observed,
       now: this.now(),
@@ -1772,9 +1918,10 @@ export class ConnectedServiceQuotasCoordinator {
 
   private async readCredentialRecordForQuotaFetch(input: Readonly<{
     accountMode: ConnectedServiceAccountMode;
-    material: QuotaCredentialOpenMaterial;
+    material: QuotaCredentialOpenMaterial | null;
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }>): Promise<ResolvedQuotaFetchCredential | null> {
     if (!this.shouldRunLegacyQuotaFetcher(
       input.serviceId,
@@ -1783,75 +1930,60 @@ export class ConnectedServiceQuotasCoordinator {
     )) {
       return null;
     }
-    let record: ConnectedServiceCredentialRecordV1 | null = null;
-    let credentialRevision: ReturnType<
-      typeof ConnectedServiceCredentialRevisionV1Schema.parse
-    > | null = null;
-    let credentialStorageMode: 'e2ee' | 'plain' = 'e2ee';
-
-    if (input.accountMode !== 'e2ee') {
-      if (typeof this.api.getConnectedServiceCredentialPlain === 'function') {
-        const plainCred = await this.api.getConnectedServiceCredentialPlain({
-          serviceId: input.serviceId,
-          profileId: input.profileId,
-        }).catch(() => null);
-        if (
-          plainCred
-          && plainCred.revisionSemantics !== 'revisioned'
-        ) {
-          return null;
-        }
-        if (plainCred?.content?.t === 'plain') {
-          credentialRevision =
-            ConnectedServiceCredentialRevisionV1Schema.parse(
-              plainCred.credentialRevision,
-            );
-          record = assertConnectedServiceCredentialRecordBinding({
-            binding: input,
-            record: ConnectedServiceCredentialRecordV1Schema.parse(plainCred.content.v),
-          });
-          credentialStorageMode = 'plain';
-        }
-      }
-      if (!record && input.accountMode === 'plain') return null;
-    }
-
-    if (!record) {
-      const sealedCred = await this.api.getConnectedServiceCredentialSealed({
+    const resolved = await resolveConnectedServiceCredentialSource({
+      credentials: this.credentials,
+      api: this.api,
+      binding: {
         serviceId: input.serviceId,
         profileId: input.profileId,
-      });
-      if (!sealedCred?.sealed?.ciphertext) return null;
-      if (sealedCred.revisionSemantics !== 'revisioned') return null;
-      credentialRevision =
-        ConnectedServiceCredentialRevisionV1Schema.parse(
-          sealedCred.credentialRevision,
-        );
+      },
+      accountMode: input.accountMode,
+      signal: input.signal,
+    });
+    if (!resolved || resolved.revisionSemantics !== 'revisioned') return null;
+    const credentialRevision =
+      ConnectedServiceCredentialRevisionV1Schema.parse(
+        resolved.credentialRevision,
+      );
+    return {
+      record: resolved.record,
+      credentialRevision,
+      credentialStorageMode: resolved.storageMode,
+      sourceProviderAccountId: readCredentialProviderAccountId(resolved.record),
+    };
+  }
 
-      const opened = openConnectedServiceCredentialCiphertext({
-        material: input.material,
-        ciphertext: sealedCred.sealed.ciphertext,
-      });
-      record = opened?.value
-        ? assertConnectedServiceCredentialRecordBinding({
-            binding: input,
-            record: ConnectedServiceCredentialRecordV1Schema.parse(opened.value),
-          })
-        : null;
-    }
-    if (!record || !credentialRevision) return null;
-    return { record, credentialRevision, credentialStorageMode };
+  private async isFetchedQuotaCredentialCurrent(input: Readonly<{
+    accountMode: ConnectedServiceAccountMode;
+    material: QuotaCredentialOpenMaterial | null;
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    credential: ResolvedQuotaFetchCredential;
+    signal?: AbortSignal;
+  }>): Promise<boolean> {
+    const current = await this.readCredentialRecordForQuotaFetch({
+      accountMode: input.accountMode,
+      material: input.material,
+      serviceId: input.serviceId,
+      profileId: input.profileId,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    return current !== null
+      && current.credentialRevision === input.credential.credentialRevision
+      && current.sourceProviderAccountId === input.credential.sourceProviderAccountId;
   }
 
   private async fetchQuotaSnapshotForProfile(input: Readonly<{
     accountMode: ConnectedServiceAccountMode;
-    material: QuotaCredentialOpenMaterial;
+    material: QuotaCredentialOpenMaterial | null;
     fetcher: ConnectedServiceQuotaFetcher;
     serviceId: ConnectedServiceId;
     profileId: string;
     credential?: ResolvedQuotaFetchCredential;
+    signal?: AbortSignal;
   }>): Promise<Readonly<{
     snapshot: ConnectedServiceQuotaSnapshotV1;
+    providerAccountUsageSnapshot: ProviderAccountUsageSnapshotV1;
     credentialStorageMode: 'e2ee' | 'plain';
     sourceProviderAccountId: string;
   }> | null> {
@@ -1865,6 +1997,43 @@ export class ConnectedServiceQuotasCoordinator {
       'quota_poll',
     )) {
       return null;
+    }
+    const normalize = (
+      value: AgentAccountUsageSnapshot,
+    ): Readonly<{
+      snapshot: ConnectedServiceQuotaSnapshotV1;
+      providerAccountUsageSnapshot: ProviderAccountUsageSnapshotV1;
+    }> | null => canonicalizeDescriptorUsageSnapshot({
+      value,
+      serviceId: input.serviceId,
+      profileId: input.profileId,
+      sourceProviderAccountId: credential.sourceProviderAccountId,
+    });
+    const credentialIsCurrent = async (): Promise<boolean> =>
+      await this.isFetchedQuotaCredentialCurrent({
+        accountMode: input.accountMode,
+        material: input.material,
+        serviceId: input.serviceId,
+        profileId: input.profileId,
+        credential,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+
+    if (input.signal) {
+      const value = await input.fetcher.loadQuota({
+        record: credential.record,
+        now: this.now(),
+        signal: input.signal,
+      });
+      if (!value) return null;
+      if (!await credentialIsCurrent()) return null;
+      const fetched = normalize(value);
+      if (!fetched) return null;
+      return {
+        ...fetched,
+        credentialStorageMode: credential.credentialStorageMode,
+        sourceProviderAccountId: credential.sourceProviderAccountId,
+      };
     }
 
     const controller = new AbortController();
@@ -1902,11 +2071,14 @@ export class ConnectedServiceQuotasCoordinator {
     if (raced.type === 'timeout') return null;
     if (raced.type === 'error') throw raced.error;
     if (!raced.snapshot) return null;
+    if (!await credentialIsCurrent()) return null;
+    const fetched = normalize(raced.snapshot);
+    if (!fetched) return null;
 
     return {
-      snapshot: raced.snapshot,
+      ...fetched,
       credentialStorageMode: credential.credentialStorageMode,
-      sourceProviderAccountId: readCredentialProviderAccountId(credential.record),
+      sourceProviderAccountId: credential.sourceProviderAccountId,
     };
   }
 
@@ -2167,6 +2339,7 @@ export class ConnectedServiceQuotasCoordinator {
         serviceId,
         profileId,
         snapshot: fetched.snapshot,
+        providerAccountUsageSnapshot: fetched.providerAccountUsageSnapshot,
         now: this.now(),
         sourceProviderAccountId: fetched.sourceProviderAccountId,
       });
@@ -2176,6 +2349,7 @@ export class ConnectedServiceQuotasCoordinator {
           serviceId,
           profileId,
           snapshot: fetched.snapshot,
+          providerAccountUsageSnapshot: fetched.providerAccountUsageSnapshot,
           sourceProviderAccountId: fetched.sourceProviderAccountId,
           materialFingerprint: this.computeQuotaMaterialFingerprint(fetched.snapshot),
         });
@@ -2292,7 +2466,6 @@ export class ConnectedServiceQuotasCoordinator {
       },
       accountLabel: entry.accountLabel,
       observedProfileId: entry.profileId,
-      deferUntilTurnBoundary: false,
     };
   }
 
@@ -2379,23 +2552,6 @@ export class ConnectedServiceQuotasCoordinator {
       case 'unavailable':
         return 'same_account_fanout_no_live_identity';
     }
-  }
-
-  private async shouldDeferBusySameAccountFanoutCandidate(input: Readonly<{
-    candidate: ActiveSameAccountFanoutCandidate;
-    result: Extract<RuntimeAccountIdentityFanoutProbeResult, Readonly<{ status: 'exact' }>>;
-  }>): Promise<boolean> {
-    if (input.result.inProviderTurn !== true) return false;
-
-    const runtimeAuthApply = await this.resolveRuntimeAuthApplyCapabilityForFanoutCandidate(input.candidate);
-
-    const policy = evaluatePredictiveSoftSwitchPolicy({
-      reason: 'same_provider_account_exhausted',
-      predictiveSoftSwitchMode: 'supported',
-      turnState: { inFlight: true },
-      runtimeAuthApply,
-    });
-    return policy.status !== 'allow';
   }
 
   private async resolveRuntimeAuthApplyCapabilityForFanoutCandidate(
@@ -2503,7 +2659,6 @@ export class ConnectedServiceQuotasCoordinator {
       candidate: input.candidate,
       accountLabel: null,
       observedProfileId: input.candidate.activeProfileId,
-      deferUntilTurnBoundary: false,
     };
   }
 
@@ -2582,15 +2737,10 @@ export class ConnectedServiceQuotasCoordinator {
     if (input.strategy === 'provider_account_id') {
       this.runtimeAccountIdentities.record(match.entry);
     }
-    const deferUntilTurnBoundary = await this.shouldDeferBusySameAccountFanoutCandidate({
-      candidate: input.candidate,
-      result,
-    });
     return {
       candidate: input.candidate,
       accountLabel: match.accountLabel,
       observedProfileId: match.observedProfileId,
-      deferUntilTurnBoundary,
     };
   }
 
@@ -2730,7 +2880,7 @@ export class ConnectedServiceQuotasCoordinator {
     serviceId: ConnectedServiceId;
     groupId: string;
     exhaustedProfileId: string;
-    providerAccountId: string;
+    providerAccountId?: string | null;
     resetAtMs: number | null;
     reason: 'usage_limit';
     committedGeneration?: ConnectedServiceAuthGroupCommittedGenerationFact | null;
@@ -2759,16 +2909,28 @@ export class ConnectedServiceQuotasCoordinator {
       this.recordSameAccountFanoutDiagnostic('hard_limit_committed_generation_missing');
       return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
     }
+    const generationTargets = this.listCommittedGenerationTargetsForGroup({
+      serviceId: input.serviceId,
+      groupId,
+      sourceSessionId,
+      sourceProfileId: input.exhaustedProfileId,
+      includeSource: input.sourceRequiresConvergence !== false,
+    });
+    const applyCommittedGeneration = async (): Promise<number> => await this.applyCommittedAuthGroupGeneration({
+      committedGeneration,
+      reason: 'same_provider_account_exhausted',
+      targets: generationTargets,
+    });
     const strategy = input.resolvedFanoutStrategy ?? await this.resolveSameAccountFanoutStrategy({
       sourceSessionId,
       serviceId: input.serviceId,
       groupId,
     });
     if (strategy === 'none') {
-      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
+      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: await applyCommittedGeneration() };
     }
     if (strategy === 'provider_account_id' && !providerAccountId) {
-      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
+      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: await applyCommittedGeneration() };
     }
 
     const candidates = await this.resolveSameAccountFanoutCandidates({
@@ -2779,20 +2941,7 @@ export class ConnectedServiceQuotasCoordinator {
       providerAccountId,
     });
     if (candidates.length === 0) {
-      if (input.sourceRequiresConvergence === true) {
-        const fanoutRequests = await this.applyCommittedAuthGroupGeneration({
-          committedGeneration,
-          reason: 'same_provider_account_exhausted',
-          targets: [{
-            sessionId: sourceSessionId,
-            serviceId: input.serviceId,
-            groupId,
-            fromProfileId: input.exhaustedProfileId,
-          }],
-        });
-        return { status: 'recorded', fanoutCandidates: 0, fanoutRequests };
-      }
-      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
+      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: await applyCommittedGeneration() };
     }
 
     const now = Math.max(0, Math.trunc(this.now()));
@@ -2805,50 +2954,63 @@ export class ConnectedServiceQuotasCoordinator {
       resetAtMs: input.resetAtMs,
     });
     if (this.shouldCoalesceSameAccountFanout({ key: fanoutKey, now })) {
-      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
+      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: await applyCommittedGeneration() };
     }
 
-    const generationTargets: Array<Readonly<{
-      sessionId: string;
-      serviceId: ConnectedServiceId;
-      groupId: string;
-      fromProfileId: string;
-      deferUntilTurnBoundary?: boolean;
-    }>> = [];
-    for (const { candidate, observedProfileId, deferUntilTurnBoundary } of candidates) {
+    for (const { candidate } of candidates) {
       this.runtimeAccountIdentities.invalidateSession(candidate.sessionId);
-      if (deferUntilTurnBoundary) {
-        this.recordSameAccountFanoutDiagnostic(
-          'same_account_fanout_candidate_deferred_until_turn_boundary',
-          'quota_work_deferred',
-        );
-      }
-      generationTargets.push({
-        sessionId: candidate.sessionId,
-        serviceId: candidate.serviceId,
-        groupId: candidate.groupId,
-        fromProfileId: observedProfileId,
-        ...(deferUntilTurnBoundary ? { deferUntilTurnBoundary: true } : {}),
-      });
     }
-    if (input.sourceRequiresConvergence !== false) {
-      generationTargets.push({
-        sessionId: sourceSessionId,
-        serviceId: input.serviceId,
-        groupId,
-        fromProfileId: input.exhaustedProfileId,
-      });
-    }
-    const fanoutRequests = await this.applyCommittedAuthGroupGeneration({
-      committedGeneration,
-      reason: 'same_provider_account_exhausted',
-      targets: generationTargets,
-    });
+    const fanoutRequests = await applyCommittedGeneration();
     return {
       status: 'recorded',
       fanoutCandidates: candidates.length,
       fanoutRequests,
     };
+  }
+
+  private listCommittedGenerationTargetsForGroup(input: Readonly<{
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    sourceSessionId: string;
+    sourceProfileId: string;
+    includeSource: boolean;
+  }>): ReadonlyArray<Readonly<{
+    sessionId: string;
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    fromProfileId: string;
+  }>> {
+    const targetsBySessionId = new Map<string, Readonly<{
+      sessionId: string;
+      serviceId: ConnectedServiceId;
+      groupId: string;
+      fromProfileId: string;
+    }>>();
+    for (const target of this.runtimeRegistry.listQuotaTargets()) {
+      const sessionId = target.sessionId?.trim() ?? '';
+      if (!sessionId) continue;
+      const binding = target.activeBindings.find((candidate) => (
+        candidate.serviceId === input.serviceId && candidate.groupId === input.groupId
+      ));
+      if (!binding) continue;
+      targetsBySessionId.set(sessionId, {
+        sessionId,
+        serviceId: input.serviceId,
+        groupId: input.groupId,
+        fromProfileId: binding.profileId,
+      });
+    }
+    if (input.includeSource && !targetsBySessionId.has(input.sourceSessionId)) {
+      targetsBySessionId.set(input.sourceSessionId, {
+        sessionId: input.sourceSessionId,
+        serviceId: input.serviceId,
+        groupId: input.groupId,
+        fromProfileId: input.sourceProfileId,
+      });
+    } else if (!input.includeSource) {
+      targetsBySessionId.delete(input.sourceSessionId);
+    }
+    return Array.from(targetsBySessionId.values());
   }
 
   private async decideAndApplyAuthGroupGeneration(input: Readonly<{
@@ -2859,7 +3021,6 @@ export class ConnectedServiceQuotasCoordinator {
       serviceId: ConnectedServiceId;
       groupId: string;
       fromProfileId: string;
-      deferUntilTurnBoundary?: boolean;
     }>>;
   }>): Promise<number> {
     const coordinator = this.authGroupSwitchCoordinator;
@@ -2871,7 +3032,6 @@ export class ConnectedServiceQuotasCoordinator {
       groupId: decisionTarget.groupId,
       reason: input.reason,
       observedProfileId: input.observedProfileId,
-      ...(decisionTarget.deferUntilTurnBoundary ? { deferUntilTurnBoundary: true } : {}),
     }).catch(() => null);
     if (!rawDecision || typeof rawDecision !== 'object' || Array.isArray(rawDecision)) return 0;
     const decision = rawDecision as Readonly<Record<string, unknown>>;
@@ -2925,7 +3085,6 @@ export class ConnectedServiceQuotasCoordinator {
       serviceId: ConnectedServiceId;
       groupId: string;
       fromProfileId: string;
-      deferUntilTurnBoundary?: boolean;
     }>>;
     skipInitialSessionId?: string;
   }>): Promise<number> {
@@ -2989,9 +3148,6 @@ export class ConnectedServiceQuotasCoordinator {
       serviceId: input.serviceId,
       groupId,
     });
-    if (strategy === 'none') {
-      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
-    }
     if (strategy === 'shared_group_auth_surface') {
       return await this.recordAccountExhaustionAndFanout({
         sourceSessionId,
@@ -3011,7 +3167,17 @@ export class ConnectedServiceQuotasCoordinator {
       ? input.sourceProviderAccountId.trim()
       : '';
     if (!sourceProviderAccountId) {
-      return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
+      return await this.recordAccountExhaustionAndFanout({
+        sourceSessionId,
+        serviceId: input.serviceId,
+        groupId,
+        exhaustedProfileId,
+        resetAtMs: input.resetAtMs,
+        reason: 'usage_limit',
+        committedGeneration: input.committedGeneration,
+        sourceRequiresConvergence: input.sourceRequiresConvergence,
+        resolvedFanoutStrategy: strategy,
+      });
     }
     const sourceGroupGeneration = normalizeNullableGeneration(input.sourceGroupGeneration)
       ?? this.resolveGroupGenerationForSession({
@@ -3484,11 +3650,13 @@ export class ConnectedServiceQuotasCoordinator {
   private async readCurrentQuotaGroupForContext(input: Readonly<{
     serviceId: ConnectedServiceId;
     groupId: string;
+    signal?: AbortSignal;
   }>): Promise<ConnectedServiceAuthGroupV1 | null> {
     if (typeof this.api.getConnectedServiceAuthGroup !== 'function') return null;
     const group = await this.api.getConnectedServiceAuthGroup({
       serviceId: input.serviceId,
       groupId: input.groupId,
+      signal: input.signal,
     }).catch(() => null);
     if (!group) return null;
     if (group.serviceId !== input.serviceId || group.groupId !== input.groupId) return null;
@@ -3659,11 +3827,7 @@ export class ConnectedServiceQuotasCoordinator {
         nextState: evaluation.nextState,
       });
       if (evaluation.edge.phase !== 'no_edge') {
-        try {
-          await listener(evaluation.edge);
-        } catch {
-          // Lifecycle notifications are best-effort; account usage remains canonical.
-        }
+        await listener(evaluation.edge);
       }
     }
 
@@ -3737,6 +3901,7 @@ export class ConnectedServiceQuotasCoordinator {
     serviceId: ConnectedServiceId;
     profileId: string;
     snapshot: ConnectedServiceQuotaSnapshotV1;
+    providerAccountUsageSnapshot?: ProviderAccountUsageSnapshotV1;
     materialFingerprint?: string;
     sourceProviderAccountId?: string | null;
   }>): Promise<void> {
@@ -3784,14 +3949,16 @@ export class ConnectedServiceQuotasCoordinator {
     serviceId: ConnectedServiceId;
     profileId: string;
     snapshot: ConnectedServiceQuotaSnapshotV1;
+    providerAccountUsageSnapshot?: ProviderAccountUsageSnapshotV1;
     materialFingerprint?: string;
     sourceProviderAccountId?: string | null;
   }>): Promise<void> {
-    const providerAccountUsageSnapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
-      snapshot: input.snapshot,
-      observedAtMs: input.snapshot.fetchedAtMs ?? input.snapshot.fetchedAt,
-      sourceProviderAccountId: input.sourceProviderAccountId,
-    });
+    const providerAccountUsageSnapshot = input.providerAccountUsageSnapshot
+      ?? buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
+        snapshot: input.snapshot,
+        observedAtMs: input.snapshot.fetchedAtMs ?? input.snapshot.fetchedAt,
+        sourceProviderAccountId: input.sourceProviderAccountId,
+      });
     const status = deriveQuotaSnapshotStatus(input.snapshot);
     const materialFingerprint = input.materialFingerprint
       ?? computeProviderAccountUsageSnapshotFingerprint(providerAccountUsageSnapshot, this.quotaSnapshotFingerprintKey);
@@ -3835,7 +4002,9 @@ export class ConnectedServiceQuotasCoordinator {
       return;
     }
 
-    const encryption = this.credentials.encryption;
+    const encryption = requireQuotaCredentialOpenMaterial(
+      this.resolveCredentialOpenMaterial(),
+    );
     const material =
       encryption.type === 'legacy'
         ? ({ type: 'legacy' as const, secret: encryption.secret })
@@ -3968,40 +4137,91 @@ export class ConnectedServiceQuotasCoordinator {
     serviceId: ConnectedServiceId;
     groupId: string;
     profileIds: ReadonlyArray<string>;
-  }>): Promise<void> {
+  }>): Promise<ConnectedServiceAuthGroupQuotaProbeResult> {
     const serviceId = ConnectedServiceIdSchema.parse(input.serviceId);
     const groupId = typeof input.groupId === 'string' ? input.groupId.trim() : '';
-    if (!groupId) return;
-    const qualifiedPeerClass =
-      this.qualifiedConnectedAccountRuntime?.resolvePeerClass() ?? null;
-    if (qualifiedPeerClass === 'advertised_v4') {
-      const accountMode = await resolveConnectedServiceAccountMode(this.api);
-      if (accountMode === 'unknown') return;
-      await this.pollQualifiedConnectedAccountQuotas({
-        accountMode,
-        now: Math.max(0, Math.trunc(this.now())),
-        v4Support: 'advertised',
-      });
-      return;
-    }
-    if (!this.shouldRunLegacyQuotaFetcher(serviceId, qualifiedPeerClass)) {
-      return;
-    }
-    const fetcher = this.quotaFetchersByServiceId.get(serviceId);
-    if (!fetcher) return;
     const profileIds = Array.from(new Set(input.profileIds
       .map((profileId) => String(profileId ?? '').trim())
       .filter((profileId) => profileId.length > 0)));
-    if (profileIds.length === 0) return;
+    const incomplete = (
+      completedProfileCount: number,
+      reason: 'deadline_exceeded' | 'probe_unavailable',
+    ): ConnectedServiceAuthGroupQuotaProbeResult => ({
+      status: 'incomplete',
+      requestedProfileCount: profileIds.length,
+      completedProfileCount,
+      reason,
+    });
+    if (profileIds.length === 0) return { status: 'complete', requestedProfileCount: 0, completedProfileCount: 0 };
+    if (!groupId) return incomplete(0, 'probe_unavailable');
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort('quota-group-probe-deadline'), this.fetchTimeoutMs);
+    (timeoutHandle as unknown as { unref?: () => void }).unref?.();
+    let completedProfileCount = 0;
+    try {
+    const qualifiedPeerClass =
+      this.qualifiedConnectedAccountRuntime?.resolvePeerClass() ?? null;
+    if (qualifiedPeerClass === 'advertised_v4') {
+      const runtime = this.qualifiedConnectedAccountRuntime;
+      const compatibility = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
+      if (!runtime?.listGroupQuotaTargets || !this.accountUsageStore) return incomplete(0, 'probe_unavailable');
+      controller.signal.throwIfAborted();
+      const profiles = await runtime.listGroupQuotaTargets({
+        service: compatibility.service,
+        groupId,
+        accountIds: profileIds,
+        signal: controller.signal,
+      });
+      const targetsByAccountId = new Map(profiles.map((target) => [target.profile.ref.accountId, target]));
+      for (const profileId of profileIds) {
+        if (controller.signal.aborted) break;
+        const target = targetsByAccountId.get(profileId);
+        const profile = target?.profile;
+        if (!target || !profile || !isConnectedServiceCredentialHealthStatusUsable(profile.status)) continue;
+        const invocation = await runtime.establishedRuntimeOwner.invokeWithReceipt({
+          account: profile.ref,
+          operation: Object.freeze({ kind: 'quota' as const }),
+          signal: controller.signal,
+        });
+        controller.signal.throwIfAborted();
+        if (!invocation.result || !invocation.basis.isCurrent()) continue;
+        const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+          profile,
+          quota: invocation.result,
+          staleAfterMs: this.quotaPersistenceMinFreshnessMs,
+        });
+        this.accountUsageStore.recordSnapshot(snapshot, {
+          sources: [{
+            serviceId,
+            profileId,
+            bindingKind: 'group_member',
+            groupId,
+            groupGeneration: target.groupGeneration,
+          }],
+        });
+        completedProfileCount += 1;
+      }
+      if (controller.signal.aborted) return incomplete(completedProfileCount, 'deadline_exceeded');
+      if (completedProfileCount !== profileIds.length) return incomplete(completedProfileCount, 'probe_unavailable');
+      return { status: 'complete', requestedProfileCount: profileIds.length, completedProfileCount };
+    }
+    if (!this.shouldRunLegacyQuotaFetcher(serviceId, qualifiedPeerClass)) {
+      return incomplete(0, 'probe_unavailable');
+    }
+    const fetcher = this.quotaFetchersByServiceId.get(serviceId);
+    if (!fetcher || (!this.runtimeQuotaSnapshots && !this.accountUsageStore)) {
+      return incomplete(0, 'probe_unavailable');
+    }
 
     const now = Math.max(0, Math.trunc(this.now()));
-    const accountMode = await resolveConnectedServiceAccountMode(this.api);
-    if (accountMode === 'unknown') return;
+    const accountMode = await resolveConnectedServiceAccountMode(this.api, { signal: controller.signal });
+    if (accountMode === 'unknown') return incomplete(0, 'probe_unavailable');
+    controller.signal.throwIfAborted();
     const material = this.resolveCredentialOpenMaterial();
+    const group = await this.readCurrentQuotaGroupForContext({ serviceId, groupId, signal: controller.signal });
 
     for (const profileId of profileIds) {
-      let expectedCredentialRevision:
-        ResolvedQuotaFetchCredential['credentialRevision'] | null = null;
+      if (controller.signal.aborted) break;
       try {
         const bindingKey = this.makeBindingKey({ serviceId, profileId });
         const failureState = this.failureStateByBindingKey.get(bindingKey);
@@ -4012,43 +4232,9 @@ export class ConnectedServiceQuotasCoordinator {
           material,
           serviceId,
           profileId,
+          signal: controller.signal,
         });
         if (!credential) continue;
-        expectedCredentialRevision = credential.credentialRevision;
-        const group = await this.readCurrentQuotaGroupForContext({
-          serviceId,
-          groupId,
-        });
-
-        const lease = await this.acquireQuotaFetchLease({
-          serviceId,
-          profileId,
-          expectedCredentialRevision: credential.credentialRevision,
-        });
-        if (lease.type === 'unavailable') continue;
-        if (lease.type === 'contended') {
-          const observed = await this.readFreshExistingQuotaSnapshot({
-            accountMode,
-            serviceId,
-            profileId,
-            now,
-            leaseUntil: lease.leaseUntil,
-            material,
-          });
-          if (observed) {
-            this.recordRuntimeProfileSnapshot({ serviceId, profileId, snapshot: observed });
-            await this.recordFetchedQuotaSnapshotAsAccountUsage({
-              serviceId,
-              profileId,
-              groupId,
-              groupContexts: this.buildQuotaGroupContextsForProfile({ group, profileId }),
-              snapshot: observed,
-              now,
-            });
-            this.failureStateByBindingKey.delete(bindingKey);
-          }
-          continue;
-        }
 
         const fetched = await this.fetchQuotaSnapshotForProfile({
           accountMode,
@@ -4057,7 +4243,9 @@ export class ConnectedServiceQuotasCoordinator {
           serviceId,
           profileId,
           credential,
+          signal: controller.signal,
         });
+        controller.signal.throwIfAborted();
         if (!fetched) continue;
         this.recordRuntimeProfileSnapshot({ serviceId, profileId, snapshot: fetched.snapshot });
         const recordedAccountUsage = await this.recordFetchedQuotaSnapshotAsAccountUsage({
@@ -4066,41 +4254,30 @@ export class ConnectedServiceQuotasCoordinator {
           groupId,
           groupContexts: this.buildQuotaGroupContextsForProfile({ group, profileId }),
           snapshot: fetched.snapshot,
+          providerAccountUsageSnapshot: fetched.providerAccountUsageSnapshot,
           now,
           authenticatedProbe: true,
           sourceProviderAccountId: fetched.sourceProviderAccountId,
+          localOnly: true,
         });
-        if (!recordedAccountUsage) {
-          await this.persistQuotaSnapshotWithServerWork({
-            accountMode: fetched.credentialStorageMode,
-            serviceId,
-            profileId,
-            snapshot: fetched.snapshot,
-            sourceProviderAccountId: fetched.sourceProviderAccountId,
-            materialFingerprint: this.computeQuotaMaterialFingerprint(fetched.snapshot),
-          });
-        }
+        void recordedAccountUsage;
         this.failureStateByBindingKey.delete(bindingKey);
+        completedProfileCount += 1;
       } catch (error) {
-        const bindingKey = this.makeBindingKey({ serviceId, profileId });
-        if (expectedCredentialRevision) {
-          await this.persistCredentialHealthForQuotaFailure({
-            serviceId,
-            profileId,
-            error,
-            now,
-            expectedCredentialRevision,
-          }).catch(() => false);
-        }
-        this.applyFailureBackoff({ now, key: bindingKey, error });
+        if (controller.signal.aborted) break;
       }
     }
-
-    await this.evaluateGroupQuotaLifecycleForGroup({
-      serviceId,
-      groupId,
-      now,
-    });
+    if (controller.signal.aborted) return incomplete(completedProfileCount, 'deadline_exceeded');
+    if (completedProfileCount !== profileIds.length) return incomplete(completedProfileCount, 'probe_unavailable');
+    return { status: 'complete', requestedProfileCount: profileIds.length, completedProfileCount };
+    } catch {
+      return incomplete(
+        completedProfileCount,
+        controller.signal.aborted ? 'deadline_exceeded' : 'probe_unavailable',
+      );
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
   }
 
   private shouldRunLegacyQuotaFetcher(
@@ -4207,16 +4384,9 @@ export class ConnectedServiceQuotasCoordinator {
             sealedPayload: {
               format: 'account_scoped_v1' as const,
               ciphertext: sealProviderAccountUsageSnapshotCiphertext({
-                material: this.credentials.encryption.type === 'legacy'
-                  ? {
-                      type: 'legacy' as const,
-                      secret: this.credentials.encryption.secret,
-                    }
-                  : {
-                      type: 'dataKey' as const,
-                      machineKey:
-                        this.credentials.encryption.machineKey,
-                    },
+                material: requireQuotaCredentialOpenMaterial(
+                  this.resolveCredentialOpenMaterial(),
+                ),
                 payload: input.snapshot,
                 randomBytes: this.randomBytes,
               }),
@@ -4293,20 +4463,17 @@ export class ConnectedServiceQuotasCoordinator {
           token: this.credentials.token,
           ref: profile.ref,
         });
+        const existingMaterial =
+          existing?.content.t === 'encrypted'
+            ? requireQuotaCredentialOpenMaterial(
+                this.resolveCredentialOpenMaterial(),
+              )
+            : this.resolveCredentialOpenMaterial();
         const existingSnapshot = existing
           ? openQualifiedConnectedAccountQuotaResponseV4({
               response: existing,
               expectedRef: profile.ref,
-              material: this.credentials.encryption.type === 'legacy'
-                ? {
-                    type: 'legacy',
-                    secret: this.credentials.encryption.secret,
-                  }
-                : {
-                    type: 'dataKey',
-                    machineKey:
-                      this.credentials.encryption.machineKey,
-                  },
+              material: existingMaterial,
             })
           : null;
         if (
@@ -4606,6 +4773,7 @@ export class ConnectedServiceQuotasCoordinator {
             serviceId,
             profileId,
             snapshot: fetched.snapshot,
+            providerAccountUsageSnapshot: fetched.providerAccountUsageSnapshot,
             now,
             authenticatedProbe: true,
             groupContexts,
@@ -4622,6 +4790,7 @@ export class ConnectedServiceQuotasCoordinator {
               serviceId,
               profileId,
               snapshot: fetched.snapshot,
+              providerAccountUsageSnapshot: fetched.providerAccountUsageSnapshot,
               sourceProviderAccountId: fetched.sourceProviderAccountId,
               materialFingerprint: this.computeQuotaMaterialFingerprint(fetched.snapshot),
             });

@@ -1,7 +1,7 @@
-import { createHmac, hkdfSync } from 'node:crypto';
+import { createHash, createHmac, hkdfSync } from 'node:crypto';
 
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 export type QuotaSnapshotFingerprintKey = Uint8Array;
 
@@ -61,13 +61,22 @@ function buildMaterialSnapshot(snapshot: ConnectedServiceQuotaSnapshotV1): JsonV
 }
 
 export function deriveQuotaSnapshotFingerprintKey(input: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   serverScope: string;
   accountScope: string;
 }>): QuotaSnapshotFingerprintKey {
-  const sourceMaterial = input.credentials.encryption.type === 'legacy'
-    ? input.credentials.encryption.secret
-    : input.credentials.encryption.machineKey;
+  // Plain-account fingerprints are dedupe metadata, not ciphertext integrity.
+  // Keep their public, scope-derived key independent of the rotating bearer token.
+  const sourceMaterial = input.credentials.encryption
+    ? input.credentials.encryption.type === 'legacy'
+      ? input.credentials.encryption.secret
+      : input.credentials.encryption.machineKey
+    : createHash('sha256')
+        .update(
+          `plain:${input.serverScope}:${input.accountScope}:${QUOTA_FINGERPRINT_INFO}`,
+          'utf8',
+        )
+        .digest();
   return new Uint8Array(hkdfSync(
     'sha256',
     toBuffer(sourceMaterial),

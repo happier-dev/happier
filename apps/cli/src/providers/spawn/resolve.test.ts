@@ -13,6 +13,7 @@ import {
   createProviderObservationAuthorizationFingerprintV1,
   createProviderProbeRequestFingerprintV1,
   encryptSecretStringV1,
+  resolveProviderManagedRuntimeDeclarationV1,
   setProviderExperimentalConfirmationV1,
   type AgentProviderRequirementsV1,
   type ProviderSettingsV1,
@@ -22,7 +23,10 @@ import {
   type ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import type {
+  ResolvedManagedProviderRuntime,
+  ResolvedProviderContribution,
+} from '@/plugins/projection/registry/types';
 import type {
   ActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -42,7 +46,7 @@ import {
   resolveProviderSpawnAuthorization,
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
-import { resolveProviderAuthorizationApplyPolicy } from '../sessions/resolveModelSelectionApplyPolicy';
+import { resolveProviderAuthorizationApplyPolicy } from '../sessions/providerAuthorizationApplyPolicy';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
 const contributionKey = 'acme.gateway/gateway';
@@ -111,55 +115,30 @@ const managedContribution: ResolvedProviderContribution = {
   ...contribution,
   provenance: 'first_party',
   source: { kind: 'bundled' },
-  managed: {
-    managedEndpoint: {
-      localService: {
-        id: 'gateway-managed',
-        launch: {
-          kind: 'packaged-runtime-binary',
-          directorySegments: ['tools', 'unpacked'],
-          executableBaseName: 'gateway-managed',
-          privateConfigPathFlag: '--config',
+  definition: ProviderContributionV1Schema.parse({
+    ...definition,
+    managedRuntime: {
+      kind: 'managed',
+      endpointTemplateIds: ['responses'],
+      connectedAccounts: [{
+        purpose: 'upstream',
+        service: {
+          pluginId: 'happier.connected-account.example',
+          localId: 'example',
         },
-        launchMode: { kind: 'assignAndInject', portPolicy: { kind: 'allocated' } },
-        hostPolicy: { kind: 'loopback' },
-        name: { strategy: 'fixed', name: 'Gateway managed' },
-        healthCheck: { kind: 'http', path: '/healthz' },
-        restart: { kind: 'never' },
-        cleanup: { staleAfterMs: 60_000 },
-      },
-      protocols: ['openai-responses'],
+        required: true,
+        materializationKinds: ['httpHeaders'],
+      }],
+      requestAuthUses: [{
+        purpose: 'upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.example.test',
+          headerNames: ['authorization'],
+        },
+      }],
     },
-    connectedAccounts: [{
-      purpose: 'upstream',
-      service: {
-        pluginId: 'happier.connected-account.example',
-        localId: 'example',
-      },
-      required: true,
-      materializationKinds: ['httpHeaders'],
-    }],
-    requestAuthUses: [{
-      purpose: 'upstream',
-      materialization: {
-        kind: 'httpHeaders',
-        origin: 'https://api.example.test',
-        headerNames: ['authorization'],
-      },
-    }],
-  },
-  managedRuntimeAdapter: {
-    v: 1,
-    catalogSource: {
-      kind: 'transientModelEndpoint',
-      contractVersion: 'happier.gateway-managed/v1',
-      sdkVersion: 'v1.2.3',
-    },
-    prepare: async () => {
-      throw new Error('not used by authorization test');
-    },
-    resolveAgentEndpoint: () => 'http://127.0.0.1:45123/v1',
-  },
+  }),
 };
 const managedRegistry = {
   providersByContributionKey: new Map([[canonicalContributionKey, managedContribution]]),
@@ -228,7 +207,10 @@ function grantedSettingsForConnection(connectionIdOverride: string): ProviderSet
 }
 
 function managedGrantedSettings(
-  providerRegistry: typeof managedRegistry = managedRegistry,
+  providerRegistry: Readonly<{
+    providersByContributionKey:
+      ReadonlyMap<string, ResolvedProviderContribution>;
+  }> = managedRegistry,
 ): ProviderSettingsV1 {
   const initial = ProviderSettingsV1Schema.parse({
     ...DEFAULT_PROVIDER_SETTINGS_V1,
@@ -298,6 +280,21 @@ function agentProviderSupport(
   };
 }
 
+function exactManagedProviderRuntime(
+  isCurrent: () => boolean = () => true,
+): ResolvedManagedProviderRuntime {
+  return Object.freeze({
+    runtime: Object.freeze({
+      async start() {
+        throw new Error('Managed Provider runtime is not invoked by authorization');
+      },
+    }),
+    activationGeneration: 'managed-provider-generation-p',
+    immutableGenerationId: 'managed-provider-generation-p',
+    isCurrent,
+  });
+}
+
 function lease(
   prepare = vi.fn(() => ({ v: 1 as const, materialization: 'engineConfig' as const, adapterBindingKey: 'gateway' })),
   supportsFreeformModelIds = true,
@@ -305,6 +302,7 @@ function lease(
   providersByContributionKey: ReadonlyMap<string, ResolvedProviderContribution> =
     registry.providersByContributionKey,
   supportsNoAuth = false,
+  retainedGenerationCurrent: () => boolean = () => true,
 ): PluginRuntimeRegistryLease {
   const support = agentProviderSupport(
     supportsFreeformModelIds,
@@ -330,6 +328,19 @@ function lease(
       isCurrent: () => true,
       createRuntime: vi.fn(),
     }]]),
+    acquireManagedProviderRuntime: vi.fn(async (ref) => {
+      const candidate = [...providersByContributionKey.values()].find(
+        (provider) => (
+          provider.identity.pluginId === ref.pluginId
+          && provider.identity.localId === ref.localId
+        ),
+      );
+      return candidate?.definition.managedRuntime?.kind === 'managed'
+        ? exactManagedProviderRuntime(
+            retainedGenerationCurrent,
+          )
+        : null;
+    }),
   } as unknown as ResolvedExecutablePluginRuntimeRegistry;
   return { registry: registryRuntime, source: 'active', release: vi.fn(async () => undefined) };
 }
@@ -671,6 +682,8 @@ describe('provider spawn authorization resolver', () => {
 
     expect(result).toMatchObject({
       ok: false,
+      // The existing two-sided freeform policy still admits the literal id,
+      // but without static capabilities it remains unverified and cannot launch.
       error: { code: 'provider_compatibility_unverified' },
     });
   });
@@ -1021,6 +1034,7 @@ describe('provider spawn authorization resolver', () => {
       registry: managedRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
       lease: lease(),
+      managedProviderRuntime: exactManagedProviderRuntime(),
       managedPurposeBindingSnapshot: {
         v: 1,
         bindings: [{
@@ -1117,6 +1131,164 @@ describe('provider spawn authorization resolver', () => {
     expect(JSON.stringify(result)).not.toContain('localhost');
   });
 
+  it.each([
+    ['development', { kind: 'path' } as const],
+    ['installed', { kind: 'package' } as const],
+  ])('authorizes an exact current public managed Provider runtime from a %s plugin', async (_kind, source) => {
+    const externalManagedContribution: ResolvedProviderContribution = {
+      provenance: 'external',
+      source,
+      pluginId: managedContribution.pluginId,
+      identity: managedContribution.identity,
+      definition: managedContribution.definition,
+    };
+    const providersByContributionKey = new Map([
+      [canonicalContributionKey, externalManagedContribution],
+    ]);
+    const externalManagedRegistry = { providersByContributionKey };
+    const settings = managedGrantedSettings(externalManagedRegistry);
+    const managedPurposeBindingSnapshot = {
+      v: 1 as const,
+      bindings: [{
+        purpose: {
+          consumer: { pluginId: 'acme.gateway', localId: 'gateway' },
+          purpose: 'upstream',
+        },
+        target: {
+          kind: 'account' as const,
+          account: {
+            service: {
+              pluginId: 'happier.connected-account.example',
+              localId: 'example',
+            },
+            accountId: 'account-a',
+          },
+        },
+      }],
+    };
+    const snapshot: ActiveAccountSettingsSnapshot = {
+      source: 'network',
+      settings: { providerSettingsV1: settings } as never,
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      scopeKey: 'account-a',
+    };
+    const acquireManagedProviderRuntime = vi.fn(
+      async () => exactManagedProviderRuntime(),
+    );
+    const runtimeLease = lease(
+      undefined,
+      true,
+      'restart_session',
+      providersByContributionKey,
+    );
+    Object.assign(runtimeLease.registry, { acquireManagedProviderRuntime });
+
+    const authorizationInput = {
+      selection: {
+        v: 1,
+        updatedAt: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: connectionId,
+          modelId: 'model-a',
+        },
+      },
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+      agentId: 'codex',
+      lease: runtimeLease,
+      getAccountSettingsSnapshot: () => snapshot,
+      managedPurposeBindingSnapshot,
+      materializationBaseDir: '/unused',
+      sessionId: `managed-${_kind}`,
+    } satisfies Parameters<
+      typeof createRuntimeProviderSpawnAuthorizationAttempt
+    >[0];
+    const result = await createRuntimeProviderSpawnAuthorizationAttempt(
+      authorizationInput,
+    );
+
+    expect(acquireManagedProviderRuntime).toHaveBeenCalledWith({
+      pluginId: 'acme.gateway',
+      localId: 'gateway',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      attempt: {
+        authorization: {
+          deployment: {
+            kind: 'managedLocal',
+            contribution: {
+              provenance: 'external',
+              source,
+            },
+            implementation: {
+              implementationIdentity: {
+                pluginId: 'acme.gateway',
+                localId: 'gateway',
+              },
+              managedRuntime: {
+                kind: 'managed',
+                endpointTemplateIds: ['responses'],
+              },
+            },
+          },
+          sessionBindingMetadata: {
+            runtimeBindingBasis: {
+              deployment: {
+                kind: 'managedLocal',
+                implementationIdentity: {
+                  pluginId: 'acme.gateway',
+                  localId: 'gateway',
+                },
+                managedRuntime: {
+                  kind: 'managed',
+                  endpointTemplateIds: ['responses'],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    for (const unavailableRuntime of [
+      null,
+      exactManagedProviderRuntime(
+        () => false,
+      ),
+    ]) {
+      Object.assign(runtimeLease.registry, {
+        acquireManagedProviderRuntime: vi.fn(
+          async () => unavailableRuntime,
+        ),
+      });
+      await expect(
+        createRuntimeProviderSpawnAuthorizationAttempt(
+          authorizationInput,
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'provider_connection_invalid' },
+      });
+    }
+
+    const {
+      managedPurposeBindingSnapshot: _omittedPurposeBindings,
+      ...withoutPurposeBindings
+    } = authorizationInput;
+    await expect(
+      createRuntimeProviderSpawnAuthorizationAttempt(
+        withoutPurposeBindings,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'provider_connection_invalid' },
+    });
+  });
+
   it('reauthorizes an active managed binding from its immutable snapshot without calling C', async () => {
     const settings = managedGrantedSettings();
     const managedPurposeBindingSnapshot = {
@@ -1188,7 +1360,7 @@ describe('provider spawn authorization resolver', () => {
 
   it('separates exact managed effect custody from transferred lifetime currentness', async () => {
     const experimentalDefinition = ProviderContributionV1Schema.parse({
-      ...definition,
+      ...managedContribution.definition,
       compatibilityOverrides: [],
     });
     const experimentalContribution: ResolvedProviderContribution = {
@@ -1352,7 +1524,7 @@ describe('provider spawn authorization resolver', () => {
     transferredCleanup?.();
 
     currentSnapshot = snapshot(confirmedSettings, 6);
-    const facetAttempt = await createRuntimeProviderSpawnAuthorizationAttempt({
+    const generationAttempt = await createRuntimeProviderSpawnAuthorizationAttempt({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -1371,22 +1543,40 @@ describe('provider spawn authorization resolver', () => {
       materializationBaseDir: '/unused',
       sessionId: 'managed-facet-currentness',
     });
-    expect(facetAttempt.ok).toBe(true);
-    if (!facetAttempt.ok) throw new Error(facetAttempt.error.code);
-    providersByContributionKey.set(canonicalContributionKey, {
-      ...experimentalContribution,
-      managed: {
-        ...experimentalContribution.managed!,
-        managedEndpoint: {
-          ...experimentalContribution.managed!.managedEndpoint,
-          localService: {
-            ...experimentalContribution.managed!.managedEndpoint.localService,
-            name: { strategy: 'fixed', name: 'Changed gateway' },
-          },
+    expect(generationAttempt.ok).toBe(true);
+    if (!generationAttempt.ok) throw new Error(generationAttempt.error.code);
+    const isExactRetainedRuntimeCurrent = () => true;
+    expect(generationAttempt.attempt.isAuthorizationCurrent()).toBe(true);
+    expect(generationAttempt.attempt.isRetainedAuthorizationCurrent({
+      isExactRetainedRuntimeCurrent,
+    })).toBe(true);
+    providersByContributionKey.delete(canonicalContributionKey);
+    expect(generationAttempt.attempt.isRetainedAuthorizationCurrent({})).toBe(true);
+    await expect(createRuntimeProviderSpawnAuthorizationAttempt({
+      selection: {
+        v: 1,
+        updatedAt: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: connectionId,
+          modelId: model.id,
         },
       },
-    });
-    expect(facetAttempt.attempt.isAuthorizationCurrent()).toBe(false);
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+      agentId: 'codex',
+      lease: runtimeLease,
+      getAccountSettingsSnapshot: () => currentSnapshot,
+      resolveManagedPurposeBindingIntent: resolveBindingIntent,
+      materializationBaseDir: '/unused',
+      sessionId: 'managed-new-claim-after-removal',
+    })).resolves.toMatchObject({ ok: false });
+
+    currentSnapshot = snapshot(ProviderSettingsV1Schema.parse({
+      ...confirmedSettings,
+      machineGrants: [],
+    }), 7);
+    expect(generationAttempt.attempt.isRetainedAuthorizationCurrent({})).toBe(false);
   });
 
   it('never reads inherited machine override rows for legal prototype-name machine ids', async () => {
@@ -1771,25 +1961,25 @@ describe('shared provider probe authorization resolver', () => {
         },
       }],
     };
-    const managedFacet = managedContribution.managed!;
-    const catalogSource = managedContribution.managedRuntimeAdapter!.catalogSource;
+    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity: managedContribution.identity,
+      managedRuntime: managedContribution.definition.managedRuntime!,
+    });
     const request = {
       deployment: 'managedLocal' as const,
       connectionId,
       machineId: 'machine-a',
       implementationIdentity: managedContribution.identity,
-      managedFacet,
+      managedRuntime,
       purposeBindings,
-      catalogSource,
       endpointTemplateId: 'responses',
       protocol: 'openai-responses' as const,
       path: '/models',
       parser: 'openai-models' as const,
       probeRequestFingerprint: createProviderManagedProbeRequestFingerprintV1({
         implementationIdentity: managedContribution.identity,
-        managedFacet,
+        managedRuntime,
         purposeBindings,
-        catalogSource,
         endpointTemplateId: 'responses',
         protocol: 'openai-responses',
         method: 'GET',
@@ -1816,7 +2006,7 @@ describe('shared provider probe authorization resolver', () => {
         machineId: 'machine-a',
         endpointTemplateId: 'responses',
         implementationIdentity: managedContribution.identity,
-        catalogSource,
+        managedRuntime,
       },
       credentialRef: null,
       observationAuthorizationFingerprint: expect.stringMatching(

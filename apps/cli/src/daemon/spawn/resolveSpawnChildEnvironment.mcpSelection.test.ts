@@ -106,5 +106,6 @@ describe('resolveSpawnChildEnvironment (mcp selection)', () => {
     if (!result.ok) return;
 
     expect(result.extraEnvForChild.HAPPIER_SESSION_REQUESTED_DIRECTORY).toBe('/tmp/requested-session-directory');
+    expect(result.extraEnvForChild.HAPPIER_SESSION_MACHINE_WORKSPACE_PATH).toBe('/tmp/requested-session-directory');
   });
 });

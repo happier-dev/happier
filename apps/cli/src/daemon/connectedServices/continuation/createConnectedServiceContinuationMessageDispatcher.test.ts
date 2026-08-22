@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { readPendingLocalId } from '@happier-dev/protocol';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 
 import { createConnectedServiceContinuationMessageDispatcher } from './createConnectedServiceContinuationMessageDispatcher';
 
 describe('createConnectedServiceContinuationMessageDispatcher', () => {
-  const credentials: Credentials = {
+  const credentials: StoredCredentials = {
     token: 'token',
-    encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    encryption: null,
   };
 
   it('delegates continuation prompts to the durable session-message owner with the supplied local id', async () => {
@@ -17,6 +17,10 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
       sessionId: 'session-1',
       localId: 'connected-service-continuation:test',
       waited: false,
+      admissionResult: {
+        status: 'accepted' as const,
+        localId: 'connected-service-continuation:test',
+      },
     }));
     const dispatcher = createConnectedServiceContinuationMessageDispatcher({
       credentials,
@@ -35,6 +39,7 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
       message: 'continue',
       localId: 'connected-service-continuation:test',
       pendingAdmissionMode: 'continuation_if_no_queued_user_input',
+      requestedAction: { v: 1, kind: 'send_now' },
       resumeInactiveSession: false,
       wait: false,
       timeoutMs: 1,
@@ -47,6 +52,10 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
       sessionId: 'session-1',
       localId: input.localId ?? 'missing',
       waited: false,
+      admissionResult: {
+        status: 'accepted' as const,
+        localId: input.localId ?? 'missing',
+      },
     }));
     const dispatcher = createConnectedServiceContinuationMessageDispatcher({
       credentials,
@@ -103,6 +112,10 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
       sessionId: 'session-1',
       localId: input.localId ?? 'missing',
       waited: false,
+      admissionResult: {
+        status: 'accepted' as const,
+        localId: input.localId ?? 'missing',
+      },
     }));
     const dispatcher = createConnectedServiceContinuationMessageDispatcher({
       credentials,
@@ -169,6 +182,10 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
       sessionId: 'session-1',
       localId: input.localId ?? 'missing',
       waited: false,
+      admissionResult: {
+        status: 'accepted' as const,
+        localId: input.localId ?? 'missing',
+      },
     }));
     const dispatcher = createConnectedServiceContinuationMessageDispatcher({
       credentials,
@@ -195,6 +212,10 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
       sessionId: 'session-1',
       localId: input.localId ?? 'missing',
       waited: false,
+      admissionResult: {
+        status: 'accepted' as const,
+        localId: input.localId ?? 'missing',
+      },
     }));
     const dispatcher = createConnectedServiceContinuationMessageDispatcher({
       credentials,
@@ -222,6 +243,10 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
       localId: 'connected-service-continuation:test',
       waited: false,
       suppressed: true as const,
+      admissionResult: {
+        status: 'alreadyAccepted' as const,
+        localId: 'connected-service-continuation:test',
+      },
     }));
     const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials, sendMessage });
 

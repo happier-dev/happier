@@ -11,6 +11,7 @@ import { waitForPidInspection } from '@/testkit/process/pidInspection';
 import { isPidSafeHappySessionProcess } from './pidSafety';
 import { findHappyProcessByPid } from './doctor';
 import { hashProcessCommand } from './sessionRegistry';
+import { readProcessIdentityByPid } from './processIdentity';
 import {
   shouldRunDaemonReattachIntegration,
   spawnHappyLookingProcess,
@@ -31,11 +32,19 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())('pidSafety (real) integra
     expect(proc).not.toBeNull();
     if (!proc) return;
 
+    const processIdentity = await readProcessIdentityByPid(p.pid);
+    expect(processIdentity).not.toBeNull();
+    if (!processIdentity) return;
+
     const expected = hashProcessCommand(proc.command);
-    await expect(isPidSafeHappySessionProcess({ pid: p.pid, expectedProcessCommandHash: expected })).resolves.toBe(true);
+    await expect(isPidSafeHappySessionProcess({
+      pid: p.pid,
+      expectedProcessCommandHash: expected,
+      expectedProcessStartTimeMs: processIdentity.processStartTimeMs,
+    })).resolves.toBe(true);
   });
 
-  it('returns false when command hash mismatches (PID reuse safety)', async () => {
+  it('keeps the same process generation safe despite a different command witness', async () => {
     const p = spawnHappyLookingProcess();
     spawned.push(p.kill);
 
@@ -43,8 +52,16 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())('pidSafety (real) integra
     expect(proc).not.toBeNull();
     if (!proc) return;
 
+    const processIdentity = await readProcessIdentityByPid(p.pid);
+    expect(processIdentity).not.toBeNull();
+    if (!processIdentity) return;
+
     const wrong = '0'.repeat(64);
     expect(hashProcessCommand(proc.command)).not.toBe(wrong);
-    await expect(isPidSafeHappySessionProcess({ pid: p.pid, expectedProcessCommandHash: wrong })).resolves.toBe(false);
+    await expect(isPidSafeHappySessionProcess({
+      pid: p.pid,
+      expectedProcessCommandHash: wrong,
+      expectedProcessStartTimeMs: processIdentity.processStartTimeMs,
+    })).resolves.toBe(true);
   });
 });

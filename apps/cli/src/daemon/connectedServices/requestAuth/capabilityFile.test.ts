@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,7 @@ import {
   verifyConnectedAccountRequestAuthCapabilityFile,
   writeConnectedAccountRequestAuthCapabilityFile,
 } from './capabilityFile';
+import type { ProtectedLocalStateOptions } from '@/utils/fs/protectedLocalState';
 
 const roots: string[] = [];
 
@@ -21,6 +22,81 @@ afterEach(async () => {
 });
 
 describe('daemon-owned connected-account request-auth capability file', () => {
+  it('protects the Windows request-auth directory and empty temporary file before publishing capability bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-windows-custody-'));
+    roots.push(root);
+    const capabilityPath = join(root, 'request-auth', 'capability.json');
+    const events: string[] = [];
+    const protectedLocalStateOptions: ProtectedLocalStateOptions = {
+      platform: 'win32',
+      windowsAclBoundary: {
+        async applyAndVerify({ path, kind }) {
+          if (kind === 'directory') {
+            events.push(`directory-protected:${path}`);
+            return;
+          }
+          expect(path).not.toBe(capabilityPath);
+          await expect(readFile(path, 'utf8')).resolves.toBe('');
+          events.push(`temporary-protected-empty:${path}`);
+        },
+        async verify({ path, kind }) {
+          if (kind === 'directory') {
+            events.push(`directory-verified:${path}`);
+            return;
+          }
+          const contents = await readFile(path, 'utf8');
+          expect(contents).toContain('"capability"');
+          events.push(path === capabilityPath
+            ? 'published-capability-verified'
+            : `temporary-capability-verified:${path}`);
+        },
+      },
+    };
+    const descriptor = await writeConnectedAccountRequestAuthCapabilityFile({
+      rootDir: root,
+      materializationId: 'managed-run-windows-custody',
+      subjectScopeDigest: 'a'.repeat(64),
+      httpPort: 43_123,
+      protectedLocalStateOptions,
+    });
+
+    expect(descriptor.path).toBe(capabilityPath);
+    const temporaryProtected = events.findIndex((event) => event.startsWith('temporary-protected-empty:'));
+    const temporaryVerified = events.findIndex((event) => event.startsWith('temporary-capability-verified:'));
+    const publishedVerified = events.indexOf('published-capability-verified');
+    expect(events.findIndex((event) => event.startsWith('directory-protected:'))).toBeGreaterThanOrEqual(0);
+    expect(temporaryProtected).toBeGreaterThanOrEqual(0);
+    expect(temporaryVerified).toBeGreaterThan(temporaryProtected);
+    expect(publishedVerified).toBeGreaterThan(temporaryVerified);
+  });
+
+  it('fails closed when the Windows capability verifier cannot prove the protected ACL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-windows-verifier-'));
+    roots.push(root);
+    const descriptor = await writeConnectedAccountRequestAuthCapabilityFile({
+      rootDir: root,
+      materializationId: 'managed-run-windows-verifier',
+      subjectScopeDigest: 'a'.repeat(64),
+      httpPort: 43_123,
+    });
+
+    await expect(verifyConnectedAccountRequestAuthCapabilityFile({
+      ...descriptor,
+      materializedRootDir: root,
+      protectedLocalStateOptions: {
+        platform: 'win32',
+        windowsAclBoundary: {
+          async applyAndVerify() {
+            throw new Error('not used by a verifier');
+          },
+          async verify() {
+            throw new Error('inherited ACL');
+          },
+        },
+      },
+    })).resolves.toBeNull();
+  });
+
   it('atomically writes and replaces one private opaque-scope capability', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-'));
     roots.push(root);
@@ -298,10 +374,21 @@ describe('daemon-owned connected-account request-auth capability file', () => {
       materializationId: 'managed-run-1',
       subjectScopeDigest: 'd'.repeat(64),
       httpPort: 43123,
-    })).rejects.toThrow('private_bearer_parent_unsafe');
-    await expect(readFile(join(outside, 'capability.json'), 'utf8')).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
+    })).rejects.toThrow();
+    // No capability byte — canonical or temporary — may land in the symlink target.
+    await expect(readdir(outside)).resolves.toEqual([]);
+    // The writer must refuse rather than replace the hostile parent.
+    expect((await lstat(join(root, 'request-auth'))).isSymbolicLink()).toBe(true);
+    // Control: the identical write against a real parent succeeds, so the refusal above is
+    // attributable to the symlink and not to the fixture or an unrelated failure.
+    const control = await mkdtemp(join(tmpdir(), 'happier-request-auth-control-'));
+    roots.push(control);
+    await expect(writeConnectedAccountRequestAuthCapabilityFile({
+      rootDir: control,
+      materializationId: 'managed-run-1',
+      subjectScopeDigest: 'd'.repeat(64),
+      httpPort: 43123,
+    })).resolves.toMatchObject({ materializationId: 'managed-run-1' });
   });
 
   it('removes capability files idempotently', async () => {

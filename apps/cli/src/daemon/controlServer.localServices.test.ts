@@ -9,10 +9,8 @@ import type {
 import { createDaemonControlApp } from './controlServer';
 import type { LocalServiceInventoryRoutes } from './local/services/inventory/routes';
 import type { LocalServiceLauncherRoutes } from './local/services/launch/routes';
-import type { PluginLocalServicesBridgeControlRoutes } from './local/services/pluginBridgeRoutes';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
 import type { LocalServicePublicPreviewRoutes } from './local/services/public/routes';
-import { hashPluginLocalServicesBridgeToken } from './local/services/pluginBridgeAuthorization';
 
 describe('daemon control server: local service inventory endpoints', () => {
     it('routes snapshot, refresh, and label patches to the daemon-owned inventory routes', async () => {
@@ -35,9 +33,6 @@ describe('daemon control server: local service inventory endpoints', () => {
                 startedBy: 'daemon',
                 pid: 1234,
                 happySessionId: 'session-1',
-                localServicesBridgeTokenHash: hashPluginLocalServicesBridgeToken('bridge-token-session-1'),
-                localServicesBridgePluginId: 'acme.plugin',
-                localServicesBridgeContributionId: 'acme.plugin.backend',
             }],
             machineId: 'machine_local',
             stopSession: async () => ({ status: 'not_found' as const }),
@@ -154,113 +149,15 @@ describe('daemon control server: local service inventory endpoints', () => {
         }
     });
 
-    it('routes plugin local-service bridge operations to the daemon-owned plugin bridge runtime', async () => {
-        const snapshot = {
-            id: 'web',
-            phase: 'running' as const,
-            port: 5173,
-            url: 'https://preview.happier.test/plugin-web/',
-            diagnostics: [],
-        };
-        const localServicesPluginBridge: PluginLocalServicesBridgeControlRoutes = {
-            dispatch: vi.fn(async () => ({ ok: true as const, snapshot })),
-        };
+    it('does not expose the retired fixed plugin local-services bridge route', async () => {
         const app = createDaemonControlApp({
-            getChildren: () => [{
-                startedBy: 'daemon',
-                pid: 1234,
-                happySessionId: 'session-1',
-                localServicesBridgeTokenHash: hashPluginLocalServicesBridgeToken('bridge-token-session-1'),
-                localServicesBridgePluginId: 'acme.plugin',
-                localServicesBridgeContributionId: 'acme.plugin.backend',
-            }],
+            getChildren: () => [],
             machineId: 'machine_local',
             stopSession: async () => ({ status: 'not_found' as const }),
             spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
             requestShutdown: () => {},
             onHappySessionWebhook: () => {},
             controlToken: 'test-token',
-            localServicesPluginBridge,
-        });
-
-        try {
-            await app.ready();
-            const payload = {
-                protocolVersion: 1,
-                bridgeToken: 'bridge-token-session-1',
-                context: {
-                    pluginId: 'acme.plugin',
-                    contributionId: 'acme.plugin.backend',
-                    sessionId: 'session-1',
-                    title: 'Preview Session',
-                },
-                operation: {
-                    kind: 'start',
-                    declaration: {
-                        id: 'web',
-                        launch: { kind: 'binary', executablePath: '/bin/sh', args: ['-lc', 'npm run dev'] },
-                        launchMode: { kind: 'detectAfterLaunch', minimumConfidence: 'medium' },
-                        hostPolicy: { kind: 'loopback' },
-                        name: { strategy: 'derived', base: 'web' },
-                        healthCheck: { kind: 'none' },
-                        restart: { kind: 'never' },
-                        cleanup: { staleAfterMs: 30_000 },
-                    },
-                },
-            };
-            expect((await app.inject({
-                method: 'POST',
-                url: '/local-services/plugin/bridge',
-                payload,
-            })).statusCode).toBe(401);
-            const response = await app.inject({
-                method: 'POST',
-                url: '/local-services/plugin/bridge',
-                headers: { 'x-happier-daemon-token': 'test-token' },
-                payload,
-            });
-
-            expect(response.statusCode, response.body).toBe(200);
-            expect(response.json()).toEqual({ ok: true, snapshot });
-        } finally {
-            await app.close();
-        }
-
-        expect(localServicesPluginBridge.dispatch).toHaveBeenCalledWith({
-            protocolVersion: 1,
-            context: {
-                pluginId: 'acme.plugin',
-                contributionId: 'acme.plugin.backend',
-                sessionId: 'session-1',
-                title: 'Preview Session',
-            },
-            operation: {
-                kind: 'start',
-                declaration: expect.objectContaining({ id: 'web' }),
-            },
-        });
-    });
-
-    it('rejects plugin bridge requests without spawned-session bridge authorization', async () => {
-        const localServicesPluginBridge: PluginLocalServicesBridgeControlRoutes = {
-            dispatch: vi.fn(async () => ({ ok: true as const })),
-        };
-        const app = createDaemonControlApp({
-            getChildren: () => [{
-                startedBy: 'daemon',
-                pid: 1234,
-                happySessionId: 'session-1',
-                localServicesBridgeTokenHash: hashPluginLocalServicesBridgeToken('bridge-token-session-1'),
-                localServicesBridgePluginId: 'acme.plugin',
-                localServicesBridgeContributionId: 'acme.plugin.backend',
-            }],
-            machineId: 'machine_local',
-            stopSession: async () => ({ status: 'not_found' as const }),
-            spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
-            requestShutdown: () => {},
-            onHappySessionWebhook: () => {},
-            controlToken: 'test-token',
-            localServicesPluginBridge,
         });
 
         try {
@@ -269,134 +166,13 @@ describe('daemon control server: local service inventory endpoints', () => {
                 method: 'POST',
                 url: '/local-services/plugin/bridge',
                 headers: { 'x-happier-daemon-token': 'test-token' },
-                payload: {
-                    protocolVersion: 1,
-                    context: {
-                        pluginId: 'acme.plugin',
-                        contributionId: 'acme.plugin.backend',
-                        sessionId: 'session-1',
-                        title: 'Preview Session',
-                    },
-                    operation: { kind: 'get', serviceId: 'web' },
-                },
+                payload: {},
             });
 
-            expect(response.statusCode, response.body).toBe(403);
-            expect(response.json()).toEqual({
-                ok: false,
-                errorCode: 'local_services_plugin_bridge_forbidden',
-            });
+            expect(response.statusCode, response.body).toBe(404);
         } finally {
             await app.close();
         }
-
-        expect(localServicesPluginBridge.dispatch).not.toHaveBeenCalled();
-    });
-
-    it('rejects plugin bridge requests with mismatched spawned-session bridge context', async () => {
-        const localServicesPluginBridge: PluginLocalServicesBridgeControlRoutes = {
-            dispatch: vi.fn(async () => ({ ok: true as const })),
-        };
-        const app = createDaemonControlApp({
-            getChildren: () => [{
-                startedBy: 'daemon',
-                pid: 1234,
-                happySessionId: 'session-1',
-                localServicesBridgeTokenHash: hashPluginLocalServicesBridgeToken('bridge-token-session-1'),
-                localServicesBridgePluginId: 'acme.plugin',
-                localServicesBridgeContributionId: 'acme.plugin.backend',
-            }],
-            machineId: 'machine_local',
-            stopSession: async () => ({ status: 'not_found' as const }),
-            spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
-            requestShutdown: () => {},
-            onHappySessionWebhook: () => {},
-            controlToken: 'test-token',
-            localServicesPluginBridge,
-        });
-
-        try {
-            await app.ready();
-            const response = await app.inject({
-                method: 'POST',
-                url: '/local-services/plugin/bridge',
-                headers: { 'x-happier-daemon-token': 'test-token' },
-                payload: {
-                    protocolVersion: 1,
-                    bridgeToken: 'bridge-token-session-1',
-                    context: {
-                        pluginId: 'acme.plugin',
-                        contributionId: 'other.plugin.backend',
-                        sessionId: 'session-1',
-                        title: 'Preview Session',
-                    },
-                    operation: { kind: 'get', serviceId: 'web' },
-                },
-            });
-
-            expect(response.statusCode, response.body).toBe(403);
-            expect(response.json()).toEqual({
-                ok: false,
-                errorCode: 'local_services_plugin_bridge_forbidden',
-            });
-        } finally {
-            await app.close();
-        }
-
-        expect(localServicesPluginBridge.dispatch).not.toHaveBeenCalled();
-    });
-
-    it('rejects plugin bridge requests with mismatched plugin owner even when token and contribution match', async () => {
-        const localServicesPluginBridge: PluginLocalServicesBridgeControlRoutes = {
-            dispatch: vi.fn(async () => ({ ok: true as const })),
-        };
-        const app = createDaemonControlApp({
-            getChildren: () => [{
-                startedBy: 'daemon',
-                pid: 1234,
-                happySessionId: 'session-1',
-                localServicesBridgeTokenHash: hashPluginLocalServicesBridgeToken('bridge-token-session-1'),
-                localServicesBridgePluginId: 'acme.plugin',
-                localServicesBridgeContributionId: 'acme.plugin.backend',
-            }],
-            machineId: 'machine_local',
-            stopSession: async () => ({ status: 'not_found' as const }),
-            spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
-            requestShutdown: () => {},
-            onHappySessionWebhook: () => {},
-            controlToken: 'test-token',
-            localServicesPluginBridge,
-        });
-
-        try {
-            await app.ready();
-            const response = await app.inject({
-                method: 'POST',
-                url: '/local-services/plugin/bridge',
-                headers: { 'x-happier-daemon-token': 'test-token' },
-                payload: {
-                    protocolVersion: 1,
-                    bridgeToken: 'bridge-token-session-1',
-                    context: {
-                        pluginId: 'other.plugin',
-                        contributionId: 'acme.plugin.backend',
-                        sessionId: 'session-1',
-                        title: 'Preview Session',
-                    },
-                    operation: { kind: 'get', serviceId: 'web' },
-                },
-            });
-
-            expect(response.statusCode, response.body).toBe(403);
-            expect(response.json()).toEqual({
-                ok: false,
-                errorCode: 'local_services_plugin_bridge_forbidden',
-            });
-        } finally {
-            await app.close();
-        }
-
-        expect(localServicesPluginBridge.dispatch).not.toHaveBeenCalled();
     });
 
     it('routes preview snapshots to the daemon-owned preview runtime', async () => {

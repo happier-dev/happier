@@ -15,9 +15,6 @@ import {
     resolveAcpSessionMessageRole,
     resolveSessionEventMessageRole,
 } from '../../messageRole';
-import {
-    buildUserTextMessageContent,
-} from '../../outbound/shared';
 import { extractAssistantTextSnapshotFromAcpMessage } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 import {
@@ -47,16 +44,23 @@ function buildSessionEventContent(event: SessionEventMessage, id?: string): {
     };
 }
 
-type CommitSessionMessageParams = Readonly<{
-    message: PlainOrEncryptedPayload;
+export function prepareSessionEventMessageViaPort(
+    port: Pick<SessionClientTranscriptSendPort, 'buildOutboundSessionMessagePayload'>,
+    event: SessionEventMessage,
+    id?: string,
+): Readonly<{
+    payload: PlainOrEncryptedPayload;
     localId: string;
-    sidechainId: string | null;
     messageRole: SessionMessageRole;
-    sessionEventType?: SessionEventType;
-    logErrorMessage: string;
-    markAsUserMessage?: boolean;
-    refreshAgentQueueEchoSuppression?: boolean;
-}>;
+    sessionEventType: SessionEventType | undefined;
+}> {
+    return {
+        payload: port.buildOutboundSessionMessagePayload(buildSessionEventContent(event, id)),
+        localId: randomUUID(),
+        messageRole: resolveSessionEventMessageRole(),
+        sessionEventType: event.type === 'ready' ? 'ready' : undefined,
+    };
+}
 
 export type SessionClientTranscriptSendPort = Readonly<{
     sessionId: string;
@@ -73,9 +77,6 @@ export type SessionClientTranscriptSendPort = Readonly<{
     debugLargeJson: (message: string, data?: unknown) => void;
     getMetadataSnapshot: () => Metadata | null;
     buildOutboundSessionMessagePayload: (content: unknown) => PlainOrEncryptedPayload;
-    commitSessionMessageBestEffort: (params: CommitSessionMessageParams) => Promise<void>;
-    logSendWhileDisconnected: (context: string, details?: Record<string, unknown>) => void;
-    markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
     toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
     permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
     toolCallInputByProviderAndId: Map<string, unknown>;
@@ -92,7 +93,7 @@ function observeAcpAssistantText(params: Readonly<{
     provider: ACPProvider;
     body: ACPMessageData;
     localId?: string | null;
-    source: 'ephemeral' | 'provider-dispatch';
+    source: 'ephemeral';
 }>): void {
     const extracted = extractAssistantTextSnapshotFromAcpMessage(params.provider, params.body);
     if (!extracted) return;
@@ -102,80 +103,6 @@ function observeAcpAssistantText(params: Readonly<{
         sidechainId: extracted.sidechainId,
         localId: params.localId ?? null,
         source: params.source,
-    });
-}
-
-export function sendAgentMessageViaPort(
-    port: SessionClientTranscriptSendPort,
-    provider: ACPProvider,
-    body: ACPMessageData,
-    opts?: Readonly<{ localId?: string; meta?: Record<string, unknown> }>,
-): Readonly<{
-    normalizedBody: ACPMessageData;
-    localId: string;
-}> {
-    const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
-        provider,
-        body,
-        meta: opts?.meta,
-        localId: opts?.localId,
-        toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
-        permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
-        toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
-        maxToolCallCacheEntries: port.maxToolCallCacheEntries,
-    });
-
-    port.outboundShapeLogger.log(`acp:${provider}:${normalizedBody.type}`, normalizedBody);
-    port.debug(`[SOCKET] Sending ACP message from ${provider}:`, {
-        type: normalizedBody.type,
-        hasMessage: 'message' in normalizedBody,
-    });
-    port.logSendWhileDisconnected(`${provider} ACP message`, { type: normalizedBody.type });
-
-    const messageRole = resolveAcpSessionMessageRole(normalizedBody);
-    const payload = port.buildOutboundSessionMessagePayload(content);
-    port.commitSessionMessageBestEffort({
-        message: payload,
-        localId,
-        sidechainId,
-        messageRole,
-        logErrorMessage: '[SOCKET] Failed to commit agent message (non-fatal)',
-    });
-    observeAcpAssistantText({
-        store: port.turnAssistantTextSnapshotStore,
-        provider,
-        body: normalizedBody,
-        localId,
-        source: 'provider-dispatch',
-    });
-
-    return { normalizedBody, localId };
-}
-
-export function sendUserTextMessageViaPort(
-    port: SessionClientTranscriptSendPort,
-    text: string,
-    opts?: Readonly<{ localId?: string; meta?: Record<string, unknown>; refreshAgentQueueEchoSuppression?: boolean }>,
-): void {
-    const content = buildUserTextMessageContent(text, opts?.meta);
-
-    port.logSendWhileDisconnected('User text message', { length: text.length });
-    const payload = port.buildOutboundSessionMessagePayload(content);
-    const localId = typeof opts?.localId === 'string' && opts.localId.length > 0 ? opts.localId : randomUUID();
-    const meta = opts?.meta ?? null;
-    const metaSource = typeof meta?.source === 'string' ? meta.source : null;
-    if (metaSource === 'cli') {
-        port.markAgentQueueEchoSuppressedLocalId(localId);
-    }
-
-    port.commitSessionMessageBestEffort({
-        message: payload,
-        localId,
-        sidechainId: null,
-        messageRole: 'user',
-        markAsUserMessage: true,
-        refreshAgentQueueEchoSuppression: opts?.refreshAgentQueueEchoSuppression === true || metaSource === 'cli',
-        logErrorMessage: '[SOCKET] Failed to commit user message (non-fatal)',
     });
 }
 
@@ -336,23 +263,4 @@ export function sendAgentMessageEphemeralDeltaViaPort(
         return createEphemeralSendFailure('emit_failed', readEphemeralStreamConnectionEpoch(port), error);
     }
     return { accepted: true, epoch: readEphemeralStreamConnectionEpoch(port) };
-}
-
-export function sendSessionEventViaPort(
-    port: SessionClientTranscriptSendPort,
-    event: SessionEventMessage,
-    id?: string,
-): void {
-    const content = buildSessionEventContent(event, id);
-    port.logSendWhileDisconnected('session event', { eventType: event.type });
-
-    const payload = port.buildOutboundSessionMessagePayload(content);
-    port.commitSessionMessageBestEffort({
-        message: payload,
-        localId: randomUUID(),
-        sidechainId: null,
-        messageRole: resolveSessionEventMessageRole(),
-        sessionEventType: event.type === 'ready' ? 'ready' : undefined,
-        logErrorMessage: '[SOCKET] Failed to commit session event (non-fatal)',
-    });
 }

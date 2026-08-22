@@ -1,15 +1,18 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 
-import { registerReadFileHandler, type ExactAllowedReadFile } from './readFileHandler';
+import { registerReadFileHandler } from './readFileHandler';
+import type { ExactAllowedReadFile } from './accessPolicy/exactAllowedReadFile';
 import { registerWriteFileHandler } from './writeFileHandler';
 import { registerDirectoryHandlers } from './directoryHandlers';
 import { registerPathMutationHandlers } from './pathMutationHandlers';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/resolveComposerMediaStageUploadTarget';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { registerTransferDownloadRpcHandlers } from '@/transfers/rpc/registerTransferDownloadRpcHandlers';
 import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
+import { registerComposerMediaStageLifecycleRpcHandlers } from '@/transfers/rpc/registerComposerMediaStageLifecycleRpcHandlers';
 import {
   OS_USER_FILESYSTEM_ACCESS_POLICY,
   type FilesystemAccessPolicy,
@@ -35,6 +38,7 @@ export function registerFileSystemHandlers(
     getAdditionalAllowedReadDirs?: () => ReadonlyArray<string>;
     getAdditionalAllowedReadFiles?: () => ReadonlyArray<ExactAllowedReadFile>;
     getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
+    composerMediaStage?: ComposerMediaStageUploadTargetDeps;
     actionExecutor?: RpcActionExecutor;
     directoryLimits?: Readonly<{
       listMaxEntries?: number;
@@ -102,14 +106,22 @@ export function registerFileSystemHandlers(
     attachmentUpload: {
       pathAllowanceRegistry,
     },
+    ...(opts?.composerMediaStage ? { composerMediaStage: opts.composerMediaStage } : {}),
   });
   registerTransferDownloadRpcHandlers(rpcHandlerManager, {
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
+    ...(getAdditionalAllowedReadFiles ? { getAdditionalAllowedReadFiles } : {}),
     store: transferSessionStore,
     sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes(),
+    ...(opts?.composerMediaStage ? { composerMediaStage: { store: opts.composerMediaStage.store } } : {}),
   });
+  if (opts?.composerMediaStage) {
+    registerComposerMediaStageLifecycleRpcHandlers(rpcHandlerManager, {
+      store: opts.composerMediaStage.store,
+    });
+  }
 
   return {
     transferSessionStore,

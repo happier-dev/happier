@@ -178,6 +178,35 @@ describe('provider runtime-state store', () => {
     expect(persisted.endpointHealth[0]?.state).toMatchObject({ status: 'available', observedAt: 1 });
   });
 
+  it('keeps its own live checking activity across a mutation that merges another process store', async () => {
+    const happyHomeDir = await tempHome();
+    const probingStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    const otherStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    await probingStore.update(() => fileWithEndpoint(endpointRecord('responses', 1, 'checking')));
+    await otherStore.update((state) => ({
+      ...state,
+      endpointHealth: [...state.endpointHealth, endpointRecord('completions', 2)],
+    }));
+
+    // The probing store must still see its own transient activity, which the
+    // durable file deliberately never carries, or it can no longer retire the
+    // record it created.
+    const observedByTransform: Array<'idle' | 'checking'> = [];
+    await probingStore.update((state) => {
+      for (const record of state.endpointHealth) observedByTransform.push(record.state.activity);
+      return {
+        ...state,
+        endpointHealth: state.endpointHealth.filter((record) =>
+          record.state.activity !== 'checking'),
+      };
+    });
+
+    expect(observedByTransform.sort()).toEqual(['checking', 'idle']);
+    const persisted = await createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' }).read();
+    expect(persisted.endpointHealth.map((record) => record.key.endpointTemplateId))
+      .toEqual(['completions']);
+  });
+
   it('serializes concurrent mutations without losing either update', async () => {
     const happyHomeDir = await tempHome();
     const store = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
@@ -319,5 +348,58 @@ describe('provider runtime-state store', () => {
     await expect(store.update(() => fileWithEndpoint())).rejects.toThrow(/symbolic link/u);
     await expect(readFile(join(externalDir, 'runtime-state-v1.json'), 'utf8'))
       .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('preserves another process store\'s record instead of overwriting it from stale memory', async () => {
+    const happyHomeDir = await tempHome();
+    // The daemon and a standalone CLI each construct their own store over the
+    // one file; neither can see the other's private memory.
+    const daemonStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    const foregroundStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    await daemonStore.read();
+    await foregroundStore.read();
+
+    await daemonStore.update((state) => ({
+      ...state,
+      endpointHealth: [endpointRecord('responses', 1)],
+    }));
+    await foregroundStore.update((state) => ({
+      ...state,
+      endpointHealth: [...state.endpointHealth, endpointRecord('completions', 2)],
+    }));
+
+    const observer = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    const persisted = await observer.read();
+    expect(persisted.endpointHealth.map((record) => record.key.endpointTemplateId).sort())
+      .toEqual(['completions', 'responses']);
+  });
+
+  it('applies a queued touch over another process store\'s newer record', async () => {
+    const happyHomeDir = await tempHome();
+    const daemonStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    const foregroundStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    await daemonStore.update((state) => ({
+      ...state,
+      endpointHealth: [endpointRecord('responses', 1)],
+    }));
+    await foregroundStore.read();
+    await daemonStore.update((state) => ({
+      ...state,
+      endpointHealth: [...state.endpointHealth, endpointRecord('completions', 2)],
+    }));
+
+    foregroundStore.touch({
+      kind: 'endpointHealth',
+      key: endpointRecord('responses', 1).key,
+      lastAccessedAt: 9,
+    });
+    await foregroundStore.flushTouches();
+
+    const observer = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    const persisted = await observer.read();
+    expect(persisted.endpointHealth.map((record) => [
+      record.key.endpointTemplateId,
+      record.lastAccessedAt,
+    ]).sort()).toEqual([['completions', 2], ['responses', 9]]);
   });
 });

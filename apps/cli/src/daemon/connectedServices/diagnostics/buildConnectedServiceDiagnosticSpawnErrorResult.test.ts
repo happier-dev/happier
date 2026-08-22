@@ -102,6 +102,88 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
     expect(JSON.stringify(result)).not.toContain('must-not-leak');
   });
 
+  it('builds a retryable transient-refresh diagnostic with only sanitized classification facts', () => {
+    const rawProviderText = 'provider response token=must-not-leak';
+    const result = buildConnectedServiceCredentialRefreshSpawnErrorResult({
+      agentId: 'codex',
+      error: Object.assign(new Error(rawProviderText), {
+        name: 'ConnectedServiceSpawnCredentialRefreshError',
+        kind: 'transient_refresh_failed',
+        serviceId: 'openai-codex',
+        profileId: 'voice-profile',
+        diagnostic: {
+          serviceId: 'openai-codex',
+          profileId: 'voice-profile',
+          reason: 'spawn_preflight',
+          status: 'refresh_failed',
+          category: 'network_error',
+          providerErrorCode: rawProviderText,
+          refreshToken: 'must-not-leak',
+        },
+      }),
+    });
+
+    expect(result).not.toBeNull();
+    if (!result) throw new Error('expected transient-refresh spawn diagnostic');
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'connected_service_credential_refresh_unavailable',
+    });
+    expect(isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)).toBe(true);
+    if (!isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)) {
+      throw new Error('expected connected-service diagnostic spawn detail');
+    }
+    expect(result.errorDetail.uxDiagnostic).toEqual({
+      code: 'connected_service_credential_refresh_unavailable',
+      failurePhase: 'materialization',
+      source: 'spawn_resume',
+      serviceId: 'openai-codex',
+      agentId: 'codex',
+      profileId: 'voice-profile',
+      retryable: true,
+      suggestedActions: ['retry', 'open_connected_accounts'],
+      diagnostics: {
+        reason: 'spawn_preflight',
+        status: 'refresh_failed',
+        category: 'network_error',
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(rawProviderText);
+    expect(JSON.stringify(result)).not.toContain('must-not-leak');
+  });
+
+  it('keeps refresh-lease contention retryable without inventing a failure category', () => {
+    const result = buildConnectedServiceCredentialRefreshSpawnErrorResult({
+      agentId: 'codex',
+      error: Object.assign(new Error('lease was held elsewhere'), {
+        name: 'ConnectedServiceSpawnCredentialRefreshError',
+        kind: 'transient_refresh_failed',
+        diagnostic: {
+          serviceId: 'openai-codex',
+          profileId: 'voice-profile',
+          reason: 'spawn_preflight',
+          status: 'lease_not_acquired',
+        },
+      }),
+    });
+
+    expect(result).not.toBeNull();
+    if (!result || !isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)) {
+      throw new Error('expected refresh-lease diagnostic spawn detail');
+    }
+    expect(result.errorDetail.uxDiagnostic).toMatchObject({
+      code: 'connected_service_credential_refresh_unavailable',
+      retryable: true,
+      suggestedActions: ['retry', 'open_connected_accounts'],
+      diagnostics: {
+        reason: 'spawn_preflight',
+        status: 'lease_not_acquired',
+        category: null,
+      },
+    });
+  });
+
   it('maps profile action required spawn failures to the same reconnect diagnostic', () => {
     const result = buildConnectedServiceCredentialRefreshSpawnErrorResult({
       agentId: 'claude',

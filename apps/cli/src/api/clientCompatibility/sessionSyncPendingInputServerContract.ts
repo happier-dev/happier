@@ -2,21 +2,21 @@ import {
     FeaturesResponseSchema,
     PENDING_INPUT_PROTOCOL_VERSION_V1,
     SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY,
-    SessionSyncPendingInputCompatibilityPingAckV1Schema,
 } from '@happier-dev/protocol';
 import { normalizeBaseUrl } from '@/diagnostics/httpClient';
 
+export type RuntimeActivityServerContract = 'v2' | 'legacy' | 'unsupported' | 'indeterminate';
+export type PendingInputServerContract = 'v1' | 'released_server_v0_2_1' | 'unsupported' | 'indeterminate';
+export type PublisherAuthorityServerContract = 'v1' | 'unsupported' | 'indeterminate';
+
 export type SessionSyncPendingInputServerContractMode =
+    | 'session_sync_v3_publisher_authority_check_v1'
     | 'session_sync_v2_pending_input_v1'
     | 'released_server_v0_2_1'
     | 'indeterminate'
     | 'auth_failed';
 
 type ProbeSocket = Readonly<{ connected?: boolean }>;
-type PingAckEmitter = Readonly<{
-    timeout?: (ms: number) => PingAckEmitter;
-    emitWithAck: (event: 'ping') => Promise<unknown>;
-}>;
 type EpochProbe = Readonly<{
     sessionConnectionEpoch: number;
     socket: ProbeSocket;
@@ -25,48 +25,93 @@ type EpochProbe = Readonly<{
 
 export type SessionSyncPendingInputServerContractResult = Readonly<{
     mode: SessionSyncPendingInputServerContractMode;
+    runtimeActivity: RuntimeActivityServerContract;
+    pendingInput: PendingInputServerContract;
+    publisherAuthority: PublisherAuthorityServerContract;
     sessionConnectionEpoch: number;
     socket: ProbeSocket;
 }>;
 
-export type SessionSyncPendingInputHttpContractShape =
-    | 'current_or_later_compatible'
-    | 'v0_2_1_legacy_contract_shape'
-    | 'indeterminate';
+type CapabilitySelection = Pick<
+    SessionSyncPendingInputServerContractResult,
+    'runtimeActivity' | 'pendingInput' | 'publisherAuthority'
+>;
 
-export function classifySessionSyncPendingInputHttpContractShape(
-    payload: unknown,
-): SessionSyncPendingInputHttpContractShape {
-    const parsed = FeaturesResponseSchema.safeParse(payload);
-    if (!parsed.success) return 'indeterminate';
+const INDETERMINATE: CapabilitySelection = Object.freeze({
+    runtimeActivity: 'indeterminate',
+    pendingInput: 'indeterminate',
+    publisherAuthority: 'indeterminate',
+});
 
-    const compatibility = parsed.data.capabilities.compatibility;
-    const sessionSyncVersion = compatibility?.sessionSync.currentSessionSyncProtocolVersion;
-    const pendingInputVersion = compatibility?.pendingInput?.currentPendingInputProtocolVersion;
-    if (
-        sessionSyncVersion !== undefined
-        && sessionSyncVersion >= SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY
-        && pendingInputVersion !== undefined
-        && pendingInputVersion >= PENDING_INPUT_PROTOCOL_VERSION_V1
-    ) {
-        return 'current_or_later_compatible';
+function isReleasedServerV021(features: ReturnType<typeof FeaturesResponseSchema.parse>): boolean {
+    return features.capabilities.session.runtimeActivity === undefined
+        && features.capabilities.session.pendingInput === undefined
+        && features.capabilities.session.publisherAuthority === undefined
+        && features.features.sharing.pendingQueueV2.enabled === true
+        && features.features.sharing.pendingDeliveryState.enabled !== true;
+}
+
+export function resolveSessionServerCapabilities(raw: unknown): CapabilitySelection {
+    const parsed = FeaturesResponseSchema.safeParse(raw);
+    if (!parsed.success) return INDETERMINATE;
+    if (isReleasedServerV021(parsed.data)) {
+        return {
+            runtimeActivity: 'legacy',
+            pendingInput: 'released_server_v0_2_1',
+            publisherAuthority: 'unsupported',
+        };
     }
+    const session = parsed.data.capabilities.session;
+    return {
+        runtimeActivity:
+            (session.runtimeActivity?.protocolVersion ?? 0)
+                >= SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY
+                ? 'v2'
+                : 'unsupported',
+        pendingInput:
+            (session.pendingInput?.protocolVersion ?? 0)
+                >= PENDING_INPUT_PROTOCOL_VERSION_V1
+                ? 'v1'
+                : 'unsupported',
+        publisherAuthority:
+            (session.publisherAuthority?.protocolVersion ?? 0) >= 1
+                ? 'v1'
+                : 'unsupported',
+    };
+}
 
-    if (
-        compatibility === undefined
-        && parsed.data.features.sharing.pendingQueueV2.enabled === true
-        && parsed.data.features.sharing.pendingDeliveryState.enabled !== true
-    ) {
-        return 'v0_2_1_legacy_contract_shape';
+function projectMode(selection: CapabilitySelection): SessionSyncPendingInputServerContractMode {
+    if (selection.publisherAuthority === 'v1') {
+        return 'session_sync_v3_publisher_authority_check_v1';
     }
-
+    if (selection.runtimeActivity === 'v2' && selection.pendingInput === 'v1') {
+        return 'session_sync_v2_pending_input_v1';
+    }
+    if (
+        selection.runtimeActivity === 'legacy'
+        && selection.pendingInput === 'released_server_v0_2_1'
+    ) {
+        return 'released_server_v0_2_1';
+    }
     return 'indeterminate';
 }
 
-function isExactReleasedServerPingAck(value: unknown): boolean {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const prototype = Object.getPrototypeOf(value);
-    return (prototype === Object.prototype || prototype === null) && Object.keys(value).length === 0;
+export function supportsSessionSyncPendingInputV1(
+    contract: SessionSyncPendingInputServerContractResult | null | undefined,
+): boolean {
+    return contract?.pendingInput === 'v1';
+}
+
+export function supportsSessionPublisherAuthorityCheckV1(
+    contract: SessionSyncPendingInputServerContractResult | null | undefined,
+): boolean {
+    return contract?.publisherAuthority === 'v1';
+}
+
+export function supportsRuntimeActivityV2(
+    contract: SessionSyncPendingInputServerContractResult | null | undefined,
+): boolean {
+    return contract?.runtimeActivity === 'v2';
 }
 
 export function createSessionSyncPendingInputServerContractController(options: Readonly<{
@@ -85,101 +130,63 @@ export function createSessionSyncPendingInputServerContractController(options: R
 
     const answer = (
         probe: EpochProbe,
-        mode: SessionSyncPendingInputServerContractMode,
+        selection: CapabilitySelection,
+        forcedMode?: 'auth_failed',
     ): SessionSyncPendingInputServerContractResult => ({
-        mode,
+        mode: forcedMode ?? projectMode(selection),
+        ...selection,
         sessionConnectionEpoch: probe.sessionConnectionEpoch,
         socket: probe.socket,
     });
-    const isCurrentAttempt = (attempt: NonNullable<typeof active>) => active === attempt;
+    const isCurrent = (attempt: NonNullable<typeof active>): boolean => active === attempt;
 
     async function run(
         probe: EpochProbe,
         attempt: NonNullable<typeof active>,
     ): Promise<SessionSyncPendingInputServerContractResult> {
         if (!probe.machineId?.trim() || probe.socket.connected !== true) {
-            return answer(probe, 'indeterminate');
+            return answer(probe, INDETERMINATE);
         }
-
         const abort = new AbortController();
         const timer = setTimeout(() => abort.abort(), timeoutMs);
         timer.unref?.();
-        let response: Response;
-        let payload: unknown;
         try {
-            response = await fetchImpl(`${normalizeBaseUrl(options.serverUrl)}/v1/features`, {
+            const response = await fetchImpl(`${normalizeBaseUrl(options.serverUrl)}/v1/features`, {
                 method: 'GET',
                 headers: { Authorization: `Bearer ${options.token}` },
                 redirect: 'manual',
                 signal: abort.signal,
             });
-            if (!isCurrentAttempt(attempt) || probe.socket.connected !== true) {
-                return answer(probe, 'indeterminate');
+            if (!isCurrent(attempt) || probe.socket.connected !== true) {
+                return answer(probe, INDETERMINATE);
             }
             if (response.status === 401 || response.status === 403) {
-                return answer(probe, 'auth_failed');
+                return answer(probe, INDETERMINATE, 'auth_failed');
             }
-            if (!response.ok) return answer(probe, 'indeterminate');
-            payload = await response.json();
+            if (!response.ok) return answer(probe, INDETERMINATE);
+            const selection = resolveSessionServerCapabilities(await response.json());
+            if (!isCurrent(attempt) || probe.socket.connected !== true) {
+                return answer(probe, INDETERMINATE);
+            }
+            return answer(probe, selection);
         } catch {
-            return answer(probe, 'indeterminate');
+            return answer(probe, INDETERMINATE);
         } finally {
             clearTimeout(timer);
         }
-        if (!isCurrentAttempt(attempt) || probe.socket.connected !== true) {
-            return answer(probe, 'indeterminate');
-        }
-
-        const httpContractShape = classifySessionSyncPendingInputHttpContractShape(payload);
-        if (httpContractShape === 'indeterminate') return answer(probe, 'indeterminate');
-
-        let rawAck: unknown;
-        try {
-            const emitter = probe.socket as PingAckEmitter;
-            rawAck = await (emitter.timeout?.(timeoutMs) ?? emitter).emitWithAck('ping');
-        } catch {
-            return answer(probe, 'indeterminate');
-        }
-        if (!isCurrentAttempt(attempt) || probe.socket.connected !== true) {
-            return answer(probe, 'indeterminate');
-        }
-
-        if (httpContractShape === 'v0_2_1_legacy_contract_shape') {
-            return answer(
-                probe,
-                isExactReleasedServerPingAck(rawAck) ? 'released_server_v0_2_1' : 'indeterminate',
-            );
-        }
-
-        const ack = SessionSyncPendingInputCompatibilityPingAckV1Schema.safeParse(rawAck);
-        if (!ack.success) return answer(probe, 'indeterminate');
-        const sessionSyncVersion = ack.data.compatibility.sessionSync.currentSessionSyncProtocolVersion;
-        const pendingInputVersion = ack.data.compatibility.pendingInput?.currentPendingInputProtocolVersion;
-        return answer(
-            probe,
-            sessionSyncVersion >= SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY
-                && pendingInputVersion !== undefined
-                && pendingInputVersion >= PENDING_INPUT_PROTOCOL_VERSION_V1
-                ? 'session_sync_v2_pending_input_v1'
-                : 'indeterminate',
-        );
     }
 
     return {
         resolve(probe: EpochProbe): Promise<SessionSyncPendingInputServerContractResult> {
-            if (probe.socket.connected !== true || !probe.machineId?.trim()) {
+            if (!probe.machineId?.trim() || probe.socket.connected !== true) {
                 active = null;
-                return Promise.resolve(answer(probe, 'indeterminate'));
+                return Promise.resolve(answer(probe, INDETERMINATE));
             }
             if (
                 active?.sessionConnectionEpoch === probe.sessionConnectionEpoch
                 && active.socket === probe.socket
                 && active.promise
-                && probe.socket.connected === true
-                && Boolean(probe.machineId?.trim())
-            ) {
-                return active.promise;
-            }
+            ) return active.promise;
             const attempt: NonNullable<typeof active> = {
                 sessionConnectionEpoch: probe.sessionConnectionEpoch,
                 socket: probe.socket,
@@ -187,10 +194,12 @@ export function createSessionSyncPendingInputServerContractController(options: R
             };
             const promise = run(probe, attempt).then((result) => {
                 if (
-                    result.mode === 'indeterminate'
-                    && isCurrentAttempt(attempt)
+                    active === attempt
+                    && result.runtimeActivity === 'indeterminate'
+                    && result.pendingInput === 'indeterminate'
+                    && result.publisherAuthority === 'indeterminate'
                 ) {
-                    attempt.promise = null;
+                    active = null;
                 }
                 return result;
             });
@@ -198,11 +207,12 @@ export function createSessionSyncPendingInputServerContractController(options: R
             active = attempt;
             return promise;
         },
-        invalidate(probe?: Readonly<{ sessionConnectionEpoch?: number; socket?: ProbeSocket }>): SessionSyncPendingInputServerContractResult | null {
+        invalidate(probe?: Readonly<{
+            sessionConnectionEpoch?: number;
+            socket?: ProbeSocket;
+        }>): SessionSyncPendingInputServerContractResult | null {
             if (
-                active
-                &&
-                probe?.sessionConnectionEpoch !== undefined
+                active && probe?.sessionConnectionEpoch !== undefined
                 && active.sessionConnectionEpoch !== probe.sessionConnectionEpoch
             ) return null;
             if (active && probe?.socket !== undefined && active.socket !== probe.socket) return null;
@@ -211,7 +221,7 @@ export function createSessionSyncPendingInputServerContractController(options: R
             const sessionConnectionEpoch = probe?.sessionConnectionEpoch ?? invalidated?.sessionConnectionEpoch;
             const socket = probe?.socket ?? invalidated?.socket;
             return sessionConnectionEpoch !== undefined && socket
-                ? { mode: 'indeterminate', sessionConnectionEpoch, socket }
+                ? answer({ sessionConnectionEpoch, socket, machineId: null }, INDETERMINATE)
                 : null;
         },
     };

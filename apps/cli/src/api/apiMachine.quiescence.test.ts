@@ -8,6 +8,8 @@ import type { DaemonState, Machine, MachineMetadata } from './types';
 
 import { ApiMachineClient } from './apiMachine';
 import { encodeBase64, encrypt } from './encryption';
+import { decodePlainMachineStoredContent } from '@happier-dev/protocol';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 const ioMock = vi.hoisted(() => vi.fn());
 const probeReadinessMock = vi.hoisted(() => vi.fn(async () => ({ status: 'ready' as const })));
@@ -60,6 +62,17 @@ function createMachine(): Machine {
     };
 }
 
+function createPlainMachine(): Machine {
+    return {
+        id: 'machine-plain-1',
+        encryptionMode: 'plain',
+        metadata: null,
+        metadataVersion: 0,
+        daemonState: null,
+        daemonStateVersion: 0,
+    };
+}
+
 function createMachineMetadata(): MachineMetadata {
     return {
         host: 'test-host',
@@ -72,6 +85,9 @@ function createMachineMetadata(): MachineMetadata {
 }
 
 function encryptForMachine(machine: Machine, value: unknown): string {
+    if (machine.encryptionMode === 'plain') {
+        throw new Error('Expected encrypted machine fixture');
+    }
     return encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, value));
 }
 
@@ -145,6 +161,138 @@ describe('ApiMachineClient daemon quiescence admission', () => {
 
         expect(outcome).toBe('published');
         expect(machine.metadata).toEqual(createMachineMetadata());
+    });
+
+    it('publishes plaintext machine metadata without encryption material', async () => {
+        const machine = createPlainMachine();
+        const socket = createApiSessionSocketStub({
+            connected: true,
+            emitWithAck: (event, payload) => {
+                if (event !== 'machine-update-metadata') {
+                    throw new Error(`unexpected event: ${event}`);
+                }
+                const metadata = (payload as { metadata: string }).metadata;
+                expect(decodePlainMachineStoredContent(metadata)).toEqual(createMachineMetadata());
+                return {
+                    result: 'success',
+                    version: 1,
+                    metadata,
+                };
+            },
+        });
+        const client = new ApiMachineClient('token', machine, undefined, {
+            requireCurrentAccountStoredContentCompatibility: async () => undefined,
+        });
+        Reflect.set(client, 'socket', socket);
+
+        const outcome = await client.updateMachineMetadata(() => createMachineMetadata());
+
+        expect(outcome).toBe('published');
+        expect(machine.metadata).toEqual(createMachineMetadata());
+    });
+
+    it('round-trips connected-client RPC as plaintext without encryption material', async () => {
+        const socket = createApiSessionSocketStub({
+            connected: true,
+            emit: (event, args) => {
+                expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+                expect(args[0]).toMatchObject({
+                    method: 'machine-plain-1:ui.demo',
+                    params: { hello: 'ui' },
+                });
+                const callback = args[1];
+                if (typeof callback !== 'function') {
+                    throw new Error('expected RPC acknowledgement callback');
+                }
+                callback({ ok: true, result: { hello: 'daemon' } });
+            },
+        });
+        const client = new ApiMachineClient('token', createPlainMachine(), undefined, {
+            requireCurrentAccountStoredContentCompatibility: async () => undefined,
+        });
+        Reflect.set(client, 'socket', socket);
+
+        await expect(client.callConnectedClientRpc(
+            'ui.demo',
+            { hello: 'ui' },
+        )).resolves.toEqual({
+            ok: true,
+            result: { hello: 'daemon' },
+        });
+    });
+
+    it('fails a connected-client RPC closed when the machine socket disconnects before the acknowledgement settles', async () => {
+        const socket = createApiSessionSocketStub({
+            connected: true,
+            emit: (_event, args, activeSocket) => {
+                const callback = args[1];
+                if (typeof callback !== 'function') {
+                    throw new Error('expected RPC acknowledgement callback');
+                }
+                activeSocket.connected = false;
+                callback({ ok: true, result: { hello: 'stale-client' } });
+            },
+        });
+        const client = new ApiMachineClient('token', createPlainMachine(), undefined, {
+            requireCurrentAccountStoredContentCompatibility: async () => undefined,
+        });
+        Reflect.set(client, 'socket', socket);
+
+        await expect(client.callConnectedClientRpc(
+            'ui.demo',
+            { hello: 'ui' },
+        )).resolves.toEqual({
+            ok: false,
+            errorCode: 'machine_socket_unavailable',
+        });
+    });
+
+    it('refuses plaintext Machine metadata writes when the server has not activated the current protocol', async () => {
+        const socket = createApiSessionSocketStub({ connected: true });
+        const compatibilityError = Object.assign(
+            new Error('server compatibility is not required'),
+            { code: 'client-upgrade-required', retryable: false as const },
+        );
+        const client = new ApiMachineClient(
+            'token',
+            createPlainMachine(),
+            undefined,
+            {
+                requireCurrentAccountStoredContentCompatibility: async () => {
+                    throw compatibilityError;
+                },
+            },
+        );
+        Reflect.set(client, 'socket', socket);
+
+        await expect(
+            client.updateMachineMetadata(() => createMachineMetadata()),
+        ).rejects.toBe(compatibilityError);
+        expect(socket.emitWithAck).not.toHaveBeenCalled();
+    });
+
+    it('refuses plaintext connected-client RPCs when the server has not activated the current protocol', async () => {
+        const socket = createApiSessionSocketStub({ connected: true });
+        const compatibilityError = Object.assign(
+            new Error('server compatibility is only observed'),
+            { code: 'client-upgrade-required', retryable: false as const },
+        );
+        const client = new ApiMachineClient(
+            'token',
+            createPlainMachine(),
+            undefined,
+            {
+                requireCurrentAccountStoredContentCompatibility: async () => {
+                    throw compatibilityError;
+                },
+            },
+        );
+        Reflect.set(client, 'socket', socket);
+
+        await expect(
+            client.callConnectedClientRpc('ui.demo', { hello: 'ui' }),
+        ).rejects.toBe(compatibilityError);
+        expect(socket.emit).not.toHaveBeenCalled();
     });
 
     it('allows an explicit shutdown-state publication while quiescing', async () => {

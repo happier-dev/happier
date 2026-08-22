@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AxiosError, AxiosHeaders } from 'axios';
 
-const { fetchChanges } = vi.hoisted(() => ({
+const {
+  fetchChanges,
+  publishPluginAccountSettingsWatchInvalidation,
+} = vi.hoisted(() => ({
   fetchChanges: vi.fn(),
+  publishPluginAccountSettingsWatchInvalidation: vi.fn(),
 }));
 
 vi.mock('../changes', () => ({
@@ -11,6 +15,21 @@ vi.mock('../changes', () => ({
 
 vi.mock('@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor', () => ({
   handleRequestAuthenticationFailure: vi.fn(() => false),
+}));
+
+vi.mock('@/plugins/runtime/context/pluginAccountSettingsChangeBroker', () => ({
+  publishPluginAccountSettingsWatchInvalidation,
+  readPluginAccountSettingsWatchInvalidations: (changes: readonly unknown[]) => changes.flatMap((change) => {
+    if (!change || typeof change !== 'object') return [];
+    const entry = change as { kind?: unknown; hint?: unknown };
+    if (entry.kind !== 'pluginDomain' || !entry.hint || typeof entry.hint !== 'object') return [];
+    const hint = entry.hint as { pluginDomain?: unknown; pluginId?: unknown; revision?: unknown };
+    return hint.pluginDomain === 'settings'
+      && typeof hint.pluginId === 'string'
+      && typeof hint.revision === 'number'
+      ? [{ kind: 'record' as const, pluginId: hint.pluginId, revision: hint.revision }]
+      : [];
+  }),
 }));
 
 import {
@@ -97,6 +116,59 @@ describe('runSessionChangesSyncOnConnect', () => {
 
     expect(applyPendingQueueState).not.toHaveBeenCalled();
     expect(changesCursor.writeChangesCursor).not.toHaveBeenCalled();
+  });
+
+  it('notifies only the exact Account plugin Settings record watcher from the shared changes feed', async () => {
+    fetchChanges.mockResolvedValueOnce({
+      status: 'ok',
+      response: {
+        nextCursor: 8,
+        changes: [
+          {
+            cursor: 4,
+            kind: 'pluginDomain',
+            entityId: 'pluginDomain/example.tasks/settings',
+            changedAt: 100,
+            hint: {
+              pluginDomain: 'settings',
+              pluginId: 'example.tasks',
+              scope: 'account',
+              revision: 5,
+            },
+          },
+          {
+            cursor: 5,
+            kind: 'pluginDomain',
+            entityId: 'pluginDomain/example.tasks/data-kv',
+            changedAt: 101,
+            hint: {
+              pluginDomain: 'dataKv',
+              pluginId: 'example.tasks',
+              full: true,
+            },
+          },
+        ],
+      },
+    });
+
+    await runSessionChangesSyncOnConnect({
+      reason: 'connect',
+      token: 'token-1',
+      sessionId: 's1',
+      lastObservedMessageSeq: 0,
+      getAccountId: async () => 'account-1',
+      ...createChangesCursorStore(),
+      catchUpSessionMessages: vi.fn(),
+      syncSessionSnapshotFromServer: vi.fn(async () => true),
+      onDebug: vi.fn(),
+    });
+
+    expect(publishPluginAccountSettingsWatchInvalidation).toHaveBeenCalledTimes(1);
+    expect(publishPluginAccountSettingsWatchInvalidation).toHaveBeenCalledWith({
+      kind: 'record',
+      pluginId: 'example.tasks',
+      revision: 5,
+    });
   });
 
   it('force-refreshes settings on reconnect when no settings hint survived', async () => {

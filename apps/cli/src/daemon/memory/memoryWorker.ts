@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 
 import type { SessionSummaryShardV1 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { DEFAULT_MEMORY_SETTINGS, readMemorySettingsFromDisk, type MemorySettingsV1 } from '@/settings/memorySettings';
 import { configuration } from '@/configuration';
 
@@ -15,8 +15,7 @@ import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
-  type SessionEncryptionContext,
-  type SessionStoredContentEncryptionMode,
+  type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
@@ -46,6 +45,7 @@ import {
   extractMemoryIndexableTranscriptItemFromDecryptedRow,
 } from './transcript/extractIndexableItem';
 import { isLegacyUnclassifiedTranscriptRow } from './transcript/legacyUnclassifiedTranscriptRows';
+import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
 
 export type MemoryWorkerHandle = Readonly<{
   stop: () => void;
@@ -90,7 +90,7 @@ function logMemoryWorkerServerEndpointFailure(operation: string, error: unknown)
 }
 
 export async function startMemoryWorker(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   machineId: string;
   env?: NodeJS.ProcessEnv;
   deps?: Readonly<{
@@ -115,8 +115,7 @@ export async function startMemoryWorker(params: Readonly<{
   let inventoryBackfillPolicy: MemorySettingsV1['backfillPolicy'] = 'new_only';
   const inventorySeenSessionIds = new Set<string>();
   const candidateObservedSeqBySessionId = new Map<string, number>();
-  const sessionCtxCache = new Map<string, SessionEncryptionContext>();
-  const sessionModeCache = new Map<string, SessionStoredContentEncryptionMode>();
+  const sessionCryptoContextCache = new Map<string, SessionStoredContentCryptoContext>();
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
   let embeddingsDiagnostics: OperationalMemoryEmbeddingsDiagnostics =
     buildUnavailableMemoryEmbeddingsDiagnostics(DEFAULT_MEMORY_SETTINGS.embeddings);
@@ -126,6 +125,31 @@ export async function startMemoryWorker(params: Readonly<{
     lastInventoryAtMs: null,
     currentSessionId: null,
     currentPhase: null,
+  };
+
+  const resolveSessionCryptoContext = async (
+    sessionId: string,
+  ): Promise<SessionStoredContentCryptoContext | null> => {
+    const cached = sessionCryptoContextCache.get(sessionId);
+    if (cached) return cached;
+
+    const raw = await fetchSessionById({ token: params.credentials.token, sessionId });
+    if (!raw) return null;
+
+    const mode = resolveSessionStoredContentEncryptionMode(raw);
+    if (mode === 'plain') {
+      const resolved = { mode, ctx: null } as const;
+      sessionCryptoContextCache.set(sessionId, resolved);
+      return resolved;
+    }
+
+    const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
+    if (!ctx) {
+      throw new AccountEncryptionMaterialUnavailableError();
+    }
+    const resolved = { mode, ctx } as const;
+    sessionCryptoContextCache.set(sessionId, resolved);
+    return resolved;
   };
 
   const refreshEmbeddingsDiagnostics = async (): Promise<EmbeddingsProviderResolution | null> => {
@@ -165,14 +189,8 @@ export async function startMemoryWorker(params: Readonly<{
         args: Readonly<{ sessionId: string; afterSeq: number; limit: number }>,
       ): Promise<DecryptedTranscriptRow[]> => {
         try {
-          let ctx = sessionCtxCache.get(args.sessionId);
-          if (!ctx) {
-            const raw = await fetchSessionById({ token: params.credentials.token, sessionId: args.sessionId });
-            if (!raw) return [];
-            ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
-            sessionCtxCache.set(args.sessionId, ctx);
-            sessionModeCache.set(args.sessionId, resolveSessionStoredContentEncryptionMode(raw));
-          }
+          const cryptoContext = await resolveSessionCryptoContext(args.sessionId);
+          if (!cryptoContext) return [];
 
           const roleFiltered = await fetchEncryptedTranscriptMessagesPage({
             token: params.credentials.token,
@@ -191,15 +209,17 @@ export async function startMemoryWorker(params: Readonly<{
           });
 
           return decryptTranscriptRows({
-            ctx,
+            ctx: cryptoContext.ctx,
             rows: [
               ...roleFiltered.messages,
               ...legacy.messages.filter(isLegacyUnclassifiedTranscriptRow),
             ],
           });
         } catch (error) {
-          logMemoryWorkerServerEndpointFailure('transcript page', error);
-          return [];
+          if (!(error instanceof AccountEncryptionMaterialUnavailableError)) {
+            logMemoryWorkerServerEndpointFailure('transcript page', error);
+          }
+          throw error;
         }
       },
     } as const);
@@ -279,14 +299,8 @@ export async function startMemoryWorker(params: Readonly<{
       now: () => Date.now(),
       fetchRecentDecryptedRows: async (sessionId) => {
         try {
-          let ctx = sessionCtxCache.get(sessionId);
-          if (!ctx) {
-            const raw = await fetchSessionById({ token: params.credentials.token, sessionId });
-            if (!raw) return [];
-            ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
-            sessionCtxCache.set(sessionId, ctx);
-            sessionModeCache.set(sessionId, resolveSessionStoredContentEncryptionMode(raw));
-          }
+          const cryptoContext = await resolveSessionCryptoContext(sessionId);
+          if (!cryptoContext) return [];
           const rawPageLimit = Math.max(1, Math.trunc(configuration.memoryMaxTranscriptWindowMessages));
           const rows: DecryptedTranscriptRow[] = [];
           let beforeSeq: number | undefined;
@@ -295,7 +309,7 @@ export async function startMemoryWorker(params: Readonly<{
             const page = await fetchMemorySemanticTranscriptPage({
               token: params.credentials.token,
               sessionId,
-              ctx,
+              ctx: cryptoContext.ctx,
               limit: rawPageLimit,
               rawPageLimit,
               maxRawRowsToScan: rawPageLimit * 4,
@@ -320,8 +334,10 @@ export async function startMemoryWorker(params: Readonly<{
           }
           return rows.sort((a, b) => a.seq - b.seq);
         } catch (error) {
-          logMemoryWorkerServerEndpointFailure('selected transcript rows', error);
-          return [];
+          if (!(error instanceof AccountEncryptionMaterialUnavailableError)) {
+            logMemoryWorkerServerEndpointFailure('selected transcript rows', error);
+          }
+          throw error;
         }
       },
       fetchCommittedSummaryShards,
@@ -333,23 +349,17 @@ export async function startMemoryWorker(params: Readonly<{
           modelId: settings.hints.summarizerModelId,
           permissionMode: settings.hints.summarizerPermissionMode,
           prompt,
+          credentials: params.credentials,
         });
       },
       commitArtifacts: async ({ sessionId, shardPayload, synopsisPayload }) => {
-        let ctx = sessionCtxCache.get(sessionId);
-        if (!ctx) {
-          const raw = await fetchSessionById({ token: params.credentials.token, sessionId });
-          if (!raw) return;
-          ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
-          sessionCtxCache.set(sessionId, ctx);
-          sessionModeCache.set(sessionId, resolveSessionStoredContentEncryptionMode(raw));
-        }
-        const mode = sessionModeCache.get(sessionId) ?? 'e2ee';
+        const cryptoContext = await resolveSessionCryptoContext(sessionId);
+        if (!cryptoContext) return;
         await commitMemorySystemRecords({
           credentials: params.credentials,
           sessionId,
-          mode,
-          ctx,
+          mode: cryptoContext.mode,
+          ...(cryptoContext.ctx ? { ctx: cryptoContext.ctx } : {}),
           shard: { sessionId, payload: shardPayload },
           synopsis: synopsisPayload ? { sessionId, payload: synopsisPayload } : null,
         });
@@ -362,25 +372,19 @@ export async function startMemoryWorker(params: Readonly<{
       return await deps.fetchCommittedSummaryShards(sessionId);
     }
     try {
-      let ctx = sessionCtxCache.get(sessionId);
-      let mode = sessionModeCache.get(sessionId);
-      if (!ctx || !mode) {
-        const raw = await fetchSessionById({ token: params.credentials.token, sessionId });
-        if (!raw) return [];
-        ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
-        mode = resolveSessionStoredContentEncryptionMode(raw);
-        sessionCtxCache.set(sessionId, ctx);
-        sessionModeCache.set(sessionId, mode);
-      }
+      const cryptoContext = await resolveSessionCryptoContext(sessionId);
+      if (!cryptoContext) return [];
       return await fetchMemorySummaryShardSystemRecords({
         token: params.credentials.token,
         sessionId,
-        mode,
-        ctx,
+        mode: cryptoContext.mode,
+        ...(cryptoContext.ctx ? { ctx: cryptoContext.ctx } : {}),
       });
     } catch (error) {
-      logMemoryWorkerServerEndpointFailure('summary system records', error);
-      return [];
+      if (!(error instanceof AccountEncryptionMaterialUnavailableError)) {
+        logMemoryWorkerServerEndpointFailure('summary system records', error);
+      }
+      throw error;
     }
   };
 

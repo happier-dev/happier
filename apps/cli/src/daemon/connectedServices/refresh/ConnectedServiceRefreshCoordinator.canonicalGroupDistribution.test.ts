@@ -168,14 +168,14 @@ describe('ConnectedServiceRefreshCoordinator canonical group distribution', () =
         success: true as const,
       })),
     } as unknown as ApiClient;
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
         access_token: 'refreshed-access',
         refresh_token: 'refreshed-refresh',
         expires_in: 3600,
-      }),
-    })) as unknown as typeof fetch);
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch);
     const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
     runtimeRegistry.registerTarget({
       pid: 505,

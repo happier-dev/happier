@@ -1,28 +1,17 @@
 import {
-  agentEventAttentionImpact,
   buildAgentEventLocalId,
   normalizeConnectedServiceUxDiagnosticV1,
   type ConnectedServiceId,
   type ConnectedServiceUxDiagnosticV1,
-  type SessionStoredMessageContent,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
 import {
   loadConnectedServiceNotificationProfilesById,
   resolveConnectedServiceNotificationProfileLabel,
   type ConnectedServiceNotificationProfileSummary,
 } from '../notifications/connectedServiceNotificationLabels';
 import { isBackgroundConnectedServiceSwitchReason } from '../connectedServiceSwitchEventVisibility';
-import {
-  encryptSessionPayload,
-  resolveSessionEncryptionContextFromCredentials,
-  resolveSessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
-import {
-  commitSessionStoredMessage,
-  fetchSessionById,
-} from '@/session/transport/http/sessionsHttp';
+import type { DaemonSessionMutationCustody } from '../usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 
 type ConnectedServiceRuntimeSwitchSessionEvent = Readonly<{
   type: 'connected_service_account_switch' | 'connected_service_auth_group_switch';
@@ -443,56 +432,21 @@ function buildConnectedServiceAccountSwitchEventId(
   ]);
 }
 
-function buildStoredContent(params: Readonly<{
-  credentials: Credentials;
-  rawSession: Awaited<ReturnType<typeof fetchSessionById>>;
-  payload: unknown;
-}>): SessionStoredMessageContent {
-  const mode = resolveSessionStoredContentEncryptionMode(params.rawSession ?? undefined);
-  if (mode === 'plain') {
-    return { t: 'plain', v: params.payload };
-  }
-  const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, params.rawSession ?? undefined);
-  return {
-    t: 'encrypted',
-    c: encryptSessionPayload({ ctx, payload: params.payload }),
-  };
-}
-
 async function commitConnectedServiceLifecycleEvent(params: Readonly<{
-  credentials: Credentials;
+  mutationCustody: Pick<DaemonSessionMutationCustody, 'stageTranscriptEvent'>;
   sessionId: string;
   eventId: string;
   data: Record<string, unknown>;
 }>): Promise<void> {
-  const rawSession = await fetchSessionById({
-    token: params.credentials.token,
+  await params.mutationCustody.stageTranscriptEvent({
     sessionId: params.sessionId,
-  });
-  if (!rawSession) return;
-  await commitSessionStoredMessage({
-    token: params.credentials.token,
-    sessionId: params.sessionId,
-    localId: params.eventId,
-    messageRole: 'event',
-    attentionImpact: agentEventAttentionImpact(params.data),
-    content: buildStoredContent({
-      credentials: params.credentials,
-      rawSession,
-      payload: {
-        role: 'agent',
-        content: {
-          type: 'event',
-          id: params.eventId,
-          data: params.data,
-        },
-      },
-    }),
+    eventId: params.eventId,
+    data: params.data,
   });
 }
 
 export async function commitConnectedServiceAccountSwitchSessionEvent(params: Readonly<{
-  credentials: Credentials;
+  mutationCustody: Pick<DaemonSessionMutationCustody, 'stageTranscriptEvent'>;
   sessionId: string;
   event: unknown;
   listConnectedServiceProfiles?: (input: Readonly<{ serviceId: ConnectedServiceId }>) => Promise<Readonly<{
@@ -504,7 +458,7 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   if (deferral) {
     const eventId = buildSwitchDeferralEventId(deferral);
     await commitConnectedServiceLifecycleEvent({
-      credentials: params.credentials,
+      mutationCustody: params.mutationCustody,
       sessionId: params.sessionId,
       eventId,
       data: {
@@ -521,7 +475,7 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   if (deferralCompletion) {
     const eventId = buildSwitchDeferralCompletionEventId(deferralCompletion);
     await commitConnectedServiceLifecycleEvent({
-      credentials: params.credentials,
+      mutationCustody: params.mutationCustody,
       sessionId: params.sessionId,
       eventId,
       data: {
@@ -537,7 +491,7 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   if (superseded) {
     const eventId = buildSwitchDeferralSupersededEventId(superseded);
     await commitConnectedServiceLifecycleEvent({
-      credentials: params.credentials,
+      mutationCustody: params.mutationCustody,
       sessionId: params.sessionId,
       eventId,
       data: {
@@ -553,7 +507,7 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
     if (isBackgroundConnectedServiceSwitchReason(attempt.rawReason ?? attempt.reason)) return;
     const eventId = buildSwitchAttemptEventId(attempt);
     await commitConnectedServiceLifecycleEvent({
-      credentials: params.credentials,
+      mutationCustody: params.mutationCustody,
       sessionId: params.sessionId,
       eventId,
       data: {
@@ -580,7 +534,7 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   if (degraded) {
     const eventId = buildProviderStateSharingDegradedEventId(degraded);
     await commitConnectedServiceLifecycleEvent({
-      credentials: params.credentials,
+      mutationCustody: params.mutationCustody,
       sessionId: params.sessionId,
       eventId,
       data: {
@@ -613,7 +567,7 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   const toProfileLabel = resolveConnectedServiceNotificationProfileLabel(profilesById, parsed.toProfileId);
 
   await commitConnectedServiceLifecycleEvent({
-    credentials: params.credentials,
+    mutationCustody: params.mutationCustody,
     sessionId: params.sessionId,
     eventId: buildConnectedServiceAccountSwitchEventId(parsed, reason),
     data: {

@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createConnectedServiceRuntimeIdentityFanoutReader } from './readConnectedServiceRuntimeIdentityForQuotaFanout';
 
 describe('createConnectedServiceRuntimeIdentityFanoutReader', () => {
-  const credentials = { token: 'token' } as unknown as Credentials;
+  const credentials = {
+    token: 'token',
+    encryption: null,
+  } satisfies StoredCredentials;
 
   it('requests exact live runtime identity through the session transport', async () => {
     const readConnectedServiceRuntimeIdentity = vi.fn(async () => ({

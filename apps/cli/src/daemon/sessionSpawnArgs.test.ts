@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+import {
+  deriveSessionCreationTagV1,
+  SessionModelSelectionV1Schema,
+  type SessionCreationCorrespondenceV1,
+} from '@happier-dev/protocol';
 
 import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 import type { NativeForkSource } from '@/session/shared/spawnSessionContract';
@@ -26,6 +30,30 @@ const nativeForkSource: NativeForkSource = {
     providerCheckpoint: {
       providerCursor: 'checkpoint-1',
     },
+  },
+};
+
+const sessionCreationCorrespondence: SessionCreationCorrespondenceV1 = {
+  v: 1,
+  sessionCreationTag: deriveSessionCreationTagV1({
+    callerCreationNamespace: 'user',
+    creationKey: 'session-spawn-args-test',
+  }),
+  recipe: {
+    execution: { machineId: 'machine-1', directory: '/workspace/project' },
+    organization: { folderId: null, tagIds: [] },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    modelSelection: null,
+    profileId: null,
+    requestedPermissionMode: null,
+    agentModeId: null,
+    configuration: null,
+    connectedServices: null,
+    mcpSelection: null,
+    transcriptStorage: null,
+    terminal: null,
+    agentSessionStartupInstructionsMarkerV1: null,
+    checkout: null,
   },
 };
 
@@ -83,6 +111,60 @@ describe('buildHappySessionControlArgs', () => {
     expect(buildHappySessionControlArgs({
       agentModeId: 'plan',
     })).toEqual(['--agent-mode', 'plan']);
+  });
+
+  it('carries an admitted session-creation tag as a Happier-owned control argument', () => {
+    const sessionCreationTag = 'create:v1:9Qf8pTqHIQxEYXv3sHohC0y7sD2pRqclZxY_V_GKcJ0';
+
+    const args = buildHappySessionControlArgs({ sessionCreationTag });
+
+    expect(args).toEqual(['--session-creation-tag-v1', sessionCreationTag]);
+    expect(partitionProviderSessionArgs({
+      args: ['codex', '--started-by', 'daemon', ...args, '--provider-arg'],
+      providerSubcommand: 'codex',
+    })).toMatchObject({
+      sessionCreationTag,
+      providerArgs: ['--provider-arg'],
+    });
+  });
+
+  it('carries the immutable creation correspondence beside its tag', () => {
+    const args = buildHappySessionControlArgs({
+      sessionCreationTag: sessionCreationCorrespondence.sessionCreationTag,
+      sessionCreationCorrespondence,
+    });
+
+    expect(args).toEqual([
+      '--session-creation-tag-v1',
+      sessionCreationCorrespondence.sessionCreationTag,
+      '--session-creation-correspondence-v1',
+      expect.stringMatching(/^scv1:[A-Za-z0-9_-]+$/u),
+    ]);
+    expect(partitionProviderSessionArgs({
+      args: ['codex', '--started-by', 'daemon', ...args],
+      providerSubcommand: 'codex',
+    })).toMatchObject({ sessionCreationCorrespondence });
+  });
+
+  it('carries an initial title only as a daemon-to-runner control value', () => {
+    const initialTitle = 'Atomic first title';
+    const args = buildHappySessionControlArgs({
+      sessionCreationTag: sessionCreationCorrespondence.sessionCreationTag,
+      sessionCreationCorrespondence,
+      initialTitle,
+    });
+
+    expect(args).toEqual(expect.arrayContaining([
+      '--session-initial-title-v1', initialTitle,
+    ]));
+    expect(partitionProviderSessionArgs({
+      args: ['codex', '--started-by', 'daemon', ...args, '--provider-arg'],
+      providerSubcommand: 'codex',
+    })).toMatchObject({
+      initialTitle,
+      sessionCreationCorrespondence,
+      providerArgs: ['--provider-arg'],
+    });
   });
 
   it('omits model flags when the structured selection is missing', () => {

@@ -150,4 +150,41 @@ describe('disconnected terminal-host resume lifecycle', () => {
     expect(retired).toBe(true);
     await expect(lifecycle.resolveResumePreGate('sess-retirement-incomplete')).resolves.toBeNull();
   });
+
+  it('keeps stop and resume serialized until asynchronous candidate evidence cleanup finishes', async () => {
+    const attachmentId = createTerminalAttachmentId();
+    let releaseRetirement!: () => void;
+    const retirementPending = new Promise<void>((resolve) => {
+      releaseRetirement = resolve;
+    });
+    let retirementFinished = false;
+    const lifecycle = createDisconnectedTerminalHostResumeLifecycle({
+      unresolvedTerminalHostSessionIds: new Set(),
+      clearUnresolvedTerminalHostSession: () => {},
+      findDisconnectedCandidate: () => null,
+      resolveResumeGateForCandidate: async () => ({ action: 'resume' }),
+      retireCandidate: async () => {
+        await retirementPending;
+        retirementFinished = true;
+      },
+    });
+
+    let stopSettled = false;
+    const stop = lifecycle.runStop('sess-async-retirement', async () => ({
+      stopResult: { status: 'stopped' as const },
+      retireCandidate: {
+        sessionId: 'sess-async-retirement',
+        attachmentId,
+      },
+    })).finally(() => {
+      stopSettled = true;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stopSettled).toBe(false);
+    expect(retirementFinished).toBe(false);
+    releaseRetirement();
+    await expect(stop).resolves.toEqual({ status: 'stopped' });
+    expect(retirementFinished).toBe(true);
+  });
 });

@@ -35,10 +35,6 @@ import {
     type PeerTcpTunnelVoiceBinaryAppendConsumer,
     type PeerTcpTunnelVoiceBinaryTerminalConsumer,
 } from './voiceBinaryAppend';
-import {
-    dispatchVoiceMediaAgentRealtimeBinaryFrame,
-    type VoiceMediaAgentRealtimeApplicationConsumer,
-} from '../../../voiceMedia/voiceMediaApplicationDispatcher';
 
 const registeredTunnelApps = new WeakSet<FastifyInstance>();
 const DEFAULT_DIRECT_TUNNEL_LIMITS: Readonly<{
@@ -58,7 +54,6 @@ export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelI
     openStreamTimeoutMs?: number;
     voiceBinaryAppendConsumer?: PeerTcpTunnelVoiceBinaryAppendConsumer;
     voiceBinaryTerminalConsumer?: PeerTcpTunnelVoiceBinaryTerminalConsumer;
-    voiceMediaAgentRealtimeConsumer?: VoiceMediaAgentRealtimeApplicationConsumer;
 }>;
 
 type ActivePeerTcpTunnel = (OpenPeerTcpTunnelResult & { ok: true }) & Readonly<{
@@ -80,7 +75,6 @@ type PeerTcpTunnelLoopbackSession = Readonly<{
     encoding: ActivePeerTcpTunnel['response']['encoding'];
     maxFrameBytes: number;
     voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
-    applicationAbortController?: AbortController;
 }>;
 
 function readFrameTunnelId(frame: unknown): string | null {
@@ -199,11 +193,10 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     })
                     : undefined;
                 let applicationSubstreams: ReturnType<typeof createPeerTcpTunnelApplicationSubstreamSession> | undefined;
-                const applicationAbortController = new AbortController();
                 if (
                     tunnel.response.encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2
                     && tunnel.flowKind === 'voice_media'
-                    && (options.voiceBinaryAppendConsumer || options.voiceMediaAgentRealtimeConsumer)
+                    && options.voiceBinaryAppendConsumer
                 ) {
                     const aggregateLimit = limits.maxTotalBytes
                         ?? DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES.maxAggregateBytes;
@@ -220,7 +213,6 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                         maxDurationMs: limits.maxDurationMs,
                         sendBinaryFrame: (frame) => socket.send(frame),
                         onTerminal: async ({ reasonCode, substreamIds }) => {
-                            applicationAbortController.abort(reasonCode);
                             try {
                                 await dispatchDaemonVoiceInferenceSttTerminal({
                                     consumer: options.voiceBinaryTerminalConsumer,
@@ -228,17 +220,6 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                                     reasonCode,
                                     voiceMediaApplicationAuthority: tunnel.voiceMediaApplicationAuthority,
                                 });
-                                if (
-                                    tunnel.voiceMediaApplicationAuthority?.applicationKind === 'agent_realtime'
-                                    && options.voiceMediaAgentRealtimeConsumer
-                                ) {
-                                    await options.voiceMediaAgentRealtimeConsumer.close({
-                                        authority: tunnel.voiceMediaApplicationAuthority,
-                                        substreamId:
-                                            `agent.realtime.${tunnel.voiceMediaApplicationAuthority.applicationAttemptId}`,
-                                        reasonCode,
-                                    });
-                                }
                             } finally {
                                 const current = sessions.get(tunnelId);
                                 if (!current || current.applicationSubstreams !== applicationSubstreams) return;
@@ -256,7 +237,6 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     ...(session ? { session } : {}),
                     ...(substreamMux ? { substreamMux } : {}),
                     ...(applicationSubstreams ? { applicationSubstreams } : {}),
-                    ...(applicationSubstreams ? { applicationAbortController } : {}),
                     encoding: tunnel.response.encoding,
                     maxFrameBytes: tunnel.response.maxFrameBytes,
                     ...(tunnel.voiceMediaApplicationAuthority ? {
@@ -297,21 +277,10 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                             if (
                                 entry.applicationSubstreams
                                 && entry.flowKind === 'voice_media'
-                                && (
-                                    (
-                                        entry.voiceMediaApplicationAuthority?.applicationKind
-                                            === 'speech_transcription'
-                                        && options.voiceBinaryAppendConsumer
-                                        && parseDaemonVoiceInferenceSttSubstreamId(substreamId)
-                                    )
-                                    || (
-                                        entry.voiceMediaApplicationAuthority?.applicationKind
-                                            === 'agent_realtime'
-                                        && options.voiceMediaAgentRealtimeConsumer
-                                        && substreamId
-                                            === `agent.realtime.${entry.voiceMediaApplicationAuthority.applicationAttemptId}`
-                                    )
-                                )
+                                && entry.voiceMediaApplicationAuthority?.applicationKind
+                                    === 'speech_transcription'
+                                && options.voiceBinaryAppendConsumer
+                                && parseDaemonVoiceInferenceSttSubstreamId(substreamId)
                             ) {
                                 if (!decodedHeader.ok) {
                                     await entry.applicationSubstreams.denySubstream(
@@ -321,38 +290,6 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                                     return;
                                 }
                                 await entry.applicationSubstreams.acceptBinaryFrame(binaryPayload, async ({ payload, sequence }) => {
-                                    if (
-                                        entry.voiceMediaApplicationAuthority?.applicationKind === 'agent_realtime'
-                                        && options.voiceMediaAgentRealtimeConsumer
-                                    ) {
-                                        const handled = await dispatchVoiceMediaAgentRealtimeBinaryFrame({
-                                            authority: entry.voiceMediaApplicationAuthority,
-                                            substreamId,
-                                            carrierSequence: sequence,
-                                            payload,
-                                            consumer: options.voiceMediaAgentRealtimeConsumer,
-                                            emitPayload: async (createPayload) => {
-                                                await entry.applicationSubstreams!.sendApplicationFrame({
-                                                    substreamId,
-                                                    createPayload: async (carrierSequence) => {
-                                                        const response = await createPayload(carrierSequence);
-                                                        if (!response) {
-                                                            throw new Error(
-                                                                'Agent realtime application response could not be encoded',
-                                                            );
-                                                        }
-                                                        return response;
-                                                    },
-                                                });
-                                            },
-                                            signal: entry.applicationAbortController?.signal
-                                                ?? new AbortController().signal,
-                                        });
-                                        if (!handled) {
-                                            throw new Error('Agent realtime application frame was rejected');
-                                        }
-                                        return null;
-                                    }
                                     let responsePayload: Uint8Array | null = null;
                                     await dispatchDaemonVoiceInferenceSttBinaryAppend({
                                         consumer: options.voiceBinaryAppendConsumer,

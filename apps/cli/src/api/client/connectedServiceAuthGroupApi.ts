@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import {
@@ -18,6 +19,7 @@ export async function getConnectedServiceAuthGroup(params: Readonly<{
   token: string;
   serviceId: ConnectedServiceId;
   groupId: string;
+  signal?: AbortSignal;
 }>): Promise<ConnectedServiceAuthGroupV1 | null> {
   const serverUrl = resolveServerHttpBaseUrl();
   const serviceId = encodeURIComponent(params.serviceId);
@@ -28,10 +30,12 @@ export async function getConnectedServiceAuthGroup(params: Readonly<{
       `${serverUrl}/v3/connect/${serviceId}/groups/${groupId}`,
       {
         headers: {
+          ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
           Authorization: `Bearer ${params.token}`,
           'Content-Type': 'application/json',
         },
         timeout: resolveConnectedServicesServerApiTimeoutMs(),
+        ...(params.signal ? { signal: params.signal } : {}),
       },
     );
     if (response.status !== 200) {

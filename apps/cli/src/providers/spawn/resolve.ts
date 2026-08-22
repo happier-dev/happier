@@ -4,6 +4,7 @@ import {
   SessionProviderBindingMetadataV1Schema,
   createProviderBindingSecurityFingerprintV1,
   createProviderErrorV1,
+  createProviderManagedRuntimeBindingEqualityKeyV1,
   mergeProviderCatalogV1,
   createProviderObservationAuthorizationFingerprintV1,
   createProviderManagedProbeRequestFingerprintV1,
@@ -12,6 +13,7 @@ import {
   providerCredentialFormatKind,
   readOwnRecordValue,
   readProviderSettingsFromAccountSettingsV1,
+  resolveProviderManagedRuntimeDeclarationV1,
   type AgentProviderRequirementsV1,
   type ProviderBindingAuthorizationTicketV1,
   type ProviderCredentialTransportV1,
@@ -21,7 +23,7 @@ import {
   type ProviderSettingsV1,
   type ProviderObservationAuthorizationFingerprintV1,
   type ProviderProbeRequestFingerprintV1,
-  type ProviderManagedCatalogSourceIdentityV1,
+  type ResolvedProviderManagedRuntimeDeclarationV1,
   type QualifiedConnectedAccountPurposeBindingsV1,
   type SessionModelSelectionV1,
   type SessionProviderBindingMetadataV1,
@@ -29,7 +31,7 @@ import {
 import type {
   AgentProviderBindingPrepared,
   AgentProviderBindingResolvedFacts,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import {
@@ -55,8 +57,10 @@ import { mintProviderBindingAuthorizationTicket } from './ticket';
 import type { ProviderProbeAuthorizationRequest } from '../probe/authorization';
 import { resolveProviderSourceFacts, type ResolvedProviderSourceFacts } from '../registry/sourceFacts';
 import { resolveProviderModelCompatibility } from '../catalog/compatibility';
-import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
-import type { ResolvedFirstPartyManagedProviderFacet } from '@/providers/managed/types';
+import type {
+  ResolvedManagedProviderRuntime,
+  ResolvedProviderContribution,
+} from '@/plugins/projection/registry/types';
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
 
 export type ManagedProviderBindingAuthorizationFacts = Readonly<{
@@ -92,7 +96,7 @@ export type ProviderSpawnAuthorization = ProviderSpawnAuthorizationBase & Readon
   | {
       deployment: Readonly<{
         kind: 'managedLocal';
-        contribution: Extract<ResolvedProviderContribution, { provenance: 'first_party' }>;
+        contribution: ResolvedProviderContribution;
         implementation: Readonly<
           Omit<
             Extract<
@@ -101,6 +105,7 @@ export type ProviderSpawnAuthorization = ProviderSpawnAuthorizationBase & Readon
             >,
             'purposeBindingIntents'
           > & {
+            runtime: ResolvedManagedProviderRuntime;
             purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
           }
         >;
@@ -142,9 +147,8 @@ export type ProviderManagedProbeHostAuthorizationTicket = Readonly<{
   connectionScope: 'machine';
   contributionKey: string;
   implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
-  managedFacet: ResolvedFirstPartyManagedProviderFacet;
+  managedRuntime: ResolvedProviderManagedRuntimeDeclarationV1;
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
-  catalogSource: ProviderManagedCatalogSourceIdentityV1;
   endpointTemplateId: string;
   protocol: ProviderProbeAuthorizationRequest['protocol'];
   path: string;
@@ -225,22 +229,27 @@ export type ResolveProviderSpawnAuthorizationInput = Readonly<{
   /** True when the exact current catalog has a successful snapshot, including an empty one. */
   runtimeCatalogSnapshotExists?: boolean;
   managedPurposeBindingSnapshot?: QualifiedConnectedAccountPurposeBindingsV1;
+  /** Exact current activation-owned runtime acquired by the runtime registry. */
+  managedProviderRuntime?: ResolvedManagedProviderRuntime;
 }>;
 
-function managedPurposeBindingSnapshotMatchesFacet(input: Readonly<{
+function managedPurposeBindingSnapshotMatchesDeclarations(input: Readonly<{
   implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
-  facet: ResolvedFirstPartyManagedProviderFacet;
+  connectedAccounts: readonly Readonly<{
+    purpose: string;
+    service: Readonly<{ pluginId: string; localId: string }>;
+    required?: boolean;
+  }>[];
   snapshot: QualifiedConnectedAccountPurposeBindingsV1;
 }>): boolean {
   const bindings = input.snapshot.bindings;
-  if (bindings.length === 0) return false;
   const declarationsByPurpose = new Map(
-    input.facet.connectedAccounts.map((declaration) => [
+    input.connectedAccounts.map((declaration) => [
       declaration.purpose,
       declaration,
     ]),
   );
-  if (declarationsByPurpose.size !== input.facet.connectedAccounts.length) return false;
+  if (declarationsByPurpose.size !== input.connectedAccounts.length) return false;
   const seen = new Set<string>();
   for (const binding of bindings) {
     const key = JSON.stringify(binding.purpose);
@@ -264,7 +273,7 @@ function managedPurposeBindingSnapshotMatchesFacet(input: Readonly<{
       return false;
     }
   }
-  return input.facet.connectedAccounts.every((declaration) => (
+  return input.connectedAccounts.every((declaration) => (
     declaration.required !== true
     || bindings.some((binding) => binding.purpose.purpose === declaration.purpose)
   ));
@@ -300,6 +309,8 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
     return { ok: false, error: createProviderErrorV1(record.authorization.errorCode, context) };
   }
   if (input.request.deployment === 'managedLocal') {
+    const managedPurposeBindingSnapshot =
+      input.managedPurposeBindingSnapshot;
     const contribution = record.source.kind === 'contribution'
       ? input.registry.providersByContributionKey.get(record.source.contributionKey)
       : undefined;
@@ -316,33 +327,66 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
           && candidate.parser === input.request.parser
         ))
       : undefined;
+    const contributionManagedRuntime = contribution?.definition.managedRuntime
+      ? resolveProviderManagedRuntimeDeclarationV1({
+          implementationIdentity: contribution.identity,
+          managedRuntime: contribution.definition.managedRuntime,
+        })
+      : null;
     if (
       record.deployment.kind !== 'managedLocal'
       || record.scope !== 'machine'
       || record.source.kind !== 'contribution'
-      || record.source.provenance !== 'first_party'
-      || contribution?.provenance !== 'first_party'
-      || contribution.source.kind !== 'bundled'
-      || !contribution.managed
-      || !contribution.managedRuntimeAdapter
+      || !contribution
+      || !contribution.definition.managedRuntime
+      || !contributionManagedRuntime
       || !endpointTemplate
       || !declaredProbe
       || endpointTemplate.protocol !== input.request.protocol
-      || !record.deployment.facet.managedEndpoint.protocols.includes(input.request.protocol)
-      || JSON.stringify(record.deployment.implementationIdentity)
-        !== JSON.stringify(input.request.implementationIdentity)
-      || JSON.stringify(record.deployment.facet)
-        !== JSON.stringify(input.request.managedFacet)
-      || JSON.stringify(input.managedPurposeBindingSnapshot)
-        !== JSON.stringify(input.request.purposeBindings)
-      || !input.managedPurposeBindingSnapshot
-      || !managedPurposeBindingSnapshotMatchesFacet({
+      || !record.deployment.managedRuntime.endpointTemplateIds.includes(
+        endpointTemplate.id,
+      )
+      || !managedPurposeBindingSnapshot
+      || !managedPurposeBindingSnapshotMatchesDeclarations({
         implementationIdentity: record.deployment.implementationIdentity,
-        facet: record.deployment.facet,
-        snapshot: input.managedPurposeBindingSnapshot,
+        connectedAccounts:
+          record.deployment.managedRuntime.connectedAccounts ?? [],
+        snapshot: managedPurposeBindingSnapshot,
       })
-      || JSON.stringify(contribution.managedRuntimeAdapter.catalogSource)
-        !== JSON.stringify(input.request.catalogSource)
+    ) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_probe_authorization_invalid', context),
+      };
+    }
+    const requestManagedBindingKey =
+      createProviderManagedRuntimeBindingEqualityKeyV1({
+        implementationIdentity: input.request.implementationIdentity,
+        managedRuntime: input.request.managedRuntime,
+        purposeBindings: input.request.purposeBindings,
+      });
+    const recordManagedBindingKey =
+      createProviderManagedRuntimeBindingEqualityKeyV1({
+        implementationIdentity: record.deployment.implementationIdentity,
+        managedRuntime: record.deployment.managedRuntime,
+        purposeBindings: input.request.purposeBindings,
+      });
+    const contributionManagedBindingKey =
+      createProviderManagedRuntimeBindingEqualityKeyV1({
+        implementationIdentity: contribution.identity,
+        managedRuntime: contributionManagedRuntime,
+        purposeBindings: input.request.purposeBindings,
+      });
+    const snapshotManagedBindingKey =
+      createProviderManagedRuntimeBindingEqualityKeyV1({
+        implementationIdentity: record.deployment.implementationIdentity,
+        managedRuntime: record.deployment.managedRuntime,
+        purposeBindings: managedPurposeBindingSnapshot,
+      });
+    if (
+      recordManagedBindingKey !== requestManagedBindingKey
+      || contributionManagedBindingKey !== requestManagedBindingKey
+      || snapshotManagedBindingKey !== requestManagedBindingKey
     ) {
       return {
         ok: false,
@@ -351,9 +395,8 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
     }
     const expectedProbeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
       implementationIdentity: record.deployment.implementationIdentity,
-      managedFacet: record.deployment.facet,
+      managedRuntime: record.deployment.managedRuntime,
       purposeBindings: input.request.purposeBindings,
-      catalogSource: contribution.managedRuntimeAdapter.catalogSource,
       endpointTemplateId: endpointTemplate.id,
       protocol: endpointTemplate.protocol,
       method: 'GET',
@@ -380,9 +423,8 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
         connectionScope: 'machine',
         contributionKey: record.source.contributionKey,
         implementationIdentity: record.deployment.implementationIdentity,
-        managedFacet: record.deployment.facet,
+        managedRuntime: record.deployment.managedRuntime,
         purposeBindings: input.request.purposeBindings,
-        catalogSource: contribution.managedRuntimeAdapter.catalogSource,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
         path: declaredProbe.path,
@@ -778,20 +820,25 @@ export function resolveProviderSpawnAuthorization(
           (candidate) => candidate.protocol === compatibilityResult.selectedProtocol,
         )
       : null;
+    const managedProviderRuntime = input.managedProviderRuntime;
     if (
       !contribution
-      || contribution.provenance !== 'first_party'
-      || contribution.source.kind !== 'bundled'
-      || !contribution.managed
       || !contributionSource
       || !endpointTemplate
-      || !record.deployment.facet.managedEndpoint.protocols.includes(
-        compatibilityResult.selectedProtocol,
+      || contribution.definition.managedRuntime?.kind !== 'managed'
+      || contribution.identity.pluginId
+        !== record.deployment.implementationIdentity.pluginId
+      || contribution.identity.localId
+        !== record.deployment.implementationIdentity.localId
+      || !record.deployment.managedRuntime.endpointTemplateIds.includes(
+        endpointTemplate.id,
       )
+      || !managedProviderRuntime
+      || managedProviderRuntime.isCurrent() !== true
       || !managedPurposeBindingSnapshot
-      || !managedPurposeBindingSnapshotMatchesFacet({
+      || !managedPurposeBindingSnapshotMatchesDeclarations({
         implementationIdentity: record.deployment.implementationIdentity,
-        facet: record.deployment.facet,
+        connectedAccounts: record.deployment.managedRuntime.connectedAccounts,
         snapshot: managedPurposeBindingSnapshot,
       })
     ) {
@@ -842,12 +889,8 @@ export function resolveProviderSpawnAuthorization(
       },
       deployment: {
         kind: 'managedLocal',
-        securityFacts: {
-          implementationIdentity: record.deployment.implementationIdentity,
-          managedEndpoint: record.deployment.facet.managedEndpoint,
-          connectedAccounts: record.deployment.facet.connectedAccounts,
-          requestAuthUses: record.deployment.facet.requestAuthUses,
-        },
+        implementationIdentity: record.deployment.implementationIdentity,
+        managedRuntime: record.deployment.managedRuntime,
       },
       endpointTemplateId: endpointTemplate.id,
       protocol: compatibilityResult.selectedProtocol,
@@ -907,7 +950,8 @@ export function resolveProviderSpawnAuthorization(
           implementation: {
             kind: 'managedLocal',
             implementationIdentity: record.deployment.implementationIdentity,
-            facet: record.deployment.facet,
+            managedRuntime: record.deployment.managedRuntime,
+            runtime: managedProviderRuntime,
             purposeBindings: managedPurposeBindingSnapshot,
           },
         },

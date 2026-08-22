@@ -30,6 +30,10 @@ function credentials(): Credentials {
   };
 }
 
+async function resolvePlainAccountEncryptionMode(): Promise<'plain'> {
+  return 'plain';
+}
+
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
@@ -81,12 +85,11 @@ describe('migrateProviderSettingsWithRetry', () => {
       lastUsedProfile: 'company',
     };
     let updateCalls = 0;
-    let releases = 0;
     const result = await previewLegacyProfileMigrationWithRetry({
       credentials: credentials(), sourceProfileId: 'company', reviewedMapping,
-      acquireRegistryLease: async () => ({ registry: {}, release: async () => { releases += 1; } }),
       deps: {
         fetchSettings: async () => ({ content: { t: 'plain', v: raw }, version: 7 }),
+        resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
         updateSettings: async (): Promise<AccountSettingsV2UpdateResponse> => {
           updateCalls += 1;
           return { success: true, version: 8 };
@@ -101,7 +104,6 @@ describe('migrateProviderSettingsWithRetry', () => {
       }),
     });
     expect(updateCalls).toBe(0);
-    expect(releases).toBe(1);
     expect(JSON.stringify(result)).not.toContain('OPENAI_BASE_URL');
   });
 
@@ -122,6 +124,7 @@ describe('migrateProviderSettingsWithRetry', () => {
           content: { t: 'plain', v: { schemaVersion: 7, unrelated: 'initial' } },
           version: 1,
         }),
+        resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
         updateSettings: async (request): Promise<AccountSettingsV2UpdateResponse> => {
           updateCalls.push(request);
           return {
@@ -173,9 +176,9 @@ describe('migrateProviderSettingsWithRetry', () => {
     await expect(confirmLegacyProfileMigrationWithRetry({
       credentials: credentials(), sourceProfileId: 'company', expectedSourceFingerprint: fingerprint,
       reviewedMapping, migratedAt: 20,
-      acquireRegistryLease: async () => ({ registry: {}, release: async () => undefined }),
       deps: {
         fetchSettings: async () => ({ content: { t: 'plain', v: raw }, version: 1 }),
+        resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
         updateSettings: async (): Promise<AccountSettingsV2UpdateResponse> => {
           updates += 1;
           return {
@@ -203,6 +206,7 @@ describe('migrateProviderSettingsWithRetry', () => {
     const barrier = new Promise<void>((resolve) => { release = resolve; });
     const deps = {
       fetchSettings: async () => ({ content, version }),
+      resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
       updateSettings: async (request: Readonly<{
         expectedVersion: number;
         content: AccountSettingsStoredContentEnvelope | null;
@@ -260,6 +264,7 @@ describe('migrateProviderSettingsWithRetry', () => {
           content: { t: 'plain', v: { schemaVersion: 7, unrelated: 'initial' } },
           version: 1,
         }),
+        resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
         updateSettings: async (request): Promise<AccountSettingsV2UpdateResponse> => {
           updateAttempt += 1;
           if (updateAttempt === 1) {
@@ -289,6 +294,36 @@ describe('migrateProviderSettingsWithRetry', () => {
     });
   });
 
+  it('does not report a dynamic migration as complete when its submitted CAS outcome is unknown', async () => {
+    let releaseCount = 0;
+    let updateCalls = 0;
+
+    await expect(migrateProviderSettingsWithRetry({
+      credentials: credentials(),
+      deriveContext: () => context('pc_outcome_unknown'),
+      acquireRegistryLease: async () => ({
+        registry: { generation: 'test' },
+        release: async () => { releaseCount += 1; },
+      }),
+      deps: {
+        fetchSettings: async () => ({
+          content: { t: 'plain', v: { schemaVersion: 7, unrelated: 'initial' } },
+          version: 1,
+        }),
+        resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
+        updateSettings: async (): Promise<AccountSettingsV2UpdateResponse> => {
+          updateCalls += 1;
+          throw new Error('connection reset after CAS submission');
+        },
+        resolveCachePath: () => '/unused/provider-settings-cache',
+        writeCache: async () => undefined,
+      },
+    })).rejects.toThrow('Account Settings mutation did not settle: outcomeUnknown');
+
+    expect(updateCalls).toBe(1);
+    expect(releaseCount).toBe(1);
+  });
+
   it('re-derives candidates from each CAS winner while retaining one registry lease', async () => {
     const derivations: unknown[] = [];
     let released = 0;
@@ -307,6 +342,7 @@ describe('migrateProviderSettingsWithRetry', () => {
         fetchSettings: async () => ({
           content: { t: 'plain', v: { schemaVersion: 7, unrelated: 'initial' } }, version: 1,
         }),
+        resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
         updateSettings: async (request): Promise<AccountSettingsV2UpdateResponse> => {
           updateAttempt += 1;
           if (updateAttempt === 1) {

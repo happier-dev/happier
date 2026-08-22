@@ -6,18 +6,33 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
-import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
+import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/sessions/external';
+import {
+  createTransferRecipientKeyPair,
+  decryptEncryptedTransferChunkEnvelope,
+} from '@/machines/transfer/transferChunkEncryption';
 import { createTransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 
-const { resolveBackendExecutionSurfacesMock } = vi.hoisted(() => ({
-  resolveBackendExecutionSurfacesMock: vi.fn(),
+const {
+  activateAgentRuntimeContributionOnDemandMock,
+  acquireAuthoritativePluginRuntimeRegistryLeaseMock,
+} = vi.hoisted(() => ({
+  activateAgentRuntimeContributionOnDemandMock: vi.fn(
+    async (_registry: unknown, _agentId: unknown) => undefined,
+  ),
+  acquireAuthoritativePluginRuntimeRegistryLeaseMock: vi.fn(),
 }));
 
-vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
-  resolveBackendExecutionSurfaces: resolveBackendExecutionSurfacesMock,
+vi.mock('@/agent/runtime/registry/activationDemand', () => ({
+  activateAgentRuntimeContributionOnDemand: (registry: unknown, agentId: unknown) =>
+    activateAgentRuntimeContributionOnDemandMock(registry, agentId),
+}));
+
+vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
+  acquireAuthoritativePluginRuntimeRegistryLease: () =>
+    acquireAuthoritativePluginRuntimeRegistryLeaseMock(),
 }));
 
 function createRpcHandlerManager(): RpcHandlerManager {
@@ -30,7 +45,7 @@ function createRpcHandlerManager(): RpcHandlerManager {
   });
 }
 
-function createDirectSessionMediaItem(providerMediaPath: string): Record<string, unknown> {
+function createDirectSessionMediaItem(providerMediaPath: string) {
   return {
     id: 'provider-media-1',
     role: 'output',
@@ -41,7 +56,7 @@ function createDirectSessionMediaItem(providerMediaPath: string): Record<string,
     path: providerMediaPath,
     sizeBytes: 5,
     origin: { source: 'provider-generated' },
-  };
+  } as const;
 }
 
 describe('external session transcript media read allowance', () => {
@@ -70,54 +85,114 @@ describe('external session transcript media read allowance', () => {
 
     const transientMediaReadAllowance = createTransientSessionMediaReadAllowance();
     const rpcHandlerManager = createRpcHandlerManager();
-    registerFileSystemHandlers(rpcHandlerManager, workingDirectory, {
+    const fileSystemHandlers = registerFileSystemHandlers(rpcHandlerManager, workingDirectory, {
       accessPolicy: { kind: 'restrictedRoots', roots: [workingDirectory] },
       getAdditionalAllowedReadFiles: () => transientMediaReadAllowance.readAllowedReadFiles(),
     });
 
     const externalSessions = {
-      validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
-      listCandidates: vi.fn(async () => ({ candidates: [], nextCursor: null })),
-      resolveTranscriptMediaReadRoots: vi.fn(async () => [providerDirectory]),
+      resolveSource: vi.fn(async ({ source }) => ({
+        ok: true as const,
+        value: { source, transcriptMediaReadRoots: [providerDirectory] },
+      })),
+      listCandidates: vi.fn(async () => ({
+        ok: true as const,
+        value: { candidates: [], nextCursor: null },
+      })),
+      resolveLinkIdentity: vi.fn(async ({ source, remoteSessionId }) => ({
+        ok: true as const,
+        value: { source, remoteSessionId, linkData: {} },
+      })),
+      resolveLinkedIdentity: vi.fn(async ({ source, remoteSessionId, linkData }) => ({
+        ok: true as const,
+        value: {
+          source,
+          remoteSessionId,
+          linkData,
+          transcriptMediaReadRoots: [providerDirectory],
+        },
+      })),
       pageTranscript: vi.fn(async () => ({
-        items: [{
-          id: 'direct-item-1',
-          localId: 'direct-item-1',
-          createdAtMs: 123,
-          raw: {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'message', message: 'preview only' } },
-            meta: {
-              happier: {
-                kind: 'session_media.v1',
-                payload: {
-                  media: [
-                    createDirectSessionMediaItem(providerMediaPath),
-                    createDirectSessionMediaItem(symlinkEscapePath),
-                    createDirectSessionMediaItem(sensitiveAbsolutePath),
-                    createDirectSessionMediaItem(pathToFileURL(sensitiveFileUriPath).href),
-                  ],
+        ok: true as const,
+        value: {
+          items: [{
+            id: 'direct-item-1',
+            localId: 'direct-item-1',
+            createdAtMs: 123,
+            raw: {
+              role: 'agent',
+              content: { type: 'output', data: { type: 'message', message: 'preview only' } },
+              meta: {
+                happier: {
+                  kind: 'session_media.v1',
+                  payload: {
+                    media: [
+                      createDirectSessionMediaItem(providerMediaPath),
+                      createDirectSessionMediaItem(symlinkEscapePath),
+                      createDirectSessionMediaItem(sensitiveAbsolutePath),
+                      createDirectSessionMediaItem(pathToFileURL(sensitiveFileUriPath).href),
+                    ],
+                  },
                 },
               },
             },
-          },
-        }],
-        nextCursor: null,
-        tailCursor: null,
-        hasMore: false,
-        truncated: false,
+          }],
+          nextCursor: null,
+          tailCursor: null,
+          hasMore: false,
+          truncated: false,
+        },
+      } as const)),
+      readAfterTranscript: vi.fn(async () => ({
+        ok: true as const,
+        value: { outcome: 'already_current' as const },
       })),
-      readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
-    } satisfies ExternalSessionProviderOps;
-
-    resolveBackendExecutionSurfacesMock.mockResolvedValue({
-      terminalRuntime: null,
-      externalSession: externalSessions,
-      attach: null,
-      handoff: null,
-      fork: null,
-      checkpoint: null,
-    } satisfies BackendExecutionSurfaces);
+    } satisfies AgentExternalSessionsContribution;
+    const agent = {
+      id: 'opencode',
+      identity: { pluginId: 'happier.opencode', localId: 'opencode' },
+      richDefinition: {
+        definition: {
+          surfaces: {
+            externalSession: {
+              sources: [{
+                sourceKind: 'opencodeServer',
+                schema: {
+                  fields: [
+                    { name: 'kind', kind: 'literal', value: 'opencodeServer' },
+                    { name: 'baseUrl', kind: 'string' },
+                    { name: 'directory', kind: 'string' },
+                  ],
+                },
+                key: {
+                  segments: [
+                    { kind: 'literal', value: 'opencodeServer' },
+                    { kind: 'field', field: 'baseUrl' },
+                    { kind: 'field', field: 'directory' },
+                  ],
+                },
+              }],
+            },
+          },
+        },
+      },
+    };
+    const retirement = new AbortController();
+    acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
+      registry: {
+        contributes: {
+          agents: [agent],
+          agentDefinitionsById: new Map([['opencode', agent]]),
+        },
+        agentRuntimesByAgentId: new Map([['opencode', {
+          generation: 'plugin-generation-1',
+          retirementSignal: retirement.signal,
+          isCurrent: () => true,
+          externalSessions,
+        }]]),
+      },
+      release: vi.fn(async () => undefined),
+    });
 
     try {
       const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
@@ -149,6 +224,33 @@ describe('external session transcript media read allowance', () => {
         success: true,
         content: providerMediaBytes.toString('base64'),
       });
+      const recipient = createTransferRecipientKeyPair();
+      const transferInit = await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, {
+        t: 'session_file_download_v1',
+        path: providerMediaPath,
+        recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+      });
+      expect(transferInit).toMatchObject({ success: true, downloadId: expect.any(String) });
+      const downloadId = (transferInit as { downloadId: string }).downloadId;
+      const transferChunk = await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK, {
+        downloadId,
+        index: 0,
+      });
+      expect(transferChunk).toMatchObject({ success: true, isLast: true });
+      expect(decryptEncryptedTransferChunkEnvelope({
+        transferId: downloadId,
+        sequence: 0,
+        payloadBase64: (transferChunk as { payloadBase64: string }).payloadBase64,
+        encryptedDataKeyEnvelopeBase64: (transferChunk as { encryptedDataKeyEnvelopeBase64: string }).encryptedDataKeyEnvelopeBase64,
+        recipientSecretKeySeed: recipient.recipientSecretKeySeed,
+      })).toEqual(providerMediaBytes);
+      await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE, { downloadId });
+      const deniedSiblingTransfer = await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, {
+        t: 'session_file_download_v1',
+        path: siblingMediaPath,
+        recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+      });
+      expect(deniedSiblingTransfer).toMatchObject({ success: false });
       const deniedSiblingAfterGrant = await rpcHandlerManager.invokeLocal(RPC_METHODS.READ_FILE, { path: siblingMediaPath });
       expect(deniedSiblingAfterGrant).toMatchObject({ success: false });
       const deniedSymlinkEscapeAfterGrant = await rpcHandlerManager.invokeLocal(RPC_METHODS.READ_FILE, { path: symlinkEscapePath });
@@ -167,6 +269,7 @@ describe('external session transcript media read allowance', () => {
 
       await expect(stat(join(workingDirectory, '.happier', 'uploads'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
+      await fileSystemHandlers.dispose();
       await rm(workingDirectory, { recursive: true, force: true });
       await rm(providerDirectory, { recursive: true, force: true });
       await rm(outsideDirectory, { recursive: true, force: true });

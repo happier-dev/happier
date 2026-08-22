@@ -2,8 +2,19 @@ import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
 import { isActiveLatestTurnStatus } from '../../sessionTurnStatusSnapshot';
-import { deriveVoiceAgentTurnLocalId, readVoiceAgentTurnPayloadFromMeta, validatePluginHookPayloadV1 } from '@happier-dev/protocol';
-import type { PrimaryTurnStatusV1, SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
+import {
+    deriveVoiceAgentTurnLocalId,
+    hasRawComposerAttachmentSelectionV1,
+    readVoiceAgentTurnPayloadFromMeta,
+    validatePluginHookPayloadV1,
+    type ComposerAttachmentInputV1,
+} from '@happier-dev/protocol';
+import type {
+    PrimaryTurnStatusV1,
+    SessionInputRequestV1,
+    SessionMessageProvenanceV1,
+    SessionTranscriptObservationProvenanceV1,
+} from '@happier-dev/protocol';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 
@@ -28,9 +39,7 @@ import {
 import {
     sendAgentMessageEphemeralDeltaViaPort,
     sendAgentMessageEphemeralViaPort,
-    sendAgentMessageViaPort,
-    sendSessionEventViaPort,
-    sendUserTextMessageViaPort,
+    prepareSessionEventMessageViaPort,
     type SessionClientTranscriptSendPort,
 } from './sendMessages';
 import {
@@ -40,10 +49,6 @@ import {
 import { applyAcpPostSendReactions } from '../reactions/postSendReactions';
 import type { PostSendReactionPort } from '../reactions/providers/postSendReactionPort';
 import type { SessionUsageObservationPublisher } from '../reactions/usagePublishing';
-import {
-    dispatchProviderTranscriptMessage,
-    type ProviderTranscriptDispatchRequest,
-} from './providerDispatch';
 import { extractAssistantTextSnapshotFromAcpMessage } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 import {
@@ -53,21 +58,20 @@ import {
 } from './sessionMediaBridge';
 import { isDefinitiveSessionMessageCommitError } from '../transport/createSessionClientCommitQueueRuntime';
 import type { EphemeralSendOutcome } from './ephemeralSendOutcome';
+import {
+    assertCommittedTranscriptAdmission,
+    type CommittedTranscriptAdmission,
+    type CommittedTranscriptMessageOptions,
+} from '../../transcriptPort';
+import {
+    admitSessionStructuredInputV1,
+    preserveComposerAttachmentSelectionAcrossSessionInputTransformV1,
+    type SessionStructuredInputAdmissionPolicyV1,
+} from '@/session/services/admitSessionStructuredInputV1';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
 type SessionEventType = 'ready';
-
-type CommitSessionMessageParams = Readonly<{
-    message: PlainOrEncryptedPayload;
-    localId: string;
-    sidechainId: string | null;
-    messageRole: SessionMessageRole;
-    sessionEventType?: SessionEventType;
-    requireCommit: boolean;
-    markAsUserMessage?: boolean;
-    refreshAgentQueueEchoSuppression?: boolean;
-}>;
 
 type EnqueueCommittedTranscriptMessageParams = Readonly<{
     message: PlainOrEncryptedPayload;
@@ -78,6 +82,7 @@ type EnqueueCommittedTranscriptMessageParams = Readonly<{
     createdAt: number;
     updatedAt: number;
     provenance: SessionTranscriptObservationProvenanceV1;
+    admission?: CommittedTranscriptAdmission;
 }>;
 
 type EnqueueCommittedVoiceAgentTranscriptTurnParams = Readonly<{
@@ -106,6 +111,72 @@ type SessionPresenceSnapshot = Readonly<{
     thinking: boolean;
     mode: SessionAliveMode;
 }>;
+
+/**
+ * Request-local post-admission work from the daemon-owned input transform.
+ * It deliberately never becomes part of the Message payload or Session state:
+ * the caller retains it only until the exact admission result is known.
+ */
+export type SessionInputAdmissionSettlement = Readonly<{
+    onAccepted: () => Promise<void> | void;
+    onDefinitiveAdmissionFailure: () => Promise<void> | void;
+}>;
+
+export type SessionInputTransformBeforeCommitResult =
+    | Record<string, unknown>
+    | Readonly<{
+        transformed: Record<string, unknown>;
+        settlement: SessionInputAdmissionSettlement;
+    }>;
+
+type NormalizedSessionInputTransformBeforeCommitResult = Readonly<{
+    transformed: Record<string, unknown>;
+    settlement?: SessionInputAdmissionSettlement;
+}>;
+
+function asMetadataRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function isSessionInputAdmissionSettlementCallback(
+    value: unknown,
+): value is () => Promise<void> | void {
+    return typeof value === 'function';
+}
+
+function normalizeSessionInputTransformBeforeCommitResult(
+    value: SessionInputTransformBeforeCommitResult,
+): NormalizedSessionInputTransformBeforeCommitResult {
+    const candidate = asMetadataRecord(value);
+    const transformed = asMetadataRecord(candidate?.transformed);
+    const settlement = asMetadataRecord(candidate?.settlement);
+    const onAccepted = settlement?.onAccepted;
+    const onDefinitiveAdmissionFailure = settlement?.onDefinitiveAdmissionFailure;
+    if (
+        transformed
+        && isSessionInputAdmissionSettlementCallback(onAccepted)
+        && isSessionInputAdmissionSettlementCallback(onDefinitiveAdmissionFailure)
+    ) {
+        return {
+            transformed,
+            settlement: { onAccepted, onDefinitiveAdmissionFailure },
+        };
+    }
+    return { transformed: value };
+}
+
+async function settleSessionInputAdmissionFailure(
+    settlement: SessionInputAdmissionSettlement | undefined,
+): Promise<void> {
+    if (!settlement) return;
+    try {
+        await settlement.onDefinitiveAdmissionFailure();
+    } catch (error) {
+        logger.debug('[session-input] Failed to settle uncommitted transformed input', { error });
+    }
+}
 
 export type SessionClientTranscriptApiDeps = Readonly<{
     token: string;
@@ -140,63 +211,53 @@ export type SessionClientTranscriptApiDeps = Readonly<{
     ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     usageObservationPublisher: SessionUsageObservationPublisher;
     buildOutboundSessionMessagePayload: (content: unknown) => PlainOrEncryptedPayload;
-    commitSessionMessageBestEffort: (params: Readonly<{
-        message: PlainOrEncryptedPayload;
-        localId: string;
-        sidechainId: string | null;
-        logErrorMessage: string;
-        messageRole: SessionMessageRole;
-        sessionEventType?: SessionEventType;
-        markAsUserMessage?: boolean;
-        refreshAgentQueueEchoSuppression?: boolean;
-    }>) => Promise<void>;
-    enqueueMessageCommit: <T>(fn: () => Promise<T>) => Promise<T>;
-    trackProviderTranscriptDispatch?: (update: Promise<unknown>) => void;
-    commitSessionMessage: (params: CommitSessionMessageParams) => Promise<void>;
-    logSendWhileDisconnected: (context: string, details?: Record<string, unknown>) => void;
-    markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
     toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
     permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
     toolCallInputByProviderAndId: Map<string, unknown>;
     maxToolCallCacheEntries?: number | undefined;
-    transformSessionInputBeforeCommit?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
-    enqueuePendingUserMessage: (params: Readonly<{
+    transformSessionInputBeforeCommit?: (
+        payload: Record<string, unknown>,
+    ) => Promise<SessionInputTransformBeforeCommitResult> | SessionInputTransformBeforeCommitResult;
+    admitSessionUserMessage: (params: Readonly<{
         localId: string;
-        message: PlainOrEncryptedPayload;
-        requestedAction: Readonly<{ v: 1; kind: 'enqueue' }>;
+        text: string;
+        meta: Record<string, unknown>;
+        composerAttachments: readonly ComposerAttachmentInputV1[];
+        settlement?: SessionInputAdmissionSettlement;
+        inputAdmission?: Readonly<{
+            provenance: SessionMessageProvenanceV1;
+            request: SessionInputRequestV1;
+        }>;
     }>) => Promise<void>;
-    getTranscriptQueryContext: () => Readonly<{
-        encryptionKey: Uint8Array;
-        encryptionVariant: 'legacy' | 'dataKey';
-    }>;
+    getTranscriptQueryContext: () => Readonly<
+        | { encryptionMode: 'plain' }
+        | {
+            encryptionMode: 'e2ee';
+            encryptionKey: Uint8Array;
+            encryptionVariant: 'legacy' | 'dataKey';
+        }
+    >;
 }>;
 
 export type SessionClientTranscriptApi = Readonly<{
-    sendProviderMessage: (request: ProviderTranscriptDispatchRequest) => void;
-    sendAgentMessage: (
-        provider: ACPProvider,
-        body: ACPMessageData,
-        opts?: { localId?: string; meta?: Record<string, unknown> },
-    ) => void;
-    sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown>; refreshAgentQueueEchoSuppression?: boolean }) => void;
-    sendUserTextMessageCommitted: (
+    enqueueUserTextMessageCommitted: (
         text: string,
-        opts: { localId: string; meta?: Record<string, unknown> },
-    ) => Promise<void>;
+        opts: CommittedTranscriptMessageOptions,
+    ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     enqueueSessionUserMessage: (params: Readonly<{
         text: string;
         localId?: string;
         meta?: Record<string, unknown>;
+        structuredInputAdmissionPolicy?: SessionStructuredInputAdmissionPolicyV1;
+        inputAdmission?: Readonly<{
+            provenance: SessionMessageProvenanceV1;
+            request: SessionInputRequestV1;
+        }>;
     }>) => Promise<void>;
-    sendAgentMessageCommitted: (
-        provider: ACPProvider,
-        body: ACPMessageData,
-        opts: { localId: string; meta?: Record<string, unknown> },
-    ) => Promise<void>;
     enqueueAgentMessageCommitted: (
         provider: ACPProvider,
         body: ACPMessageData,
-        opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
+        opts: CommittedTranscriptMessageOptions,
     ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     enqueueVoiceAgentTranscriptTurnCommitted: (
         provider: ACPProvider,
@@ -222,7 +283,10 @@ export type SessionClientTranscriptApi = Readonly<{
     fetchLatestUserPermissionIntentFromTranscript: (
         opts?: { take?: number },
     ) => Promise<{ intent: import('../../../types').PermissionMode; updatedAt: number } | null>;
-    sendSessionEvent: (event: SessionEventMessage, id?: string) => void;
+    enqueueSessionEventCommitted: (
+        event: SessionEventMessage,
+        id?: string,
+    ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     keepAlive: (thinking: boolean, mode: SessionAliveMode) => void;
     replayLatestPresence: () => void;
 }>;
@@ -299,7 +363,11 @@ export function createSessionClientTranscriptApi(
         const socket = deps.getSocket();
         if (!socket.connected) return false;
 
-        if (payload.thinking || !volatileWhenIdle) {
+        if (
+            payload.thinking
+            || isActiveLatestTurnStatus(payload.latestTurnStatus)
+            || !volatileWhenIdle
+        ) {
             socket.emit('session-alive', payload);
             return true;
         }
@@ -329,9 +397,6 @@ export function createSessionClientTranscriptApi(
         debugLargeJson: (message, data) => logger.debugLargeJson(message, data),
         getMetadataSnapshot: () => deps.getMetadataSnapshot(),
         buildOutboundSessionMessagePayload: (content) => deps.buildOutboundSessionMessagePayload(content),
-        commitSessionMessageBestEffort: (params) => deps.commitSessionMessageBestEffort(params),
-        logSendWhileDisconnected: (context, details) => deps.logSendWhileDisconnected(context, details),
-        markAgentQueueEchoSuppressedLocalId: (localId) => deps.markAgentQueueEchoSuppressedLocalId(localId),
         toolCallCanonicalNameByProviderAndId: deps.toolCallCanonicalNameByProviderAndId,
         permissionToolCallRawInputByProviderAndId: deps.permissionToolCallRawInputByProviderAndId,
         toolCallInputByProviderAndId: deps.toolCallInputByProviderAndId,
@@ -346,133 +411,116 @@ export function createSessionClientTranscriptApi(
         usageObservationPublisher: deps.usageObservationPublisher,
     });
 
-    const sendUserTextMessage = (
-        text: string,
-        opts?: { localId?: string; meta?: Record<string, unknown>; refreshAgentQueueEchoSuppression?: boolean },
-    ): void => {
-        sendUserTextMessageViaPort(getTranscriptSendPort(), text, opts);
-    };
-
-    const sendAgentMessageCommitted = async (
-        provider: ACPProvider,
-        body: ACPMessageData,
-        opts: { localId: string; meta?: Record<string, unknown> },
-    ): Promise<void> => {
-        const { normalizedBody, payload, localId, sidechainId, messageRole } = prepareCommittedAgentMessageViaPort(
-            getTranscriptSendPort(),
-            provider,
-            body,
-            opts,
-        );
-
-        if (shouldTraceAcpMessageType(normalizedBody.type)) {
-            recordAcpToolTraceEventIfNeeded({ sessionId: deps.sessionId, provider, body: normalizedBody, localId });
-        }
-
-        await deps.enqueueMessageCommit(() =>
-            deps.commitSessionMessage({ message: payload, localId, sidechainId, messageRole, requireCommit: true }),
-        );
-        const extracted = extractAssistantTextSnapshotFromAcpMessage(provider, normalizedBody);
-        if (extracted) {
-            deps.turnAssistantTextSnapshotStore?.observe({
-                text: extracted.text,
-                provider: extracted.provider,
-                sidechainId: extracted.sidechainId,
-                localId,
-                source: 'committed',
-            });
-        }
-        applyAcpPostSendReactions(getPostSendReactionPort(), {
-            provider,
-            normalizedBody,
-            localId,
-        });
-    };
-
-    const commitUserTextMessage = async (
-        text: string,
-        opts: { localId: string; meta?: Record<string, unknown>; refreshAgentQueueEchoSuppression: boolean },
-    ): Promise<void> => {
-        const { payload, localId } = prepareCommittedUserTextMessageViaPort(
-            getTranscriptSendPort(),
-            text,
-            opts,
-        );
-        if (opts.refreshAgentQueueEchoSuppression) {
-            deps.markAgentQueueEchoSuppressedLocalId(localId);
-        }
-        await deps.enqueueMessageCommit(() =>
-            deps.commitSessionMessage({
-                message: payload,
-                localId,
-                sidechainId: null,
-                messageRole: 'user',
-                requireCommit: true,
-                markAsUserMessage: true,
-                refreshAgentQueueEchoSuppression: opts.refreshAgentQueueEchoSuppression,
-            }),
-        );
-    };
-
     const transformSessionInputPayloadBeforeCommit = async (
         payload: Readonly<{
             localId: string;
             text: string;
             meta: Record<string, unknown>;
             timestampMs: number;
+            structuredInputAdmissionPolicy?: SessionStructuredInputAdmissionPolicyV1;
         }>,
     ): Promise<Readonly<{
         text: string;
         meta: Record<string, unknown>;
+        composerAttachments: readonly ComposerAttachmentInputV1[];
+        settlement?: SessionInputAdmissionSettlement;
     }>> => {
+        const admit = (input: Readonly<{
+            text: string;
+            meta: Record<string, unknown>;
+            preparedComposerAttachments?: readonly ComposerAttachmentInputV1[];
+        }>) => {
+            const admitted = admitSessionStructuredInputV1({
+                text: input.text,
+                meta: input.meta,
+                ...(payload.structuredInputAdmissionPolicy
+                    ? { admissionPolicy: payload.structuredInputAdmissionPolicy }
+                    : {}),
+                ...(input.preparedComposerAttachments
+                    ? { preparedComposerAttachments: input.preparedComposerAttachments }
+                    : {}),
+            });
+            return {
+                text: admitted.text,
+                meta: admitted.meta,
+                composerAttachments: admitted.structuredInput?.composerAttachments ?? [],
+            };
+        };
+        const selectedComposerAttachment = hasRawComposerAttachmentSelectionV1(payload.meta);
         if (!deps.transformSessionInputBeforeCommit) {
-            return { text: payload.text, meta: payload.meta };
+            return admit({ text: payload.text, meta: payload.meta });
         }
         try {
-            const transformed = await deps.transformSessionInputBeforeCommit({
-                sessionId: deps.sessionId,
-                localId: payload.localId,
-                text: payload.text,
-                meta: payload.meta,
-                timestampMs: payload.timestampMs,
-            });
+            const transformResult = normalizeSessionInputTransformBeforeCommitResult(
+                await deps.transformSessionInputBeforeCommit({
+                    sessionId: deps.sessionId,
+                    localId: payload.localId,
+                    text: payload.text,
+                    meta: payload.meta,
+                    timestampMs: payload.timestampMs,
+                }),
+            );
+            const transformed = transformResult.transformed;
             const validation = validatePluginHookPayloadV1({
                 hookId: 'session.input.transform',
                 payload: transformed,
             });
             if (!validation.success) {
+                if (selectedComposerAttachment) {
+                    await settleSessionInputAdmissionFailure(transformResult.settlement);
+                    return admit({ text: payload.text, meta: payload.meta });
+                }
                 logger.debug('[plugins] session.input.transform returned an invalid payload; using original input', {
                     error: validation.message,
                 });
-                return { text: payload.text, meta: payload.meta };
+                return admit({ text: payload.text, meta: payload.meta });
             }
             const parsed = validation.payload as Record<string, unknown>;
             const transformedMeta = parsed.meta && typeof parsed.meta === 'object' && !Array.isArray(parsed.meta)
                 ? parsed.meta as Record<string, unknown>
-                : payload.meta;
-            return {
-                text: typeof parsed.text === 'string' ? parsed.text : payload.text,
-                meta: transformedMeta,
-            };
-        } catch {
+                : null;
+            const admissionMeta = preserveComposerAttachmentSelectionAcrossSessionInputTransformV1({
+                sourceMeta: payload.meta,
+                transformedMeta,
+            }) ?? payload.meta;
+            const preparedComposerAttachments = Array.isArray(parsed.preparedComposerAttachments)
+                ? parsed.preparedComposerAttachments as readonly ComposerAttachmentInputV1[]
+                : undefined;
+            try {
+                return {
+                    ...admit({
+                        text: typeof parsed.text === 'string' ? parsed.text : payload.text,
+                        meta: admissionMeta,
+                        ...(preparedComposerAttachments ? { preparedComposerAttachments } : {}),
+                    }),
+                    ...(transformResult.settlement ? { settlement: transformResult.settlement } : {}),
+                };
+            } catch (error) {
+                await settleSessionInputAdmissionFailure(transformResult.settlement);
+                throw error;
+            }
+        } catch (error) {
+            if (selectedComposerAttachment) throw error;
             logger.debug('[plugins] session.input.transform failed; using original input');
-            return { text: payload.text, meta: payload.meta };
+            return admit({ text: payload.text, meta: payload.meta });
         }
     };
 
     const enqueueAgentMessageCommitted = async (
         provider: ACPProvider,
         body: ACPMessageData,
-        opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
+        opts: CommittedTranscriptMessageOptions,
     ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> => {
-        const { normalizedBody, payload, localId, sidechainId, messageRole } = prepareCommittedAgentMessageViaPort(
+        const { normalizedBody, payload, localId, sidechainId, messageRole } = await prepareCommittedAgentMessageViaPort(
             getTranscriptSendPort(),
             provider,
             body,
             opts,
         );
 
-        if (shouldTraceAcpMessageType(normalizedBody.type)) {
+        deps.outboundShapeLogger.log(`acp:${provider}:${normalizedBody.type}`, normalizedBody);
+
+        if (shouldTraceAcpMessageType(normalizedBody.type, { includeTaskComplete: true })) {
             recordAcpToolTraceEventIfNeeded({ sessionId: deps.sessionId, provider, body: normalizedBody, localId });
         }
 
@@ -480,14 +528,17 @@ export function createSessionClientTranscriptApi(
         const metaRecord = streamSegmentMeta && typeof streamSegmentMeta === 'object'
             ? streamSegmentMeta as Record<string, unknown>
             : null;
-        const createdAt =
-            metaRecord && typeof metaRecord.startedAtMs === 'number' && Number.isFinite(metaRecord.startedAtMs)
+        const createdAt = typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
+            ? Math.max(0, Math.trunc(opts.createdAt))
+            : metaRecord && typeof metaRecord.startedAtMs === 'number' && Number.isFinite(metaRecord.startedAtMs)
                 ? Math.max(0, Math.trunc(metaRecord.startedAtMs))
                 : Date.now();
-        const updatedAt =
-            metaRecord && typeof metaRecord.updatedAtMs === 'number' && Number.isFinite(metaRecord.updatedAtMs)
+        const updatedAt = typeof opts.updatedAt === 'number' && Number.isFinite(opts.updatedAt)
+            ? Math.max(createdAt, Math.trunc(opts.updatedAt))
+            : metaRecord && typeof metaRecord.updatedAtMs === 'number' && Number.isFinite(metaRecord.updatedAtMs)
                 ? Math.max(createdAt, Math.trunc(metaRecord.updatedAtMs))
                 : createdAt;
+        assertCommittedTranscriptAdmission(opts.admission);
         const result = await deps.enqueueCommittedTranscriptMessage({
             message: payload,
             localId,
@@ -496,6 +547,7 @@ export function createSessionClientTranscriptApi(
             createdAt,
             updatedAt,
             provenance: opts.provenance,
+            ...(opts.admission === undefined ? {} : { admission: opts.admission }),
         });
         if (result.delivered) {
             const extracted = extractAssistantTextSnapshotFromAcpMessage(provider, normalizedBody);
@@ -526,7 +578,7 @@ export function createSessionClientTranscriptApi(
             params.user.text,
             { localId: params.user.localId, meta: params.user.meta },
         );
-        const assistant = prepareCommittedAgentMessageViaPort(
+        const assistant = await prepareCommittedAgentMessageViaPort(
             getTranscriptSendPort(),
             provider,
             { type: 'message', message: params.assistant.text },
@@ -580,48 +632,48 @@ export function createSessionClientTranscriptApi(
     };
 
     return {
-        sendProviderMessage(request) {
-            const update = dispatchProviderTranscriptMessage(getTranscriptSendPort(), request, {
-                sessionId: deps.sessionId,
-                postSendReactionPort: getPostSendReactionPort(),
-            }).catch(() => {
-                logger.debug('[SOCKET] Failed to dispatch provider transcript message (non-fatal)');
-            });
-            deps.trackProviderTranscriptDispatch?.(update);
-            void update;
-        },
-
-        sendAgentMessage(provider, body, opts) {
-            const { normalizedBody, localId } = sendAgentMessageViaPort(getTranscriptSendPort(), provider, body, opts);
-
-            if (shouldTraceAcpMessageType(normalizedBody.type, { includeTaskComplete: true })) {
-                recordAcpToolTraceEventIfNeeded({
-                    sessionId: deps.sessionId,
-                    provider,
-                    body: normalizedBody,
-                    localId,
-                });
-            }
-
-            applyAcpPostSendReactions(getPostSendReactionPort(), {
-                provider,
-                normalizedBody,
-                localId,
+        async enqueueSessionEventCommitted(event, id) {
+            const prepared = prepareSessionEventMessageViaPort(getTranscriptSendPort(), event, id);
+            const now = Date.now();
+            return await deps.enqueueCommittedTranscriptMessage({
+                message: prepared.payload,
+                localId: prepared.localId,
+                sidechainId: null,
+                messageRole: prepared.messageRole,
+                sessionEventType: prepared.sessionEventType,
+                createdAt: now,
+                updatedAt: now,
+                provenance: { kind: 'non_dependent', source: 'background' },
             });
         },
 
-        sendUserTextMessage,
-
-        async sendUserTextMessageCommitted(text, opts) {
-            await commitUserTextMessage(text, {
-                ...opts,
-                refreshAgentQueueEchoSuppression: true,
+        async enqueueUserTextMessageCommitted(text, opts) {
+            const prepared = prepareCommittedUserTextMessageViaPort(
+                getTranscriptSendPort(),
+                text,
+                opts,
+            );
+            const createdAt = typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
+                ? Math.max(0, Math.trunc(opts.createdAt))
+                : Date.now();
+            const updatedAt = typeof opts.updatedAt === 'number' && Number.isFinite(opts.updatedAt)
+                ? Math.max(createdAt, Math.trunc(opts.updatedAt))
+                : createdAt;
+            assertCommittedTranscriptAdmission(opts.admission);
+            return await deps.enqueueCommittedTranscriptMessage({
+                message: prepared.payload,
+                localId: prepared.localId,
+                sidechainId: null,
+                messageRole: 'user',
+                createdAt,
+                updatedAt,
+                provenance: opts.provenance,
+                ...(opts.admission === undefined ? {} : { admission: opts.admission }),
             });
         },
 
         async enqueueSessionUserMessage(params) {
             const originalText = String(params.text ?? '');
-            if (originalText.length === 0) return;
             const localId = typeof params.localId === 'string' && params.localId.length > 0 ? params.localId : randomUUID();
 
             const meta: Record<string, unknown> = params.meta && typeof params.meta === 'object' ? { ...params.meta } : {};
@@ -631,31 +683,29 @@ export function createSessionClientTranscriptApi(
             if (typeof meta.sentFrom !== 'string' || meta.sentFrom.trim().length === 0) {
                 meta.sentFrom = 'ui';
             }
+            if (originalText.length === 0 && !hasRawComposerAttachmentSelectionV1(meta)) return;
             const createdAt = Date.now();
             const transformed = await transformSessionInputPayloadBeforeCommit({
                 localId,
                 text: originalText,
                 meta,
                 timestampMs: createdAt,
+                ...(params.structuredInputAdmissionPolicy
+                    ? { structuredInputAdmissionPolicy: params.structuredInputAdmissionPolicy }
+                    : {}),
             });
             const text = transformed.text;
 
-            const { payload } = prepareCommittedUserTextMessageViaPort(
-                getTranscriptSendPort(),
-                text,
-                {
-                    localId,
-                    meta: transformed.meta,
-                },
-            );
-            await deps.enqueuePendingUserMessage({
+            await deps.admitSessionUserMessage({
                 localId,
-                message: payload,
-                requestedAction: { v: 1, kind: 'enqueue' },
+                text,
+                meta: transformed.meta,
+                composerAttachments: transformed.composerAttachments,
+                ...(transformed.settlement ? { settlement: transformed.settlement } : {}),
+                ...(params.inputAdmission ? { inputAdmission: params.inputAdmission } : {}),
             });
         },
 
-        sendAgentMessageCommitted,
         enqueueAgentMessageCommitted,
         enqueueVoiceAgentTranscriptTurnCommitted,
 
@@ -670,14 +720,18 @@ export function createSessionClientTranscriptApi(
             const messageText = request.messageText ?? '';
 
             try {
-                await sendAgentMessageCommitted(
+                const admission = await enqueueAgentMessageCommitted(
                     provider,
                     { type: 'message', message: messageText },
                     {
                         localId: request.localId,
                         meta: persisted.meta,
+                        provenance: { kind: 'non_dependent', source: 'external' },
                     },
                 );
+                if (!admission.persisted) {
+                    throw new Error('Session media transcript descriptor was not admitted to durable custody');
+                }
             } catch (error) {
                 if (
                     isDefinitiveSessionMessageCommitError(error)
@@ -712,8 +766,7 @@ export function createSessionClientTranscriptApi(
             const request = () => fetchRecentTranscriptTextItemsForAcpImportFromServer({
                 token: deps.token,
                 sessionId: deps.sessionId,
-                encryptionKey: transcriptQueryContext.encryptionKey,
-                encryptionVariant: transcriptQueryContext.encryptionVariant,
+                ...transcriptQueryContext,
                 take: opts?.take,
             });
             const supervisor = deps.getSessionConnectionSupervisor();
@@ -733,8 +786,7 @@ export function createSessionClientTranscriptApi(
             const request = () => fetchLatestUserPermissionIntentFromEncryptedTranscript({
                 token: deps.token,
                 sessionId: deps.sessionId,
-                encryptionKey: transcriptQueryContext.encryptionKey,
-                encryptionVariant: transcriptQueryContext.encryptionVariant,
+                ...transcriptQueryContext,
                 take: opts?.take,
             });
             const supervisor = deps.getSessionConnectionSupervisor();
@@ -749,15 +801,14 @@ export function createSessionClientTranscriptApi(
             });
         },
 
-        sendSessionEvent(event, id) {
-            sendSessionEventViaPort(getTranscriptSendPort(), event, id);
-        },
-
         keepAlive(thinking, mode) {
             if (process.env.DEBUG) {
                 logger.debug(`[API] Sending keep alive message: ${thinking}`);
             }
             latestSessionPresence = { thinking: resolveKeepAliveThinkingWithTerminalGuard(thinking, Date.now()), mode };
+            // An open canonical turn keeps publisher presence reliable even when the provider's
+            // foreground thinking projection is idle. The payload retains the original thinking
+            // value, so presence transport cannot synthesize a working-state projection.
             const didPublish = emitSessionAlive(
                 createSessionAlivePayload(latestSessionPresence),
                 { volatileWhenIdle: hasPublishedSessionPresence },

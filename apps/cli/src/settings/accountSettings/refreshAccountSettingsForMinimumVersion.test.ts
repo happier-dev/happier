@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
 import type { AccountSettingsContext } from './bootstrapAccountSettingsContext';
+import {
+  resetActiveAccountSettingsSnapshotForTests,
+  setActiveAccountSettingsSnapshot,
+} from './activeAccountSettingsSnapshot';
 import { refreshAccountSettingsForMinimumVersion } from './refreshAccountSettingsForMinimumVersion';
 
 function createCredentialsStub(token = 'token'): Credentials {
@@ -27,6 +31,7 @@ function createContext(settingsVersion: number, scopeKey = 'scope:token'): Accou
 describe('refreshAccountSettingsForMinimumVersion', () => {
   beforeEach(() => {
     vi.useRealTimers();
+    resetActiveAccountSettingsSnapshotForTests();
   });
 
   it('returns the active snapshot when it already satisfies the minimum version', async () => {
@@ -94,6 +99,76 @@ describe('refreshAccountSettingsForMinimumVersion', () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([createContext(5), createContext(5)]);
     expect(bootstrapAccountSettingsContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes concurrent forced refreshes for the same scope', async () => {
+    const resolveRefreshes: Array<(ctx: AccountSettingsContext) => void> = [];
+    const bootstrapAccountSettingsContext = vi.fn(() => new Promise<AccountSettingsContext>((resolve) => {
+      resolveRefreshes.push(resolve);
+    }));
+    const params = {
+      credentials: createCredentialsStub(),
+      minSettingsVersion: null,
+      forceRefresh: true,
+      deps: {
+        getActiveSnapshot: () => null,
+        bootstrapAccountSettingsContext,
+        resolveScopeKey: () => 'scope:token',
+      },
+    } as const;
+
+    const first = refreshAccountSettingsForMinimumVersion(params);
+    const second = refreshAccountSettingsForMinimumVersion(params);
+    // This assertion is the RED discriminator: the previous forced-refresh
+    // bypass started two bootstrap calls before either could settle.
+    expect(bootstrapAccountSettingsContext).toHaveBeenCalledTimes(1);
+    for (const resolveRefresh of resolveRefreshes) {
+      resolveRefresh(createContext(5));
+    }
+
+    await expect(Promise.all([first, second])).resolves.toEqual([createContext(5), createContext(5)]);
+  });
+
+  it('does not coalesce a re-entered Account A scope with a refresh from its retired lifetime', async () => {
+    const accountA = createCredentialsStub('account-a');
+    const accountB = createCredentialsStub('account-b');
+    const scopeA = 'scope:account-a';
+    const scopeB = 'scope:account-b';
+    const resolveRefreshes: Array<(ctx: AccountSettingsContext) => void> = [];
+    const bootstrapAccountSettingsContext = vi.fn(() => new Promise<AccountSettingsContext>((resolve) => {
+      resolveRefreshes.push(resolve);
+    }));
+
+    setActiveAccountSettingsSnapshot(createContext(1, scopeA));
+    const oldLifetime = refreshAccountSettingsForMinimumVersion({
+      credentials: accountA,
+      forceRefresh: true,
+      deps: {
+        bootstrapAccountSettingsContext,
+        resolveScopeKey: () => scopeA,
+      },
+    });
+    await vi.waitFor(() => expect(bootstrapAccountSettingsContext).toHaveBeenCalledTimes(1));
+
+    setActiveAccountSettingsSnapshot(createContext(2, scopeB));
+    setActiveAccountSettingsSnapshot(createContext(3, scopeA));
+    const newLifetime = refreshAccountSettingsForMinimumVersion({
+      credentials: accountA,
+      forceRefresh: true,
+      deps: {
+        bootstrapAccountSettingsContext,
+        resolveScopeKey: () => scopeA,
+      },
+    });
+
+    try {
+      expect(bootstrapAccountSettingsContext).toHaveBeenCalledTimes(2);
+    } finally {
+      resolveRefreshes.forEach((resolve, index) => {
+        resolve(createContext(index + 4, scopeA));
+      });
+      await Promise.allSettled([oldLifetime, newLifetime]);
+    }
   });
 
   it('dedupes concurrent refreshes for the same credentials scope across agents and backends', async () => {

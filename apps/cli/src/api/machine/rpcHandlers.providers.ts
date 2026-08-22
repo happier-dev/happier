@@ -32,7 +32,10 @@ import { createProviderModelLoadRpcHandler } from '@/providers/modelManagement/r
 import {
   createProviderSavedModelsRpcHandler,
 } from '@/providers/probe/rpc';
-import type { ProviderSavedModelsRpcResult } from '@/providers/probe/rpc';
+import type {
+  ProviderProbeWaiterLifetime,
+  ProviderSavedModelsRpcResult,
+} from '@/providers/probe/rpc';
 import type { DaemonProviderDraftProbeRequestV1 } from '@happier-dev/protocol/rpc';
 import type {
   DaemonProviderConnectionMutationRequestV1,
@@ -54,8 +57,14 @@ import type {
 } from '@happier-dev/protocol/rpc';
 
 export type MachineProviderRpcServices = Readonly<{
-  probe(input: Readonly<{ connectionId: string; machineId: string }>): Promise<ProviderCatalogRefreshResult>;
-  probeDraft(input: DaemonProviderDraftProbeRequestV1): Promise<ProviderCatalogRefreshResult>;
+  probe(
+    input: Readonly<{ connectionId: string; machineId: string }>,
+    waiterLifetime?: ProviderProbeWaiterLifetime,
+  ): Promise<ProviderCatalogRefreshResult>;
+  probeDraft(
+    input: DaemonProviderDraftProbeRequestV1,
+    waiterLifetime?: ProviderProbeWaiterLifetime,
+  ): Promise<ProviderCatalogRefreshResult>;
   models(input: Readonly<{ connectionId: string; machineId: string }>): Promise<ProviderSavedModelsRpcResult>;
   loadModel(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult>;
   cancelModelLoad(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult>;
@@ -171,7 +180,7 @@ export function registerMachineProviderRpcHandlers(input: Readonly<{
   );
   input.rpcHandlerManager.registerHandler(
     RPC_METHODS.DAEMON_PROVIDERS_PROBE,
-    async (raw) => {
+    async (raw, context) => {
       const request = DaemonProviderProbeRequestV1Schema.parse(raw);
       const identity = 'kind' in request
         ? { connectionId: request.draftConnectionId, machineId: request.machineId }
@@ -184,8 +193,12 @@ export function registerMachineProviderRpcHandlers(input: Readonly<{
             error: createProviderErrorV1('provider_not_enabled_on_machine', identity),
           }
         : 'kind' in request
-            ? await input.services.probeDraft(request)
-            : await input.services.probe(request);
+            ? context?.signal
+              ? await input.services.probeDraft(request, { signal: context.signal })
+              : await input.services.probeDraft(request)
+            : context?.signal
+              ? await input.services.probe(request, { signal: context.signal })
+              : await input.services.probe(request);
       return DaemonProviderProbeResponseV1Schema.parse(result);
     },
   );
@@ -208,9 +221,7 @@ export function registerMachineProviderRpcHandlers(input: Readonly<{
         loadNow: async (request) => input.featureGate.isEnabled('providers')
           ? input.services.loadModel(request)
           : featureDisabled(request),
-        cancelNow: async (request) => input.featureGate.isEnabled('providers')
-          ? input.services.cancelModelLoad(request)
-          : featureDisabled(request),
+        cancelNow: input.services.cancelModelLoad,
       })(raw, context),
     ),
   );

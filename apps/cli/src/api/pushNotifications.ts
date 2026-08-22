@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios'
 import { logger } from '@/ui/logger'
 import { Expo, type ExpoPushErrorTicket, type ExpoPushMessage } from 'expo-server-sdk'
@@ -157,6 +158,7 @@ export class PushNotificationClient {
                 `${this.baseUrl}/v1/push-tokens`,
                 {
                     headers: {
+                        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                         'Authorization': `Bearer ${this.token}`,
                         'Content-Type': 'application/json'
                     },
@@ -199,6 +201,7 @@ export class PushNotificationClient {
                 `${this.baseUrl}/v1/account/activity/badge-snapshot`,
                 {
                     headers: {
+                        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                         'Authorization': `Bearer ${this.token}`,
                         'Content-Type': 'application/json'
                     },
@@ -222,6 +225,7 @@ export class PushNotificationClient {
             `${this.baseUrl}/v1/push-tokens/${encodeURIComponent(token)}`,
             {
                 headers: {
+                    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                     'Authorization': `Bearer ${this.token}`,
                 },
                 timeout: readPushFetchTokensTimeoutMs(),
@@ -453,6 +457,7 @@ export class PushNotificationClient {
                 request,
                 {
                     headers: {
+                        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                         'Authorization': `Bearer ${this.token}`,
                         'Content-Type': 'application/json',
                     },

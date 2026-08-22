@@ -6,7 +6,9 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  CONNECTED_ACCOUNT_SERVICE_CONFIGURATION_MAX_ENTRIES,
   CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY,
+  AccountSettingsSavedSecretMutationError,
   QualifiedConnectedAccountCredentialMetadataV4Schema,
   QualifiedConnectedAccountCredentialPayloadV1Schema,
   SavedSecretSchema,
@@ -14,8 +16,8 @@ import {
   accountSettingsParse,
   decryptSecretValueWithKeysV1,
   encryptSecretStringV1,
-  openConnectedServiceCredentialCiphertext,
   parseBuiltInLegacyConnectedServiceCredentialRecordV1,
+  parseConnectedAccountServiceConfigurationsV1,
   parseQualifiedConnectedAccountCredentialPlaintextV1,
   openQualifiedConnectedAccountContentEnvelope,
   projectQualifiedConnectedAccountCredentialPlaintextV1,
@@ -37,6 +39,7 @@ import {
   readQualifiedConnectedAccountConfigurationV4,
   readQualifiedConnectedAccountCredentialV4,
 } from '@/api/client/qualifiedConnectedAccountApi';
+import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type {
@@ -47,14 +50,19 @@ import {
   storeConnectedServiceCredentialForAccount,
   type ConnectedServiceCredentialStorageApi,
 } from '@/cloud/connectedServices/storeConnectedServiceCredentialForAccount';
-import type { Credentials } from '@/persistence';
+import {
+  resolveConnectedServiceCredentialSource,
+} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import type { StoredCredentials } from '@/persistence';
 import {
   commitActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import {
   updateAccountSettingsV2WithRetry,
+  type AccountSettingsMutationResult,
   type AccountSettingsUpdateV2Deps,
 } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import {
@@ -104,6 +112,67 @@ type AccountSettingsMutator = (
   current: Readonly<Record<string, unknown>>,
 ) => Readonly<Record<string, unknown>>;
 
+type AccountSettingsUpdateOutcome =
+  | Readonly<{
+      kind: 'settings';
+      settings: Readonly<Record<string, unknown>>;
+    }>
+  | Readonly<{
+      kind: 'settlement';
+      result: Exclude<AccountSettingsMutationResult, Readonly<{
+        status: 'applied' | 'satisfied' | 'unchanged';
+      }>>;
+    }>;
+
+function isSettledAccountSettingsSuccess(
+  result: AccountSettingsMutationResult,
+): result is Extract<AccountSettingsMutationResult, Readonly<{
+  status: 'applied' | 'satisfied' | 'unchanged';
+}>> {
+  return result.status === 'applied'
+    || result.status === 'satisfied'
+    || result.status === 'unchanged';
+}
+
+function configurationFailureForAccountSettingsSettlement(
+  result: Exclude<AccountSettingsMutationResult, Readonly<{
+    status: 'applied' | 'satisfied' | 'unchanged';
+  }>>,
+) {
+  switch (result.status) {
+    case 'conflict':
+      return Object.freeze({
+        status: 'conflict' as const,
+        code: 'connected_account_configuration_settings_conflict',
+      });
+    case 'outcomeUnknown':
+      return Object.freeze({
+        status: 'unavailable' as const,
+        code: 'connected_account_configuration_settings_outcome_unknown',
+      });
+    case 'cancelled':
+      return Object.freeze({
+        status: 'unavailable' as const,
+        code: 'connected_account_configuration_settings_cancelled',
+      });
+    case 'locked':
+      return Object.freeze({
+        status: 'unavailable' as const,
+        code: 'connected_account_configuration_settings_locked',
+      });
+    case 'invalid':
+      return Object.freeze({
+        status: 'unavailable' as const,
+        code: 'connected_account_configuration_settings_invalid',
+      });
+    case 'unavailable':
+      return Object.freeze({
+        status: 'unavailable' as const,
+        code: 'connected_account_configuration_settings_unavailable',
+      });
+  }
+}
+
 export type QualifiedConnectedAccountAttemptTransactionAdapters = Readonly<{
   oauth?: ConnectedAccountOAuthTransactionOwner;
   device?: ConnectedAccountDeviceTransactionOwner;
@@ -121,7 +190,6 @@ class LegacyCredentialSettlementError extends Error {
   }
 }
 
-const MAX_SERVICE_CONFIGURATION_RECORDS = 256;
 const MAX_ATTEMPT_CONFIGURATION_RECORDS = 64;
 
 type ConfigurationRecord = ReturnType<
@@ -195,62 +263,12 @@ function parseServiceConfigurationEntries(
   const rawStore =
     settings[CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY];
   if (rawStore === undefined) return new Map();
-  if (
-    !rawStore
-    || typeof rawStore !== 'object'
-    || Array.isArray(rawStore)
-  ) {
-    throw new Error('Connected-account service configuration settings are invalid');
-  }
-  const store = rawStore as Record<string, unknown>;
-  if (
-    store.v !== 1
-    || !Array.isArray(store.entries)
-    || store.entries.length > MAX_SERVICE_CONFIGURATION_RECORDS
-    || Reflect.ownKeys(store).some((key) => (
-      typeof key !== 'string' || !['v', 'entries'].includes(key)
-    ))
-  ) {
-    throw new Error('Connected-account service configuration settings are invalid');
-  }
+  const store = parseConnectedAccountServiceConfigurationsV1(rawStore);
   const entries = new Map<string, ServiceConfigurationEntry>();
-  for (const raw of store.entries) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      throw new Error('Connected-account service configuration entry is invalid');
-    }
-    const entry = raw as Record<string, unknown>;
-    if (
-      Reflect.ownKeys(entry).some((key) => (
-        typeof key !== 'string'
-        || !['service', 'modeId', 'revision', 'values', 'secretRefs'].includes(key)
-      ))
-      || !entry.service
-      || typeof entry.service !== 'object'
-      || Array.isArray(entry.service)
-      || typeof entry.modeId !== 'string'
-      || entry.modeId.length === 0
-      || entry.modeId.length > 256
-      || typeof entry.revision !== 'string'
-    ) {
-      throw new Error('Connected-account service configuration entry is invalid');
-    }
-    const service = entry.service as Record<string, unknown>;
-    if (
-      Reflect.ownKeys(service).some((key) => (
-        typeof key !== 'string' || !['pluginId', 'localId'].includes(key)
-      ))
-      || typeof service.pluginId !== 'string'
-      || service.pluginId.length === 0
-      || service.pluginId.length > 256
-      || typeof service.localId !== 'string'
-      || service.localId.length === 0
-      || service.localId.length > 256
-    ) {
-      throw new Error('Connected-account service configuration identity is invalid');
-    }
+  for (const entry of store.entries) {
     const normalizedService = Object.freeze({
-      pluginId: service.pluginId,
-      localId: service.localId,
+      pluginId: entry.service.pluginId,
+      localId: entry.service.localId,
     });
     const record = parsePhysicalConfigurationRecord({
       content: {
@@ -277,26 +295,71 @@ function parseServiceConfigurationEntries(
 function serializeServiceConfigurationEntries(
   entries: ReadonlyMap<string, ServiceConfigurationEntry>,
 ): Readonly<Record<string, unknown>> {
-  return Object.freeze({
+  return parseConnectedAccountServiceConfigurationsV1({
     v: 1,
-    entries: Object.freeze([...entries.values()]
+    entries: [...entries.values()]
       .sort((left, right) => (
         serviceConfigurationKey(left).localeCompare(serviceConfigurationKey(right))
       ))
-      .map((entry) => Object.freeze({
+      .map((entry) => ({
         service: entry.service,
         modeId: entry.modeId,
         revision: entry.record.revision,
         values: entry.record.values,
         secretRefs: entry.record.secretRefs,
-      }))),
+      })),
   });
 }
 
-function cryptoMaterial(credentials: Credentials): AccountScopedCryptoMaterial {
+function retireUnreferencedReplacedServiceConfigurationSecrets(input: Readonly<{
+  settings: Readonly<Record<string, unknown>>;
+  previousSecretIds: readonly string[];
+}>): Readonly<Record<string, unknown>> {
+  let settings = input.settings;
+  for (const secretId of new Set(input.previousSecretIds)) {
+    const savedSecret = Array.isArray(settings.secrets)
+      ? settings.secrets
+        .map((candidate) => SavedSecretSchema.safeParse(candidate))
+        .find((candidate) => candidate.success && candidate.data.id === secretId)
+      : undefined;
+    if (!savedSecret?.success) continue;
+    try {
+      settings = applyAccountSettingsSavedSecretMutation(settings, {
+        kind: 'delete',
+        secretId,
+        expectedUpdatedAt: savedSecret.data.updatedAt,
+      }).settings;
+    } catch (error) {
+      if (
+        error instanceof AccountSettingsSavedSecretMutationError
+        && error.code === 'saved_secret_in_use'
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  return settings;
+}
+
+function cryptoMaterial(
+  credentials: StoredCredentials,
+): AccountScopedCryptoMaterial | null {
+  if (!credentials.encryption) return null;
   return credentials.encryption.type === 'legacy'
     ? { type: 'legacy', secret: credentials.encryption.secret }
     : { type: 'dataKey', machineKey: credentials.encryption.machineKey };
+}
+
+function requireCryptoMaterial(
+  credentials: StoredCredentials,
+  material: AccountScopedCryptoMaterial | null,
+): AccountScopedCryptoMaterial {
+  if (material) return material;
+  requireAccountEncryptionCredentials(credentials);
+  throw new Error(
+    'Account encryption credentials unexpectedly resolved without crypto material',
+  );
 }
 
 type LegacyConnectedServiceId =
@@ -455,7 +518,8 @@ export function createActiveAccountSettingsConnectedAccountSecrets():
 function openContent(input: Readonly<{
   kind: 'credential' | 'configuration';
   accountMode: Exclude<ConnectedServiceAccountEncryptionMode, 'unknown'>;
-  material: AccountScopedCryptoMaterial;
+  credentials: StoredCredentials;
+  material: AccountScopedCryptoMaterial | null;
   envelope: Parameters<typeof openQualifiedConnectedAccountContentEnvelope>[0]['envelope'];
 }>): unknown | null {
   return input.accountMode === 'plain'
@@ -467,7 +531,7 @@ function openContent(input: Readonly<{
     : openQualifiedConnectedAccountContentEnvelope({
         kind: input.kind,
         accountMode: 'e2ee',
-        material: input.material,
+        material: requireCryptoMaterial(input.credentials, input.material),
         envelope: input.envelope,
       });
 }
@@ -475,7 +539,8 @@ function openContent(input: Readonly<{
 function sealContent(input: Readonly<{
   kind: 'credential' | 'configuration';
   accountMode: Exclude<ConnectedServiceAccountEncryptionMode, 'unknown'>;
-  material: AccountScopedCryptoMaterial;
+  credentials: StoredCredentials;
+  material: AccountScopedCryptoMaterial | null;
   payload: unknown;
   randomBytes(length: number): Uint8Array;
 }>) {
@@ -489,7 +554,7 @@ function sealContent(input: Readonly<{
     : sealQualifiedConnectedAccountContentEnvelope({
         kind: input.kind,
         accountMode: 'e2ee',
-        material: input.material,
+        material: requireCryptoMaterial(input.credentials, input.material),
         payload: input.payload,
         randomBytes: input.randomBytes,
       });
@@ -497,7 +562,7 @@ function sealContent(input: Readonly<{
 
 export function createQualifiedConnectedAccountDaemonPersistence(
   params: Readonly<{
-    credentials: Credentials;
+    credentials: StoredCredentials;
     getAccountEncryptionMode(): Promise<ConnectedServiceAccountEncryptionMode>;
     readCredential?: CredentialReader;
     readConfiguration?: ConfigurationReader;
@@ -714,32 +779,71 @@ export function createQualifiedConnectedAccountDaemonPersistence(
 
   async function updateAccountSettings(
     mutate: AccountSettingsMutator,
-  ): Promise<Readonly<Record<string, unknown>>> {
+  ): Promise<AccountSettingsUpdateOutcome> {
     if (params.updateAccountSettings) {
-      return await params.updateAccountSettings(mutate);
+      return Object.freeze({
+        kind: 'settings' as const,
+        settings: await params.updateAccountSettings(mutate),
+      });
     }
+    const expectedScopeKey = resolveAccountSettingsScopeKey(params.credentials);
+    const activeAtStart = getActiveAccountSettingsSnapshot();
+    const activeLifetimeTokenAtStart = getActiveAccountSettingsSnapshotLifetimeToken();
+    if (activeAtStart?.scopeKey && activeAtStart.scopeKey !== expectedScopeKey) {
+      return Object.freeze({
+        kind: 'settlement' as const,
+        result: Object.freeze({ status: 'unavailable' as const, retryable: false }),
+      });
+    }
+    const current = readAccountSettings();
+    if (!current) {
+      return Object.freeze({
+        kind: 'settlement' as const,
+        result: Object.freeze({ status: 'unavailable' as const, retryable: false }),
+      });
+    }
+    const remainsCurrent = (): boolean => {
+      const active = getActiveAccountSettingsSnapshot();
+      return getActiveAccountSettingsSnapshotLifetimeToken()
+        === activeLifetimeTokenAtStart
+        && (active === activeAtStart || active?.scopeKey === expectedScopeKey);
+    };
     const result = await updateAccountSettingsV2WithRetry({
       credentials: params.credentials,
+      // Service configuration and SavedSecret updates are a domain delta, not
+      // a whole Settings-key replacement. The canonical retry owner invokes
+      // this callback again for each CAS winner so it can validate and retain
+      // independently written service entries and SavedSecrets.
       mutate,
+      shouldSubmit: remainsCurrent,
+      shouldCommit: remainsCurrent,
       ...(params.accountSettingsUpdateDeps
         ? { deps: params.accountSettingsUpdateDeps }
         : {}),
     });
-    const previous = getActiveAccountSettingsSnapshot();
-    const settings =
-      result.settings
-      ?? previous?.settings
-      ?? accountSettingsParse({});
-    return commitActiveAccountSettingsSnapshot({
+    if (!isSettledAccountSettingsSuccess(result)) {
+      return Object.freeze({ kind: 'settlement' as const, result });
+    }
+    if (!remainsCurrent()) {
+      return Object.freeze({
+        kind: 'settlement' as const,
+        result: Object.freeze({ status: 'unavailable' as const, retryable: false }),
+      });
+    }
+    const committed = commitActiveAccountSettingsSnapshot({
       source: 'network',
-      settings,
+      settings: result.settings,
       settingsVersion: result.version,
       loadedAtMs: now(),
       settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(
         params.credentials,
       ),
       scopeKey: resolveAccountSettingsScopeKey(params.credentials),
-    }).snapshot.settings;
+    });
+    return Object.freeze({
+      kind: 'settings' as const,
+      settings: committed.snapshot.settings,
+    });
   }
 
   async function resolveAccountMode(): Promise<
@@ -820,57 +924,20 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       serviceId: input.serviceId,
       profileId: input.accountId,
     };
-    if (accountMode === 'plain') {
-      const stored =
-        await input.api.getConnectedServiceCredentialPlain(binding);
-      if (!stored) return null;
-      if (
-        stored.revisionSemantics !== 'revisioned'
-        || !stored.credentialRevision
-      ) {
-        throw new QualifiedConnectedAccountCompatibilityError(
-          'connected_account_legacy_operation_unsupported',
-        );
-      }
-      return Object.freeze({
-        record: stored.content.v,
-        credentialRevision: stored.credentialRevision,
-      });
-    }
-    const stored =
-      await input.api.getConnectedServiceCredentialSealed(binding);
-    if (!stored) return null;
-    if (
-      stored.revisionSemantics !== 'revisioned'
-      || !stored.credentialRevision
-    ) {
-      throw new QualifiedConnectedAccountCompatibilityError(
-        'connected_account_legacy_operation_unsupported',
-      );
-    }
-    const opened = openConnectedServiceCredentialCiphertext({
-      material,
-      ciphertext: stored.sealed.ciphertext,
+    const stored = await resolveConnectedServiceCredentialSource({
+      credentials: params.credentials,
+      api: input.api,
+      binding,
+      accountMode,
     });
-    let record: ConnectedServiceCredentialRecordV1;
-    try {
-      record =
-        parseBuiltInLegacyConnectedServiceCredentialRecordV1(opened?.value);
-    } catch {
-      throw new QualifiedConnectedAccountCompatibilityError(
-        'connected_account_legacy_operation_unsupported',
-      );
-    }
-    if (
-      record.serviceId !== input.serviceId
-      || record.profileId !== input.accountId
-    ) {
+    if (!stored) return null;
+    if (stored.revisionSemantics !== 'revisioned') {
       throw new QualifiedConnectedAccountCompatibilityError(
         'connected_account_legacy_operation_unsupported',
       );
     }
     return Object.freeze({
-      record,
+      record: stored.record,
       credentialRevision: stored.credentialRevision,
     });
   }
@@ -927,6 +994,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                   status: publicAuthentication.status,
                   authenticationModeId:
                     publicAuthentication.authenticationModeId,
+                  revisionSemantics: 'revisioned' as const,
                   credentialRevision: exact.credentialRevision,
                   configurationReady: false,
                   configurationRevision: null,
@@ -972,7 +1040,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           let committed:
             ReturnType<typeof parseConnectedAccountConfigurationRecordContent>
             | null = null;
-          await updateAccountSettings((settings) => {
+          const update = await updateAccountSettings((settings) => {
             const entries = parseServiceConfigurationEntries(settings);
             const key = serviceConfigurationKey(serviceTarget);
             const current = entries.get(key)?.record ?? null;
@@ -987,18 +1055,25 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             }
             if (
               current === null
-              && entries.size >= MAX_SERVICE_CONFIGURATION_RECORDS
+              && entries.size >= CONNECTED_ACCOUNT_SERVICE_CONFIGURATION_MAX_ENTRIES
             ) {
               throw new Error(
                 'Connected-account service configuration capacity is exhausted',
               );
             }
             const writeKey =
-              deriveSettingsSecretsKeyForCredentials(params.credentials);
+              deriveSettingsSecretsKeyForCredentials(
+                requireAccountEncryptionCredentials(params.credentials),
+              );
             let nextSettings = settings;
             const secretRefs: Record<string, string> = {
               ...input.currentSecretRefs,
             };
+            const replacedSecretIds = Object.keys(input.secretValues)
+              .flatMap((fieldId) => {
+                const previousSecretId = input.currentSecretRefs[fieldId];
+                return previousSecretId === undefined ? [] : [previousSecretId];
+              });
             for (const [fieldId, value] of Object.entries(input.secretValues)) {
               const secretId = createSecretId();
               const timestamp = now();
@@ -1033,12 +1108,19 @@ export function createQualifiedConnectedAccountDaemonPersistence(
               modeId: serviceTarget.modeId,
               record: committed,
             }));
-            return Object.freeze({
+            const withConfiguration = Object.freeze({
               ...nextSettings,
               [CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY]:
                 serializeServiceConfigurationEntries(entries),
             });
+            return retireUnreferencedReplacedServiceConfigurationSecrets({
+              settings: withConfiguration,
+              previousSecretIds: replacedSecretIds,
+            });
           });
+          if (update.kind === 'settlement') {
+            return configurationFailureForAccountSettingsSettlement(update.result);
+          }
           if (!committed) {
             throw new Error(
               'Connected-account service configuration commit was not observed',
@@ -1100,7 +1182,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
         const accountMode = await resolveAccountMode();
         const resealed = accountMode === 'e2ee'
           ? resealQualifiedConnectedAccountConfigurationContentEnvelopeIfHistoricalAlias({
-              material,
+              material: requireCryptoMaterial(params.credentials, material),
               envelope: snapshot.configurationContent,
               randomBytes,
               validatePayload: (value) => {
@@ -1146,6 +1228,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
         const opened = resealed?.value ?? openContent({
           kind: 'configuration',
           accountMode,
+          credentials: params.credentials,
           material,
           envelope: snapshot.configurationContent,
         });
@@ -1221,7 +1304,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             let committed:
               ReturnType<typeof parseConnectedAccountConfigurationRecordContent>
               | null = null;
-            await updateAccountSettings((settings) => {
+            const update = await updateAccountSettings((settings) => {
               const entries = parseServiceConfigurationEntries(settings);
               const key = serviceConfigurationKey(serviceTarget);
               const current = entries.get(key)?.record ?? null;
@@ -1230,7 +1313,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
               }
               if (
                 current === null
-                && entries.size >= MAX_SERVICE_CONFIGURATION_RECORDS
+                && entries.size >= CONNECTED_ACCOUNT_SERVICE_CONFIGURATION_MAX_ENTRIES
               ) {
                 throw new Error(
                   'Connected-account service configuration capacity is exhausted',
@@ -1252,6 +1335,9 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                   serializeServiceConfigurationEntries(entries),
               });
             });
+            if (update.kind === 'settlement') {
+              return configurationFailureForAccountSettingsSettlement(update.result);
+            }
             if (!committed) {
               throw new Error(
                 'Connected-account service configuration commit was not observed',
@@ -1308,6 +1394,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                   replacementContentEnvelope: sealContent({
                     kind: 'configuration',
                     accountMode,
+                    credentials: params.credentials,
                     material,
                     payload: replacement,
                     randomBytes,
@@ -1435,6 +1522,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                 ref: account,
                 authenticationModeId:
                   publicAuthentication.authenticationModeId,
+                revisionSemantics: 'revisioned' as const,
                 credentialRevision: exact.credentialRevision,
                 configurationRevision: null,
               });
@@ -1444,6 +1532,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             !snapshot
             || !sameAccount(snapshot.ref, account)
             || snapshot.authenticationModeId === null
+            || snapshot.revisionSemantics !== 'revisioned'
           ) {
             return null;
           }
@@ -1532,6 +1621,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                 const content = sealContent({
                   kind: 'credential',
                   accountMode,
+                  credentials: params.credentials,
                   material,
                   payload:
                     projectQualifiedConnectedAccountCredentialPlaintextV1({
@@ -1559,6 +1649,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                         replacementContentEnvelope: sealContent({
                           kind: 'configuration',
                           accountMode,
+                          credentials: params.credentials,
                           material,
                           payload: stagedAccountConfigurationContent,
                           randomBytes,
@@ -1741,6 +1832,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
               const opened = openContent({
                 kind: 'credential',
                 accountMode,
+                credentials: params.credentials,
                 material,
                 envelope: committed.content,
               });
@@ -1789,6 +1881,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                 const openedConfigurationContent = openContent({
                   kind: 'configuration',
                   accountMode,
+                  credentials: params.credentials,
                   material,
                   envelope: configuration.configurationContent,
                 });

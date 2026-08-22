@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExternalSessionFollowLeaseManager } from './createExternalSessionFollowLeaseManager';
 
+type FollowStatusWriteInput = Parameters<
+    NonNullable<
+        NonNullable<Parameters<typeof createExternalSessionFollowLeaseManager>[0]>['writeFollowStatus']
+    >
+>[0];
+
 function readPublishedFollowStatus(call: readonly unknown[]): Readonly<{
     status: string;
     reason: string;
@@ -22,6 +28,120 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+    });
+
+    it('renews an existing viewer lease id for the same session and detaches it cleanly', async () => {
+        // Viewer-lease identity, expiry, capacity and demand are one concept with one
+        // owner: these contracts are asserted through the manager that owns them, not
+        // against a second registry kept in hand-written lockstep with it.
+        let nowMs = 1_000;
+        const manager = createExternalSessionFollowLeaseManager({
+            now: () => nowMs,
+            randomId: () => 'lease-generated',
+        });
+
+        await expect(manager.attach({
+            sessionId: 'session-1',
+            ttlMs: 30_000,
+        })).resolves.toEqual({
+            leaseId: 'lease-generated',
+            expiresAtMs: 31_000,
+            renewed: false,
+        });
+
+        nowMs = 5_000;
+        await expect(manager.attach({
+            sessionId: 'session-1',
+            leaseId: 'lease-generated',
+            ttlMs: 30_000,
+        })).resolves.toEqual({
+            leaseId: 'lease-generated',
+            expiresAtMs: 35_000,
+            renewed: true,
+        });
+        expect(manager.countActiveLeases('session-1')).toBe(1);
+        await expect(manager.detach({
+            sessionId: 'session-1',
+            leaseId: 'lease-generated',
+        })).resolves.toEqual({ detached: true });
+        expect(manager.countActiveLeases('session-1')).toBe(0);
+    });
+
+    it('bounds distinct active viewer leases per session while allowing renewal at capacity', async () => {
+        const manager = createExternalSessionFollowLeaseManager({
+            now: () => 1_000,
+        });
+
+        for (let index = 0; index < 64; index += 1) {
+            await expect(manager.attach({
+                sessionId: 'session-bounded',
+                leaseId: `lease-${index}`,
+                ttlMs: 30_000,
+            })).resolves.toEqual({
+                leaseId: `lease-${index}`,
+                expiresAtMs: 31_000,
+                renewed: false,
+            });
+        }
+
+        expect(manager.countActiveLeases('session-bounded')).toBe(64);
+        await expect(manager.attach({
+            sessionId: 'session-bounded',
+            leaseId: 'lease-over-capacity',
+            ttlMs: 30_000,
+        })).rejects.toThrowError(expect.objectContaining({
+            name: 'ExternalSessionViewerLeaseCapacityExceededError',
+        }));
+        await expect(manager.attach({
+            sessionId: 'session-bounded',
+            leaseId: 'lease-0',
+            ttlMs: 60_000,
+        })).resolves.toEqual({
+            leaseId: 'lease-0',
+            expiresAtMs: 61_000,
+            renewed: true,
+        });
+        expect(manager.countActiveLeases('session-bounded')).toBe(64);
+    });
+
+    it('releases viewer-lease capacity and cursor custody when a lease is detached or expires', async () => {
+        let nowMs = 1_000;
+        const requestTranscriptRefresh = vi.fn(async (): Promise<void> => undefined);
+        const manager = createExternalSessionFollowLeaseManager({
+            now: () => nowMs,
+        });
+
+        for (let index = 0; index < 64; index += 1) {
+            await manager.attach({
+                sessionId: 'session-releases-capacity',
+                leaseId: `lease-${index}`,
+                ttlMs: index === 0 ? 1_000 : 30_000,
+                acceptedTailCursor: 'cursor-0',
+                requestTranscriptRefresh,
+            });
+        }
+
+        await expect(manager.detach({
+            sessionId: 'session-releases-capacity',
+            leaseId: 'lease-1',
+        })).resolves.toEqual({ detached: true });
+        await expect(manager.attach({
+            sessionId: 'session-releases-capacity',
+            leaseId: 'lease-after-detach',
+            ttlMs: 30_000,
+        })).resolves.toMatchObject({ renewed: false });
+        expect(manager.countActiveLeases('session-releases-capacity')).toBe(64);
+
+        // The expired lease releases capacity from the same record that carries its
+        // cursor custody, without waiting for its expiry timer to fire.
+        nowMs = 2_000;
+        await expect(manager.attach({
+            sessionId: 'session-releases-capacity',
+            leaseId: 'lease-after-expiry',
+            ttlMs: 30_000,
+        })).resolves.toMatchObject({ renewed: false });
+        expect(manager.countActiveLeases('session-releases-capacity')).toBe(64);
+        expect(requestTranscriptRefresh).not.toHaveBeenCalled();
     });
 
     it('shares one generation-qualified follower across multiple viewers and background policy', async () => {
@@ -67,6 +187,81 @@ describe('createExternalSessionFollowLeaseManager', () => {
             enabled: false,
         });
         expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let a stalled session block another session while preserving same-session order and disposal', async () => {
+        let resolveFirstAcquisition:
+            | ((lease: Readonly<{ release: () => Promise<void> }>) => void)
+            | undefined;
+        const firstAcquisition = new Promise<Readonly<{
+            release: () => Promise<void>;
+        }>>((resolve) => {
+            resolveFirstAcquisition = resolve;
+        });
+        const firstRelease = vi.fn(async () => {});
+        const secondRelease = vi.fn(async () => {});
+        const acquireFirst = vi.fn(async () => await firstAcquisition);
+        const acquireSecond = vi.fn(async () => ({ release: secondRelease }));
+        const manager = createExternalSessionFollowLeaseManager();
+
+        const firstAttach = manager.attach({
+            sessionId: 'session-stalled',
+            leaseId: 'viewer-first',
+            ttlMs: 30_000,
+            acquireFollowLease: acquireFirst,
+        });
+        await vi.waitFor(() => expect(acquireFirst).toHaveBeenCalledOnce());
+
+        let sameSessionAttachSettled = false;
+        const sameSessionAttach = manager.attach({
+            sessionId: 'session-stalled',
+            leaseId: 'viewer-same-session',
+            ttlMs: 30_000,
+            acquireFollowLease: acquireFirst,
+        }).then((result) => {
+            sameSessionAttachSettled = true;
+            return result;
+        });
+        let independentAttachSettled = false;
+        const independentAttach = manager.attach({
+            sessionId: 'session-independent',
+            leaseId: 'viewer-independent',
+            ttlMs: 30_000,
+            acquireFollowLease: acquireSecond,
+        }).then((result) => {
+            independentAttachSettled = true;
+            return result;
+        });
+        let disposeSettled = false;
+        const dispose = manager.dispose().then(() => {
+            disposeSettled = true;
+        });
+        let operationSettlements: PromiseSettledResult<unknown>[] = [];
+
+        try {
+            await vi.waitFor(() => expect(acquireSecond).toHaveBeenCalledOnce());
+            await independentAttach;
+
+            expect(independentAttachSettled).toBe(true);
+            expect(sameSessionAttachSettled).toBe(false);
+            expect(manager.countActiveLeases('session-stalled')).toBe(1);
+            expect(disposeSettled).toBe(false);
+        } finally {
+            resolveFirstAcquisition?.({ release: firstRelease });
+            operationSettlements = await Promise.allSettled([
+                firstAttach,
+                sameSessionAttach,
+                independentAttach,
+                dispose,
+            ]);
+        }
+
+        expect(operationSettlements.every(({ status }) => status === 'fulfilled')).toBe(true);
+        expect(sameSessionAttachSettled).toBe(true);
+        expect(acquireFirst).toHaveBeenCalledOnce();
+        expect(firstRelease).toHaveBeenCalledOnce();
+        expect(secondRelease).toHaveBeenCalledOnce();
+        expect(disposeSettled).toBe(true);
     });
 
     it('converges relink and generation retirement by replacing and releasing each follower once', async () => {
@@ -975,15 +1170,21 @@ describe('createExternalSessionFollowLeaseManager', () => {
             randomId: () => 'lease-archive',
             writeFollowStatus,
         });
+        const resource = {
+            linkGeneration: 'link-archive',
+            pluginGeneration: 'plugin-archive',
+        };
 
         await manager.attach({
             sessionId: 'session-archive',
             ttlMs: 30_000,
+            resource,
             acquireFollowLease: async () => ({ release: viewerRelease }),
         });
         await manager.setBackgroundFollowEnabled({
             sessionId: 'session-archive',
             enabled: true,
+            resource,
             acquireFollowLease: async () => ({ release: backgroundRelease }),
         });
 
@@ -1009,6 +1210,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(writeFollowStatus).toHaveBeenCalledTimes(2);
         expect(writeFollowStatus).toHaveBeenNthCalledWith(1, {
             sessionId: 'session-archive',
+            expectedLinkGeneration: 'link-archive',
             followStatusV1: {
                 v: 1,
                 status: 'active',
@@ -1018,6 +1220,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         });
         expect(writeFollowStatus).toHaveBeenNthCalledWith(2, {
             sessionId: 'session-archive',
+            expectedLinkGeneration: 'link-archive',
             followStatusV1: {
                 v: 1,
                 status: 'paused',
@@ -1158,10 +1361,15 @@ describe('createExternalSessionFollowLeaseManager', () => {
             randomId: () => 'lease-status',
             writeFollowStatus,
         });
+        const resource = {
+            linkGeneration: 'link-status',
+            pluginGeneration: 'plugin-status',
+        };
 
         await manager.attach({
             sessionId: 'session-status',
             ttlMs: 30_000,
+            resource,
             acquireFollowLease: async () => ({ release }),
         });
 
@@ -1178,6 +1386,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(writeFollowStatus.mock.calls).toEqual([
             [{
                 sessionId: 'session-status',
+                expectedLinkGeneration: 'link-status',
                 followStatusV1: {
                     v: 1,
                     status: 'active',
@@ -1187,6 +1396,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
             }],
             [{
                 sessionId: 'session-status',
+                expectedLinkGeneration: 'link-status',
                 followStatusV1: {
                     v: 1,
                     status: 'disabled',
@@ -1196,6 +1406,136 @@ describe('createExternalSessionFollowLeaseManager', () => {
             }],
         ]);
         expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('retains a rejected terminal follow status for the existing final-release retry', async () => {
+        const release = vi.fn(async () => {});
+        const writeFollowStatus = vi.fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error('transient metadata failure'))
+            .mockResolvedValueOnce(undefined);
+        const manager = createExternalSessionFollowLeaseManager({
+            randomId: () => 'lease-terminal-status-retry',
+            writeFollowStatus,
+        });
+        const resource = {
+            linkGeneration: 'link-terminal-status-retry',
+            pluginGeneration: 'plugin-terminal-status-retry',
+        };
+
+        await manager.attach({
+            sessionId: 'session-terminal-status-retry',
+            ttlMs: 30_000,
+            resource,
+            acquireFollowLease: async () => ({ release }),
+        });
+        await manager.detach({
+            sessionId: 'session-terminal-status-retry',
+            leaseId: 'lease-terminal-status-retry',
+        });
+
+        expect(writeFollowStatus.mock.calls.map(readPublishedFollowStatus)).toEqual([
+            { status: 'active', reason: 'viewer_attached' },
+            { status: 'disabled', reason: 'follow_demand_released' },
+        ]);
+
+        await manager.releaseSession({
+            sessionId: 'session-terminal-status-retry',
+        });
+
+        expect(writeFollowStatus.mock.calls.map(readPublishedFollowStatus)).toEqual([
+            { status: 'active', reason: 'viewer_attached' },
+            { status: 'disabled', reason: 'follow_demand_released' },
+            { status: 'disabled', reason: 'follow_demand_released' },
+        ]);
+        await manager.dispose();
+    });
+
+    it('fences every lifecycle publication to the exact actual or desired link generation', async () => {
+        const firstRetirement = new AbortController();
+        const secondRetirement = new AbortController();
+        const writeFollowStatus = vi.fn(async () => {});
+        const manager = createExternalSessionFollowLeaseManager({
+            now: () => 12_000,
+            randomId: () => 'lease-generation-status',
+            writeFollowStatus,
+        });
+        const firstResource = {
+            linkGeneration: 'link-1',
+            pluginGeneration: 'plugin-1',
+            retirementSignal: firstRetirement.signal,
+        };
+        const secondResource = {
+            linkGeneration: 'link-2',
+            pluginGeneration: 'plugin-2',
+            retirementSignal: secondRetirement.signal,
+        };
+
+        await manager.attach({
+            sessionId: 'session-generation-status',
+            ttlMs: 30_000,
+            resource: firstResource,
+            acquireFollowLease: async () => ({ release: async () => {} }),
+        });
+        await expect(manager.setBackgroundFollowEnabled({
+            sessionId: 'session-generation-status',
+            enabled: true,
+            resource: secondResource,
+            acquireFollowLease: async () => {
+                throw new Error('acquire failed');
+            },
+        })).rejects.toThrow('acquire failed');
+        await manager.attach({
+            sessionId: 'session-generation-status',
+            ttlMs: 30_000,
+            resource: secondResource,
+            acquireFollowLease: async () => ({ release: async () => {} }),
+        });
+        secondRetirement.abort();
+        await vi.waitFor(() => expect(writeFollowStatus).toHaveBeenCalledTimes(6));
+
+        const publications = writeFollowStatus.mock.calls as unknown as Array<[
+            Readonly<{
+                followStatusV1: Readonly<{ status: string; reason: string }>;
+                expectedLinkGeneration?: string;
+            }>,
+        ]>;
+        expect(publications.map(([publication]) => ({
+            status: publication.followStatusV1.status,
+            reason: publication.followStatusV1.reason,
+            expectedLinkGeneration: Reflect.get(publication, 'expectedLinkGeneration'),
+        }))).toEqual([
+            {
+                status: 'active',
+                reason: 'viewer_attached',
+                expectedLinkGeneration: 'link-1',
+            },
+            {
+                status: 'paused',
+                reason: 'follow_source_generation_changed',
+                expectedLinkGeneration: 'link-1',
+            },
+            {
+                status: 'reacquiring',
+                reason: 'follow_source_generation_changed',
+                expectedLinkGeneration: 'link-2',
+            },
+            {
+                status: 'error',
+                reason: 'lease_acquire_failed',
+                expectedLinkGeneration: 'link-2',
+            },
+            {
+                status: 'active',
+                reason: 'viewer_attached',
+                expectedLinkGeneration: 'link-2',
+            },
+            {
+                status: 'paused',
+                reason: 'plugin_generation_retired',
+                expectedLinkGeneration: 'link-2',
+            },
+        ]);
     });
 
     it('does not publish a false pause or reacquire when only the demand kind changes', async () => {
@@ -1267,6 +1607,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
         expect(writeFollowStatus).toHaveBeenLastCalledWith({
             sessionId: 'session-reacquire-error',
+            expectedLinkGeneration: 'link-2',
             followStatusV1: {
                 v: 1,
                 status: 'error',
@@ -1292,10 +1633,15 @@ describe('createExternalSessionFollowLeaseManager', () => {
             randomId: () => 'lease-release-error',
             writeFollowStatus,
         });
+        const resource = {
+            linkGeneration: 'link-release-error',
+            pluginGeneration: 'plugin-release-error',
+        };
 
         await manager.attach({
             sessionId: 'session-release-error',
             ttlMs: 30_000,
+            resource,
             acquireFollowLease: async () => ({
                 release,
             }),
@@ -1307,6 +1653,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
         expect(writeFollowStatus).toHaveBeenLastCalledWith({
             sessionId: 'session-release-error',
+            expectedLinkGeneration: 'link-release-error',
             followStatusV1: {
                 v: 1,
                 status: 'error',
@@ -1331,6 +1678,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(release).toHaveBeenCalledTimes(2);
         expect(writeFollowStatus).toHaveBeenLastCalledWith({
             sessionId: 'session-release-error',
+            expectedLinkGeneration: 'link-release-error',
             followStatusV1: {
                 v: 1,
                 status: 'disabled',
@@ -1434,6 +1782,48 @@ describe('createExternalSessionFollowLeaseManager', () => {
         });
         expect(retiredRelease).toHaveBeenCalledTimes(1);
         expect(replacementAcquire).toHaveBeenCalledTimes(1);
+    });
+
+    it('retains a late acquired lease until matching source retirement retries its exact release', async () => {
+        const retirement = new AbortController();
+        let resolveAcquisition:
+            | ((lease: Readonly<{ release: () => Promise<void> }>) => void)
+            | undefined;
+        const acquisition = new Promise<Readonly<{
+            release: () => Promise<void>;
+        }>>((resolve) => {
+            resolveAcquisition = resolve;
+        });
+        const release = vi.fn()
+            .mockRejectedValueOnce(new Error('late release failed'))
+            .mockResolvedValueOnce(undefined);
+        const acquireFollowLease = vi.fn(async () => await acquisition);
+        const manager = createExternalSessionFollowLeaseManager();
+
+        const enabling = manager.setBackgroundFollowEnabled({
+            sessionId: 'session-late-acquired-retirement',
+            enabled: true,
+            resource: {
+                linkGeneration: 'link-late-acquired',
+                pluginGeneration: 'plugin-late-acquired',
+                retirementSignal: retirement.signal,
+            },
+            acquireFollowLease,
+        });
+        await vi.waitFor(() => expect(acquireFollowLease).toHaveBeenCalledOnce());
+
+        retirement.abort();
+        resolveAcquisition?.({ release });
+
+        await expect(enabling).resolves.toEqual({
+            enabled: true,
+            leaseAcquired: false,
+        });
+        await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(2));
+        expect(manager.hasBackgroundFollowLease(
+            'session-late-acquired-retirement',
+        )).toBe(false);
+        await manager.dispose();
     });
 
     it('does not let desired-source retirement fence retained custody from another generation', async () => {
@@ -1813,6 +2203,77 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
     it.each([
         'source_replaced',
+        'resync_required',
+    ] as const)(
+        'fences %s refreshes by releasing the current lease and requiring a newly resolved source',
+        async (outcome) => {
+            const release = vi.fn(async () => undefined);
+            const staleRefresh = vi.fn(async () => ({ outcome }));
+            const replacementRefresh = vi.fn(async () => undefined);
+            const manager = createExternalSessionFollowLeaseManager({
+                randomId: () => 'terminal-refresh-lease',
+            });
+            const staleResource = {
+                linkGeneration: 'link-before-replacement',
+                pluginGeneration: 'plugin-generation',
+            };
+            const replacementResource = {
+                linkGeneration: 'link-after-replacement',
+                pluginGeneration: 'plugin-generation',
+            };
+
+            await manager.attach({
+                sessionId: 'session-terminal-refresh',
+                leaseId: 'viewer-terminal-refresh',
+                ttlMs: 30_000,
+                acceptedTailCursor: 'happier_external_cursor_v1:c3RhbGU',
+                resource: staleResource,
+                acquireFollowLease: async () => ({ release }),
+                requestTranscriptRefresh: staleRefresh,
+            });
+
+            await expect(manager.requestTranscriptRefresh({
+                sessionId: 'session-terminal-refresh',
+                resource: staleResource,
+            })).resolves.toEqual({ requested: true, coalesced: false });
+            expect(release).toHaveBeenCalledOnce();
+            expect(staleRefresh).toHaveBeenCalledWith(
+                'happier_external_cursor_v1:c3RhbGU',
+                expect.any(Function),
+            );
+            expect(manager.hasTranscriptDemand({
+                sessionId: 'session-terminal-refresh',
+                resource: staleResource,
+            })).toBe(false);
+            await expect(manager.requestTranscriptRefresh({
+                sessionId: 'session-terminal-refresh',
+                resource: staleResource,
+            })).resolves.toEqual({ requested: false, reason: 'not-demanded' });
+            expect(staleRefresh).toHaveBeenCalledOnce();
+            expect(release).toHaveBeenCalledOnce();
+
+            await manager.attach({
+                sessionId: 'session-terminal-refresh',
+                leaseId: 'viewer-terminal-refresh',
+                ttlMs: 30_000,
+                acceptedTailCursor: 'happier_external_cursor_v1:bmV3',
+                resource: replacementResource,
+                acquireFollowLease: async () => ({ release: async () => undefined }),
+                requestTranscriptRefresh: replacementRefresh,
+            });
+            await expect(manager.requestTranscriptRefresh({
+                sessionId: 'session-terminal-refresh',
+                resource: replacementResource,
+            })).resolves.toEqual({ requested: true, coalesced: false });
+            expect(replacementRefresh).toHaveBeenCalledWith(
+                'happier_external_cursor_v1:bmV3',
+                expect.any(Function),
+            );
+        },
+    );
+
+    it.each([
+        'source_replaced',
         'source_unavailable',
         'read_failed',
     ] as const)(
@@ -1845,6 +2306,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
             expect(writeFollowStatus).toHaveBeenLastCalledWith({
                 sessionId: 'session-background-error',
+                expectedLinkGeneration: 'link-background-error',
                 followStatusV1: {
                     v: 1,
                     status: 'error',
@@ -1860,6 +2322,141 @@ describe('createExternalSessionFollowLeaseManager', () => {
             });
         },
     );
+
+    it('retries a retryable transcript refresh through the existing session pump and stops after success', async () => {
+        const refresh = vi.fn()
+            .mockResolvedValueOnce({ outcome: 'read_failed' as const })
+            .mockResolvedValueOnce({ outcome: 'already_current' as const });
+        const manager = createExternalSessionFollowLeaseManager();
+        const resource = {
+            linkGeneration: 'link-refresh-retry',
+            pluginGeneration: 'plugin-refresh-retry',
+        };
+
+        await manager.setBackgroundFollowEnabled({
+            sessionId: 'session-refresh-retry',
+            enabled: true,
+            resource,
+            acquireFollowLease: async () => ({
+                release: async () => {},
+                requestTranscriptRefresh: refresh,
+            }),
+        });
+
+        await expect(manager.requestTranscriptRefresh({
+            sessionId: 'session-refresh-retry',
+            resource,
+        })).resolves.toEqual({ requested: true, coalesced: false });
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(250);
+        expect(refresh).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(refresh).toHaveBeenCalledTimes(2);
+        await manager.dispose();
+    });
+
+    it('cancels a retryable transcript refresh retry when its demand is released', async () => {
+        const refresh = vi.fn(async () => ({ outcome: 'source_unavailable' as const }));
+        const manager = createExternalSessionFollowLeaseManager({
+            randomId: () => 'refresh-retry-release',
+        });
+        const resource = {
+            linkGeneration: 'link-refresh-retry-release',
+            pluginGeneration: 'plugin-refresh-retry-release',
+        };
+
+        await manager.attach({
+            sessionId: 'session-refresh-retry-release',
+            leaseId: 'refresh-retry-release',
+            ttlMs: 30_000,
+            acceptedTailCursor: 'cursor-refresh-retry-release',
+            resource,
+            acquireFollowLease: async () => ({ release: async () => {} }),
+            requestTranscriptRefresh: refresh,
+        });
+        await manager.requestTranscriptRefresh({
+            sessionId: 'session-refresh-retry-release',
+            resource,
+        });
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        await manager.detach({
+            sessionId: 'session-refresh-retry-release',
+            leaseId: 'refresh-retry-release',
+        });
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(refresh).toHaveBeenCalledTimes(1);
+        await manager.dispose();
+    });
+
+    it('does not let a delayed retired-plugin refresh status overwrite the current same-link generation', async () => {
+        let releaseDelayedStatus: (() => void) | undefined;
+        const delayedStatus = new Promise<void>((resolve) => {
+            releaseDelayedStatus = resolve;
+        });
+        let markDelayedStatusStarted: (() => void) | undefined;
+        const delayedStatusStarted = new Promise<void>((resolve) => {
+            markDelayedStatusStarted = resolve;
+        });
+        let persistedStatus: Readonly<{ status: string; reason?: string }> | null = null;
+        const writeFollowStatus = vi.fn(async (input: Readonly<{
+            followStatusV1: Readonly<{ status: string; reason?: string }>;
+        }>) => {
+            if (input.followStatusV1.reason === 'follow_refresh_read_failed') {
+                markDelayedStatusStarted?.();
+                await delayedStatus;
+            }
+            persistedStatus = input.followStatusV1;
+        });
+        const firstRetirement = new AbortController();
+        const manager = createExternalSessionFollowLeaseManager({
+            now: () => 55_000,
+            writeFollowStatus,
+        });
+        const firstResource = {
+            linkGeneration: 'link-shared',
+            pluginGeneration: 'plugin-retired',
+            retirementSignal: firstRetirement.signal,
+        };
+        const replacementResource = {
+            linkGeneration: 'link-shared',
+            pluginGeneration: 'plugin-current',
+        };
+
+        await manager.attach({
+            sessionId: 'session-delayed-refresh-status',
+            ttlMs: 30_000,
+            resource: firstResource,
+            acquireFollowLease: async () => ({
+                release: async () => {},
+                requestTranscriptRefresh: async () => ({ outcome: 'read_failed' }),
+            }),
+        });
+        const refresh = manager.requestTranscriptRefresh({
+            sessionId: 'session-delayed-refresh-status',
+            resource: firstResource,
+        });
+        await delayedStatusStarted;
+
+        firstRetirement.abort();
+        const replacement = manager.attach({
+            sessionId: 'session-delayed-refresh-status',
+            ttlMs: 30_000,
+            resource: replacementResource,
+            acquireFollowLease: async () => ({ release: async () => {} }),
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        releaseDelayedStatus?.();
+        await Promise.all([refresh, replacement]);
+
+        expect(persistedStatus).toMatchObject({
+            status: 'active',
+            reason: 'viewer_attached',
+        });
+    });
 
     it('publishes reacquiring then active around one bounded background gap recovery', async () => {
         const writeFollowStatus = vi.fn(async () => {});
@@ -1895,6 +2492,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(recover).toHaveBeenCalledOnce();
         expect(writeFollowStatus).toHaveBeenNthCalledWith(1, {
             sessionId: 'session-background-gap',
+            expectedLinkGeneration: 'link-background-gap',
             followStatusV1: {
                 v: 1,
                 status: 'reacquiring',
@@ -1910,6 +2508,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         });
         expect(writeFollowStatus).toHaveBeenNthCalledWith(2, {
             sessionId: 'session-background-gap',
+            expectedLinkGeneration: 'link-background-gap',
             followStatusV1: {
                 v: 1,
                 status: 'active',
@@ -1956,6 +2555,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
         expect(writeFollowStatus).toHaveBeenLastCalledWith({
             sessionId: 'session-background-rejection',
+            expectedLinkGeneration: 'link-background-rejection',
             followStatusV1: {
                 v: 1,
                 status: 'error',
@@ -2008,6 +2608,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
 
             expect(writeFollowStatus).toHaveBeenLastCalledWith({
                 sessionId: 'session-viewer-error',
+                expectedLinkGeneration: 'link-viewer-error',
                 followStatusV1: {
                     v: 1,
                     status: 'error',
@@ -2023,6 +2624,82 @@ describe('createExternalSessionFollowLeaseManager', () => {
             });
         },
     );
+
+    it('settles a source-replaced scoped binding once after its terminal status while keeping source unavailability retryable', async () => {
+        const writeFollowStatus = vi.fn(async (_input: FollowStatusWriteInput) => {});
+        const sourceReplacementNotices: Array<
+            Readonly<{ status: string; reason: string }>
+        > = [];
+        const manager = createExternalSessionFollowLeaseManager({
+            now: () => 75_500,
+            writeFollowStatus,
+        });
+        const resource = {
+            linkGeneration: 'link-scoped-terminal',
+            pluginGeneration: 'plugin-scoped-terminal',
+        };
+
+        await manager.attachScoped({
+            sessionId: 'session-scoped-source-replaced',
+            acceptedTailCursor: 'cursor-accepted',
+            resource,
+            acquireFollowLease: async () => ({
+                release: async () => {},
+            }),
+            requestTranscriptRefresh: async () => ({
+                outcome: 'source_replaced' as const,
+            }),
+            onSourceReplaced: async () => {
+                const publication = writeFollowStatus.mock.lastCall?.[0];
+                sourceReplacementNotices.push({
+                    status: publication?.followStatusV1.status ?? 'missing',
+                    reason: publication?.followStatusV1.reason ?? 'missing',
+                });
+            },
+        });
+        writeFollowStatus.mockClear();
+
+        await expect(manager.requestTranscriptRefresh({
+            sessionId: 'session-scoped-source-replaced',
+            resource,
+        })).resolves.toEqual({ requested: true, coalesced: false });
+        expect(sourceReplacementNotices).toEqual([{
+            status: 'error',
+            reason: 'follow_refresh_source_replaced',
+        }]);
+        expect(manager.countActiveLeases('session-scoped-source-replaced')).toBe(0);
+        await expect(manager.requestTranscriptRefresh({
+            sessionId: 'session-scoped-source-replaced',
+            resource,
+        })).resolves.toEqual({ requested: false, reason: 'not-demanded' });
+        expect(sourceReplacementNotices).toHaveLength(1);
+
+        const unavailableLease = await manager.attachScoped({
+            sessionId: 'session-scoped-source-unavailable',
+            acceptedTailCursor: 'cursor-accepted',
+            resource,
+            acquireFollowLease: async () => ({
+                release: async () => {},
+            }),
+            requestTranscriptRefresh: async () => ({
+                outcome: 'source_unavailable' as const,
+            }),
+            onSourceReplaced: async () => {
+                sourceReplacementNotices.push({
+                    status: 'unexpected',
+                    reason: 'unexpected',
+                });
+            },
+        });
+
+        await expect(manager.requestTranscriptRefresh({
+            sessionId: 'session-scoped-source-unavailable',
+            resource,
+        })).resolves.toEqual({ requested: true, coalesced: false });
+        expect(sourceReplacementNotices).toHaveLength(1);
+        expect(manager.countActiveLeases('session-scoped-source-unavailable')).toBe(1);
+        await unavailableLease.release();
+    });
 
     it('publishes scoped-viewer gap recovery and rejected-refresh outcomes through the same status writer', async () => {
         const writeFollowStatus = vi.fn(async () => {});
@@ -2076,6 +2753,7 @@ describe('createExternalSessionFollowLeaseManager', () => {
         });
         expect(writeFollowStatus).toHaveBeenLastCalledWith({
             sessionId: 'session-viewer-gap',
+            expectedLinkGeneration: 'link-viewer-gap',
             followStatusV1: {
                 v: 1,
                 status: 'error',

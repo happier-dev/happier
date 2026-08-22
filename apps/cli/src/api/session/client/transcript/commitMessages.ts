@@ -11,18 +11,18 @@ import type { SessionClientTranscriptSendPort } from './sendMessages';
 type PlainOrEncryptedPayload = ReturnType<SessionClientTranscriptSendPort['buildOutboundSessionMessagePayload']>;
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
 
-export function prepareCommittedAgentMessageViaPort(
+export async function prepareCommittedAgentMessageViaPort(
   port: SessionClientTranscriptSendPort,
   provider: ACPProvider,
   body: ACPMessageData,
   opts: Readonly<{ localId: string; meta?: Record<string, unknown> }>,
-): Readonly<{
+): Promise<Readonly<{
   normalizedBody: ACPMessageData;
   localId: string;
   sidechainId: string | null;
   payload: PlainOrEncryptedPayload;
   messageRole: SessionMessageRole;
-}> {
+}>> {
   const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
     provider,
     body,

@@ -40,6 +40,7 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     initialAfterSeq?: number;
     lastObservedSeq?: number;
     delays?: readonly number[];
+    handleUpdate?: (update: any) => void;
   }> = {}) {
     return createSessionClientRecoveryRuntime({
       startupMessageCatchUpRetryDelaysMs: params.delays ?? [300, 1_200],
@@ -66,7 +67,7 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
       getStartupMessageCatchUpInitialAfterSeq: () => params.initialAfterSeq ?? 0,
       getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => true,
       getLastObservedMessageSeq: () => params.lastObservedSeq ?? 0,
-      handleUpdate: () => {},
+      handleUpdate: params.handleUpdate ?? (() => {}),
       syncSessionSnapshotFromServer: async () => true,
       applyPendingQueueState: () => {},
     });
@@ -106,6 +107,34 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     await vi.advanceTimersByTimeAsync(1_200);
 
     expect(axiosGetMock).toHaveBeenCalledTimes(2);
+    expect(axiosGetMock.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
+      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
+    ]);
+  });
+
+  it('retries a corrupt transcript page from the original cursor without applying its valid neighbors', async () => {
+    axiosGetMock
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            { id: 'm5', seq: 5, content: { t: 'encrypted', c: 'c5' } },
+            { id: 'm6', seq: 6, content: { t: 'future', value: 'unreadable' } },
+            { id: 'm7', seq: 7, content: { t: 'encrypted', c: 'c7' } },
+          ],
+          nextAfterSeq: 7,
+        },
+      })
+      .mockResolvedValueOnce({ data: { messages: [] } });
+    const handleUpdate = vi.fn();
+    const runtime = createRuntime({ initialAfterSeq: 4, handleUpdate });
+
+    runtime.scheduleNextStartupMessageCatchUpRetry();
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(handleUpdate).not.toHaveBeenCalled();
     expect(axiosGetMock.mock.calls.map((call) => call[1])).toEqual([
       expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
       expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),

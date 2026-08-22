@@ -4,10 +4,17 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import {
+  createConnectedAccountContributionRegistry,
+  type ConnectedAccountRuntimeRegistration,
+} from '@/plugins/runtime/connectedAccounts/contributionRegistry';
 import type {
   ConnectedAccountConfigurationRecord,
   ConnectedAccountConfigurationTarget,
 } from '@/plugins/runtime/connectedAccounts/configurationOwner';
+import type {
+  ResolvedConnectedAccountDescriptorContribution,
+} from '@/plugins/projection/registry/types';
 import type {
   QualifiedConnectedAccountEstablishedRuntimeOwner,
 } from './qualifiedConnectedAccountEstablishedRuntimeOwner';
@@ -291,7 +298,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
 
   it('keeps revisioned legacy credential deletion on its exact guarded route', async () => {
     const legacyService = Object.freeze({
-      pluginId: 'happier.scm.hosting.github',
+      pluginId: 'happier.scm.forge.github',
       localId: 'github-account',
     });
     const legacyAccount = Object.freeze({
@@ -422,6 +429,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       ref: account,
       status: 'connected' as const,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: 'credential-1',
       configurationReady: true,
       configurationRevision: null,
@@ -430,6 +438,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       ref: secondAccount,
       status: 'connected' as const,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: 'credential-2',
       configurationReady: true,
       configurationRevision: null,
@@ -438,6 +447,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       ref: otherModeAccount,
       status: 'connected' as const,
       authenticationModeId: 'account-oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: 'credential-3',
       configurationReady: true,
       configurationRevision: 'account-configuration-1',
@@ -446,6 +456,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       ref: foreignAccount,
       status: 'connected' as const,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: 'credential-4',
       configurationReady: true,
       configurationRevision: null,
@@ -730,6 +741,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       ref: account,
       status: 'connected' as const,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: 'credential-1',
       configurationReady: true,
       configurationRevision: null,
@@ -778,6 +790,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       ref: account,
       status: 'connected' as const,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: 'credential-1',
       configurationReady: true,
       configurationRevision: null,
@@ -786,6 +799,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       ref: secondAccount,
       status: 'connected' as const,
       authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned' as const,
       credentialRevision: 'credential-2',
       configurationReady: true,
       configurationRevision: null,
@@ -856,6 +870,154 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         expectedCredentialRevision: 'credential-1',
         cleanupGroupReferences: true,
       },
+    });
+  });
+
+  describe('describeService over the real connected-account contribution registry', () => {
+    // describeService must answer from the descriptor alone. Every provider entry
+    // point throws so an accidental invocation fails the test loudly.
+    const unreached = (): never => {
+      throw new Error('describeService must not enter the connected-account provider');
+    };
+    const publishedRuntime: ConnectedAccountRuntimeRegistration['runtime'] = {
+      authentication: {
+        modes: {
+          oauth: {
+            kind: 'oauthAuthorizationCode',
+            begin: unreached,
+            complete: unreached,
+            cancel: unreached,
+          },
+          'account-oauth': {
+            kind: 'oauthDeviceCode',
+            begin: unreached,
+            poll: unreached,
+            cancel: unreached,
+          },
+        },
+      },
+      refresh: unreached,
+      revoke: unreached,
+      status: unreached,
+      materialize: unreached,
+    };
+
+    function createDaemonOverRealRegistry(input: Readonly<{
+      published: boolean;
+      generationCurrent(): boolean;
+    }>) {
+      const registrations: ConnectedAccountRuntimeRegistration[] = [];
+      const contributions = createConnectedAccountContributionRegistry({
+        generation: 'generation-1',
+        immutableGenerationIdsByPluginId: new Map([[service.pluginId, 'artifact-1']]),
+        descriptors: [{
+          provenance: 'first_party',
+          source: { kind: 'bundled' },
+          pluginId: service.pluginId,
+          definition: descriptor,
+        }] satisfies readonly ResolvedConnectedAccountDescriptorContribution[],
+        activateOnDemand: async (ref) => {
+          if (!input.published) return;
+          registrations.push({
+            pluginId: ref.pluginId,
+            generation: 'generation-1',
+            localId: ref.localId,
+            runtime: publishedRuntime,
+          });
+        },
+        readRegistrations: () => registrations,
+        isGenerationCurrent: () => input.generationCurrent(),
+      });
+      const registry = {
+        generation: 'generation-1',
+        connectedAccountContributions: contributions,
+        resolveConnectedAccountRuntime: contributions.resolve,
+      };
+      const lease = () => ({
+        registry,
+        source: 'active' as const,
+        release: vi.fn(async () => undefined),
+      });
+      return createConnectedAccountDaemonRuntime({
+        reloadController: {
+          acquireRuntimeRegistry: vi.fn(async () => lease()),
+          tryAcquireRuntimeRegistry: vi.fn(() => lease()),
+          isRuntimeRegistryCurrent: vi.fn(() => true),
+        } as unknown as PluginReloadController,
+        persistence: {
+          profiles: { list: vi.fn(async () => []) },
+          configuration: {
+            read: vi.fn(async () => null),
+            replace: vi.fn(),
+            destroyAttempt: vi.fn(),
+            secrets: {
+              has: vi.fn(async () => false),
+              read: vi.fn(async () => null),
+            },
+          },
+          attempts: {
+            accounts: { readExact: vi.fn(async () => null) },
+            oauth: { create: vi.fn() },
+            settlement: { settle: vi.fn() },
+          },
+        } as unknown as ConnectedAccountDaemonPersistence,
+        configurationConsequences: {
+          assertAvailable: vi.fn(),
+          apply: vi.fn(),
+        },
+        revocation: {} as never,
+      });
+    }
+
+    it('names an unresolvable declared service instead of the untyped control catch-all', async () => {
+      const daemon = createDaemonOverRealRegistry({
+        published: false,
+        generationCurrent: () => true,
+      });
+
+      await expect(daemon.control({
+        operation: 'describeService',
+        service,
+      })).resolves.toEqual({
+        status: 'unavailable',
+        code: 'connected_account_service_unavailable',
+      });
+    });
+
+    it('keeps a retired generation distinguishable from an unavailable service', async () => {
+      let current = true;
+      const daemon = createDaemonOverRealRegistry({
+        published: true,
+        generationCurrent: () => current,
+      });
+      await expect(daemon.control({
+        operation: 'describeService',
+        service,
+      })).resolves.toMatchObject({ status: 'described', service });
+
+      current = false;
+      await expect(daemon.control({
+        operation: 'describeService',
+        service,
+      })).resolves.toEqual({
+        status: 'unavailable',
+        code: 'connected_account_runtime_generation_changed',
+      });
+    });
+
+    it('refuses an undeclared service without inventing a runtime for it', async () => {
+      const daemon = createDaemonOverRealRegistry({
+        published: true,
+        generationCurrent: () => true,
+      });
+
+      await expect(daemon.control({
+        operation: 'describeService',
+        service: { pluginId: 'acme.accounts', localId: 'not-declared' },
+      })).resolves.toEqual({
+        status: 'unavailable',
+        code: 'connected_account_service_unavailable',
+      });
     });
   });
 });

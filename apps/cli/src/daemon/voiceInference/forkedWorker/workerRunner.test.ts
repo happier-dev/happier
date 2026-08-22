@@ -95,8 +95,8 @@ describe('voice inference worker runner', () => {
 
     fake.sendRequest({ kind: 'warm', id: 'w-1', packId: 'pack-1', packDir: '/tmp/pack-1', manifest });
     await vi.waitFor(() => expect(fake.responses).toContainEqual({ kind: 'result', id: 'w-1', result: { kind: 'warm' } }));
-    expect(fake.responses).toContainEqual({ kind: 'snapshot', packId: 'pack-1', runtimeState: 'warming', residentMemoryBytes: null });
-    expect(fake.responses).toContainEqual({ kind: 'snapshot', packId: 'pack-1', runtimeState: 'ready', residentMemoryBytes: null });
+    expect(fake.responses).toContainEqual({ kind: 'snapshot', packId: 'pack-1', runtimeState: 'warming' });
+    expect(fake.responses).toContainEqual({ kind: 'snapshot', packId: 'pack-1', runtimeState: 'ready' });
 
     fake.sendRequest({
       kind: 'synthesize', id: 's-1', requestId: 'tts-1', text: 'hi', packId: 'pack-1', packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null, output: { codec: 'wav', mimeType: 'audio/wav' },
@@ -111,6 +111,46 @@ describe('voice inference worker runner', () => {
     } else {
       throw new Error('expected synthesize result');
     }
+  });
+
+  it('returns a typed terminal error when a direct TTS result exceeds the IPC frame ceiling', async () => {
+    const fake = createFakeTransport();
+    const runtime: VoiceInferenceRuntime = {
+      synthesizeTts: async () => ({
+        bytes: Buffer.alloc(1_024, 7),
+        output: { codec: 'wav', mimeType: 'audio/wav' },
+        name: 'too-large.wav',
+      }),
+      transcribeAudio: async () => ({ text: 'unused', language: null }),
+    };
+    createVoiceInferenceWorkerRunner({
+      transport: fake.transport,
+      loadRuntime: async () => runtime,
+      maxFrameBytes: 512,
+    });
+
+    fake.sendRequest({
+      kind: 'synthesize',
+      id: 's-too-large',
+      requestId: 'tts-too-large',
+      text: 'hello',
+      packId: 'pack-1',
+      packDir: '/tmp/pack-1',
+      manifest,
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+
+    await vi.waitFor(() => {
+      expect(fake.responses).toContainEqual({
+        kind: 'error',
+        id: 's-too-large',
+        code: 'output_too_large',
+        message: 'voice_inference_tts_output_too_large',
+      });
+    });
+    expect(fake.responses.some((frame) => frame.kind === 'result' && frame.id === 's-too-large')).toBe(false);
   });
 
   it('maps engine error codes into worker error frames', async () => {

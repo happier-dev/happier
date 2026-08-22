@@ -26,18 +26,45 @@ export type ForkedVoiceInferenceRuntimeHandle = Readonly<{
   dispose: () => Promise<void>;
 }>;
 
+export type ForkedVoiceInferenceWorkerProcessObservation = Pick<
+  Awaited<ReturnType<VoiceInferenceWorkerChannelFactory>>,
+  'pid' | 'waitForTermination'
+>;
+
 export type CreateForkedVoiceInferenceRuntimeHandleParams = Readonly<{
   /** Injectable for tests; defaults to the binary-safe spawnHappyCLI-backed channel. */
   channelFactory?: VoiceInferenceWorkerChannelFactory;
   onSnapshot?: (snapshot: ForkedVoiceInferenceRuntimeSnapshot) => void;
   loggerDebug?: (message: string, payload?: unknown) => void;
+  /** Observe only the exact child owned by this runtime; intended for process-lifecycle tests. */
+  onWorkerProcess?: (process: ForkedVoiceInferenceWorkerProcessObservation) => void;
 }>;
 
 export function createForkedVoiceInferenceRuntimeHandle(
   params?: CreateForkedVoiceInferenceRuntimeHandleParams,
 ): ForkedVoiceInferenceRuntimeHandle {
-  const channelFactory: VoiceInferenceWorkerChannelFactory =
+  const createChannel: VoiceInferenceWorkerChannelFactory =
     params?.channelFactory ?? (async () => spawnVoiceInferenceWorkerChannel());
+  const channelFactory: VoiceInferenceWorkerChannelFactory = async () => {
+    const channel = await createChannel();
+    try {
+      params?.onWorkerProcess?.({
+        pid: channel.pid,
+        waitForTermination: channel.waitForTermination,
+      });
+    } catch (error) {
+      // The observer is outside the supervised client, so it must not strand a successfully
+      // spawned child before the client can assume ownership. Retire this exact channel first;
+      // the client remains the sole supervisor for every channel it successfully receives.
+      try {
+        channel.forceTerminate();
+      } finally {
+        await channel.waitForTermination().catch(() => undefined);
+      }
+      throw error;
+    }
+    return channel;
+  };
 
   let client: ForkedVoiceInferenceRuntimeClient | null = null;
 

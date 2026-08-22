@@ -12,17 +12,19 @@ import { resolvePromptAssetDownloadSource } from '@/transfers/targets/resolvePro
 import { resolvePromptRegistryItemDownloadSource } from '@/transfers/targets/resolvePromptRegistryItemDownloadSource';
 import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
 import type {
-  LocalServiceManagedRuntimeSnapshotV1,
   MachineLiveStreamControlLeaseV1,
   PromptAssetReadRequest,
   PromptRegistryFetchItemRequestV1,
 } from '@happier-dev/protocol';
 import {
-  createProviderErrorV1,
-  readServerEnabledBit,
+    createProviderErrorV1,
+    HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
+    parseHostEventPayloadV1,
+    readServerEnabledBit,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryV1Schema,
 } from '@happier-dev/protocol';
+import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
@@ -38,7 +40,8 @@ import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRe
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { bindPluginDaemonConnectionStateSource } from '@/agent/runtime/registry/pluginConnectionStateSource';
-import type { Credentials } from '@/persistence';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
@@ -51,6 +54,10 @@ import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import { createRuntimeProviderConnectionServices } from '@/providers/connections/runtimeServices';
 import { createLegacyProfileMigrationRpcServices } from '@/providers/migrations/rpc';
+import {
+  createRuntimeProviderOperationsProducer,
+  type RuntimeProviderOperationsProducer,
+} from '@/providers/runtimeServices';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
 import { createNpmRegistryProfileProbe } from '@/plugins/distribution/npm/profiles/probe';
 import { triggerLegacyProfileMigration as triggerLegacyProfileMigrationRuntime } from '@/providers/migrations/runtime';
@@ -81,10 +88,6 @@ import type { NormalizedLocalServiceInventorySnapshot } from '../local/services/
 import { projectProviderDiscoveryCandidates } from '@/providers/discovery/project';
 import { createProviderLocalInstallationReader } from '@/providers/discovery/installations';
 import { createDaemonSpawnToolResolutionContext } from '../spawnHooks';
-import {
-  createManagedProviderStart,
-  type ProviderManagedLocalServicesDispatch,
-} from '@/providers/discovery/managedStart';
 import { createProviderLocalCatalogFallbackRunner } from '@/providers/probe/localCommand';
 import type { createAgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import { resolveDaemonSpawnSessionByNonce } from '../controlClient';
@@ -93,13 +96,19 @@ import {
   type UsageLimitRecoveryIntent,
 } from '../connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 import { createInactiveUsageLimitRecoveryCheckOwner } from '../connectedServices/usageLimitRecovery/inactiveUsageLimitRecoveryCheckOwner';
-import { createDaemonUsageLimitRecoveryMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
+import {
+  createDaemonSessionMutationCustody,
+  type DaemonSessionMutationCustody,
+} from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import { buildInactiveUsageLimitResumeSpawnOptions } from '../sessions/runtimeSnapshot/buildInactiveUsageLimitResumeSpawnOptions';
 import { createRecoveryIntentFileStore } from '../connectedServices/recoveryScheduler/recoveryIntentFileStore';
 import type { DurableBackoffRecoveryStore } from '../connectedServices/recoveryScheduler/DurableBackoffRecoveryScheduler';
 import { abandonSpawnedSessionUntilCompleted } from '@/session/services/awaitSpawnedSessionId';
 import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
 import type { PersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persistedTakeoverAdmission';
+import type {
+  ExternalSessionPluginAdmissionOwner,
+} from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
 import type {
   ExternalSessionPersistedTakeoverAdmissionOwner,
 } from '@/session/actions/externalSessions/persistedTakeoverAdmission';
@@ -108,6 +117,7 @@ import type {
   ExternalSessionHostOperationSet,
 } from '@/session/external/hostOperationOwner';
 import type { SessionLifecycleMachineDeps } from '@/session/actions/lifecycle/sessionLifecycleTypes';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 function readAccountSettingsChangedHintVersion(update: unknown): number | null {
   if (!update || typeof update !== 'object') return null;
@@ -117,8 +127,57 @@ function readAccountSettingsChangedHintVersion(update: unknown): number | null {
   return normalizeAccountSettingsVersionHint((body as { settingsVersion?: unknown }).settingsVersion);
 }
 
+/**
+ * The server has already committed and stamped this lossy observation. This
+ * ingress validates and projects it into the daemon-lifetime broker; it never
+ * derives lifecycle facts or participates in Automation settlement.
+ */
+function projectAutomationRunStateChangedHostEvent(
+  update: unknown,
+  isShuttingDown: () => boolean,
+): boolean {
+  if (!update || typeof update !== 'object') return false;
+  const body = UpdateBodySchema.safeParse((update as { body?: unknown }).body);
+  if (!body.success || body.data.t !== 'automation-run-state-changed') return false;
+  if (isShuttingDown()) return true;
+  const payload = parseHostEventPayloadV1(
+    HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
+    {
+      runId: body.data.runId,
+      automationId: body.data.automationId,
+      originKind: body.data.originKind,
+      previousState: body.data.previousState,
+      currentState: body.data.currentState,
+      transitionedAt: body.data.transitionedAt,
+      claimedByMachineId: body.data.claimedByMachineId,
+    },
+  );
+  const registryLease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+  if (!registryLease) return true;
+  try {
+    const broker = registryLease.registry.stableEventsBroker;
+    if (!broker) return true;
+    broker.publishHostEventEnvelope({
+      eventId: HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
+      scope: { kind: 'account' },
+      payload,
+    });
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Automation lifecycle Host Event projection failed (ignored)', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    void registryLease.release().catch((error) => {
+      logger.warn('[DAEMON RUN] Automation lifecycle Host Event registry release failed (ignored)', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+  return true;
+}
+
 async function refreshDaemonAccountSettingsForHint(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   settingsVersion: number | null;
 }>): Promise<boolean> {
   const requiresConservativeRefresh = params.settingsVersion === null;
@@ -178,7 +237,7 @@ function normalizeNonEmptyString(value: string | null | undefined): string | nul
   return normalized ? normalized : null;
 }
 
-function resolveAccountIdFromCredentials(credentials: Credentials | undefined): string | null {
+function resolveAccountIdFromCredentials(credentials: StoredCredentials | undefined): string | null {
   if (!credentials) return null;
   const payload = decodeJwtPayload(credentials.token);
   return typeof payload?.sub === 'string' ? normalizeNonEmptyString(payload.sub) : null;
@@ -202,13 +261,13 @@ function readUsageLimitRecoveryIntentFromControlResult(result: unknown) {
 
 function resolveAccountSigningSeed(params: Readonly<{
   config: PeerMediationMachineRpcBootstrapConfig | undefined;
-  credentials: Credentials | undefined;
+  credentials: StoredCredentials | undefined;
   machine: Machine;
 }>): Uint8Array | null {
   if (params.config?.accountSigningSeed && params.config.accountSigningSeed.length > 0) {
     return params.config.accountSigningSeed;
   }
-  if (params.credentials?.encryption.type === 'legacy') {
+  if (params.credentials?.encryption?.type === 'legacy') {
     return params.credentials.encryption.secret;
   }
   if (params.machine.encryptionVariant === 'legacy' && params.machine.encryptionKey.length > 0) {
@@ -258,7 +317,7 @@ function mergePeerMediationLoopbackEndpoint(
 async function maybeStartPeerMediationLoopback(params: Readonly<{
   config: PeerMediationMachineRpcBootstrapConfig | undefined;
   connectedApiMachine: ApiMachineClient;
-  credentials: Credentials | undefined;
+  credentials: StoredCredentials | undefined;
   machine: Machine;
   machineId: string;
   voiceBinaryAppendConsumer?: PeerTcpTunnelVoiceBinaryAppendConsumer;
@@ -301,7 +360,7 @@ async function maybeStartPeerMediationLoopback(params: Readonly<{
 
 async function resolvePeerTcpTunnelRelayBootstrapContext(params: Readonly<{
   config: PeerMediationMachineRpcBootstrapConfig | undefined;
-  credentials: Credentials | undefined;
+  credentials: StoredCredentials | undefined;
 }>): Promise<PeerTcpTunnelRelayBootstrapContext | null> {
   const serverFeatures = await resolvePeerMediationMachineRpcServerFeatures(params.config);
   if (!serverFeatures) return null;
@@ -325,6 +384,7 @@ function resolvePeerTcpTunnelRelayTrustRoots(input: Readonly<{
 }
 
 export type BootstrapMachineSyncRuntimeResult = Readonly<{
+  externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   apiMachine: ApiMachineClient | null;
   apiMachineForSessions: ApiMachineClient | null;
   automationWorker: AutomationWorkerHandle | null;
@@ -334,14 +394,97 @@ export type BootstrapMachineSyncRuntimeResult = Readonly<{
   machineConnectionStateCleanup: (() => void) | null;
   stopPeerMediationLoopbackServer: () => Promise<void>;
   resumeMachineConnectionPublications: () => Promise<void>;
-  daemonUsageLimitRecoveryMutationCustody: ReturnType<typeof createDaemonUsageLimitRecoveryMutationCustody> | null;
+  daemonSessionMutationCustody: DaemonSessionMutationCustody | null;
+  cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop(input: Readonly<{
+    sessionId: string;
+  }>): Promise<unknown>;
+  /**
+   * Retires this attempt's inactive usage-limit recovery scheduler. Its armed timers outlive the
+   * attempt otherwise and would keep waking probes that stage durable session work long after a
+   * replacement attempt hydrated the same durable store.
+   */
+  disposeInactiveSessionUsageLimitRecovery: () => void;
+  providerOperationsProducer: RuntimeProviderOperationsProducer | null;
 }>;
+
+export type MachineSyncRuntimeAttemptResources = Readonly<
+  Pick<
+    BootstrapMachineSyncRuntimeResult,
+    | 'apiMachine'
+    | 'automationWorker'
+    | 'memoryWorker'
+    | 'voiceInferenceWorker'
+    | 'machineConnectionStateCleanup'
+    | 'stopPeerMediationLoopbackServer'
+  > & {
+    disposeInactiveSessionUsageLimitRecovery: (() => void) | null;
+    cleanupMachineLiveStreamRelay?: (() => void) | null;
+    cleanupPeerTcpTunnelRelay?: (() => void) | null;
+  }
+>;
+
+/**
+ * Retires one machine-sync attempt without closing daemon-lifetime custody.
+ * Registration retries use this after either bootstrap or post-bootstrap handoff
+ * fails, before a replacement attempt can publish new resources.
+ */
+export async function retireMachineSyncRuntimeAttempt(
+  params: MachineSyncRuntimeAttemptResources,
+): Promise<void> {
+  try {
+    params.disposeInactiveSessionUsageLimitRecovery?.();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to retire inactive usage-limit recovery timers after machine-sync attempt failure', error);
+  }
+  try {
+    params.machineConnectionStateCleanup?.();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to retire machine connection listeners after machine-sync attempt failure', error);
+  }
+  try {
+    params.cleanupMachineLiveStreamRelay?.();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to retire live-stream relay after machine-sync attempt failure', error);
+  }
+  try {
+    params.cleanupPeerTcpTunnelRelay?.();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to retire peer TCP relay after machine-sync attempt failure', error);
+  }
+  try {
+    await params.stopPeerMediationLoopbackServer();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to stop peer mediation loopback after machine-sync attempt failure', error);
+  }
+  try {
+    params.automationWorker?.stop();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to stop automation worker after machine-sync attempt failure', error);
+  }
+  try {
+    params.memoryWorker?.stop();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to stop memory worker after machine-sync attempt failure', error);
+  }
+  try {
+    await params.voiceInferenceWorker?.stop();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to stop voice inference worker after machine-sync attempt failure', error);
+  }
+  try {
+    await params.apiMachine?.shutdown();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to shut down machine client after machine-sync attempt failure', error);
+  }
+}
 
 export type BootstrapMachineSyncRuntimeParams = Readonly<{
   cliVersion: string;
   machineId: string;
   machine: Machine;
-  credentials?: Credentials;
+  credentials?: StoredCredentials;
+  daemonSessionMutationCustody?: DaemonSessionMutationCustody;
+  deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   preferredHost: string;
   happyHomeDir: string;
   happyLibDir: string;
@@ -380,7 +523,6 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   peerMediationMachineRpc?: PeerMediationMachineRpcBootstrapConfig;
   inactiveUsageLimitRecoveryStore?: DurableBackoffRecoveryStore<UsageLimitRecoveryIntent>;
   readLocalServiceInventorySnapshot?: () => Promise<NormalizedLocalServiceInventorySnapshot | null>;
-  dispatchProviderLocalServicesBridge?: ProviderManagedLocalServicesDispatch;
   managedCatalogRuntime?: Parameters<
     typeof createRuntimeProviderModelManagementServices
   >[0]['managedCatalogRuntime'];
@@ -393,7 +535,6 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
       'client' | 'scheduler'
     >,
   ) => ReturnType<typeof createAgentProviderCatalogObservationService>;
-  readManagedLocalServicesSnapshot?: () => Promise<LocalServiceManagedRuntimeSnapshotV1 | null>;
   triggerLegacyProfileMigration?: typeof triggerLegacyProfileMigrationRuntime;
   persistedTakeoverAdmissionWaiter?: PersistedTakeoverAdmissionWaiter;
   attachPersistedTakeoverAdmissionOwner?: (
@@ -418,24 +559,56 @@ export async function bootstrapMachineSyncRuntime(
       machineConnectionStateCleanup: null,
       stopPeerMediationLoopbackServer: async () => {},
       resumeMachineConnectionPublications: async () => {},
-      daemonUsageLimitRecoveryMutationCustody: null,
+      daemonSessionMutationCustody: null,
+      cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop: async () => null,
+      disposeInactiveSessionUsageLimitRecovery: () => {},
+      providerOperationsProducer: null,
     };
   }
 
   const connectedApiMachine = params.createConnectedApiMachine(params.machine);
-  if (connectedApiMachine) {
-    await params.attachTransferRuntimeStatePublisher(connectedApiMachine);
-    if (params.reconcileConnectedServicesProjection) {
-      connectedApiMachine.onConnectedServicesProjection(params.reconcileConnectedServicesProjection);
-    }
-  }
-
   let automationWorker: AutomationWorkerHandle | null = null;
+  let externalSessionPluginAdmissionOwner:
+    ExternalSessionPluginAdmissionOwner | undefined;
+  let providerOperationsProducer: RuntimeProviderOperationsProducer | null = null;
   let memoryWorker: MemoryWorkerHandle | null = null;
   let voiceInferenceWorker: VoiceInferenceWorkerHandle | null = null;
   let voiceBinaryAppendConsumer: PeerTcpTunnelVoiceBinaryAppendConsumer | undefined;
   let voiceBinaryTerminalConsumer: PeerTcpTunnelVoiceBinaryTerminalConsumer | undefined;
+  let daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null = null;
+  let machineConnectionStateCleanup: (() => void) | null = null;
+  let peerMediationLoopback: StartedPeerMediationLoopback | null = null;
+  let stopPeerMediationLoopbackServer: () => Promise<void> = async () => {};
+  let cleanupMachineLiveStreamRelay: (() => void) | null = null;
+  let cleanupPeerTcpTunnelRelay: (() => void) | null = null;
+  let resumeMachineConnectionPublications = async (): Promise<void> => {};
+  let disposeInactiveSessionUsageLimitRecovery: (() => void) | null = null;
 
+  const getAttemptResources = (): MachineSyncRuntimeAttemptResources => ({
+    apiMachine: connectedApiMachine,
+    automationWorker,
+    memoryWorker,
+    voiceInferenceWorker,
+    machineConnectionStateCleanup,
+    stopPeerMediationLoopbackServer,
+    cleanupMachineLiveStreamRelay,
+    cleanupPeerTcpTunnelRelay,
+    disposeInactiveSessionUsageLimitRecovery,
+  });
+
+  if (connectedApiMachine) {
+    try {
+      await params.attachTransferRuntimeStatePublisher(connectedApiMachine);
+      if (params.reconcileConnectedServicesProjection) {
+        connectedApiMachine.onConnectedServicesProjection(params.reconcileConnectedServicesProjection);
+      }
+    } catch (error) {
+      await retireMachineSyncRuntimeAttempt(getAttemptResources());
+      throw error;
+    }
+  }
+
+  try {
   const directPeerServerLifecycle = params.directPeerServerLifecycle;
   const directPeerTransferHandlers: SessionHandoffDirectPeerTransferHandle | null = directPeerServerLifecycle
     ? {
@@ -559,17 +732,15 @@ export async function bootstrapMachineSyncRuntime(
       }
     : null;
 
-  let daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null = null;
-  let machineConnectionStateCleanup: (() => void) | null = null;
-  let peerMediationLoopback: StartedPeerMediationLoopback | null = null;
-  let stopPeerMediationLoopbackServer: () => Promise<void> = async () => {};
-  let cleanupMachineLiveStreamRelay: (() => void) | null = null;
-  let cleanupPeerTcpTunnelRelay: (() => void) | null = null;
-  let resumeMachineConnectionPublications = async (): Promise<void> => {};
   const inactiveUsageLimitRecoveryCheckOwner = createInactiveUsageLimitRecoveryCheckOwner();
-  const usageLimitRecoveryMutationCustody = params.credentials
-    ? createDaemonUsageLimitRecoveryMutationCustody({ credentials: params.credentials })
+  const encryptionCredentials: Credentials | null = params.credentials?.encryption
+    ? params.credentials
     : null;
+  const storedCredentials = params.credentials;
+  const usageLimitRecoveryMutationCustody = params.daemonSessionMutationCustody
+    ?? (params.credentials
+      ? createDaemonSessionMutationCustody({ credentials: params.credentials })
+      : null);
   const inactiveUsageLimitRecoveryScheduler = new UsageLimitRecoveryScheduler({
     nowMs: () => Date.now(),
     store: params.inactiveUsageLimitRecoveryStore ?? createRecoveryIntentFileStore(join(
@@ -613,6 +784,7 @@ export async function bootstrapMachineSyncRuntime(
       };
     },
   });
+  disposeInactiveSessionUsageLimitRecovery = () => inactiveUsageLimitRecoveryScheduler.dispose();
   inactiveUsageLimitRecoveryScheduler.hydratePassive();
 
   if (connectedApiMachine) {
@@ -625,7 +797,7 @@ export async function bootstrapMachineSyncRuntime(
         ?? resolveAccountIdFromCredentials(params.credentials),
     );
     const providerFeatureGate = {
-      isEnabled: (featureId: 'providers' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'localServices.managed') => {
+      isEnabled: (featureId: 'providers' | 'providers.localDiscovery' | 'providers.localModelManagement') => {
         const serverSnapshot = params.getServerFeaturesSnapshot?.();
         return resolveCliFeatureDecision({
           featureId,
@@ -635,11 +807,11 @@ export async function bootstrapMachineSyncRuntime(
       },
     };
     const triggerProviderLegacyProfileMigration = async (): Promise<void> => {
-      if (!params.credentials) return;
+      if (!encryptionCredentials) return;
       const triggerMigration = params.triggerLegacyProfileMigration ?? triggerLegacyProfileMigrationRuntime;
       try {
         const result = await triggerMigration({
-          credentials: params.credentials,
+          credentials: encryptionCredentials,
           providersEnabled: providerFeatureGate.isEnabled('providers'),
           machineId: params.machineId,
         });
@@ -652,7 +824,6 @@ export async function bootstrapMachineSyncRuntime(
     };
     void triggerProviderLegacyProfileMigration();
     const providerLocalToolContext = createDaemonSpawnToolResolutionContext({ processEnv: process.env });
-    const dispatchProviderLocalServicesBridge = params.dispatchProviderLocalServicesBridge;
     let providerRuntimeServices!: ReturnType<typeof createRuntimeProviderModelManagementServices>;
     let providerLocalInstallationReader!: ReturnType<typeof createProviderLocalInstallationReader>;
     const providerConnectionRuntimeServices = params.credentials
@@ -663,25 +834,23 @@ export async function bootstrapMachineSyncRuntime(
           featureGate: providerFeatureGate,
           runtimeSummary: (input) => providerRuntimeServices.summary(input),
           refreshOnEnable: (input) => providerRuntimeServices.probe(input),
+          ...(params.resolveManagedPurposeBindingIntent
+            ? {
+                resolveManagedPurposeBindingIntent:
+                  params.resolveManagedPurposeBindingIntent,
+              }
+            : {}),
           discoveryCandidates: async ({ registry, connections }) => {
             const snapshot = await params.readLocalServiceInventorySnapshot?.();
-            const managed = await params.readManagedLocalServicesSnapshot?.();
             return snapshot
               ? projectProviderDiscoveryCandidates({
                   snapshot,
                   registry,
                   connections,
-                  ...(managed ? { managedServices: managed.rows } : {}),
                 })
               : [];
           },
           localInstallations: (request) => providerLocalInstallationReader.read(request),
-          ...(dispatchProviderLocalServicesBridge ? {
-            startManaged: createManagedProviderStart({
-              resolveSystemTool: providerLocalToolContext.resolveSystemTool,
-              dispatch: dispatchProviderLocalServicesBridge,
-            }),
-          } : {}),
         })
       : null;
     const providerConnectionUnavailable = async (request: Readonly<{ connectionId?: string; machineId: string }>) => ({
@@ -730,21 +899,45 @@ export async function bootstrapMachineSyncRuntime(
         sourceProfileId: request.sourceProfileId,
       }),
     });
-    const providerProfileMigrationRpcServices = params.credentials
-      ? createLegacyProfileMigrationRpcServices({ credentials: params.credentials })
+    const providerProfileMigrationRpcServices = encryptionCredentials
+      ? createLegacyProfileMigrationRpcServices({ credentials: encryptionCredentials })
       : null;
+    providerOperationsProducer = createRuntimeProviderOperationsProducer({
+      machineId: params.machineId,
+      featureGate: providerFeatureGate,
+      machineServices: {
+        ...providerRuntimeServices,
+        probe: (input, waiterLifetime) => providerRuntimeServices.probe(
+          input,
+          'manual_refresh',
+          waiterLifetime,
+        ),
+        probeDraft: (input, waiterLifetime) => providerRuntimeServices.probeDraft(input, waiterLifetime),
+        describeConnections: providerConnectionRuntimeServices?.describeConnections
+          ?? providerConnectionUnavailable,
+        mutateConnection: providerConnectionRuntimeServices?.mutateConnection
+          ?? providerConnectionUnavailable,
+        previewProfileMigration: providerProfileMigrationRpcServices?.previewProfileMigration
+          ?? providerProfileMigrationUnavailable,
+        confirmProfileMigration: providerProfileMigrationRpcServices?.confirmProfileMigration
+          ?? providerProfileMigrationUnavailable,
+        confirmProfileMigrationConflict: providerProfileMigrationRpcServices?.confirmProfileMigrationConflict
+          ?? providerProfileMigrationUnavailable,
+      },
+    });
 
     const machineRpcLifecycleRegistration = connectedApiMachine.setRPCHandlers(
       {
         spawnSession: params.spawnSession,
+        sessionSpawnV1OutcomeRequired: true,
         resolveSpawnSessionByNonce: resolveDaemonSpawnSessionByNonce,
-        ...(params.credentials ? {
+        ...(storedCredentials ? {
           abandonSpawnSessionByNonce: async (spawnNonce: string) => await abandonSpawnedSessionUntilCompleted({
             spawnNonce,
             resolveSpawnSessionByNonce: resolveDaemonSpawnSessionByNonce,
             archiveSession: async (sessionId) => {
               const archived = await setSessionArchivedState({
-                credentials: params.credentials!,
+                credentials: storedCredentials,
                 idOrPrefix: sessionId,
                 archived: true,
               });
@@ -801,23 +994,14 @@ export async function bootstrapMachineSyncRuntime(
         },
         providerRpc: {
           machineId: params.machineId,
-          services: {
-            ...providerRuntimeServices,
-            describeConnections: providerConnectionRuntimeServices?.describeConnections
-              ?? providerConnectionUnavailable,
-            mutateConnection: providerConnectionRuntimeServices?.mutateConnection
-              ?? providerConnectionUnavailable,
-            previewProfileMigration: providerProfileMigrationRpcServices?.previewProfileMigration
-              ?? providerProfileMigrationUnavailable,
-            confirmProfileMigration: providerProfileMigrationRpcServices?.confirmProfileMigration
-              ?? providerProfileMigrationUnavailable,
-            confirmProfileMigrationConflict: providerProfileMigrationRpcServices?.confirmProfileMigrationConflict
-              ?? providerProfileMigrationUnavailable,
-          },
+          services: providerOperationsProducer.machineServices,
           featureGate: providerFeatureGate,
         },
         ...(agentCatalogObservation ? { agentCatalogObservation } : {}),
         emitExternalSessionTranscriptUpdate: (payload) => connectedApiMachine.emitExternalSessionTranscriptUpdate(payload),
+        ...(params.deviceLocalSecretStorage
+          ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage }
+          : {}),
         executeExternalSessionHistoricalImportCommand: async (command) =>
           await connectedApiMachine.executeExternalSessionHistoricalImportCommand(command),
         persistedTakeoverAdmissionWaiter:
@@ -863,6 +1047,8 @@ export async function bootstrapMachineSyncRuntime(
             scheduler: inactiveUsageLimitRecoveryScheduler,
           });
         },
+        readInactiveSessionUsageLimitRecovery: ({ sessionId }) =>
+          inactiveUsageLimitRecoveryScheduler.read(sessionId),
         cancelInactiveSessionUsageLimitRecoveryCheck: async ({
           sessionId,
           issueFingerprint,
@@ -885,6 +1071,8 @@ export async function bootstrapMachineSyncRuntime(
           : {}),
       },
     );
+    externalSessionPluginAdmissionOwner =
+      machineRpcLifecycleRegistration.externalSessionPluginAdmissionOwner;
     voiceBinaryAppendConsumer =
       machineRpcLifecycleRegistration?.voiceInference?.voiceInferenceStreaming.appendSttStreamBinaryFrame;
     voiceBinaryTerminalConsumer =
@@ -1001,8 +1189,8 @@ export async function bootstrapMachineSyncRuntime(
       });
     }
 
-    if (params.credentials) {
-      const credentials = params.credentials;
+    if (storedCredentials) {
+      const credentials = storedCredentials;
       connectedApiMachine.onUpdate((update) => {
         const settingsVersion = readAccountSettingsChangedHintVersion(update);
         if (settingsVersion === null) return false;
@@ -1019,7 +1207,10 @@ export async function bootstrapMachineSyncRuntime(
           settingsVersion: hint.settingsVersion,
         });
       });
+    }
 
+    if (storedCredentials) {
+      const credentials = storedCredentials;
       connectedApiMachine.onPendingSessionActivationHint(async (hint) => {
         const result = await activatePendingInactiveSession({
           credentials,
@@ -1041,6 +1232,16 @@ export async function bootstrapMachineSyncRuntime(
     }
 
     connectedApiMachine.onUpdate((update) => {
+      const projectedAutomationRunStateChanged = projectAutomationRunStateChangedHostEvent(
+        update,
+        params.isShuttingDown,
+      );
+      if (projectedAutomationRunStateChanged) {
+        if (activeAutomationWorker && !params.isShuttingDown()) {
+          activeAutomationWorker.handleServerUpdate(update);
+        }
+        return true;
+      }
       if (!activeAutomationWorker) return false;
       const t = (update?.body as any)?.t;
       if (t === 'automation-assignment-updated' || t === 'automation-run-updated') {
@@ -1265,6 +1466,11 @@ export async function bootstrapMachineSyncRuntime(
   }
 
   return {
+    ...(externalSessionPluginAdmissionOwner
+      ? {
+          externalSessionPluginAdmissionOwner,
+        }
+      : {}),
     apiMachine: connectedApiMachine,
     apiMachineForSessions: connectedApiMachine,
     automationWorker,
@@ -1274,6 +1480,17 @@ export async function bootstrapMachineSyncRuntime(
     machineConnectionStateCleanup,
     stopPeerMediationLoopbackServer,
     resumeMachineConnectionPublications,
-    daemonUsageLimitRecoveryMutationCustody: usageLimitRecoveryMutationCustody,
+    daemonSessionMutationCustody: usageLimitRecoveryMutationCustody,
+    cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop: async ({ sessionId }) =>
+      await inactiveUsageLimitRecoveryCheckOwner.cancelSession({
+        sessionId,
+        scheduler: inactiveUsageLimitRecoveryScheduler,
+      }),
+    disposeInactiveSessionUsageLimitRecovery: () => inactiveUsageLimitRecoveryScheduler.dispose(),
+    providerOperationsProducer,
   };
+  } catch (error) {
+    await retireMachineSyncRuntimeAttempt(getAttemptResources());
+    throw error;
+  }
 }

@@ -98,6 +98,30 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         expect(queue.isTurnInFlight('sess_1')).toBe(false);
     });
 
+    it('records an exact null prompt witness as idle without changing ordinary prompt semantics', () => {
+        const queue = createConnectedServiceSwitchDeferralQueue({
+            timeoutMs: 60_000,
+            disableDeferral: false,
+        });
+
+        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'task_started' });
+        expect(queue.isTurnInFlight('sess_1')).toBe(true);
+
+        queue.recordTurnLifecycleEvent({
+            sessionId: 'sess_1',
+            event: 'prompt_or_steer',
+            activeTurnIdWitness: 'turn_1',
+        });
+        expect(queue.isTurnInFlight('sess_1')).toBe(true);
+
+        queue.recordTurnLifecycleEvent({
+            sessionId: 'sess_1',
+            event: 'prompt_or_steer',
+            activeTurnIdWitness: null,
+        });
+        expect(queue.isTurnInFlight('sess_1')).toBe(false);
+    });
+
     it('exposes lifecycle evidence so recovery can distinguish first-prompt retry from mid-turn continuation', () => {
         const queue = createConnectedServiceSwitchDeferralQueue({
             timeoutMs: 60_000,
@@ -556,5 +580,64 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             type: 'connected_service_account_switch_deferral_completed',
             reason: 'daemon_shutdown',
         }));
+    });
+    it('resolves a signalled switch whose completion-event admission fails instead of reporting a rollback-safe failure', async () => {
+        // POST-EFFECT SETTLEMENT: runSwitch has already emitted the irreversible restart signal. A
+        // failure while ADMITTING the completion transcript event is missing evidence, not an
+        // un-happened switch, so the deferred caller must never see it as a rollback-safe rejection.
+        const emitSessionEvent = vi.fn(async (_sessionId: string, event: unknown) => {
+            if ((event as { type?: string }).type === 'connected_service_account_switch_deferral_completed') {
+                throw new Error('transcript_admission_failed');
+            }
+        });
+        const runSwitch = vi.fn(async () => {});
+        const queue = createConnectedServiceSwitchDeferralQueue({
+            timeoutMs: 60_000,
+            disableDeferral: false,
+            emitSessionEvent,
+        });
+
+        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
+        const pending = queue.requestSwitch({
+            sessionId: 'sess_1',
+            policy: 'defer_until_turn_boundary',
+            source: 'manual',
+            target: target(),
+            runSwitch,
+        });
+
+        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'assistant_message_end' });
+        await expect(pending).resolves.toBeUndefined();
+        expect(runSwitch).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves the forced-interruption witness when the restart it caused terminates the runner', async () => {
+        // The forced boundary interrupted a LIVE user turn, then the restart signal killed the
+        // runner. The exit observer cancels the session as `session_restarting` BEFORE the
+        // continuation plan resolves; wiping the witness there silently loses the user's turn.
+        const queue = createConnectedServiceSwitchDeferralQueue({
+            timeoutMs: 60_000,
+            disableDeferral: false,
+        });
+
+        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
+        const pending = queue.requestSwitch({
+            sessionId: 'sess_1',
+            policy: 'defer_until_turn_boundary',
+            source: 'manual',
+            target: target(),
+            runSwitch: async () => {},
+        });
+        vi.advanceTimersByTime(60_000);
+        await pending;
+        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(true);
+
+        await queue.cancelSession('sess_1', 'session_restarting');
+
+        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(true);
+        expect(queue.isTurnInFlight('sess_1')).toBe(false);
+        // A genuine session teardown still clears everything.
+        await queue.cancelSession('sess_1', 'session_terminated');
+        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(false);
     });
 });

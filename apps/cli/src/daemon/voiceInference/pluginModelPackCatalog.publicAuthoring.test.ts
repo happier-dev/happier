@@ -19,7 +19,6 @@ import { projectDaemonPluginVoiceModelPackCatalogV1 } from './pluginModelPackCat
 
 const pluginId = 'examples.public-sdk-review-assistant';
 const pluginVersion = '0.1.0';
-const pluginPackageDigest = `sha256:${'b'.repeat(64)}`;
 const modelOrigin = 'https://models.example.com';
 
 const daemonHost = {
@@ -56,7 +55,10 @@ function projectLoadedPlugins(
     plugins: loadResult.loadedPlugins.map((plugin) => ({
       pluginId: plugin.pluginId,
       pluginVersion: plugin.manifest.version,
-      pluginSourceDigest: pluginPackageDigest,
+      artifactBinding: {
+        kind: 'materialization',
+        immutableGenerationId: 'public-authoring-fixture-local-generation',
+      },
       enabled: true,
       authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
       grantedNetworkOrigins,
@@ -100,7 +102,6 @@ async function installPublicAuthoringFixture(manifest: ParsedPluginManifestV2): 
           install: {
             mode: 'link',
             manifestVersion: pluginVersion,
-            manifestDigest: null,
             installedPath: null,
           },
           state: { enabled },

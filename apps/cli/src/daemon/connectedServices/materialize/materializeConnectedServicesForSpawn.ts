@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import type {
   AccountSettings,
@@ -13,6 +13,7 @@ import { getConnectedServicesMaterializer } from '@/daemon/connectedServices/cat
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type {
   ConnectedServiceResolvedSelection,
+  ConnectedServicesMaterializationAuthority,
   ConnectedServicesMaterialization,
   ConnectedServicesMaterializationDiagnostic,
 } from '@/daemon/connectedServices/materialization/materializer';
@@ -27,6 +28,7 @@ import {
 } from '../connectedServiceChildEnvironment';
 import { resolveConnectedServiceMaterializedRootDir } from './resolveConnectedServiceMaterializedRootDir';
 import { resolveConnectedServiceTargetMaterializedRoot } from './resolveConnectedServiceTargetMaterializedRoot';
+import { ensurePrivateConnectedServiceMaterializedRoot } from './privateMaterializedRoot';
 
 export class ConnectedServiceMaterializationBlockedError extends Error {
   readonly code = 'connected_service_materialization_blocked';
@@ -183,7 +185,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
-  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<ConnectedServicesMaterialization | null> {
@@ -205,7 +207,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
-  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>, rootDir: string): Promise<ConnectedServicesMaterialization | null> {
@@ -221,9 +223,9 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     return null;
   }
 
-  await mkdir(attemptRoot, { recursive: true });
   let materialized: ConnectedServicesMaterialization | null;
   try {
+    await ensurePrivateConnectedServiceMaterializedRoot(attemptRoot);
     materialized = await materializer({
       materializationKey: params.materializationKey,
       activeServerDir: params.activeServerDir,
@@ -232,9 +234,8 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       sessionDirectory: params.sessionDirectory ?? null,
       recordsByServiceId: params.recordsByServiceId,
       selectionsByServiceId: params.selectionsByServiceId,
-      ...(params.requestAuthPurposeBindings
-        ? { requestAuthPurposeBindings: params.requestAuthPurposeBindings }
-        : {}),
+      connectedAccountMaterializationAuthority:
+        params.connectedAccountMaterializationAuthority,
       accountSettings: params.accountSettings ?? null,
       processEnv: params.processEnv ?? process.env,
     });
@@ -261,6 +262,15 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     && materialized.targetMaterializedRoot.trim().length > 0
     ? rewritePathRoot(materialized.targetMaterializedRoot, attemptRoot, rootDir)
     : null;
+  const requestAuthMaterializedRoot =
+    typeof materialized.requestAuthMaterializedRoot === 'string'
+      && materialized.requestAuthMaterializedRoot.trim().length > 0
+      ? rewritePathRoot(
+        materialized.requestAuthMaterializedRoot,
+        attemptRoot,
+        rootDir,
+      )
+      : null;
   const serializedSelections = serializeConnectedServiceChildSelections(params.selectionsByServiceId);
   const serializedMaterializedEnvKeys = serializeConnectedServiceMaterializedEnvKeys(materializedEnv);
   const targetMaterializedRoot = explicitTargetMaterializedRoot
@@ -269,6 +279,19 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       targetMaterializedEnv: materializedEnv,
     })
     ?? (materialized.cleanupOnFailure ? rootDir : null);
+  try {
+    await ensurePrivateConnectedServiceMaterializedRoot(attemptRoot);
+    if (
+      targetMaterializedRoot
+      && resolve(targetMaterializedRoot) !== resolve(rootDir)
+    ) {
+      await ensurePrivateConnectedServiceMaterializedRoot(targetMaterializedRoot);
+    }
+  } catch (error) {
+    cleanupAttemptRoot();
+    forgetActiveAttemptIfCurrent(rootDir, attemptId);
+    throw error;
+  }
 
   try {
     await runSerializedPromotion(rootDir, async () => {
@@ -287,7 +310,12 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     const cleanupFinalRoot = createBestEffortCleanupDirectory(rootDir);
     const cleanupOnFailure = materialized.cleanupOnFailure ? cleanupFinalRoot : materialized.cleanupOnFailure;
     const cleanupOnExit = materialized.cleanupOnExit ? cleanupFinalRoot : materialized.cleanupOnExit;
-    if (!serializedSelections && !serializedMaterializedEnvKeys && !targetMaterializedRoot) {
+    if (
+      !serializedSelections
+      && !serializedMaterializedEnvKeys
+      && !targetMaterializedRoot
+      && !requestAuthMaterializedRoot
+    ) {
       return {
         ...materialized,
         cleanupOnFailure,
@@ -300,6 +328,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       ...materialized,
       cleanupOnFailure,
       cleanupOnExit,
+      requestAuthMaterializedRoot,
       env: {
         ...materializedEnv,
         ...(targetMaterializedRoot

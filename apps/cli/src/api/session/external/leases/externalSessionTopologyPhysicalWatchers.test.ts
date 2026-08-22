@@ -157,7 +157,7 @@ afterEach(async () => {
 
 describe('External Sessions topology physical watcher pooling', () => {
     it.each(['target', 'parent'] as const)(
-        'reacquires the complete watcher batch after a transient %s error without another rename',
+        'reacquires the complete watcher batch after a transient %s error only when demand re-enters',
         async (failedWatcherKind) => {
             vi.useFakeTimers({
                 toFake: ['setTimeout', 'clearTimeout'],
@@ -211,10 +211,14 @@ describe('External Sessions topology physical watcher pooling', () => {
             await Promise.resolve();
 
             expect(registrations).toHaveLength(3);
-            expect(vi.getTimerCount()).toBe(1);
+            expect(vi.getTimerCount()).toBe(0);
             expect(reconcileResource).not.toHaveBeenCalled();
 
-            await vi.runOnlyPendingTimersAsync();
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(registrations).toHaveLength(3);
+            expect(reconcileResource).not.toHaveBeenCalled();
+
+            await addHome(reconciler, home, 1);
             await Promise.resolve();
             await Promise.resolve();
             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -242,7 +246,7 @@ describe('External Sessions topology physical watcher pooling', () => {
         },
     );
 
-    it('backs off persistent EMFILE acquisition failures without a descriptor storm and catches up once after recovery', async () => {
+    it('holds persistent EMFILE recovery until a later demand reconciliation, then catches up once', async () => {
         vi.useFakeTimers({
             toFake: ['setTimeout', 'clearTimeout'],
         });
@@ -313,26 +317,26 @@ describe('External Sessions topology physical watcher pooling', () => {
 
         expect(watchBoundary.watch).toHaveBeenCalledTimes(3);
         expect(registrations).toHaveLength(1);
-        expect(vi.getTimerCount()).toBe(1);
+        expect(vi.getTimerCount()).toBe(0);
         expect(reconcileResource).not.toHaveBeenCalled();
 
-        await vi.runOnlyPendingTimersAsync();
+        await vi.advanceTimersByTimeAsync(120_000);
         await Promise.resolve();
         await Promise.resolve();
-        expect(watchBoundary.watch).toHaveBeenCalledTimes(6);
-        expect(registrations).toHaveLength(2);
-        expect(vi.getTimerCount()).toBe(1);
+        expect(watchBoundary.watch).toHaveBeenCalledTimes(3);
+        expect(registrations).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
         expect(reconcileResource).not.toHaveBeenCalled();
 
         failRecursiveAttachments = false;
-        await vi.runOnlyPendingTimersAsync();
+        await addHome(reconciler, home, 1);
         await Promise.resolve();
         await Promise.resolve();
         await new Promise<void>((resolve) => setImmediate(resolve));
         await Promise.resolve();
 
-        expect(watchBoundary.watch).toHaveBeenCalledTimes(9);
-        expect(registrations).toHaveLength(5);
+        expect(watchBoundary.watch).toHaveBeenCalledTimes(6);
+        expect(registrations).toHaveLength(4);
         expect(reconcileResource).toHaveBeenCalledOnce();
         expect(vi.getTimerCount()).toBe(0);
 

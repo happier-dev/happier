@@ -70,7 +70,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     });
     const selectionCalls: string[] = [];
     const applied: string[] = [];
-    const pending: string[] = [];
 
     const result = await applyConnectedServiceAuthGroupGenerationToSessions({
       committedGeneration,
@@ -86,9 +85,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
           ? { reconciliationDisposition: 'deferred_restart' as const, errorCode: null }
           : converged(exactFact);
       },
-      recordPendingGeneration: async ({ sessionId, committedGeneration: exactFact }) => {
-        pending.push(`${sessionId}:${exactFact.decisionId}:${exactFact.decisionCommittedTarget.generation}`);
-      },
       clearAdoptedGeneration: async () => {},
     });
 
@@ -98,7 +94,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     expect(new Set(applied.map((value) => value.split(':').slice(1).join(':')))).toEqual(
       new Set(['decision-once:2']),
     );
-    expect(pending).toEqual([]);
     expect(result.resultsBySessionId?.['session-4']).toMatchObject({
       reconciliationDisposition: 'deferred_restart',
       pendingRecorded: false,
@@ -109,57 +104,16 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     });
   });
 
-  it('does not invoke the retired pending persistence dependency', async () => {
-    const committedGeneration = buildConnectedServiceAuthGroupCommittedGenerationFact({
-      decisionId: 'decision-persist-failure',
-      provenance: 'hard_limit',
-      decisionCommittedTarget: {
-        serviceId: 'openai-codex',
-        groupId: 'team',
-        profileId: 'next',
-        generation: 3,
-        credentialRevision,
-      },
-    });
-    const recordPendingGeneration = vi.fn(async () => {
-      throw new Error('disk unavailable');
-    });
-
-    const result = await applyConnectedServiceAuthGroupGenerationToSessions({
-      committedGeneration,
-      switchReason: 'automatic_runtime_failure',
-      executionAuthority: 'runtime_recovery',
-      targets: [{ sessionId: 'session-1', fromProfileId: 'source' }],
-      applyCommittedGeneration: async () => ({
-        reconciliationDisposition: 'deferred_restart',
-        errorCode: null,
-      }),
-      recordPendingGeneration,
-      clearAdoptedGeneration: async () => {},
-    });
-
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
-    expect(result.resultsBySessionId?.['session-1']).toEqual({
-      reconciliationDisposition: 'deferred_restart',
-      errorCode: null,
-      pendingRecorded: false,
-    });
-    expect(result.failures).toEqual([]);
-  });
-
   it('reports an exact clear CAS supersession as typed non-convergence without overwriting newer pending state', async () => {
-    const recordPendingGeneration = vi.fn(async () => {});
     const result = await applyConnectedServiceAuthGroupGenerationToSessions({
       committedGeneration: manualGeneration,
       switchReason: 'automatic_runtime_failure',
       executionAuthority: 'runtime_recovery',
       targets: [{ sessionId: 'session-1', fromProfileId: 'old' }],
       applyCommittedGeneration: async () => converged(manualGeneration),
-      recordPendingGeneration,
       clearAdoptedGeneration: async () => ({ status: 'superseded' as const }),
     });
 
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
     expect(result).toMatchObject({ ok: false, appliedSessionCount: 0, failedSessionCount: 1 });
     expect(result.resultsBySessionId?.['session-1']).toEqual({
       reconciliationDisposition: 'superseded_after_apply',
@@ -192,7 +146,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       },
     });
     const applied: string[] = [];
-    const pending: string[] = [];
 
     const result = await applyConnectedServiceAuthGroupGenerationToSessions({
       committedGeneration: generationB,
@@ -213,9 +166,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         }
         return converged(committedGeneration);
       },
-      recordPendingGeneration: async ({ committedGeneration }) => {
-        pending.push(`${committedGeneration.decisionCommittedTarget.profileId}:${committedGeneration.decisionCommittedTarget.generation}`);
-      },
       clearAdoptedGeneration: async () => {},
     });
 
@@ -225,7 +175,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       'session-1:3',
       'session-2:3',
     ]));
-    expect(pending).not.toContain('backup-b:2');
     expect(result.appliedSessionCount).toBe(2);
     expect(result.failedSessionCount).toBe(0);
   });
@@ -299,7 +248,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         coordinatorStatuses.push(coordinatorResult.status);
         return mapCommittedGenerationApplyResult({ committedGeneration, result: coordinatorResult });
       },
-      recordPendingGeneration: async () => {},
       clearAdoptedGeneration: async () => {},
     });
 
@@ -347,7 +295,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
           ? { reconciliationDisposition: 'superseded_after_apply', errorCode: null, authoritativeGeneration: authoritative }
           : converged(committedGeneration);
       },
-      recordPendingGeneration: async () => {},
       clearAdoptedGeneration: async () => {},
     });
 
@@ -372,11 +319,14 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         { sessionId: 'other-a', fromProfileId: 'old', applicationScope: 'shared_group_auth_surface', applicationOwnerId: 'other-provider' },
         { sessionId: 'direct-a', fromProfileId: 'direct-old', applicationScope: 'per_session_runtime', applicationOwnerId: 'direct-a' },
       ],
+      applySharedGenerationApplication: async ({ representativeSessionId }) => {
+        applied.push(representativeSessionId);
+        return converged(manualGeneration);
+      },
       applyCommittedGeneration: async ({ sessionId }) => {
         applied.push(sessionId);
         return converged(manualGeneration);
       },
-      recordPendingGeneration: async () => {},
       clearAdoptedGeneration: async ({ sessionId }) => { cleared.push(sessionId); },
     });
 
@@ -399,13 +349,16 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationScope: 'shared_group_auth_surface' as const,
         applicationOwnerId: 'claude',
       })),
-      applyCommittedGeneration: async (applyInput) => {
-        const cohortSessionIds = applyInput.applicationCohortSessionIds ?? [applyInput.sessionId];
+      applySharedGenerationApplication: async (applyInput) => {
+        const cohortSessionIds = applyInput.applicationCohortSessionIds;
         for (const sessionId of cohortSessionIds) events.push(`enforce:${sessionId}`);
-        events.push(`effect:${applyInput.sessionId}`);
+        events.push(`effect:${applyInput.representativeSessionId}`);
         return converged(manualGeneration);
       },
-      recordPendingGeneration: async () => {},
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration: async ({ sessionId }) => { events.push(`clear:${sessionId}`); },
     });
 
@@ -434,8 +387,11 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationScope: 'shared_group_auth_surface',
         applicationOwnerId: 'claude',
       }],
-      applyCommittedGeneration: async () => converged(manualGeneration),
-      recordPendingGeneration: async () => {},
+      applySharedGenerationApplication: async () => converged(manualGeneration),
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration: async ({ sessionId }) => (
         pendingGenerationBySessionId.get(sessionId) === 8
           ? { status: 'superseded' as const }
@@ -472,8 +428,11 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationScope: 'shared_group_auth_surface' as const,
         applicationOwnerId: 'claude',
       })),
-      applyCommittedGeneration: async () => converged(manualGeneration),
-      recordPendingGeneration: async () => {},
+      applySharedGenerationApplication: async () => converged(manualGeneration),
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration: async ({ sessionId }) => {
         cleared.push(sessionId);
         return pendingGenerationBySessionId.get(sessionId) === 8
@@ -509,7 +468,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       reconciliationDisposition: 'failed' as const,
       errorCode: 'provider_application_failed',
     }));
-    const pending: string[] = [];
     const result = await applyConnectedServiceAuthGroupGenerationToSessions({
       ...sharedVerificationDeps(),
       committedGeneration: manualGeneration,
@@ -521,13 +479,15 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationScope: 'shared_group_auth_surface' as const,
         applicationOwnerId: 'claude',
       })),
-      applyCommittedGeneration,
-      recordPendingGeneration: async ({ sessionId }) => { pending.push(sessionId); },
+      applySharedGenerationApplication: applyCommittedGeneration,
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration: async () => {},
     });
 
     expect(applyCommittedGeneration).toHaveBeenCalledTimes(1);
-    expect(pending).toEqual([]);
     expect(result.failedSessionCount).toBe(3);
     expect(result.resultsBySessionId?.b).toMatchObject({
       reconciliationDisposition: 'failed',
@@ -559,13 +519,16 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationScope: 'shared_group_auth_surface' as const,
         applicationOwnerId: 'claude',
       })),
-      applyCommittedGeneration: async ({ committedGeneration }) => {
+      applySharedGenerationApplication: async ({ committedGeneration }) => {
         appliedGenerations.push(committedGeneration.decisionCommittedTarget.generation);
         return committedGeneration.decisionCommittedTarget.generation === 7
           ? { reconciliationDisposition: 'superseded_after_apply' as const, errorCode: null, authoritativeGeneration: generationC }
           : converged(committedGeneration);
       },
-      recordPendingGeneration: async () => {},
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration: async ({ sessionId }) => { cleared.push(sessionId); },
     });
 
@@ -612,8 +575,11 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationOwnerId: 'claude',
       })),
       verifySharedGenerationApplication,
-      applyCommittedGeneration,
-      recordPendingGeneration: async () => {},
+      applySharedGenerationApplication: applyCommittedGeneration,
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration: async () => {},
     } as const;
 
@@ -626,38 +592,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     expect(applyCommittedGeneration).toHaveBeenCalledTimes(1);
     expect(verifySharedGenerationApplication).toHaveBeenCalledTimes(2);
     expect(recovered).toMatchObject({ ok: true, appliedSessionCount: 2, failedSessionCount: 0 });
-  });
-
-  it('does not let obsolete receipt persistence failure overturn an exact provider application', async () => {
-    const verifySharedGenerationApplication = vi.fn(async () => null);
-    const applyCommittedGeneration = vi.fn(async () => converged(manualGeneration));
-    const obsoleteReceiptPersistence = {
-      recordSharedApplicationReceipt: vi.fn(async () => {
-        throw new Error('metadata unavailable');
-      }),
-    };
-    const result = await applyConnectedServiceAuthGroupGenerationToSessions({
-      ...obsoleteReceiptPersistence,
-      committedGeneration: manualGeneration,
-      switchReason: 'automatic_runtime_failure',
-      executionAuthority: 'runtime_recovery',
-      targets: [{
-        sessionId: 'a',
-        fromProfileId: 'old',
-        applicationScope: 'shared_group_auth_surface',
-        applicationOwnerId: 'claude',
-      }],
-      verifySharedGenerationApplication,
-      applyCommittedGeneration,
-      recordPendingGeneration: async () => {},
-      clearAdoptedGeneration: async () => {},
-    });
-
-    expect(verifySharedGenerationApplication).toHaveBeenCalledOnce();
-    expect(applyCommittedGeneration).toHaveBeenCalledOnce();
-    expect(obsoleteReceiptPersistence.recordSharedApplicationReceipt).not.toHaveBeenCalled();
-    expect(result.ok).toBe(true);
-    expect(result.appliedSessionCount).toBe(1);
   });
 
   it('single-flights concurrent duplicate deliveries for the same exact shared epoch', async () => {
@@ -675,8 +609,11 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationOwnerId: 'claude',
       }],
       verifySharedGenerationApplication,
-      applyCommittedGeneration,
-      recordPendingGeneration: async () => {},
+      applySharedGenerationApplication: applyCommittedGeneration,
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration: async () => {},
     });
 
@@ -693,7 +630,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
 
   it('fails shared scopes locally before provider mechanics when exact verification wiring is absent', async () => {
     const applyCommittedGeneration = vi.fn(async () => converged(manualGeneration));
-    const pending: string[] = [];
     const result = await applyConnectedServiceAuthGroupGenerationToSessions({
       committedGeneration: manualGeneration,
       switchReason: 'automatic_runtime_failure',
@@ -705,12 +641,10 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationOwnerId: 'claude',
       }],
       applyCommittedGeneration,
-      recordPendingGeneration: async ({ sessionId }) => { pending.push(sessionId); },
       clearAdoptedGeneration: async () => {},
     });
 
     expect(applyCommittedGeneration).not.toHaveBeenCalled();
-    expect(pending).toEqual([]);
     expect(result.resultsBySessionId?.a).toMatchObject({
       reconciliationDisposition: 'failed',
       errorCode: 'shared_application_verification_wiring_missing',
@@ -754,9 +688,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
           }),
         };
       },
-      recordPendingGeneration: async () => {
-        throw new Error('disk unavailable');
-      },
       clearAdoptedGeneration: async () => {},
     });
 
@@ -790,7 +721,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         started.push(input.sessionId);
         return input.sessionId === 'sess_1' ? first.promise : second.promise;
       },
-      recordPendingGeneration: async () => {},
       clearAdoptedGeneration: async () => {},
     });
 
@@ -815,7 +745,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     const controller = new AbortController();
     controller.abort();
     const applyCommittedGeneration = vi.fn(async () => converged(manualGeneration));
-    const recordPendingGeneration = vi.fn(async () => {});
     const clearAdoptedGeneration = vi.fn(async () => {});
 
     await expect(applyConnectedServiceAuthGroupGenerationToSessions({
@@ -825,19 +754,16 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       signal: controller.signal,
       targets: [{ sessionId: 'session-1', fromProfileId: null }],
       applyCommittedGeneration,
-      recordPendingGeneration,
       clearAdoptedGeneration,
     })).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(applyCommittedGeneration).not.toHaveBeenCalled();
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
     expect(clearAdoptedGeneration).not.toHaveBeenCalled();
   });
 
   it('joins an in-flight provider apply but starts no persistence after abort', async () => {
     const controller = new AbortController();
     const apply = deferred();
-    const recordPendingGeneration = vi.fn(async () => {});
     const clearAdoptedGeneration = vi.fn(async () => {});
     const resultPromise = applyConnectedServiceAuthGroupGenerationToSessions({
       committedGeneration: manualGeneration,
@@ -852,7 +778,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         { sessionId: 'session-queued', fromProfileId: null },
       ],
       applyCommittedGeneration: vi.fn(async () => await apply.promise),
-      recordPendingGeneration,
       clearAdoptedGeneration,
     });
 
@@ -861,7 +786,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     apply.resolve(converged(manualGeneration));
 
     await expect(resultPromise).rejects.toMatchObject({ name: 'AbortError' });
-    expect(recordPendingGeneration).not.toHaveBeenCalled();
     expect(clearAdoptedGeneration).not.toHaveBeenCalled();
   });
 
@@ -880,11 +804,14 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationScope: 'shared_group_auth_surface',
         applicationOwnerId: 'shared-owner',
       }],
-      applyCommittedGeneration: async () => {
+      applySharedGenerationApplication: async () => {
         controller.abort();
         return converged(manualGeneration);
       },
-      recordPendingGeneration: async () => {},
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration,
       ...sharedVerificationDeps(),
     })).rejects.toMatchObject({ name: 'AbortError' });
@@ -906,8 +833,11 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         applicationScope: 'shared_group_auth_surface' as const,
         applicationOwnerId: 'shared-owner',
       })),
-      applyCommittedGeneration: async () => converged(manualGeneration),
-      recordPendingGeneration: async () => {},
+      applySharedGenerationApplication: async () => converged(manualGeneration),
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'failed' as const,
+        errorCode: 'unexpected_per_session_apply',
+      }),
       clearAdoptedGeneration: async ({ sessionId }) => {
         cleared.push(sessionId);
         if (sessionId === 'representative') controller.abort();
@@ -934,7 +864,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         if (input.sessionId === 'sess_throw') throw new Error('boom');
         return converged(manualGeneration);
       },
-      recordPendingGeneration: async () => {},
       clearAdoptedGeneration: async () => {},
     });
 
@@ -967,7 +896,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
         inFlight -= 1;
         return converged(manualGeneration);
       },
-      recordPendingGeneration: async () => {},
       clearAdoptedGeneration: async () => {},
     });
 

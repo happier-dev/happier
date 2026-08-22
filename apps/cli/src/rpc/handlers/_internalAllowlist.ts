@@ -28,22 +28,9 @@ const VOICE_INFERENCE_MODEL_ADMIN_RATIONALE =
     'A.12 voice cleanup keeps daemon voice inference model install/remove/warm calls as bounded daemon-local admin RPC, not an ActionSpec action surface.';
 const VOICE_INFERENCE_TRANSPORT_RATIONALE =
     'A.12 voice cleanup keeps daemon voice inference TTS/STT request, transfer, and cancellation calls as bounded internal transport, not an ActionSpec action surface.';
-const VOICE_FOUNDATION_RATIONALE =
-    'Daemon-executed voice provider and OpenAI-compatible operations are closed, machine-owned transport RPCs, not public ActionSpec action surfaces.';
 const VOICE_FOUNDATION_INTERNAL_METHODS = Object.freeze([
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_MODELS_LIST,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_INIT,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_CHUNK,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_FINALIZE,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_ABORT,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_SYNTHESIZE,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_CHUNK,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_FINALIZE,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_ABORT,
-    RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_REQUEST_CANCEL,
     RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG,
+    RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_MATERIALIZE,
 ]);
 
 // A.12.0 seeds only clearly internal lifecycle transport methods.
@@ -52,7 +39,7 @@ const VOICE_FOUNDATION_INTERNAL_METHODS = Object.freeze([
 export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
     ...VOICE_FOUNDATION_INTERNAL_METHODS.map((method) => ({
         method,
-        rationale: VOICE_FOUNDATION_RATIONALE,
+        rationale: 'Daemon-executed Voice operations are closed, machine-owned transport RPCs, not public ActionSpec action surfaces.',
         ownerPacket: 'A.12-voice-foundation',
     })),
     ...[
@@ -68,6 +55,31 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         method: RPC_METHODS.STOP_DAEMON,
         rationale: 'Daemon lifecycle shutdown transport; not a plugin-exposed action surface.',
         ownerPacket: 'A.12.0',
+    },
+    {
+        method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+        rationale: 'Private machine Session lifecycle transport with daemon-owned spawn/resume request and response semantics; it is not the public V2 session.spawn_new Action surface.',
+        ownerPacket: 'SESSION-COMPAT',
+    },
+    {
+        method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+        rationale: 'Private Provider-safe machine Session lifecycle transport with daemon-owned spawn/resume request and response semantics; it is not the public V2 session.spawn_new Action surface.',
+        ownerPacket: 'SESSION-COMPAT',
+    },
+    {
+        method: RPC_METHODS.SESSION_AGENT_TRANSITION,
+        rationale: 'Same-Session Agent transition is an owner-only machine lifecycle transport: it stops the exact source runtime, commits a sealed current view, and re-admits one already-authenticated input through the canonical message owner. It is not a plugin-exposed ActionSpec surface.',
+        ownerPacket: 'same-session-cross-agent-continuation',
+    },
+    {
+        method: RPC_METHODS.SESSION_CONTINUATION_INSPECT,
+        rationale: 'Exact-machine read-only continuation eligibility projection over the incumbent Agent catalog and Session lifecycle checks; it grants no authority, persists nothing, and is not an ActionSpec action surface.',
+        ownerPacket: 'same-session-cross-agent-continuation',
+    },
+    {
+        method: RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW,
+        rationale: 'Exact-machine read-only rebuild of the activation brief a transition divider stands for; it runs the same bounded context pass, grants no authority, persists nothing, and is not an ActionSpec action surface.',
+        ownerPacket: 'same-session-cross-agent-continuation',
     },
     {
         method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
@@ -235,15 +247,49 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         ownerPacket: 'PMS-5',
     },
     {
-        method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_RESOLVE,
-        rationale: 'WS6.T2 generation-leased structured-message validation and immutable resource read; remains internal host-rendering transport.',
-        ownerPacket: 'WS6.T2',
+        method: RPC_METHODS.DAEMON_PLUGIN_INVOCATION_LOGS_READ,
+        rationale: 'PEP-SDK exact-machine bounded structured plugin-log read through the canonical daemon logger; it creates no alternate sink, store, or server persistence.',
+        ownerPacket: 'PEP-SDK',
     },
     {
         method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
         rationale: 'WS6.T2 thin UI transport into the canonical plugin action executor; it does not own dispatch or policy.',
         ownerPacket: 'WS6.T2',
     },
+    {
+        method: RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE,
+        rationale: 'SDK-ACTION-FORM transient daemon form-option read derives one current Action-declared Connected Account selection purpose and returns only bounded labels with opaque qualified refs; it neither exposes account authority nor persists form state.',
+        ownerPacket: 'SDK-ACTION-FORM',
+    },
+    {
+        method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH,
+        rationale: 'SDK-EU-19 bounded generation-leased picker search through the canonical registered composer-reference owner; it transports candidates only, not durable resolved context.',
+        ownerPacket: 'SDK-EU-19',
+    },
+    {
+        method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE,
+        rationale: 'CEX-EU3 bounded pre-admission preparation through the canonical current-generation Composer attachment registry; it transports no durable admission, queue, or terminal Message identity.',
+        ownerPacket: 'CEX-EU3',
+    },
+    {
+        method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
+        rationale: 'EU-4a generation-leased packaged plugin resource snapshot read for mounted plugin UI surfaces; remains internal transport over the canonical per-plugin resource service, not a public action surface.',
+        ownerPacket: 'EU-4a',
+    },
+    {
+        method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_WATCH,
+        rationale: 'UIX-08 exact-daemon Settings parked invalidation transport; it carries only a revision/status through the canonical scoped Settings service and leaves record rereads to the existing UI projection owner.',
+        ownerPacket: 'UIX-08',
+    },
+    ...[
+        RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+        RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT,
+        RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE,
+    ].map((method) => ({
+        method,
+        rationale: 'EU-4b client-owned long-poll transport for live plugin resource invalidation; it carries a bounded signal over the canonical per-plugin resource service and no resource bytes, so it is internal transport rather than a public action surface.',
+        ownerPacket: 'EU-4b',
+    })),
     {
         method: RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ,
         rationale: 'A.16x.10 daemon-to-UI installed plugin UI artifact byte transfer; remains internal transport and verifies installed artifact integrity.',
@@ -420,9 +466,19 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         ownerPacket: 'PMS-5',
     },
     {
+        method: RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET,
+        rationale: 'PA-19.9 direct-eligible additive session-runner process-currentness read; remains internal transport, not a public action surface.',
+        ownerPacket: 'PA-19.9',
+    },
+    {
         method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART,
         rationale: 'PMS-5 daemon session-runner restart bridge; command-receipted machine RPC delegates to local runtime supervision.',
         ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2,
+        rationale: 'PA-19.9 recovery-only process-attested session-runner restart bridge; delegates to the canonical local runtime supervision owner.',
+        ownerPacket: 'PA-19.9',
     },
     {
         method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL,

@@ -159,7 +159,11 @@ describe('qualified Connected Account attempt transaction adapters', () => {
       attemptId: initial.attemptId,
       service: initial.service,
       snapshot: initial,
+      callbackUrl: 'https://provider.example/oauth/callback',
     });
+    expect(original.request.callbackUrl).toBe(
+      'https://provider.example/oauth/callback',
+    );
     const persisted = api.records.get('oauth:oauth-attempt');
 
     expect(persisted).toBeDefined();

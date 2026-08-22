@@ -1,21 +1,20 @@
 import {
   PromptRegistryInstallRequestV1Schema,
-  PromptRegistryInstallResponseV1,
   PromptRegistryListAdaptersResponseV1,
   PromptRegistryListSourcesRequestV1Schema,
   PromptRegistryListSourcesResponseV1,
   PromptRegistryScanSourceRequestV1Schema,
-  PromptRegistryScanSourceResponseV1,
   RPC_METHODS,
 } from '@happier-dev/protocol';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
-import type { PromptAssetAdapter } from '@/prompts/assets/types';
+import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry, type PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { PROMPT_REGISTRY_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
+import { installPromptRegistryItem, scanPromptRegistrySource } from '@/prompts/registries/actions';
 
 function invalidRequest(error: string) {
   return { ok: false as const, errorCode: 'invalid_request' as const, error };
@@ -33,79 +32,30 @@ function createPromptRegistryRpcActionExecutor(params: Readonly<{
   assetRegistry: ReadonlyMap<string, PromptAssetAdapter>;
 }>): RpcActionExecutor {
   return {
-    execute: async (actionId, input) => {
+    execute: async (actionId, input, context) => {
       if (actionId === 'daemon.promptRegistry.scanSource') {
         const parsed = PromptRegistryScanSourceRequestV1Schema.safeParse(input);
         if (!parsed.success) return { ok: true, result: invalidRequest('invalid_request') };
 
-        try {
-          const items = await params.registry.scanSource({
-            sourceId: parsed.data.sourceId,
-            configuredSources: parsed.data.configuredSources,
-            query: parsed.data.query ?? null,
-          });
-
-          return { ok: true, result: { ok: true, items } satisfies PromptRegistryScanSourceResponseV1 };
-        } catch (error) {
-          return { ok: true, result: internalError(error) };
-        }
+        return {
+          ok: true,
+          result: await scanPromptRegistrySource({ registry: params.registry, request: parsed.data }),
+        };
       }
 
       if (actionId === 'daemon.promptRegistry.install') {
         const parsed = PromptRegistryInstallRequestV1Schema.safeParse(input);
         if (!parsed.success) return { ok: true, result: invalidRequest('invalid_request') };
 
-        const adapter = params.assetRegistry.get(parsed.data.installTarget.assetTypeId);
-        if (!adapter) {
-          return { ok: true, result: invalidRequest('unsupported asset type') };
-        }
-        if (adapter.descriptor.libraryKind !== 'bundle') {
-          return { ok: true, result: invalidRequest('registry installs require a bundle-capable prompt asset type') };
-        }
-        if (adapter.descriptor.capabilities.supportsCatalogInstall !== true) {
-          return { ok: true, result: invalidRequest('prompt asset type does not support registry installs') };
-        }
-        if (adapter.descriptor.supportsScope[parsed.data.installTarget.scope] !== true) {
-          return { ok: true, result: invalidRequest('prompt asset type does not support the selected scope') };
-        }
-
-        try {
-          const fetched = await params.registry.fetchItem({
-            sourceId: parsed.data.sourceId,
-            itemId: parsed.data.itemId,
-            configuredSources: parsed.data.configuredSources,
-          });
-          if (!fetched.ok) {
-            return {
-              ok: true,
-              result: {
-                ok: false,
-                errorCode: fetched.errorCode === 'not_found' ? 'not_found' : fetched.errorCode === 'unsupported' ? 'unsupported' : 'invalid_request',
-                error: fetched.error,
-              },
-            };
-          }
-
-          return {
-            ok: true,
-            result: await adapter.writeBundle({
-              assetTypeId: parsed.data.installTarget.assetTypeId,
-              scope: parsed.data.installTarget.scope,
-              directory: parsed.data.installTarget.scope === 'project'
-                ? (parsed.data.installTarget.directory ?? null)
-                : null,
-              targetName: parsed.data.installTarget.targetName,
-              title: fetched.item.title,
-              bundleSchemaId: fetched.item.bundleSchemaId,
-              bundleBody: fetched.item.bundleBody,
-              installMode: parsed.data.installTarget.installMode,
-              previewOnly: parsed.data.previewOnly,
-              expectedDigest: parsed.data.expectedDigest,
-            }),
-          };
-        } catch (error) {
-          return { ok: true, result: internalError(error) as PromptRegistryInstallResponseV1 };
-        }
+        return {
+          ok: true,
+          result: await installPromptRegistryItem({
+            registry: params.registry,
+            assetRegistry: params.assetRegistry,
+            request: parsed.data,
+            ...(context?.signal ? { signal: context.signal } : {}),
+          }),
+        };
       }
 
       return {

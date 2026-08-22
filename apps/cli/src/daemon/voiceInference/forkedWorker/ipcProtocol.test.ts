@@ -63,11 +63,9 @@ describe('voice inference worker ipc protocol', () => {
   it('decodes multiple frames delivered in a single chunk', () => {
     const a: VoiceInferenceWorkerFrame = { kind: 'ready', id: 'a' };
     const b: VoiceInferenceWorkerFrame = {
-      kind: 'partial',
+      kind: 'result',
       id: 'b',
-      partialKind: 'stt',
-      text: 'partial hypothesis',
-      language: 'en',
+      result: { kind: 'warm' },
     };
     const c: VoiceInferenceWorkerFrame = {
       kind: 'result',
@@ -84,23 +82,16 @@ describe('voice inference worker ipc protocol', () => {
     expect(decoder.push(combined)).toEqual([a, b, c]);
   });
 
-  it('preserves binary audio payloads through base64 chunk frames', () => {
-    const audio = Buffer.from([0x00, 0xff, 0x10, 0x7f, 0x80]);
-    const frame: VoiceInferenceWorkerFrame = {
-      kind: 'partial',
-      id: 'tts',
-      partialKind: 'tts',
-      index: 0,
-      chunkBase64: audio.toString('base64'),
-    };
-    const decoder = createVoiceInferenceWorkerFrameDecoder();
-    const [decoded] = decoder.push(encodeVoiceInferenceWorkerFrame(frame));
-    expect(decoded).toEqual(frame);
-    if (decoded?.kind === 'partial' && decoded.partialKind === 'tts') {
-      expect(Buffer.from(decoded.chunkBase64, 'base64')).toEqual(audio);
-    } else {
-      throw new Error('expected tts partial frame');
-    }
+  it('rejects retired partial frames because no worker producer emits them', () => {
+    expect(() =>
+      parseVoiceInferenceWorkerResponseFrame({
+        kind: 'partial',
+        id: 'tts',
+        partialKind: 'tts',
+        index: 0,
+        chunkBase64: 'AAA=',
+      }),
+    ).toThrow();
   });
 
   it('rejects an oversized declared frame length', () => {
@@ -124,33 +115,30 @@ describe('voice inference worker ipc protocol', () => {
     expect(createVoiceInferenceWorkerFrameDecoder(64).push(encoded)).toEqual([small]);
 
     const big: VoiceInferenceWorkerFrame = {
-      kind: 'partial',
+      kind: 'result',
       id: 'tts',
-      partialKind: 'tts',
-      index: 0,
-      chunkBase64: 'a'.repeat(64),
+      result: {
+        kind: 'synthesize',
+        output: { codec: 'wav', mimeType: 'audio/wav' },
+        bytesBase64: 'a'.repeat(64),
+        name: null,
+      },
     };
     expect(() => encodeVoiceInferenceWorkerFrame(big, 32)).toThrow(/too_large/);
   });
 
   describe('response frame schema validation (L4)', () => {
-    it('accepts well-formed ready / result / error / snapshot / partial frames', () => {
+    it('accepts well-formed ready / result / error / snapshot frames', () => {
       expect(parseVoiceInferenceWorkerResponseFrame({ kind: 'ready', id: 'p' })).toMatchObject({ kind: 'ready' });
       expect(
         parseVoiceInferenceWorkerResponseFrame({ kind: 'error', id: 'p', code: 'runtime_unavailable', message: 'x' }),
       ).toMatchObject({ kind: 'error', code: 'runtime_unavailable' });
       expect(
-        parseVoiceInferenceWorkerResponseFrame({ kind: 'snapshot', packId: 'p', runtimeState: 'ready', residentMemoryBytes: null }),
-      ).toMatchObject({ kind: 'snapshot' });
+        parseVoiceInferenceWorkerResponseFrame({ kind: 'snapshot', packId: 'p', runtimeState: 'ready' }),
+      ).toEqual({ kind: 'snapshot', packId: 'p', runtimeState: 'ready' });
       expect(
         parseVoiceInferenceWorkerResponseFrame({ kind: 'result', id: 'p', result: { kind: 'transcribe', text: 'hi', language: null } }),
       ).toMatchObject({ kind: 'result' });
-      expect(
-        parseVoiceInferenceWorkerResponseFrame({ kind: 'partial', id: 'p', partialKind: 'tts', index: 0, chunkBase64: 'AAA=' }),
-      ).toMatchObject({ kind: 'partial', partialKind: 'tts', index: 0 });
-      expect(
-        parseVoiceInferenceWorkerResponseFrame({ kind: 'partial', id: 'p', partialKind: 'stt', text: 'hel', language: 'en' }),
-      ).toMatchObject({ kind: 'partial', partialKind: 'stt' });
       expect(
         parseVoiceInferenceWorkerResponseFrame({ kind: 'result', id: 'p', result: { kind: 'stt_stream_start', sessionId: 'worker-stream-1' } }),
       ).toMatchObject({ kind: 'result', result: { kind: 'stt_stream_start' } });
@@ -179,21 +167,6 @@ describe('voice inference worker ipc protocol', () => {
       expect(
         parseVoiceInferenceWorkerResponseFrame({ kind: 'result', id: 'p', result: { kind: 'stt_stream_cancel' } }),
       ).toMatchObject({ kind: 'result', result: { kind: 'stt_stream_cancel' } });
-    });
-
-    it('rejects a tts partial whose index is negative or non-integer (used directly as an array key)', () => {
-      expect(() =>
-        parseVoiceInferenceWorkerResponseFrame({ kind: 'partial', id: 'p', partialKind: 'tts', index: -1, chunkBase64: 'AAA=' }),
-      ).toThrow();
-      expect(() =>
-        parseVoiceInferenceWorkerResponseFrame({ kind: 'partial', id: 'p', partialKind: 'tts', index: 1.5, chunkBase64: 'AAA=' }),
-      ).toThrow();
-    });
-
-    it('rejects a tts partial whose chunkBase64 is not a string', () => {
-      expect(() =>
-        parseVoiceInferenceWorkerResponseFrame({ kind: 'partial', id: 'p', partialKind: 'tts', index: 0, chunkBase64: 123 }),
-      ).toThrow();
     });
 
     it('rejects an unknown frame kind or a request-kind frame leaking onto the response path', () => {

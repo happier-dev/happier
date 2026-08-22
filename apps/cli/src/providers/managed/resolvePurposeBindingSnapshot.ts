@@ -6,11 +6,8 @@ import {
   type QualifiedConnectedAccountPurposeBindingV1,
   type QualifiedConnectedAccountPurposeBindingsV1,
   type QualifiedConnectedAccountPurposeV1,
+  type ResolvedProviderManagedRuntimeDeclarationV1,
 } from '@happier-dev/protocol';
-
-import type {
-  ResolvedFirstPartyManagedProviderFacet,
-} from './types';
 
 export type ResolveManagedProviderPurposeBindingIntent = (
   input: Readonly<{
@@ -35,7 +32,8 @@ function bindingKey(binding: QualifiedConnectedAccountPurposeBindingV1): string 
  */
 export async function resolveManagedProviderPurposeBindingSnapshot(input: Readonly<{
   implementationIdentity: PluginContributionIdentityV1;
-  facet: ResolvedFirstPartyManagedProviderFacet;
+  connectedAccounts:
+    ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'];
   purposeBindingIntents: QualifiedConnectedAccountPurposeBindingsV1;
   resolveBindingIntent: ResolveManagedProviderPurposeBindingIntent;
   signal?: AbortSignal;
@@ -45,15 +43,15 @@ export async function resolveManagedProviderPurposeBindingSnapshot(input: Readon
   const intents = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
     input.purposeBindingIntents,
   );
+  const connectedAccounts = input.connectedAccounts;
   const declarationsByPurpose = new Map(
-    input.facet.connectedAccounts.map((declaration) => [
+    connectedAccounts.map((declaration) => [
       declaration.purpose,
       declaration,
     ]),
   );
   if (
-    declarationsByPurpose.size !== input.facet.connectedAccounts.length
-    || intents.bindings.length === 0
+    declarationsByPurpose.size !== connectedAccounts.length
   ) {
     throw new Error('managed_provider_purpose_binding_intent_invalid');
   }
@@ -94,7 +92,7 @@ export async function resolveManagedProviderPurposeBindingSnapshot(input: Readon
     }
     bindings.push(resolved);
   }
-  if (input.facet.connectedAccounts.some((declaration) => (
+  if (connectedAccounts.some((declaration) => (
     declaration.required === true
     && !bindings.some((binding) => binding.purpose.purpose === declaration.purpose)
   ))) {

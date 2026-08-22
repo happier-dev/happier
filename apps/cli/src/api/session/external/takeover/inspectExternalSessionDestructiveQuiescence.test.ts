@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { resolveExternalSessionsSourceKey } from '@happier-dev/protocol';
 
 import type { DaemonSessionMarker } from '@/daemon/sessionRegistry';
+import { createExternalSessionSourceKeyOwnerFromAgentProjection } from '@/plugins/projection/registry/externalSessionSources';
 
 import { inspectExternalSessionDestructiveQuiescence } from './inspectExternalSessionDestructiveQuiescence';
 
@@ -17,16 +19,19 @@ const qualifiedIdentity = {
 };
 
 function linkedSession() {
+  const source = {
+    kind: 'claudeConfig' as const,
+    configDir: '/home/lee/.claude',
+    projectId: 'project-1',
+  };
+  const sourceKey = resolveExternalSessionsSourceKey(source);
   return {
     agentId: 'claude' as const,
     machineId: 'machine-1',
     remoteSessionId: 'remote-1',
     linkGeneration: '1000',
-    source: {
-      kind: 'claudeConfig' as const,
-      configDir: '/home/lee/.claude',
-      projectId: 'project-1',
-    },
+    source,
+    canonicalResolvedSourceKey: sourceKey,
     metadata: {
       externalSessionV1: {
         v: 1,
@@ -100,14 +105,110 @@ describe('inspectExternalSessionDestructiveQuiescence', () => {
     expect(readMarkers).toHaveBeenCalledOnce();
   });
 
+  it('uses the carried declaration-owned key for a non-bundled source kind', async () => {
+    const dynamicSource = {
+      kind: 'syntheticProductRoute',
+      scope: 'scope-a',
+    } as const;
+    const sourceKeyOwner = createExternalSessionSourceKeyOwnerFromAgentProjection(
+      {
+        agents: [{
+          id: 'external-product-route-agent',
+          richDefinition: {
+            definition: {
+              surfaces: {
+                externalSession: {
+                  sources: [{
+                    sourceKind: dynamicSource.kind,
+                    schema: {
+                      fields: [
+                        {
+                          name: 'kind',
+                          kind: 'literal',
+                          value: dynamicSource.kind,
+                        },
+                        {
+                          name: 'scope',
+                          kind: 'string',
+                        },
+                      ],
+                    },
+                    key: {
+                      segments: [
+                        { kind: 'literal', value: dynamicSource.kind },
+                        { kind: 'field', field: 'scope' },
+                      ],
+                    },
+                  }],
+                },
+              },
+            },
+          },
+        }],
+      } as unknown as Parameters<
+        typeof createExternalSessionSourceKeyOwnerFromAgentProjection
+      >[0],
+      'external-product-route-agent',
+      dynamicSource,
+    );
+    if (!sourceKeyOwner) {
+      throw new Error('Expected the synthetic declaration-owned source key');
+    }
+    const sourceKey = sourceKeyOwner.sourceKey;
+    const linked = {
+      ...linkedSession(),
+      source: dynamicSource,
+      canonicalResolvedSourceKey: sourceKey,
+      metadata: {
+        externalSessionV1: {
+          ...linkedSession().metadata.externalSessionV1,
+          source: dynamicSource,
+          qualifiedIdentity: {
+            ...qualifiedIdentity,
+            source: {
+              kind: dynamicSource.kind,
+              contractVersion: 1 as const,
+            },
+          },
+        },
+      },
+    };
+
+    const result = await inspectExternalSessionDestructiveQuiescence({
+      linked,
+      linkedSessionId: 'session-1',
+      machineId: 'machine-1',
+      observedAtMs: 2_000,
+      listSessionMarkersFn: async () => [marker()],
+      verifySessionMarkerProcessLivenessFn: async () => ({
+        status: 'verified_stopped',
+        pid: 4_242,
+        processStartTimeMs: 1_717_171_717_000,
+      }),
+    });
+
+    expect(result).toMatchObject({
+      status: 'verified_stopped',
+      permitsAdmission: true,
+      protocolResult: {
+        sourceIdentity: { sourceKey },
+      },
+    });
+  });
+
   it.each([
     { name: 'no marker', markers: [] },
     { name: 'legacy marker without start identity', markers: [marker({ processStartTimeMs: undefined })] },
     { name: 'legacy link without qualified identity', markers: [marker()], qualified: false },
-  ])('fails closed for $name', async ({ markers, qualified }) => {
+    { name: 'link without a current declaration-owned source key', markers: [marker()], sourceKey: false },
+  ])('fails closed for $name', async ({ markers, qualified, sourceKey }) => {
     const linked = linkedSession();
     if (qualified === false) {
       delete (linked.metadata.externalSessionV1 as { qualifiedIdentity?: unknown }).qualifiedIdentity;
+    }
+    if (sourceKey === false) {
+      delete (linked as { canonicalResolvedSourceKey?: unknown })
+        .canonicalResolvedSourceKey;
     }
 
     const result = await inspectExternalSessionDestructiveQuiescence({

@@ -21,7 +21,7 @@ async function runtimeStore() {
   return createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
 }
 
-function registry(): ProviderContributionRegistryView {
+function registry(options: Readonly<{ managedRuntime?: boolean }> = {}): ProviderContributionRegistryView {
   const definition = ProviderContributionV1Schema.parse({
     v: 1, id: 'lmstudio', name: 'LM Studio', kind: 'local',
     endpointTemplates: [{
@@ -29,6 +29,9 @@ function registry(): ProviderContributionRegistryView {
       capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' },
     }],
     catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'openai', path: '/v1/models', parser: 'openai-models' }] },
+    ...(options.managedRuntime
+      ? { managedRuntime: { kind: 'managed', endpointTemplateIds: ['openai'] } }
+      : {}),
     discovery: {
       v: 1,
       listener: { executableBasenames: ['llmster'], defaultPorts: [1234] },
@@ -67,6 +70,24 @@ describe('createProviderLocalInstallationReader', () => {
     await expect(reader.read({ machineId: 'machine-a', registry: registry(), candidates: [] })).resolves.toMatchObject([
       { contributionKey: key, status: 'installed_not_running' },
     ]);
+  });
+
+  it('offers managed start only from the public managed Provider declaration', async () => {
+    const reader = createProviderLocalInstallationReader({
+      runtimeStore: await runtimeStore(),
+      resolveSystemTool: vi.fn(async () => ({ ok: true as const, command: '/usr/bin/lms', args: [], source: 'system' })),
+      runSystemTool: vi.fn(async () => ({ ok: true as const, exitCode: 1, stdout: '{}', stderr: '' })),
+      now: () => 100,
+    });
+
+    await expect(reader.read({
+      machineId: 'machine-a',
+      registry: registry({ managedRuntime: true }),
+      candidates: [],
+    })).resolves.toMatchObject([{
+      contributionKey: key,
+      managedStartAvailable: true,
+    }]);
   });
 
   it('does not execute installation or presence checks for an already listening contribution', async () => {

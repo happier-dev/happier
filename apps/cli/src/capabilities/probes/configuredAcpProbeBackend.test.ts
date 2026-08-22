@@ -52,6 +52,7 @@ describe('createConfiguredAcpProbeBackend', () => {
         agentId: 'customAcp',
         backendTarget: { kind: 'configuredAcpBackend', backendId: 'plugin-review-bot' },
         cwd: '/repo',
+        credentials: { token: 'token-only', encryption: null },
       }),
     ).resolves.toBe(backend);
 
@@ -69,7 +70,46 @@ describe('createConfiguredAcpProbeBackend', () => {
     }));
   });
 
-  it('still refuses configured ACP targets that need saved secrets when credentials are missing', async () => {
+  it('materializes saved-secret environment for token-only plaintext account settings', async () => {
+    const backend = { dispose: vi.fn(async () => undefined) };
+    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
+      backendId: 'plugin-review-bot',
+      name: 'plugin-review-bot',
+      title: 'Plugin Review Bot',
+      command: 'plugin-acp-cli',
+      args: ['acp'],
+      env: {
+        ACP_TOKEN: { t: 'savedSecret', secretId: 'secret-1' },
+      },
+      transportProfile: 'generic',
+      capabilities: {},
+    });
+    materializeConfiguredAcpEnvironmentMock.mockReturnValue({
+      ACP_TOKEN: 'plain-account-secret',
+    });
+    createConfiguredAcpBackendMock.mockReturnValue(backend);
+
+    await expect(
+      createConfiguredAcpProbeBackend({
+        agentId: 'customAcp',
+        backendTarget: { kind: 'configuredAcpBackend', backendId: 'plugin-review-bot' },
+        cwd: '/repo',
+        accountSettings: { connectedServices: {} },
+        credentials: { token: 'token-only', encryption: null },
+      }),
+    ).resolves.toBe(backend);
+
+    expect(materializeConfiguredAcpEnvironmentMock).toHaveBeenCalledWith({
+      backend: expect.objectContaining({ backendId: 'plugin-review-bot' }),
+      accountSettings: { connectedServices: {} },
+      credentials: { token: 'token-only', encryption: null },
+    });
+    expect(createConfiguredAcpBackendMock).toHaveBeenCalledWith(expect.objectContaining({
+      launchEnv: { ACP_TOKEN: 'plain-account-secret' },
+    }));
+  });
+
+  it('does not materialize a saved-secret environment when credentials are unavailable', async () => {
     resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
       backendId: 'plugin-review-bot',
       name: 'plugin-review-bot',
@@ -88,6 +128,7 @@ describe('createConfiguredAcpProbeBackend', () => {
         agentId: 'customAcp',
         backendTarget: { kind: 'configuredAcpBackend', backendId: 'plugin-review-bot' },
         cwd: '/repo',
+        accountSettings: { connectedServices: {} },
       }),
     ).resolves.toBeNull();
 

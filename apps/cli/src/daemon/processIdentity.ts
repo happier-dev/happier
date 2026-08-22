@@ -33,6 +33,32 @@ function isSupportedPlatform(platform: NodeJS.Platform): platform is SupportedPr
     return platform === 'darwin' || platform === 'linux' || platform === 'win32';
 }
 
+function isValidProcessStartTimeMs(value: number | undefined): value is number {
+    return Number.isInteger(value) && (value ?? -1) >= 0;
+}
+
+/**
+ * Process start time is the cross-platform process-generation witness. Command
+ * lines can legitimately change while a process remains the same generation.
+ */
+export function processGenerationMatches(
+    expectedProcessStartTimeMs: number | undefined,
+    observedProcessStartTimeMs: number | undefined,
+): boolean {
+    return isValidProcessStartTimeMs(expectedProcessStartTimeMs)
+        && isValidProcessStartTimeMs(observedProcessStartTimeMs)
+        && expectedProcessStartTimeMs === observedProcessStartTimeMs;
+}
+
+export function processGenerationProvesReuse(
+    expectedProcessStartTimeMs: number | undefined,
+    observedProcessStartTimeMs: number | undefined,
+): boolean {
+    return isValidProcessStartTimeMs(expectedProcessStartTimeMs)
+        && isValidProcessStartTimeMs(observedProcessStartTimeMs)
+        && expectedProcessStartTimeMs !== observedProcessStartTimeMs;
+}
+
 function normalizeExactProcessIdentity(
     requestedPid: number,
     processIdentity:

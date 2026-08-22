@@ -18,7 +18,7 @@ import {
 type ServerBackedSessionTranscriptStoreParams = Readonly<{
     token: string;
     sessionId: string;
-    ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+    ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }> | null;
 }>;
 
 function parseSeqCursor(value: unknown): number | undefined {

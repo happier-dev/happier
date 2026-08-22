@@ -64,6 +64,17 @@ describe('capabilities.invoke(cli.* probeConfigOptions)', () => {
     }));
   });
 
+  it('does not forward connected-service selections to the config-options probe', async () => {
+    mocks.probeConfigOptions.mockResolvedValue({ provider: 'codex', configOptions: [], source: 'static' });
+    await createCall()(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.codex', method: 'probeConfigOptions',
+      params: { connectedServices: { v: 1, bindingsByServiceId: {} } },
+    });
+    expect(mocks.probeConfigOptions).toHaveBeenCalledWith(
+      expect.not.objectContaining({ connectedServices: expect.anything() }),
+    );
+  });
+
   it('supports probeConfigOptions for ACP-backed catalog entries', async () => {
     mocks.probeConfigOptions.mockResolvedValue({
       provider: 'codex',
@@ -100,7 +111,7 @@ describe('capabilities.invoke(cli.* probeConfigOptions)', () => {
     });
     mocks.resolveProbeBackendContext.mockResolvedValue({
       backendTarget: undefined,
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
       accountSettings: { codexBackendMode: 'appServer' },
     });
 
@@ -115,7 +126,7 @@ describe('capabilities.invoke(cli.* probeConfigOptions)', () => {
     expect(mocks.probeConfigOptions).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
       accountSettings: { codexBackendMode: 'appServer' },
-      credentials: { token: 'token' },
+      credentials: { token: 'token', encryption: null },
     }));
   });
 });

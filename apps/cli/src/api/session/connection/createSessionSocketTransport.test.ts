@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TransportDisconnectEvent } from '@happier-dev/connection-supervisor';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
 import axios from 'axios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import {
@@ -79,8 +80,7 @@ describe('createSessionSocketTransport', () => {
             expect.objectContaining({
                 headers: expect.objectContaining({
                     Authorization: 'Bearer token-1',
-                    'x-happier-client-kind': 'session-runner',
-                    'x-happier-session-sync-protocol': '2',
+                    'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
                 }),
             }),
         );
@@ -92,8 +92,7 @@ describe('createSessionSocketTransport', () => {
             expect.objectContaining({
                 headers: expect.objectContaining({
                     Authorization: 'Bearer token-1',
-                    'x-happier-client-kind': 'session-runner',
-                    'x-happier-session-sync-protocol': '2',
+                    'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
                 }),
             }),
         );

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DaemonState } from '@/api/types';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
@@ -36,10 +37,15 @@ const harness = vi.hoisted(() => {
   }));
 
   const apiMachine = {
-    setRPCHandlers: vi.fn(),
-    onUpdate: vi.fn(),
-    onAccountSettingsVersionHint: vi.fn(),
-    onConnectedServicesProjection: vi.fn(),
+    setRPCHandlers: vi.fn(() => ({ externalSessionPluginAdmissionOwner: undefined })),
+    getPeerMediationMachineRpcHandlerManager: vi.fn(() => ({
+      invokeLocal: vi.fn(async () => ({ ok: true })),
+    })),
+    registerLiveStreamRelayRoutes: vi.fn(),
+    onUpdate: vi.fn(() => () => {}),
+    onAccountSettingsVersionHint: vi.fn(() => () => {}),
+    onConnectedServicesProjection: vi.fn(() => () => {}),
+    onPendingSessionActivationHint: vi.fn(() => () => {}),
     onConnectionStateChange: vi.fn((listener: (state: any) => void) => {
       machineConnectionStateListener = listener;
       return () => {
@@ -55,14 +61,29 @@ const harness = vi.hoisted(() => {
       void params?.onConnect?.();
     }),
     updateMachineMetadata: vi.fn(async () => {}),
-    updateDaemonState: vi.fn(async () => {}),
+    updateDaemonState: vi.fn(async (
+      _handler: (state: DaemonState | null) => DaemonState,
+    ) => {}),
+    awaitPendingRpcRequests: vi.fn(async () => {}),
     registerConnectedAccountDaemonRuntime: vi.fn(),
+    registerConnectedAccountPurposeBindingRuntime: vi.fn(),
+    onMachineTransferEnvelope: vi.fn(() => () => {}),
+    sendMachineTransferEnvelope: vi.fn(),
+    onTransferRelayV2Envelope: vi.fn(() => () => {}),
+    sendTransferRelayV2Envelope: vi.fn(),
+    onPeerTcpTunnelRelayEnvelope: vi.fn(() => () => {}),
+    sendPeerTcpTunnelRelayEnvelope: vi.fn(),
+    onMachineLiveStreamRelayEnvelope: vi.fn(() => () => {}),
+    sendMachineLiveStreamRelayEnvelope: vi.fn(),
+    emitExternalSessionTranscriptUpdate: vi.fn(),
+    executeExternalSessionHistoricalImportCommand: vi.fn(async () => ({ ok: true })),
     recoverDaemonTerminalSessionMutationJournals: vi.fn(async (params: {
       bindUsageLimitRecoveryJournals: (sessionIds: readonly string[]) => Promise<unknown>;
     }) => {
       await params.bindUsageLimitRecoveryJournals([]);
       return { recoveredSessionIds: [], retainedSessionIds: [] };
     }),
+    resolvePluginResourceSessionAccess: vi.fn(),
     enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
     shutdown: vi.fn(),
   };
@@ -109,6 +130,7 @@ vi.mock('@/api/api', () => ({
     create: vi.fn(async () => ({
       machineSyncClient: () => harness.apiMachine,
       setServerFeaturesSnapshotProvider: vi.fn(),
+      createBrowserRuntimeActionExecutor: vi.fn(),
       getAccountEncryptionMode: vi.fn(async () => 'plain'),
       getConnectedServiceAuthGroup: vi.fn(async () => null),
     })),
@@ -119,14 +141,35 @@ vi.mock('@/api/api', () => ({
 vi.mock('@/settings/accountSettings/updateAccountSettingsV2WithRetry', () => {
   let settings: Record<string, unknown> = {};
   let version = 0;
-  return {
-    updateAccountSettingsV2WithRetry: vi.fn(async (input: Readonly<{
-      mutate(current: Readonly<Record<string, unknown>>): Record<string, unknown>;
-    }>) => {
+  const updateSettings = vi.fn(async (input: Readonly<{
+    mutate?: (current: Readonly<Record<string, unknown>>) => Record<string, unknown>;
+    mutation?: Readonly<{ operations: readonly Readonly<
+      | { op: 'set'; key: string; value: unknown }
+      | { op: 'reset'; key: string }
+    >[] }>;
+  }>) => {
+    if (input.mutation) {
+      const next = { ...settings };
+      for (const operation of input.mutation.operations) {
+        if (operation.op === 'set') next[operation.key] = operation.value;
+        else delete next[operation.key];
+      }
+      settings = next;
+    } else if (input.mutate) {
       settings = input.mutate(settings);
-      version += 1;
-      return { settings, version };
-    }),
+    } else {
+      throw new Error('Expected Account Settings mutation');
+    }
+    version += 1;
+    return { status: 'applied' as const, settings, version };
+  });
+  return {
+    updateAccountSettingsV2WithRetry: updateSettings,
+    updateAccountSettingsV2Once: updateSettings,
+    requireAccountSettingsMutationSuccess: (result: Readonly<{ status?: unknown }>) => {
+      if (result.status === 'applied' || result.status === 'satisfied' || result.status === 'unchanged') return result;
+      throw new Error(`Account Settings mutation did not settle: ${String(result.status)}`);
+    },
   };
 });
 
@@ -205,16 +248,12 @@ vi.mock('@/ui/doctor', () => ({
 vi.mock('@/utils/spawnHappyCLI', () => ({
   buildHappyCliSubprocessInvocation: vi.fn(),
   buildHappyCliSubprocessLaunchSpec: vi.fn<BuildHappyCliSubprocessLaunchSpec>(),
+  pruneHappyCliRunnerSnapshots: vi.fn(),
   spawnHappyCLI: vi.fn(),
 }));
 
 vi.mock('@/session/runtime/catalogHooks', () => ({
   getVendorResumeSupport: vi.fn(async () => () => true),
-}));
-
-vi.mock('@/daemon/managedServers/catalogHooks', () => ({
-  getManagedServerShutdownCleanup: vi.fn(async () => null),
-  listManagedServerClaimDescriptors: vi.fn(async () => []),
 }));
 
 vi.mock('@/agent/catalog/resolution', async (importOriginal) => ({
@@ -225,9 +264,11 @@ vi.mock('@/agent/catalog/resolution', async (importOriginal) => ({
 
 vi.mock('@/persistence', () => ({
   writeDaemonState: vi.fn(),
+  writeDaemonStateForLockOwner: vi.fn(() => true),
+  clearDaemonStateForLockOwner: vi.fn(() => true),
   acquireDaemonLock: vi.fn(async () => harness.lockHandle),
   releaseDaemonLock: vi.fn(async () => {}),
-  readCredentials: vi.fn(async () => ({
+  readStoredCredentials: vi.fn(async () => ({
     token: 'token-automation',
     encryption: {
       type: 'dataKey',
@@ -236,6 +277,15 @@ vi.mock('@/persistence', () => ({
     },
   })),
   readSettings: vi.fn(async () => ({ experiments: true })),
+}));
+
+vi.mock('@/daemon/deviceLocalSecretStorage', () => ({
+  readOrCreateDeviceLocalSecretStorage: vi.fn(async () => ({
+    sealJson: vi.fn(() => 'sealed'),
+    openJson: vi.fn(() => null),
+    deriveOpaqueIdentity: vi.fn(() => 'opaque'),
+    deriveSecretKey: vi.fn(() => new Uint8Array(32)),
+  })),
 }));
 
 vi.mock('./controlClient', () => ({
@@ -263,7 +313,8 @@ vi.mock('./sessions/reattachFromMarkers', () => ({
   })),
 }));
 
-vi.mock('./sessions/onHappySessionWebhook', () => ({
+vi.mock('./sessions/onHappySessionWebhook', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./sessions/onHappySessionWebhook')>(),
   createOnHappySessionWebhook: vi.fn(() => vi.fn()),
 }));
 
@@ -430,6 +481,10 @@ vi.mock('@/machines/transfer/directPeerTransport', () => ({
     readPublishedTransfer: vi.fn(() => null),
     resolveOnDemandTransferOnOpen: vi.fn(async () => null),
     clearPublishedTransfer: vi.fn(),
+    cleanupExpiredPublishedTransfers: vi.fn(),
+    getNextPublishedTransferExpiryAt: vi.fn(() => null),
+    hasPublishedTransfers: vi.fn(() => false),
+    dispose: vi.fn(async () => {}),
   })),
   requestDirectPeerTransferToFile: vi.fn(async ({ destinationPath }: { destinationPath: string }) => ({
     destinationPath,
@@ -527,14 +582,17 @@ describe('startDaemon automation wiring (integration)', () => {
         params?.expectedMachineId === 'machine-automation'
       ));
 
-      const { writeDaemonState } = await import('@/persistence');
+      const { writeDaemonStateForLockOwner } = await import('@/persistence');
       const { startDaemon } = await import('./startDaemon');
       await startDaemon();
 
       expect(stopDaemon).toHaveBeenCalledTimes(1);
-      expect(writeDaemonState).toHaveBeenCalledWith(expect.objectContaining({
-        machineId: 'machine-rotated',
-      }));
+      expect(writeDaemonStateForLockOwner).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          machineId: 'machine-rotated',
+        }),
+      );
       expect(harness.startAutomationWorker).toHaveBeenCalledTimes(1);
     } finally {
       exitSpy.mockRestore();
@@ -678,17 +736,460 @@ describe('startDaemon automation wiring (integration)', () => {
         new Error('machine registration failure'),
       );
 
-      const { writeDaemonState } = await import('@/persistence');
+      const { writeDaemonStateForLockOwner } = await import('@/persistence');
       const { startDaemon } = await import('./startDaemon');
 
       const run = startDaemon();
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(writeDaemonState).toHaveBeenCalledTimes(1);
+      expect(writeDaemonStateForLockOwner).toHaveBeenCalledTimes(1);
 
       harness.requestShutdown('happier-cli');
       await run;
     } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('binds exact Session Resource access only after the live machine client is available', async () => {
+    harness.setAutoShutdownAfterAutomationStart(false);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const machineRegistrationParams: {
+      current: Parameters<
+        typeof import('./startup/startDaemonMachineRegistrationRuntime').startDaemonMachineRegistrationRuntime
+      >[0] | null;
+    } = { current: null };
+    const pluginRuntimeOwnerParams: {
+      current: Readonly<Record<string, unknown>> | null;
+    } = { current: null };
+    const pluginChangeService = {
+      requestPluginChange: vi.fn(),
+      decidePluginChange: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+      quiesceForHandoff: vi.fn(async () => ({ resume: vi.fn() })),
+      isQuiescing: () => false,
+      runHardRevocationCurrentnessChange: vi.fn(),
+    };
+    vi.doMock('@/plugins/daemon/runtimeOwner', () => ({
+      createDaemonPluginRuntimeOwner: vi.fn((params: Readonly<Record<string, unknown>>) => {
+        pluginRuntimeOwnerParams.current = params;
+        return {
+          changeService: pluginChangeService,
+          initialize: vi.fn(async () => {
+            const onInitialRegistryPublished = params.onInitialRegistryPublished as
+              | (() => void)
+              | undefined;
+            const awaitInitialRuntimeActivation = params.awaitInitialRuntimeActivation as
+              | (() => Promise<void>)
+              | undefined;
+            const onDurableRegistryApplied = params.onDurableRegistryApplied as
+              | (() => void)
+              | undefined;
+            onInitialRegistryPublished?.();
+            await awaitInitialRuntimeActivation?.();
+            onDurableRegistryApplied?.();
+          }),
+          reportCurrentAvailability: vi.fn(),
+          readCatalog: vi.fn(async () => []),
+        };
+      }),
+    }));
+    vi.doMock('./startup/startDaemonMachineRegistrationRuntime', () => ({
+      startDaemonMachineRegistrationRuntime: vi.fn((params) => {
+        machineRegistrationParams.current = params;
+        return { resume: vi.fn() };
+      }),
+    }));
+
+    let run: Promise<void> | null = null;
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      await vi.waitFor(() => {
+        expect(machineRegistrationParams.current).not.toBeNull();
+        expect(pluginRuntimeOwnerParams.current).not.toBeNull();
+      });
+
+      // Daemon startup is the production policy boundary. A declared database
+      // must not become unavailable merely because the registry owner received
+      // no policy injection.
+      const daemonDatabaseLimits = pluginRuntimeOwnerParams.current
+        ?.daemonDatabaseLimits as Readonly<{
+          protocolMaximumDatabaseBytes: number;
+          resolvePluginLimits(pluginId: string): Readonly<{
+            maximumDatabaseBytes: number;
+          }> | null;
+        }> | undefined;
+      expect(daemonDatabaseLimits).toEqual(expect.objectContaining({
+        protocolMaximumDatabaseBytes: expect.any(Number),
+        resolvePluginLimits: expect.any(Function),
+      }));
+      expect(daemonDatabaseLimits?.resolvePluginLimits('examples.background-indexer'))
+        .toEqual(expect.objectContaining({
+          maximumDatabaseBytes: expect.any(Number),
+        }));
+
+      // Collection admission AND plugin-facing feature decisions consume the daemon's
+      // existing feature snapshot cache through one supplied resolver; neither may
+      // create a second feature fetch/currentness path.
+      const resolveServerFeaturesSnapshot = pluginRuntimeOwnerParams.current
+        ?.resolveServerFeaturesSnapshot as (() => unknown) | undefined;
+      expect(resolveServerFeaturesSnapshot).toEqual(expect.any(Function));
+      expect(
+        (pluginRuntimeOwnerParams.current?.accountStorageDependencies as Readonly<{
+          resolveServerFeaturesSnapshot?: () => unknown;
+        }> | undefined)?.resolveServerFeaturesSnapshot,
+      ).toBeUndefined();
+      await vi.waitFor(() => {
+        expect(resolveServerFeaturesSnapshot?.()).toEqual({
+          status: 'unsupported',
+          reason: 'endpoint_missing',
+        });
+      });
+
+      const resolveSessionResourceAccess = pluginRuntimeOwnerParams.current
+        ?.resolveSessionResourceAccess as ((input: Readonly<{
+          accountId: string;
+          sessionId: string;
+          signal: AbortSignal;
+        }>) => Promise<unknown>) | undefined;
+      if (!resolveSessionResourceAccess) {
+        throw new Error('expected exact Session Resource access resolver');
+      }
+      const signal = new AbortController().signal;
+      const input = Object.freeze({
+        accountId: 'account-resource-access',
+        sessionId: 'session-resource-access',
+        signal,
+      });
+
+      await expect(resolveSessionResourceAccess(input)).rejects.toThrow(
+        'plugin_resource_session_access_unavailable',
+      );
+      expect(harness.apiMachine.resolvePluginResourceSessionAccess).not.toHaveBeenCalled();
+
+      const sentinel = Object.freeze({
+        accountId: input.accountId,
+        throughCursor: 17,
+        status: 'available' as const,
+      });
+      harness.apiMachine.resolvePluginResourceSessionAccess.mockResolvedValueOnce(sentinel);
+      const onMachineSyncRuntime = machineRegistrationParams.current?.onMachineSyncRuntime;
+      if (!onMachineSyncRuntime) throw new Error('expected machine sync runtime callback');
+      harness.apiMachine.updateDaemonState.mockClear();
+      const machineSyncSettlement = onMachineSyncRuntime({
+        apiMachine: harness.apiMachine,
+        apiMachineForSessions: harness.apiMachine,
+        automationWorker: null,
+        memoryWorker: null,
+        voiceInferenceWorker: null,
+        daemonConnectivityCoordinator: null,
+        machineConnectionStateCleanup: null,
+        stopPeerMediationLoopbackServer: async () => {},
+        resumeMachineConnectionPublications: async () => {},
+        daemonSessionMutationCustody: {
+          bindRecoveredJournals: async () => ({
+            boundSessionIds: [],
+            retainedSessionIds: [],
+          }),
+          close: async () => {},
+          stage: async () => {},
+        },
+        providerOperationsProducer: {
+          machineServices: {},
+          bind: vi.fn(),
+        },
+      } as unknown as Parameters<typeof onMachineSyncRuntime>[0]);
+
+      await expect(resolveSessionResourceAccess(input)).resolves.toBe(sentinel);
+      expect(harness.apiMachine.resolvePluginResourceSessionAccess).toHaveBeenCalledOnce();
+      expect(harness.apiMachine.resolvePluginResourceSessionAccess).toHaveBeenCalledWith(input);
+      await vi.waitFor(() => {
+        expect(harness.apiMachine.updateDaemonState).toHaveBeenCalledOnce();
+      });
+      const updateDaemonState = harness.apiMachine.updateDaemonState.mock.calls[0]?.[0];
+      if (typeof updateDaemonState !== 'function') {
+        throw new Error('expected daemon-state currentness updater');
+      }
+      const currentDaemonState = Object.freeze({ status: 'running' as const, pid: 17 });
+      expect(updateDaemonState(currentDaemonState)).toBe(currentDaemonState);
+      harness.requestShutdown('happier-cli');
+      void Promise.resolve(machineSyncSettlement).catch(() => undefined);
+    } finally {
+      harness.requestShutdown('happier-cli');
+      await run?.catch(() => undefined);
+      vi.doUnmock('./startup/startDaemonMachineRegistrationRuntime');
+      vi.doUnmock('@/plugins/daemon/runtimeOwner');
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('does not publish a machine-sync attempt rejected during post-publication handoff', async () => {
+    harness.setAutoShutdownAfterAutomationStart(false);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const machineRegistrationParams: {
+      current: Parameters<
+        typeof import('./startup/startDaemonMachineRegistrationRuntime').startDaemonMachineRegistrationRuntime
+      >[0] | null;
+    } = { current: null };
+    const pluginRuntimeOwnerParams: {
+      current: Readonly<Record<string, unknown>> | null;
+    } = { current: null };
+    const pluginChangeService = {
+      requestPluginChange: vi.fn(),
+      decidePluginChange: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+      quiesceForHandoff: vi.fn(async () => ({ resume: vi.fn() })),
+      isQuiescing: () => false,
+      runHardRevocationCurrentnessChange: vi.fn(),
+    };
+    vi.doMock('@/plugins/daemon/runtimeOwner', () => ({
+      createDaemonPluginRuntimeOwner: vi.fn((params: Readonly<Record<string, unknown>>) => {
+        pluginRuntimeOwnerParams.current = params;
+        return {
+          changeService: pluginChangeService,
+          initialize: vi.fn(async () => {
+            const onInitialRegistryPublished = params.onInitialRegistryPublished as
+              | (() => void)
+              | undefined;
+            const awaitInitialRuntimeActivation = params.awaitInitialRuntimeActivation as
+              | (() => Promise<void>)
+              | undefined;
+            onInitialRegistryPublished?.();
+            await awaitInitialRuntimeActivation?.();
+          }),
+          reportCurrentAvailability: vi.fn(),
+          readCatalog: vi.fn(async () => []),
+        };
+      }),
+    }));
+    vi.doMock('./startup/startDaemonMachineRegistrationRuntime', () => ({
+      startDaemonMachineRegistrationRuntime: vi.fn((params) => {
+        machineRegistrationParams.current = params;
+        return { resume: vi.fn() };
+      }),
+    }));
+    const firstIdentityFailure = new Error('first-attempt-installation-identity-failure');
+    const readOrCreateInstallationIdentity = vi
+      .fn()
+      .mockRejectedValueOnce(firstIdentityFailure)
+      .mockResolvedValue({ installationId: 'installation-test' });
+    vi.doMock('./identity/store', () => ({
+      readOrCreateInstallationIdentity,
+    }));
+    vi.doMock('@/settings/accountSettings/warmActiveAccountSettingsSnapshot', () => ({
+      warmActiveAccountSettingsSnapshotBestEffort: vi.fn(async () => false),
+    }));
+    vi.doMock('@/plugins/runtime/webhooks/pluginWebhookDaemonWorker', () => ({
+      startPluginWebhookDaemonWorkerV1: vi.fn(() => ({
+        trigger: vi.fn(),
+        stop: vi.fn(async () => {}),
+      })),
+    }));
+    vi.doMock('@/plugins/runtime/webhooks/pluginWebhookDaemonWake', () => ({
+      attachPluginWebhookDaemonWakeV1: vi.fn(() => () => {}),
+    }));
+
+    let run: Promise<void> | null = null;
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      await vi.waitFor(() => {
+        expect(exitSpy).not.toHaveBeenCalled();
+        expect(pluginRuntimeOwnerParams.current).not.toBeNull();
+        expect(machineRegistrationParams.current).not.toBeNull();
+      });
+
+      const resolveSessionResourceAccess = pluginRuntimeOwnerParams.current
+        ?.resolveSessionResourceAccess as ((input: Readonly<{
+          accountId: string;
+          sessionId: string;
+          signal: AbortSignal;
+        }>) => Promise<unknown>) | undefined;
+      if (!resolveSessionResourceAccess) {
+        throw new Error('expected exact Session Resource access resolver');
+      }
+      const providerSource = pluginRuntimeOwnerParams.current?.providers as Readonly<{
+        bind(binding: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>): Readonly<{
+          connections: Readonly<{
+            describe(request: unknown): Promise<unknown>;
+          }>;
+        }>;
+      }> | undefined;
+      if (!providerSource) throw new Error('expected Provider operations source');
+      const pluginAdmissionOwner = pluginRuntimeOwnerParams.current
+        ?.externalSessionPluginAdmissionOwner as Readonly<{
+          materializeStart(input: unknown): Promise<unknown>;
+        }> | undefined;
+      if (!pluginAdmissionOwner) {
+        throw new Error('expected external-session plugin admission owner');
+      }
+      const onMachineSyncRuntime = machineRegistrationParams.current?.onMachineSyncRuntime;
+      if (!onMachineSyncRuntime) throw new Error('expected machine sync runtime callback');
+      const input = Object.freeze({
+        accountId: 'account-resource-access',
+        sessionId: 'session-resource-access',
+        signal: new AbortController().signal,
+      });
+      const providerBinding = Object.freeze({
+        signal: new AbortController().signal,
+        isCurrent: () => true,
+      });
+      const staleResourceAccess = Object.freeze({
+        accountId: input.accountId,
+        throughCursor: 13,
+        status: 'available' as const,
+      });
+      const firstProviderDescribe = vi.fn(async () => ({
+        status: 'success' as const,
+        connections: [],
+      }));
+      const firstProviderBind = vi.fn(() => Object.freeze({
+        connections: Object.freeze({ describe: firstProviderDescribe }),
+      }));
+      const firstMaterializeStart = vi.fn(async () => ({
+        ok: true as const,
+        source: 'retired-attempt',
+      }));
+      const firstApiMachine = {
+        ...harness.apiMachine,
+        recoverDaemonTerminalSessionMutationJournals: vi.fn(async () => {
+          return { recoveredSessionIds: [], retainedSessionIds: [] };
+        }),
+        resolvePluginResourceSessionAccess: vi.fn(async () => staleResourceAccess),
+        registerLocalServicesPreviewRoutes: vi.fn(),
+        registerLocalServicesRoutes: vi.fn(),
+        registerBrowserControlRoutes: vi.fn(),
+        registerBrowserContextRoutes: vi.fn(),
+        registerBrowserDiagnosticsRoutes: vi.fn(),
+        registerBrowserRecordingRoutes: vi.fn(),
+        registerSimulatorPreviewRoutes: vi.fn(),
+        registerConnectedAccountDaemonRuntime: vi.fn(),
+        registerConnectedAccountPurposeBindingRuntime: vi.fn(),
+      };
+
+      // No replacement callback is supplied between attempts. These probes
+      // therefore observe whether the failed attempt remains globally selected
+      // while the registration retry waits.
+      await expect(onMachineSyncRuntime({
+        apiMachine: firstApiMachine,
+        apiMachineForSessions: firstApiMachine,
+        externalSessionPluginAdmissionOwner: {
+          materializeStart: firstMaterializeStart,
+        },
+        automationWorker: null,
+        memoryWorker: null,
+        voiceInferenceWorker: null,
+        daemonConnectivityCoordinator: null,
+        machineConnectionStateCleanup: null,
+        stopPeerMediationLoopbackServer: async () => {},
+        resumeMachineConnectionPublications: async () => {},
+        daemonSessionMutationCustody: {
+          bindRecoveredJournals: async () => ({
+            boundSessionIds: [],
+            retainedSessionIds: [],
+          }),
+          close: async () => {},
+          stage: async () => {},
+        },
+        providerOperationsProducer: {
+          machineServices: {},
+          bind: firstProviderBind,
+        },
+      } as unknown as Parameters<typeof onMachineSyncRuntime>[0])).rejects.toBe(firstIdentityFailure);
+
+      expect(readOrCreateInstallationIdentity).toHaveBeenCalledOnce();
+      await expect(resolveSessionResourceAccess(input)).rejects.toThrow(
+        'plugin_resource_session_access_unavailable',
+      );
+      expect(firstApiMachine.resolvePluginResourceSessionAccess).not.toHaveBeenCalled();
+      await expect(providerSource.bind(providerBinding).connections.describe({}))
+        .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+      expect(firstProviderBind).not.toHaveBeenCalled();
+      await expect(pluginAdmissionOwner.materializeStart({})).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'source_unavailable' },
+      });
+      expect(firstMaterializeStart).not.toHaveBeenCalled();
+      expect(firstApiMachine.registerConnectedAccountDaemonRuntime).not.toHaveBeenCalled();
+      expect(firstApiMachine.registerConnectedAccountPurposeBindingRuntime).not.toHaveBeenCalled();
+
+      const sentinel = Object.freeze({
+        accountId: input.accountId,
+        throughCursor: 17,
+        status: 'available' as const,
+      });
+      const secondApiMachine = {
+        ...harness.apiMachine,
+        resolvePluginResourceSessionAccess: vi.fn(async () => sentinel),
+        registerLocalServicesPreviewRoutes: vi.fn(),
+        registerLocalServicesRoutes: vi.fn(),
+        registerBrowserControlRoutes: vi.fn(),
+        registerBrowserContextRoutes: vi.fn(),
+        registerBrowserDiagnosticsRoutes: vi.fn(),
+        registerBrowserRecordingRoutes: vi.fn(),
+        registerSimulatorPreviewRoutes: vi.fn(),
+        registerConnectedAccountDaemonRuntime: vi.fn(),
+        registerConnectedAccountPurposeBindingRuntime: vi.fn(),
+      };
+      const secondProviderDescribe = vi.fn(async () => ({
+        status: 'success' as const,
+        connections: [],
+      }));
+      const secondProviderBind = vi.fn(() => Object.freeze({
+        connections: Object.freeze({ describe: secondProviderDescribe }),
+      }));
+      const secondMaterializeStart = vi.fn(async () => ({
+        ok: true as const,
+        source: 'current-attempt',
+      }));
+      await onMachineSyncRuntime({
+        apiMachine: secondApiMachine,
+        apiMachineForSessions: secondApiMachine,
+        externalSessionPluginAdmissionOwner: {
+          materializeStart: secondMaterializeStart,
+        },
+        automationWorker: null,
+        memoryWorker: null,
+        voiceInferenceWorker: null,
+        daemonConnectivityCoordinator: null,
+        machineConnectionStateCleanup: null,
+        stopPeerMediationLoopbackServer: async () => {},
+        resumeMachineConnectionPublications: async () => {},
+        daemonSessionMutationCustody: {
+          bindRecoveredJournals: async () => ({
+            boundSessionIds: [],
+            retainedSessionIds: [],
+          }),
+          close: async () => {},
+          stage: async () => {},
+        },
+        providerOperationsProducer: {
+          machineServices: {},
+          bind: secondProviderBind,
+        },
+      } as unknown as Parameters<typeof onMachineSyncRuntime>[0]);
+
+      await expect(resolveSessionResourceAccess(input)).resolves.toBe(sentinel);
+      expect(secondApiMachine.resolvePluginResourceSessionAccess).toHaveBeenCalledOnce();
+      await expect(providerSource.bind(providerBinding).connections.describe({}))
+        .resolves.toMatchObject({ status: 'success' });
+      expect(secondProviderBind).toHaveBeenCalledWith(providerBinding);
+      await expect(pluginAdmissionOwner.materializeStart({})).resolves.toMatchObject({
+        ok: true,
+        source: 'current-attempt',
+      });
+      expect(secondMaterializeStart).toHaveBeenCalledOnce();
+      harness.requestShutdown('happier-cli');
+    } finally {
+      harness.requestShutdown('happier-cli');
+      await run?.catch(() => undefined);
+      vi.doUnmock('@/plugins/runtime/webhooks/pluginWebhookDaemonWake');
+      vi.doUnmock('@/plugins/runtime/webhooks/pluginWebhookDaemonWorker');
+      vi.doUnmock('@/settings/accountSettings/warmActiveAccountSettingsSnapshot');
+      vi.doUnmock('./identity/store');
+      vi.doUnmock('./startup/startDaemonMachineRegistrationRuntime');
+      vi.doUnmock('@/plugins/daemon/runtimeOwner');
       exitSpy.mockRestore();
     }
   });
@@ -710,6 +1211,10 @@ describe('startDaemon automation wiring (integration)', () => {
         typeof import('./startup/startDaemonMachineRegistrationRuntime').startDaemonMachineRegistrationRuntime
       >[0] | null;
     } = { current: null };
+    const pluginRuntimeOwnerParams: {
+      current: Readonly<Record<string, unknown>> | null;
+    } = { current: null };
+    let pluginRuntimeInitializationSettled = false;
     const pluginChangeService = {
       requestPluginChange: vi.fn(),
       decidePluginChange: vi.fn(),
@@ -719,14 +1224,28 @@ describe('startDaemon automation wiring (integration)', () => {
         return { resume: () => { quiescing = false; } };
       }),
       isQuiescing: () => quiescing,
-      runAutomaticCurrentnessChange: vi.fn(),
+      runHardRevocationCurrentnessChange: vi.fn(),
     };
     vi.doMock('@/plugins/daemon/runtimeOwner', () => ({
-      createDaemonPluginRuntimeOwner: vi.fn(() => ({
-        changeService: pluginChangeService,
-        initialize: vi.fn(async () => {}),
-        readCatalog: vi.fn(async () => []),
-      })),
+      createDaemonPluginRuntimeOwner: vi.fn((params: Readonly<Record<string, unknown>>) => {
+        pluginRuntimeOwnerParams.current = params;
+        return {
+          changeService: pluginChangeService,
+          initialize: vi.fn(async () => {
+            const onInitialRegistryPublished = params.onInitialRegistryPublished as
+              | (() => void)
+              | undefined;
+            const awaitInitialRuntimeActivation = params.awaitInitialRuntimeActivation as
+              | (() => Promise<void>)
+              | undefined;
+            onInitialRegistryPublished?.();
+            await awaitInitialRuntimeActivation?.();
+            pluginRuntimeInitializationSettled = true;
+          }),
+          reportCurrentAvailability: vi.fn(),
+          readCatalog: vi.fn(async () => []),
+        };
+      }),
     }));
     vi.doMock('./startup/startDaemonMachineRegistrationRuntime', () => ({
       startDaemonMachineRegistrationRuntime: vi.fn((params) => {
@@ -771,16 +1290,15 @@ describe('startDaemon automation wiring (integration)', () => {
 
     let run: Promise<void> | null = null;
     try {
-      const { writeDaemonState } = await import('@/persistence');
+      const { writeDaemonStateForLockOwner } = await import('@/persistence');
       const { startDaemonHeartbeatLoop } = await import('./lifecycle/heartbeat');
       const { startDaemon } = await import('./startDaemon');
       run = startDaemon();
       await vi.waitFor(() => {
         expect(machineRegistrationParams.current).not.toBeNull();
         expect(startDaemonHeartbeatLoop).toHaveBeenCalledOnce();
-      }, { timeout: 30_000 });
-
-      vi.mocked(writeDaemonState).mockClear();
+      }, { timeout: 3_000 });
+      vi.mocked(writeDaemonStateForLockOwner).mockClear();
       quiescing = true;
       const heartbeatParams = vi.mocked(startDaemonHeartbeatLoop).mock.calls[0]?.[0];
       machineRegistrationParams.current?.setMachineId('machine-after-handoff');
@@ -790,13 +1308,39 @@ describe('startDaemon automation wiring (integration)', () => {
       expect.soft(machineRegistrationParams.current?.isShuttingDown()).toBe(false);
       expect.soft(machineRegistrationParams.current?.isQuiescing?.()).toBe(true);
       expect.soft(machineRegistrationParams.current?.bootstrapRuntime.isShuttingDown()).toBe(true);
-      expect.soft(writeDaemonState).not.toHaveBeenCalledWith(expect.objectContaining({
-        machineId: 'machine-after-handoff',
-      }));
+      expect.soft(writeDaemonStateForLockOwner).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          machineId: 'machine-after-handoff',
+        }),
+      );
 
       harness.apiMachine.recoverDaemonTerminalSessionMutationJournals.mockClear();
       const onMachineSyncRuntime = machineRegistrationParams.current?.onMachineSyncRuntime;
       if (!onMachineSyncRuntime) throw new Error('expected machine sync runtime callback');
+      const providerSource = pluginRuntimeOwnerParams.current?.providers as Readonly<{
+        bind(binding: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>): unknown;
+      }> | undefined;
+      if (!providerSource) throw new Error('expected Provider operations source');
+      const providerBinding = Object.freeze({
+        signal: new AbortController().signal,
+        isCurrent: () => true,
+      });
+      const earlyProviderService = providerSource.bind(providerBinding) as Readonly<{
+        connections: Readonly<{
+          describe(request: unknown): Promise<unknown>;
+        }>;
+      }> | null;
+      expect(earlyProviderService).not.toBeNull();
+      expect(pluginRuntimeInitializationSettled).toBe(false);
+      const providerDescribe = vi.fn(async () => ({
+        status: 'success' as const,
+        connections: [],
+      }));
+      const providerService = Object.freeze({
+        connections: Object.freeze({ describe: providerDescribe }),
+      });
+      const providerBind = vi.fn(() => providerService);
       // Test harness boundary: this fixture supplies only the settled runtime fields the callback reads.
       await onMachineSyncRuntime({
         apiMachine: harness.apiMachine,
@@ -808,7 +1352,7 @@ describe('startDaemon automation wiring (integration)', () => {
         machineConnectionStateCleanup: null,
         stopPeerMediationLoopbackServer: async () => {},
         resumeMachineConnectionPublications: machineConnectionPublicationsResume,
-        daemonUsageLimitRecoveryMutationCustody: {
+        daemonSessionMutationCustody: {
           bindRecoveredJournals: async () => ({
             boundSessionIds: [],
             retainedSessionIds: [],
@@ -816,7 +1360,16 @@ describe('startDaemon automation wiring (integration)', () => {
           close: async () => {},
           stage: async () => {},
         },
+        providerOperationsProducer: {
+          machineServices: {},
+          bind: providerBind,
+        },
       } as unknown as Parameters<typeof onMachineSyncRuntime>[0]);
+      await expect(earlyProviderService?.connections.describe({}))
+        .resolves.toMatchObject({ status: 'success' });
+      expect(providerDescribe).toHaveBeenCalledWith({});
+      expect(providerBind).toHaveBeenCalledWith(providerBinding);
+      expect(pluginRuntimeInitializationSettled).toBe(true);
       expect(harness.apiMachine.recoverDaemonTerminalSessionMutationJournals).not.toHaveBeenCalled();
 
       await heartbeatParams?.requestSelfRestart?.({} as never);
@@ -852,9 +1405,6 @@ describe('startDaemon automation wiring (integration)', () => {
         }),
       );
       expect(harness.apiMachine.setRPCHandlers).toHaveBeenCalledTimes(1);
-      expect(harness.apiMachine.connect).toHaveBeenCalledTimes(1);
-      expect(harness.apiMachine.updateMachineMetadata).toHaveBeenCalledTimes(1);
-      expect(harness.automationWorkerRefreshAssignments).toHaveBeenCalledTimes(2);
       expect(harness.automationWorkerStop).toHaveBeenCalledTimes(1);
       expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {
@@ -1005,6 +1555,86 @@ describe('startDaemon automation wiring (integration)', () => {
       harness.requestShutdown('happier-cli');
       await run;
     } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('warms authenticated Account Settings before creating the plugin runtime', async () => {
+    harness.setAutoShutdownAfterAutomationStart(false);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const deferredWarm = createDeferred<boolean>();
+    const bootstrapCredentials = Object.freeze({
+      token: 'token-settings-startup-order',
+      encryption: {
+        type: 'dataKey' as const,
+        publicKey: new Uint8Array(32).fill(1),
+        machineKey: new Uint8Array(32).fill(2),
+      },
+    });
+    const warmParams: { current: Readonly<{ credentials: unknown }> | null } = { current: null };
+    const warmActiveAccountSettingsSnapshotBestEffort = vi.fn((params: Readonly<{ credentials: unknown }>) => {
+      warmParams.current = params;
+      return deferredWarm.promise;
+    });
+    const pluginRuntimeOwnerParams: { current: Readonly<Record<string, unknown>> | null } = { current: null };
+    const pluginRuntimeInitialize = vi.fn(async () => {
+      const onInitialRegistryPublished = pluginRuntimeOwnerParams.current
+        ?.onInitialRegistryPublished as (() => void) | undefined;
+      onInitialRegistryPublished?.();
+    });
+    const pluginChangeService = {
+      requestPluginChange: vi.fn(),
+      decidePluginChange: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+      quiesceForHandoff: vi.fn(async () => ({ resume: vi.fn() })),
+      isQuiescing: () => false,
+      runHardRevocationCurrentnessChange: vi.fn(),
+    };
+    const createDaemonPluginRuntimeOwner = vi.fn((params: Readonly<Record<string, unknown>>) => {
+      pluginRuntimeOwnerParams.current = params;
+      return {
+        changeService: pluginChangeService,
+        initialize: pluginRuntimeInitialize,
+        reportCurrentAvailability: vi.fn(),
+        readCatalog: vi.fn(async () => []),
+      };
+    });
+
+    vi.doMock('@/settings/accountSettings/warmActiveAccountSettingsSnapshot', () => ({
+      warmActiveAccountSettingsSnapshotBestEffort,
+    }));
+    vi.doMock('@/plugins/daemon/runtimeOwner', () => ({
+      createDaemonPluginRuntimeOwner,
+    }));
+
+    let run: Promise<void> | null = null;
+    try {
+      const { authAndSetupMachineIfNeeded } = await import('@/ui/auth');
+      vi.mocked(authAndSetupMachineIfNeeded).mockResolvedValueOnce({
+        credentials: bootstrapCredentials,
+        machineId: 'machine-automation',
+      });
+      const { startDaemon } = await import('./startDaemon');
+
+      run = startDaemon();
+      await vi.waitFor(() => {
+        expect(warmActiveAccountSettingsSnapshotBestEffort).toHaveBeenCalledOnce();
+      });
+
+      expect(warmParams.current?.credentials).toBe(bootstrapCredentials);
+      expect(createDaemonPluginRuntimeOwner).not.toHaveBeenCalled();
+      expect(pluginRuntimeInitialize).not.toHaveBeenCalled();
+
+      deferredWarm.resolve(false);
+      await vi.waitFor(() => {
+        expect(pluginRuntimeInitialize).toHaveBeenCalledOnce();
+      });
+    } finally {
+      deferredWarm.resolve(false);
+      harness.requestShutdown('happier-cli');
+      await run?.catch(() => undefined);
+      vi.doUnmock('@/settings/accountSettings/warmActiveAccountSettingsSnapshot');
+      vi.doUnmock('@/plugins/daemon/runtimeOwner');
       exitSpy.mockRestore();
     }
   });

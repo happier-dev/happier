@@ -44,6 +44,15 @@ function createSessionStub() {
         body,
       });
     },
+    enqueueAgentMessageCommitted: async (provider: any, body: any, opts: any) => {
+      durableCalls.push({
+        provider: String(provider),
+        localId: String(opts.localId),
+        meta: opts.meta,
+        body,
+      });
+      return { persisted: true as const, delivered: false as const };
+    },
   };
 
   return { session, durableCalls, bestEffortCalls, liveCalls };
@@ -177,6 +186,37 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     writer.appendAssistantDelta('Dropped durable snapshot');
+    const summary = await writer.flushAll({ reason: 'turn-end' });
+    await settleCommittedSnapshot();
+
+    expect(enqueueAgentMessageCommitted).toHaveBeenCalledOnce();
+    expect(summary.assistant.didDurablyFlush).toBe(false);
+    expect(summary.assistantRoot.didDurablyFlush).toBe(false);
+  });
+
+  it('does not advance durable checkpoints when the durable enqueue hook rejects custody', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session } = createSessionStub();
+    const enqueueAgentMessageCommitted = vi.fn(async () => {
+      throw new Error('durable custody rejected');
+    });
+    const sessionWithDurableEnqueue = {
+      ...session,
+      enqueueAgentMessageCommitted,
+    };
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'opencode',
+      session: sessionWithDurableEnqueue,
+      makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 10_000,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('Rejected durable snapshot');
     const summary = await writer.flushAll({ reason: 'turn-end' });
     await settleCommittedSnapshot();
 
@@ -671,7 +711,7 @@ describe('createStreamedTranscriptWriter', () => {
     vi.setSystemTime(new Date(0));
 
     const { session, bestEffortCalls } = createSessionStub();
-    session.sendAgentMessageCommitted = async () => {
+    session.enqueueAgentMessageCommitted = async () => {
       throw new Error('boom');
     };
 
@@ -690,18 +730,20 @@ describe('createStreamedTranscriptWriter', () => {
     expect(bestEffortCalls).toHaveLength(0);
   });
 
-  it('reports an incomplete durable final turn flush when durable commit fails', async () => {
+  it('reports an incomplete durable final turn flush without a durable enqueue API', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
     const { session, bestEffortCalls } = createSessionStub();
-    session.sendAgentMessageCommitted = async () => {
-      throw new Error('boom');
+    const sessionWithoutDurableEnqueue = {
+      ...session,
+      enqueueAgentMessageCommitted: undefined,
     };
+    sessionWithoutDurableEnqueue.sendAgentMessageCommitted = vi.fn(async () => undefined);
 
     const writer = createStreamedTranscriptWriter({
       provider: 'codex' as any,
-      session: session as any,
+      session: sessionWithoutDurableEnqueue as any,
       makeLocalId: () => 'segment-1',
       initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 10_000,
@@ -713,6 +755,7 @@ describe('createStreamedTranscriptWriter', () => {
     await settleCommittedSnapshot();
 
     expect(bestEffortCalls).toHaveLength(0);
+    expect(sessionWithoutDurableEnqueue.sendAgentMessageCommitted).not.toHaveBeenCalled();
     expect(flushSummary as any).toMatchObject({
       assistant: { sawText: true, didDurablyFlush: false },
       assistantRoot: { sawText: true, didDurablyFlush: false },
@@ -727,7 +770,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     const { session } = createSessionStub();
 
-    session.sendAgentMessageCommitted = async () => {
+    session.enqueueAgentMessageCommitted = async () => {
       throw new Error('boom');
     };
     session.sendAgentMessage = vi.fn(() => new Promise<void>(() => {}));
@@ -798,7 +841,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     const { session, durableCalls } = createSessionStub();
     let resolveFirstCommit: (() => void) | undefined;
-    session.sendAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
+    session.enqueueAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
       durableCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -810,6 +853,7 @@ describe('createStreamedTranscriptWriter', () => {
           resolveFirstCommit = resolve;
         });
       }
+      return { persisted: true as const, delivered: false as const };
     });
 
     const writer = createStreamedTranscriptWriter({
@@ -853,7 +897,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     const { session, durableCalls } = createSessionStub();
     let resolveFirstCommit: (() => void) | undefined;
-    session.sendAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
+    session.enqueueAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
       durableCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -865,6 +909,7 @@ describe('createStreamedTranscriptWriter', () => {
           resolveFirstCommit = resolve;
         });
       }
+      return { persisted: true as const, delivered: false as const };
     });
 
     const writer = createStreamedTranscriptWriter({
@@ -909,7 +954,7 @@ describe('createStreamedTranscriptWriter', () => {
       'commit failed for https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/messages?token=secret Authorization: Bearer COMMIT_SECRET',
     );
     const session = {
-      sendAgentMessageCommitted: vi.fn(async () => {
+      enqueueAgentMessageCommitted: vi.fn(async () => {
         throw secretError;
       }),
       sendAgentMessage: vi.fn(() => {
@@ -977,6 +1022,15 @@ function createDeltaSessionStub() {
         meta: opts.meta,
         body,
       });
+    },
+    enqueueAgentMessageCommitted: async (provider: any, body: any, opts: any) => {
+      durableCalls.push({
+        provider: String(provider),
+        localId: String(opts.localId),
+        meta: opts.meta,
+        body,
+      });
+      return { persisted: true as const, delivered: false as const };
     },
     sendAgentMessageEphemeral: (provider: any, body: any, opts: any) => {
       liveCalls.push({
@@ -1345,8 +1399,9 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
         return { accepted: true as const, epoch: 1 };
       }),
       sendAgentMessageEphemeralDelta: vi.fn(() => ({ accepted: true as const, epoch: 1 })),
-      sendAgentMessageCommitted: vi.fn(async (_provider: unknown, body: unknown) => {
+      enqueueAgentMessageCommitted: vi.fn(async (_provider: unknown, body: unknown) => {
         order.push(`durable:${(body as { message: string }).message}`);
+        return { persisted: true as const, delivered: false as const };
       }),
     };
     const writer = createDeltaWriter(session, { liveSnapshotIntervalMs: 0 });
@@ -1384,8 +1439,9 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
         }
         return { accepted: true as const, epoch: 1 };
       }),
-      sendAgentMessageCommitted: vi.fn(async (_provider: unknown, body: unknown, opts: { localId: string }) => {
+      enqueueAgentMessageCommitted: vi.fn(async (_provider: unknown, body: unknown, opts: { localId: string }) => {
         durableCalls.push({ localId: opts.localId, body });
+        return { persisted: true as const, delivered: false as const };
       }),
     };
     const writer = createDeltaWriter(session, {

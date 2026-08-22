@@ -4,14 +4,17 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+    PLUGIN_UI_HOST_API_VERSION_V1,
     computePluginUiArtifactFileSetSha256DigestV1,
     computePluginUiArtifactSha256DigestV1,
+    PluginUiArtifactIntegrityBindingV1Schema,
     verifyPluginUiArtifactFileSetIntegrityV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import { prepareOwnedImmutablePluginGeneration } from '@/plugins/store/registry/generationStore';
 import { PluginStateFileV1Schema } from '@/plugins/store/state';
 
 import { createHostedWebStaticAssetLifecycle } from './lifecycle';
@@ -61,9 +64,9 @@ async function installGeneratedUiPlugin(input?: Readonly<{
             ui: {
                 views: [{
                     id: 'preview',
-                    placement: 'session.preview',
+                    container: 'detailsTab',
+                    target: { kind: 'session', sessionIdPath: '/session/id' },
                     renderer: rendererId,
-                    title: 'Generated V2 preview',
                 }],
                 renderers: [{
                     id: rendererId,
@@ -88,8 +91,8 @@ async function installGeneratedUiPlugin(input?: Readonly<{
             })),
             digest,
             builtWith: { bundler: 'vite', version: '7.0.0' },
-            hostUiApiVersion: '1.0.0',
-            compat: { react: '19.2.0' },
+            hostUiApiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
+            compat: {},
         }],
     }), 'utf8');
     await writeFile(join(artifactsRoot, entryPath), html, 'utf8');
@@ -125,15 +128,27 @@ async function installGeneratedUiPlugin(input?: Readonly<{
             }),
         },
     });
-    await store.install({
+    const preparedGeneration = await prepareOwnedImmutablePluginGeneration({
+        paths: store.paths,
         pluginId,
         sourceRootPath: sourceRoot,
         manifestRelativePath: '.happier-plugin/plugin.json',
-        catalogRecord,
-        trust,
+        distribution,
         updatePolicy: 'manual',
-        optionalAccess: [],
+        createdAtMs: Date.now(),
     });
+    try {
+        await store.install({
+            pluginId,
+            catalogRecord,
+            trust,
+            updatePolicy: 'manual',
+            optionalAccess: [],
+            preparedGeneration,
+        });
+    } finally {
+        await preparedGeneration.cleanup();
+    }
     const installedRoot = (await store.read()).plugins[pluginId]?.install.installedPath;
     if (!installedRoot) throw new Error('Expected committed immutable plugin generation');
 
@@ -142,7 +157,13 @@ async function installGeneratedUiPlugin(input?: Readonly<{
 
 async function resolveGeneratedLifecycleSource(happyHomeDir: string) {
     const registry = await resolveMergedContributionRegistry({ happyHomeDir });
-    expect(registry.uiArtifacts?.filter((artifact) => artifact.pluginId === pluginId) ?? []).toEqual([]);
+    expect(registry.pluginDiagnosticsByPluginId[pluginId]).toEqual([]);
+    expect(registry.uiRenderersV2?.filter((renderer) => renderer.pluginId === pluginId)).toEqual([
+        expect.objectContaining({
+            definition: expect.objectContaining({ id: rendererId, kind: 'hostedWeb' }),
+        }),
+    ]);
+    expect(registry).not.toHaveProperty('uiArtifacts');
     expect(registry.hostedWeb?.filter((contribution) => contribution.pluginId === pluginId) ?? []).toEqual([]);
     return await resolveHostedWebStaticAssetLifecycleSource({
         registry,
@@ -154,14 +175,18 @@ async function resolveGeneratedLifecycleSource(happyHomeDir: string) {
 function createLifecycle() {
     return createHostedWebStaticAssetLifecycle({
         verifyArtifact: ({ files, digest }) => {
+            const integrity = PluginUiArtifactIntegrityBindingV1Schema.safeParse({
+                digest,
+                pluginId,
+                contributionId: artifactId,
+                artifactKind: 'hostedWebAsset',
+            });
+            if (!integrity.success) {
+                return { ok: false as const, reasonCode: 'unsupported_digest' };
+            }
             const result = verifyPluginUiArtifactFileSetIntegrityV1({
                 files,
-                integrity: {
-                    digest,
-                    pluginId,
-                    contributionId: artifactId,
-                    artifactKind: 'hostedWebAsset',
-                },
+                integrity: integrity.data,
             });
             return result.ok
                 ? { ok: true as const }

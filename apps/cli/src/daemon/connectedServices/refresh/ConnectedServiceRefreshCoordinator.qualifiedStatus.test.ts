@@ -96,6 +96,7 @@ async function createHarness(input: Readonly<{
             accountId: 'work',
           },
           authenticationModeId: 'api-key',
+          revisionSemantics: 'revisioned' as const,
           credentialRevision,
           configurationRevision: null,
           content: credentialContent,

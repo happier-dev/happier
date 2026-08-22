@@ -4,8 +4,14 @@ import {
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
+import type { StoredCredentials } from '@/persistence';
 
 type FingerprintModule = Readonly<{
+    deriveProviderAccountUsageFingerprintKey(input: Readonly<{
+        credentials: StoredCredentials;
+        serverScope: string;
+        accountScope: string;
+    }>): Uint8Array;
     computeProviderAccountUsageSnapshotFingerprint(
         snapshot: ProviderAccountUsageSnapshotV1,
         key: Uint8Array,
@@ -88,6 +94,33 @@ describe('provider account usage material fingerprint', () => {
         );
         expect(module!.computeProviderAccountUsageSnapshotFingerprint(first, key)).not.toBe(
             module!.computeProviderAccountUsageSnapshotFingerprint(changedMeter, key),
+        );
+    });
+
+    it('derives stable plaintext dedupe fingerprints without using the bearer token', async () => {
+        const module = await loadFingerprintModule();
+        expect(module).not.toBeNull();
+        const firstKey = module!.deriveProviderAccountUsageFingerprintKey({
+            credentials: { token: 'first-token', encryption: null },
+            serverScope: 'server-a',
+            accountScope: 'account-a',
+        });
+        const rotatedKey = module!.deriveProviderAccountUsageFingerprintKey({
+            credentials: { token: 'rotated-token', encryption: null },
+            serverScope: 'server-a',
+            accountScope: 'account-a',
+        });
+
+        expect(
+            module!.computeProviderAccountUsageSnapshotFingerprint(
+                createSnapshot(),
+                rotatedKey,
+            ),
+        ).toBe(
+            module!.computeProviderAccountUsageSnapshotFingerprint(
+                createSnapshot(),
+                firstKey,
+            ),
         );
     });
 });

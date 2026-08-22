@@ -70,6 +70,7 @@ export type SessionModelTransitionProviderTargetAuthorizer = (
 
 export function resolveDaemonSessionModelTransitionAuthority(params: Readonly<{
   trackedAgentId: string | null;
+  authorizedAgentId?: string | null;
   trackedSelection: ProviderBoundModelRef | null;
   trackedSessionBindingMetadata:
     SessionProviderBindingMetadataV1 | null;
@@ -81,11 +82,14 @@ export function resolveDaemonSessionModelTransitionAuthority(params: Readonly<{
   agentTargetKey: string;
   input: Parameters<SessionModelTransitionProviderTargetAuthorizer>[0];
 }> {
+  const trackedAgentId = params.trackedAgentId
+    ?? params.authorizedAgentId
+    ?? null;
   const trackedSelection = params.trackedSelection;
   const trackedMetadata = params.trackedSessionBindingMetadata;
   if (
-    params.trackedAgentId === null
-    || params.trackedAgentId !== params.requestAgentId
+    trackedAgentId === null
+    || trackedAgentId !== params.requestAgentId
     || trackedSelection === null
     || trackedSelection.providerConnectionId === null
     || params.requestedSelection.agentTargetKey
@@ -103,7 +107,7 @@ export function resolveDaemonSessionModelTransitionAuthority(params: Readonly<{
     );
   }
   return {
-    agentId: params.trackedAgentId,
+    agentId: trackedAgentId,
     agentTargetKey: trackedSelection.agentTargetKey,
     input: {
       selection: {

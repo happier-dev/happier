@@ -1,10 +1,11 @@
 import {
-  PROVIDER_CONNECTION_SUMMARY_LIMITS_V1,
   PROVIDER_SETTINGS_LIMITS_V1,
   createProviderErrorV1,
   readOwnRecordValue,
   readProviderSettingsFromAccountSettingsV1,
   resolveProviderGrantV1,
+  resolveProviderManagedRuntimeDeclarationV1,
+  type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1,
 } from '@happier-dev/protocol';
 
 import {
@@ -27,6 +28,25 @@ const EMPTY_RUNTIME_PROJECTION = Object.freeze({
   summary: EMPTY_RUNTIME_SUMMARY,
   probeObservationIdentity: null,
 });
+
+function projectManagedConnectedAccountPurpose(
+  declaration: ResolvedProviderManagedConnectedAccountPurposeDeclarationV1,
+) {
+  const title = declaration.title === undefined
+    ? undefined
+    : typeof declaration.title === 'string'
+      ? declaration.title
+      : declaration.title.fallback;
+  return {
+    purpose: declaration.purpose,
+    service: declaration.service,
+    ...(title === undefined ? {} : { title }),
+    required: declaration.required === true,
+    ...(declaration.materializationKinds !== undefined
+      ? { materializationKinds: [...declaration.materializationKinds] }
+      : {}),
+  };
+}
 
 async function readAdvisoryProjection<T>(read: () => Promise<readonly T[]>): Promise<readonly T[]> {
   try {
@@ -58,7 +78,7 @@ export async function describeProviderConnections(
   }
 
   const snapshot = await deps.loadSnapshot();
-  const read = readProviderSettingsFromAccountSettingsV1(snapshot.accountSettings);
+  const read = readProviderSettingsFromAccountSettingsV1(snapshot.rawAccountSettings);
   if (read.diagnostics.some((diagnostic) => diagnostic.path === 'providerSettingsV1')) {
     return { status: 'error', error: createProviderErrorV1('provider_settings_invalid', { machineId: input.machineId }) };
   }
@@ -90,23 +110,19 @@ export async function describeProviderConnections(
       const catalogDefinition = connection.source.kind === 'custom'
         ? connection.source.template.catalog
         : contribution?.definition.catalog;
+      const managedRuntimeDeclaration = contribution?.definition.managedRuntime
+        ? resolveProviderManagedRuntimeDeclarationV1({
+            implementationIdentity: contribution.identity,
+            managedRuntime: contribution.definition.managedRuntime,
+          })
+        : null;
       const managedLocalOption =
-        deps.featureGate.isEnabled('localServices.managed')
-        && contribution?.provenance === 'first_party'
-        && contribution.source.kind === 'bundled'
-        && contribution.managed
+        managedRuntimeDeclaration
           ? {
               targetMachineId: input.machineId,
               connectedAccountPurposes:
-                contribution.managed.connectedAccounts.map(
-                  (declaration) => ({
-                    purpose: declaration.purpose,
-                    service: declaration.service,
-                    required: declaration.required === true,
-                    ...(declaration.materializationKinds !== undefined
-                      ? { materializationKinds: [...declaration.materializationKinds] }
-                      : {}),
-                  }),
+                managedRuntimeDeclaration.connectedAccounts.map(
+                  projectManagedConnectedAccountPurpose,
                 ),
             }
           : null;
@@ -137,13 +153,13 @@ export async function describeProviderConnections(
         return { defaultBaseUrl, accountOverrideBaseUrl, machineOverrideBaseUrl };
       };
       const dnsEvidence = await deps.collectDnsEvidence({
-        accountSettings: snapshot.accountSettings,
+        accountSettings: snapshot.rawAccountSettings,
         connectionId: connection.id,
         machineId: input.machineId,
         registry: snapshot.registry,
       });
       const resolution = deps.resolveConnection({
-        accountSettings: snapshot.accountSettings,
+        accountSettings: snapshot.rawAccountSettings,
         connectionId: connection.id,
         machineId: input.machineId,
         registry: snapshot.registry,
@@ -163,7 +179,7 @@ export async function describeProviderConnections(
       const accountViewResolution = accountViewConnection === connection
         ? resolution
         : deps.resolveConnection({
-            accountSettings: replaceSettings(snapshot.accountSettings, {
+            accountSettings: replaceSettings(snapshot.rawAccountSettings, {
               ...settings,
               connections: settings.connections.map((entry) =>
                 entry.id === connection.id ? accountViewConnection : entry),
@@ -210,7 +226,14 @@ export async function describeProviderConnections(
       const machineState = machineGrantResolution?.state ?? (machineGrant ? 'stale' as const : 'absent' as const);
       const effectiveState = effectiveGrantResolution?.state ?? 'absent' as const;
       const runtimeProjection = resolved && resolved.record.authorization.authorized
-        ? await deps.runtimeSummary({ connectionId: connection.id, machineId: input.machineId, resolution: resolved })
+        ? await deps.runtimeSummary({
+            connectionId: connection.id,
+            machineId: input.machineId,
+            accountSettings: snapshot.accountSettings,
+            registry: snapshot.registry,
+            dnsEvidence,
+            resolution: resolved,
+          })
         : EMPTY_RUNTIME_PROJECTION;
       const compatibility = resolved && compatibilityProjection
         ? [...compatibilityProjection.project(resolved.record)]
@@ -225,26 +248,21 @@ export async function describeProviderConnections(
             effects: resolvedManagedDeployment
               ? {
                   implementationIdentity: resolvedManagedDeployment.implementationIdentity,
-                  process: {
-                    localServiceId: resolvedManagedDeployment.facet.managedEndpoint.localService.id,
-                    manager: 'happier',
-                    lifetime: 'session',
-                    network: 'loopback',
-                    restart: 'never',
-                  },
-                  dependency: {
-                    kind: 'packaged-runtime-binary',
-                    directorySegments: [
-                      ...resolvedManagedDeployment.facet.managedEndpoint.localService.launch.directorySegments,
-                    ],
-                    executableBaseName:
-                      resolvedManagedDeployment.facet.managedEndpoint.localService.launch.executableBaseName,
-                  },
-                  protocols: [
-                    ...resolvedManagedDeployment.facet.managedEndpoint.protocols,
-                  ].sort(),
+                  protocols: resolvedManagedDeployment.managedRuntime.endpointTemplateIds.map(
+                    (endpointTemplateId) => {
+                      const endpointTemplate = endpointTemplates.find(
+                        (candidate) => candidate.id === endpointTemplateId,
+                      );
+                      if (!endpointTemplate) {
+                        throw new Error(
+                          `Resolved managed Provider endpoint template is unavailable: ${endpointTemplateId}`,
+                        );
+                      }
+                      return endpointTemplate.protocol;
+                    },
+                  ),
                   connectedAccountPurposes:
-                    resolvedManagedDeployment.facet.connectedAccounts.flatMap((declaration) => {
+                    resolvedManagedDeployment.managedRuntime.connectedAccounts.flatMap((declaration) => {
                       const binding = resolvedManagedDeployment.purposeBindingIntents.bindings.find((candidate) =>
                         candidate.purpose.consumer.pluginId
                           === resolvedManagedDeployment.implementationIdentity.pluginId
@@ -253,12 +271,7 @@ export async function describeProviderConnections(
                         && candidate.purpose.purpose === declaration.purpose);
                       return binding
                         ? [{
-                            purpose: declaration.purpose,
-                            service: declaration.service,
-                            required: declaration.required === true,
-                            ...(declaration.materializationKinds !== undefined
-                              ? { materializationKinds: [...declaration.materializationKinds] }
-                              : {}),
+                            ...projectManagedConnectedAccountPurpose(declaration),
                             target: binding.target,
                           }]
                         : [];
@@ -397,7 +410,7 @@ export async function describeProviderConnections(
         : null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.contributionKey.localeCompare(b.contributionKey));
-  const available = allAvailable.slice(0, PROVIDER_CONNECTION_SUMMARY_LIMITS_V1.availableContributions);
+  const available = allAvailable;
   const discoveryCandidatesReader = deps.discoveryCandidates;
   const allDiscoveryCandidates = deps.featureGate.isEnabled('providers.localDiscovery') && discoveryCandidatesReader
     ? await readAdvisoryProjection(() => discoveryCandidatesReader({
@@ -406,7 +419,7 @@ export async function describeProviderConnections(
         connections: views,
       }))
     : [];
-  const discoveryCandidates = allDiscoveryCandidates.slice(0, 256);
+  const discoveryCandidates = allDiscoveryCandidates;
   const localInstallationsReader = deps.localInstallations;
   const localInstallations = deps.featureGate.isEnabled('providers.localDiscovery') && localInstallationsReader
     ? (await readAdvisoryProjection(() => localInstallationsReader({
@@ -416,22 +429,22 @@ export async function describeProviderConnections(
       }))).map((installation) => ({
         ...installation,
         managedStartAvailable: installation.managedStartAvailable
-          && deps.featureGate.isEnabled('localServices.managed')
-          && deps.startManaged !== undefined,
+          && deps.startManagedProviderRuntime !== undefined,
       }))
     : [];
   const deletedConnection = input.connectionId === undefined
     ? undefined
     : settings.connectionTombstones.find((entry) => entry.id === input.connectionId) ?? null;
   return {
-    status: 'success', connections: views, available, discoveryCandidates,
-    discoveryCandidatesTruncated: allDiscoveryCandidates.length > discoveryCandidates.length,
-    localInstallations,
+    status: 'success', connections: views, available,
+    discoveryCandidates: [...discoveryCandidates],
+    discoveryCandidatesTruncated: false,
+    localInstallations: [...localInstallations],
     diagnostics: read.diagnostics
       .slice(0, PROVIDER_SETTINGS_LIMITS_V1.readDiagnostics)
       .map(redactProviderSettingsDiagnostic),
     diagnosticsTruncated: read.diagnostics.length > PROVIDER_SETTINGS_LIMITS_V1.readDiagnostics,
-    availableTruncated: allAvailable.length > PROVIDER_CONNECTION_SUMMARY_LIMITS_V1.availableContributions,
+    availableTruncated: false,
     ...(input.connectionId !== undefined ? {
       deletedConnection: deletedConnection
         ? {

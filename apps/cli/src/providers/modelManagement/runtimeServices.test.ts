@@ -21,7 +21,10 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { resolveProviderSpawnAuthorization } from '@/providers/spawn/resolve';
-import { createProviderProbeHttpClient } from '@/providers/probe/client';
+import {
+  createProviderProbeHttpClient,
+  type ProviderProbeTransportRequest,
+} from '@/providers/probe/client';
 import { createProviderConnectionService } from '@/providers/connections';
 import type { ProviderModelSettingsMutationIntent } from '@/providers/connections';
 
@@ -435,6 +438,191 @@ describe('runtime provider model-management composition', () => {
     expect(isEnabled).toHaveBeenCalledWith('providers.localModelManagement');
   });
 
+  it('drains every legal picker demand through the shared scheduler instead of dropping its pending tail', async () => {
+    const connectionCount = 69;
+    const registry = { providersByContributionKey: new Map() };
+    const base = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: Array.from({ length: connectionCount }, (_, index) => ({
+        v: 1,
+        id: `pc_demand_${index}`,
+        source: {
+          kind: 'custom',
+          template: {
+            v: 1,
+            name: `Demand ${index}`,
+            endpointTemplates: [
+              {
+                id: 'catalog',
+                protocol: 'openai-chat',
+                baseUrl: `https://catalog-${index}.example/v1`,
+                capabilities: {
+                  streaming: 'unknown',
+                  toolRoundTrips: 'unknown',
+                  statefulResponses: 'unknown',
+                  reasoningControls: 'unknown',
+                },
+              },
+              {
+                id: 'responses',
+                protocol: 'openai-responses',
+                baseUrl: `https://responses-${index}.example/v1`,
+                capabilities: {
+                  streaming: 'unknown',
+                  toolRoundTrips: 'unknown',
+                  statefulResponses: 'unknown',
+                  reasoningControls: 'unknown',
+                },
+              },
+            ],
+            catalog: {
+              source: 'probe',
+              manualModelPolicy: 'allowed',
+              probes: [
+                { endpointTemplateId: 'catalog', path: '/models', parser: 'openai-models' },
+                { endpointTemplateId: 'responses', path: '/models', parser: 'openai-models' },
+              ],
+            },
+          },
+        },
+        role: 'named',
+        displayName: `Demand ${index}`,
+        displayNameMode: 'custom',
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      })),
+    });
+    const dnsEvidenceByEndpointUrl = new Map<string, readonly string[]>(
+      base.connections.flatMap((connection) => connection.source.kind === 'custom'
+        ? connection.source.template.endpointTemplates.map((endpoint) => [endpoint.baseUrl, ['1.1.1.1']] as const)
+        : []),
+    );
+    const settings = ProviderSettingsV1Schema.parse({
+      ...base,
+      accountGrants: base.connections.map((connection) => {
+        const resolved = resolveProviderConnectionForMachine({
+          connectionId: connection.id,
+          machineId: 'machine-a',
+          accountSettings: { providerSettingsV1: base },
+          registry,
+          dnsEvidenceByEndpointUrl,
+        });
+        if (resolved.status !== 'resolved') throw new Error('Expected custom Provider connection');
+        return {
+          v: 1,
+          connectionId: connection.id,
+          connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint,
+          confirmedAt: 1,
+        };
+      }),
+    });
+    const support = {
+      acceptsProtocols: ['openai-chat'],
+      required: { streaming: true },
+      credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+      authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] },
+      materialization: 'engineConfig',
+      applyPolicy: 'restart_session',
+      supportsFreeformModelIds: false,
+    } as const;
+    const executable = {
+      contributes: {
+        providersByContributionKey: registry.providersByContributionKey,
+        agentDefinitionsById: new Map([['codex', {
+          id: 'codex',
+          pluginId: 'happier.agent.codex',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+          definition: { id: 'codex', kindVersion: 1, providerRequirements: support },
+        }]]),
+      },
+      activateContributionsOnDemand: vi.fn(async () => []),
+      agentRuntimesByAgentId: new Map([['codex', {
+        pluginId: 'happier.agent.codex',
+        pluginVersion: '1.0.0',
+        agentId: 'codex',
+        generation: 'fixture-generation',
+        providerBinding: {
+          v: 1,
+          adapterVersion: 1,
+          prepare: vi.fn(() => ({ v: 1, materialization: 'engineConfig' })),
+          materialize: vi.fn(),
+        },
+        isCurrent: () => true,
+        createRuntime: vi.fn(),
+      }]]),
+    } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+    const lease: PluginRuntimeRegistryLease = {
+      registry: executable,
+      source: 'active',
+      release: vi.fn(async () => undefined),
+    };
+    let state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    const runtimeStore: ProviderRuntimeStateStore = {
+      path: '/virtual/provider-runtime-state.json',
+      read: vi.fn(async () => state),
+      update: vi.fn(async (transform) => {
+        state = await transform(state);
+        return state;
+      }),
+      touch: vi.fn(),
+      flushTouches: vi.fn(async () => state),
+    };
+    const catalogHosts = new Set<string>();
+    const releases: Array<() => void> = [];
+    let releaseAll = false;
+    const transport = vi.fn(async (request: ProviderProbeTransportRequest) => {
+      if (request.hostname.startsWith('catalog-')) {
+        catalogHosts.add(request.hostname);
+        if (!releaseAll) {
+          await new Promise<void>((resolve) => releases.push(resolve));
+        }
+      }
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify({ data: [{ id: 'model-a' }] }), 'utf8'),
+      };
+    });
+    const services = createRuntimeProviderModelManagementServices({
+      machineId: 'machine-a',
+      registry,
+      runtimeStore,
+      resolveAddresses: async () => ['1.1.1.1'],
+      acquireRuntimeLease: async () => lease,
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => ['1.1.1.1'],
+        transport,
+      }),
+      getAccountSettingsSnapshot: () => ({
+        source: 'cache',
+        settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
+        settingsVersion: 1,
+        loadedAtMs: 1,
+        settingsSecretsReadKeys: [],
+        scopeKey: 'account-a',
+      }),
+      featureGate: { isEnabled: () => true },
+      modelSettingsMutation: successfulModelSettingsMutation,
+    });
+
+    try {
+      await expect(services.projectModels({
+        machineId: 'machine-a',
+        agentTargetKey: 'backend:codex',
+      })).resolves.toMatchObject({ status: 'success', groups: expect.any(Array) });
+      await vi.waitFor(() => expect(catalogHosts.size).toBe(4));
+
+      releaseAll = true;
+      for (const release of releases.splice(0)) release();
+
+      await vi.waitFor(() => expect(catalogHosts.size).toBe(connectionCount), { timeout: 5_000 });
+    } finally {
+      releaseAll = true;
+      for (const release of releases.splice(0)) release();
+    }
+  });
+
   it('owns one shared probe/catalog runtime when the caller does not provide one', () => {
     const services = createRuntimeProviderModelManagementServices({
       machineId: 'machine-a',
@@ -573,6 +761,7 @@ describe('runtime provider model-management composition', () => {
       featureGate,
       loadSnapshot: async () => ({
         accountSettings,
+        rawAccountSettings: accountSettings,
         registry: { providersByContributionKey: new Map() },
       }),
       updateAccountSettings,

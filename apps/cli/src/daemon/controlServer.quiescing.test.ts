@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createDaemonControlApp } from './controlServer';
-import { hashPluginLocalServicesBridgeToken } from './local/services/pluginBridgeAuthorization';
 
 describe('daemon control server quiescing producer routes', () => {
   it('rejects runtime producer routes while shutdown is quiescing new work', async () => {
@@ -20,7 +19,13 @@ describe('daemon control server quiescing producer routes', () => {
       failedCount: 0,
       results: [],
     }));
-    const handleConnectedServiceTurnLifecycle = vi.fn(async () => ({ status: 'recorded' }));
+    const handleConnectedServiceTurnLifecycle = vi.fn(async () => ({
+      status: 'continue' as const,
+      turnCustody: {
+        status: 'recorded' as const,
+        activeTurnId: null,
+      },
+    }));
     const localServicesInventory = {
       getSnapshot: vi.fn(),
       refreshSnapshot: vi.fn(async () => ({
@@ -41,9 +46,6 @@ describe('daemon control server quiescing producer routes', () => {
         status: 'succeeded' as const,
         auditEvents: [],
       })),
-    };
-    const localServicesPluginBridge = {
-      dispatch: vi.fn(async () => ({ ok: true as const })),
     };
     const simulatorPreview = {
       getSnapshot: vi.fn(),
@@ -73,14 +75,7 @@ describe('daemon control server quiescing producer routes', () => {
     const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'happy-test-123' }));
 
     const app = createDaemonControlApp({
-      getChildren: () => [{
-        startedBy: 'daemon',
-        pid: 1234,
-        happySessionId: 'session-1',
-        localServicesBridgeTokenHash: hashPluginLocalServicesBridgeToken('bridge-token-session-1'),
-        localServicesBridgePluginId: 'acme.plugin',
-        localServicesBridgeContributionId: 'acme.plugin.backend',
-      }],
+      getChildren: () => [],
       machineId: 'machine_local',
       stopSession: async () => ({ status: 'not_found' as const }),
       spawnSession,
@@ -94,7 +89,6 @@ describe('daemon control server quiescing producer routes', () => {
       handleConnectedServiceTurnLifecycle,
       localServicesInventory,
       localServicesActions,
-      localServicesPluginBridge,
       simulatorPreview,
       sshTunnels,
     });
@@ -167,32 +161,6 @@ describe('daemon control server quiescing producer routes', () => {
           },
         },
         {
-          url: '/local-services/plugin/bridge',
-          payload: {
-            protocolVersion: 1,
-            bridgeToken: 'bridge-token-session-1',
-            context: {
-              pluginId: 'acme.plugin',
-              contributionId: 'acme.plugin.backend',
-              sessionId: 'session-1',
-              title: 'Preview Session',
-            },
-            operation: {
-              kind: 'start',
-              declaration: {
-                id: 'web',
-                launch: { kind: 'binary', executablePath: '/bin/sh', args: ['-lc', 'npm run dev'] },
-                launchMode: { kind: 'detectAfterLaunch', minimumConfidence: 'medium' },
-                hostPolicy: { kind: 'loopback' },
-                name: { strategy: 'derived', base: 'web' },
-                healthCheck: { kind: 'none' },
-                restart: { kind: 'never' },
-                cleanup: { staleAfterMs: 30_000 },
-              },
-            },
-          },
-        },
-        {
           url: '/devices/simulator/preview/action',
           payload: {
             protocolVersion: 1,
@@ -242,7 +210,6 @@ describe('daemon control server quiescing producer routes', () => {
     expect(localServicesInventory.refreshSnapshot).not.toHaveBeenCalled();
     expect(localServicesInventory.patchLabel).not.toHaveBeenCalled();
     expect(localServicesActions.execute).not.toHaveBeenCalled();
-    expect(localServicesPluginBridge.dispatch).not.toHaveBeenCalled();
     expect(simulatorPreview.dispatchAction).not.toHaveBeenCalled();
     expect(sshTunnels.ensureTunnel).not.toHaveBeenCalled();
     expect(sshTunnels.releaseTunnel).not.toHaveBeenCalled();

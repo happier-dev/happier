@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
     PEER_MACHINE_RPC_DIRECT_PATH_V1,
     PEER_MACHINE_RPC_DIRECT_PATH_V2,
@@ -30,7 +30,11 @@ import {
 } from './replayKeys';
 
 export type PeerMachineRpcDirectHandlerManager = Readonly<{
-    invokeLocal(method: string, params: unknown): Promise<unknown>;
+    invokeLocal(
+        method: string,
+        params: unknown,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<unknown>;
 }>;
 
 export type PeerMachineRpcDirectRuntimeOptions = Readonly<{
@@ -74,6 +78,38 @@ function createCommandReceipt(input: Readonly<{
     };
 }
 
+function createDirectPeerRequestLifetime(
+    request: FastifyRequest,
+    reply: FastifyReply,
+): Readonly<{
+    signal: AbortSignal;
+    dispose: () => void;
+}> {
+    const controller = new AbortController();
+    const abort = () => {
+        if (!controller.signal.aborted) {
+            controller.abort(new Error('Direct peer RPC request ended'));
+        }
+    };
+    const abortIfResponseDidNotFinish = () => {
+        if (!reply.raw.writableEnded) {
+            abort();
+        }
+    };
+    request.raw.once('aborted', abort);
+    reply.raw.once('close', abortIfResponseDidNotFinish);
+    if (request.raw.aborted) {
+        abort();
+    }
+    return {
+        signal: controller.signal,
+        dispose: () => {
+            request.raw.removeListener('aborted', abort);
+            reply.raw.removeListener('close', abortIfResponseDidNotFinish);
+        },
+    };
+}
+
 export function registerPeerMediationMachineRpcDirectRoutes(
     app: FastifyInstance,
     options: RegisterPeerMediationMachineRpcDirectRoutesOptions,
@@ -93,7 +129,10 @@ export function registerPeerMediationMachineRpcDirectRoutes(
         grantConsumption.clear();
     });
 
-    const handleRequest = async (body: unknown): Promise<PeerMachineRpcDirectResponseV1 | PeerMachineRpcDirectResponseV2> => {
+    const handleRequest = async (
+        body: unknown,
+        signal: AbortSignal,
+    ): Promise<PeerMachineRpcDirectResponseV1 | PeerMachineRpcDirectResponseV2> => {
         const validation = validatePeerMachineRpcDirectRequest({
             body,
             expected: options.expected,
@@ -141,6 +180,7 @@ export function registerPeerMediationMachineRpcDirectRoutes(
                 result = await options.rpcHandlerManager.invokeLocal(
                     validation.request.method,
                     validation.request.params,
+                    { signal },
                 );
             } catch (error) {
                 if (validation.request.v === 1) throw error;
@@ -188,6 +228,15 @@ export function registerPeerMediationMachineRpcDirectRoutes(
         }
     };
 
-    app.post(PEER_MACHINE_RPC_DIRECT_PATH_V1, async (request) => await handleRequest(request.body));
-    app.post(PEER_MACHINE_RPC_DIRECT_PATH_V2, async (request) => await handleRequest(request.body));
+    const handleRouteRequest = async (request: FastifyRequest, reply: FastifyReply) => {
+        const lifetime = createDirectPeerRequestLifetime(request, reply);
+        try {
+            return await handleRequest(request.body, lifetime.signal);
+        } finally {
+            lifetime.dispose();
+        }
+    };
+
+    app.post(PEER_MACHINE_RPC_DIRECT_PATH_V1, handleRouteRequest);
+    app.post(PEER_MACHINE_RPC_DIRECT_PATH_V2, handleRouteRequest);
 }

@@ -4,41 +4,26 @@ import { runAutomationAsNewSession } from './automationRunNewSession';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 
 describe('runAutomationAsNewSession', () => {
-  it('uses the run id as a deterministic spawn nonce and passes first-turn custody explicitly', async () => {
+  it('uses the run id as a deterministic spawn nonce without handing first-input custody to the child', async () => {
     const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({ type: 'success' as const, sessionId: 'session-automation' }));
 
     await runAutomationAsNewSession({
       spawnSession,
       runId: 'run-new-prompt',
-      firstInputText: 'Inspect this workspace.',
       template: {
         directory: '/tmp/happier-automation',
+        pendingFirstInput: {
+          text: 'Predecessor-only first input must not enter an Automation child.',
+          localId: 'spawn-first-turn:predecessor-only',
+        },
       },
     });
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/tmp/happier-automation',
       spawnNonce: 'automation:run-new-prompt',
-      pendingFirstInput: {
-        text: 'Inspect this workspace.',
-        localId: 'spawn-first-turn:automation:run-new-prompt',
-      },
     }));
     expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
-  });
-
-  it('does not create an empty first-input handoff', async () => {
-    const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({ type: 'success' as const, sessionId: 'session-automation' }));
-
-    await runAutomationAsNewSession({
-      spawnSession,
-      runId: 'run-without-prompt',
-      firstInputText: '   ',
-      template: {
-        directory: '/tmp/happier-automation',
-      },
-    });
-
     expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('pendingFirstInput');
   });
 

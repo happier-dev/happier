@@ -28,9 +28,10 @@ import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsPro
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { configuration } from '@/configuration';
-import { getAgentModelConfig, isAgentId, type AgentId } from '@happier-dev/agents';
+import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import {
     ConnectedServiceBindingsV1Schema,
+    PluginScaffoldUiModeSchema,
     qualifiedPurposeKey,
     type CapabilityId,
 } from '@happier-dev/protocol';
@@ -38,7 +39,15 @@ import type { AgentProviderCatalogObservationService } from '@/providers/probe/a
 import { ProviderProbeCancelledError } from '@/providers/probe/client';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { resolveProbeBackendContext } from './capabilitiesProbeContext';
+import { resolvePreflightSessionControlsProbeAdapter } from '@/capabilities/probes/resolvePreflightSessionControlsProbeAdapter';
+import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
+import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
+import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
+import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { invokeAgentCliInstall as invokeSharedProviderCliInstall } from '@/packagedRuntime/managedTools/invokeAgentCliInstall';
 import {
     getResolvedContributionRegistry,
@@ -49,7 +58,11 @@ import {
     readInstalledPluginCatalogEntry,
     type PluginCatalogEntry,
 } from '@/plugins/projection/catalog/installed';
-import { requestUserPluginChange } from '@/plugins/daemon/changeClient';
+import {
+    listUserPluginChanges,
+    readUserPluginChangeStatus,
+    requestUserPluginChange,
+} from '@/plugins/daemon/changeClient';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import { setInstalledPluginEnabled } from '@/plugins/store/enabled';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -59,7 +72,13 @@ import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
 
+type ConnectedServiceProbeCredentials = NonNullable<
+    Awaited<ReturnType<typeof resolveProbeBackendContext>>['credentials']
+>;
+type ConnectedServiceProbeApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
+
 type CliProbeDependencies = Readonly<{
+    createApiClient?: (credentials: ConnectedServiceProbeCredentials) => Promise<ConnectedServiceProbeApi>;
     getAgentCatalogObservation?: () => Readonly<{
         machineId: string;
         service: AgentProviderCatalogObservationService;
@@ -67,6 +86,86 @@ type CliProbeDependencies = Readonly<{
     agentRegistrySnapshot?: ReturnType<typeof getResolvedContributionRegistry>;
     isAgentRegistryCurrent?: () => boolean;
 }>;
+
+type ConnectedServiceProbeEnvironment = Readonly<{
+    materializedEnv: Readonly<Record<string, string>> | null;
+    connectedServiceSelectionCacheKey: string | null;
+    cleanup: (() => Promise<void>) | null;
+}>;
+
+async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
+    agentId: string;
+    cwd: string;
+    connectedServices: ReturnType<typeof ConnectedServiceBindingsV1Schema.parse> | null;
+    credentials: Awaited<ReturnType<typeof resolveProbeBackendContext>>['credentials'];
+    accountSettings: Record<string, unknown> | null;
+    requiresMaterializedAuth: boolean;
+    dependencies: CliProbeDependencies;
+}>): Promise<ConnectedServiceProbeEnvironment> {
+    if (!params.requiresMaterializedAuth || !params.connectedServices) {
+        return {
+            materializedEnv: null,
+            connectedServiceSelectionCacheKey: null,
+            cleanup: null,
+        };
+    }
+    if (!params.credentials) {
+        throw new Error('Connected-service credentials are unavailable for this preflight probe');
+    }
+    if (!params.dependencies.createApiClient) {
+        throw new Error('Connected-service API owner is unavailable for this preflight probe');
+    }
+
+    const materializationIdentity = generateConnectedServiceMaterializationIdentityV1();
+    const materializationBaseDir = join(
+        configuration.happyHomeDir,
+        'daemon',
+        'connected-services',
+        'materialized',
+    );
+    const registry = params.dependencies.agentRegistrySnapshot ?? getResolvedContributionRegistry();
+    const resolved = await resolveConnectedServiceAuthForSpawn({
+        agentId: params.agentId,
+        sessionDirectory: params.cwd,
+        connectedServicesBindingsRaw: params.connectedServices,
+        materializationKey: materializationIdentity.id,
+        activeServerDir: configuration.activeServerDir,
+        baseDir: materializationBaseDir,
+        credentials: params.credentials,
+        api: await params.dependencies.createApiClient(params.credentials),
+        accountSettings: params.accountSettings,
+        processEnv: process.env,
+        resolveQualifiedPurposeBindingSnapshot: (bindings) =>
+            resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+                agentId: params.agentId,
+                bindings,
+                contributions: registry,
+            }),
+        // Capability probes observe the current selection. Spawn/runtime owners alone may refresh
+        // credentials or advance an auth group.
+        authGroupSwitchCoordinator: null,
+        credentialRefreshService: null,
+    });
+    if (!resolved) {
+        throw new Error('The selected connected-service account could not be materialized for this preflight probe');
+    }
+
+    const ephemeralRoot = resolveConnectedServiceMaterializedRootDir({
+        baseDir: materializationBaseDir,
+        agentId: params.agentId,
+        materializationKey: materializationIdentity.id,
+    });
+    return {
+        materializedEnv: resolved.env,
+        connectedServiceSelectionCacheKey:
+            resolved.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] ?? null,
+        cleanup: async () => {
+            resolved.cleanupOnExit?.();
+            resolved.cleanupOnFailure?.();
+            await rm(ephemeralRoot, { recursive: true, force: true });
+        },
+    };
+}
 
 function buildCapabilityId(kind: 'cli' | 'tool' | 'dep', suffix: string): CapabilityId {
     // `CapabilityId` is intentionally a namespaced string type (`cli.${string}` / etc). TS does not
@@ -120,11 +219,49 @@ async function invokeCliProbeOrInstallMethod(
         return null;
     }
 
-    const probeContext = await resolveProbeBackendContext({ ...params, agentId });
     const { cwd, timeoutMs } = resolveCliProbeInvokeParams(params);
-    const connectedServices = params && Object.prototype.hasOwnProperty.call(params, 'connectedServices')
-        ? params.connectedServices
-        : undefined;
+    const parsedConnectedServices = ConnectedServiceBindingsV1Schema.safeParse(params?.connectedServices);
+    const connectedServices = parsedConnectedServices.success ? parsedConnectedServices.data : null;
+    const materializationAgentId =
+        resolveCatalogAgentConnectedServiceIds(agentId).length > 0
+            ? agentId
+            : null;
+    const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(agentId).catch(() => null);
+    const requiresMaterializedAuth = Boolean(
+        materializationAgentId
+        && connectedServices
+        && preflightAdapter?.connectedServiceAuth === 'materialized-env',
+    );
+    const probeContext = await resolveProbeBackendContext(
+        { ...params, agentId },
+        { requireCredentials: requiresMaterializedAuth },
+    );
+    let connectedServiceProbeEnvironment: ConnectedServiceProbeEnvironment = {
+        materializedEnv: null,
+        connectedServiceSelectionCacheKey: null,
+        cleanup: null,
+    };
+    if (materializationAgentId) {
+        try {
+            connectedServiceProbeEnvironment = await resolveConnectedServiceProbeEnvironment({
+                agentId: materializationAgentId,
+                cwd,
+                connectedServices,
+                credentials: probeContext.credentials,
+                accountSettings: probeContext.accountSettings,
+                requiresMaterializedAuth,
+                dependencies,
+            });
+        } catch {
+            return {
+                ok: false,
+                error: {
+                    code: 'connected-service-preflight-failed',
+                    message: 'Could not prepare the selected connected-service account for this probe.',
+                },
+            };
+        }
+    }
     const commonProbeArgs = {
         agentId,
         backendTarget: probeContext.backendTarget,
@@ -132,11 +269,14 @@ async function invokeCliProbeOrInstallMethod(
         timeoutMs,
         accountSettings: probeContext.accountSettings,
         credentials: probeContext.credentials,
-        ...(connectedServices !== undefined ? { connectedServices } : {}),
+        materializedEnv: connectedServiceProbeEnvironment.materializedEnv ?? undefined,
+        connectedServiceSelectionCacheKey:
+            connectedServiceProbeEnvironment.connectedServiceSelectionCacheKey,
     };
 
-    if (method === 'probeModels') {
-        const modelConfig = isAgentId(agentId) ? getAgentModelConfig(agentId) : null;
+    try {
+      if (method === 'probeModels') {
+        const modelConfig = getAgentModelConfig(agentId);
         const observation = modelConfig?.nativeCatalogObservation;
         const bindings = ConnectedServiceBindingsV1Schema.safeParse(params?.connectedServices);
         const observationRuntime = dependencies.getAgentCatalogObservation?.() ?? null;
@@ -194,12 +334,15 @@ async function invokeCliProbeOrInstallMethod(
                 };
             }
         }
-        return { ok: true, result: await probeAgentModelsBestEffort(commonProbeArgs) };
+          return { ok: true, result: await probeAgentModelsBestEffort(commonProbeArgs) };
+      }
+      if (method === 'probeModes') {
+          return { ok: true, result: await probeAgentModesBestEffort(commonProbeArgs) };
+      }
+      return { ok: true, result: await probeAgentConfigOptionsBestEffort(commonProbeArgs) };
+    } finally {
+      await connectedServiceProbeEnvironment.cleanup?.();
     }
-    if (method === 'probeModes') {
-        return { ok: true, result: await probeAgentModesBestEffort(commonProbeArgs) };
-    }
-    return { ok: true, result: await probeAgentConfigOptionsBestEffort(commonProbeArgs) };
 }
 
 async function invokeAgentCliInstall(
@@ -272,8 +415,10 @@ type PluginMarketplaceCapabilityMethod =
     | 'uninstall'
     | 'forgetTrust'
     | 'create'
+    | 'develop'
     | 'test'
-    | 'pack';
+    | 'pack'
+    | 'changeStatus';
 
 function resolveMarketplaceActionMethod(method: string): PluginMarketplaceCapabilityMethod | null {
     if (
@@ -285,12 +430,82 @@ function resolveMarketplaceActionMethod(method: string): PluginMarketplaceCapabi
         || method === 'uninstall'
         || method === 'forgetTrust'
         || method === 'create'
+        || method === 'develop'
         || method === 'test'
         || method === 'pack'
+        || method === 'changeStatus'
     ) {
         return method;
     }
     return null;
+}
+
+/**
+ * Rejoins one daemon-issued pending change by its id, without creating or
+ * deciding anything.
+ *
+ * This is the read a present user needs before answering a change some other
+ * client prepared: the snapshot listing can be minutes old, and the honest
+ * arms — still applying, already expired, daemon gone — are only knowable from
+ * the change owner at decision time. It travels verbatim so the caller renders
+ * exactly what `happier plugins change status` renders.
+ */
+async function invokePluginChangeStatusAction(
+    params: Record<string, unknown> | undefined,
+): Promise<CapabilitiesInvokeResponse> {
+    const pendingChangeId = typeof params?.pendingChangeId === 'string' ? params.pendingChangeId.trim() : '';
+    if (!pendingChangeId) {
+        return { ok: false, error: { message: 'pendingChangeId is required', code: 'plugin_change_missing' } };
+    }
+    const status = await readUserPluginChangeStatus({ pendingChangeId });
+    return { ok: true, result: { action: 'changeStatus', pendingChangeId, status } };
+}
+
+/**
+ * Starts a local development source through the canonical daemon change owner
+ * and hands the pending review back to the caller.
+ *
+ * `approval: 'none'` is deliberate and load-bearing. A local development source
+ * is executable code the daemon will evaluate, and the terminal prompt owner
+ * (`changeClient`) is not present for a remote client. Approving here would be
+ * exactly the trust bypass §2 forbids, so the daemon's `sourceRootReviewRequired`
+ * and `reviewRequired` results travel back verbatim and a present user decides
+ * them through `daemon.plugins.install.review.decide`.
+ */
+async function invokePluginDevelopAction(
+    params: Record<string, unknown> | undefined,
+): Promise<CapabilitiesInvokeResponse> {
+    const sourceRootPath = typeof params?.sourceRootPath === 'string' ? params.sourceRootPath.trim() : '';
+    if (!sourceRootPath) {
+        return { ok: false, error: { message: 'sourceRootPath is required', code: 'plugin_source_missing' } };
+    }
+    const requestedPluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
+    const sdkRegistryOrigin = typeof params?.sdkRegistryOrigin === 'string'
+        ? params.sdkRegistryOrigin.trim()
+        : '';
+    const change = await requestUserPluginChange({
+        request: {
+            kind: 'development',
+            sourceRootPath,
+            ...(requestedPluginId ? { pluginId: requestedPluginId } : {}),
+            ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
+        },
+        approval: 'none',
+    });
+    if (
+        change.kind === 'sourceRootReviewRequired'
+        || change.kind === 'reviewRequired'
+        || change.kind === 'committed'
+    ) {
+        return { ok: true, result: { action: 'develop', sourceRootPath, change } };
+    }
+    return {
+        ok: false,
+        error: {
+            message: `The daemon did not start the development source (${change.kind}).`,
+            code: change.kind,
+        },
+    };
 }
 
 function projectPluginDevelopmentSources(
@@ -330,7 +545,29 @@ async function invokePluginDevelopmentAction(
         const targetDir = typeof params?.targetDir === 'string' ? params.targetDir.trim() : '';
         const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
         const displayName = typeof params?.displayName === 'string' ? params.displayName.trim() : '';
-        const result = await scaffoldLocalPlugin({ targetDir, pluginId, displayName });
+        // The scaffold UI mode has one vocabulary owner. Resolving it here
+        // through the same schema the CLI flag and the `plugins.scaffold`
+        // action input use keeps this third caller from silently scaffolding a
+        // non-UI plugin when the client asked for a UI surface.
+        const requestedUi = params?.ui;
+        const ui = requestedUi === undefined || requestedUi === null
+            ? undefined
+            : PluginScaffoldUiModeSchema.safeParse(requestedUi);
+        if (ui && !ui.success) {
+            return {
+                ok: false,
+                error: {
+                    message: `Unsupported plugin scaffold UI mode: ${String(requestedUi)}`,
+                    code: 'plugin_scaffold_invalid_input',
+                },
+            };
+        }
+        const result = await scaffoldLocalPlugin({
+            targetDir,
+            pluginId,
+            displayName,
+            ...(ui ? { ui: ui.data } : {}),
+        });
         if (!result.ok) {
             return {
                 ok: false,
@@ -346,7 +583,8 @@ async function invokePluginDevelopmentAction(
                 action,
                 pluginId: result.pluginId,
                 sourceRootPath: result.targetDir,
-                manifestPath: result.manifestPath,
+                sourceEntryPath: result.sourceEntryPath,
+                ...(result.uiEntryPath ? { uiEntryPath: result.uiEntryPath } : {}),
             },
         };
     }
@@ -420,6 +658,14 @@ async function invokePluginMarketplaceAction(
     const action = resolveMarketplaceActionMethod(method);
     if (!action) {
         return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
+    }
+
+    if (action === 'develop') {
+        return await invokePluginDevelopAction(params);
+    }
+
+    if (action === 'changeStatus') {
+        return await invokePluginChangeStatusAction(params);
     }
 
     if (action === 'create' || action === 'test' || action === 'pack') {
@@ -582,16 +828,25 @@ function createPluginMarketplaceCapability(
                 uninstall: { title: 'Uninstall' },
                 forgetTrust: { title: 'Forget trust' },
                 create: { title: 'Create' },
+                develop: { title: 'Develop' },
                 test: { title: 'Test' },
                 pack: { title: 'Pack' },
+                changeStatus: { title: 'Plugin change status' },
             },
         },
         detect: async () => {
             const installedPlugins = await readPluginCatalog();
+            // A change an Agent (or another client) prepared has no caller left
+            // to hand its issued id to. Projecting the daemon's outstanding
+            // decisions here makes it discoverable on the same plugin-truth
+            // read the app already refreshes, instead of requiring the id to
+            // travel out of band.
+            const pendingChanges = await listUserPluginChanges();
             return {
                 installedPlugins,
-                developmentActions: { create: true },
+                developmentActions: { create: true, develop: true },
                 developmentSources: projectPluginDevelopmentSources(installedPlugins),
+                pendingChanges: pendingChanges.changes,
             };
         },
         invoke: async ({ method, params }) => invokePluginMarketplaceAction(method, params),
@@ -637,6 +892,7 @@ function augmentCliCapabilityWithProviderCliMethods(
 }
 
 export async function createCliCapabilitiesService(dependencies: Readonly<{
+    createApiClient?: CliProbeDependencies['createApiClient'];
     readPluginCatalog?: () => Promise<readonly PluginCatalogEntry[]>;
     getAgentCatalogObservation?: () => Readonly<{
         machineId: string;

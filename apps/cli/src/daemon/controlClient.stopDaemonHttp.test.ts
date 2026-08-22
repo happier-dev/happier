@@ -3,7 +3,7 @@ import http from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
-import { clearDaemonState, writeDaemonState } from '@/persistence';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { stopDaemonHttp, stopDaemonSession } from '@/daemon/controlClient';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -44,7 +44,7 @@ describe('daemon control client: stopDaemonHttp', () => {
   let tmpHomeDir: string | null = null;
 
   afterEach(async () => {
-    await clearDaemonState();
+    await clearDaemonStateForTestTeardown();
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     reloadConfiguration();
@@ -54,7 +54,7 @@ describe('daemon control client: stopDaemonHttp', () => {
     }
   });
 
-  it('POSTs /stop with stopSessions and managed-service transfer intent when requested', async () => {
+  it('POSTs /stop with the requested session-stop intent', async () => {
     let observed: { token: string; body: string } | null = null;
 
     const server = http.createServer(async (req, res) => {
@@ -87,14 +87,12 @@ describe('daemon control client: stopDaemonHttp', () => {
 
       await stopDaemonHttp({
         stopSessions: true,
-        transferManagedLocalServices: true,
       });
 
       const req = requireObserved(observed);
       expect(req.token).toBe('test-token');
       expect(JSON.parse(req.body)).toEqual({
         stopSessions: true,
-        transferManagedLocalServices: true,
       });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

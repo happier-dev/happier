@@ -3,13 +3,19 @@ import { logger } from '../ui/logger';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DaemonExecutionRunMarkerSchema, type DaemonExecutionRunMarker } from '@happier-dev/protocol';
-import { normalizePersistedExecutionRunConnectedServicesLaunchV1 } from '@happier-dev/protocol';
+import {
+  DaemonExecutionRunMarkerPersistenceReadSchema,
+  DaemonExecutionRunMarkerSchema,
+  type DaemonExecutionRunMarker,
+  type DaemonExecutionRunMarkerPersistenceRead,
+} from '@happier-dev/protocol';
 import { resolveReleaseRingScopedBasename } from '../cli/runtime/publicReleaseChannel';
 
 const ExecutionRunMarkerSchema = DaemonExecutionRunMarkerSchema;
+const ExecutionRunMarkerPersistenceReadSchema = DaemonExecutionRunMarkerPersistenceReadSchema;
 
 export type ExecutionRunMarker = DaemonExecutionRunMarker;
+type ExecutionRunMarkerPersistenceRead = DaemonExecutionRunMarkerPersistenceRead;
 
 function resolveExecutionRunMarkerDir(): string {
   return join(
@@ -32,12 +38,15 @@ function isCanonicalExecutionRunMarkerEntry(entry: string): boolean {
   return entry.startsWith('run-') && entry.endsWith('.json');
 }
 
-async function readExecutionRunMarkerFile(path: string): Promise<ExecutionRunMarker | null> {
+async function readExecutionRunMarkerFile(path: string): Promise<ExecutionRunMarkerPersistenceRead | null> {
   try {
     const raw = await readFile(path, 'utf8');
-    const parsed = ExecutionRunMarkerSchema.safeParse(JSON.parse(raw));
+    const parsed = ExecutionRunMarkerPersistenceReadSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) return null;
-    if (parsed.data.happyHomeDir !== configuration.happyHomeDir) return null;
+    // Current markers are scoped by this owner-local directory and intentionally
+    // contain no path. A predecessor marker may still carry its old path key;
+    // reject it if it names a different owner directory.
+    if (parsed.data.happyHomeDir !== undefined && parsed.data.happyHomeDir !== configuration.happyHomeDir) return null;
     return parsed.data;
   } catch {
     return null;
@@ -71,9 +80,9 @@ function isRunningMarker(marker: ExecutionRunMarker): boolean {
 async function shouldSkipOverwriteForTerminalMarker(filePath: string, next: ExecutionRunMarker): Promise<boolean> {
   try {
     const raw = await readFile(filePath, 'utf8');
-    const parsed = ExecutionRunMarkerSchema.safeParse(JSON.parse(raw));
+    const parsed = ExecutionRunMarkerPersistenceReadSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) return false;
-    if (parsed.data.happyHomeDir !== next.happyHomeDir) return false;
+    if (parsed.data.happyHomeDir !== undefined && parsed.data.happyHomeDir !== configuration.happyHomeDir) return false;
     if (isTerminalMarker(parsed.data) && isRunningMarker(next)) return true;
   } catch {
     // ignore read/parse issues
@@ -126,14 +135,11 @@ async function writeJsonAtomic(filePath: string, value: ExecutionRunMarker): Pro
   }
 }
 
-export async function writeExecutionRunMarker(marker: Omit<ExecutionRunMarker, 'happyHomeDir'>): Promise<void> {
+export async function writeExecutionRunMarker(marker: ExecutionRunMarker): Promise<void> {
   const dir = resolveExecutionRunMarkerDir();
   await mkdir(dir, { recursive: true });
 
-  const payload: ExecutionRunMarker = ExecutionRunMarkerSchema.parse({
-    ...marker,
-    happyHomeDir: configuration.happyHomeDir,
-  });
+  const payload: ExecutionRunMarker = ExecutionRunMarkerSchema.parse(marker);
   await writeJsonAtomic(resolveExecutionRunMarkerPath(payload.runId), payload);
 }
 
@@ -172,12 +178,15 @@ export async function removeExecutionRunMarker(runId: string): Promise<void> {
   }
 }
 
-async function listExecutionRunMarkersRaw(): Promise<ExecutionRunMarker[]> {
+async function listExecutionRunMarkersRaw(): Promise<ExecutionRunMarkerPersistenceRead[]> {
   const dir = resolveExecutionRunMarkerDir();
   await mkdir(dir, { recursive: true });
 
   const entries = await readdir(dir);
-  const recovered = new Map<string, Readonly<{ marker: ExecutionRunMarker; isCanonical: boolean }>>();
+  const recovered = new Map<string, Readonly<{
+    marker: ExecutionRunMarkerPersistenceRead;
+    isCanonical: boolean;
+  }>>();
   for (const entry of entries) {
     if (!isExecutionRunMarkerEntry(entry)) continue;
     const path = join(dir, entry);
@@ -208,25 +217,18 @@ async function listExecutionRunMarkersRaw(): Promise<ExecutionRunMarker[]> {
 }
 
 function projectExecutionRunMarkerForPublication(
-  marker: ExecutionRunMarker,
+  marker: ExecutionRunMarkerPersistenceRead,
 ): ExecutionRunMarker {
-  const persistedLaunch = marker.executionRunConnectedServicesLaunchV1;
-  if (!persistedLaunch) return marker;
-  const normalized = normalizePersistedExecutionRunConnectedServicesLaunchV1(persistedLaunch);
-  if (!normalized || normalized.source === 'remote_dev_predecessor') {
-    const {
-      executionRunConnectedServicesLaunchV1: _predecessorLaunch,
-      ...publicMarker
-    } = marker;
-    return publicMarker;
-  }
-  return {
-    ...marker,
-    executionRunConnectedServicesLaunchV1: normalized.registration,
-  };
+  // Launch registration is a rehydration-only compatibility fact. Public marker
+  // consumers receive the bounded operational run state, never its launch config.
+  const {
+    executionRunConnectedServicesLaunchV1: _ownerLocalLaunch,
+    ...publicMarker
+  } = marker;
+  return ExecutionRunMarkerSchema.parse(publicMarker);
 }
 
-export async function listExecutionRunMarkersForRehydration(): Promise<ExecutionRunMarker[]> {
+export async function listExecutionRunMarkersForRehydration(): Promise<ExecutionRunMarkerPersistenceRead[]> {
   return await listExecutionRunMarkersRaw();
 }
 

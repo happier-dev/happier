@@ -29,19 +29,22 @@ const credentials = {
 const initialCiphertext = sealAccountScopedBlobCiphertext({
   kind: 'account_settings',
   material: { type: 'legacy', secret },
-  payload: { ...accountSettingsParse({ schemaVersion: 2 }), someKey: 'before' },
+  payload: { ...accountSettingsParse({ schemaVersion: 2 }), reviewPromptLikedApp: false },
   randomBytes: () => new Uint8Array(24).fill(1),
 });
 
 let postedContent = null;
 const result = await updateAccountSettingsV2WithRetry({
   credentials,
-  mutate: (settings) => ({ ...settings, someKey: 'after' }),
+  mutation: {
+    operations: [{ op: 'set', key: 'reviewPromptLikedApp', value: true }],
+  },
   deps: {
     fetchSettings: async () => ({
       content: { t: 'encrypted', c: initialCiphertext },
       version: 10,
     }),
+    resolveAccountEncryptionMode: async () => 'e2ee',
     updateSettings: async (req) => {
       postedContent = req.content;
       return { success: true, version: 11 };
@@ -52,6 +55,9 @@ const result = await updateAccountSettingsV2WithRetry({
 if (!postedContent || postedContent.t !== 'encrypted') {
   throw new Error('missing encrypted content');
 }
+if (result.status !== 'applied') {
+  throw new Error(\`unexpected account settings result: \${result.status}\`);
+}
 
 const opened = openAccountScopedBlobCiphertext({
   kind: 'account_settings',
@@ -61,7 +67,7 @@ const opened = openAccountScopedBlobCiphertext({
 
 console.log(JSON.stringify({
   version: result.version,
-  updated: opened?.value?.someKey === 'after',
+  updated: opened?.value?.reviewPromptLikedApp === true,
 }));
 `;
 

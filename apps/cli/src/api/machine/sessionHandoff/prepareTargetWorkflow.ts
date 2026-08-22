@@ -1,5 +1,5 @@
 import {
-  resolvePrepareTargetBootstrap,
+  resumePersistedPrepareTarget as resumePersistedPrepareTargetBootstrap,
   type ResolvePrepareTargetBootstrapInput,
 } from './prepareTargetBootstrap';
 import type { SessionHandoffPrepareTargetJobRecordV2 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
@@ -29,19 +29,10 @@ export function createSessionHandoffPrepareTargetWorkflow(
   });
   const resumePersistedPrepareTarget = async (
     record: SessionHandoffPrepareTargetJobRecordV2,
-  ): Promise<void> => {
-    if (!record.prepareTargetRequest) {
-      throw new Error('Interrupted prepare-target job has no persisted request');
-    }
-    if (record.prepareTargetRequest.handoffId !== record.handoffId) {
-      throw new Error('Interrupted prepare-target job identity disagrees with its persisted request');
-    }
-    await resolvePrepareTargetBootstrap({
-      ...params,
-      request: record.prepareTargetRequest,
-      acceptedResumeJobId: record.jobId,
-    });
-  };
+  ): Promise<void> => resumePersistedPrepareTargetBootstrap({
+    ...params,
+    record,
+  });
 
   return {
     handlePrepareTargetRaw,

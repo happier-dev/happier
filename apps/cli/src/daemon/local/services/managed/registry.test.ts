@@ -81,6 +81,37 @@ describe('createManagedLocalServiceRegistry', () => {
         });
     });
 
+    it('treats an exact owned process listener as high-confidence custody', () => {
+        const registry = createManagedLocalServiceRegistry();
+        registry.startDetectAfterLaunch({
+            id: 'plugin-a:exact',
+            owner: { kind: 'plugin', pluginId: 'plugin-a' },
+            minimumConfidence: 'high',
+            process: { pid: 300, startedAt: 1_000 },
+            routeName: 'plugin-a-exact',
+        });
+
+        const related = registry.applyInventoryEntry({
+            id: 'machine-a:tcp:127.0.0.1:5174',
+            port: 5174,
+            confidence: 'high',
+            processOwnershipConfidence: 'medium',
+            provenance: {
+                process: {
+                    pid: 300,
+                    lineagePids: [300, 1],
+                    redacted: true,
+                    command: 'fixture-server',
+                },
+            },
+        });
+
+        expect(related).toMatchObject({
+            phase: 'running',
+            port: 5174,
+        });
+    });
+
     it('starts assign-and-inject services in running with the assigned host and port', () => {
         const registry = createManagedLocalServiceRegistry();
         const state = registry.startAssignAndInject({

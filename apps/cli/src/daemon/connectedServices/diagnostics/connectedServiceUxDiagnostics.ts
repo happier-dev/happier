@@ -30,6 +30,7 @@ export function resolveConnectedServiceUxDiagnosticActions(
       ];
     case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.metadataUpdateFailed:
     case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.recoveryRetryScheduled:
+    case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable:
       return [
         CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry,
         CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.openConnectedAccounts,

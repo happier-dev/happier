@@ -68,10 +68,7 @@ describe('startDaemonHeartbeatLoop execution run marker gc', () => {
       callId: 'call_1',
       sidechainId: 'side_1',
       intent: 'review',
-      backendId: 'claude',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      retentionPolicy: 'ephemeral',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       status: 'succeeded',
       startedAtMs: Date.now() - 10_000,
       updatedAtMs: Date.now() - 9_000,
@@ -98,6 +95,7 @@ describe('startDaemonHeartbeatLoop execution run marker gc', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();

@@ -7,7 +7,7 @@ import {
   type ProviderRuntimeBindingBasisV1,
   type SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
-import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   createSessionModelTransitionAuthorizer,
@@ -126,32 +126,14 @@ function managedRuntimeBindingBasis(
     v: 1,
     deployment: {
       kind: 'managedLocal',
-      securityFacts: {
-        implementationIdentity: {
-          pluginId: 'provider.test',
-          localId: 'gateway',
-        },
-        managedEndpoint: {
-          localService: {
-            id: 'gateway',
-            launch: {
-              kind: 'packaged-runtime-binary',
-              directorySegments: ['gateway'],
-              executableBaseName: 'gateway',
-              privateConfigPathFlag: '--config',
-            },
-            launchMode: {
-              kind: 'assignAndInject',
-              portPolicy: { kind: 'allocated' },
-            },
-            hostPolicy: { kind: 'loopback' },
-            name: { strategy: 'fixed', name: 'Gateway' },
-            healthCheck: { kind: 'http', path: '/health' },
-            restart: { kind: 'never' },
-            cleanup: { staleAfterMs: 60_000 },
-          },
-          protocols: ['anthropic'],
-        },
+      implementationIdentity: {
+        pluginId: 'provider.test',
+        localId: 'gateway',
+      },
+      managedRuntime: {
+        kind: 'managed',
+        dependencies: [],
+        endpointTemplateIds: ['messages'],
         connectedAccounts: purposes.map((purpose) => ({
           purpose,
           service: {
@@ -277,6 +259,7 @@ function createHarness(params?: Readonly<{
   initial?: ProviderBoundModelRef;
   initialTarget?: AuthorizedSessionModelTransitionTarget;
   authoritativeRuntimeReadback?: boolean;
+  checkCurrentPublisherAuthority?: () => Promise<boolean>;
   readRuntimeModelId?: () => Promise<string | null> | string | null;
   subscribeRuntimeModelChanges?: (handler: () => void) => () => void;
 }>) {
@@ -307,6 +290,7 @@ function createHarness(params?: Readonly<{
   const publishActive = vi.fn(async (target: AuthorizedSessionModelTransitionTarget) => {
     events.push(`active:${target.selection.modelId}`);
   });
+  const revokeActiveSelectionProof = vi.fn(async () => undefined);
   const fence = vi.fn(async () => {
     events.push('fence');
   });
@@ -332,10 +316,13 @@ function createHarness(params?: Readonly<{
     agentTargetKey: 'backend:claude',
     initialActiveTarget: params?.initialTarget ?? authorized(current),
     isCurrentRun: () => currentRun,
+    checkCurrentPublisherAuthority:
+      params?.checkCurrentPublisherAuthority ?? (async () => true),
     authorize,
     publishIntent,
     applyRuntime,
     publishActive,
+    revokeActiveSelectionProof,
     fencePromptAdmission: fence,
     clearPromptAdmission: unfence,
     transferPromptAdmission,
@@ -355,6 +342,7 @@ function createHarness(params?: Readonly<{
     publishIntent,
     applyRuntime,
     publishActive,
+    revokeActiveSelectionProof,
     fence,
     unfence,
     transferPromptAdmission,
@@ -382,6 +370,187 @@ describe('createSessionModelTransitionCoordinator', () => {
         status: 'applied',
       }),
     ).toEqual({ status: 'applied' });
+  });
+
+  it('publishes an admitted same-selection replacement target before making it active', async () => {
+    const initial = authorized(provider('pc_work', 'old'));
+    const successor = {
+      ...initial,
+      sessionBindingMetadata: {
+        ...initial.sessionBindingMetadata!,
+        bindingSecurityFingerprint: 'security:successor',
+      },
+    } satisfies AuthorizedSessionModelTransitionTarget;
+    const harness = createHarness({ initialTarget: initial });
+
+    await harness.coordinator.admitReplacementTarget(successor);
+
+    expect(harness.publishActive).toHaveBeenCalledWith(successor);
+    expect(harness.coordinator.readActiveTarget()).toBe(successor);
+    expect(harness.events).toEqual(['active:old']);
+
+    await harness.coordinator.dispose();
+  });
+
+  it('rejects a replacement admission that changes the active selection', async () => {
+    const harness = createHarness();
+    const successor = authorized(provider('pc_work', 'next'));
+
+    await expect(
+      harness.coordinator.admitReplacementTarget(successor),
+    ).rejects.toThrow('replacement_target_selection_mismatch');
+
+    expect(harness.publishActive).not.toHaveBeenCalled();
+    expect(harness.coordinator.readActiveTarget().selection).toEqual(
+      provider('pc_work', 'old'),
+    );
+
+    await harness.coordinator.dispose();
+  });
+
+  it('queues transitions while a stable active-target effect is in flight, then applies after release', async () => {
+    const harness = createHarness();
+    const effectStarted = deferred<void>();
+    const releaseEffect = deferred<void>();
+    const stable = harness.coordinator.runWithStableActiveTarget(
+      async (target) => {
+        expect(target.selection).toEqual(provider('pc_work', 'old'));
+        effectStarted.resolve();
+        await releaseEffect.promise;
+        return 'launched';
+      },
+    );
+    await effectStarted.promise;
+
+    const transition = harness.coordinator.submit(
+      provider('pc_work', 'next'),
+      { source: 'command' },
+    );
+    await Promise.resolve();
+    expect(harness.applyRuntime).not.toHaveBeenCalled();
+    expect(harness.publishActive).not.toHaveBeenCalled();
+
+    releaseEffect.resolve();
+    await expect(stable).resolves.toEqual({
+      status: 'completed',
+      value: 'launched',
+    });
+    await expect(transition).resolves.toMatchObject({
+      ok: true,
+      status: 'applied',
+      activeSelection: provider('pc_work', 'next'),
+    });
+  });
+
+  it('releases a queued transition when a stable active-target effect fails', async () => {
+    const harness = createHarness();
+    const effectStarted = deferred<void>();
+    const releaseEffect = deferred<void>();
+    const stable = harness.coordinator.runWithStableActiveTarget(
+      async () => {
+        effectStarted.resolve();
+        await releaseEffect.promise;
+        throw new Error('terminal launch failed');
+      },
+    );
+    await effectStarted.promise;
+    const transition = harness.coordinator.submit(
+      provider('pc_work', 'next'),
+      { source: 'command' },
+    );
+
+    releaseEffect.resolve();
+    await expect(stable).rejects.toThrow('terminal launch failed');
+    await expect(transition).resolves.toMatchObject({
+      ok: true,
+      status: 'applied',
+    });
+    expect(harness.applyRuntime).toHaveBeenCalledTimes(1);
+    expect(harness.publishActive).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for stable active-target custody before disposing and refuses new transitions', async () => {
+    const harness = createHarness();
+    const effectStarted = deferred<void>();
+    const releaseEffect = deferred<void>();
+    const stable = harness.coordinator.runWithStableActiveTarget(
+      async () => {
+        effectStarted.resolve();
+        await releaseEffect.promise;
+      },
+    );
+    await effectStarted.promise;
+    const dispose = harness.coordinator.dispose();
+    let disposed = false;
+    void dispose.then(() => {
+      disposed = true;
+    });
+
+    await expect(harness.coordinator.submit(
+      provider('pc_work', 'next'),
+      { source: 'command' },
+    )).resolves.toMatchObject({
+      ok: false,
+      status: 'owner_unavailable',
+    });
+    await Promise.resolve();
+    expect(disposed).toBe(false);
+
+    releaseEffect.resolve();
+    await expect(stable).resolves.toMatchObject({ status: 'completed' });
+    await dispose;
+    expect(disposed).toBe(true);
+  });
+
+  it('retains prompt custody when superseded after active publication but before the custody check', async () => {
+    const checkCurrentPublisherAuthority = vi.fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const harness = createHarness({ checkCurrentPublisherAuthority });
+    const dispatch = vi.fn(async () => {});
+
+    const result = await harness.coordinator.submit(
+      provider('pc_work', 'next'),
+      {
+        source: 'prompt',
+        runWithActiveSelection: async (consume) => {
+          await consume({
+            abortSignal: new AbortController().signal,
+            dispatch,
+          });
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'owner_unavailable',
+    });
+    expect(harness.publishActive).toHaveBeenCalledTimes(1);
+    expect(checkCurrentPublisherAuthority).toHaveBeenCalledTimes(2);
+    expect(harness.unfence).not.toHaveBeenCalled();
+    expect(harness.transferPromptAdmission).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not start a runtime effect when superseded before the immediate effect check', async () => {
+    const checkCurrentPublisherAuthority = vi.fn(async () => false);
+    const harness = createHarness({ checkCurrentPublisherAuthority });
+
+    const result = await harness.coordinator.submit(
+      provider('pc_work', 'next'),
+      { source: 'command' },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'owner_unavailable',
+    });
+    expect(checkCurrentPublisherAuthority).toHaveBeenCalledTimes(1);
+    expect(harness.applyRuntime).not.toHaveBeenCalled();
+    expect(harness.publishActive).not.toHaveBeenCalled();
+    expect(harness.fence).toHaveBeenCalledTimes(1);
+    expect(harness.unfence).not.toHaveBeenCalled();
   });
 
   it('fences, applies the exact structured Provider binding, publishes active facts, then unfences', async () => {

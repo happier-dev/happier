@@ -7,15 +7,12 @@ import {
     type SessionHandoffLocalMetadataSource,
 } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
+import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { buildRuntimeLocalHandoffMetadataForAgent } from '@/session/handoff/metadata/catalogHooks';
 import type { TrackedSession } from '../types';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import {
-    getAgentResumeConfig,
-    isAgentId,
-} from '@happier-dev/agents';
+import { getAgentResumeConfig } from '@happier-dev/agents';
 import { buildProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import { projectAgentVisibleSessionMetadata } from '@/agent/runtime/sessionMetadataVisibility';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -134,8 +131,9 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
     const runtimeIdentity = resolveSessionRuntimeIdentityFallback({ metadata });
     const agentId = typeof runtimeIdentity.providerId === 'string' ? runtimeIdentity.providerId.trim() : '';
 
-    if (isAgentId(agentId)) {
-        const vendorResumeIdField = getAgentResumeConfig(agentId).vendorResumeIdField;
+    const agentResumeConfig = agentId ? getAgentResumeConfig(agentId) : null;
+    if (agentResumeConfig) {
+        const vendorResumeIdField = agentResumeConfig.vendorResumeIdField;
         if (vendorResumeIdField && !(runtimeLocalMetadata as Record<string, unknown>)[vendorResumeIdField]) {
             Object.assign(
                 runtimeLocalMetadata,
@@ -145,9 +143,18 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
                 }),
             );
         }
+    }
+
+    // Catalog membership, rather than the generated built-in ID set, decides
+    // whether a runtime identity owns a handoff metadata hook. This keeps an
+    // installed external Agent exact while leaving configured ACP identities
+    // without a catalog Agent unmodified.
+    if (agentId && isCatalogAgentId(agentId)) {
         const providerRuntimeLocalMetadata = buildRuntimeLocalHandoffMetadataForAgent(agentId, {
-            metadata: projectAgentVisibleSessionMetadata(metadata),
-            trackedSession: params.trackedSession,
+            machineId: normalizeOptionalString(metadata.machineId),
+            workingDirectory: normalizeOptionalString(metadata.path),
+            transcriptStorage: normalizeOptionalString(params.trackedSession.spawnOptions?.transcriptStorage),
+            environmentVariables: params.trackedSession.spawnOptions?.environmentVariables ?? null,
             vendorResumeId,
         });
         if (providerRuntimeLocalMetadata) {

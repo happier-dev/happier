@@ -2,17 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 
-const readCredentialsMock = vi.fn<() => Promise<Credentials | null>>();
+const readStoredCredentialsMock = vi.fn<() => Promise<StoredCredentials | null>>();
 const fetchSessionByIdMock = vi.fn();
 const fetchEncryptedTranscriptMessagesPageMock = vi.fn();
 
 vi.mock('@/persistence', () => ({
-  readCredentials: () => readCredentialsMock(),
+  readStoredCredentials: () => readStoredCredentialsMock(),
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', async () => {
@@ -39,12 +39,18 @@ describe('rpcHandlers.memory (window retrieval)', () => {
   });
 
   it('passes the configured content policy into citation windows', async () => {
-    readCredentialsMock.mockResolvedValue({
+    readStoredCredentialsMock.mockResolvedValue({
       token: 'token-memory-window',
-      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+      encryption: null,
     });
     fetchSessionByIdMock.mockResolvedValue(
-      createSessionRecordFixture({ id: 'sess-memory-window', active: true, activeAt: 1, metadata: '{}' }),
+      createSessionRecordFixture({
+        id: 'sess-memory-window',
+        active: true,
+        activeAt: 1,
+        metadata: '{}',
+        encryptionMode: 'plain',
+      }),
     );
     fetchEncryptedTranscriptMessagesPageMock.mockResolvedValue({
       hasMore: false,

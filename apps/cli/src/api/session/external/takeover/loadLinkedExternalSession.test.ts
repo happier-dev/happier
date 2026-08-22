@@ -1,27 +1,77 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createLocalPathPluginDistributionIdentity } from '@/plugins/store/install/trustIdentity';
+import { createImmutablePluginGenerationRecordFromSource } from '@/plugins/store/registry/generationStore';
 
 const fetchSessionByIdMock = vi.fn();
+const fetchAccountEncryptionCurrentnessMock = vi.fn();
 const tryDecryptSessionOwnerMetadataViewMock = vi.fn();
 const {
   canonicalizeLinkedExternalSessionSourceMock,
   resolveExternalSessionLinkIdentityMock,
+  resolveExternalSessionSourceKeyOwnerMock,
 } = vi.hoisted(() => ({
   canonicalizeLinkedExternalSessionSourceMock: vi.fn(),
   resolveExternalSessionLinkIdentityMock: vi.fn(),
+  resolveExternalSessionSourceKeyOwnerMock: vi.fn(),
 }));
 const temporaryRoots = new Set<string>();
+const generationRoots = new Set<string>();
+
+function bundledPluginPackageRoot(packageName: string): string {
+  const resolvePackage = createRequire(import.meta.url);
+  return dirname(dirname(resolvePackage.resolve(packageName)));
+}
+
+async function bundledFixtureGenerations(pluginIds: ReadonlySet<string>) {
+  return await Promise.all(
+    BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS
+      .filter((artifact) => pluginIds.has(artifact.record.pluginId))
+      .map(async (artifact) => {
+        const packageRoot = bundledPluginPackageRoot(artifact.packageName);
+        const rootPath = await mkdtemp(join(tmpdir(), 'happier-linked-generation-'));
+        generationRoots.add(rootPath);
+        await cp(packageRoot, rootPath, {
+          recursive: true,
+          filter: (source) => basename(source) !== 'node_modules',
+        });
+        const record = await createImmutablePluginGenerationRecordFromSource({
+          pluginId: artifact.record.pluginId,
+          sourceRootPath: rootPath,
+          manifestRelativePath: '.happier-plugin/plugin.json',
+          distribution: await createLocalPathPluginDistributionIdentity(rootPath),
+          updatePolicy: 'manual',
+          createdAtMs: 0,
+          immutableGenerationId: artifact.record.immutableGenerationId,
+        });
+        await symlink(join(process.cwd(), 'node_modules'), join(rootPath, 'node_modules'));
+        return [artifact.record.pluginId, {
+          pluginId: artifact.record.pluginId,
+          immutableGenerationId: record.immutableGenerationId,
+          rootPath,
+          record,
+        }] as const;
+      }),
+  );
+}
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionById: (...args: unknown[]) => fetchSessionByIdMock(...args),
+}));
+
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  fetchAccountEncryptionCurrentness: (...args: unknown[]) =>
+    fetchAccountEncryptionCurrentnessMock(...args),
 }));
 
 vi.mock('@/session/transport/encryption/sessionEncryptionContext', () => ({
@@ -48,6 +98,20 @@ vi.mock('@/agent/runtime/bridges/session/externalSessionSourceCanonicalization',
   };
 });
 
+vi.mock('@/session/external/resolveExternalSessionSourceKeyOwner', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@/session/external/resolveExternalSessionSourceKeyOwner')
+  >();
+  resolveExternalSessionSourceKeyOwnerMock.mockImplementation(
+    actual.resolveExternalSessionSourceKeyOwner,
+  );
+  return {
+    ...actual,
+    resolveExternalSessionSourceKeyOwner:
+      (...args: unknown[]) => resolveExternalSessionSourceKeyOwnerMock(...args),
+  };
+});
+
 import {
   loadLinkedExternalSession,
   loadPersistedLinkedExternalSession,
@@ -57,15 +121,33 @@ describe('loadLinkedExternalSession', () => {
   let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
 
   beforeAll(async () => {
+    const pluginIds = [
+      'happier.agent.claude',
+      'happier.agent.codex',
+      'happier.agent.ohmypi',
+      'happier.agent.opencode',
+    ] as const;
+    const resolvedContributes = getResolvedContributionRegistry();
+    const contributes = {
+      ...resolvedContributes,
+      connectedAccountDescriptors: Object.freeze(
+        (resolvedContributes.connectedAccountDescriptors ?? []).filter(
+          (descriptor) => pluginIds.includes(descriptor.pluginId as typeof pluginIds[number]),
+        ),
+      ),
+    };
+    const admittedPluginIds = new Set(pluginIds);
     runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
       resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
-        contributes: getResolvedContributionRegistry(),
-        pluginIds: [
-          'happier.agent.claude',
-          'happier.agent.codex',
-          'happier.agent.ohmypi',
-          'happier.agent.opencode',
-        ],
+        contributes,
+        pluginIds,
+        generationAuthority: {
+          commit: null,
+          generations: new Map(await bundledFixtureGenerations(admittedPluginIds)),
+          rejectedGenerations: new Map(),
+          unavailableBundledPackageNames: new Set(),
+          isCurrent: async () => true,
+        },
       }),
     });
   });
@@ -74,10 +156,160 @@ describe('loadLinkedExternalSession', () => {
     await runtimeRegistryLease?.release();
     runtimeRegistryLease = null;
     await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+    await Promise.all([...generationRoots].map(
+      (root) => rm(root, { recursive: true, force: true }),
+    ));
+    generationRoots.clear();
   });
 
   beforeEach(() => {
     vi.clearAllMocks();
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+      mode: 'e2ee',
+      version: 1,
+      signingKeyFingerprint: null,
+      contentKeyFingerprint: null,
+      updatedAt: 1,
+    });
+  });
+
+  function arrangeDirectOpenCodeLink(source: Readonly<Record<string, unknown>>): void {
+    fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_current_link' });
+    tryDecryptSessionOwnerMetadataViewMock.mockReturnValueOnce({
+      externalSessionV1: {
+        v: 1,
+        agentId: 'opencode',
+        machineId: 'machine_1',
+        remoteSessionId: 'remote_1',
+        source,
+        linkedAtMs: 1,
+      },
+    });
+  }
+
+  it('fails closed with an unavailable result when Account currentness cannot be read', async () => {
+    fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_current_link' });
+    fetchAccountEncryptionCurrentnessMock.mockRejectedValueOnce(
+      new Error('currentness unavailable'),
+    );
+
+    await expect(loadLinkedExternalSession({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      sessionId: 'sess_current_link',
+      machineId: 'machine_1',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'session_load_unavailable',
+    });
+    expect(tryDecryptSessionOwnerMetadataViewMock).not.toHaveBeenCalled();
+  });
+
+  it('admits only the exact declaration-keyed current link identity', async () => {
+    arrangeDirectOpenCodeLink({
+      kind: 'opencodeServer',
+      directory: '/repo/current',
+    });
+
+    await expect(loadLinkedExternalSession({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      sessionId: 'sess_current_link',
+      machineId: 'machine_1',
+      expectedIdentity: {
+        agentId: 'opencode',
+        machineId: 'machine_1',
+        remoteSessionId: 'remote_1',
+        source: {
+          kind: 'opencodeServer',
+          directory: '/repo/current',
+        },
+      },
+    })).resolves.toEqual({
+      ok: true,
+      session: expect.objectContaining({
+        source: expect.objectContaining({
+          kind: 'opencodeServer',
+          directory: '/repo/current',
+        }),
+        canonicalResolvedSourceKey: expect.any(String),
+      }),
+    });
+    expect(resolveExternalSessionSourceKeyOwnerMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      'a same-kind source relink',
+      { kind: 'opencodeServer', directory: '/repo/relinked' },
+    ],
+    [
+      'a cross-kind source',
+      { kind: 'codexHome', home: 'user' },
+    ],
+    [
+      'a malformed source',
+      { kind: 'opencodeServer', directory: 42 },
+    ],
+  ] as const)('rejects %s before admitting the current link', async (_label, expectedSource) => {
+    arrangeDirectOpenCodeLink({
+      kind: 'opencodeServer',
+      directory: '/repo/current',
+    });
+
+    await expect(loadLinkedExternalSession({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      sessionId: 'sess_current_link',
+      machineId: 'machine_1',
+      expectedIdentity: {
+        agentId: 'opencode',
+        machineId: 'machine_1',
+        remoteSessionId: 'remote_1',
+        source: expectedSource,
+      },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'linked_session_identity_mismatch',
+    });
+  });
+
+  it('rejects when the installed Agent source-key owner is unavailable', async () => {
+    arrangeDirectOpenCodeLink({
+      kind: 'opencodeServer',
+      directory: '/repo/current',
+    });
+    resolveExternalSessionSourceKeyOwnerMock.mockResolvedValueOnce(null);
+
+    await expect(loadLinkedExternalSession({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      sessionId: 'sess_current_link',
+      machineId: 'machine_1',
+      expectedIdentity: {
+        agentId: 'opencode',
+        machineId: 'machine_1',
+        remoteSessionId: 'remote_1',
+        source: {
+          kind: 'opencodeServer',
+          directory: '/repo/current',
+        },
+      },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'linked_session_identity_mismatch',
+    });
   });
 
   it('reads persisted linked identity without resolving an Agent runtime surface', async () => {
@@ -131,6 +363,53 @@ describe('loadLinkedExternalSession', () => {
     expect(resolveExternalSessionLinkIdentityMock).not.toHaveBeenCalled();
   });
 
+  it('rejects a relinked persisted identity without resolving an Agent runtime surface', async () => {
+    fetchSessionByIdMock.mockResolvedValueOnce({
+      id: 'sess_persisted_relinked',
+      archivedAt: 3_000,
+    });
+    tryDecryptSessionOwnerMetadataViewMock.mockReturnValueOnce({
+      externalSessionV1: {
+        v: 1,
+        agentId: 'opencode',
+        machineId: 'machine_1',
+        remoteSessionId: 'remote_1',
+        source: {
+          kind: 'opencodeServer',
+          directory: '/repo/current',
+        },
+        linkedAtMs: 1_000,
+      },
+    });
+
+    await expect(loadPersistedLinkedExternalSession({
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1]),
+        },
+      },
+      sessionId: 'sess_persisted_relinked',
+      machineId: 'machine_1',
+      expectedIdentity: {
+        agentId: 'opencode',
+        machineId: 'machine_1',
+        remoteSessionId: 'remote_1',
+        source: {
+          kind: 'opencodeServer',
+          directory: '/repo/relinked',
+        },
+      },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'linked_session_identity_mismatch',
+    });
+    expect(canonicalizeLinkedExternalSessionSourceMock).not.toHaveBeenCalled();
+    expect(resolveExternalSessionLinkIdentityMock).not.toHaveBeenCalled();
+  });
+
   afterEach(async () => {
     vi.unstubAllEnvs();
     await Promise.all([...temporaryRoots].map(
@@ -179,6 +458,11 @@ describe('loadLinkedExternalSession', () => {
   });
 
   it('projects an exact hosted owner into an in-memory follow identity', async () => {
+    resolveExternalSessionSourceKeyOwnerMock.mockResolvedValueOnce({
+      sourceKey: 'codexHome:user',
+      resolveSourceKey: () => 'codexHome:user',
+      resolvePersistedSourceKeys: () => ['codexHome:user'],
+    });
     fetchSessionByIdMock.mockResolvedValueOnce({
       id: 'sess_hosted',
       currentStorageState: 'hosted',
@@ -197,7 +481,7 @@ describe('loadLinkedExternalSession', () => {
       },
       sessionId: 'sess_hosted',
       machineId: 'machine_1',
-      expectedHostedIdentity: {
+      expectedIdentity: {
         agentId: 'codex',
         machineId: 'machine_1',
         remoteSessionId: 'thread_hosted',
@@ -224,6 +508,47 @@ describe('loadLinkedExternalSession', () => {
     });
   });
 
+  it('rejects a malformed present import tombstone before hosted follow synthesis or source resolution', async () => {
+    fetchSessionByIdMock.mockResolvedValueOnce({
+      id: 'sess_hosted_malformed_tombstone',
+      currentStorageState: 'hosted',
+    });
+    tryDecryptSessionOwnerMetadataViewMock.mockReturnValueOnce({
+      machineId: 'machine_1',
+      flavor: 'codex',
+      codexSessionId: 'thread_hosted',
+      externalHistoryImportV1: {
+        v: 1,
+        providerId: 'codex',
+        remoteSessionId: 'thread_hosted',
+        importedAtMs: 100,
+        source: { kind: 'codexHome', home: 'user' },
+        linkData: { projectId: 'canonical-only' },
+      },
+    });
+
+    await expect(loadLinkedExternalSession({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      sessionId: 'sess_hosted_malformed_tombstone',
+      machineId: 'machine_1',
+      expectedIdentity: {
+        agentId: 'codex',
+        machineId: 'machine_1',
+        remoteSessionId: 'thread_hosted',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'external_history_import_invalid',
+    });
+    expect(resolveExternalSessionSourceKeyOwnerMock).not.toHaveBeenCalled();
+    expect(canonicalizeLinkedExternalSessionSourceMock).not.toHaveBeenCalled();
+  });
+
   it('does not project a hosted owner for a different Provider-session identity', async () => {
     fetchSessionByIdMock.mockResolvedValueOnce({
       id: 'sess_hosted',
@@ -242,7 +567,7 @@ describe('loadLinkedExternalSession', () => {
       },
       sessionId: 'sess_hosted',
       machineId: 'machine_1',
-      expectedHostedIdentity: {
+      expectedIdentity: {
         agentId: 'codex',
         machineId: 'machine_1',
         remoteSessionId: 'thread_hosted',
@@ -350,7 +675,10 @@ describe('loadLinkedExternalSession', () => {
       id: 'sess_split_linked',
       metadataLayoutVersion: 1,
       metadata: 'shared-ciphertext',
-      ownerMetadata: 'owner-ciphertext',
+      ownerMetadata: {
+        t: 'encrypted',
+        c: 'owner-ciphertext',
+      },
     });
     tryDecryptSessionOwnerMetadataViewMock.mockReturnValueOnce(ownerView);
 
@@ -393,7 +721,6 @@ describe('loadLinkedExternalSession', () => {
         remoteSessionId: 'legacy-session',
         source: {
           kind: 'opencodeServer',
-          baseUrl: 'http://127.0.0.1:4096/',
           directory: '/repo/opencode',
         },
         linkedAtMs: 1,
@@ -404,19 +731,6 @@ describe('loadLinkedExternalSession', () => {
             provider: {
               backendMode: 'server',
               providerSessionId: 'runtime-session',
-              serverBaseUrl: 'http://127.0.0.1:4096/',
-              serverBaseUrlExplicit: true,
-              providerExtra: {
-                owner: 'opencode',
-                schemaId: 'opencode.agentRuntimeDescriptorExtra',
-                v: 1,
-                runtimeHandle: {
-                  backendMode: 'server',
-                  providerSessionId: 'runtime-session',
-                  serverBaseUrl: 'http://127.0.0.1:4096/',
-                  serverBaseUrlExplicit: true,
-                },
-              },
             },
           },
         },
@@ -437,7 +751,7 @@ describe('loadLinkedExternalSession', () => {
     });
   });
 
-  it('preserves the stored OpenCode source identity when the runtime descriptor does not carry a server base URL', async () => {
+  it('preserves the stored OpenCode directory and marks the canonical managed endpoint when the runtime descriptor has no base URL', async () => {
     fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_open_code_partial_source' });
     tryDecryptSessionOwnerMetadataViewMock.mockReturnValueOnce({
       path: '/repo',
@@ -475,6 +789,7 @@ describe('loadLinkedExternalSession', () => {
         source: {
           kind: 'opencodeServer',
           directory: '/repo/opencode',
+          managedEndpoint: true,
         },
       }),
     });
@@ -639,7 +954,7 @@ describe('loadLinkedExternalSession', () => {
     });
   });
 
-  it('resolves linked ohMyPi identity from canonical file linkData under the configured Agent directory', async () => {
+  it('resolves linked ohMyPi identity from the canonical source session file under the configured Agent directory', async () => {
     const agentDir = await mkdtemp(join(tmpdir(), 'happier-linked-omp-'));
     temporaryRoots.add(agentDir);
     const sessionRoot = join(agentDir, 'sessions', '-repo');
@@ -662,10 +977,14 @@ describe('loadLinkedExternalSession', () => {
         agentId: 'ohMyPi',
         machineId: 'machine_1',
         remoteSessionId: 'omp-session',
+        // The canonical Oh My Pi link persists its session file on the source;
+        // link data stays empty because the host spreads it into top-level owner
+        // metadata, whose strict allow-list rejects a `sessionFilePath` key.
         source: {
           kind: 'ohMyPiAgentDir',
+          sessionFilePath: canonicalSessionFilePath,
         },
-        linkData: { sessionFilePath: canonicalSessionFilePath },
+        linkData: {},
         linkedAtMs: 1,
       },
     });

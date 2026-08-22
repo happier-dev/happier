@@ -1,6 +1,6 @@
 import type {
-    AgentExternalSessionObservationContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+    GenerationBoundExternalSessionObservation,
+} from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import {
     ExternalAgentObservationResourceDescriptorV1Schema,
     type ExternalAgentObservationResourceDescriptorV1,
@@ -26,7 +26,7 @@ import {
 } from './publishExternalAgentObservationField';
 
 type ObservationContributionLease = Readonly<{
-    contribution: AgentExternalSessionObservationContribution;
+    contribution: GenerationBoundExternalSessionObservation;
     filesystemReadAllowedPaths?: ReadonlySet<string>;
     retirementSignal?: AbortSignal;
     release(): Promise<void>;
@@ -178,7 +178,7 @@ export function createExternalSessionObservationDaemonProjection(
     const withContribution = async <T>(
         resource: ExternalSessionObservationResourceIdentity,
         operation: (
-            contribution: AgentExternalSessionObservationContribution,
+            contribution: GenerationBoundExternalSessionObservation,
             lease: Pick<
                 ObservationContributionLease,
                 'filesystemReadAllowedPaths' | 'retirementSignal'
@@ -207,6 +207,7 @@ export function createExternalSessionObservationDaemonProjection(
             async (contribution) => {
                 const request = {
                     resourceKey: input.resource.resourceKey,
+                    managedEndpointSource: input.managedEndpointSource,
                     signal: input.signal,
                     emit: input.emit,
                     requestReconcile: input.requestReconcile,

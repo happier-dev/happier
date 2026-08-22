@@ -1,8 +1,10 @@
 import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 
 type SessionRowWithMetadata = Readonly<{
   id?: unknown;
@@ -26,8 +28,9 @@ type FetchSessionsPage = (params: Readonly<{
 }>>;
 
 type DecryptSessionMetadata = (input: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   rawSession: SessionRowWithMetadata;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
 }>) => Record<string, unknown> | null;
 
 const DEFAULT_PAGE_LIMIT = 200;
@@ -37,9 +40,10 @@ function isArchived(row: SessionRowWithMetadata): boolean {
 }
 
 export async function readRetainedConnectedServiceMaterializationKeys(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   fetchSessionsPage?: FetchSessionsPage;
   decryptSessionMetadata?: DecryptSessionMetadata;
+  getAccountEncryptionCurrentness?: () => Promise<AccountEncryptionCurrentnessResponse>;
   pageLimit?: number;
 }>): Promise<ReadonlyArray<string>> {
   const fetchPage = params.fetchSessionsPage ?? fetchSessionsPage;
@@ -51,6 +55,10 @@ export async function readRetainedConnectedServiceMaterializationKeys(params: Re
   const seenKeys = new Set<string>();
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
+  const accountEncryptionCurrentness = await (
+    params.getAccountEncryptionCurrentness
+    ?? (async () => await fetchAccountEncryptionCurrentness({ token: params.credentials.token }))
+  )();
 
   while (true) {
     const page = await fetchPage({
@@ -63,6 +71,7 @@ export async function readRetainedConnectedServiceMaterializationKeys(params: Re
       const metadata = decryptMetadata({
         credentials: params.credentials,
         rawSession: row,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
       });
       const identity = readConnectedServiceMaterializationIdentityV1FromMetadata(metadata);
       const key = typeof identity?.id === 'string' ? identity.id.trim() : '';

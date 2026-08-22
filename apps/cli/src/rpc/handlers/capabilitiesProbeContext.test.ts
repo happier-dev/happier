@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveProbeBackendContext } from './capabilitiesProbeContext';
 
 const mocks = vi.hoisted(() => ({
-  readCredentials: vi.fn(),
+  readStoredCredentials: vi.fn(),
   bootstrapAccountSettingsContext: vi.fn(),
 }));
 
 vi.mock('@/persistence', () => ({
-  readCredentials: mocks.readCredentials,
+  readStoredCredentials: mocks.readStoredCredentials,
 }));
 
 vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
@@ -28,15 +28,33 @@ describe('resolveProbeBackendContext', () => {
   };
 
   beforeEach(() => {
-    mocks.readCredentials.mockReset();
+    mocks.readStoredCredentials.mockReset();
     mocks.bootstrapAccountSettingsContext.mockReset();
-    mocks.readCredentials.mockResolvedValue(credentials);
+    mocks.readStoredCredentials.mockResolvedValue(credentials);
     mocks.bootstrapAccountSettingsContext.mockResolvedValue({
       settings: { runtimePreference: 'connected' },
     });
   });
 
-  it('loads credentials and account settings when connected-service bindings are present', async () => {
+  it('loads plain account settings with token-only credentials', async () => {
+    const tokenOnlyCredentials = {
+      token: 'plain-token',
+      encryption: null,
+    };
+    mocks.readStoredCredentials.mockResolvedValue(tokenOnlyCredentials);
+
+    const context = await resolveProbeBackendContext({
+      agentId: 'codex',
+    });
+
+    expect(mocks.readStoredCredentials).toHaveBeenCalledOnce();
+    expect(mocks.bootstrapAccountSettingsContext).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: tokenOnlyCredentials,
+    }));
+    expect(context.credentials).toEqual(tokenOnlyCredentials);
+  });
+
+  it('does not load credentials or account settings for connected-service bindings', async () => {
     const context = await resolveProbeBackendContext({
       agentId: 'opencode',
       connectedServices: {
@@ -47,17 +65,45 @@ describe('resolveProbeBackendContext', () => {
       },
     });
 
-    expect(mocks.readCredentials).toHaveBeenCalledTimes(1);
+    expect(mocks.readStoredCredentials).not.toHaveBeenCalled();
+    expect(mocks.bootstrapAccountSettingsContext).not.toHaveBeenCalled();
+    expect(context).toEqual({
+      backendTarget: undefined,
+      credentials: null,
+      accountSettings: null,
+    });
+  });
+
+  it('retains account settings for configured ACP SavedSecret probes', async () => {
+    const accountSettings = {
+      secrets: [{
+        id: 'secret-acp',
+        name: 'ACP token',
+        kind: 'token',
+        encryptedValue: { _isSecretValue: true, value: 'plain-account-secret' },
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    };
+    mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: accountSettings });
+    const backendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' } as const;
+
+    const context = await resolveProbeBackendContext({
+      agentId: 'opencode',
+      backendTarget,
+    });
+
+    expect(mocks.readStoredCredentials).toHaveBeenCalledOnce();
     expect(mocks.bootstrapAccountSettingsContext).toHaveBeenCalledWith(expect.objectContaining({
       credentials,
-      agentId: 'opencode',
+      backendTarget,
       mode: 'blocking',
       refresh: 'auto',
     }));
-    expect(context).toMatchObject({
-      backendTarget: undefined,
+    expect(context).toEqual({
+      backendTarget,
       credentials,
-      accountSettings: { runtimePreference: 'connected' },
+      accountSettings,
     });
   });
 
@@ -71,7 +117,7 @@ describe('resolveProbeBackendContext', () => {
       runtimeKindOverride: 'appServer',
     });
 
-    expect(mocks.readCredentials).toHaveBeenCalledTimes(1);
+    expect(mocks.readStoredCredentials).toHaveBeenCalledTimes(1);
     expect(mocks.bootstrapAccountSettingsContext).toHaveBeenCalledTimes(1);
     expect(context).toMatchObject({
       credentials,

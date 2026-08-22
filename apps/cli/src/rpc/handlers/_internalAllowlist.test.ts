@@ -53,10 +53,24 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
         expect(isInternalOnlyRpcMethod(RPC_METHODS.STOP_SESSION)).toBe(false);
     });
 
-    it('keeps public execution-run transport methods out of the internal-only allowlist', () => {
+    it('keeps private Session spawn lifecycle transports out of the public Action surface', () => {
+        for (const method of [
+            RPC_METHODS.SPAWN_HAPPY_SESSION,
+            RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+        ]) {
+            expect(INTERNAL_ONLY_RPC_METHODS.find((entry) => entry.method === method)).toEqual(expect.objectContaining({
+                ownerPacket: 'SESSION-COMPAT',
+            }));
+            expect(isInternalOnlyRpcMethod(method)).toBe(true);
+        }
+    });
+
+    it('keeps public Action RPC methods out of the internal-only allowlist', () => {
         const expected = [
+            RPC_METHODS.SESSION_SPAWN_NEW,
             SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
             SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+            SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
             SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
             SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ,
             SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL,
@@ -94,6 +108,30 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
         }
     });
 
+    it('classifies exact-machine plugin invocation log reads as PEP-SDK internal transport', () => {
+        const entry = INTERNAL_ONLY_RPC_METHODS.find((candidate) => (
+            candidate.method === RPC_METHODS.DAEMON_PLUGIN_INVOCATION_LOGS_READ
+        ));
+
+        expect(entry).toEqual(expect.objectContaining({
+            ownerPacket: 'PEP-SDK',
+        }));
+        expect(isInternalOnlyRpcMethod(RPC_METHODS.DAEMON_PLUGIN_INVOCATION_LOGS_READ)).toBe(true);
+    });
+
+    it('classifies the transient Connected Account Action-form option read as internal-only', () => {
+        const entry = INTERNAL_ONLY_RPC_METHODS.find((candidate) => (
+            candidate.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE
+        ));
+
+        expect(entry).toEqual(expect.objectContaining({
+            ownerPacket: 'SDK-ACTION-FORM',
+        }));
+        expect(isInternalOnlyRpcMethod(
+            RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE,
+        )).toBe(true);
+    });
+
     it('classifies A.12 voice cleanup model admin and transfer methods as internal-only', () => {
         const expected = [
             RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
@@ -127,31 +165,6 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
             const entry = INTERNAL_ONLY_RPC_METHODS.find((candidate) => candidate.method === method);
             expect(entry).toEqual(expect.objectContaining({
                 ownerPacket: 'A.12-voice-cleanup',
-            }));
-            expect(isInternalOnlyRpcMethod(method)).toBe(true);
-        }
-    });
-
-    it('classifies the daemon OpenAI-compatible foundation as internal-only', () => {
-        const expected = [
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_MODELS_LIST,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_INIT,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_CHUNK,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_FINALIZE,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_ABORT,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_SYNTHESIZE,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_CHUNK,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_FINALIZE,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_ABORT,
-            RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_REQUEST_CANCEL,
-        ];
-
-        for (const method of expected) {
-            const entry = INTERNAL_ONLY_RPC_METHODS.find((candidate) => candidate.method === method);
-            expect(entry).toEqual(expect.objectContaining({
-                ownerPacket: 'A.12-voice-foundation',
             }));
             expect(isInternalOnlyRpcMethod(method)).toBe(true);
         }

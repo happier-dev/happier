@@ -31,6 +31,13 @@ function normalizeOptionalAbsolutePath(value: unknown): string | null {
   return normalized && isAbsolute(normalized) ? normalized : null;
 }
 
+function resolveBuiltInVendorResumeId(
+  agentId: CatalogAgentId,
+  metadata: unknown,
+): string | null {
+  return resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
+}
+
 export function resolveTrackedConnectedServiceMaterializationIdentity(input: Readonly<{
   tracked: ContinuityTrackedSession | null;
   connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
@@ -54,7 +61,7 @@ export function resolveTrackedConnectedServiceVendorResumeId(input: Readonly<{
   const metadata = input.tracked?.happySessionMetadataFromLocalWebhook ?? null;
   return normalizeOptionalString(input.tracked?.vendorResumeId)
     ?? normalizeOptionalString(input.tracked?.spawnOptions?.resume)
-    ?? resolveVendorResumeIdFromSessionMetadata(input.agentId, metadata)
+    ?? resolveBuiltInVendorResumeId(input.agentId, metadata)
     ?? normalizeOptionalString(input.vendorResumeId);
 }
 
@@ -67,12 +74,12 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
 }>): ResolvedTrackedResumeContext {
   const trackedMetadata = input.tracked?.happySessionMetadataFromLocalWebhook ?? null;
   const persistedMetadata = input.persistedSessionMetadata ?? null;
-  const trackedMetadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(input.agentId, trackedMetadata);
+  const trackedMetadataVendorResumeId = resolveBuiltInVendorResumeId(input.agentId, trackedMetadata);
   const trackedMetadataCandidatePersistedSessionFile = resolveConnectedServiceCandidatePersistedSessionFile(
     input.agentId,
     trackedMetadata,
   );
-  const persistedMetadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(input.agentId, persistedMetadata);
+  const persistedMetadataVendorResumeId = resolveBuiltInVendorResumeId(input.agentId, persistedMetadata);
   const persistedMetadataCandidatePersistedSessionFile = resolveConnectedServiceCandidatePersistedSessionFile(
     input.agentId,
     persistedMetadata,

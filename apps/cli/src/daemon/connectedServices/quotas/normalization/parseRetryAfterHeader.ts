@@ -1,3 +1,5 @@
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
+
 export type ProviderResetTiming = Readonly<{
   retryAfterMs: number | null;
   resetAtMs: number | null;
@@ -16,6 +18,20 @@ function parseNonNegativeNumber(value: unknown): number | null {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
 }
 
+export function normalizeNonNegativeSafeMilliseconds(value: number): number | null {
+  const milliseconds = Math.trunc(value);
+  return Number.isSafeInteger(milliseconds) && milliseconds >= 0 ? milliseconds : null;
+}
+
+export function addSafeEpochMilliseconds(nowMs: number, durationMs: number): number | null {
+  const now = normalizeNonNegativeSafeMilliseconds(nowMs);
+  const duration = normalizeNonNegativeSafeMilliseconds(durationMs);
+  if (now === null || duration === null) return null;
+
+  const resetAtMs = now + duration;
+  return Number.isSafeInteger(resetAtMs) ? resetAtMs : null;
+}
+
 export function parseCompactDurationMs(value: unknown): number | null {
   const text = normalizeString(value);
   if (!text) return null;
@@ -26,28 +42,39 @@ export function parseCompactDurationMs(value: unknown): number | null {
     const unit = match[2]?.toLowerCase();
     if (!Number.isFinite(amount) || amount < 0 || !unit) continue;
     matched = true;
-    if (unit.startsWith('ms') || unit.startsWith('millisecond')) totalMs += amount;
-    else if (unit === 's' || unit.startsWith('sec')) totalMs += amount * 1000;
-    else if (unit === 'm' || unit.startsWith('min')) totalMs += amount * 60_000;
-    else if (unit === 'h' || unit.startsWith('hr') || unit.startsWith('hour')) totalMs += amount * 3_600_000;
-    else if (unit === 'd' || unit.startsWith('day')) totalMs += amount * 86_400_000;
+    const multiplier = unit.startsWith('ms') || unit.startsWith('millisecond')
+      ? 1
+      : unit === 's' || unit.startsWith('sec')
+        ? 1_000
+        : unit === 'm' || unit.startsWith('min')
+          ? 60_000
+          : unit === 'h' || unit.startsWith('hr') || unit.startsWith('hour')
+            ? 3_600_000
+            : unit === 'd' || unit.startsWith('day')
+              ? 86_400_000
+              : Number.NaN;
+    const partMs = amount * multiplier;
+    if (!Number.isFinite(partMs)) return null;
+    totalMs += partMs;
+    if (!Number.isFinite(totalMs)) return null;
   }
-  return matched ? Math.max(0, Math.trunc(totalMs)) : null;
+  return matched ? normalizeNonNegativeSafeMilliseconds(totalMs) : null;
 }
 
 export function parseProviderTimestampMs(value: unknown): number | null {
   if (value instanceof Date) {
     const ms = value.getTime();
-    return Number.isFinite(ms) && ms >= 0 ? ms : null;
+    return normalizeNonNegativeSafeMilliseconds(ms);
   }
   const numeric = parseNonNegativeNumber(value);
   if (numeric !== null) {
-    return Math.trunc(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
+    const parsed = parseTimestampMs(numeric);
+    return parsed === null ? null : normalizeNonNegativeSafeMilliseconds(parsed);
   }
   const text = normalizeString(value);
   if (!text) return null;
   const parsed = Date.parse(text);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  return normalizeNonNegativeSafeMilliseconds(parsed);
 }
 
 export function parseRetryAfterHeader(
@@ -56,15 +83,23 @@ export function parseRetryAfterHeader(
 ): ProviderResetTiming {
   const numericSeconds = parseNonNegativeNumber(value);
   if (numericSeconds !== null) {
-    return { retryAfterMs: Math.trunc(numericSeconds * 1000), resetAtMs: null };
+    const retryAfterMs = normalizeNonNegativeSafeMilliseconds(numericSeconds * 1_000);
+    return retryAfterMs === null
+      ? { retryAfterMs: null, resetAtMs: null }
+      : { retryAfterMs, resetAtMs: null };
   }
   const durationMs = parseCompactDurationMs(value);
   if (durationMs !== null) {
-    return { retryAfterMs: durationMs, resetAtMs: options.nowMs + durationMs };
+    const resetAtMs = addSafeEpochMilliseconds(options.nowMs, durationMs);
+    return resetAtMs === null
+      ? { retryAfterMs: null, resetAtMs: null }
+      : { retryAfterMs: durationMs, resetAtMs };
   }
   const dateMs = parseProviderTimestampMs(value);
-  if (dateMs !== null && dateMs >= options.nowMs) {
-    return { retryAfterMs: dateMs - options.nowMs, resetAtMs: dateMs };
+  const nowMs = normalizeNonNegativeSafeMilliseconds(options.nowMs);
+  if (dateMs !== null && nowMs !== null && dateMs >= nowMs) {
+    const retryAfterMs = normalizeNonNegativeSafeMilliseconds(dateMs - nowMs);
+    if (retryAfterMs !== null) return { retryAfterMs, resetAtMs: dateMs };
   }
   return { retryAfterMs: null, resetAtMs: null };
 }

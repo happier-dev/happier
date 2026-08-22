@@ -12,11 +12,15 @@ export function normalizeBaseUrl(url: string): string {
 export async function withAbortTimeout<T>(
   timeoutMs: number,
   run: (signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
   try {
-    return await run(controller.signal);
+    const operationSignal = signal && signal !== controller.signal
+      ? AbortSignal.any([controller.signal, signal])
+      : controller.signal;
+    return await run(operationSignal);
   } finally {
     clearTimeout(timeout);
   }

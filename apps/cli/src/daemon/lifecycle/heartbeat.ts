@@ -2,12 +2,11 @@ import { readFileSync } from 'fs';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonLocallyPersistedState } from '@/persistence';
-import { writeDaemonState } from '@/persistence';
 import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { findHappyProcessByPid } from '@/daemon/doctor';
-import { isPidSafeHappySessionProcess } from '@/daemon/pidSafety';
+import { processGenerationProvesReuse, readProcessIdentityByPid } from '@/daemon/processIdentity';
 import { resolveComparableCliVersion } from '@/daemon/resolveComparableCliVersion';
 import { readDaemonRestartVerifyPollMs, readDaemonRestartVerifyTimeoutMs } from '@/daemon/startupWaitDefaults';
 import { configuration } from '@/configuration';
@@ -61,15 +60,16 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     pid: number,
     exit: Readonly<{ reason: string; code: number | null; signal: string | null }>,
   ) => void | Promise<void>;
-  pidSafetyDependencies?: NonNullable<
-    Parameters<typeof isPidSafeHappySessionProcess>[1]
-  >;
+  pidSafetyDependencies?: Readonly<{
+    readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
+  }>;
   controlPort: number;
   fileState: DaemonLocallyPersistedState;
   currentCliVersion: string;
   requestShutdown: (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
   isShuttingDown?: () => boolean;
   requestSelfRestart?: RequestDaemonSelfRestart;
+  writeDaemonStateForCurrentOwner: (state: DaemonLocallyPersistedState) => boolean;
 }>): NodeJS.Timeout {
   const {
     pidToTrackedSession,
@@ -81,8 +81,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     controlPort,
     fileState,
     currentCliVersion,
+    requestShutdown,
     isShuttingDown,
     requestSelfRestart = requestDaemonSelfRestart,
+    writeDaemonStateForCurrentOwner,
   } = params;
 
   const onChildExitedForPrune =
@@ -202,25 +204,20 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           await onChildExitedForPrune(pid, { reason: 'process-missing', code: null, signal: null });
           continue;
         }
-        const expectedProcessCommandHash = tracked.processCommandHash;
         const expectedProcessStartTimeMs = tracked.processStartTimeMs;
-        if (
-          typeof expectedProcessCommandHash !== 'string'
-          || expectedProcessCommandHash.length === 0
-          || expectedProcessStartTimeMs === undefined
-        ) {
+        if (expectedProcessStartTimeMs === undefined) {
           continue;
         }
-        const isExactProcessCurrent = await isPidSafeHappySessionProcess({
-          pid,
-          expectedProcessCommandHash,
-          expectedProcessStartTimeMs,
-        }, pidSafetyDependencies).catch(() => false);
+        const processIdentity = await (
+          pidSafetyDependencies?.readProcessIdentityByPidFn ?? readProcessIdentityByPid
+        )(pid).catch(() => null);
         const currentTracked = pidToTrackedSession.get(pid);
         if (
-          isExactProcessCurrent
+          !processGenerationProvesReuse(
+            expectedProcessStartTimeMs,
+            processIdentity?.processStartTimeMs,
+          )
           || currentTracked !== tracked
-          || currentTracked.processCommandHash !== expectedProcessCommandHash
           || currentTracked.processStartTimeMs !== expectedProcessStartTimeMs
         ) {
           continue;
@@ -339,7 +336,14 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           daemonLogPath: fileState.daemonLogPath,
           controlToken: fileState.controlToken,
         };
-        writeDaemonState(updatedState);
+        const published = writeDaemonStateForCurrentOwner(updatedState);
+        if (!published) {
+          requestShutdown(
+            'exception',
+            'daemon_state_publication_ownership_lost',
+          );
+          return;
+        }
         if (process.env.DEBUG) {
           logger.debug(
             `[DAEMON RUN] Health check completed at ${new Date(updatedState.lastHeartbeatAt ?? Date.now()).toISOString()}`,

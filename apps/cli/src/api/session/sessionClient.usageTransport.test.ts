@@ -1,9 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
-import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import {
     type ApiSessionSocketStub,
     createApiSessionSocketStub,
@@ -12,11 +11,9 @@ import {
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
 
-const { fetchServerFeaturesSnapshotMock } = vi.hoisted(() => ({
+const { fetchServerFeaturesSnapshotMock, readStoredCredentialsMock } = vi.hoisted(() => ({
     fetchServerFeaturesSnapshotMock: vi.fn(),
-}));
-const { readCredentialsMock } = vi.hoisted(() => ({
-    readCredentialsMock: vi.fn(),
+    readStoredCredentialsMock: vi.fn(),
 }));
 
 vi.mock('@/features/serverFeaturesClient', () => ({
@@ -24,7 +21,8 @@ vi.mock('@/features/serverFeaturesClient', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-    readCredentials: () => readCredentialsMock(),
+    readCredentials: () => readStoredCredentialsMock(),
+    readStoredCredentials: () => readStoredCredentialsMock(),
 }));
 
 vi.mock('./sockets', () => ({
@@ -63,338 +61,137 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
     }),
 }));
 
-describe('ApiSessionClient usage transport', () => {
-    it('publishes token_count usage through v2 analytics ingest when available', async () => {
-        vi.resetModules();
-        fetchServerFeaturesSnapshotMock.mockReset();
-        readCredentialsMock.mockReset();
-        readCredentialsMock.mockResolvedValue({ token: 'fake-token' });
-        fetchServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: FeaturesResponseSchema.parse({
-                features: {},
-                capabilities: {
-                    server: {
-                        usageAnalytics: {
-                            version: 1,
-                            eventsIngest: { path: '/v2/usage-events' },
-                            query: { path: '/v2/usage/query' },
-                            legacy: {
-                                usageReportsPath: '/v2/usage-reports',
-                                usageQueryPath: '/v1/usage/query',
-                            },
+function readyUsageFeatures() {
+    return {
+        status: 'ready' as const,
+        features: FeaturesResponseSchema.parse({
+            features: {},
+            capabilities: {
+                server: {
+                    usageAnalytics: {
+                        version: 1,
+                        eventsIngest: { path: '/v2/usage-events' },
+                        query: { path: '/v2/usage/query' },
+                        legacy: {
+                            usageReportsPath: '/v2/usage-reports',
+                            usageQueryPath: '/v1/usage/query',
                         },
                     },
                 },
-            }),
-        });
-        sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-        userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+            },
+        }),
+    };
+}
 
-        const axiosMod = await import('axios');
-        const axios = axiosMod.default as any;
+function usageObservation(provider: string, total = 9) {
+    return {
+        provider,
+        source: `${provider}-token-count`,
+        scope: 'turn_delta' as const,
+        key: `${provider}-usage-key`,
+        modelId: null,
+        tokens: { total, input: 4, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: null,
+        contextUsedTokens: null,
+        contextWindowTokens: null,
+    };
+}
+
+async function createClient(token = 'fake-token') {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const { ApiSessionClient } = await import('./sessionClient');
+    return new ApiSessionClient(token, createPlainSessionFixture({ id: 'session-1' }));
+}
+
+afterEach(() => {
+    vi.restoreAllMocks();
+    sessionSocketStub = null;
+    userSocketStub = null;
+});
+
+describe('ApiSessionClient usage transport', () => {
+    it('publishes an explicit usage observation through v2 analytics ingest when available', async () => {
+        vi.resetModules();
+        fetchServerFeaturesSnapshotMock.mockResolvedValue(readyUsageFeatures());
+        readStoredCredentialsMock.mockResolvedValue({ token: 'fake-token' });
+        const axios = (await import('axios')).default as any;
         const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true, eventId: 'evt-1', createdAt: 1 } });
+        const client = await createClient();
 
-        const { ApiSessionClient } = await import('./sessionClient');
-        const client = new ApiSessionClient('fake-token', createPlainSessionFixture({ id: 'session-1' }));
-        const sessionSocket = sessionSocketStub;
-        if (!sessionSocket) {
-            throw new Error('Missing session socket stub');
-        }
-
-        client.sendAgentMessage('codex', {
-            type: 'token_count',
-            tokens: { total: 9, input: 4, output: 5 },
-            source: 'codex-token-count',
-            scope: 'turn_delta',
-        } as any);
-
-        await vi.waitFor(() => {
-            expect(postSpy).toHaveBeenCalled();
-        });
+        await client.publishUsageObservation({ observation: usageObservation('codex') });
 
         expect(postSpy).toHaveBeenCalledWith(
             expect.stringContaining('/v2/usage-events'),
-            expect.objectContaining({
-                sessionId: 'session-1',
-                agentId: 'codex',
-            }),
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer fake-token',
-                    'Content-Type': 'application/json',
-                }),
-            }),
+            expect.objectContaining({ sessionId: 'session-1', agentId: 'codex' }),
+            expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer fake-token' }) }),
         );
-        expect(
-            sessionSocket.emit.mock.calls.some((call) => call[0] === 'usage-report'),
-        ).toBe(false);
+        expect(sessionSocketStub?.emit.mock.calls.some((call) => call[0] === 'usage-report')).toBe(false);
+        await client.close();
     });
 
-    it('redacts usage observation publication errors before logging', async () => {
+    it('preserves backend mode and caller-owned stable external keys at the explicit publisher boundary', async () => {
         vi.resetModules();
-        fetchServerFeaturesSnapshotMock.mockReset();
-        readCredentialsMock.mockReset();
-        readCredentialsMock.mockResolvedValue({ token: 'fake-token' });
-        fetchServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: FeaturesResponseSchema.parse({
-                features: {},
-                capabilities: {
-                    server: {
-                        usageAnalytics: {
-                            version: 1,
-                            eventsIngest: { path: '/v2/usage-events' },
-                            query: { path: '/v2/usage/query' },
-                            legacy: {
-                                usageReportsPath: '/v2/usage-reports',
-                                usageQueryPath: '/v1/usage/query',
-                            },
-                        },
-                    },
-                },
-            }),
-        });
-        sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-        userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-
-        const axiosMod = await import('axios');
-        vi.spyOn(axiosMod.default, 'post').mockRejectedValue(
-            new Error(
-                'usage failed for https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/usage?token=secret Authorization: Bearer USAGE_SECRET',
-            ),
-        );
-        const { logger } = await import('@/ui/logger');
-        const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
-
-        try {
-            const { createSessionClientUsageObservationPublisher } = await import(
-                './client/createSessionClientUsageObservationPublisher'
-            );
-            const publisher = createSessionClientUsageObservationPublisher({
-                token: 'fake-token',
-                getSocket: () => ({
-                    connected: true,
-                    emit: vi.fn(),
-                }),
-            });
-
-            await publisher.publish({
-                sessionId: 'session-1',
-                observation: {
-                    provider: 'codex',
-                    source: 'codex-token-count',
-                    scope: 'turn_delta',
-                    key: 'usage-key',
-                    modelId: null,
-                    tokens: { total: 9, input: 4, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
-                    cost: null,
-                    contextUsedTokens: null,
-                    contextWindowTokens: null,
-                },
-            });
-
-            expect(debugSpy.mock.calls.some(([message]) =>
-                message === '[SOCKET] Failed to publish usage observation (non-fatal)'
-            )).toBe(true);
-            const [, logged] = debugSpy.mock.calls.find(([message]) =>
-                message === '[SOCKET] Failed to publish usage observation (non-fatal)'
-            ) ?? [];
-            expect(logged).toEqual(expect.objectContaining({
-                name: 'Error',
-                message: 'usage failed for https://api.example.test/v1/usage Authorization: <redacted>',
-            }));
-            const serializedLog = JSON.stringify(logged);
-            expect(serializedLog).not.toContain('SUPER_SECRET_PASSWORD');
-            expect(serializedLog).not.toContain('token=secret');
-            expect(serializedLog).not.toContain('USAGE_SECRET');
-            expect(serializedLog).not.toContain('stack');
-        } finally {
-            debugSpy.mockRestore();
-        }
-    });
-
-    it('publishes OpenCode token_count usage with backend mode and stable external key', async () => {
-        vi.resetModules();
-        fetchServerFeaturesSnapshotMock.mockReset();
-        readCredentialsMock.mockReset();
-        readCredentialsMock.mockResolvedValue({ token: 'fake-token' });
-        fetchServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: FeaturesResponseSchema.parse({
-                features: {},
-                capabilities: {
-                    server: {
-                        usageAnalytics: {
-                            version: 1,
-                            eventsIngest: { path: '/v2/usage-events' },
-                            query: { path: '/v2/usage/query' },
-                            legacy: {
-                                usageReportsPath: '/v2/usage-reports',
-                                usageQueryPath: '/v1/usage/query',
-                            },
-                        },
-                    },
-                },
-            }),
-        });
-        sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-        userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-
-        const axiosMod = await import('axios');
-        const axios = axiosMod.default as any;
+        fetchServerFeaturesSnapshotMock.mockResolvedValue(readyUsageFeatures());
+        readStoredCredentialsMock.mockResolvedValue({ token: 'fake-token' });
+        const axios = (await import('axios')).default as any;
         const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true, eventId: 'evt-open', createdAt: 1 } });
+        const client = await createClient();
 
-        const { ApiSessionClient } = await import('./sessionClient');
-        const client = new ApiSessionClient(
-            'fake-token',
-            createPlainSessionFixture({
-                id: 'session-1',
-                metadata: createTestMetadata({ opencodeBackendMode: 'server' }),
-            }),
-        );
-
-        client.sendAgentMessage(
-            'opencode',
-            {
-                type: 'token_count',
-                key: 'opencode-message:1',
-                tokens: { total: 9, input: 4, output: 5 },
-                source: 'opencode-message-updated',
-                scope: 'turn_delta',
-            } as any,
-            { localId: 'opencode-local-1' },
-        );
-
-        await vi.waitFor(() => {
-            expect(postSpy).toHaveBeenCalled();
+        await client.publishUsageObservation({
+            observation: usageObservation('opencode'),
+            backendMode: 'server',
+            externalKey: 'opencode-message:1',
         });
 
-        expect(postSpy.mock.calls[0]?.[1]).toEqual(
-            expect.objectContaining({
-                sessionId: 'session-1',
-                agentId: 'opencode',
-                backendMode: 'server',
-                externalKey: 'opencode-message:1',
-            }),
-        );
+        expect(postSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+            agentId: 'opencode',
+            backendMode: 'server',
+            externalKey: 'opencode-message:1',
+        }));
+        await client.close();
     });
 
-    it('falls back to legacy usage-report when v2 analytics ingest is unavailable', async () => {
+    it('falls back to the legacy usage-report transport when v2 ingest is unavailable', async () => {
         vi.resetModules();
-        fetchServerFeaturesSnapshotMock.mockReset();
-        readCredentialsMock.mockReset();
-        readCredentialsMock.mockResolvedValue({ token: 'fake-token' });
-        fetchServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'unsupported',
-            reason: 'endpoint_missing',
-        });
-        sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-        userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-
-        const axiosMod = await import('axios');
-        const axios = axiosMod.default as any;
+        fetchServerFeaturesSnapshotMock.mockResolvedValue({ status: 'unsupported', reason: 'endpoint_missing' });
+        readStoredCredentialsMock.mockResolvedValue({ token: 'fake-token' });
+        const axios = (await import('axios')).default as any;
         const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true } });
+        const client = await createClient();
 
-        const { ApiSessionClient } = await import('./sessionClient');
-        const client = new ApiSessionClient('fake-token', createPlainSessionFixture({ id: 'session-1' }));
-        const sessionSocket = sessionSocketStub;
-        if (!sessionSocket) {
-            throw new Error('Missing session socket stub');
-        }
-
-        client.sendAgentMessage('codex', {
-            type: 'token_count',
-            tokens: { total: 9, input: 4, output: 5 },
-            source: 'codex-token-count',
-            scope: 'turn_delta',
-        } as any);
-
-        await vi.waitFor(() => {
-            expect(
-                sessionSocket.emit.mock.calls.some((call) => call[0] === 'usage-report'),
-            ).toBe(true);
-        });
+        await client.publishUsageObservation({ observation: usageObservation('codex') });
 
         expect(postSpy).not.toHaveBeenCalled();
-        expect(
-            sessionSocket.emit.mock.calls.find((call) => call[0] === 'usage-report')?.[1],
-        ).toEqual({
-            key: 'codex-session',
+        expect(sessionSocketStub?.emit.mock.calls.find((call) => call[0] === 'usage-report')?.[1]).toEqual({
+            key: 'codex-usage-key',
             sessionId: 'session-1',
             tokens: { total: 9, input: 4, output: 5 },
             cost: { total: 0 },
         });
+        await client.close();
     });
 
-    it('refreshes credentials and retries usage ingest after an auth failure', async () => {
+    it('refreshes stored credentials and retries v2 ingest once after authentication failure', async () => {
         vi.resetModules();
-        fetchServerFeaturesSnapshotMock.mockReset();
-        readCredentialsMock.mockReset();
-        readCredentialsMock.mockResolvedValue({ token: 'fresh-token' });
-        fetchServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: FeaturesResponseSchema.parse({
-                features: {},
-                capabilities: {
-                    server: {
-                        usageAnalytics: {
-                            version: 1,
-                            eventsIngest: { path: '/v2/usage-events' },
-                            query: { path: '/v2/usage/query' },
-                            legacy: {
-                                usageReportsPath: '/v2/usage-reports',
-                                usageQueryPath: '/v1/usage/query',
-                            },
-                        },
-                    },
-                },
-            }),
-        });
-        sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-        userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-
-        const axiosMod = await import('axios');
-        const axios = axiosMod.default as any;
+        fetchServerFeaturesSnapshotMock.mockResolvedValue(readyUsageFeatures());
+        readStoredCredentialsMock.mockResolvedValue({ token: 'fresh-token' });
+        const axios = (await import('axios')).default as any;
         const postSpy = vi.spyOn(axios, 'post')
             .mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { response: { status: 401 } }))
             .mockResolvedValueOnce({ data: { success: true, eventId: 'evt-2', createdAt: 2 } });
+        const client = await createClient('stale-token');
 
-        const { ApiSessionClient } = await import('./sessionClient');
-        const client = new ApiSessionClient('stale-token', createPlainSessionFixture({ id: 'session-1' }));
-        const sessionSocket = sessionSocketStub;
-        if (!sessionSocket) {
-            throw new Error('Missing session socket stub');
-        }
+        await client.publishUsageObservation({ observation: usageObservation('opencode', 18) });
 
-        client.sendAgentMessage('opencode', {
-            type: 'token_count',
-            tokens: { total: 18, input: 8, output: 6, thought: 4 },
-            source: 'opencode-message-updated',
-            scope: 'session_cumulative',
-        } as any);
-
-        await vi.waitFor(() => {
-            expect(postSpy).toHaveBeenCalledTimes(2);
-        });
-
-        expect(readCredentialsMock).toHaveBeenCalledTimes(1);
-        expect(postSpy.mock.calls[0]?.[2]).toEqual(
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer stale-token',
-                }),
-            }),
-        );
-        expect(postSpy.mock.calls[1]?.[2]).toEqual(
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer fresh-token',
-                }),
-            }),
-        );
-        expect(
-            sessionSocket.emit.mock.calls.some((call) => call[0] === 'usage-report'),
-        ).toBe(false);
+        expect(readStoredCredentialsMock).toHaveBeenCalledTimes(1);
+        expect(postSpy.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+            headers: expect.objectContaining({ Authorization: 'Bearer stale-token' }),
+        }));
+        expect(postSpy.mock.calls[1]?.[2]).toEqual(expect.objectContaining({
+            headers: expect.objectContaining({ Authorization: 'Bearer fresh-token' }),
+        }));
+        expect(sessionSocketStub?.emit.mock.calls.some((call) => call[0] === 'usage-report')).toBe(false);
+        await client.close();
     });
 });

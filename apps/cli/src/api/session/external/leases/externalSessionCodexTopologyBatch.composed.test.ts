@@ -12,8 +12,11 @@ import { join } from 'node:path';
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
+    AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -24,6 +27,7 @@ import {
     type ExternalSessionObservationLinkIdentity,
     type ExternalSessionObservationResourceIdentity,
 } from './createExternalSessionObservationReconciler';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 const fsBoundary = vi.hoisted(() => ({
     open: vi.fn(),
@@ -66,6 +70,12 @@ type CodexHomeFixture = Readonly<{
 }>;
 
 const roots: string[] = [];
+
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
+    async () => {
+        throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
+    };
+const unavailableInvocationExec = createUnavailablePluginServices().exec;
 
 function jsonl(value: unknown): string {
     return `${JSON.stringify(value)}\n`;
@@ -183,6 +193,8 @@ function invocation() {
         signal: new AbortController().signal,
         deadlineAtMs: Date.now() + 30_000,
         maxSerializedBytes: 524_288,
+        managedEndpointRead: unavailableManagedEndpointRead,
+        exec: unavailableInvocationExec,
     };
 }
 
@@ -281,6 +293,7 @@ describe('composed Codex topology descriptor batching', () => {
                     linkedSource: link.linkedSource,
                 })),
                 signal: input.signal,
+                managedEndpointRead: unavailableManagedEndpointRead,
             });
             if (input.purpose === 'resource_descriptors') {
                 descriptorResults.push(result);
@@ -583,6 +596,7 @@ describe('composed Codex topology descriptor batching', () => {
             resourceKey: grouped[homes.indexOf(home)]![0]!.grouping.resourceKey,
             links,
             signal: new AbortController().signal,
+            managedEndpointRead: unavailableManagedEndpointRead,
         }));
 
         const results = await Promise.all(homes.map(async (home, homeIndex) =>
@@ -713,6 +727,7 @@ describe('composed Codex topology descriptor batching', () => {
                     linkedSource: link.linkedSource,
                 })),
                 signal: input.signal,
+                managedEndpointRead: unavailableManagedEndpointRead,
             });
             if (input.purpose === 'resource_descriptors') {
                 descriptorInventoryCounts.push({
@@ -932,6 +947,7 @@ describe('composed Codex topology descriptor batching', () => {
                 linkedSource: link.linkedSource,
             })),
             signal: input.signal,
+            managedEndpointRead: unavailableManagedEndpointRead,
         }));
         const statusOnly = createExternalSessionObservationReconciler({
             acquireObserver: statusOnlyAcquireObserver,
@@ -985,6 +1001,7 @@ describe('composed Codex topology descriptor batching', () => {
                     linkedSource: link.linkedSource,
                 })),
                 signal: input.signal,
+                managedEndpointRead: unavailableManagedEndpointRead,
             });
             if (input.purpose === 'resource_descriptors') {
                 await retirementGate.promise;

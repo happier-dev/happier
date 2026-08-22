@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
 import type { AgentId } from '@happier-dev/agents';
@@ -11,7 +12,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { decryptAccountSettingsCiphertext } from '@/settings/accountSettingsClient';
@@ -22,6 +23,7 @@ import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/
 import {
   type AccountSettingsCache,
   type AccountSettingsCacheV1,
+  type AccountSettingsCacheWriteOptions,
   type AccountSettingsContentEnvelope,
   readAccountSettingsCache,
   resolveAccountSettingsCachePath,
@@ -30,6 +32,7 @@ import {
 import {
   commitActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
   resetActiveAccountSettingsSnapshotForTests,
 } from './activeAccountSettingsSnapshot';
 import { resolveAccountSettingsHttpBaseUrl } from './resolveAccountSettingsHttpBaseUrl';
@@ -39,6 +42,10 @@ import {
   normalizeAccountSettingsVersionHint,
 } from './accountSettingsVersion';
 import { createAccountSettingsScopeKey } from './accountSettingsScopeKey';
+import {
+  isAccountSettingsEncryptionMaterialUnavailableError,
+  requireAccountSettingsEncryptionCredentials,
+} from './accountSettingsEncryptionMaterial';
 
 export type AccountSettingsBootstrapMode = 'blocking' | 'fast';
 export type AccountSettingsRefreshMode = 'auto' | 'force';
@@ -46,6 +53,7 @@ export type AccountSettingsRefreshMode = 'auto' | 'force';
 export type AccountSettingsContext = Readonly<{
   source: 'network' | 'cache' | 'none';
   settings: AccountSettings;
+  rawSettings?: Readonly<Record<string, unknown>>;
   settingsVersion: number;
   loadedAtMs: number;
   settingsSecretsReadKeys: readonly Uint8Array[];
@@ -54,7 +62,7 @@ export type AccountSettingsContext = Readonly<{
 }>;
 
 type ApplyAccountSettingsV2UpdateDeps = Readonly<{
-  resolveCachePath: (credentials: Credentials) => string;
+  resolveCachePath: (credentials: StoredCredentials) => string;
   decryptCiphertext: (args: { credentials: Credentials; ciphertext: string }) => Promise<Record<string, unknown> | null>;
 }>;
 
@@ -69,11 +77,25 @@ function createAccountSettingsLiveApplyError(
   return Object.assign(new Error(message), { code });
 }
 
+function isAccountSettingsContentUnavailableError(error: unknown): boolean {
+  if (isAccountSettingsEncryptionMaterialUnavailableError(error)) return true;
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  return error.code === 'ACCOUNT_SETTINGS_DECRYPT_FAILED'
+    || error.code === 'ACCOUNT_SETTINGS_SCOPE_CHANGED'
+    || error.code === 'ACCOUNT_SETTINGS_SOURCE_STALE';
+}
+
 function contextFromActiveSnapshot(active: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>): AccountSettingsContext {
   return {
     ...active,
     whenRefreshed: null,
   };
+}
+
+function readRawAccountSettingsObject(value: unknown): Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : {};
 }
 
 class AccountSettingsV2RequestError extends Error {
@@ -85,9 +107,10 @@ class AccountSettingsV2RequestError extends Error {
   }
 }
 
-async function requestAccountSettingsV2(credentials: Credentials): Promise<AccountSettingsV2GetResponse> {
+async function requestAccountSettingsV2(credentials: StoredCredentials): Promise<AccountSettingsV2GetResponse> {
   const response = await axios.get(`${resolveAccountSettingsHttpBaseUrl()}/v2/account/settings`, {
     headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${credentials.token}`,
       'Content-Type': 'application/json',
     },
@@ -103,10 +126,25 @@ async function requestAccountSettingsV2(credentials: Credentials): Promise<Accou
 function resolveLiveApplyDisposition(params: Readonly<{
   active: ReturnType<typeof getActiveAccountSettingsSnapshot>;
   activeAtStart: ReturnType<typeof getActiveAccountSettingsSnapshot>;
+  activeLifetimeToken: number;
+  activeLifetimeTokenAtStart: number;
   scopeKey: string;
   settingsVersion: number;
 }>): AccountSettingsContext | null {
-  const { active, activeAtStart, scopeKey, settingsVersion } = params;
+  const {
+    active,
+    activeAtStart,
+    activeLifetimeToken,
+    activeLifetimeTokenAtStart,
+    scopeKey,
+    settingsVersion,
+  } = params;
+  if (activeLifetimeToken !== activeLifetimeTokenAtStart) {
+    throw createAccountSettingsLiveApplyError(
+      'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+      'The active account lifetime changed before the live settings update could be applied.',
+    );
+  }
   if (!active) return null;
   if (active.scopeKey && active.scopeKey !== scopeKey) {
     throw createAccountSettingsLiveApplyError(
@@ -142,7 +180,7 @@ function migrateAccountSettingsForCodexAppServerDefault(settings: AccountSetting
  * Live updates intentionally do not write the durable cache; bootstrap remains its sole owner.
  */
 export async function applyAccountSettingsV2Update(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   update: AccountSettingsV2GetResponse;
   shouldCommit?: () => boolean;
   nowMs?: number;
@@ -156,9 +194,12 @@ export async function applyAccountSettingsV2Update(params: Readonly<{
   const cachePath = resolveCachePath(params.credentials);
   const scopeKey = createAccountSettingsScopeKey({ cachePath, token: params.credentials.token });
   const activeAtStart = getActiveAccountSettingsSnapshot();
+  const activeLifetimeTokenAtStart = getActiveAccountSettingsSnapshotLifetimeToken();
   const reusableAtStart = resolveLiveApplyDisposition({
     active: activeAtStart,
     activeAtStart,
+    activeLifetimeToken: activeLifetimeTokenAtStart,
+    activeLifetimeTokenAtStart,
     scopeKey,
     settingsVersion: params.update.version,
   });
@@ -169,8 +210,9 @@ export async function applyAccountSettingsV2Update(params: Readonly<{
   if (content?.t === 'plain') {
     rawSettings = content.v;
   } else if (content?.t === 'encrypted') {
+    const encryptionCredentials = requireAccountSettingsEncryptionCredentials(params.credentials);
     rawSettings = await decryptCiphertext({
-      credentials: params.credentials,
+      credentials: encryptionCredentials,
       ciphertext: content.c,
     });
     if (!rawSettings) {
@@ -191,6 +233,8 @@ export async function applyAccountSettingsV2Update(params: Readonly<{
   const reusableBeforeCommit = resolveLiveApplyDisposition({
     active: getActiveAccountSettingsSnapshot(),
     activeAtStart,
+    activeLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+    activeLifetimeTokenAtStart,
     scopeKey,
     settingsVersion: params.update.version,
   });
@@ -200,6 +244,7 @@ export async function applyAccountSettingsV2Update(params: Readonly<{
   const committed = commitActiveAccountSettingsSnapshot({
     source: 'network',
     settings,
+    rawSettings: readRawAccountSettingsObject(rawSettings),
     settingsVersion: params.update.version,
     loadedAtMs: nowMs,
     settingsSecretsReadKeys,
@@ -208,14 +253,42 @@ export async function applyAccountSettingsV2Update(params: Readonly<{
   const committedContext = contextFromActiveSnapshot(committed.snapshot);
   if (!committed.didCommit) return committedContext;
 
+  const committedLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  if (
+    getActiveAccountSettingsSnapshot() !== committed.snapshot
+    || getActiveAccountSettingsSnapshotLifetimeToken() !== committedLifetimeToken
+  ) {
+    const active = getActiveAccountSettingsSnapshot();
+    if (active?.scopeKey === scopeKey) return contextFromActiveSnapshot(active);
+    throw createAccountSettingsLiveApplyError(
+      'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+      'The active account changed before the live settings update side effects could be applied.',
+    );
+  }
   applyAccountSettingsToProcessEnv({ settings: committed.snapshot.settings });
-  inMemoryByScopeKey.set(scopeKey, committedContext);
-  return committedContext;
+  if (
+    getActiveAccountSettingsSnapshot() === committed.snapshot
+    && getActiveAccountSettingsSnapshotLifetimeToken() === committedLifetimeToken
+  ) {
+    rememberInMemoryAccountSettingsContext(
+      scopeKey,
+      committedContext,
+      committedLifetimeToken,
+      committed.snapshot,
+    );
+    return committedContext;
+  }
+  const active = getActiveAccountSettingsSnapshot();
+  if (active?.scopeKey === scopeKey) return contextFromActiveSnapshot(active);
+  throw createAccountSettingsLiveApplyError(
+    'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+    'The active account changed while the live settings update side effects were applied.',
+  );
 }
 
 /** Request-only convergence for a live session; no durable cache reads or writes. */
 export async function refreshActiveAccountSettingsFromServer(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   minSettingsVersion?: number | null;
   shouldCommit?: () => boolean;
   nowMs?: number;
@@ -234,10 +307,14 @@ export async function refreshActiveAccountSettingsFromServer(params: Readonly<{
 }
 
 type BootstrapDeps = Readonly<{
-  resolveCachePath: (credentials: Credentials) => string;
+  resolveCachePath: (credentials: StoredCredentials) => string;
   readCache: (path: string) => Promise<AccountSettingsCache | null>;
-  writeCache: (path: string, cache: AccountSettingsCache) => Promise<void>;
-  fetchFromServer: (args: { credentials: Credentials }) => Promise<
+  writeCache: (
+    path: string,
+    cache: AccountSettingsCache,
+    options?: AccountSettingsCacheWriteOptions,
+  ) => Promise<void>;
+  fetchFromServer: (args: { credentials: StoredCredentials }) => Promise<
     | { settingsCiphertext: string | null; settingsVersion: number }
     | { settingsContent: AccountSettingsContentEnvelope | null; settingsVersion: number }
   >;
@@ -279,7 +356,30 @@ function shouldTreatVersionAsFresh(current: number | null | undefined, minimum: 
   return isAccountSettingsVersionAtLeast(current, minimum);
 }
 
-const inMemoryByScopeKey = new Map<string, AccountSettingsContext>();
+type InMemoryAccountSettingsContext = Readonly<{
+  context: AccountSettingsContext;
+  lifetimeToken: number;
+  snapshot: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>;
+}>;
+
+const inMemoryByScopeKey = new Map<string, InMemoryAccountSettingsContext>();
+
+function activeSnapshotPublicationIsCurrent(params: Readonly<{
+  snapshot: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>;
+  lifetimeToken: number;
+}>): boolean {
+  return getActiveAccountSettingsSnapshot() === params.snapshot
+    && getActiveAccountSettingsSnapshotLifetimeToken() === params.lifetimeToken;
+}
+
+function rememberInMemoryAccountSettingsContext(
+  scopeKey: string,
+  context: AccountSettingsContext,
+  lifetimeToken: number,
+  snapshot: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>,
+): void {
+  inMemoryByScopeKey.set(scopeKey, Object.freeze({ context, lifetimeToken, snapshot }));
+}
 
 export function resetInMemoryAccountSettingsContextForTests(): void {
   inMemoryByScopeKey.clear();
@@ -287,7 +387,7 @@ export function resetInMemoryAccountSettingsContextForTests(): void {
 }
 
 export async function bootstrapAccountSettingsContext(params: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   agentId?: AgentId;
   backendTarget?: BackendTargetRefV1;
   mode?: AccountSettingsBootstrapMode;
@@ -299,6 +399,12 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
    */
   honorAccountSettingsModeEnv?: boolean;
   minSettingsVersion?: number;
+  /**
+   * Live callers may retain a narrower Account incumbent while a refresh is
+   * in flight. The canonical publication owner checks this immediately before
+   * every active-snapshot commit.
+   */
+  shouldCommit?: () => boolean;
   nowMs?: number;
   ttlMs?: number;
   deps?: Partial<BootstrapDeps>;
@@ -322,6 +428,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         if (!(err instanceof AccountSettingsV2RequestError) || err.status !== 404) throw err;
         const response = await axios.get(`${resolveAccountSettingsHttpBaseUrl()}/v1/account/settings`, {
           headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             Authorization: `Bearer ${credentials.token}`,
             'Content-Type': 'application/json',
           },
@@ -348,13 +455,94 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
 
   const cachePath = deps.resolveCachePath(params.credentials);
   const scopeKey = createAccountSettingsScopeKey({ cachePath, token: params.credentials.token });
+  const activeAtBootstrapStart = getActiveAccountSettingsSnapshot();
+  const activeLifetimeTokenAtBootstrapStart = getActiveAccountSettingsSnapshotLifetimeToken();
+  type PublishedAccountSettingsContext = Readonly<{
+    context: AccountSettingsContext;
+    didCommit: boolean;
+    snapshot: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>;
+    lifetimeToken: number;
+  }>;
+  const currentPublicationForScope = (): PublishedAccountSettingsContext | null => {
+    const active = getActiveAccountSettingsSnapshot();
+    if (!active || active.scopeKey !== scopeKey) return null;
+    return {
+      context: contextFromActiveSnapshot(active),
+      didCommit: false,
+      snapshot: active,
+      lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+    };
+  };
+  const applyPublicationSideEffects = (
+    publication: PublishedAccountSettingsContext,
+  ): PublishedAccountSettingsContext => {
+    if (!activeSnapshotPublicationIsCurrent(publication)) {
+      throw createAccountSettingsLiveApplyError(
+        'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+        'The active account changed before Settings bootstrap side effects could be applied.',
+      );
+    }
+    deps.applySideEffects({
+      settings: publication.context.settings,
+      agentId: params.agentId,
+      backendTarget: params.backendTarget,
+      source: publication.context.source,
+      settingsVersion: publication.context.settingsVersion,
+      loadedAtMs: publication.context.loadedAtMs,
+    });
+    if (!activeSnapshotPublicationIsCurrent(publication)) {
+      throw createAccountSettingsLiveApplyError(
+        'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+        'The active account changed while Settings bootstrap side effects were applied.',
+      );
+    }
+    rememberInMemoryAccountSettingsContext(
+      scopeKey,
+      publication.context,
+      publication.lifetimeToken,
+      publication.snapshot,
+    );
+    return publication;
+  };
   const publishContext = (candidate: AccountSettingsContext): Readonly<{
     context: AccountSettingsContext;
     didCommit: boolean;
+    snapshot: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>;
+    lifetimeToken: number;
   }> => {
+    if (params.shouldCommit?.() === false) {
+      throw createAccountSettingsLiveApplyError(
+        'ACCOUNT_SETTINGS_SOURCE_STALE',
+        'The Account Settings publication lifetime ended before Settings bootstrap could be committed.',
+      );
+    }
+    if (getActiveAccountSettingsSnapshotLifetimeToken() !== activeLifetimeTokenAtBootstrapStart) {
+      const currentPublication = currentPublicationForScope();
+      if (!currentPublication) {
+        throw createAccountSettingsLiveApplyError(
+          'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+          'The active account lifetime changed before Settings bootstrap could be committed.',
+        );
+      }
+      if (!shouldTreatVersionAsFresh(currentPublication.context.settingsVersion, minSettingsVersion)) {
+        throw new AccountSettingsStaleError();
+      }
+      return applyPublicationSideEffects(currentPublication);
+    }
+    const activeBeforeCommit = getActiveAccountSettingsSnapshot();
+    if (
+      activeBeforeCommit !== activeAtBootstrapStart
+      && activeBeforeCommit?.scopeKey !== scopeKey
+    ) {
+      throw createAccountSettingsLiveApplyError(
+        'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+        'The active account changed before Settings bootstrap could be committed.',
+      );
+    }
     const committed = commitActiveAccountSettingsSnapshot({
       source: candidate.source,
       settings: candidate.settings,
+      ...(candidate.rawSettings ? { rawSettings: candidate.rawSettings } : {}),
       settingsVersion: candidate.settingsVersion,
       loadedAtMs: candidate.loadedAtMs,
       settingsSecretsReadKeys: candidate.settingsSecretsReadKeys,
@@ -364,16 +552,12 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     if (!shouldTreatVersionAsFresh(context.settingsVersion, minSettingsVersion)) {
       throw new AccountSettingsStaleError();
     }
-    deps.applySideEffects({
-      settings: context.settings,
-      agentId: params.agentId,
-      backendTarget: params.backendTarget,
-      source: context.source,
-      settingsVersion: context.settingsVersion,
-      loadedAtMs: context.loadedAtMs,
+    return applyPublicationSideEffects({
+      context,
+      didCommit: committed.didCommit,
+      snapshot: committed.snapshot,
+      lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
     });
-    inMemoryByScopeKey.set(scopeKey, context);
-    return { context, didCommit: committed.didCommit };
   };
 
   const honorModeEnv = params.honorAccountSettingsModeEnv !== false;
@@ -386,6 +570,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     const ctx: AccountSettingsContext = {
       source: 'none',
       settings,
+      rawSettings: {},
       settingsVersion: 0,
       loadedAtMs: nowMs,
       settingsSecretsReadKeys,
@@ -395,35 +580,67 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   }
 
   const active = getActiveAccountSettingsSnapshot();
+  const activeLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  const inMemory = inMemoryByScopeKey.get(scopeKey);
   const existing = active?.scopeKey === scopeKey
-    ? contextFromActiveSnapshot(active)
-    : (inMemoryByScopeKey.get(scopeKey) ?? null);
+    ? (
+      inMemory?.snapshot === active && inMemory.lifetimeToken === activeLifetimeToken
+        ? inMemory.context
+        : contextFromActiveSnapshot(active)
+    )
+    : null;
   if (
     refresh === 'auto'
     && existing
     && shouldTreatCacheAsFresh({ version: 2, cachedAt: existing.loadedAtMs, settingsContent: null, settingsVersion: existing.settingsVersion }, nowMs, ttlMs)
     && shouldTreatVersionAsFresh(existing.settingsVersion, minSettingsVersion)
   ) {
-    deps.applySideEffects({
-      settings: existing.settings,
-      agentId: params.agentId,
-      backendTarget: params.backendTarget,
-      source: existing.source,
-      settingsVersion: existing.settingsVersion,
-      loadedAtMs: existing.loadedAtMs,
-    });
-    return existing;
+    const currentPublication = currentPublicationForScope();
+    if (!currentPublication) {
+      throw createAccountSettingsLiveApplyError(
+        'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+        'The active account changed before fresh Settings could be reused.',
+      );
+    }
+    return applyPublicationSideEffects(currentPublication).context;
   }
 
-  const cache = await deps.readCache(cachePath);
+  const readCache = await deps.readCache(cachePath);
+  const cache =
+    readCache?.version === 2 && readCache.settingsContent?.t === 'plain'
+      ? null
+      : readCache;
 
-  const parseFromContent = async (content: AccountSettingsContentEnvelope | null): Promise<AccountSettings> => {
-    if (!content) return migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse({}));
-    if (content.t === 'plain') return migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse(content.v));
+  const parseFromContent = async (content: AccountSettingsContentEnvelope | null): Promise<Readonly<{
+    rawSettings: Readonly<Record<string, unknown>>;
+    settings: AccountSettings;
+  }>> => {
+    if (!content) {
+      return {
+        rawSettings: {},
+        settings: migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse({})),
+      };
+    }
+    if (content.t === 'plain') {
+      const rawSettings = readRawAccountSettingsObject(content.v);
+      return {
+        rawSettings,
+        settings: migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse(rawSettings)),
+      };
+    }
     const ciphertext = typeof content.c === 'string' ? content.c : '';
-    if (!ciphertext) return migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse({}));
-    const decrypted = await deps.decryptCiphertext({ credentials: params.credentials, ciphertext });
-    return migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse(decrypted ?? {}));
+    const encryptionCredentials = requireAccountSettingsEncryptionCredentials(params.credentials);
+    const decrypted = await deps.decryptCiphertext({ credentials: encryptionCredentials, ciphertext });
+    if (!decrypted) {
+      throw createAccountSettingsLiveApplyError(
+        'ACCOUNT_SETTINGS_DECRYPT_FAILED',
+        'The account settings payload could not be decrypted.',
+      );
+    }
+    return {
+      rawSettings: decrypted,
+      settings: migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse(decrypted)),
+    };
   };
 
   const cacheContent: AccountSettingsContentEnvelope | null =
@@ -434,11 +651,12 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         : null);
 
   const useCache = async (): Promise<AccountSettingsContext> => {
-    const settings = await parseFromContent(cacheContent);
+    const parsed = await parseFromContent(cacheContent);
     const settingsVersion = cache?.settingsVersion ?? 0;
     const ctx: AccountSettingsContext = {
       source: cache ? 'cache' : 'none',
-      settings,
+      settings: parsed.settings,
+      rawSettings: parsed.rawSettings,
       settingsVersion,
       loadedAtMs: nowMs,
       settingsSecretsReadKeys,
@@ -454,10 +672,11 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       'settingsContent' in fetched
         ? (fetched.settingsContent ?? null)
         : (fetched.settingsCiphertext ? { t: 'encrypted', c: fetched.settingsCiphertext } : null);
-    const settings = await parseFromContent(settingsContent);
+    const parsed = await parseFromContent(settingsContent);
     const candidate: AccountSettingsContext = {
       source: 'network',
-      settings,
+      settings: parsed.settings,
+      rawSettings: parsed.rawSettings,
       settingsVersion,
       loadedAtMs: nowMs,
       settingsSecretsReadKeys,
@@ -469,20 +688,29 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     const publication = publishContext(candidate);
     if (!publication.didCommit) return publication.context;
 
-    try {
-      await deps.writeCache(cachePath, {
-        version: 2,
-        cachedAt: nowMs,
-        settingsContent,
-        settingsVersion,
-      });
-    } catch (err) {
-      logger.debug('[accountSettings] cache write failed; continuing without persistence', serializeAxiosErrorForLog(err));
+    if (settingsContent?.t !== 'plain') {
+      try {
+        await deps.writeCache(cachePath, {
+          version: 2,
+          cachedAt: nowMs,
+          settingsContent,
+          settingsVersion,
+        }, {
+          shouldCommit: () => params.shouldCommit?.() !== false
+            && activeSnapshotPublicationIsCurrent(publication),
+        });
+      } catch (err) {
+        logger.debug('[accountSettings] cache write failed; continuing without persistence', serializeAxiosErrorForLog(err));
+      }
     }
     const activeAfterWrite = getActiveAccountSettingsSnapshot();
-    return activeAfterWrite?.scopeKey === scopeKey
-      ? contextFromActiveSnapshot(activeAfterWrite)
-      : publication.context;
+    if (activeAfterWrite?.scopeKey === scopeKey) {
+      return contextFromActiveSnapshot(activeAfterWrite);
+    }
+    throw createAccountSettingsLiveApplyError(
+      'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+      'The active account changed while Settings bootstrap was writing its cache.',
+    );
   };
 
   const cacheFresh = cache
@@ -498,7 +726,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
 
     // Fire refresh immediately; expose promise for long-running processes.
     const whenRefreshed = fetchAndPersist().catch(async (err) => {
-      if (minSettingsVersion !== null) {
+      if (minSettingsVersion !== null || isAccountSettingsContentUnavailableError(err)) {
         throw err;
       }
       logger.debug('[accountSettings] background refresh failed; using cache', serializeAxiosErrorForLog(err));
@@ -515,7 +743,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   try {
     return await fetchAndPersist();
   } catch (err) {
-    if (minSettingsVersion !== null) {
+    if (minSettingsVersion !== null || isAccountSettingsContentUnavailableError(err)) {
       throw err;
     }
     logger.debug('[accountSettings] fetch failed; falling back to cache', serializeAxiosErrorForLog(err));

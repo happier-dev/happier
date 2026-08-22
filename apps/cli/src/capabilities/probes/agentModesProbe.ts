@@ -1,8 +1,8 @@
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
-import { getAgentSessionModesKind, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
+import { getAgentSessionModesKind, legacyCustomAcpCompat } from '@happier-dev/agents';
 import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
@@ -64,13 +64,10 @@ function shouldFailClosedForMissingCli(params: {
 }
 
 function resolveAgentSessionModesKindForLookupId(agentId: CatalogAgentLookupId) {
-  if (isAgentId(agentId)) {
-    return getAgentSessionModesKind(agentId);
-  }
-  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
-    return 'acpAgentModes' as const;
-  }
-  throw new Error(`Unsupported agent session modes lookup id '${agentId}'`);
+  return getAgentSessionModesKind(agentId)
+    ?? (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)
+      ? 'acpAgentModes' as const
+      : null);
 }
 
 function normalizeDynamicModes(modesRaw: unknown): ProbedAgentMode[] | null {
@@ -176,9 +173,10 @@ export async function probeAgentModesBestEffort(params: {
   cwd: string;
   timeoutMs?: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
-  credentials?: Credentials | null;
-  connectedServices?: unknown;
+  credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
+  materializedEnv?: Readonly<Record<string, string>>;
+  connectedServiceSelectionCacheKey?: string | null;
 }): Promise<ProbedAgentModesResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
@@ -193,7 +191,7 @@ export async function probeAgentModesBestEffort(params: {
     cwd,
     backendTarget: params.backendTarget,
     variant: probeVariant,
-    connectedServices: params.connectedServices,
+    connectedServiceSelection: params.connectedServiceSelectionCacheKey,
   });
 
   const cached = agentModesProbeCache.get(cacheKey);
@@ -218,12 +216,8 @@ export async function probeAgentModesBestEffort(params: {
       const probePreflightModesOnce = async (): Promise<ProbedAgentMode[] | null> => {
         const modesRaw = await withPreflightSessionControlsProbeEnvironment({
           agentId: params.agentId,
-          probeKind: 'modes',
-          cwd,
-          connectedServices: params.connectedServices,
-          credentials: params.credentials ?? null,
-          accountSettings: params.accountSettings ?? null,
           processEnv: params.env ?? process.env,
+          materializedEnv: params.materializedEnv,
         }, async ({ env }) => await preflightAdapter.probeModesRaw!({
           backendTarget: params.backendTarget,
           probeKind: 'modes',

@@ -57,6 +57,9 @@ describe('materializeConnectedServicesForSpawn atomicity', () => {
           activeServerDir,
           baseDir,
           recordsByServiceId: new Map(),
+          connectedAccountMaterializationAuthority: {
+            kind: 'legacy_unfenced_one_shot' as const,
+          },
         };
         const finalRoot = resolveConnectedServiceMaterializedRootDir(common);
 
@@ -144,6 +147,9 @@ describe('materializeConnectedServicesForSpawn atomicity', () => {
           activeServerDir,
           baseDir,
           recordsByServiceId: new Map(),
+          connectedAccountMaterializationAuthority: {
+            kind: 'legacy_unfenced_one_shot' as const,
+          },
         };
 
         const first = materializeConnectedServicesForSpawn({

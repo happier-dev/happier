@@ -1,5 +1,7 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
 
+import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol';
+
 import { createDaemonSessionClientDurableMutationOutbox } from './createDaemonSessionClientDurableMutationOutbox';
 import { createRuntimeSessionClientDurableMutationOutbox } from './createRuntimeSessionClientDurableMutationOutbox';
 import {
@@ -162,7 +164,7 @@ async function runDaemonStage(args: readonly string[]): Promise<void> {
         createSessionClientDurableMutationDeadLetterEntry({
             sessionId,
             mutation: deadLetterMutation,
-            reason: 'process_fixture_authoritative_retry',
+            reason: 'retry_exhausted',
         }),
     ], persistenceContext);
 }
@@ -177,12 +179,22 @@ async function runRuntimeRecovery(args: readonly string[]): Promise<void> {
         connected: true,
         emit: () => undefined,
         emitWithAck: async (event, ...eventArgs) => {
-            if (event !== 'message') throw new Error(`Unexpected runtime socket event: ${event}`);
+            if (event !== SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
+                throw new Error(`Unexpected runtime socket event: ${event}`);
+            }
             const payload = eventArgs[0] as { localId?: unknown };
             const localId = typeof payload.localId === 'string' ? payload.localId : null;
             if (localId) deliveredTranscriptLocalIds.push(localId);
             sequence += 1;
-            return { ok: true, id: `message-${sequence}`, seq: sequence, localId };
+            return {
+                ok: true,
+                status: 'observed',
+                id: `message-${sequence}`,
+                seq: sequence,
+                localId,
+                didWrite: true,
+                ingestedAt: Date.now(),
+            };
         },
     };
     const outbox = createRuntimeSessionClientDurableMutationOutbox({
@@ -193,10 +205,34 @@ async function runRuntimeRecovery(args: readonly string[]): Promise<void> {
         requestReconnect: () => undefined,
         deliverRegisteredSessionStateFieldMutation: async (mutation) => {
             deliveredFieldIds.push(mutation.fieldId);
+            if (mutation.fieldId === 'runtime.activity') {
+                return {
+                    delivered: true,
+                    settlement: {
+                        status: 'applied',
+                        committedProjection: {
+                            state: 'unknown',
+                            activeCount: 0,
+                            observedAt: mutation.observedAt,
+                            revision: 1,
+                        },
+                        committedRevision: 1,
+                    },
+                };
+            }
             return true;
         },
     });
     await outbox.awaitReady();
+    await outbox.setSessionSyncPendingInputServerContract({
+        mode: 'session_sync_v2_pending_input_v1',
+        runtimeActivity: 'v2',
+        pendingInput: 'v1',
+        publisherAuthority: 'indeterminate',
+        sessionConnectionEpoch: 1,
+        socket,
+        transcriptTransport: { mode: 'session_transcript_observation_v1' },
+    });
     await outbox.flush('flush');
     await writeFile(resultPath, JSON.stringify({ deliveredTranscriptLocalIds, deliveredFieldIds }));
     await outbox.close();

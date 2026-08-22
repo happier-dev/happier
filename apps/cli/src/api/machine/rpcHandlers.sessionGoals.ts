@@ -14,11 +14,15 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { readCredentials, type Credentials } from '@/persistence';
+import {
+  readStoredCredentials,
+  type StoredCredentials,
+} from '@/persistence';
 import {
   createCliActionDeps,
   type CancelConnectedServiceRuntimeAuthRecovery,
   type CancelInactiveSessionUsageLimitRecoveryCheck,
+  type ReadInactiveSessionUsageLimitRecovery,
   type ResumeInactiveSessionWhenUsageLimitReady,
   type RetryTemporaryThrottleNow,
   type ScheduleInactiveSessionUsageLimitRecoveryCheck,
@@ -42,15 +46,18 @@ import {
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter';
 import { routeSessionUsageLimitRecoverySwitchAccountNow } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow';
 import type { DaemonUsageLimitRecoveryFieldMutation } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
-import { readSessionMetadata } from '@/session/actions/cliActionDeps/sessionStateReaders';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { getConnectedServiceAuthGroup } from '@/api/client/connectedServiceAuthGroupApi';
+import {
+  tryDecryptSessionMetadata,
+  type SessionStoredContentCryptoContext,
+} from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 import type { RpcHandlerRegistrar } from '../rpc/types';
 
 type RegisterMachineSessionGoalRpcHandlersDeps = Readonly<{
-  readCredentials?: () => Promise<Credentials | null>;
+  readStoredCredentials?: () => Promise<StoredCredentials | null>;
   resolveSessionTransportContext?: typeof resolveSessionTransportContext;
   createCliActionDeps?: (
     params: Parameters<typeof createCliActionDeps>[0],
@@ -71,6 +78,7 @@ type RegisterMachineSessionGoalRpcHandlersDeps = Readonly<{
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
   cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
+  readInactiveSessionUsageLimitRecovery?: ReadInactiveSessionUsageLimitRecovery;
   cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
   currentMachineId?: string;
@@ -115,7 +123,7 @@ async function resolveActionDeps(params: Readonly<{
   | Readonly<{ ok: true; sessionId: string; actionDeps: ReturnType<NonNullable<RegisterMachineSessionGoalRpcHandlersDeps['createCliActionDeps']>> }>
   | Readonly<{ ok: false; result: unknown }>
 > {
-  const credentials = await (params.deps?.readCredentials ?? readCredentials)();
+  const credentials = await (params.deps?.readStoredCredentials ?? readStoredCredentials)();
   if (!credentials) return { ok: false, result: notAuthenticated() };
 
   const transport = await (params.deps?.resolveSessionTransportContext ?? resolveSessionTransportContext)({
@@ -123,15 +131,23 @@ async function resolveActionDeps(params: Readonly<{
     idOrPrefix: params.sessionId,
   });
   if (!transport.ok) return { ok: false, result: transportError(transport) };
-
-  const actionDeps = (params.deps?.createCliActionDeps ?? createCliActionDeps)({
+  const common = {
     token: credentials.token,
     credentials,
     sessionId: transport.sessionId,
     rawSession: transport.rawSession,
-    ctx: transport.ctx,
-    mode: transport.mode,
-  });
+  };
+  const actionDeps = transport.mode === 'plain'
+    ? (params.deps?.createCliActionDeps ?? createCliActionDeps)({
+        ...common,
+        mode: transport.mode,
+        ctx: transport.ctx,
+      })
+    : (params.deps?.createCliActionDeps ?? createCliActionDeps)({
+        ...common,
+        mode: transport.mode,
+        ctx: transport.ctx,
+      });
   return { ok: true, sessionId: transport.sessionId, actionDeps };
 }
 
@@ -141,16 +157,14 @@ async function resolveLocalUsageLimitContext(params: Readonly<{
 }>): Promise<
   | Readonly<{
       ok: true;
-      credentials: Credentials;
+      credentials: StoredCredentials;
       sessionId: string;
       rawSession: RawSessionRecord;
       metadata: Record<string, unknown> | null;
-      ctx: Extract<ResolveSessionTransportContextResult, { ok: true }>['ctx'];
-      mode: Extract<ResolveSessionTransportContextResult, { ok: true }>['mode'];
-    }>
+    }> & SessionStoredContentCryptoContext
   | Readonly<{ ok: false; result: unknown }>
 > {
-  const credentials = await (params.deps?.readCredentials ?? readCredentials)();
+  const credentials = await (params.deps?.readStoredCredentials ?? readStoredCredentials)();
   if (!credentials) return { ok: false, result: notAuthenticated() };
   const transport = await (params.deps?.resolveSessionTransportContext ?? resolveSessionTransportContext)({
     credentials,
@@ -177,19 +191,20 @@ async function resolveLocalUsageLimitContext(params: Readonly<{
       }),
     };
   }
-  return {
+  const metadata = tryDecryptSessionMetadata({
+    credentials,
+    rawSession: transport.rawSession,
+  });
+  const base = {
     ok: true,
     credentials,
     sessionId: transport.sessionId,
     rawSession: transport.rawSession,
-    metadata: readSessionMetadata({
-      rawSession: transport.rawSession,
-      mode: transport.mode,
-      ctx: transport.ctx,
-    }),
-    ctx: transport.ctx,
-    mode: transport.mode,
-  };
+    metadata,
+  } as const;
+  return transport.mode === 'plain'
+    ? { ...base, mode: transport.mode, ctx: transport.ctx }
+    : { ...base, mode: transport.mode, ctx: transport.ctx };
 }
 
 function readRecoveryFromUsageLimitResult(result: unknown): SessionUsageLimitRecoveryV1 | null {
@@ -321,15 +336,13 @@ async function executeUsageLimitControl(params: Readonly<{
   const stageUsageLimitRecoveryMutation = async (mutation: DaemonUsageLimitRecoveryFieldMutation) => {
     await stageDaemonMutation({ mutation, rawSession: resolved.rawSession });
   };
-  const common = {
+  const commonBase = {
     token: resolved.credentials.token,
     credentials: resolved.credentials,
     sessionId: resolved.sessionId,
     rawSession: resolved.rawSession,
     metadata: resolved.metadata,
     currentMachineId: params.deps?.currentMachineId ?? null,
-    ctx: resolved.ctx,
-    mode: resolved.mode,
     callLiveSessionRpc: async () => buildUsageLimitRecoveryOperationError({
       errorCode: 'session_usage_limit_recovery_control_active_runner_owned',
       status: 'session_unreachable',
@@ -350,7 +363,13 @@ async function executeUsageLimitControl(params: Readonly<{
     ...(params.deps?.retryTemporaryThrottleNow
       ? { retryTemporaryThrottleNow: params.deps.retryTemporaryThrottleNow }
       : {}),
+    ...(params.deps?.readInactiveSessionUsageLimitRecovery
+      ? { readCurrentUsageLimitRecovery: params.deps.readInactiveSessionUsageLimitRecovery }
+      : {}),
   } as const;
+  const common = resolved.mode === 'plain'
+    ? { ...commonBase, mode: resolved.mode, ctx: resolved.ctx }
+    : { ...commonBase, mode: resolved.mode, ctx: resolved.ctx };
 
   let result: unknown;
   if (params.operation === 'enable') {

@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import { Agent as HttpAgent } from 'node:http';
@@ -33,6 +34,7 @@ export type TranscriptLookupOutcome =
 function createAxiosGetConfig(params: { token: string; timeoutMs?: number }) {
     return {
         headers: {
+            ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             Authorization: `Bearer ${params.token}`,
             'Content-Type': 'application/json',
         },

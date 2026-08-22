@@ -1,9 +1,4 @@
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
-import type {
-    ConnectedAccountRequestAuthSubject,
-} from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
-import type { ManagedLocalServiceRunAttachmentV1 } from '@/daemon/sessionRegistry';
-import type { TrustedManagedLocalServiceOwnedRun } from '@/daemon/local/services/runtime';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
@@ -11,7 +6,6 @@ import { configuration } from '@/configuration';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import type {
     ProviderSpawnAuthorizationAttempt,
-    ProviderSpawnMaterializationResult,
 } from '@/providers/spawn/authorize';
 import type {
     ProviderRedactionLease,
@@ -37,15 +31,6 @@ import {
 } from './persistedTakeoverAdmission';
 
 type ConnectedServiceAuth = Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>;
-type ManagedProviderSpawnMaterializationResult =
-    | (Extract<ProviderSpawnMaterializationResult, { ok: true }> & Readonly<{
-        managedLocalServiceRunAttachment: ManagedLocalServiceRunAttachmentV1;
-        managedLocalServiceOwnedRun: TrustedManagedLocalServiceOwnedRun;
-        activateManagedProviderRequestAuth:
-            (subject: ConnectedAccountRequestAuthSubject) => Promise<void>;
-    }>)
-    | Extract<ProviderSpawnMaterializationResult, { ok: false }>;
-
 export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     options: SpawnSessionOptions;
     effectiveModelSelection: SpawnSessionOptions['modelSelection'];
@@ -59,7 +44,6 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     providerBindingAttempt: ProviderSpawnAuthorizationAttempt | null;
     providerAgentTargetKey: string | null;
     providerDiagnosticRedactionLease: ProviderRedactionLease;
-    materializeManagedProviderBinding?: () => Promise<ManagedProviderSpawnMaterializationResult>;
     launchResourceScope: ProviderLaunchResourceScope;
 }>): Promise<Readonly<{
     ok: false;
@@ -73,15 +57,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     terminalRequest: ReturnType<typeof resolveTerminalRequestFromSpawnOptions>;
     sanitizeDiagnosticText: (value: string) => string;
     createStreamingSanitizer?: () => ProviderStreamingSanitizer;
-    managedLocalServiceRunAttachment?: ManagedLocalServiceRunAttachmentV1;
-    managedLocalServiceOwnedRun?: TrustedManagedLocalServiceOwnedRun;
-    activateManagedProviderRequestAuth?:
-        (subject: ConnectedAccountRequestAuthSubject) => Promise<void>;
 }>> {
-    let managedLocalServiceRunAttachment: ManagedLocalServiceRunAttachmentV1 | null = null;
-    let managedLocalServiceOwnedRun: TrustedManagedLocalServiceOwnedRun | null = null;
-    let activateManagedProviderRequestAuth:
-        ((subject: ConnectedAccountRequestAuthSubject) => Promise<void>) | null = null;
     const providerBindingLaunchInput = (() => {
         if (!input.providerBindingAttempt) return null;
         if (!input.providerAgentTargetKey) {
@@ -92,6 +68,11 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
             agentTargetKey: input.providerAgentTargetKey,
         });
     })();
+    const materializeProviderBindingAfterHooks =
+        providerBindingLaunchInput
+        && 'materializeAfterHooks' in providerBindingLaunchInput.attempt
+            ? providerBindingLaunchInput.attempt.materializeAfterHooks
+            : null;
     const spawnEnvironment = await resolveSpawnChildEnvironment({
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: input.pluginRuntimeRegistry,
@@ -112,51 +93,47 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
                     modelId: providerBindingLaunchInput.attempt.authorization.binding.selection.model.id,
                 },
                 runtimePrerequisitesAlreadyResolved:
-                    'materializeAfterHooks' in providerBindingLaunchInput.attempt,
-                materializeProviderBindingAfterHooks: async () => {
-                    let materialized: ProviderSpawnMaterializationResult;
-                    if ('materializeManagedEndpoint' in providerBindingLaunchInput.attempt) {
-                        const managedMaterialized =
-                            await input.materializeManagedProviderBinding?.();
-                        if (!managedMaterialized) {
-                            throw new Error('Managed Provider binding materializer is unavailable');
-                        }
-                        if (managedMaterialized.ok) {
-                            managedLocalServiceRunAttachment =
-                                managedMaterialized.managedLocalServiceRunAttachment;
-                            managedLocalServiceOwnedRun =
-                                managedMaterialized.managedLocalServiceOwnedRun;
-                            activateManagedProviderRequestAuth =
-                                managedMaterialized.activateManagedProviderRequestAuth;
-                        }
-                        materialized = managedMaterialized;
-                    } else {
-                        materialized =
-                            await providerBindingLaunchInput.attempt.materializeAfterHooks();
+                    materializeProviderBindingAfterHooks !== null,
+                ...(materializeProviderBindingAfterHooks
+                    ? {
+                        materializeProviderBindingAfterHooks:
+                            async () => {
+                                const materialized =
+                                    await materializeProviderBindingAfterHooks();
+                                if (!materialized.ok) {
+                                    return {
+                                        ok: false as const,
+                                        errorCode:
+                                            SPAWN_SESSION_ERROR_CODES
+                                                .SPAWN_VALIDATION_FAILED,
+                                        errorMessage:
+                                            materialized.error.code,
+                                        providerError:
+                                            materialized.error,
+                                    };
+                                }
+                                input.providerDiagnosticRedactionLease.add(
+                                    materialized.redactionLease.values(),
+                                );
+                                return {
+                                    ok: true as const,
+                                    providerEnvironmentOverlay:
+                                        materialized.materialization
+                                            .providerEnvironmentOverlay,
+                                    providerBindingLaunchHandoff: {
+                                        v: 1 as const,
+                                        materialization:
+                                            materialized.materialization
+                                                .launchMaterialization,
+                                        sessionBindingMetadata:
+                                            providerBindingLaunchInput
+                                                .attempt.authorization
+                                                .sessionBindingMetadata,
+                                    },
+                                };
+                            },
                     }
-                    if (!materialized.ok) {
-                        return {
-                            ok: false as const,
-                            errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                            errorMessage: materialized.error.code,
-                            providerError: materialized.error,
-                        };
-                    }
-                    input.providerDiagnosticRedactionLease.add(
-                        materialized.redactionLease.values(),
-                    );
-                    return {
-                        ok: true as const,
-                        providerEnvironmentOverlay:
-                            materialized.materialization.providerEnvironmentOverlay,
-                        providerBindingLaunchHandoff: {
-                            v: 1 as const,
-                            materialization: materialized.materialization.launchMaterialization,
-                            sessionBindingMetadata:
-                                providerBindingLaunchInput.attempt.authorization.sessionBindingMetadata,
-                        },
-                    };
-                },
+                    : {}),
             }
             : {}),
     });
@@ -247,14 +224,5 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         sanitizeDiagnosticText: input.providerDiagnosticRedactionLease.redact,
         createStreamingSanitizer:
             input.providerDiagnosticRedactionLease.createStreamingSanitizer,
-        ...(managedLocalServiceRunAttachment
-            ? { managedLocalServiceRunAttachment }
-            : {}),
-        ...(managedLocalServiceOwnedRun
-            ? { managedLocalServiceOwnedRun }
-            : {}),
-        ...(activateManagedProviderRequestAuth
-            ? { activateManagedProviderRequestAuth }
-            : {}),
     };
 }

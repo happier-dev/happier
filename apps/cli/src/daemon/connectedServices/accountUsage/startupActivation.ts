@@ -1,5 +1,9 @@
 import type { ConnectedServiceId, ConnectedServiceUsageSourceV1 } from '@happier-dev/protocol';
 
+import { ConnectedServiceCurrentSourceHydrationConflictError } from './currentSourceHydration';
+
+const MAX_CURRENT_SOURCE_HYDRATION_ATTEMPTS = 3;
+
 export async function activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration<
   TCoordinator extends Readonly<{
     scheduleCurrentSourceRefresh: (sources: readonly ConnectedServiceUsageSourceV1[]) => unknown;
@@ -24,7 +28,18 @@ export async function activateConnectedServiceQuotaAutomationAfterProviderAccoun
   const serviceIds = [...new Set(input.quotaFetchers.map((fetcher) => fetcher.serviceId))];
   try {
     await input.awaitReadiness();
-    const hydration = await input.hydrate({ serviceIds });
+    let hydration: Awaited<ReturnType<typeof input.hydrate>> | undefined;
+    for (let attempt = 1; attempt <= MAX_CURRENT_SOURCE_HYDRATION_ATTEMPTS; attempt += 1) {
+      try {
+        hydration = await input.hydrate({ serviceIds });
+        break;
+      } catch (error) {
+        const shouldRetry = error instanceof ConnectedServiceCurrentSourceHydrationConflictError
+          && attempt < MAX_CURRENT_SOURCE_HYDRATION_ATTEMPTS;
+        if (!shouldRetry) throw error;
+      }
+    }
+    if (!hydration) throw new Error('Connected-service quota hydration did not settle');
     const coordinator = input.createCoordinator();
     coordinator.scheduleCurrentSourceRefresh(hydration.refreshSources);
     const loopHandle = input.startLoop(coordinator);

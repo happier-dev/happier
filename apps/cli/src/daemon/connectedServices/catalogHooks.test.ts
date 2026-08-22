@@ -10,6 +10,7 @@ import {
   getConnectedServiceRecoveryCapabilities,
   getConnectedServicesMaterializer,
   getConnectedServiceStateSharingDescriptor,
+  buildConnectedServicePersistedSessionMetadata,
   resolveConnectedServiceCandidatePersistedSessionFile,
   resolveConnectedServiceSwitchContinuity,
   resolveConnectedServiceGenerationApplicationScope,
@@ -60,6 +61,22 @@ const EXPECTED_CODEX_RECOVERY_CAPABILITIES = {
 } as const;
 
 describe('connected-service catalog hooks', () => {
+  it('passes only persisted-session lookup fields to Connected Service leaves', () => {
+    expect(buildConnectedServicePersistedSessionMetadata({
+      piSessionFile: '/tmp/pi-session.jsonl',
+      codexBackendMode: 'appServer',
+      codexSessionId: 'codex-session',
+      externalSessionOperation: { operationClaimId: 'claim-private' },
+      externalSessionOperationPresentationV1: { operationId: 'operation-private' },
+      ownerProjection: { custody: 'private' },
+      runtime: { host: 'private' },
+    })).toEqual({
+      piSessionFile: '/tmp/pi-session.jsonl',
+      codexBackendMode: 'appServer',
+      codexSessionId: 'codex-session',
+    });
+  });
+
   it('loads provider-owned connected-service hooks from the catalog owner', async () => {
     await expect(getConnectedServicesMaterializer('codex')).resolves.toBeTypeOf('function');
     await expect(getConnectedServiceRuntimeAuthAdapter('codex')).resolves.toMatchObject({

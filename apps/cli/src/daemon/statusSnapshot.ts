@@ -2,22 +2,11 @@ import { createServerUrlComparableKey, type DoctorSnapshot } from '@happier-dev/
 
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
-import { readCredentials, readDaemonState, readSettings } from '@/persistence';
+import { readDaemonState, readSettings, readStoredCredentials } from '@/persistence';
 import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/service/cli';
+import { isPidAliveBySignal } from '@/daemon/processRunState';
 
 export type DaemonStatusSnapshot = NonNullable<DoctorSnapshot['daemonStatus']>;
-
-function isPidAlive(pid: number | null | undefined): boolean {
-  if (!pid) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function resolveComparableKey(rawUrl: string): string | null {
   const value = String(rawUrl ?? '').trim();
@@ -34,7 +23,7 @@ function resolveComparableKey(rawUrl: string): string | null {
 export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> {
   const [settings, credentials, daemonState] = await Promise.all([
     readSettings(),
-    readCredentials(),
+    readStoredCredentials(),
     readDaemonState().catch(() => null),
   ]);
 
@@ -45,7 +34,7 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
     : null;
 
   const pid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
-  const daemonRunning = isPidAlive(pid);
+  const daemonRunning = pid != null && isPidAliveBySignal(pid);
   const machineId = typeof settings.machineId === 'string' && settings.machineId.trim()
     ? settings.machineId.trim()
     : null;

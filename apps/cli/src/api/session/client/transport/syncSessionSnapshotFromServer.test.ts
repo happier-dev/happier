@@ -24,7 +24,10 @@ describe('syncSessionSnapshotFromServer', () => {
             metadata,
             metadataVersion: 1,
             ownerMetadata: { v: 1, metadata: {} },
-            ownerMetadataCiphertext: 'owner-ciphertext',
+            ownerMetadataEnvelope: {
+                t: 'plain',
+                v: { v: 1 },
+            },
             agentState: null,
             agentStateVersion: 1,
         };
@@ -39,8 +42,18 @@ describe('syncSessionSnapshotFromServer', () => {
         await expect(syncSessionSnapshotFromServer({
             token: 'token',
             sessionId: 'session',
-            encryptionKey: new Uint8Array(32),
-            encryptionVariant: 'legacy',
+            accountEncryptionCurrentness: {
+                mode: 'e2ee',
+                version: 1,
+                signingKeyFingerprint: null,
+                contentKeyFingerprint: 'content-fingerprint',
+                updatedAt: 1,
+            },
+            mode: 'e2ee',
+            ctx: {
+                encryptionKey: new Uint8Array(32),
+                encryptionVariant: 'legacy',
+            },
             currentMetadataLayoutVersion: 0,
             currentMetadataVersion: 9,
             currentAgentStateVersion: 8,

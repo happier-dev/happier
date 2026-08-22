@@ -68,7 +68,10 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
                 previewId: 'preview_1',
             },
             {
-                headers: { Authorization: 'Bearer token_1' },
+                headers: {
+                    Authorization: 'Bearer token_1',
+                    'x-happier-account-stored-content-protocol': '2',
+                },
             },
         );
     });
@@ -126,7 +129,10 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
                 confirmation: { acknowledged: true },
             },
             {
-                headers: { Authorization: 'Bearer token_1' },
+                headers: {
+                    Authorization: 'Bearer token_1',
+                    'x-happier-account-stored-content-protocol': '2',
+                },
             },
         );
 
@@ -156,7 +162,10 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
         expect(deleteRequest).toHaveBeenCalledWith(
             'https://app.happier.test/v1/local-services/public/public_preview_1',
             {
-                headers: { Authorization: 'Bearer token_1' },
+                headers: {
+                    Authorization: 'Bearer token_1',
+                    'x-happier-account-stored-content-protocol': '2',
+                },
                 data: {
                     machineId: 'machine_1',
                     sessionId: 'session_1',

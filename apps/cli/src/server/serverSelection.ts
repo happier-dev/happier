@@ -169,20 +169,12 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
     activeServerId: string;
     localServerUrl?: string | null;
   }>) => {
-    const canonical = normalizeUrlOrThrow(params.serverUrl, '--server-url');
-    const local = params.localServerUrl ? normalizeUrlOrThrow(params.localServerUrl, '--local-server-url') : '';
-
-    if (local && local !== canonical) {
-      process.env.HAPPIER_PUBLIC_SERVER_URL = canonical;
-      process.env.HAPPIER_LOCAL_SERVER_URL = local;
-      process.env.HAPPIER_SERVER_URL = local;
-    } else {
-      delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-      delete process.env.HAPPIER_LOCAL_SERVER_URL;
-      process.env.HAPPIER_SERVER_URL = canonical;
-    }
-    process.env.HAPPIER_ACTIVE_SERVER_ID = params.activeServerId;
-    process.env.HAPPIER_WEBAPP_URL = normalizeUrlOrThrow(params.webappUrl, '--webapp-url');
+    applySelectionEnv({
+      serverUrl: normalizeUrlOrThrow(params.serverUrl, '--server-url'),
+      localServerUrl: params.localServerUrl ? normalizeUrlOrThrow(params.localServerUrl, '--local-server-url') : null,
+      webappUrl: normalizeUrlOrThrow(params.webappUrl, '--webapp-url'),
+      activeServerId: params.activeServerId,
+    });
   };
 
   if (server) {
@@ -191,7 +183,7 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
       serverUrl: profile.serverUrl,
       webappUrl: profile.webappUrl,
       activeServerId: profile.id,
-      localServerUrl: (profile as any).localServerUrl ?? null,
+      localServerUrl: profile.localServerUrl ?? null,
     });
     reloadConfiguration();
     return args.slice(i);
@@ -220,18 +212,67 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
 }
 
 /**
- * Apply server selection flags and return remaining args (with flags removed).
+ * A server selection resolved from CLI flags, before anything is applied.
+ *
+ * Resolving is read-only: flags are parsed and validated and the named profile is
+ * read, but neither settings nor `process.env` are written. Applying is the separate
+ * explicit step below, so dry-run callers (`happier setup plan`) can report the
+ * selection a real run would make without changing the machine.
+ */
+export type ResolvedServerSelection = Readonly<{
+  /** Canonical relay URL — what `configuration.serverUrl` becomes once applied. */
+  serverUrl: string;
+  /** Loopback/LAN API URL when it differs from the canonical URL. */
+  localServerUrl: string | null;
+  webappUrl: string;
+  /** Server id this selection resolves to (derived from the URL for a URL selection). */
+  activeServerId: string;
+  /** How applying this selection takes effect. */
+  application:
+    | Readonly<{ kind: 'ephemeralEnv' }>
+    | Readonly<{ kind: 'useServerProfile'; selector: string }>
+    | Readonly<{ kind: 'upsertServerProfile'; name: string }>;
+}>;
+
+export type ServerSelectionResolution = Readonly<{
+  /** Remaining args, with the selection flags removed. */
+  rest: string[];
+  /** `null` when the args carried no server selection. */
+  selection: ResolvedServerSelection | null;
+}>;
+
+function applySelectionEnv(selection: Readonly<{
+  serverUrl: string;
+  localServerUrl: string | null;
+  webappUrl: string;
+  activeServerId: string;
+}>): void {
+  const local = selection.localServerUrl;
+  if (local && local !== selection.serverUrl) {
+    process.env.HAPPIER_PUBLIC_SERVER_URL = selection.serverUrl;
+    process.env.HAPPIER_LOCAL_SERVER_URL = local;
+    process.env.HAPPIER_SERVER_URL = local;
+  } else {
+    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    delete process.env.HAPPIER_LOCAL_SERVER_URL;
+    process.env.HAPPIER_SERVER_URL = selection.serverUrl;
+  }
+  process.env.HAPPIER_ACTIVE_SERVER_ID = selection.activeServerId;
+  process.env.HAPPIER_WEBAPP_URL = selection.webappUrl;
+}
+
+/**
+ * Resolve server selection flags without applying them.
  *
  * Supported:
  * - --server <name-or-id>
- * - --server-url <url> [--webapp-url <url>] [--persist|--no-persist]
+ * - --server-url <url> [--local-server-url <url>] [--webapp-url <url>] [--persist|--no-persist]
  *
- * Side effects:
- * - May update persisted settings (when --server is used, or when --server-url is combined with --persist)
- * - May set env vars (when --no-persist is used, or when --server-url is used without --persist)
- * - Always reloads configuration if selection is applied
+ * Read-only: validates the flags, reads the named profile, and returns what applying
+ * the selection would do. Nothing is persisted, no env var is written, and the
+ * configuration is not reloaded.
  */
-export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<string[]> {
+export async function resolveServerSelectionFromArgs(argsRaw: string[]): Promise<ServerSelectionResolution> {
   if (hasLegacyPublicServerUrlFlag(argsRaw)) throw createLegacyPublicServerUrlFlagError();
 
   let args = [...argsRaw];
@@ -272,58 +313,89 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
   const shouldPersistServerUrlSelection = persist.present ? true : false;
 
   if (server.value) {
-    if (!shouldPersistProfileSelection) {
-      const profile = await getServerProfile(server.value);
-      const local = (profile as any).localServerUrl ? String((profile as any).localServerUrl).trim() : '';
-      if (local && local !== profile.serverUrl) {
-        process.env.HAPPIER_PUBLIC_SERVER_URL = profile.serverUrl;
-        process.env.HAPPIER_LOCAL_SERVER_URL = local;
-        process.env.HAPPIER_SERVER_URL = local;
-      } else {
-        delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-        delete process.env.HAPPIER_LOCAL_SERVER_URL;
-        process.env.HAPPIER_SERVER_URL = profile.serverUrl;
-      }
-      process.env.HAPPIER_ACTIVE_SERVER_ID = profile.id;
-      process.env.HAPPIER_WEBAPP_URL = profile.webappUrl;
-    } else {
-      await useServerProfile(server.value);
-    }
-    reloadConfiguration();
-    return args;
+    const profile = await getServerProfile(server.value);
+    const local = profile.localServerUrl ? String(profile.localServerUrl).trim() : '';
+    return {
+      rest: args,
+      selection: {
+        serverUrl: profile.serverUrl,
+        localServerUrl: local ? local : null,
+        webappUrl: profile.webappUrl,
+        activeServerId: profile.id,
+        application: shouldPersistProfileSelection
+          ? { kind: 'useServerProfile', selector: server.value }
+          : { kind: 'ephemeralEnv' },
+      },
+    };
   }
 
   if (serverUrl.value) {
     const normalizedServerUrl = normalizeUrlOrThrow(serverUrl.value, '--server-url');
     const normalizedWebappUrl = webappUrl.value ? normalizeUrlOrThrow(webappUrl.value, '--webapp-url') : null;
     const normalizedLocalServerUrl = localServerUrl.value ? normalizeUrlOrThrow(localServerUrl.value, '--local-server-url') : null;
-    if (!shouldPersistServerUrlSelection) {
-      if (normalizedLocalServerUrl && normalizedLocalServerUrl !== normalizedServerUrl) {
-        process.env.HAPPIER_PUBLIC_SERVER_URL = normalizedServerUrl;
-        process.env.HAPPIER_LOCAL_SERVER_URL = normalizedLocalServerUrl;
-        process.env.HAPPIER_SERVER_URL = normalizedLocalServerUrl;
-      } else {
-        delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-        delete process.env.HAPPIER_LOCAL_SERVER_URL;
-        process.env.HAPPIER_SERVER_URL = normalizedServerUrl;
-      }
-      process.env.HAPPIER_ACTIVE_SERVER_ID = deriveServerIdFromUrl(normalizedServerUrl);
-      process.env.HAPPIER_WEBAPP_URL = normalizedWebappUrl ?? deriveDefaultWebappUrl(normalizedServerUrl);
-      reloadConfiguration();
-      return args;
-    }
-
-    const name = deriveProfileNameFromServerUrl(normalizedServerUrl);
-    await upsertServerProfileByUrl({
-      name,
-      serverUrl: normalizedServerUrl,
-      ...(normalizedLocalServerUrl && normalizedLocalServerUrl !== normalizedServerUrl ? { localServerUrl: normalizedLocalServerUrl } : {}),
-      webappUrl: normalizedWebappUrl ?? deriveDefaultWebappUrl(normalizedServerUrl),
-      use: true,
-    });
-    reloadConfiguration();
-    return args;
+    return {
+      rest: args,
+      selection: {
+        serverUrl: normalizedServerUrl,
+        localServerUrl: normalizedLocalServerUrl,
+        webappUrl: normalizedWebappUrl ?? deriveDefaultWebappUrl(normalizedServerUrl),
+        activeServerId: deriveServerIdFromUrl(normalizedServerUrl),
+        application: shouldPersistServerUrlSelection
+          ? { kind: 'upsertServerProfile', name: deriveProfileNameFromServerUrl(normalizedServerUrl) }
+          : { kind: 'ephemeralEnv' },
+      },
+    };
   }
 
-  return args;
+  return { rest: args, selection: null };
+}
+
+/**
+ * Apply a previously resolved server selection.
+ *
+ * Side effects:
+ * - Updates persisted settings for a profile selection, or for `--server-url --persist`
+ * - Sets env vars for an ephemeral selection
+ * - Always reloads configuration
+ */
+export async function applyResolvedServerSelection(selection: ResolvedServerSelection): Promise<void> {
+  const application = selection.application;
+  switch (application.kind) {
+    case 'ephemeralEnv':
+      applySelectionEnv(selection);
+      break;
+    case 'useServerProfile':
+      await useServerProfile(application.selector);
+      break;
+    case 'upsertServerProfile':
+      await upsertServerProfileByUrl({
+        name: application.name,
+        serverUrl: selection.serverUrl,
+        ...(selection.localServerUrl && selection.localServerUrl !== selection.serverUrl
+          ? { localServerUrl: selection.localServerUrl }
+          : {}),
+        webappUrl: selection.webappUrl,
+        use: true,
+      });
+      break;
+  }
+  reloadConfiguration();
+}
+
+/**
+ * Apply server selection flags and return remaining args (with flags removed).
+ *
+ * Supported:
+ * - --server <name-or-id>
+ * - --server-url <url> [--webapp-url <url>] [--persist|--no-persist]
+ *
+ * Side effects:
+ * - May update persisted settings (when --server is used, or when --server-url is combined with --persist)
+ * - May set env vars (when --no-persist is used, or when --server-url is used without --persist)
+ * - Always reloads configuration if selection is applied
+ */
+export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<string[]> {
+  const { rest, selection } = await resolveServerSelectionFromArgs(argsRaw);
+  if (selection) await applyResolvedServerSelection(selection);
+  return rest;
 }

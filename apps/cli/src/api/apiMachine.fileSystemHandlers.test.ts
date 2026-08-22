@@ -54,6 +54,8 @@ describe('ApiMachineClient filesystem handlers', () => {
     expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CAPABILITY_GET_V1)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE)).toBe(true);
   });
 
   it('disposes abandoned filesystem transfer resources when the machine client shuts down', async () => {

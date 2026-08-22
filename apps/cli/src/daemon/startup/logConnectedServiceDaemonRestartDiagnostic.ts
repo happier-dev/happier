@@ -2,12 +2,11 @@ import type { ConnectedServiceDaemonRestartDiagnosticRecord } from '../connected
 
 type RestartDiagnosticLogger = Readonly<{
   debug: (message: string, record: ConnectedServiceDaemonRestartDiagnosticRecord) => void;
-  info: (message: string, record: ConnectedServiceDaemonRestartDiagnosticRecord) => void;
 }>;
 
 export function logConnectedServiceDaemonRestartDiagnostic(
   logger: RestartDiagnosticLogger,
   record: ConnectedServiceDaemonRestartDiagnosticRecord,
 ): void {
-  logger.info('[DAEMON RUN] Connected-service daemon restart diagnostic', record);
+  logger.debug('[DAEMON RUN] Connected-service daemon restart diagnostic', record);
 }

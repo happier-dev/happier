@@ -1,15 +1,54 @@
 import { describe, expect, it } from 'vitest';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
-import { resolve } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { hashProcessCommand } from './sessionRegistry';
 import type { TrackedSession } from './types';
 import type { Credentials } from '@/persistence';
 
 import { adoptSessionsFromMarkers } from './reattach';
-import type { SessionRunnerRespawnDescriptorV1 } from './processSupervision/sessionRunnerRespawnDescriptor';
+import {
+  buildSessionRunnerRespawnDescriptorV1FromSpawnOptions,
+  type SessionRunnerRespawnDescriptorV1,
+} from './processSupervision/sessionRunnerRespawnDescriptor';
+import { readOrCreateDeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 
 describe('adoptSessionsFromMarkers respawn descriptor', () => {
+  it('adopts the same process generation when the observed command drifts', () => {
+    const markerCommand = 'happier plugins list --json';
+    const runningCommand = 'happier claude --resume sess-existing';
+    const marker = {
+      pid: 118,
+      happySessionId: 'sess-process-generation',
+      happyHomeDir: '/tmp/happy-home',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      startedBy: 'terminal' as const,
+      processCommandHash: hashProcessCommand(markerCommand),
+      processStartTimeMs: 1_000,
+      processCommand: markerCommand,
+    };
+    const map = new Map<number, TrackedSession>();
+
+    const { adopted } = adoptSessionsFromMarkers({
+      markers: [marker],
+      happyProcesses: [{ pid: marker.pid, command: runningCommand, type: 'user-session' } as never],
+      processIdentityByPid: new Map([[
+        marker.pid,
+        { pid: marker.pid, processStartTimeMs: 1_000, command: runningCommand },
+      ]]),
+      pidToTrackedSession: map,
+    });
+
+    expect(adopted).toBe(1);
+    expect(map.get(marker.pid)).toMatchObject({
+      processStartTimeMs: 1_000,
+      processCommandHash: hashProcessCommand(runningCommand),
+    });
+  });
+
   it('does not represent a surviving Agent-runtime marker as usable or its interrupted turn as active', () => {
     const command = 'happier grok --happy-starting-mode remote --started-by daemon';
     const marker = {
@@ -215,6 +254,64 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
       transcriptStorage: 'direct',
     });
     expect(map.get(123)?.vendorResumeId).toBe('vendor-sess-123');
+  });
+
+  it('restores device-local respawn secrets for token-only daemon adoption', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-device-local-reattach-'));
+    try {
+      const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({
+        path: join(tempDir, 'device-local-secret-key.json'),
+        randomBytes: (length) => new Uint8Array(length).fill(17),
+      });
+      const command = `${process.execPath} -e "setInterval(()=>{}, 1000)"`;
+      const respawn = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
+        directory: '/tmp/workspace',
+        backendTarget: {
+          kind: 'backend',
+          backendId: 'codex',
+          sourceKind: 'built_in',
+        },
+        environmentVariables: {
+          OPENAI_API_KEY: 'sk-device-local',
+        },
+      }, {
+        deviceLocalSecretStorage,
+        randomBytes: (length) => new Uint8Array(length).fill(19),
+      });
+      expect(respawn?.sealedEnvironmentVariables?.format).toBe('device_local_v1');
+
+      const marker = {
+        pid: 124,
+        happySessionId: 'sess-device-local',
+        happyHomeDir: tempDir,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        startedBy: 'daemon' as const,
+        cwd: '/tmp/workspace',
+        processCommandHash: hashProcessCommand(command),
+        processCommand: command,
+        respawn,
+      };
+      const map = new Map<number, TrackedSession>();
+
+      const { adopted } = adoptSessionsFromMarkers({
+        markers: [marker as never],
+        happyProcesses: [{
+          pid: marker.pid,
+          command,
+          type: 'daemon-spawned-session',
+        } as never],
+        pidToTrackedSession: map,
+        deviceLocalSecretStorage,
+      });
+
+      expect(adopted).toBe(1);
+      expect(map.get(marker.pid)?.spawnOptions?.environmentVariables).toEqual({
+        OPENAI_API_KEY: 'sk-device-local',
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('refuses complete-marker adoption when newer metadata would downgrade Provider V2 continuity to native', () => {

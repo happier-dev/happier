@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import {
     CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     readConnectedAccountRequestAuthCapabilityFile,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 import type {
     QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';
@@ -49,6 +49,7 @@ const REQUEST_AUTH_CONTRIBUTIONS = {
                 connectedAccounts: [{
                     purpose: 'primary',
                     service: 'openai-codex',
+                    materializationKinds: ['httpHeaders'],
                 }],
             },
         },
@@ -164,8 +165,9 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             activate: vi.fn(async ({ subject }) => {
                 capturedSubject.current = subject;
                 expect(subject.subjectId).toBe(
-                    `${purposeLease.subjectId}/agent:codex`,
+                    purposeLease.subjectId,
                 );
+                expect(subject.legacyServiceKeyedCompatibility).toBe(true);
                 return {
                     path: capabilityPath,
                     materializationId: 'run_abc',
@@ -181,8 +183,10 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             cleanupOrder.push('filesystem');
         });
         const resolveAuthForSpawn = vi.fn(async (input) => {
+            const qualifiedPurposeBindingSnapshot =
+                input.resolveQualifiedPurposeBindingSnapshot(RUN_BINDINGS);
             const requestAuthPurposeBindings =
-                input.resolveRequestAuthPurposeBindings(RUN_BINDINGS);
+                qualifiedPurposeBindingSnapshot?.bindings ?? [];
             return {
                 env: {
                     CODEX_HOME: '/materialized/run_abc/codex-home',
@@ -194,6 +198,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
                 connectedServicesBindings: RUN_BINDINGS,
                 targetMaterializedRoot: materializedRoot,
                 requestAuthPurposeBindings,
+                qualifiedPurposeBindingSnapshot,
             };
         });
         let generationCurrent = true;
@@ -240,7 +245,8 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         });
         expect(requestAuthRegistry.activate).toHaveBeenCalledWith({
             subject: expect.objectContaining({
-                subjectId: `${purposeLease.subjectId}/agent:codex`,
+                subjectId: purposeLease.subjectId,
+                legacyServiceKeyedCompatibility: true,
             }),
             materializedRootDir: materializedRoot,
             materializationId: 'run_abc',
@@ -284,9 +290,9 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             retire: vi.fn(),
         };
         const resolveAuthForSpawn = vi.fn(async (input) => {
-            expect(
-                input.resolveRequestAuthPurposeBindings(nativeBindings),
-            ).toEqual([]);
+            const qualifiedPurposeBindingSnapshot =
+                input.resolveQualifiedPurposeBindingSnapshot(nativeBindings);
+            expect(qualifiedPurposeBindingSnapshot?.bindings).toEqual([]);
             return {
                 env: { NATIVE_AGENT_ENV: 'unchanged' },
                 cleanupOnFailure: null,
@@ -294,6 +300,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
                 connectedServicesBindings: nativeBindings,
                 targetMaterializedRoot: null,
                 requestAuthPurposeBindings: [],
+                qualifiedPurposeBindingSnapshot,
             };
         });
         const { bridge } = createBridge({
@@ -518,6 +525,140 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             activationId: result.activationId,
         }))
             .resolves.toEqual({ ok: true, released: false });
+    });
+
+    it('waits for a resolve-pending exited runner attempt and cleans its root and contribution lease', async () => {
+        let finishResolution!: () => void;
+        let markResolutionStarted!: () => void;
+        const resolutionStarted = new Promise<void>((resolve) => {
+            markResolutionStarted = resolve;
+        });
+        const resolutionGate = new Promise<void>((resolve) => {
+            finishResolution = resolve;
+        });
+        const runnerIdentity = Object.freeze({ kind: 'exiting-runner' });
+        let runnerCurrent = true;
+        const exactRootCleanup = vi.fn();
+        const createAdoptedRootCleanup = vi.fn(() => exactRootCleanup);
+        const contributionRelease = vi.fn(async () => undefined);
+        const { bridge, registerRunTargets } = createBridge({
+            captureRunnerIdentity: () => ({
+                identity: runnerIdentity,
+                parentSessionId: 'session-1',
+                isCurrent: () => runnerCurrent,
+            }),
+            acquireAgentPurposeContributions: async () => ({
+                contributions: { agentDefinitionsById: new Map() },
+                isCurrent: () => true,
+                release: contributionRelease,
+            }),
+            resolveAuthForSpawn: (async () => {
+                markResolutionStarted();
+                await resolutionGate;
+                return {
+                    env: { CODEX_HOME: '/materialized/run_abc/codex-home' },
+                    cleanupOnFailure: null,
+                    cleanupOnExit: null,
+                    connectedServicesBindings: RUN_BINDINGS,
+                    targetMaterializedRoot: '/materialized/run_abc/codex',
+                };
+            }) as never,
+            createAdoptedRootCleanup,
+        });
+
+        const materialization = bridge.materialize(MATERIALIZE_INPUT);
+        await resolutionStarted;
+        runnerCurrent = false;
+        let exitCleanupSettled = false;
+        const exitCleanup = bridge.releaseForRunnerExit({
+            runnerPid: 4242,
+            runnerIdentity,
+        }).then(() => {
+            exitCleanupSettled = true;
+        });
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
+        });
+        expect(exitCleanupSettled).toBe(false);
+
+        finishResolution();
+        await expect(materialization).resolves.toMatchObject({
+            ok: false,
+            errorCode: 'connected_service_run_materialization_blocked',
+        });
+        await exitCleanup;
+        expect(createAdoptedRootCleanup).toHaveBeenCalledWith({
+            runKey: 'run_abc',
+            agentId: 'codex',
+            materializedRoot: '/materialized/run_abc/codex',
+        });
+        expect(exactRootCleanup).toHaveBeenCalledOnce();
+        expect(contributionRelease).toHaveBeenCalledOnce();
+        expect(registerRunTargets).not.toHaveBeenCalled();
+    });
+
+    it('cleans materialized root and contribution when post-resolution setup fails', async () => {
+        const cleanupOnFailure = vi.fn();
+        const contributionRelease = vi.fn(async () => undefined);
+        const { bridge, registerRunTargets } = createBridge({
+            resolveAuthForSpawn: (async () => ({
+                env: { CODEX_HOME: '/materialized/run_abc/codex-home' },
+                cleanupOnFailure,
+                cleanupOnExit: vi.fn(),
+                connectedServicesBindings: RUN_BINDINGS,
+                targetMaterializedRoot: '/materialized/run_abc/codex',
+            })) as never,
+            resolveRunMaterializedRoot: () => {
+                throw new Error('root lookup failed');
+            },
+            acquireAgentPurposeContributions: async () => ({
+                contributions: { agentDefinitionsById: new Map() },
+                isCurrent: () => true,
+                release: contributionRelease,
+            }),
+        });
+
+        await expect(bridge.materialize(MATERIALIZE_INPUT)).resolves.toMatchObject({
+            ok: false,
+            errorCode: 'connected_service_run_materialization_blocked',
+        });
+        expect(cleanupOnFailure).toHaveBeenCalledOnce();
+        expect(contributionRelease).toHaveBeenCalledOnce();
+        expect(registerRunTargets).not.toHaveBeenCalled();
+    });
+
+    it('unregisters a possibly-partial target registration and uses failure cleanup before admission', async () => {
+        const cleanupOnFailure = vi.fn();
+        const cleanupOnExit = vi.fn();
+        const contributionRelease = vi.fn(async () => undefined);
+        const unregisterRunTargets = vi.fn();
+        const { bridge } = createBridge({
+            resolveAuthForSpawn: (async () => ({
+                env: { CODEX_HOME: '/materialized/run_abc/codex-home' },
+                cleanupOnFailure,
+                cleanupOnExit,
+                connectedServicesBindings: RUN_BINDINGS,
+                targetMaterializedRoot: '/materialized/run_abc/codex',
+            })) as never,
+            registerRunTargets: () => {
+                throw new Error('partial registration failed');
+            },
+            unregisterRunTargets,
+            acquireAgentPurposeContributions: async () => ({
+                contributions: { agentDefinitionsById: new Map() },
+                isCurrent: () => true,
+                release: contributionRelease,
+            }),
+        });
+
+        await expect(bridge.materialize(MATERIALIZE_INPUT)).resolves.toMatchObject({
+            ok: false,
+            errorCode: 'connected_service_run_materialization_blocked',
+        });
+        expect(unregisterRunTargets).toHaveBeenCalledWith('run_abc');
+        expect(cleanupOnFailure).toHaveBeenCalledOnce();
+        expect(cleanupOnExit).not.toHaveBeenCalled();
+        expect(contributionRelease).toHaveBeenCalledOnce();
     });
 
     it('fully cleans prior same-key ownership before starting replacement materialization', async () => {
@@ -819,6 +960,12 @@ describe('createExecutionRunConnectedServicesBridge', () => {
                     kind: 'environment',
                     env: {},
                 }),
+                async projectTargetAccounts() {
+                    throw new Error('target-scoped listing is outside execution-run adoption');
+                },
+                async assertTargetAccountMaterializable() {
+                    throw new Error('listed-account materialization is outside execution-run adoption');
+                },
             });
         const restartedRegistry =
             createConnectedAccountRequestAuthSubjectRegistry();
@@ -869,8 +1016,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             expect(
                 restartedRegistry.authenticate(currentDocument?.capability),
             ).toMatchObject({
-                subjectId:
-                    'execution-run:run_abc/runner:4242/agent:codex/agent:codex',
+                subjectId: 'execution-run:run_abc/runner:4242/agent:codex',
             });
             expect(adoptedCleanup).not.toHaveBeenCalled();
 

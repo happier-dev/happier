@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AccountSettingsSchema,
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderConnectionIdSchema,
   ProviderContributionV1Schema,
@@ -18,6 +19,10 @@ import type { ResolvedProviderContribution } from '@/plugins/projection/registry
 import { resolveProviderConnectionForMachine, type ProviderContributionRegistryView } from '@/providers/registry';
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
 import { createProviderConnectionService } from './service';
+import type {
+  ProviderConnectionServiceDeps,
+  ProviderConnectionServiceSnapshot,
+} from './service/types';
 
 const contributionKey = 'acme.gateway/gateway';
 
@@ -79,6 +84,25 @@ function localContribution(): ResolvedProviderContribution {
   };
 }
 
+/**
+ * A contribution whose catalog probe declares a catalog format by id. The
+ * format may be one the host bundles, or one only this plugin implements.
+ */
+function catalogFormatContribution(parser: string): ResolvedProviderContribution {
+  const value = contribution();
+  return {
+    ...value,
+    definition: ProviderContributionV1Schema.parse({
+      ...value.definition,
+      catalog: {
+        source: 'probe',
+        manualModelPolicy: 'allowed',
+        probes: [{ endpointTemplateId: 'responses', path: '/v1/models', parser }],
+      },
+    }),
+  };
+}
+
 function adoptedAggregatorContribution(): ResolvedProviderContribution {
   const value = localContribution();
   return {
@@ -92,55 +116,106 @@ function adoptedAggregatorContribution(): ResolvedProviderContribution {
   };
 }
 
-function managedContribution(): Extract<
-  ResolvedProviderContribution,
-  { provenance: 'first_party' }
-> {
+function managedContribution(): ResolvedProviderContribution {
   const value = noAuthContribution({ id: 'gateway', name: 'Managed Gateway' });
   return {
     ...value,
     provenance: 'first_party',
     source: { kind: 'bundled' },
-    managed: {
-      managedEndpoint: {
-        localService: {
-          id: 'gateway',
-          launch: {
-            kind: 'packaged-runtime-binary',
-            directorySegments: ['cliproxyapi', 'unpacked'],
-            executableBaseName: 'cliproxyapi',
-            privateConfigPathFlag: '--config',
+    definition: ProviderContributionV1Schema.parse({
+      ...value.definition,
+      endpointTemplates: [
+        ...value.definition.endpointTemplates,
+        {
+          id: 'chat',
+          protocol: 'openai-chat',
+          baseUrl: 'https://gateway.example/chat',
+          capabilities: {
+            streaming: 'unknown',
+            toolRoundTrips: 'unknown',
+            statefulResponses: 'unknown',
+            reasoningControls: 'unknown',
           },
-          launchMode: {
-            kind: 'assignAndInject',
-            portPolicy: { kind: 'allocated' },
-          },
-          hostPolicy: { kind: 'loopback' },
-          name: { strategy: 'fixed', name: 'Managed Gateway' },
-          healthCheck: { kind: 'http', path: '/healthz' },
-          restart: { kind: 'never' },
-          cleanup: { staleAfterMs: 60_000 },
         },
-        protocols: ['openai-chat', 'openai-responses'],
+      ],
+      managedRuntime: {
+        kind: 'managed',
+        connectedAccounts: [{
+          purpose: 'upstream',
+          service: {
+            pluginId: 'happier.connected-account.openai',
+            localId: 'openai',
+          },
+          title: {
+            key: 'plugins.acme.gateway.connectedAccounts.upstream',
+            fallback: 'Use upstream OpenAI account',
+          },
+          required: true,
+          materializationKinds: ['httpHeaders'],
+        }],
+        requestAuthUses: [{
+          purpose: 'upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.openai.com',
+            headerNames: ['authorization'],
+          },
+        }],
+        endpointTemplateIds: ['responses', 'chat'],
       },
-      connectedAccounts: [{
-        purpose: 'upstream',
-        service: {
-          pluginId: 'happier.connected-account.openai',
-          localId: 'openai',
-        },
-        required: true,
-        materializationKinds: ['httpHeaders'],
-      }],
-      requestAuthUses: [{
-        purpose: 'upstream',
-        materialization: {
-          kind: 'httpHeaders',
-          origin: 'https://api.openai.com',
-          headerNames: ['authorization'],
-        },
-      }],
-    },
+    }),
+  };
+}
+
+function managedContributionForSource(
+  source: 'bundled' | 'path' | 'package',
+): ResolvedProviderContribution {
+  return {
+    ...managedContribution(),
+    provenance: source === 'bundled' ? 'first_party' : 'external',
+    source: { kind: source },
+  };
+}
+
+function managedContributionWithTwoPurposes(): ResolvedProviderContribution {
+  const value = managedContribution();
+  return {
+    ...value,
+    definition: ProviderContributionV1Schema.parse({
+      ...value.definition,
+      managedRuntime: {
+        kind: 'managed',
+        connectedAccounts: [
+          {
+            purpose: 'upstream',
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            required: true,
+            materializationKinds: ['httpHeaders'],
+          },
+          {
+            purpose: 'secondary',
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            required: true,
+            materializationKinds: ['httpHeaders'],
+          },
+        ],
+        requestAuthUses: [{
+          purpose: 'upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.openai.com',
+            headerNames: ['authorization'],
+          },
+        }],
+        endpointTemplateIds: ['responses', 'chat'],
+      },
+    }),
   };
 }
 
@@ -167,7 +242,16 @@ function harness(options: Readonly<{
   ) => Readonly<Record<string, unknown>>) | null = null;
   const providersByContributionKey = new Map([[contributionKey, contribution()]]);
   const registry: ProviderContributionRegistryView = { providersByContributionKey };
-  const loadSnapshot = vi.fn(async () => ({ accountSettings: raw, registry }));
+  let lastSnapshot: ProviderConnectionServiceSnapshot | null = null;
+  const loadSnapshot = vi.fn(async (): Promise<ProviderConnectionServiceSnapshot> => {
+    const snapshot = {
+      accountSettings: AccountSettingsSchema.parse(raw),
+      rawAccountSettings: raw,
+      registry,
+    };
+    lastSnapshot = snapshot;
+    return snapshot;
+  });
   const mutationApplications: Array<Readonly<{
     input: Readonly<Record<string, unknown>>;
     output: Readonly<Record<string, unknown>>;
@@ -189,7 +273,7 @@ function harness(options: Readonly<{
     ['https://gateway.example/v1', ['1.1.1.1']],
     ['http://127.0.0.1:8080/v1', ['127.0.0.1']],
   ]));
-  const runtimeSummary = vi.fn(async () => ({
+  const runtimeSummary = vi.fn<ProviderConnectionServiceDeps['runtimeSummary']>(async (_input) => ({
     summary: {
       health: 'available' as const,
       modelCount: 3,
@@ -220,7 +304,12 @@ function harness(options: Readonly<{
     managedStartAvailable: true,
   }]);
   const refreshOnEnable = vi.fn(async () => undefined);
-  const startManaged = vi.fn(async () => ({ status: 'running' as const }));
+  const startManagedProviderRuntime = vi.fn<
+    NonNullable<ProviderConnectionServiceDeps['startManagedProviderRuntime']>
+  >(async (_input) => ({ status: 'running' as const }));
+  const resolveManagedPurposeBindingIntent = vi.fn<
+    NonNullable<ProviderConnectionServiceDeps['resolveManagedPurposeBindingIntent']>
+  >(async ({ purpose, target }) => ({ purpose, target }));
   const compatibilitySummary = vi.fn((): DaemonProviderAgentCompatibilitySummaryV1[] => [{
       agentTargetKey: 'backend:codex', agentName: 'Codex', status: 'experimental' as const,
       reasons: ['compatibility_evidence_missing'],
@@ -249,14 +338,18 @@ function harness(options: Readonly<{
     discoveryCandidates,
     localInstallations,
     refreshOnEnable,
-    startManaged,
+    startManagedProviderRuntime,
+    resolveManagedPurposeBindingIntent,
     now: () => 100,
   });
   return {
     service, loadSnapshot, updateAccountSettings, collectDnsEvidence, runtimeSummary, compatibilitySummary,
-    acquireCompatibilityProjection, discoveryCandidates, localInstallations, refreshOnEnable, startManaged,
+    acquireCompatibilityProjection, discoveryCandidates, localInstallations, refreshOnEnable,
+    startManagedProviderRuntime,
+    resolveManagedPurposeBindingIntent,
     providersByContributionKey,
     getRaw: () => raw,
+    getLastSnapshot: () => lastSnapshot,
     mutationApplications,
     setRaw: (next: Record<string, unknown>) => { raw = next; },
     beforeNextUpdate: (mutate: (
@@ -268,7 +361,179 @@ function harness(options: Readonly<{
 }
 
 describe('provider connection service', () => {
-  it('projects managed process, dependency, protocol, and selected purpose effects without endpoints', async () => {
+  it.each(['bundled', 'path', 'package'] as const)(
+    'projects the same public managed deployment for a %s Provider without the UI Local Services gate',
+    async (source) => {
+      const managed = harness({ managedEnabled: false });
+      managed.providersByContributionKey.set(
+        contributionKey,
+        managedContributionForSource(source),
+      );
+      managed.setRaw({
+        providerSettingsV1: ProviderSettingsV1Schema.parse({
+          ...DEFAULT_PROVIDER_SETTINGS_V1,
+          connections: [ProviderConnectionV1Schema.parse({
+            v: 1,
+            id: 'pc_managed',
+            source: { kind: 'contribution', contributionKey },
+            role: 'default',
+            displayName: 'Managed Gateway',
+            displayNameMode: 'automatic',
+            deployment: { kind: 'managedLocal' },
+            purposeBindingDefaults: {
+              upstream: {
+                kind: 'account',
+                account: {
+                  service: {
+                    pluginId: 'happier.connected-account.openai',
+                    localId: 'openai',
+                  },
+                  accountId: 'work',
+                },
+              },
+            },
+            revision: 0,
+            createdAt: 1,
+            updatedAt: 1,
+          })],
+        }),
+        secrets: [],
+      });
+
+      const described = await managed.service.describe({
+        machineId: 'machine-a',
+        connectionId: ProviderConnectionIdSchema.parse('pc_managed'),
+      });
+      expect(described).toMatchObject({
+        status: 'success',
+        connections: [{ connectionId: 'pc_managed' }],
+      });
+      if (described.status !== 'success') {
+        throw new Error('Expected managed connection description to succeed');
+      }
+      const describedConnection = described.connections[0];
+      expect(describedConnection?.deployment).toEqual({
+        kind: 'managedLocal',
+        targetMachineId: 'machine-a',
+        effects: {
+          implementationIdentity: {
+            pluginId: 'acme.gateway',
+            localId: 'gateway',
+          },
+          protocols: ['openai-responses', 'openai-chat'],
+          connectedAccountPurposes: [{
+            purpose: 'upstream',
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            title: 'Use upstream OpenAI account',
+            required: true,
+            materializationKinds: ['httpHeaders'],
+            target: {
+              kind: 'account',
+              account: {
+                service: {
+                  pluginId: 'happier.connected-account.openai',
+                  localId: 'openai',
+                },
+                accountId: 'work',
+              },
+            },
+          }],
+        },
+      });
+      expect(describedConnection?.managedLocalOption).toEqual({
+        targetMachineId: 'machine-a',
+        connectedAccountPurposes: [{
+          purpose: 'upstream',
+          service: {
+            pluginId: 'happier.connected-account.openai',
+            localId: 'openai',
+          },
+          title: 'Use upstream OpenAI account',
+          required: true,
+          materializationKinds: ['httpHeaders'],
+        }],
+      });
+    },
+  );
+
+  it.each([
+    ['built-in', 'bundled'],
+    ['external', 'path'],
+  ] as const)('passes the exact %s Provider settings resolution to runtime summary', async (_kind, source) => {
+    const h = harness();
+    h.providersByContributionKey.set(contributionKey, managedContributionForSource(source));
+    const connection = ProviderConnectionV1Schema.parse({
+      v: 1,
+      id: 'pc_runtime_summary_snapshot',
+      source: { kind: 'contribution', contributionKey },
+      role: 'default',
+      displayName: 'Managed Gateway',
+      displayNameMode: 'automatic',
+      deployment: { kind: 'managedLocal' },
+      purposeBindingDefaults: {
+        upstream: {
+          kind: 'account',
+          account: {
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            accountId: 'work',
+          },
+        },
+      },
+      revision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const ungrantedSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [connection],
+    });
+    const ungranted = resolveProviderConnectionForMachine({
+      connectionId: connection.id,
+      machineId: 'machine-a',
+      accountSettings: { providerSettingsV1: ungrantedSettings },
+      registry: { providersByContributionKey: h.providersByContributionKey },
+      dnsEvidenceByEndpointUrl: new Map(),
+    });
+    if (ungranted.status !== 'resolved') {
+      throw new Error('Expected the managed Provider connection to resolve before grant');
+    }
+    const settings = ProviderSettingsV1Schema.parse({
+      ...ungrantedSettings,
+      machineGrants: [{
+        v: 1,
+        machineId: 'machine-a',
+        connectionId: connection.id,
+        endpointSetFingerprint: ungranted.record.endpointSetFingerprint,
+        connectionSecurityFingerprint: ungranted.record.connectionSecurityFingerprint,
+        confirmedAt: 1,
+      }],
+    });
+    h.setRaw({ providerSettingsV1: settings, secrets: [] });
+
+    await expect(h.service.describe({
+      machineId: 'machine-a',
+      connectionId: connection.id,
+    })).resolves.toMatchObject({
+      status: 'success',
+      connections: [{ connectionId: connection.id, authorized: true }],
+    });
+    const runtimeSummaryInput = h.runtimeSummary.mock.calls.at(-1)?.[0];
+    const snapshot = h.getLastSnapshot();
+    expect(runtimeSummaryInput).toBeDefined();
+    expect(snapshot).not.toBeNull();
+    expect(runtimeSummaryInput?.accountSettings).toBe(snapshot?.accountSettings);
+    expect(runtimeSummaryInput?.registry.providersByContributionKey).toBe(h.providersByContributionKey);
+    expect(runtimeSummaryInput?.dnsEvidence).toBeInstanceOf(Map);
+    expect(runtimeSummaryInput?.resolution.record.deployment).toMatchObject({ kind: 'managedLocal' });
+  });
+
+  it('does not mutate persisted state for an unmatched managed authoring preview', async () => {
     const managed = harness();
     managed.providersByContributionKey.set(contributionKey, managedContribution());
     managed.setRaw({
@@ -300,69 +565,6 @@ describe('provider connection service', () => {
         })],
       }),
       secrets: [],
-    });
-
-    await expect(managed.service.describe({
-      machineId: 'machine-a',
-      connectionId: ProviderConnectionIdSchema.parse('pc_managed'),
-    })).resolves.toMatchObject({
-      status: 'success',
-      connections: [{
-        connectionId: 'pc_managed',
-        deployment: {
-          kind: 'managedLocal',
-          targetMachineId: 'machine-a',
-          effects: {
-            implementationIdentity: {
-              pluginId: 'acme.gateway',
-              localId: 'gateway',
-            },
-            process: {
-              localServiceId: 'gateway',
-              manager: 'happier',
-              lifetime: 'session',
-              network: 'loopback',
-              restart: 'never',
-            },
-            dependency: {
-              kind: 'packaged-runtime-binary',
-              directorySegments: ['cliproxyapi', 'unpacked'],
-              executableBaseName: 'cliproxyapi',
-            },
-            protocols: ['openai-chat', 'openai-responses'],
-            connectedAccountPurposes: [{
-              purpose: 'upstream',
-              service: {
-                pluginId: 'happier.connected-account.openai',
-                localId: 'openai',
-              },
-              required: true,
-              target: {
-                kind: 'account',
-                account: {
-                  service: {
-                    pluginId: 'happier.connected-account.openai',
-                    localId: 'openai',
-                  },
-                  accountId: 'work',
-                },
-              },
-            }],
-          },
-        },
-        managedLocalOption: {
-          targetMachineId: 'machine-a',
-          connectedAccountPurposes: [{
-            purpose: 'upstream',
-            service: {
-              pluginId: 'happier.connected-account.openai',
-              localId: 'openai',
-            },
-            required: true,
-          }],
-        },
-        endpoints: [],
-      }],
     });
     const beforePreview = structuredClone(managed.getRaw());
     await expect(managed.service.describe({
@@ -799,33 +1001,41 @@ describe('provider connection service', () => {
     expect(managed.getRaw()).toEqual(before);
 
     const managedWithRequiredPurpose = managedContribution();
+    const managedRuntime = managedWithRequiredPurpose.definition.managedRuntime;
+    if (!managedRuntime) {
+      throw new Error('Expected public managed runtime declaration');
+    }
     managed.providersByContributionKey.set(contributionKey, {
       ...managedWithRequiredPurpose,
-      managed: {
-        ...managedWithRequiredPurpose.managed!,
-        connectedAccounts: [
-          ...managedWithRequiredPurpose.managed!.connectedAccounts,
-          {
-            purpose: 'optional',
-            service: {
-              pluginId: 'happier.connected-account.openai',
-              localId: 'openai',
+      definition: ProviderContributionV1Schema.parse({
+        ...managedWithRequiredPurpose.definition,
+        managedRuntime: {
+          ...managedRuntime,
+          connectedAccounts: [
+            ...(managedRuntime.connectedAccounts ?? []),
+            {
+              purpose: 'optional',
+              service: {
+                pluginId: 'happier.connected-account.openai',
+                localId: 'openai',
+              },
+              required: false,
+              materializationKinds: ['httpHeaders'],
             },
-            required: false,
-          },
-        ],
-        requestAuthUses: [
-          ...managedWithRequiredPurpose.managed!.requestAuthUses,
-          {
-            purpose: 'optional',
-            materialization: {
-              kind: 'httpHeaders',
-              origin: 'https://api.openai.com',
-              headerNames: ['authorization'],
+          ],
+          requestAuthUses: [
+            ...(managedRuntime.requestAuthUses ?? []),
+            {
+              purpose: 'optional',
+              materialization: {
+                kind: 'httpHeaders',
+                origin: 'https://api.openai.com',
+                headerNames: ['authorization'],
+              },
             },
-          },
-        ],
-      },
+          ],
+        },
+      }),
     });
     await expect(managed.service.update({
       ...request,
@@ -1344,7 +1554,7 @@ describe('provider connection service', () => {
 
     const managedDisabled = harness({ managedEnabled: false });
     await expect(managedDisabled.service.describe({ machineId: 'machine-a' })).resolves.toMatchObject({
-      status: 'success', localInstallations: [{ managedStartAvailable: false }],
+      status: 'success', localInstallations: [{ managedStartAvailable: true }],
     });
   });
 
@@ -1382,7 +1592,7 @@ describe('provider connection service', () => {
     expect(h.getRaw()).toEqual(beforeDescribe);
   });
 
-  it('bounds discovery summaries and reports truncation instead of overflowing the RPC contract', async () => {
+  it('retains all valid discovery summaries instead of truncating at an arbitrary count', async () => {
     const h = harness();
     const candidate = (await h.discoveryCandidates())[0];
     if (!candidate) throw new Error('expected discovery fixture');
@@ -1391,11 +1601,11 @@ describe('provider connection service', () => {
       normalizedEndpointUrl: `http://127.0.0.1:${10_000 + index}/`,
     })));
     await expect(h.service.describe({ machineId: 'machine-a' })).resolves.toMatchObject({
-      status: 'success', discoveryCandidatesTruncated: true,
+      status: 'success', discoveryCandidatesTruncated: false,
       discoveryCandidates: expect.any(Array),
     });
     const result = await h.service.describe({ machineId: 'machine-a' });
-    expect(result.status === 'success' ? result.discoveryCandidates : []).toHaveLength(256);
+    expect(result.status === 'success' ? result.discoveryCandidates : []).toHaveLength(257);
   });
 
   it('atomically creates, machine-overrides, and grants a revalidated detected listener', async () => {
@@ -1473,7 +1683,7 @@ describe('provider connection service', () => {
       machineId: 'machine-a',
       connectionId: 'pc_adopted',
     })).resolves.toMatchObject({ status: 'success', connectionId: 'pc_adopted' });
-    expect(h.startManaged).not.toHaveBeenCalled();
+    expect(h.startManagedProviderRuntime).not.toHaveBeenCalled();
     expect(readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings.connections).toEqual([]);
   });
 
@@ -1533,30 +1743,276 @@ describe('provider connection service', () => {
     expect(h.updateAccountSettings).not.toHaveBeenCalled();
   });
 
-  it('starts only a declared managed local provider behind both dependent feature gates', async () => {
-    const h = harness();
-    h.discoveryCandidates.mockResolvedValue([]);
+  it('starts only a declared managed Provider without consulting advisory discovery candidates', async () => {
+    const h = harness({ managedEnabled: false });
     const managed = localContribution();
     const withManaged = {
       ...managed,
       definition: ProviderContributionV1Schema.parse({
         ...managed.definition,
-        discovery: {
-          ...managed.definition.discovery,
-          managedStart: { lookupNames: ['local-server'], fixedArgs: ['serve'] },
+        managedRuntime: {
+          kind: 'managed',
+          endpointTemplateIds: ['chat'],
         },
       }),
     };
     h.providersByContributionKey.set(contributionKey, withManaged);
     await expect(h.service.startLocal({
-      action: 'startLocal', machineId: 'machine-a', connectionId: 'pc_local', contributionKey,
+      action: 'startLocal', machineId: 'machine-a', contributionKey,
     })).resolves.toMatchObject({ status: 'success', contributionKey, phase: 'running' });
+    expect(h.discoveryCandidates).not.toHaveBeenCalled();
+    expect(h.startManagedProviderRuntime).toHaveBeenCalledOnce();
+    expect(h.startManagedProviderRuntime).toHaveBeenCalledWith({
+      contributionKey,
+      identity: { pluginId: 'acme.gateway', localId: 'gateway' },
+      request: {
+        reason: 'explicitStartLocal',
+        endpointTemplateIds: ['chat'],
+      },
+      purposeBindings: { v: 1, bindings: [] },
+      isAuthorizationCurrent: expect.any(Function),
+      revalidateAuthorization: expect.any(Function),
+    });
 
-    const disabled = harness({ managedEnabled: false });
-    disabled.providersByContributionKey.set(contributionKey, withManaged);
-    await expect(disabled.service.startLocal({
-      action: 'startLocal', machineId: 'machine-a', connectionId: 'pc_local', contributionKey,
-    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_feature_disabled' } });
+    const startInput = h.startManagedProviderRuntime.mock.calls[0]?.[0];
+    expect(startInput?.isAuthorizationCurrent()).toBe(true);
+    await expect(startInput?.revalidateAuthorization()).resolves.toBe(true);
+  });
+
+  it.each(['bundled', 'path', 'package'] as const)(
+    'passes the canonical selected managed binding snapshot for a %s Provider explicit start',
+    async (source) => {
+      const h = harness({ managedEnabled: false });
+      h.discoveryCandidates.mockResolvedValue([]);
+      h.providersByContributionKey.set(
+        contributionKey,
+        managedContributionForSource(source),
+      );
+      h.setRaw({
+        providerSettingsV1: ProviderSettingsV1Schema.parse({
+          ...DEFAULT_PROVIDER_SETTINGS_V1,
+          connections: [ProviderConnectionV1Schema.parse({
+            v: 1,
+            id: 'pc_managed',
+            source: { kind: 'contribution', contributionKey },
+            role: 'default',
+            displayName: 'Managed Gateway',
+            displayNameMode: 'automatic',
+            deployment: { kind: 'managedLocal' },
+            purposeBindingDefaults: {
+              upstream: {
+                kind: 'account',
+                account: {
+                  service: {
+                    pluginId: 'happier.connected-account.openai',
+                    localId: 'openai',
+                  },
+                  accountId: 'work',
+                },
+              },
+            },
+            revision: 4,
+            createdAt: 1,
+            updatedAt: 4,
+          })],
+        }),
+        secrets: [],
+      });
+
+      await expect(h.service.startLocal({
+        action: 'startLocal', machineId: 'machine-a', contributionKey,
+      })).resolves.toMatchObject({ status: 'success', phase: 'running' });
+
+      expect(h.startManagedProviderRuntime).toHaveBeenCalledWith(expect.objectContaining({
+        contributionKey,
+        identity: { pluginId: 'acme.gateway', localId: 'gateway' },
+        purposeBindings: {
+          v: 1,
+          bindings: [{
+            purpose: {
+              consumer: { pluginId: 'acme.gateway', localId: 'gateway' },
+              purpose: 'upstream',
+            },
+            target: {
+              kind: 'account',
+              account: {
+                service: {
+                  pluginId: 'happier.connected-account.openai',
+                  localId: 'openai',
+                },
+                accountId: 'work',
+              },
+            },
+          }],
+        },
+      }));
+
+      const startInput = h.startManagedProviderRuntime.mock.calls[0]?.[0];
+      await expect(startInput?.revalidateAuthorization()).resolves.toBe(true);
+      const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+      h.setRaw({
+        ...h.getRaw(),
+        providerSettingsV1: ProviderSettingsV1Schema.parse({
+          ...settings,
+          connections: settings.connections.map((connection) => (
+            connection.id !== 'pc_managed'
+              ? connection
+              : {
+                  ...connection,
+                  purposeBindingDefaults: {
+                    upstream: {
+                      kind: 'account',
+                      account: {
+                        service: {
+                          pluginId: 'happier.connected-account.openai',
+                          localId: 'openai',
+                        },
+                        accountId: 'replacement',
+                      },
+                    },
+                  },
+                  revision: connection.revision + 1,
+                  updatedAt: connection.updatedAt + 1,
+                }
+          )),
+        }),
+      });
+      await expect(startInput?.revalidateAuthorization()).resolves.toBe(false);
+    },
+  );
+
+  it('keeps explicit managed-start authorization current when equivalent purpose bindings reorder', async () => {
+    const h = harness({ managedEnabled: false });
+    h.discoveryCandidates.mockResolvedValue([]);
+    h.providersByContributionKey.set(
+      contributionKey,
+      managedContributionWithTwoPurposes(),
+    );
+    const upstream = {
+      kind: 'account' as const,
+      account: {
+        service: {
+          pluginId: 'happier.connected-account.openai',
+          localId: 'openai',
+        },
+        accountId: 'work',
+      },
+    };
+    const secondary = {
+      kind: 'account' as const,
+      account: {
+        service: {
+          pluginId: 'happier.connected-account.openai',
+          localId: 'openai',
+        },
+        accountId: 'secondary',
+      },
+    };
+    h.setRaw({
+      providerSettingsV1: ProviderSettingsV1Schema.parse({
+        ...DEFAULT_PROVIDER_SETTINGS_V1,
+        connections: [ProviderConnectionV1Schema.parse({
+          v: 1,
+          id: 'pc_managed',
+          source: { kind: 'contribution', contributionKey },
+          role: 'default',
+          displayName: 'Managed Gateway',
+          displayNameMode: 'automatic',
+          deployment: { kind: 'managedLocal' },
+          purposeBindingDefaults: { upstream, secondary },
+          revision: 4,
+          createdAt: 1,
+          updatedAt: 4,
+        })],
+      }),
+      secrets: [],
+    });
+
+    await expect(h.service.startLocal({
+      action: 'startLocal', machineId: 'machine-a', contributionKey,
+    })).resolves.toMatchObject({ status: 'success', phase: 'running' });
+    const startInput = h.startManagedProviderRuntime.mock.calls[0]?.[0];
+    await expect(startInput?.revalidateAuthorization()).resolves.toBe(true);
+
+    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    h.setRaw({
+      ...h.getRaw(),
+      providerSettingsV1: ProviderSettingsV1Schema.parse({
+        ...settings,
+        connections: settings.connections.map((connection) => (
+          connection.id !== 'pc_managed'
+            ? connection
+            : {
+                ...connection,
+                purposeBindingDefaults: { secondary, upstream },
+              }
+        )),
+      }),
+    });
+
+    await expect(startInput?.revalidateAuthorization()).resolves.toBe(true);
+  });
+
+  it('refuses a managed explicit start with connected-account declarations before service supervision when no default connection is configured', async () => {
+    const h = harness({ managedEnabled: false });
+    h.discoveryCandidates.mockResolvedValue([]);
+    h.providersByContributionKey.set(
+      contributionKey,
+      managedContributionForSource('path'),
+    );
+
+    await expect(h.service.startLocal({
+      action: 'startLocal', machineId: 'machine-a', contributionKey,
+    })).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'provider_connection_not_found' },
+    });
+    expect(h.startManagedProviderRuntime).not.toHaveBeenCalled();
+  });
+
+  it('authors a managed Provider deployment without depending on the UI Local Services gate', async () => {
+    const h = harness({ managedEnabled: false });
+    h.providersByContributionKey.set(contributionKey, managedContribution());
+    h.setRaw({
+      providerSettingsV1: ProviderSettingsV1Schema.parse({
+        ...DEFAULT_PROVIDER_SETTINGS_V1,
+        connections: [ProviderConnectionV1Schema.parse({
+          v: 1,
+          id: 'pc_managed',
+          source: { kind: 'contribution', contributionKey },
+          role: 'default',
+          displayName: 'Gateway',
+          displayNameMode: 'automatic',
+          revision: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        })],
+      }),
+      secrets: [],
+    });
+
+    await expect(h.service.update({
+      action: 'update',
+      machineId: 'machine-a',
+      connectionId: 'pc_managed',
+      expectedRevision: 0,
+      deployment: {
+        kind: 'managedLocal',
+        purposeBindingDefaults: {
+          upstream: {
+            kind: 'group',
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            groupId: 'team',
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      status: 'success',
+      deployment: { kind: 'managedLocal' },
+    });
   });
 
   it('atomically creates, binds, and grants a contribution connection using daemon-derived fingerprints', async () => {
@@ -2279,7 +2735,7 @@ describe('provider connection service', () => {
     expect(JSON.stringify(result)).not.toContain('SECRET_SHOULD_NOT_LEAK');
   });
 
-  it('bounds the extensible available contribution catalog and marks truncation', async () => {
+  it('retains all valid available contributions instead of truncating at an arbitrary count', async () => {
     const h = harness();
     for (let index = 0; index < 257; index += 1) {
       const entry = noAuthContribution();
@@ -2297,8 +2753,8 @@ describe('provider connection service', () => {
       });
     }
     const result = await h.service.describe({ machineId: 'machine-a' });
-    expect(result).toMatchObject({ status: 'success', availableTruncated: true });
-    if (result.status === 'success') expect(result.available).toHaveLength(256);
+    expect(result).toMatchObject({ status: 'success', availableTruncated: false });
+    if (result.status === 'success') expect(result.available).toHaveLength(258);
   });
 
   it('returns stable validation errors for schema-valid mutations and preserves settings', async () => {
@@ -2351,6 +2807,29 @@ describe('provider connection service', () => {
       action: 'bindSecret', machineId: 'machine-a', connectionId: 'pc_work',
       credentialSlotId: 'otherKey', savedSecretId: 'secret_api', scope: 'account',
     })).toMatchObject({ status: 'error', error: { code: 'provider_credential_transport_unavailable' } });
+  });
+
+  it('duplicates as custom only when every declared catalog format is bundled', async () => {
+    const h = harness();
+    // The plugin implements this format itself; a custom template has no plugin
+    // behind it, so copying the id would persist a probe nothing can ever run.
+    h.providersByContributionKey.set(contributionKey, catalogFormatContribution('acme-catalog-v3'));
+    await h.service.create({
+      action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_gateway',
+      contributionKey, displayName: 'Gateway', savedSecretId: null, enable: false,
+    });
+    const before = structuredClone(h.getRaw());
+    await expect(h.service.duplicate({
+      action: 'duplicate', machineId: 'machine-a', connectionId: 'pc_gateway',
+      newConnectionId: 'pc_copy', displayName: 'Copy', mode: 'asCustom',
+    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_connection_invalid' } });
+    expect(h.getRaw()).toEqual(before);
+
+    h.providersByContributionKey.set(contributionKey, catalogFormatContribution('openai-models'));
+    await expect(h.service.duplicate({
+      action: 'duplicate', machineId: 'machine-a', connectionId: 'pc_gateway',
+      newConnectionId: 'pc_copy', displayName: 'Copy', mode: 'asCustom',
+    })).resolves.toMatchObject({ status: 'success', connectionId: 'pc_copy' });
   });
 
   it('atomically persists a prepared replacement secret with its binding', async () => {

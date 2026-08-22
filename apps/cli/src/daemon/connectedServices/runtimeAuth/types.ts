@@ -65,6 +65,18 @@ export type ConnectedServiceRuntimeAuthTargetInput = Readonly<{
   env?: Readonly<Record<string, string>> | null;
   failingAccessTokenFingerprint?: string | null;
   reason?: string | null;
+  validateCurrentBeforeMutation?: () => Promise<Readonly<
+    | { current: true }
+    | {
+        current: false;
+        reason: string;
+        authoritativeTarget?: Readonly<{
+          profileId: string;
+          generation: number;
+          credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+        }>;
+      }
+  >>;
 }>;
 
 export type ConnectedServiceRuntimeFailureInput = Readonly<{

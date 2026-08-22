@@ -124,6 +124,23 @@ describe('runtimeAuthFailureReportOutboxDrainScheduler', () => {
     expect(drain).toHaveBeenCalledTimes(4);
   });
 
+  it('keeps retrying within the bounded daemon-replacement horizon', async () => {
+    const drain = vi.fn(async () => ({ delivered: 0, dropped: 0, retried: 1 }));
+
+    scheduleRuntimeAuthFailureReportOutboxDrainToDaemon({
+      delayMs: 10,
+      retryDelayMs: 20,
+      drain,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    for (let attempt = 1; attempt < 8; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(20 * (2 ** (attempt - 1)));
+    }
+
+    expect(drain).toHaveBeenCalledTimes(8);
+  });
+
   it('unrefs scheduled timers when the timer handle supports it', () => {
     const unref = vi.fn();
     const timer = { unref } as unknown as ReturnType<typeof setTimeout>;

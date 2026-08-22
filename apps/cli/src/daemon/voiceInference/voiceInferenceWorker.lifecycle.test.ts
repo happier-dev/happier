@@ -8,7 +8,34 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const ZIPFORMER_PACK_ID = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
-const UNAVAILABLE_KOKORO_PACK_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
+const KOKORO_PACK_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
+
+function createKokoroCatalogManifest(): ModelPackManifest {
+  const catalogEntry = getModelPackCatalogEntry(KOKORO_PACK_ID);
+  if (!catalogEntry || catalogEntry.runtimeFamily !== 'sherpa_kokoro_offline') {
+    throw new Error('expected canonical Kokoro catalog entry');
+  }
+  const artifacts = [
+    ...Object.values(catalogEntry.runtimeArtifacts),
+    ...(catalogEntry.supportArtifacts ?? []),
+  ];
+  return {
+    packId: KOKORO_PACK_ID,
+    kind: 'tts_sherpa',
+    model: 'kokoro',
+    version: 'kokoro-int8-multi-lang-v1_1',
+    files: artifacts.map((artifact, index) => ({
+      path: artifact.path === 'espeak-ng-data'
+        ? 'espeak-ng-data/voices/!v/Alex'
+        : artifact.path,
+      url: artifact.path === 'espeak-ng-data'
+        ? 'https://github.com/happier-dev/happier-assets/releases/download/model-packs/kokoro-82m-v1.0-onnx-q8-wasm__espeak-ng-data__voices__.v__Alex'
+        : `https://github.com/happier-dev/happier-assets/releases/download/model-packs/kokoro-82m-v1.0-onnx-q8-wasm__${artifact.path.replaceAll('/', '__')}`,
+      sha256: String((index % 9) + 1).repeat(64),
+      sizeBytes: index + 1,
+    })),
+  };
+}
 
 function createZipformerCatalogManifest(): Readonly<{
   manifest: ModelPackManifest;
@@ -83,11 +110,20 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     await lifecycle.stop();
   });
 
-  it('fails closed for the unavailable canonical Kokoro publication before manifest download', async () => {
+  it('admits the exact published Kokoro catalog pack through the normal manifest installer', async () => {
     const homeDir = await createHomeDir();
     const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
-    const fetchManifest = vi.fn();
-    const installModelPack = vi.fn();
+    const manifest = createKokoroCatalogManifest();
+    const fetchManifest = vi.fn(async () => manifest);
+    const installModelPack = vi.fn(async (input: Readonly<{
+      packsRootDir: string;
+      manifest: ModelPackManifest;
+    }>) => {
+      const packDir = join(input.packsRootDir, input.manifest.packId);
+      await mkdir(packDir, { recursive: true });
+      await writeFile(join(packDir, 'pack.json'), JSON.stringify(input.manifest), 'utf8');
+      return input.manifest;
+    });
     const lifecycle = createVoiceInferenceWorkerLifecycle({
       installerOps: { fetchManifest, installModelPack },
     });
@@ -97,24 +133,32 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     ])).resolves.toEqual([
       expect.objectContaining({
         runtimeFamily: 'sherpa_kokoro_offline',
-        runtimeSupported: false,
+        runtimeSupported: true,
         installState: 'not_installed',
       }),
     ]);
     await expect(lifecycle.installModel({
       packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-    })).rejects.toMatchObject({ code: 'unsupported_runtime_family' });
-    expect(fetchManifest).not.toHaveBeenCalled();
-    expect(installModelPack).not.toHaveBeenCalled();
+    })).resolves.toMatchObject({
+      packId: KOKORO_PACK_ID,
+      runtimeFamily: 'sherpa_kokoro_offline',
+      runtimeSupported: true,
+      installState: 'installed',
+    });
+    expect(fetchManifest).toHaveBeenCalledOnce();
+    expect(installModelPack).toHaveBeenCalledOnce();
+    expect(installModelPack).toHaveBeenCalledWith(expect.objectContaining({
+      manifest,
+    }));
     await lifecycle.stop();
   });
 
-  it('admits a known supported unavailable catalog family only for an explicit injected runtime fixture', async () => {
+  it('admits a supported catalog family for an explicit injected runtime fixture', async () => {
     const homeDir = await createHomeDir();
     const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
     const { resolveVoiceInferencePaths } = await import('./voiceInferencePaths');
     const manifest: ModelPackManifest = {
-      packId: UNAVAILABLE_KOKORO_PACK_ID,
+      packId: KOKORO_PACK_ID,
       kind: 'tts_sherpa',
       model: 'kokoro-82m-v1.0',
       version: 'injected-runtime-fixture',
@@ -153,42 +197,43 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     await expect(lifecycle.installModel({
       packId: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
     })).rejects.toMatchObject({ code: 'unsupported_runtime_family' });
-    await expect(lifecycle.getModelsStatus([UNAVAILABLE_KOKORO_PACK_ID])).resolves.toEqual([
+    await expect(lifecycle.getModelsStatus([KOKORO_PACK_ID])).resolves.toEqual([
       expect.objectContaining({
-        packId: UNAVAILABLE_KOKORO_PACK_ID,
+        packId: KOKORO_PACK_ID,
         runtimeFamily: 'sherpa_kokoro_offline',
         runtimeSupported: true,
         installState: 'not_installed',
       }),
     ]);
     await expect(lifecycle.installModel({
-      packId: UNAVAILABLE_KOKORO_PACK_ID,
+      packId: KOKORO_PACK_ID,
     })).resolves.toMatchObject({
-      packId: UNAVAILABLE_KOKORO_PACK_ID,
+      packId: KOKORO_PACK_ID,
       runtimeSupported: true,
       installState: 'installed',
     });
-    await lifecycle.warmModelPack(UNAVAILABLE_KOKORO_PACK_ID);
+    await lifecycle.warmModelPack(KOKORO_PACK_ID);
 
     expect(fetchManifest).toHaveBeenCalledOnce();
     expect(installModelPack).toHaveBeenCalledOnce();
     expect(warmModel).toHaveBeenCalledWith(expect.objectContaining({
-      packId: UNAVAILABLE_KOKORO_PACK_ID,
-      packDir: join(resolveVoiceInferencePaths().packsRootDir, UNAVAILABLE_KOKORO_PACK_ID),
+      packId: KOKORO_PACK_ID,
+      packDir: join(resolveVoiceInferencePaths().packsRootDir, KOKORO_PACK_ID),
       manifest,
     }));
     await lifecycle.stop();
   });
 
-  it('keeps previously-installed unavailable catalog bytes inert for status and runtime warmup', async () => {
+  it('keeps previously-installed unpublished catalog bytes inert for status and runtime warmup', async () => {
     const homeDir = await createHomeDir();
     const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
     const { resolveVoiceInferencePaths } = await import('./voiceInferencePaths');
-    const catalogEntry = getModelPackCatalogEntry(UNAVAILABLE_KOKORO_PACK_ID);
+    const unavailablePackId = 'kokoro-en-v0_19';
+    const catalogEntry = getModelPackCatalogEntry(unavailablePackId);
     if (!catalogEntry || catalogEntry.runtimeFamily !== 'sherpa_kokoro_offline') {
-      throw new Error('expected unavailable canonical Kokoro catalog entry');
+      throw new Error('expected unavailable neighboring Kokoro catalog entry');
     }
-    const packDir = join(resolveVoiceInferencePaths().packsRootDir, UNAVAILABLE_KOKORO_PACK_ID);
+    const packDir = join(resolveVoiceInferencePaths().packsRootDir, unavailablePackId);
     await mkdir(packDir, { recursive: true });
     await writeFile(join(packDir, 'pack.json'), JSON.stringify({
       packId: catalogEntry.packId,
@@ -218,35 +263,35 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     }));
     const lifecycle = createVoiceInferenceWorkerLifecycle({ runtimeLoader });
 
-    const status = (await lifecycle.getModelsStatus([UNAVAILABLE_KOKORO_PACK_ID]))[0];
+    const status = (await lifecycle.getModelsStatus([unavailablePackId]))[0];
     const listedStatuses = await lifecycle.listModels();
-    const warmResult = await lifecycle.warmModelPack(UNAVAILABLE_KOKORO_PACK_ID)
+    const warmResult = await lifecycle.warmModelPack(unavailablePackId)
       .then(() => 'warmed' as const)
       .catch((error: unknown) => error);
-    await lifecycle.removeModel(UNAVAILABLE_KOKORO_PACK_ID);
-    const removedStatus = (await lifecycle.getModelsStatus([UNAVAILABLE_KOKORO_PACK_ID]))[0];
+    await lifecycle.removeModel(unavailablePackId);
+    const removedStatus = (await lifecycle.getModelsStatus([unavailablePackId]))[0];
     const listedAfterRemoval = await lifecycle.listModels();
     await lifecycle.stop();
 
     expect(status).toMatchObject({
-      packId: UNAVAILABLE_KOKORO_PACK_ID,
+      packId: unavailablePackId,
       installState: 'installed',
       runtimeSupported: false,
     });
     expect(listedStatuses).toContainEqual(expect.objectContaining({
-      packId: UNAVAILABLE_KOKORO_PACK_ID,
+      packId: unavailablePackId,
       installState: 'installed',
       runtimeSupported: false,
     }));
     expect(warmResult).toMatchObject({ code: 'unsupported_runtime_family' });
     expect(runtimeLoader).not.toHaveBeenCalled();
     expect(removedStatus).toMatchObject({
-      packId: UNAVAILABLE_KOKORO_PACK_ID,
+      packId: unavailablePackId,
       installState: 'not_installed',
       runtimeSupported: false,
     });
     expect(listedAfterRemoval).not.toContainEqual(expect.objectContaining({
-      packId: UNAVAILABLE_KOKORO_PACK_ID,
+      packId: unavailablePackId,
     }));
   });
 
@@ -523,7 +568,7 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
         }),
       ],
     });
-    expect(failedStatus.models[0]).not.toHaveProperty('residentMemoryBytes');
+    expect(failedStatus.models[0]).not.toHaveProperty('loadedArtifactBytes');
 
     await lifecycle.warmRuntimeForPack(manifest.packId);
     expect(warmAttempts).toBe(2);

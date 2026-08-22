@@ -4,9 +4,11 @@ import {
   AgentSessionStartupInstructionsV1Schema,
   RuntimeDescriptorV1Schema,
   ConnectedServiceMaterializationIdentityV1Schema,
+  SessionCreationCorrespondenceV1Schema,
   SessionAttachMetadataIdentityPolicySchema,
   SessionMcpSelectionV1Schema,
   SessionModelSelectionV1Schema,
+  SessionCreationTagV1Schema,
   SessionProviderBindingSecurityChangeConfirmationV1Schema,
   SpawnSessionExecutionAuthorizationSchema,
   buildBackendTargetKeyV2,
@@ -14,7 +16,8 @@ import {
 } from '@happier-dev/protocol';
 
 import { PERMISSION_MODES } from '@/api/types';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { normalizeDaemonBackendTargetV2Input } from '@/daemon/backendTargetRouting';
 
 import {
@@ -31,7 +34,6 @@ function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T
 }
 
 export const SpawnSessionPermissionModeSchema = z.enum(asNonEmptyStringTuple(PERMISSION_MODES));
-const RESOLVABLE_BUILT_IN_AGENT_IDS = CATALOG_AGENT_IDS as readonly CatalogAgentId[];
 function parseSpawnBackendTargetCandidate(value: unknown): CanonicalSpawnBackendTarget | null {
   const backendTarget = normalizeDaemonBackendTargetV2Input(value);
   if (!backendTarget) {
@@ -48,7 +50,7 @@ function isSupportedSpawnBackendTarget(backendTarget: CanonicalSpawnBackendTarge
     return false;
   }
 
-  if (backendTarget.sourceKind === 'built_in' && !RESOLVABLE_BUILT_IN_AGENT_IDS.includes(backendTarget.backendId as CatalogAgentId)) {
+  if (backendTarget.sourceKind === 'built_in' && !isCatalogAgentId(backendTarget.backendId)) {
     return false;
   }
 
@@ -56,7 +58,7 @@ function isSupportedSpawnBackendTarget(backendTarget: CanonicalSpawnBackendTarge
 }
 
 function isKnownCatalogAgentId(value: string): value is CatalogAgentId {
-  return (RESOLVABLE_BUILT_IN_AGENT_IDS as readonly string[]).includes(value);
+  return isCatalogAgentId(value);
 }
 
 type CanonicalSpawnBackendTarget = BackendTargetRefV2;
@@ -65,6 +67,8 @@ export type SpawnDaemonSessionRequest = Omit<
   SpawnSessionOptions,
   'experimentalCodexAcp' | 'backendTarget' | 'providerBindingMetadataV1'
 > & {
+  /** Private machine transport discriminator retained for lifecycle routing. */
+  type?: 'spawn-in-directory' | 'resume-session';
   backendTarget?: BackendTargetRefV2;
 };
 
@@ -126,10 +130,14 @@ function canonicalizeSpawnDaemonSessionRequestIngress(value: unknown): unknown {
 }
 
 const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaemonSessionRequestIngress, z.object({
+  type: z.enum(['spawn-in-directory', 'resume-session']).optional(),
   directory: z.string(),
   approvedNewDirectoryCreation: z.boolean().optional(),
   machineId: z.string().trim().min(1).optional(),
   spawnNonce: z.string().trim().min(1).optional(),
+  sessionCreationTag: SessionCreationTagV1Schema.optional(),
+  sessionCreationCorrespondence: SessionCreationCorrespondenceV1Schema.optional(),
+  initialTitle: z.string().trim().min(1).optional(),
   pendingFirstInput: z.object({
     text: z.string().refine((value) => value.trim().length > 0),
     localId: z.string().refine((value) => value.trim().length > 0),
@@ -170,7 +178,7 @@ const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaem
   connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1Schema.optional(),
   mcpSelection: SessionMcpSelectionV1Schema.optional(),
   transcriptStorage: z.enum(['persisted', 'direct']).optional(),
-}));
+}).strict());
 
 export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSchema.transform((request, ctx) => {
   if (request.resume && request.nativeForkSource) {
@@ -189,6 +197,17 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
       code: z.ZodIssueCode.custom,
       message: 'Startup instructions are not supported for fork requests',
       path: ['agentSessionStartupInstructionsV1'],
+    });
+    return z.NEVER;
+  }
+  if (
+    request.sessionCreationCorrespondence
+    && request.sessionCreationCorrespondence.sessionCreationTag !== request.sessionCreationTag
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Session creation correspondence must match sessionCreationTag',
+      path: ['sessionCreationCorrespondence'],
     });
     return z.NEVER;
   }
@@ -268,6 +287,9 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'machineId',
   'directory',
   'spawnNonce',
+  'sessionCreationTag',
+  'sessionCreationCorrespondence',
+  'initialTitle',
   'pendingFirstInput',
   'accountSettingsVersionHint',
   'sessionId',

@@ -3,10 +3,15 @@ import { BrowserCommandV1Schema, FeaturesResponseSchema, type ExecutionRunPublic
 
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 import type { ExecutionRunHostBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 
-import { createExecutionRunRpcActionExecutor, type ExecutionRunRpcApprovalDeps } from './dispatchExecutionRunRpcAction';
+import {
+  createExecutionRunRpcActionDeps,
+  createExecutionRunRpcActionExecutor,
+  type ExecutionRunRpcApprovalDeps,
+} from './dispatchExecutionRunRpcAction';
 
 function unusedBridgeMethod(): never {
   throw new Error('execution-run bridge should not be used for unavailable runtime action families');
@@ -53,8 +58,16 @@ function createExecutionRunBridgeWithRun(
     status: 'running',
     startedAtMs: 1,
   } satisfies ExecutionRunPublicState;
+  const runState = {
+    ...run,
+    sessionId: 'sess_1',
+    depth: 0,
+    backendId: 'codex',
+    instructions: 'Inspect the change.',
+  } satisfies ExecutionRunState;
   return {
     ...createUnusedExecutionRunBridge(),
+    get: (runId: string) => (runId === run.runId ? runState : null),
     getPublic: (runId: string) => (runId === run.runId ? run : null),
     ...overrides,
   };
@@ -134,7 +147,596 @@ const APPROVED_INTERNAL_RUNTIME_ACTION_CONTEXT = {
   bypassApprovals: true,
 } as const;
 
+const AGENT_EXECUTION_RUN_START_REQUEST = {
+  sessionId: 'sess_1',
+  intent: 'delegate',
+  backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+  instructions: 'Inspect the change.',
+  permissionMode: 'yolo',
+  retentionPolicy: 'ephemeral',
+  runClass: 'bounded',
+  ioMode: 'request_response',
+} as const;
+
+function createAgentExecutionRunStartExecutor(start: ExecutionRunHostBridgeContract['start']) {
+  return createExecutionRunRpcActionExecutor({
+    manager: {
+      ...createUnusedExecutionRunBridge(),
+      start,
+    },
+    context: { sessionId: 'sess_1', cwd: '/workspace' },
+    policy: resolveExecutionRunPolicy({
+      defaults: {
+        maxConcurrentRuns: null,
+        boundedTimeoutMs: null,
+        reviewBoundedTimeoutMs: null,
+        maxTurns: null,
+        maxDepth: 3,
+      },
+    }),
+    isExecutionRunsEnabled: () => true,
+  });
+}
+
 describe('createExecutionRunRpcActionExecutor', () => {
+  it('rejects malformed explicit review intent input before creating a run', async () => {
+    const start = vi.fn(async () => ({
+      runId: 'run_started_1',
+      callId: 'call_started_1',
+      sidechainId: 'sidechain_started_1',
+    }));
+    const executor = createAgentExecutionRunStartExecutor(start);
+
+    await expect(executor.execute('execution.run.start', {
+      ...AGENT_EXECUTION_RUN_START_REQUEST,
+      intent: 'review',
+      permissionMode: 'read_only',
+      intentInput: { engineIds: [] },
+    }, { surface: 'rpc' })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'execution_run_invalid_action_input',
+      error: expect.stringContaining('review intentInput'),
+    });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('normalizes partial explicit review intent input before creating a run', async () => {
+    const start = vi.fn(async () => ({
+      runId: 'run_started_1',
+      callId: 'call_started_1',
+      sidechainId: 'sidechain_started_1',
+    }));
+    const executor = createAgentExecutionRunStartExecutor(start);
+
+    await expect(executor.execute('execution.run.start', {
+      ...AGENT_EXECUTION_RUN_START_REQUEST,
+      intent: 'review',
+      permissionMode: 'read_only',
+      intentInput: {
+        changeType: 'committed',
+        base: { kind: 'none' },
+      },
+    }, { surface: 'rpc' })).resolves.toMatchObject({ ok: true });
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      intentInput: expect.objectContaining({
+        engineIds: ['codex'],
+        instructions: 'Inspect the change.',
+        changeType: 'committed',
+        base: { kind: 'none' },
+      }),
+    }));
+  });
+
+  it.each([
+    {
+      name: 'foreign Session start',
+      actionId: 'execution.run.start',
+      input: {
+        ...AGENT_EXECUTION_RUN_START_REQUEST,
+        sessionId: 'sess_foreign',
+        permissionMode: 'read_only',
+      },
+    },
+    {
+      name: 'foreign Session control',
+      actionId: 'execution.run.stop',
+      input: { sessionId: 'sess_foreign', runId: 'run_foreign_1' },
+    },
+    {
+      name: 'explicit detached start',
+      actionId: 'execution.run.start',
+      input: {
+        ...AGENT_EXECUTION_RUN_START_REQUEST,
+        sessionId: null,
+        permissionMode: 'read_only',
+      },
+    },
+    {
+      name: 'explicit detached control',
+      actionId: 'execution.run.stop',
+      input: { sessionId: null, runId: 'run_foreign_1' },
+    },
+  ] as const)('rejects $name at the public Action boundary before a manager effect', async ({ actionId, input }) => {
+    const start = vi.fn(async () => ({ runId: 'run_started_1', callId: 'call_started_1', sidechainId: 'sidechain_started_1' }));
+    const get = vi.fn(() => null);
+    const send = vi.fn(async () => ({ ok: true }));
+    const ensure = vi.fn(async () => ({ ok: true }));
+    const startTurnStream = vi.fn(async () => ({ ok: true as const, streamId: 'stream_1' }));
+    const readTurnStream = vi.fn(async () => ({ ok: true as const, streamId: 'stream_1', events: [], nextCursor: 0, done: true }));
+    const cancelTurnStream = vi.fn(async () => ({ ok: true as const }));
+    const stop = vi.fn(async () => ({ ok: true }));
+    const applyAction = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutionRunRpcActionExecutor({
+      manager: {
+        ...createUnusedExecutionRunBridge(),
+        start,
+        get,
+        send,
+        ensure,
+        startTurnStream,
+        readTurnStream,
+        cancelTurnStream,
+        stop,
+        applyAction,
+      },
+      context: { sessionId: 'sess_1', cwd: '/workspace' },
+      policy: resolveExecutionRunPolicy({
+        defaults: {
+          maxConcurrentRuns: null,
+          boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null,
+          maxTurns: null,
+          maxDepth: 3,
+        },
+      }),
+      isExecutionRunsEnabled: () => true,
+    });
+
+    await expect(executor.execute(actionId, input, { surface: 'rpc' })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'execution_run_scope_mismatch',
+    });
+
+    for (const effect of [start, get, send, ensure, startTurnStream, readTurnStream, cancelTurnStream, stop, applyAction]) {
+      expect(effect).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    ['execution.run.send', { sessionId: 'sess_1', runId: 'run_foreign_1', message: 'Continue' }],
+    ['execution.run.ensure', { sessionId: 'sess_1', runId: 'run_foreign_1' }],
+    ['execution.run.ensure_or_start', { sessionId: 'sess_1', runId: 'run_foreign_1' }],
+    ['execution.run.stream.start', { sessionId: 'sess_1', runId: 'run_foreign_1', message: 'Continue' }],
+    ['execution.run.stream.read', { sessionId: 'sess_1', runId: 'run_foreign_1', streamId: 'stream_foreign_1', cursor: 0 }],
+    ['execution.run.stream.cancel', { sessionId: 'sess_1', runId: 'run_foreign_1', streamId: 'stream_foreign_1' }],
+    ['execution.run.stop', { sessionId: 'sess_1', runId: 'run_foreign_1' }],
+    ['execution.run.action', { sessionId: 'sess_1', runId: 'run_foreign_1', actionId: 'task.commit', input: {} }],
+  ] as const)('does not mutate a foreign run through %s when the outer scope is authoritative', async (actionId, input) => {
+    const foreignRun = {
+      runId: 'run_foreign_1',
+      callId: 'call_foreign_1',
+      sidechainId: 'sidechain_foreign_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      status: 'running',
+      startedAtMs: 1,
+      sessionId: 'sess_foreign',
+      depth: 0,
+      backendId: 'codex',
+      instructions: 'Foreign run.',
+    } satisfies ExecutionRunState;
+    const start = vi.fn(async () => ({ runId: 'run_started_1', callId: 'call_started_1', sidechainId: 'sidechain_started_1' }));
+    const send = vi.fn(async () => ({ ok: true }));
+    const ensure = vi.fn(async () => ({ ok: true }));
+    const startTurnStream = vi.fn(async () => ({ ok: true as const, streamId: 'stream_1' }));
+    const readTurnStream = vi.fn(async () => ({ ok: true as const, streamId: 'stream_1', events: [], nextCursor: 0, done: true }));
+    const cancelTurnStream = vi.fn(async () => ({ ok: true as const }));
+    const stop = vi.fn(async () => ({ ok: true }));
+    const applyAction = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutionRunRpcActionExecutor({
+      manager: {
+        ...createUnusedExecutionRunBridge(),
+        get: (runId) => runId === foreignRun.runId ? foreignRun : null,
+        start,
+        send,
+        ensure,
+        startTurnStream,
+        readTurnStream,
+        cancelTurnStream,
+        stop,
+        applyAction,
+      },
+      context: { sessionId: 'sess_1', cwd: '/workspace' },
+      policy: resolveExecutionRunPolicy({
+        defaults: {
+          maxConcurrentRuns: null,
+          boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null,
+          maxTurns: null,
+          maxDepth: 3,
+        },
+      }),
+      isExecutionRunsEnabled: () => true,
+    });
+
+    await expect(executor.execute(actionId, input, { surface: 'rpc' })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'execution_run_not_found',
+    });
+
+    for (const effect of [start, send, ensure, startTurnStream, readTurnStream, cancelTurnStream, stop, applyAction]) {
+      expect(effect).not.toHaveBeenCalled();
+    }
+  });
+
+  it('keeps a nested ensure-or-start request at its already-authorized scope', async () => {
+    const start = vi.fn(async () => ({
+      runId: 'run_scoped_1',
+      callId: 'call_scoped_1',
+      sidechainId: 'sidechain_scoped_1',
+    }));
+    const deps = createExecutionRunRpcActionDeps({
+      manager: {
+        ...createUnusedExecutionRunBridge(),
+        start,
+      },
+      context: { sessionId: 'sess_1', cwd: '/workspace' },
+      policy: resolveExecutionRunPolicy({
+        defaults: {
+          maxConcurrentRuns: null,
+          boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null,
+          maxTurns: null,
+          maxDepth: 3,
+        },
+      }),
+      isExecutionRunsEnabled: () => true,
+    });
+    const ensureOrStart = deps.executionRunEnsureOrStart;
+    if (!ensureOrStart) throw new Error('executionRunEnsureOrStart is required');
+
+    await expect(ensureOrStart('sess_1', {
+      start: {
+        ...AGENT_EXECUTION_RUN_START_REQUEST,
+        // This raw nested value is not scope authority; the outer operation is.
+        sessionId: null,
+      },
+    })).resolves.toEqual({ ok: true, runId: 'run_scoped_1', created: true });
+
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sess_1' }));
+  });
+
+  it('distinguishes daemon setup failure before manager.start from an unclassified manager failure', async () => {
+    const preStart = vi.fn(async () => ({
+      runId: 'run_pre_start',
+      callId: 'call_pre_start',
+      sidechainId: 'side_pre_start',
+    }));
+    const preStartExecutor = createExecutionRunRpcActionExecutor({
+      manager: { ...createUnusedExecutionRunBridge(), start: preStart },
+      context: {
+        sessionId: 'sess_1',
+        cwd: '/workspace',
+        resolveAccountSettings: async () => {
+          throw new Error('settings unavailable');
+        },
+      },
+      policy: resolveExecutionRunPolicy({
+        defaults: {
+          maxConcurrentRuns: null,
+          boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null,
+          maxTurns: null,
+          maxDepth: 3,
+        },
+      }),
+      isExecutionRunsEnabled: () => true,
+    });
+
+    await expect(preStartExecutor.execute(
+      'execution.run.start',
+      AGENT_EXECUTION_RUN_START_REQUEST,
+      { surface: 'rpc' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'execution_run_failed',
+      error: 'settings unavailable',
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+    });
+    expect(preStart).not.toHaveBeenCalled();
+
+    const managerStart = vi.fn(async () => {
+      throw new Error('manager disconnected');
+    });
+    const postStartExecutor = createAgentExecutionRunStartExecutor(managerStart);
+
+    await expect(postStartExecutor.execute(
+      'execution.run.start',
+      AGENT_EXECUTION_RUN_START_REQUEST,
+      { surface: 'rpc' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'execution_run_failed',
+      error: 'manager disconnected',
+      details: { executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } },
+    });
+  });
+
+  it('keeps an agent-started execution run at its active turn ceiling after the session mode widens', async () => {
+    const start = vi.fn(async () => ({
+      runId: 'run_causal_1',
+      callId: 'call_causal_1',
+      sidechainId: 'side_causal_1',
+    }));
+    const executor = createAgentExecutionRunStartExecutor(start);
+    const firstTurnAuthority = {
+      kind: 'admittedSessionInputV1',
+      admittedPermissionCeiling: 'default',
+    } as const;
+    const laterTurnAuthority = {
+      kind: 'admittedSessionInputV1',
+      admittedPermissionCeiling: 'yolo',
+    } as const;
+
+    await expect(executor.execute(
+      'execution.run.start',
+      AGENT_EXECUTION_RUN_START_REQUEST,
+      {
+        surface: 'agent',
+        // The mutable Session mode has widened after the first turn was admitted.
+        callerPermissionMode: 'yolo',
+        causalPermissionAuthority: firstTurnAuthority,
+      } as unknown as Parameters<typeof executor.execute>[2],
+    )).resolves.toEqual({
+      ok: true,
+      result: {
+        runId: 'run_causal_1',
+        callId: 'call_causal_1',
+        sidechainId: 'side_causal_1',
+      },
+    });
+
+    await expect(executor.execute(
+      'execution.run.start',
+      AGENT_EXECUTION_RUN_START_REQUEST,
+      {
+        surface: 'agent',
+        callerPermissionMode: 'yolo',
+        // A later independently admitted turn may carry a new ceiling.
+        causalPermissionAuthority: laterTurnAuthority,
+      } as unknown as Parameters<typeof executor.execute>[2],
+    )).resolves.toEqual({
+      ok: true,
+      result: {
+        runId: 'run_causal_1',
+        callId: 'call_causal_1',
+        sidechainId: 'side_causal_1',
+      },
+    });
+
+    expect(start).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      permissionMode: 'default',
+      causalPermissionAuthority: firstTurnAuthority,
+    }));
+    expect(start).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      permissionMode: 'yolo',
+      causalPermissionAuthority: laterTurnAuthority,
+    }));
+  });
+
+  it('does not start an agent execution run when its active-turn authority is missing or malformed', async () => {
+    const start = vi.fn(async () => ({
+      runId: 'run_causal_missing_1',
+      callId: 'call_causal_missing_1',
+      sidechainId: 'side_causal_missing_1',
+    }));
+    const executor = createAgentExecutionRunStartExecutor(start);
+
+    await expect(executor.execute(
+      'execution.run.start',
+      AGENT_EXECUTION_RUN_START_REQUEST,
+      {
+        surface: 'agent',
+        callerPermissionMode: 'yolo',
+        causalPermissionAuthority: null,
+      } as unknown as Parameters<typeof executor.execute>[2],
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'causal_permission_authority_invalid',
+      error: 'causal_permission_authority_invalid',
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+    });
+
+    await expect(executor.execute(
+      'execution.run.start',
+      AGENT_EXECUTION_RUN_START_REQUEST,
+      {
+        surface: 'agent',
+        callerPermissionMode: 'yolo',
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'not-a-permission-mode',
+        },
+      } as unknown as Parameters<typeof executor.execute>[2],
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'causal_permission_authority_invalid',
+      error: 'causal_permission_authority_invalid',
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+    });
+
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('uses the incumbent waiter for an exact detached start-and-wait without dispatching a second run', async () => {
+    const start = vi.fn(async () => ({
+      runId: 'run_detached_1',
+      callId: 'call_detached_1',
+      sidechainId: 'sidechain_detached_1',
+    }));
+    const publicRun = {
+      runId: 'run_detached_1',
+      callId: 'call_detached_1',
+      sidechainId: 'sidechain_detached_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      status: 'succeeded',
+      startedAtMs: 1,
+      finishedAtMs: 2,
+    } satisfies ExecutionRunPublicState;
+    const runState = {
+      ...publicRun,
+      sessionId: null,
+      depth: 0,
+      backendId: 'codex',
+      instructions: 'Summarize the change.',
+    } satisfies ExecutionRunState;
+    const getPublic = vi.fn(() => publicRun);
+    const executor = createExecutionRunRpcActionExecutor({
+      manager: {
+        ...createUnusedExecutionRunBridge(),
+        start,
+        get: (runId) => runId === publicRun.runId ? runState : null,
+        getPublic,
+      },
+      context: { sessionId: null, cwd: '/workspace' },
+      policy: resolveExecutionRunPolicy({
+        defaults: {
+          maxConcurrentRuns: null,
+          boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null,
+          maxTurns: null,
+          maxDepth: 3,
+        },
+      }),
+      isExecutionRunsEnabled: () => true,
+    });
+
+    await expect(executor.execute('execution.run.start', {
+      sessionId: null,
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Summarize the change.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      waitForCompletion: true,
+      waitTimeoutSeconds: 5,
+    }, { surface: 'rpc' })).resolves.toEqual({
+      ok: true,
+      result: {
+        runId: 'run_detached_1',
+        callId: 'call_detached_1',
+        sidechainId: 'sidechain_detached_1',
+        wait: {
+          ok: true,
+          status: 'succeeded',
+          result: {
+            run: {
+              runId: publicRun.runId,
+              status: publicRun.status,
+            },
+          },
+        },
+      },
+    });
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ sessionId: null }));
+    expect(getPublic).toHaveBeenCalledWith('run_detached_1');
+  });
+
+  it('times out detached observation without stopping or dispatching the admitted run again', async () => {
+    vi.useFakeTimers();
+    try {
+      const start = vi.fn(async () => ({
+        runId: 'run_detached_waiting_1',
+        callId: 'call_detached_waiting_1',
+        sidechainId: 'sidechain_detached_waiting_1',
+      }));
+      const stop = vi.fn(async () => ({ ok: true }));
+      const publicRun = {
+        runId: 'run_detached_waiting_1',
+        callId: 'call_detached_waiting_1',
+        sidechainId: 'sidechain_detached_waiting_1',
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        status: 'running',
+        startedAtMs: 1,
+      } satisfies ExecutionRunPublicState;
+      const runState = {
+        ...publicRun,
+        sessionId: null,
+        depth: 0,
+        backendId: 'codex',
+        instructions: 'Summarize the change.',
+      } satisfies ExecutionRunState;
+      const executor = createExecutionRunRpcActionExecutor({
+        manager: {
+          ...createUnusedExecutionRunBridge(),
+          start,
+          stop,
+          get: (runId) => runId === publicRun.runId ? runState : null,
+          getPublic: (runId) => runId === publicRun.runId ? publicRun : null,
+        },
+        context: { sessionId: null, cwd: '/workspace' },
+        policy: resolveExecutionRunPolicy({
+          defaults: {
+            maxConcurrentRuns: null,
+            boundedTimeoutMs: null,
+            reviewBoundedTimeoutMs: null,
+            maxTurns: null,
+            maxDepth: 3,
+          },
+        }),
+        isExecutionRunsEnabled: () => true,
+      });
+
+      const result = executor.execute('execution.run.start', {
+        sessionId: null,
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        instructions: 'Summarize the change.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        waitForCompletion: true,
+        waitTimeoutSeconds: 1,
+      }, { surface: 'rpc' });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(start).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(result).resolves.toEqual({
+        ok: true,
+        result: {
+          runId: 'run_detached_waiting_1',
+          callId: 'call_detached_waiting_1',
+          sidechainId: 'sidechain_detached_waiting_1',
+          wait: { ok: false, code: 'timeout' },
+        },
+      });
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports the canonical voice.agent dependency blocker when root voice is disabled', async () => {
     vi.stubEnv('HAPPIER_FEATURE_VOICE__ENABLED', '1');
     vi.stubEnv('HAPPIER_FEATURE_VOICE_AGENT__ENABLED', '1');
@@ -186,9 +788,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
         error: 'Voice feature disabled',
         errorCode: 'execution_run_not_allowed',
         details: {
-          featureId: 'voice.agent',
-          blockedBy: 'dependency',
-          blockerCode: 'dependency_disabled',
+          executionRunStart: { v: 1, runCreation: 'noRunCreated' },
         },
       });
       expect(start).not.toHaveBeenCalled();
@@ -248,9 +848,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
         error: 'Voice feature disabled',
         errorCode: 'execution_run_not_allowed',
         details: {
-          featureId: 'voice.agent',
-          blockedBy: 'local_policy',
-          blockerCode: 'flag_disabled',
+          executionRunStart: { v: 1, runCreation: 'noRunCreated' },
         },
       });
       expect(start).not.toHaveBeenCalled();

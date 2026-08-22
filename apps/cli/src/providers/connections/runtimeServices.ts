@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
   resolveProviderContributionRegistryView,
@@ -10,13 +10,18 @@ import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import {
+  requireAccountSettingsMutationSuccess,
+  updateAccountSettingsV2WithRetry,
+} from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
+import { createPublicManagedProviderRuntimeStartOperation } from './publicManagedRuntimeStart';
 import {
   createProviderConnectionService,
   type ProviderConnectionRuntimeProjection,
   type ProviderConnectionRuntimeSummary,
+  type ProviderConnectionRuntimeSummaryInput,
 } from './service';
 import { projectProviderConnectionCompatibility } from './compatibility';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -39,10 +44,10 @@ export type RuntimeProviderConnectionServices = Readonly<
  */
 export function createRuntimeProviderConnectionServices(input: Readonly<{
   machineId: string;
-  credentials: Credentials;
+  credentials: StoredCredentials;
   happyHomeDir: string;
-  featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery' | 'localServices.managed'): boolean }>;
-  runtimeSummary(input: Readonly<{ connectionId: string; machineId: string }>): Promise<
+  featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery'): boolean }>;
+  runtimeSummary(input: ProviderConnectionRuntimeSummaryInput): Promise<
     | Readonly<{
         status: 'success';
         summary: ProviderConnectionRuntimeSummary;
@@ -63,14 +68,12 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
     registry: ProviderContributionRegistryView;
     candidates: readonly ProviderDiscoveryCandidateV1[];
   }>) => Promise<readonly ProviderLocalInstallationSummaryV1[]>;
-  startManaged?: (input: Readonly<{
-    machineId: string;
-    contributionKey: string;
-    pluginId: string;
-    providerName: string;
-    lookupNames: readonly string[];
-    fixedArgs: readonly string[];
-  }>) => Promise<Readonly<{ status: 'detecting' | 'running' }>>;
+  startManagedProviderRuntime?: NonNullable<
+    Parameters<typeof createProviderConnectionService>[0]['startManagedProviderRuntime']
+  >;
+  resolveManagedPurposeBindingIntent?: Parameters<
+    typeof createProviderConnectionService
+  >[0]['resolveManagedPurposeBindingIntent'];
   refreshOnEnable?: (
     input: Readonly<{ connectionId: string; machineId: string }>,
     trigger: 'enable',
@@ -79,6 +82,11 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
   const resolveRegistry = input.resolveRegistry ?? (async () => resolveProviderContributionRegistryView(
     await resolveMergedContributionRegistry({ happyHomeDir: input.happyHomeDir }),
   ));
+  const startManagedProviderRuntime = input.startManagedProviderRuntime
+    ?? createPublicManagedProviderRuntimeStartOperation({
+      machineId: input.machineId,
+      happyHomeDir: input.happyHomeDir,
+    });
   const service = createProviderConnectionService({
     machineId: input.machineId,
     featureGate: input.featureGate,
@@ -91,10 +99,16 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
           minSettingsVersion: null,
           mode: 'blocking',
         });
-      return { accountSettings: active.settings, registry: await resolveRegistry() };
+      return {
+        accountSettings: active.settings,
+        rawAccountSettings: active.rawSettings ?? active.settings,
+        registry: await resolveRegistry(),
+      };
     },
     updateAccountSettings: async (mutate) => {
-      const result = await updateAccountSettingsV2WithRetry({ credentials: input.credentials, mutate });
+      const result = requireAccountSettingsMutationSuccess(
+        await updateAccountSettingsV2WithRetry({ credentials: input.credentials, mutate }),
+      );
       const refreshed = await refreshAccountSettingsForMinimumVersion({
         credentials: input.credentials,
         minSettingsVersion: result.version,
@@ -114,8 +128,8 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
         accountSettings, connectionId, machineId, registry,
         dnsEvidenceByEndpointUrl: dnsEvidence,
       }),
-    runtimeSummary: async ({ connectionId, machineId }) => {
-      const result = await input.runtimeSummary({ connectionId, machineId });
+    runtimeSummary: async (request) => {
+      const result = await input.runtimeSummary(request);
       return result.status === 'success'
         ? { summary: result.summary, probeObservationIdentity: result.probeObservationIdentity }
         : { summary: EMPTY_RUNTIME_SUMMARY, probeObservationIdentity: null };
@@ -132,7 +146,10 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
     },
     discoveryCandidates: input.discoveryCandidates ?? (async () => []),
     localInstallations: input.localInstallations ?? (async () => []),
-    ...(input.startManaged ? { startManaged: input.startManaged } : {}),
+    startManagedProviderRuntime,
+    ...(input.resolveManagedPurposeBindingIntent
+      ? { resolveManagedPurposeBindingIntent: input.resolveManagedPurposeBindingIntent }
+      : {}),
     ...(input.refreshOnEnable ? { refreshOnEnable: input.refreshOnEnable } : {}),
     now: input.now ?? Date.now,
   });

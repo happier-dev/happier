@@ -1,8 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { ApiMachineClient, ConnectedServicesProjectionNotification } from '@/api/apiMachine';
+import type { Metadata, SessionCreationOutcome } from '@/api/types';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { configuration } from '@/configuration';
@@ -10,11 +12,7 @@ import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessi
 import {
     getActiveAccountSettingsSnapshot,
     resolveActiveAccountSettingsSnapshotRevision,
-    subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import {
-    warmActiveAccountSettingsSnapshotBestEffort,
-} from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { logger } from '@/ui/logger';
 import {
     resolveConnectedServiceCredentialResolutions,
@@ -31,31 +29,39 @@ import {
     DEFAULT_LOCAL_SERVICE_PAGE_TITLE_MAX_BODY_BYTES,
     DEFAULT_LOCAL_SERVICE_PAGE_TITLE_SUCCESS_TTL_MS,
     DEFAULT_LOCAL_SERVICE_PAGE_TITLE_TIMEOUT_MS,
+    ComposerAttachmentPrepareRequestV1Schema,
     parseBooleanEnv,
     projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
     readConnectedServiceMaterializationIdentityV1FromMetadata,
+    resolveConnectedServicesProviderStateSharingPolicyV1,
     writeProviderAccountUsageRecordIdToMetadata,
     writeConnectedServiceMaterializationIdentityV1ToMetadata,
+    assessProviderEndpoint,
     type AccountSettings,
-    type AgentSessionStartupInstructionsMarkerV1,
-    type AgentSessionStartupInstructionsV1,
     type ConnectedServiceBindingsV1,
     type ConnectedServiceCredentialRevisionV1,
+    type ConnectedServiceExecutionAuthorityV1,
     type ConnectedServiceId,
     type ConnectedServiceMaterializationIdentityV1,
     type ConnectedServiceUsageSourceV1,
+    type MachineSessionTerminalAuthorityV1,
     type QualifiedConnectedAccountServiceRef,
     type SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
     type ProviderAccountUsageRecordId,
+    type ProviderRuntimeBindingBasisV1,
+    type RequestAuthFailureOutcomeV1,
     type SessionContinuationResumePromptModeV1,
     type SessionRunnerRestartDisabledReason,
 } from '@happier-dev/protocol';
 import { resolveRoutedUsageLimitRecoveryResumePromptMode } from '@/session/usageLimitRecoveryControls/resolveRoutedUsageLimitRecoveryResumePromptMode';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
-import { verifyPluginUiArtifactFileSetIntegrityV1 } from '@happier-dev/protocol/plugins/ui';
 import {
-    inferAgentIdFromSessionMetadata,
+    PluginUiArtifactDigestV1Schema,
+    verifyPluginUiArtifactFileSetIntegrityV1,
+} from '@happier-dev/protocol/plugins/ui';
+import {
+    resolveAgentIdFromSessionMetadata,
     resolveVendorResumeIdFromSessionMetadata,
     type TerminalHostAdapter,
 } from '@happier-dev/agents';
@@ -64,9 +70,21 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import {
     authorizeDaemonSessionModelTransitionProviderTarget,
     authorizeSessionModelTransitionProviderTargetWithLease,
+    resolveDaemonSessionModelTransitionAuthority,
 } from '@/providers/sessions/authorizeSessionModelTransitionTarget';
+import {
+    sameProviderRuntimeBindingBasis,
+} from '@/providers/sessions/providerAuthorizationApplyPolicy';
+import {
+    isRetainedManagedProviderSettingsGrantCurrent,
+} from '@/providers/sessions/retainedManagedProviderPolicy';
+import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/createCliActionExecutor';
 import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
+import {
+    findCatalogEntry,
+    readDeclaredCatalogConnectedServiceIds,
+} from '@/agent/catalog/registry';
 import {
     resolveConnectedServiceCandidatePersistedSessionFile,
     getConnectedServiceRecoveryCapabilities,
@@ -77,13 +95,11 @@ import {
     resolveConnectedServiceRuntimeAuthApplyCapability,
     resolveConnectedServiceSwitchContinuity,
 } from '@/daemon/connectedServices/catalogHooks';
-import { listManagedServerClaimDescriptors } from '@/daemon/managedServers/catalogHooks';
 import type {
     CatalogAgentId,
     ConnectedServiceDaemonAuthBridgeRefresh,
     ConnectedServiceRuntimeAuthApplyCapability,
     ConnectedServiceSwitchEffectiveBinding,
-    ManagedServerClaimDescriptor,
 } from '@/agent/catalog/types';
 import {
     createSessionConnectedServiceAuthTransport,
@@ -92,8 +108,45 @@ import {
 import type {
     ConnectedServiceDaemonAuthBridgeRegistration,
 } from '../connectedServices/daemonAuthBridgeTypes';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 import { startDaemonControlServer } from '../controlServer';
+import { createOnDaemonSessionStartupFailure } from '../sessions/onHappySessionWebhook';
+import {
+    AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema,
+    AgentRuntimeDaemonTurnContributionsResultV1Schema,
+    COMPOSER_STAGED_MEDIA_ADMISSION_SETTLEMENT_FIELD,
+} from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
+import {
+    AgentRuntimeDaemonServiceResponseV1Schema,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import {
+    RunnerDaemonPluginServiceOperationV1Schema,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
+import {
+    RUNNER_MANAGED_SERVICES_CUSTODY_RPC_METHOD,
+    RunnerManagedServicesCustodyResultV1Schema,
+    createRunnerManagedServicesClient,
+    type RunnerManagedServicesCustodyDispatchV1,
+    type RunnerManagedProviderCustodyScopeV1,
+} from '@/agent/runtime/session/process/runnerManagedServicesCustody';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import {
+    preserveComposerAttachmentSelectionAcrossSessionInputTransformV1,
+    validateSessionStructuredInputIngressV1,
+} from '@/session/services/admitSessionStructuredInputV1';
+import {
+    finalizeComposerStagedMediaToSession,
+} from '@/session/media/finalizeComposerStagedMediaToSession';
+import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
+import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
+import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
+import {
+    startPublicManagedProviderRuntime,
+} from '@/providers/lifecycle/publicManagedProviderRuntimeStart';
+import {
+    createProviderLaunchResourceScope,
+} from '@/providers/lifecycle/resourceScope';
 import { createDaemonShutdownCancellationDomains } from './shutdownCancellationDomains';
 import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
 import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
@@ -181,9 +234,7 @@ export type DaemonBrowserStoragePurgeOwner = Readonly<{
     purgeForLogout: () => Promise<void>;
 }>;
 
-export type ProviderManagedLocalServicesOwner = Readonly<{
-    dispatch: ProviderManagedLocalServicesDispatch;
-    getManagedSnapshot: LocalServiceManagedRoutes['getSnapshot'];
+export type ProviderManagedCatalogRuntimeOwner = Readonly<{
     managedCatalogRuntime: ReturnType<
         typeof createProviderManagedCatalogRuntimePort
     >;
@@ -196,14 +247,8 @@ import { createProductBrowserSidecarControlAdapterFactory } from '../browser/sid
 import { createBrowserDaemonFeatureGate, type BrowserDaemonFeatureGate } from '../browser/featureGate';
 import type { MachineLiveStreamCaptureRegistry } from '../peer/mediation/stream';
 import { createLocalServicesDaemonRuntime } from '../local/services/runtime';
-import type { LocalServiceManagedRoutes } from '../local/services/managed/routes';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
-import { createPluginExecService } from '@/plugins/runtime/exec/hostService';
-import {
-    createProviderManagedLocalServicesDispatch,
-    type ProviderManagedLocalServicesDispatch,
-} from '@/providers/discovery/managedStart';
 import {
     createProviderManagedCatalogRuntimePort,
 } from '@/providers/probe/managedRuntime';
@@ -219,8 +264,12 @@ import {
     isSessionRunnerActive as isSessionRunnerActiveInDaemon,
     probeSessionRunnerServiceability,
 } from '../sessions/isSessionRunnerActive';
-import { createStopSession } from '../sessions/stopSession';
 import {
+    createStopSession,
+    type StopSessionOptions,
+} from '../sessions/stopSession';
+import {
+    registerPidSpawnResourceCleanup,
     retireUpstreamAuthorityBeforeProcessStop,
 } from '../sessions/cleanupPidSessionResources';
 import {
@@ -231,6 +280,7 @@ import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/terminal/attach
 import { waitForExistingSessionExitIfStopRequested } from '../sessions/waitForExistingSessionExitIfStopRequested';
 import { waitForTrackedRunnerProcessesExit } from '../sessions/waitForTrackedRunnerProcessesExit';
 import {
+    resolveDisconnectedTerminalMode,
     resolveDisconnectedTerminalHostResumeGate,
     superviseDisconnectedTerminalHostCandidate,
     type DisconnectedTerminalHostCandidate,
@@ -240,10 +290,100 @@ import { createDisconnectedTerminalHostResumeLifecycle } from './disconnectedTer
 import { resolveTrackedSessionCatalogAgentId } from '../sessions/resolveTrackedSessionCatalogAgentId';
 import {
     clearSessionMarkerConnectedServiceRestartIntent,
-    clearSessionMarkerManagedLocalServiceRunAttachment,
+    readSessionMarkerForPid,
+    removeSessionMarker,
     removeSessionMarkerIfOwned,
-    updateSessionMarkerAgentSessionStartupInstructionsMarker,
+    updateSessionMarkerActiveTurn,
 } from '../sessionRegistry';
+import {
+    promoteForegroundDaemonServiceAuthority,
+} from '../agentRuntime/promoteForegroundDaemonServiceAuthority';
+import {
+    readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker,
+    removeAgentRuntimeDaemonServiceAuthorityIfOwned,
+    type AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
+} from '../agentRuntime/sessionBridgeAuthorization';
+import {
+    refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority,
+} from '../agentRuntime/refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority';
+import {
+    awaitTrackedRunnerAgentSessionOpen,
+    recordTrackedRunnerAgentSessionOpenAttestation,
+} from '../agentRuntime/runnerAgentSessionOpenAttestation';
+import {
+    authorizeRunnerAgentNewTurn,
+} from '../agentRuntime/runnerAgentTurnAdmission';
+import {
+    createRunnerAgentDaemonFacetService,
+} from '../agentRuntime/runnerAgentDaemonFacetService';
+import {
+    createRunnerDaemonPluginServicesHost,
+    type RunnerDaemonCurrentGlobalActionExecutor,
+    type RunnerDaemonCurrentGlobalExternalSessionsOwner,
+    type RunnerDaemonCurrentGlobalMcpOwner,
+} from '../agentRuntime/runnerDaemonPluginServicesHost';
+import {
+    materializeRunnerManagedProviderAgentBinding,
+} from '../agentRuntime/materializeRunnerManagedProviderAgentBinding';
+import {
+    authorizeTrackedRunnerAgentDaemonServiceOperation,
+} from '../agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation';
+import {
+    RunnerAgentDaemonFacetOperationV1Schema,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonFacetProtocol';
+import {
+    resolveExternalSessionSurfaceOps,
+} from '@/session/actions/externalSessions/providerOpsResolution';
+import {
+    resolveRetainedAgentSessionRealtimeVoiceAuthority,
+    snapshotAgentSessionRealtimeVoiceProviders,
+} from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
+import {
+    resolveAgentCompositionThroughRuntimeRegistry,
+    resolvePluginToolPromptContributionsThroughRuntimeRegistry,
+    transformAgentContextThroughPluginRuntimeRegistry,
+    transformAgentRequestThroughRuntimeRegistry,
+    transformSessionInputThroughRuntimeRegistry,
+} from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
+import {
+    verifyRunnerAgentBindingAgainstGeneration,
+} from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
+import {
+    projectManifestAgentContribution,
+} from '@/plugins/projection/registry/projectManifestAgentContribution';
+import {
+    readLeasedAgentProviderBindingAdapter,
+} from '@/plugins/runtime/providerBindings/adapter';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import {
+    readCurrentPluginHardRevocationRevision,
+    readCurrentPluginImmutableGenerationIntegrityCurrentness,
+} from '@/plugins/store/registry/generationStore';
+import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
+import {
+    isPluginRunningSessionDispositionTarget,
+} from '@/plugins/runtime/reload/controller';
+import {
+    createManagedServiceDurabilityOwner,
+    observeManagedServiceProcessStartIdentity,
+    type ManagedServiceDurabilityOwner,
+} from '@/plugins/runtime/invocation/services/managedServiceDurability';
+import {
+    executeRunnerManagedServiceEndpointProjectionBridgeOperation,
+} from '@/plugins/runtime/invocation/services/runnerManagedServiceEndpointProjectionBridge';
+import {
+    createDaemonManagedServiceEndpointReadOwner,
+} from '@/plugins/runtime/invocation/services/daemonManagedServiceEndpointReadOwner';
+import {
+    authorizeRunnerManagedProviderServerSupervision,
+    authorizeRunnerManagedServiceSupervision,
+    projectRunnerManagedProviderServerLaunchAuthority,
+    type RunnerManagedProviderServerLaunchAuthority,
+} from '@/plugins/runtime/invocation/services/runnerManagedServiceSupervisionAuthorization';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import type {
+    ManagedServiceSpec,
+} from '@happier-dev/plugin-sdk/managed-services';
 import type { TrackedSession } from '../types';
 import {
     ConnectedServiceRuntimeRegistry,
@@ -258,17 +398,24 @@ import type {
 } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { readTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
+import {
+    cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop,
+    persistUsageLimitRecoveryFieldDurably,
+} from '@/session/usageLimitRecoveryControls/persistUsageLimitRecoveryFieldDurably';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { executeSpawnSessionRequest } from './executeSpawnSessionRequest';
 import { refreshAccountSettingsForDaemonRequest } from './accountSettingsFreshness';
 import { createSpawnConcurrencyGate } from '../spawn/createSpawnConcurrencyGate';
-import { createAgentRuntimeSessionBridgeRoutes } from '../agentRuntime/sessionBridgeRoutes';
 import { createForegroundAgentRuntimeAdmissionOwner } from '../agentRuntime/foregroundAdmission';
 import {
     createExternalSessionHostOperationOwner,
+    type ExternalSessionHostOperationOwner,
     type ExternalSessionHostOperationSet,
 } from '@/session/external/hostOperationOwner';
 import { prepareForegroundAgentRuntimeAdmission } from '../agentRuntime/prepareForegroundAdmission';
@@ -297,11 +444,13 @@ import {
     type ConnectedServiceProjectionSnapshot,
 } from '../connectedServices/accountGroups/generation/connectedServiceProjectionSnapshot';
 import {
+    ConnectedAccountRequestAuthError,
     createConnectedAccountRequestAuthService,
     type ConnectedAccountRequestAuthResolvedBinding,
 } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthService';
 import {
     createConnectedAccountRequestAuthSubjectRegistry,
+    type ConnectedAccountRequestAuthSubjectRegistry,
 } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import {
     inspectConnectedAccountRequestAuthCapabilityFile,
@@ -309,7 +458,7 @@ import {
 } from '../connectedServices/requestAuth/capabilityFile';
 import {
     resolveQualifiedPurposeBindingSnapshotForAgentSpawn,
-    resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn,
+    resolveQualifiedRequestAuthPurposeBindingsFromSnapshot,
 } from '../connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import {
     scopeConnectedAccountSessionPurposeBindingLease,
@@ -317,17 +466,8 @@ import {
 } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import {
-    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     resolveConnectedAccountRequestAuthCapabilityPath,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
-import { prepareProviderLaunch } from '@/providers/lifecycle/prepareLaunch';
-import {
-    createRuntimeProviderSpawnAuthorizationAttempt,
-} from '@/providers/spawn/authorize';
-import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
-import {
-    recoverManagedProviderEndpoint,
-} from '@/providers/lifecycle/managedEndpointRecovery';
+} from '@happier-dev/agents/request-auth';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createAgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import {
@@ -341,6 +481,9 @@ import {
     resolveFirstPartyConnectedAccountBinding,
     resolveFirstPartyConnectedAccountServiceId,
 } from '../connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
+import {
+    resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
+} from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import type {
     QualifiedConnectedAccountEstablishedRuntimeOwner,
 } from '../connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
@@ -383,9 +526,10 @@ import {
 import { ConnectedServiceRuntimeAuthSwitchAttemptTracker } from '../connectedServices/runtimeAuth/ConnectedServiceRuntimeAuthSwitchAttemptTracker';
 import { buildConnectedServiceRuntimeAuthSwitchAttemptLogContext } from '../connectedServices/runtimeAuth/buildConnectedServiceRuntimeAuthSwitchAttemptLogContext';
 import { commitConnectedServiceAccountSwitchSessionEvent } from '../connectedServices/runtimeAuth/commitConnectedServiceAccountSwitchSessionEvent';
+import type { DaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import {
-    commitRuntimeAuthRecoveryVisibleEventDelivery,
-} from '../connectedServices/runtimeAuth/commitConnectedServiceRuntimeAuthRecoverySessionEvent';
+    buildRuntimeAuthRecoveryAttemptTransitionLocalId,
+} from '../connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryProjection';
 import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from '../connectedServices/runtimeAuth/createDaemonConnectedServiceAuthGroupSwitchCoordinator';
 import {
     createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator,
@@ -399,10 +543,14 @@ import {
     type RuntimeAuthFailureSourceAuthorization,
 } from '../connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
 import { resolveCurrentRuntimeAuthFailureSource } from '../connectedServices/runtimeAuth/resolveCurrentRuntimeAuthFailureSource';
+import { resolveRuntimeAuthFailureSourceProfile } from '../connectedServices/runtimeAuth/resolveRuntimeAuthFailureSourceProfile';
+import { readConnectedServiceCredentialProviderAccountId } from '../connectedServices/shared/connectedServiceCredentialRecord';
+import { resolveProviderAccountUsageSourceProfile } from '../connectedServices/accountUsage/resolveProviderAccountUsageSourceProfile';
 import { createConnectedServiceSessionAuthSwitchCore } from '../connectedServices/runtimeAuth/connectedServiceSessionAuthSwitchCore';
 import { shouldCommitAutomaticGroupApplySessionEvent } from '../connectedServices/runtimeAuth/automaticGroupApplySessionEvents';
 import {
     type RuntimeAuthRecoveryDiagnostic,
+    type RuntimeAuthRecoveryVisibleEventDelivery,
 } from '../connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { createRuntimeAuthRecoverySchedulerForDaemon } from '../connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon';
 import { ConnectedServiceTemporaryThrottleRetryScheduler } from '../connectedServices/runtimeAuth/temporaryThrottleRetryScheduler';
@@ -425,17 +573,38 @@ import {
     createConnectedServiceSwitchDeferralQueue,
     type ConnectedServiceSwitchTarget,
 } from '../connectedServices/sessionAuthSwitch/connectedServiceSwitchDeferralQueue';
+import {
+    CONNECTED_SERVICE_TURN_LIFECYCLE_SOURCE_CUTOVER_BLOCK,
+    connectedServiceTurnLifecycleContinue,
+} from '../connectedServices/connectedServiceTurnLifecycleContract';
 import { requestPlannedRunnerRestart } from '../plannedRunnerRestart/requestPlannedRunnerRestart';
 import { createVersionRuntimeRefreshAttemptHandoff } from '../plannedRunnerRestart/versionRuntimeRefreshAttemptHandoff';
-import type { PlannedRunnerRestartNotSignaledReason } from '../plannedRunnerRestart/types';
+import type {
+    PlannedRunnerRestartNotSignaledReason,
+    PlannedRunnerRestartSignalGateResult,
+    RestartSessionRunnerResult,
+} from '../plannedRunnerRestart/types';
 import {
+    captureRunnerRestartIdentityWitness,
     summarizeSessionRunnerEndpoint,
     restartAllSessionRunnersOnCurrentRuntime,
+    restartSessionRunnerForRequestAuthSourceCutover,
     restartSessionRunnerOnCurrentRuntime,
     type RestartSessionRunnerCompletion,
 } from '../plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
-import { resolveCurrentSessionRunnerLaunchIdentity } from '../sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
+import {
+    resolveRequestAuthSourceCutoverRequirement,
+    type RequestAuthSourceCutoverRequirement,
+} from '../plannedRunnerRestart/requestAuthSourceCutover';
+import {
+    resolveCurrentSessionRunnerLaunchIdentity,
+    resolveSessionRunnerEntrypointIdentityFromProcessCommand,
+} from '../sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
 import { resolveSessionRunnerRuntimeState } from '../sessionRunnerRuntime/resolveRuntimeState';
+import { resolveSessionRunnerRuntimeStatusV2 } from '../sessionRunnerRuntime/resolveRuntimeStatusV2';
+import {
+    resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness,
+} from '../sessionRunnerRuntime/resolveAgentRuntimeCurrentness';
 import { logConnectedServiceDaemonRestartDiagnostic } from './logConnectedServiceDaemonRestartDiagnostic';
 import {
     nudgeAlreadyRunningExistingSessionPendingQueue,
@@ -447,6 +616,7 @@ import {
 } from './terminalControlServiceabilityProjection';
 import { publishReportedTerminalControlServiceability } from './publishReportedTerminalControlServiceability';
 import { retireExactTerminalControlServiceability } from '../sessions/retireTerminalControlServiceability';
+import { recoverStrandedTerminalControlServiceability } from '../sessions/recoverStrandedTerminalControlServiceability';
 import { resolveSharedStateRequiredSwitchContinuity } from '../connectedServices/sessionAuthSwitch/sharedStateContinuity';
 import { resolveUnsupportedSwitchContinuityErrorCode } from '../connectedServices/sessionAuthSwitch/resolveUnsupportedSwitchContinuityErrorCode';
 import { materializeSessionConnectedServiceRuntimeAuthSelection } from '../connectedServices/sessionAuthSwitch/materializeSessionConnectedServiceRuntimeAuthSelection';
@@ -546,10 +716,14 @@ function verifyHostedWebStaticAssetArtifact(input: Readonly<{
     }>[];
     digest: string;
 }>): Readonly<{ ok: true }> | Readonly<{ ok: false; reasonCode: string }> {
+    const digest = PluginUiArtifactDigestV1Schema.safeParse(input.digest);
+    if (!digest.success) {
+        return { ok: false, reasonCode: 'digest_invalid' };
+    }
     const result = verifyPluginUiArtifactFileSetIntegrityV1({
         files: input.files,
         integrity: {
-            digest: input.digest,
+            digest: digest.data,
             pluginId: 'hosted-web-static-assets',
             contributionId: 'static-asset-file-set',
             artifactKind: 'hostedWebAsset',
@@ -782,24 +956,6 @@ function findTrackedSessionByHappySessionId(
     return null;
 }
 
-function startupInstructionsMarkerMatchesCarrier(
-    marker: AgentSessionStartupInstructionsMarkerV1,
-    carrier: AgentSessionStartupInstructionsV1,
-): boolean {
-    return marker.v === carrier.v
-        && marker.id === carrier.id
-        && marker.revision === carrier.revision;
-}
-
-function startupInstructionsMarkersEqual(
-    left: AgentSessionStartupInstructionsMarkerV1,
-    right: AgentSessionStartupInstructionsMarkerV1,
-): boolean {
-    return left.v === right.v
-        && left.id === right.id
-        && left.revision === right.revision;
-}
-
 function snapshotTrackedSessionForTemporaryThrottleResume(tracked: TrackedSession): TrackedSession {
     const {
         childProcess: _childProcess,
@@ -815,55 +971,6 @@ function snapshotTrackedSessionForTemporaryThrottleResume(tracked: TrackedSessio
     };
 }
 
-type ManagedServerClaimSnapshot = Readonly<{
-    countsByStatePath: ReadonlyMap<string, number>;
-    hasUnknownTrackedClaims: boolean;
-    inFlightTurnStatePaths: ReadonlySet<string>;
-}>;
-
-function isTrackedManagedServerSession(
-    tracked: TrackedSession,
-    descriptor: ManagedServerClaimDescriptor,
-): boolean {
-    const routedAgentId = resolveDaemonCatalogAgentIdFromBackendTarget(tracked.spawnOptions?.backendTarget);
-    if (routedAgentId === descriptor.agentId) return true;
-    const processCommand = normalizeOptionalString(tracked.processCommand);
-    return processCommand ? descriptor.isExpectedProcessCommand(processCommand) : false;
-}
-
-async function summarizeManagedServerClaims(
-    trackedSessions: Iterable<TrackedSession>,
-    isTurnInFlight?: (sessionId: string) => boolean,
-): Promise<ManagedServerClaimSnapshot> {
-    const descriptors = await listManagedServerClaimDescriptors();
-    const countsByStatePath = new Map<string, number>();
-    const inFlightTurnStatePaths = new Set<string>();
-    let hasUnknownTrackedClaims = false;
-    for (const tracked of trackedSessions) {
-        for (const descriptor of descriptors) {
-            if (!isTrackedManagedServerSession(tracked, descriptor)) continue;
-            const statePath = normalizeOptionalString(
-                tracked.spawnOptions?.environmentVariables?.[descriptor.statePathEnvKey],
-            );
-            if (!statePath) {
-                hasUnknownTrackedClaims = true;
-                break;
-            }
-            countsByStatePath.set(statePath, (countsByStatePath.get(statePath) ?? 0) + 1);
-            // Same single pass that counts claims also aggregates which state paths have an in-flight
-            // turn — so the in-flight set is a structural subset of the claimed state paths (a state
-            // path can never report in-flight while its claim count is 0). Fail-closed: a missing
-            // session id / probe simply omits the state path (the kill proceeds).
-            const happySessionId = normalizeOptionalString(tracked.happySessionId);
-            if (happySessionId && isTurnInFlight?.(happySessionId) === true) {
-                inFlightTurnStatePaths.add(statePath);
-            }
-            break;
-        }
-    }
-    return { countsByStatePath, hasUnknownTrackedClaims, inFlightTurnStatePaths };
-}
-
 function resolveConnectedServiceMaterializationIdentityFromTrackedSession(
     tracked: TrackedSession | null | undefined,
 ): ConnectedServiceMaterializationIdentityV1 | null {
@@ -871,6 +978,63 @@ function resolveConnectedServiceMaterializationIdentityFromTrackedSession(
         ?? readConnectedServiceMaterializationIdentityFromEnvironment(
             tracked?.spawnOptions?.environmentVariables ?? null,
         );
+}
+
+function resolveOwnedRetainedDevRequestAuthCapabilityPaths(input: Readonly<{
+    tracked: TrackedSession;
+    agentId: CatalogAgentId;
+    bindings: ConnectedServiceBindingsV1;
+}>): readonly string[] {
+    const childSelections =
+        readConnectedServiceChildSelectionsFromEnv(
+            input.tracked.spawnOptions?.environmentVariables ?? {},
+        );
+    const paths = new Set<string>();
+    for (
+        const [serviceIdRaw, binding]
+        of Object.entries(
+            input.bindings.bindingsByServiceId,
+        )
+    ) {
+        if (binding.source !== 'connected') continue;
+        const serviceId = serviceIdRaw as ConnectedServiceId;
+        const childSelection =
+            childSelections?.get(serviceId) ?? null;
+        const selection =
+            binding.selection === 'profile'
+                ? {
+                    kind: 'profile' as const,
+                    serviceId,
+                    profileId: binding.profileId,
+                }
+                : childSelection?.kind === 'group'
+                    && childSelection.groupId
+                        === binding.groupId
+                    ? childSelection
+                    : null;
+        if (!selection) continue;
+        const profileId = selection.kind === 'profile'
+            ? selection.profileId
+            : selection.activeProfileId;
+        const materializedRoot =
+            resolveConnectedServiceMaterializedHomeRoot(
+                input.agentId,
+                {
+                    activeServerDir:
+                        configuration.activeServerDir,
+                    serviceId,
+                    profileId,
+                    selection,
+                },
+            );
+        if (!materializedRoot) continue;
+        paths.add(
+            resolveConnectedAccountRequestAuthCapabilityPath(
+                materializedRoot,
+            ),
+        );
+    }
+    return [...paths];
 }
 
 function pathEqualsOrIsInside(parentPath: string, childPath: string): boolean {
@@ -976,7 +1140,7 @@ function logConnectedServiceAuthSwitchResult(input: Readonly<{
     serviceIds: readonly string[];
     result: SessionConnectedServiceAuthSwitchResult;
 }>): void {
-    logger.info('[DAEMON RUN] Connected-service session auth switch result', {
+    logger.debug('[DAEMON RUN] Connected-service session auth switch result', {
         sessionId: input.sessionId,
         agentId: input.agentId,
         serviceIds: input.serviceIds,
@@ -1133,29 +1297,6 @@ async function publishProviderAccountUsageRecordIdToSessionMetadata(input: Reado
     });
 }
 
-function connectedServiceBindingToEffectiveBinding(
-    serviceId: ConnectedServiceId,
-    binding: ConnectedServiceBindingsV1['bindingsByServiceId'][string],
-): ConnectedServiceSwitchEffectiveBinding | null {
-    if (binding.source !== 'connected') return null;
-    if (binding.selection === 'group') {
-        return {
-            source: 'connected',
-            selection: 'group',
-            serviceId,
-            profileId: normalizeOptionalString(binding.profileId) || null,
-            groupId: binding.groupId,
-        };
-    }
-    return {
-        source: 'connected',
-        selection: 'profile',
-        serviceId,
-        profileId: binding.profileId,
-        groupId: null,
-    };
-}
-
 async function repairMissingConnectedServiceMaterializationIdentityForSpawn(input: Readonly<{
     token: string;
     credentials: Parameters<typeof updateSessionMetadataWithRetry>[0]['credentials'];
@@ -1163,42 +1304,31 @@ async function repairMissingConnectedServiceMaterializationIdentityForSpawn(inpu
     agentId: CatalogAgentId;
     connectedServices: ConnectedServiceBindingsV1;
     vendorResumeId: string | null;
-}>): Promise<ConnectedServiceMaterializationIdentityV1 | null> {
+}>): Promise<Readonly<{
+    identity: ConnectedServiceMaterializationIdentityV1;
+    persistAfterMaterialization: () => Promise<void>;
+}> | null> {
     const vendorResumeId = normalizeOptionalString(input.vendorResumeId);
     if (!vendorResumeId) return null;
 
-    const connectedBindings: ConnectedServiceSwitchEffectiveBinding[] = [];
-    for (const [serviceIdRaw, binding] of Object.entries(input.connectedServices.bindingsByServiceId)) {
-        const serviceId = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
-        if (!serviceId.success) continue;
-        const effective = connectedServiceBindingToEffectiveBinding(serviceId.data, binding);
-        if (effective) connectedBindings.push(effective);
-    }
-    if (connectedBindings.length === 0) return null;
-
-    for (const binding of connectedBindings) {
-        const continuity = await resolveConnectedServiceSwitchContinuity(input.agentId, {
-            sessionId: input.sessionId,
-            agentId: input.agentId,
-            serviceId: binding.serviceId,
-            previousBinding: binding,
-            nextBinding: binding,
-            fromBindings: input.connectedServices,
-            toBindings: input.connectedServices,
-            vendorResumeId,
-        });
-        if (continuity.mode !== 'restart_same_home') return null;
-    }
+    const hasConnectedBinding = Object.values(
+        input.connectedServices.bindingsByServiceId,
+    ).some((binding) => binding.source === 'connected');
+    if (!hasConnectedBinding) return null;
 
     const connectedServiceMaterializationIdentityV1 = generateConnectedServiceMaterializationIdentityV1();
-    await persistSessionConnectedServiceBindings({
-        token: input.token,
-        credentials: input.credentials,
-        sessionId: input.sessionId,
-        normalizedBindings: input.connectedServices,
-        connectedServiceMaterializationIdentityV1,
-    });
-    return connectedServiceMaterializationIdentityV1;
+    return {
+        identity: connectedServiceMaterializationIdentityV1,
+        persistAfterMaterialization: async () => {
+            await persistSessionConnectedServiceBindings({
+                token: input.token,
+                credentials: input.credentials,
+                sessionId: input.sessionId,
+                normalizedBindings: input.connectedServices,
+                connectedServiceMaterializationIdentityV1,
+            });
+        },
+    };
 }
 
 export async function resolveContinuationResumePromptMode(input: Readonly<{
@@ -1229,6 +1359,199 @@ export function resolveConnectedServiceContinuationOriginId(input: Readonly<{
     return reportId || null;
 }
 
+type ContinueAfterRuntimeAuthSwitch = (input: Readonly<{
+    sessionId: string;
+    attemptId: string;
+    action: 'hot_applied' | 'restart_requested';
+    switchReason?: ConnectedServiceSessionAuthSwitchReason;
+}>) => Promise<void>;
+
+type ReconcileCurrentRuntimeAuthTarget = (input: Readonly<{
+    sessionId: string;
+    serviceId: ConnectedServiceId;
+    groupId: string;
+}>) => Promise<boolean>;
+
+export async function continueAfterSupersededRuntimeAuthFailure(input: Readonly<{
+    result: unknown;
+    sessionId: string;
+    interruptedOriginId?: string | null;
+    continueAfterRuntimeAuthSwitch: ContinueAfterRuntimeAuthSwitch;
+    reconcileCurrentRuntimeAuthTarget?: ReconcileCurrentRuntimeAuthTarget;
+}>): Promise<boolean> {
+    if (
+        !input.result
+        || typeof input.result !== 'object'
+        || !('status' in input.result)
+        || input.result.status !== 'recovery_superseded'
+        || !('reason' in input.result)
+        || (
+            input.result.reason !== 'source_tuple_unavailable'
+            && input.result.reason !== 'source_tuple_mismatch'
+        )
+    ) {
+        return false;
+    }
+    const interruptedOriginId = input.interruptedOriginId?.trim() ?? '';
+    let currentTargetSettled = false;
+    if (
+        input.reconcileCurrentRuntimeAuthTarget
+        && 'serviceId' in input.result
+        && 'groupId' in input.result
+        && typeof input.result.serviceId === 'string'
+        && typeof input.result.groupId === 'string'
+    ) {
+        const serviceId = ConnectedServiceIdSchema.safeParse(input.result.serviceId);
+        const groupId = input.result.groupId.trim();
+        if (serviceId.success && groupId) {
+            currentTargetSettled = await input.reconcileCurrentRuntimeAuthTarget({
+                sessionId: input.sessionId,
+                serviceId: serviceId.data,
+                groupId,
+            });
+        }
+    }
+    if (currentTargetSettled && interruptedOriginId) {
+        await input.continueAfterRuntimeAuthSwitch({
+            sessionId: input.sessionId,
+            attemptId: interruptedOriginId,
+            action: 'hot_applied',
+        });
+    }
+    return true;
+}
+
+export async function settleSupersedingRuntimeAuthGenerationForSource(input: Readonly<{
+    recovery: unknown;
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    sessionId: string;
+    fromProfileId: string | null;
+    consumeCommittedAuthGroupGeneration: (
+        consumeInput: Parameters<ConnectedServiceAuthGroupGenerationConsumer['consume']>[0],
+    ) => Promise<Pick<Awaited<ReturnType<ConnectedServiceAuthGroupGenerationConsumer['consume']>>, 'outcome'>>;
+}>): Promise<void> {
+    const resolved = resolveCommittedGenerationFromRuntimeAuthRecovery({
+        serviceId: input.serviceId,
+        groupId: input.groupId,
+        recovery: input.recovery,
+        provenance: 'runtime_failure',
+    });
+    if (!resolved?.sourceRequiresConvergence) {
+        throw Object.assign(
+            new Error('connected_service_runtime_auth_superseding_generation_target_unavailable'),
+            {
+                code: 'connected_service_runtime_auth_superseding_generation_target_unavailable',
+                retryable: true,
+            },
+        );
+    }
+    const consumption = await input.consumeCommittedAuthGroupGeneration({
+        committedGeneration: resolved.committedGeneration,
+        switchReason: 'automatic_runtime_failure',
+        sessions: [{
+            sessionId: input.sessionId,
+            activity: 'live',
+            fromProfileId: input.fromProfileId,
+        }],
+        executionAuthority: 'runtime_recovery',
+    });
+    if (consumption.outcome !== 'adopted_current') {
+        throw Object.assign(
+            new Error('connected_service_runtime_auth_superseding_generation_not_acknowledged'),
+            {
+                code: 'connected_service_runtime_auth_superseding_generation_not_acknowledged',
+                retryable: true,
+                outcome: consumption.outcome,
+            },
+        );
+    }
+}
+
+export async function isRetainedManagedProviderInvocationCurrent(
+    input: Readonly<{
+        readsRetainedAuthorityCurrent(): boolean;
+        revalidatePolicy(): Promise<boolean>;
+        fenceRetainedPolicy(): Promise<void>;
+        readHardRevocationRevision(): Promise<number>;
+        readGenerationIntegrityCurrentness(): Promise<boolean>;
+        hardRevocationRevisionAtAdmission: number;
+    }>,
+): Promise<boolean> {
+    try {
+        if (!input.readsRetainedAuthorityCurrent()) return false;
+        let policyCurrent = false;
+        try {
+            policyCurrent = await input.revalidatePolicy() === true;
+        } catch {
+            if (!input.readsRetainedAuthorityCurrent()) return false;
+            await input.fenceRetainedPolicy();
+            return false;
+        }
+        if (!policyCurrent) {
+            if (!input.readsRetainedAuthorityCurrent()) return false;
+            await input.fenceRetainedPolicy();
+            return false;
+        }
+        if (!input.readsRetainedAuthorityCurrent()) return false;
+        const hardRevocationRevision =
+            await input.readHardRevocationRevision();
+        if (
+            hardRevocationRevision
+                !== input.hardRevocationRevisionAtAdmission
+            || await input.readGenerationIntegrityCurrentness()
+                !== true
+        ) {
+            return false;
+        }
+        if (
+            await input.readHardRevocationRevision()
+            !== input.hardRevocationRevisionAtAdmission
+        ) {
+            return false;
+        }
+        return input.readsRetainedAuthorityCurrent();
+    } catch {
+        return false;
+    }
+}
+
+export async function isManagedProviderSessionInvocationCurrent(
+    input: Readonly<{
+        adoptionCommitted(): boolean;
+        revalidateInitialPolicy(): Promise<boolean>;
+        readsRetainedAuthorityCurrent(): boolean;
+        revalidateRetainedPolicy(): Promise<boolean>;
+        fenceRetainedPolicy(): Promise<void>;
+        readHardRevocationRevision(): Promise<number>;
+        readGenerationIntegrityCurrentness(): Promise<boolean>;
+        hardRevocationRevisionAtAdmission: number;
+    }>,
+): Promise<boolean> {
+    if (!input.adoptionCommitted()) {
+        try {
+            return await input.revalidateInitialPolicy() === true
+                && !input.adoptionCommitted();
+        } catch {
+            return false;
+        }
+    }
+    return await isRetainedManagedProviderInvocationCurrent({
+        readsRetainedAuthorityCurrent:
+            input.readsRetainedAuthorityCurrent,
+        revalidatePolicy:
+            input.revalidateRetainedPolicy,
+        fenceRetainedPolicy:
+            input.fenceRetainedPolicy,
+        readHardRevocationRevision:
+            input.readHardRevocationRevision,
+        readGenerationIntegrityCurrentness:
+            input.readGenerationIntegrityCurrentness,
+        hardRevocationRevisionAtAdmission:
+            input.hardRevocationRevisionAtAdmission,
+    });
+}
+
 function readContinuationCustomResumePrompt(
     settings: AccountSettings | null | undefined,
 ): string | null {
@@ -1252,11 +1575,8 @@ function createConnectedServiceContinuationHandler(params: Readonly<{
         sendMessage: sendSessionMessage,
     });
     return async (input: Readonly<{
-        tracked: Pick<TrackedSession, 'activeTurnId'>;
         sessionId: string;
         attemptId: string;
-        normalizedBindings: ConnectedServiceBindingsV1;
-        serviceIds: ReadonlySet<ConnectedServiceId>;
         action: 'hot_applied' | 'restart_requested';
         switchReason?: ConnectedServiceSessionAuthSwitchReason;
     }>) => {
@@ -1278,10 +1598,7 @@ function createConnectedServiceContinuationHandler(params: Readonly<{
     };
 }
 
-function createSelectionPostSwitchRecoveryHandler(params: Readonly<{
-    getTrackedSessions: () => ReadonlyArray<TrackedSession>;
-    isTurnInFlight?: (sessionId: string) => boolean;
-}>) {
+function createSelectionPostSwitchRecoveryHandler() {
     return async (input: Readonly<{
         tracked: TrackedSession;
         sessionId: string;
@@ -1290,22 +1607,9 @@ function createSelectionPostSwitchRecoveryHandler(params: Readonly<{
         action: 'hot_applied' | 'restart_requested';
         runtimeAuthSelectionsByServiceId?: ReadonlyMap<ConnectedServiceId, unknown>;
     }>) => {
-        const claimSnapshot = await summarizeManagedServerClaims(
-            params.getTrackedSessions(),
-            params.isTurnInFlight,
-        );
         return await runSelectionPostSwitchRecovery({
             ...input,
             runtimeAuthSelectionsByServiceId: input.runtimeAuthSelectionsByServiceId,
-            countTrackedClaimsForStatePath: (statePath) => {
-                const normalized = normalizeOptionalString(statePath);
-                return normalized ? (claimSnapshot.countsByStatePath.get(normalized) ?? 0) : 0;
-            },
-            hasUnknownTrackedClaims: claimSnapshot.hasUnknownTrackedClaims,
-            hasInFlightTurnForStatePath: (statePath) => {
-                const normalized = normalizeOptionalString(statePath);
-                return normalized ? claimSnapshot.inFlightTurnStatePaths.has(normalized) : false;
-            },
         });
     };
 }
@@ -1417,9 +1721,11 @@ function tryReadSessionMetadataRecord(input: Readonly<{
         dataEncryptionKey?: unknown;
     }>;
     credentials: Parameters<typeof updateSessionMetadataWithRetry>[0]['credentials'];
+    accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
 }>): Record<string, unknown> | null {
     return tryDecryptSessionOwnerMetadataView({
         credentials: input.credentials,
+        accountEncryptionMode: input.accountEncryptionMode,
         rawSession: input.rawSession,
     });
 }
@@ -1431,14 +1737,49 @@ async function resolvePersistedConnectedServiceSwitchSessionMetadata(input: Read
 }>): Promise<Record<string, unknown> | null> {
     const token = input.token.trim();
     if (!token) return null;
-    const rawSession = await fetchSessionByIdCompat({
-        token,
-        sessionId: input.sessionId,
-    }).catch(() => null);
+    const [rawSession, accountEncryptionCurrentness] = await Promise.all([
+        fetchSessionByIdCompat({
+            token,
+            sessionId: input.sessionId,
+        }).catch(() => null),
+        fetchAccountEncryptionCurrentness({ token }),
+    ]);
     if (!rawSession) return null;
     return tryReadSessionMetadataRecord({
         rawSession,
         credentials: input.credentials,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
+    });
+}
+
+async function persistExplicitSessionStopUsageLimitRecoveryCancellation(input: Readonly<{
+    credentials: Parameters<typeof updateSessionMetadataWithRetry>[0]['credentials'];
+    sessionId: string;
+    mutationCustody: Pick<DaemonSessionMutationCustody, 'stage'>;
+}>): Promise<void> {
+    const token = input.credentials.token.trim();
+    if (!token) return;
+    const [rawSession, accountEncryptionCurrentness] = await Promise.all([
+        fetchSessionByIdCompat({ token, sessionId: input.sessionId }),
+        fetchAccountEncryptionCurrentness({ token }),
+    ]);
+    if (!rawSession || rawSession.id !== input.sessionId) return;
+    const currentMetadata = tryReadSessionMetadataRecord({
+        rawSession,
+        credentials: input.credentials,
+        accountEncryptionMode: accountEncryptionCurrentness.mode,
+    });
+    if (!currentMetadata) return;
+    const nextMetadata = cancelLatestUsageLimitRecoveryInMetadataAfterExplicitStop(currentMetadata);
+    if (nextMetadata === currentMetadata) return;
+    await persistUsageLimitRecoveryFieldDurably({
+        sessionId: input.sessionId,
+        currentMetadata,
+        nextMetadata,
+        mode: 'cancel',
+        stageUsageLimitRecoveryMutation: async (mutation) => {
+            await input.mutationCustody.stage({ mutation, rawSession });
+        },
     });
 }
 
@@ -1446,8 +1787,10 @@ async function resolveInactiveConnectedServiceSessionContext(input: Readonly<{
     token: string;
     credentials: Parameters<typeof updateSessionMetadataWithRetry>[0]['credentials'];
     sessionId: string;
+    currentMachineId: string;
 }>): Promise<Readonly<{
-    agentId: CatalogAgentId;
+    /** Absent when the Session declares no Agent this daemon has installed. */
+    agentId: CatalogAgentId | null;
     connectedServices: ConnectedServiceBindingsV1;
     connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1;
     vendorResumeId?: string;
@@ -1465,22 +1808,31 @@ async function resolveInactiveConnectedServiceSessionContext(input: Readonly<{
      */
     candidatePersistedSessionFile?: string;
 }> | null> {
-    const rawSession = await fetchSessionByIdCompat({
-        token: input.token,
-        sessionId: input.sessionId,
-    });
+    const [rawSession, accountEncryptionCurrentness] = await Promise.all([
+        fetchSessionByIdCompat({
+            token: input.token,
+            sessionId: input.sessionId,
+        }),
+        fetchAccountEncryptionCurrentness({ token: input.token }),
+    ]);
     const metadata = rawSession
         ? tryReadSessionMetadataRecord({
             rawSession,
             credentials: input.credentials,
+            accountEncryptionMode: accountEncryptionCurrentness.mode,
         })
         : null;
     if (!metadata) return null;
-    const inferredAgentId = inferAgentIdFromSessionMetadata(metadata);
-    const agentId = resolveCatalogAgentId(inferredAgentId);
+    const agentId = resolveCatalogAgentId(resolveAgentIdFromSessionMetadata(metadata));
     const materializationIdentity = readConnectedServiceMaterializationIdentityFromMetadata(metadata);
-    const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
-    const cwd = normalizeOptionalString(metadata.path);
+    const vendorResumeId = agentId
+        ? resolveVendorResumeIdFromSessionMetadata(agentId, metadata)
+        : null;
+    const cwd = resolveSessionMachineWorkspacePath({
+        metadata,
+        currentMachineId: input.currentMachineId,
+        candidatePath: metadata.path,
+    });
     const candidatePersistedSessionFile =
         resolveConnectedServiceCandidatePersistedSessionFile(agentId, metadata) ?? '';
     return {
@@ -1504,7 +1856,7 @@ async function applyAlreadyRunningExistingSessionRuntimeSnapshot(input: Readonly
     const metadata = await input.readPersistedSessionMetadata(input.sessionId);
     if (!metadata) return;
 
-    const agentId = inferAgentIdFromSessionMetadata(metadata);
+    const agentId = resolveAgentIdFromSessionMetadata(metadata);
     const persistedVendorResumeId = agentId
         ? resolveVendorResumeIdFromSessionMetadata(agentId, metadata)
         : null;
@@ -1541,7 +1893,7 @@ async function resolveRespawnSessionOptionsWithRuntimeSnapshot(input: Readonly<{
     const metadata = await input.readPersistedSessionMetadata(input.sessionId);
     if (!metadata) return input.defaultOptions;
 
-    const agentId = inferAgentIdFromSessionMetadata(metadata);
+    const agentId = resolveAgentIdFromSessionMetadata(metadata);
     const persistedVendorResumeId = agentId
         ? resolveVendorResumeIdFromSessionMetadata(agentId, metadata)
         : null;
@@ -1594,8 +1946,15 @@ export async function commitConnectedServiceHotApplyRuntimeTarget(input: Readonl
 export async function startDaemonSessionControlRuntime(
     params: Readonly<{
         machineId: string;
+        externalSessionHostOperationOwner?: ExternalSessionHostOperationOwner;
         runtimeId?: string;
         credentials: NonNullable<Parameters<typeof executeSpawnSessionRequest>[0]['credentials']>;
+        daemonSessionMutationCustody: Pick<DaemonSessionMutationCustody, 'stageTranscriptEvent'>
+            & Partial<Pick<DaemonSessionMutationCustody, 'stage'>>;
+        cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop?: (input: Readonly<{
+            sessionId: string;
+        }>) => Promise<unknown>;
+        deviceLocalSecretStorage?: DeviceLocalSecretStorage;
         api: Parameters<typeof executeSpawnSessionRequest>[0]['api'];
         loadLocalHandoffMetadataByVendorResumeId: Parameters<typeof executeSpawnSessionRequest>[0]['loadLocalHandoffMetadataByVendorResumeId'];
         connectedServicesMaterializationBaseDir: string;
@@ -1610,6 +1969,9 @@ export async function startDaemonSessionControlRuntime(
             QualifiedConnectedAccountEstablishedRuntimeOwner,
             'invokeWithReceipt'
         >;
+        connectedAccountRequestAuthRegistry?:
+            ConnectedAccountRequestAuthSubjectRegistry;
+        onConnectedAccountRequestAuthHttpPortReady?: (port: number) => void;
         connectedServiceRuntimeRegistry?: ConnectedServiceRuntimeRegistry;
         pidToTrackedSession: Map<number, TrackedSession>;
         pidToAwaiter: Map<number, (session: TrackedSession) => void>;
@@ -1618,7 +1980,12 @@ export async function startDaemonSessionControlRuntime(
         getApiMachineForSessions: () => ApiMachineClient | null;
         onLocalServicesPreviewRoutesReady?: (routes: LocalServicePreviewRoutes) => void;
         onLocalServicesRoutesReady?: (routes: DaemonLocalServicesMachineRpcRoutes) => void;
-        onProviderManagedLocalServicesOwnerReady?: (owner: ProviderManagedLocalServicesOwner) => void;
+        onProviderManagedCatalogRuntimeOwnerReady?: (owner: ProviderManagedCatalogRuntimeOwner) => void;
+        onManagedServiceEndpointReadHostReady?: (
+            host: ReturnType<
+                typeof createDaemonManagedServiceEndpointReadOwner
+            >['bindHost'],
+        ) => void;
         onBrowserDiagnosticsRoutesReady?: (routes: BrowserDiagnosticsRoutes) => void;
         onBrowserRecordingRoutesReady?: (routes: BrowserRecordingRoutes) => void;
         onBrowserControlRoutesReady?: (routes: BrowserDaemonControlRoutes) => void;
@@ -1633,17 +2000,20 @@ export async function startDaemonSessionControlRuntime(
             disconnectedTerminalHostCandidates: ReadonlyArray<DisconnectedTerminalHostCandidate>;
             unresolvedTerminalHostSessionIds: ReadonlyArray<string>;
         }>;
-        startupManagedProviderRecoveryCandidates?: NonNullable<
-            Awaited<ReturnType<
-                typeof import('../sessions/reattachFromMarkers').reattachTrackedSessionsFromMarkers
-            >>['managedProviderRecoveryCandidates']
-        >;
+        onAlreadyRunningSessionAdopted?: (sessionId: string) => Promise<void>;
         connectedServiceGroupHomeCleanupScheduler?: Pick<ConnectedServiceGroupHomeCleanupScheduler, 'cleanupPendingDeletedGroupHomes'>;
         connectedServiceMaterializedHomeCleanupScheduler?: Readonly<{
             cleanupPendingMaterializedHomes: () => Promise<unknown>;
         }>;
         beforeShutdown: Parameters<typeof startDaemonControlServer>[0]['beforeShutdown'];
-        onHappySessionWebhook: Parameters<typeof startDaemonControlServer>[0]['onHappySessionWebhook'];
+        onHappySessionWebhook: (
+            sessionId: string,
+            sessionMetadata: Metadata,
+            reconcileCanonicalReadiness?: (
+                tracked: TrackedSession,
+            ) => Promise<void>,
+            sessionCreationOutcome?: SessionCreationOutcome,
+        ) => Promise<void>;
         setOnTrackedSessionPidPromoted?: (
             handler: (input: Readonly<{
                 fromPid: number;
@@ -1658,12 +2028,27 @@ export async function startDaemonSessionControlRuntime(
         requestShutdown: (source: ShutdownSource, errorMessage?: string) => void;
         requestSelfRestart?: Parameters<typeof startDaemonControlServer>[0]['requestSelfRestart'];
         pluginChangeService?: DaemonPluginChangeService;
+        hardRevokeRunningSessionsForGenerationIntegrityFailure?: (
+            input: Readonly<{
+                pluginId: string;
+                immutableGenerationId: string;
+            }>,
+        ) => Promise<void>;
         resolveManagedPurposeBindingIntent?: Parameters<
             typeof executeSpawnSessionRequest
         >[0]['resolveManagedPurposeBindingIntent'];
         activateSessionPurposeBindings?: Parameters<
             typeof executeSpawnSessionRequest
         >[0]['activateSessionPurposeBindings'];
+        resolveCurrentSessionPurposeBindingSnapshot?: ConnectedAccountPurposeBindingOwner[
+            'resolveCurrentSessionPurposeBindingSnapshot'
+        ];
+        resolveCurrentRequestAuthBinding?: ConnectedAccountPurposeBindingOwner[
+            'resolveCurrentRequestAuthBinding'
+        ];
+        materializeRequestAuthBearer?: ConnectedAccountPurposeBindingOwner[
+            'materializeRequestAuthBearer'
+        ];
         activatePurposeBindings?: ConnectedAccountPurposeBindingOwner[
             'activatePurposeBindings'
         ];
@@ -1743,6 +2128,16 @@ export async function startDaemonSessionControlRuntime(
             generation: number;
             errorCode?: string;
         }>>;
+        applyCredentialUpdate: (input: Readonly<{
+            sessionId: string;
+            serviceId: ConnectedServiceId;
+            profileId: string;
+            reason: 'account_changed' | 'auth_expired';
+            executionAuthority: ConnectedServiceExecutionAuthorityV1;
+        }>) => Promise<Readonly<{
+            status: 'hot_applied' | 'restart_requested' | 'unchanged' | 'failed';
+            errorCode?: string;
+        }>>;
     }>;
     connectedServicePredictiveSwitchGuard: ReturnType<typeof createConnectedServicePredictiveSwitchGuard>;
     connectedServiceRuntimeAuthApplyCapabilityResolver: (input: Readonly<{
@@ -1770,10 +2165,14 @@ export async function startDaemonSessionControlRuntime(
         attemptId: string;
     }>) => Promise<unknown>;
     retryTemporaryThrottleNow: (input: Readonly<{ sessionId: string }>) => Promise<unknown>;
+    reconcileReattachedConnectedServiceCredentialProjection: () => Promise<void>;
     reconcileConnectedServicesProjection: (notification: ConnectedServicesProjectionNotification) => Promise<void>;
-    awaitAgentSessionOpen: ReturnType<
-        typeof createAgentRuntimeSessionBridgeRoutes
-    >['awaitAgentSessionOpen'];
+    awaitAgentSessionOpen: (
+        input: Omit<
+            Parameters<typeof awaitTrackedRunnerAgentSessionOpen>[0],
+            'getTrackedSessions'
+        >,
+    ) => ReturnType<typeof awaitTrackedRunnerAgentSessionOpen>;
     installExternalSessionHostOperations(
         operations: ExternalSessionHostOperationSet,
     ): ReturnType<
@@ -1781,6 +2180,12 @@ export async function startDaemonSessionControlRuntime(
     >;
     providerAccountUsageStore: Pick<ProviderAccountUsageStore, 'recordSnapshot' | 'resolveRecordId' | 'resolveBySource'>;
     connectedServiceRuntimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
+    createAgentCatalogObservation: (
+        infrastructure: Pick<
+            Parameters<typeof createAgentProviderCatalogObservationService>[0],
+            'client' | 'scheduler'
+        >,
+    ) => ReturnType<typeof createAgentProviderCatalogObservationService>;
     refreshBrowserRouteOwners: () => Promise<void>;
     purgeBrowserStorageForSessionDeleted: (sessionId: string) => Promise<void>;
     purgeBrowserStorageForLogout: () => Promise<void>;
@@ -1831,23 +2236,79 @@ export async function startDaemonSessionControlRuntime(
             },
         });
     };
-    const registerTrackedConnectedServiceRuntimeTarget = async (tracked: TrackedSession): Promise<void> => {
+    // Reattached children are restored as ongoing runtime targets only when their materialized
+    // credential is revision-fenced. Server-observed credential revisions are the canonical
+    // authority for that fact, so bootstrap must never resolve credential material to learn it:
+    // the materialization owner is not ready yet, and a stale-but-fenced revision is precisely the
+    // case reattach reconciliation exists to repair.
+    const resolveBootstrapConnectedServiceRuntimeCandidate = (tracked: TrackedSession) => {
         const agentId = resolveTrackedSessionCatalogAgentId(tracked);
         const materializationIdentity = resolveConnectedServiceMaterializationIdentityFromTrackedSession(tracked);
-        if (!agentId || !materializationIdentity) return;
+        if (!agentId || !materializationIdentity) return null;
         const environment = tracked.spawnOptions?.environmentVariables ?? {};
-        connectedServiceRuntimeRegistry.registerTarget({
-            pid: tracked.pid,
-            agentId,
-            sessionId: tracked.happySessionId,
-            sessionDirectory: tracked.spawnOptions?.directory,
-            materializationKey: materializationIdentity.id,
-            connectedServiceMaterializationIdentityV1: materializationIdentity,
-            connectedServicesBindingsRaw: tracked.spawnOptions?.connectedServices,
-            connectedServiceSelectionsEnv: environment,
-        }, { source: 'bootstrap' });
+        const configuredSelections = parseConnectedServiceBindingSelections(
+            resolveTrackedConnectedServiceBindingsRaw(tracked),
+        );
+        const materializedSelections =
+            readConnectedServiceChildSelectionsFromEnv(environment);
+        const credentialBindings = configuredSelections.flatMap(
+            (selection) => {
+                const materialized = materializedSelections?.get(
+                    selection.serviceId,
+                );
+                if (!materialized) {
+                    return [];
+                }
+                if (selection.kind === 'profile') {
+                    return materialized.kind === 'profile'
+                        && materialized.profileId === selection.profileId
+                        ? [{
+                            serviceId: selection.serviceId,
+                            profileId: materialized.profileId,
+                        }]
+                        : [];
+                }
+                return materialized.kind === 'group'
+                    && materialized.groupId === selection.groupId
+                    ? [{
+                        serviceId: selection.serviceId,
+                        profileId: materialized.activeProfileId,
+                    }]
+                    : [];
+            },
+        );
+        if (
+            configuredSelections.length === 0
+            || credentialBindings.length !== configuredSelections.length
+        ) return null;
+        return { tracked, agentId, materializationIdentity, environment, credentialBindings };
     };
-    await Promise.all(Array.from(params.pidToTrackedSession.values()).map(registerTrackedConnectedServiceRuntimeTarget));
+    const registerTrackedConnectedServiceRuntimeTargets = async (): Promise<void> => {
+        const candidates = Array.from(params.pidToTrackedSession.values())
+            .flatMap((tracked) => resolveBootstrapConnectedServiceRuntimeCandidate(tracked) ?? []);
+        if (candidates.length === 0) return;
+        const projection = await fetchConnectedServiceProjectionSnapshot().catch(() => null);
+        if (!projection) return;
+        for (const candidate of candidates) {
+            const revisionFenced = candidate.credentialBindings.every((binding) => (
+                projection.resolveCredentialPresence(
+                    binding.serviceId,
+                    binding.profileId,
+                ).status === 'present'
+            ));
+            if (!revisionFenced) continue;
+            connectedServiceRuntimeRegistry.registerTarget({
+                pid: candidate.tracked.pid,
+                agentId: candidate.agentId,
+                sessionId: candidate.tracked.happySessionId,
+                sessionDirectory: candidate.tracked.spawnOptions?.directory,
+                materializationKey: candidate.materializationIdentity.id,
+                connectedServiceMaterializationIdentityV1: candidate.materializationIdentity,
+                connectedServicesBindingsRaw: candidate.tracked.spawnOptions?.connectedServices,
+                connectedServiceSelectionsEnv: candidate.environment,
+            }, { source: 'bootstrap' });
+        }
+    };
     const spawnConcurrencyGate = createSpawnConcurrencyGate(
         resolvePositiveIntEnv(params.processEnv.HAPPIER_DAEMON_MAX_CONCURRENT_SPAWNS, 0, { min: 0, max: 64 }),
     );
@@ -1870,6 +2331,7 @@ export async function startDaemonSessionControlRuntime(
         });
     let latestConnectedServiceProjectionSnapshot: ConnectedServiceProjectionSnapshot | null = null;
     let unsubscribeConnectedServiceRuntimeTargetRegistrations = () => {};
+    let unsubscribeRunnerAgentAuthorityCurrentness = () => {};
     const connectedServiceRuntimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
     const providerAccountUsageStore = createProviderAccountUsageStore();
     const providerAccountUsagePersistence = createProviderAccountUsagePersistenceScheduler({
@@ -1885,6 +2347,10 @@ export async function startDaemonSessionControlRuntime(
             ?? null,
     });
     const connectedServiceAuthGroupSwitchLeases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry();
+    const qualifiedConnectedAccountAuthGroupSwitchLeases =
+        new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
+            QualifiedConnectedAccountServiceRef
+        >();
     const connectedServiceRuntimeAuthSwitchAttempts = new ConnectedServiceRuntimeAuthSwitchAttemptTracker({
         nowMs: () => Date.now(),
         windowMs: 60_000,
@@ -1894,21 +2360,19 @@ export async function startDaemonSessionControlRuntime(
     const recordConnectedServiceRestartDiagnostic = (record: ConnectedServiceDaemonRestartDiagnosticRecord) => {
         logConnectedServiceDaemonRestartDiagnostic(logger, record);
     };
-    const commitConnectedServiceAccountSwitchSessionEventWithNotification = (
+    const commitConnectedServiceAccountSwitchSessionEventWithNotification = async (
         input: Readonly<{
             sessionId: string;
             event: unknown;
             logContext: string;
             reasonFallback?: string;
         }>,
-    ): void => {
-        void commitConnectedServiceAccountSwitchSessionEvent({
-            credentials: params.credentials,
+    ): Promise<void> => {
+        await commitConnectedServiceAccountSwitchSessionEvent({
+            mutationCustody: params.daemonSessionMutationCustody,
             sessionId: input.sessionId,
             event: input.event,
             listConnectedServiceProfiles: params.api.listConnectedServiceProfiles.bind(params.api),
-        }).catch((error) => {
-            logger.debug(`[DAEMON RUN] Failed to commit ${input.logContext} connected-service account switch session event (non-fatal)`, error);
         });
 
         const record = input.event && typeof input.event === 'object'
@@ -1972,8 +2436,91 @@ export async function startDaemonSessionControlRuntime(
         5 * 60_000,
         { min: 1_000, max: 60 * 60_000 },
     );
+    const prepareLegacyAuthGroupCandidateForSwitch = async (input: Readonly<{
+        serviceId: ConnectedServiceId;
+        groupId: string;
+        profileId: string;
+        reason: string;
+    }>) => await params.getConnectedServiceRefreshCoordinator()
+        ?.prepareConnectedServiceAuthGroupCandidateForSwitch({
+            serviceId: input.serviceId,
+            profileId: input.profileId,
+            reason: input.reason,
+        }) ?? {
+            status: 'ineligible' as const,
+            memberState: { credentialHealthStatus: 'refresh_failed_retryable' as const },
+        };
+    const validateConnectedServiceGroupMutationCurrentness = async (input: Readonly<{
+        serviceId: ConnectedServiceId;
+        groupId: string;
+        profileId: string;
+        generation: number;
+        credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+    }>) => {
+        const currentGroup = await params.api.getConnectedServiceAuthGroup({
+            serviceId: input.serviceId,
+            groupId: input.groupId,
+        }).catch(() => null);
+        if (!currentGroup?.activeProfileId) {
+            return { current: false as const, reason: 'shared_generation_application_superseded' };
+        }
+        const currentResolutions = await resolveConnectedServiceCredentialResolutions({
+            credentials: params.credentials,
+            api: params.api,
+            bindings: [{ serviceId: input.serviceId, profileId: currentGroup.activeProfileId }],
+        }).catch(() => null);
+        const currentResolution = currentResolutions?.get(input.serviceId) ?? null;
+        const authoritativeTarget = currentResolution
+            ? {
+                profileId: currentGroup.activeProfileId,
+                generation: currentGroup.generation,
+                credentialRevision: currentResolution.revisionSemantics === 'revisioned'
+                    ? currentResolution.credentialRevision
+                    : null,
+            }
+            : undefined;
+        if (
+            currentGroup.activeProfileId !== input.profileId
+            || currentGroup.generation !== input.generation
+        ) {
+            return {
+                current: false as const,
+                reason: 'shared_generation_application_superseded',
+                ...(authoritativeTarget ? { authoritativeTarget } : {}),
+            };
+        }
+        const revisionIsCurrent = currentResolution?.revisionSemantics === 'revisioned'
+            ? currentResolution.credentialRevision === input.credentialRevision
+            : input.credentialRevision === null;
+        return revisionIsCurrent
+            ? { current: true as const }
+            : {
+                current: false as const,
+                reason: 'credential_revision_superseded',
+                ...(authoritativeTarget ? { authoritativeTarget } : {}),
+            };
+    };
+    const prepareQualifiedAuthGroupCandidateForSwitch = async (input: Readonly<{
+        serviceId: QualifiedConnectedAccountServiceRef;
+        groupId: string;
+        profileId: string;
+        reason: string;
+    }>) => {
+        const serviceId = resolveFirstPartyConnectedAccountServiceId(
+            input.serviceId,
+        );
+        if (!serviceId) return { status: 'ready' as const };
+        return await prepareLegacyAuthGroupCandidateForSwitch({
+            serviceId,
+            groupId: input.groupId,
+            profileId: input.profileId,
+            reason: input.reason,
+        });
+    };
     const preTurnConnectedServiceAuthGroupSwitchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
         api: params.api,
+        prepareCandidateForSwitch:
+            prepareLegacyAuthGroupCandidateForSwitch,
         runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
         accountUsageStore: providerAccountUsageStore,
         leases: connectedServiceAuthGroupSwitchLeases,
@@ -1986,7 +2533,15 @@ export async function startDaemonSessionControlRuntime(
         ),
         restartSession: async () => ({ ok: true }),
         probeQuotaSnapshotsForGroup: async (input) => {
-            await params.getConnectedServiceQuotasCoordinator()?.probeGroupQuotaSnapshots(input);
+            const coordinator = params.getConnectedServiceQuotasCoordinator();
+            return coordinator
+                ? await coordinator.probeGroupQuotaSnapshots(input)
+                : {
+                    status: 'incomplete' as const,
+                    requestedProfileCount: input.profileIds.length,
+                    completedProfileCount: 0,
+                    reason: 'probe_unavailable' as const,
+                };
         },
     });
     const qualifiedRequestAuthGroupSwitchCoordinator =
@@ -1995,12 +2550,15 @@ export async function startDaemonSessionControlRuntime(
                 token: params.credentials.token,
                 quotaFreshnessMs: requestAuthGroupQuotaFreshnessMs,
                 nowMs: () => Date.now(),
+                leases: qualifiedConnectedAccountAuthGroupSwitchLeases,
                 applyGeneration: async () => ({ ok: true }),
+                prepareCandidateForSwitch:
+                    prepareQualifiedAuthGroupCandidateForSwitch,
             })
             : null;
     const switchAfterConnectedAccountRequestAuthFailure = async (input: Readonly<{
         service: QualifiedConnectedAccountServiceRef;
-        legacyServiceId: ConnectedServiceId;
+        legacyServiceId: ConnectedServiceId | null;
         failure: Parameters<
             ConnectedAccountRequestAuthRecoveryInput[
                 'switchAfterClassifiedFailure'
@@ -2020,7 +2578,7 @@ export async function startDaemonSessionControlRuntime(
                     serviceId: input.service,
                 });
         }
-        if (support !== 'absent') return null;
+        if (support !== 'absent' || !input.legacyServiceId) return null;
         return await preTurnConnectedServiceAuthGroupSwitchCoordinator
             .switchAfterClassifiedFailure({
                 ...input.failure,
@@ -2043,7 +2601,8 @@ export async function startDaemonSessionControlRuntime(
         return value;
     };
     const connectedAccountRequestAuthRegistry =
-        createConnectedAccountRequestAuthSubjectRegistry();
+        params.connectedAccountRequestAuthRegistry
+        ?? createConnectedAccountRequestAuthSubjectRegistry();
     const resolveRequestAuthAccountFingerprint = (
         resolved: ConnectedAccountRequestAuthResolvedBinding,
         projection: ConnectedServiceProjectionSnapshot | null,
@@ -2104,40 +2663,239 @@ export async function startDaemonSessionControlRuntime(
             );
             return { status: 'unavailable', reason };
         };
-        if (!serviceId || !quotaCoordinator) {
+        if (!quotaCoordinator) {
             return unavailable('backoff_owner_unavailable');
         }
         try {
-            quotaCoordinator.recordRequestAuthProviderBackoff({
-                serviceId,
-                profileId: input.accountId,
-                groupId: input.groupId,
-                groupGeneration: input.groupGeneration,
-                limitCategory: input.limitCategory,
-                quotaScope: input.quotaScope,
-                retryAfterMs: input.retryAfterMs,
-                resetAtMs: input.resetAtMs,
-                providerCode: input.providerCode,
-            });
+            if (serviceId) {
+                quotaCoordinator.recordRequestAuthProviderBackoff({
+                    serviceId,
+                    profileId: input.accountId,
+                    groupId: input.groupId,
+                    groupGeneration: input.groupGeneration,
+                    limitCategory: input.limitCategory,
+                    quotaScope: input.quotaScope,
+                    retryAfterMs: input.retryAfterMs,
+                    resetAtMs: input.resetAtMs,
+                    providerCode: input.providerCode,
+                });
+            } else {
+                quotaCoordinator.recordQualifiedRequestAuthProviderBackoff({
+                    account: {
+                        service: input.service,
+                        accountId: input.accountId,
+                    },
+                    groupId: input.groupId,
+                    groupGeneration: input.groupGeneration,
+                    limitCategory: input.limitCategory,
+                    quotaScope: input.quotaScope,
+                    retryAfterMs: input.retryAfterMs,
+                    resetAtMs: input.resetAtMs,
+                    providerCode: input.providerCode,
+                });
+            }
             return { status: 'recorded' };
         } catch {
             return unavailable('backoff_record_failed');
         }
     };
+    const recoverConnectedAccountRequestAuthFailure = async (input: Readonly<{
+        resolved: ConnectedAccountRequestAuthResolvedBinding;
+        failure: ConnectedAccountRequestAuthRecoveryInput['failure'];
+        signal: AbortSignal;
+        allowCredentialRefresh: boolean;
+    }>): Promise<RequestAuthFailureOutcomeV1> => {
+        input.signal.throwIfAborted();
+        const legacyServiceId = input.resolved.legacyServiceKeyedCompatibility === true
+            ? resolveFirstPartyConnectedAccountServiceId(
+                input.resolved.account.service,
+            )
+            : null;
+        if (
+            input.resolved.legacyServiceKeyedCompatibility === true
+            && !legacyServiceId
+        ) {
+            return { status: 'denied' };
+        }
+        const before = legacyServiceId
+            ? resolveRequestAuthAccountFingerprint(
+                input.resolved,
+                latestConnectedServiceProjectionSnapshot,
+            )
+            : null;
+        const recovery = await applyConnectedAccountRequestAuthRecovery({
+            resolved: input.resolved,
+            failure: input.failure,
+            signal: input.signal,
+            refreshCredential: async (refreshInput) => {
+                input.signal.throwIfAborted();
+                if (!input.allowCredentialRefresh) return false;
+                const refreshCoordinator =
+                    params.getConnectedServiceRefreshCoordinator();
+                if (!refreshCoordinator) return false;
+                const refreshed = legacyServiceId
+                    ? await refreshCoordinator
+                        .refreshConnectedServiceCredentialForQuota({
+                            serviceId: legacyServiceId,
+                            profileId: refreshInput.account.accountId,
+                            force: true,
+                            expectedCredentialRevision:
+                                refreshInput.expectedCredentialRevision,
+                        })
+                        .catch(() => null)
+                    : await refreshCoordinator
+                        .refreshQualifiedConnectedAccountCredentialForRequestAuth({
+                            account: refreshInput.account,
+                            expectedCredentialRevision:
+                                refreshInput.expectedCredentialRevision,
+                        })
+                        .catch(() => false);
+                input.signal.throwIfAborted();
+                return Boolean(refreshed);
+            },
+            switchAfterClassifiedFailure: async (failure) => {
+                input.signal.throwIfAborted();
+                const result = await switchAfterConnectedAccountRequestAuthFailure({
+                    service: input.resolved.account.service,
+                    legacyServiceId,
+                    failure,
+                }).catch(() => null);
+                input.signal.throwIfAborted();
+                return result;
+            },
+            recordTemporaryRetry: recordConnectedAccountRequestAuthTemporaryRetry,
+        });
+        input.signal.throwIfAborted();
+        if (recovery.effect === 'stale_context') {
+            return { status: 'stale_context' };
+        }
+        if (recovery.effect === 'temporary_retry_unavailable') {
+            return { status: 'denied' };
+        }
+        if (!legacyServiceId) {
+            // The qualified purpose-binding owner re-resolves current account/group truth after
+            // this callback. It alone turns an actual replacement into stale_context.
+            return { status: 'current_unchanged' };
+        }
+        const projection = await fetchConnectedServiceProjectionSnapshot(input.signal)
+            .catch(() => {
+                input.signal.throwIfAborted();
+                return latestConnectedServiceProjectionSnapshot;
+            });
+        input.signal.throwIfAborted();
+        const after = resolveRequestAuthAccountFingerprint(input.resolved, projection);
+        return {
+            status: !after || after !== before
+                ? 'current_changed'
+                : 'current_unchanged',
+        };
+    };
     const connectedAccountRequestAuthService =
         createConnectedAccountRequestAuthService({
-            resolveCurrentBinding: (binding) => (
-                latestConnectedServiceProjectionSnapshot
-                    ? resolveFirstPartyConnectedAccountBinding(
+            resolveCurrentBinding: async ({ subject, binding, signal }) => {
+                signal.throwIfAborted();
+                const service = binding.target.kind === 'account'
+                    ? binding.target.account.service
+                    : binding.target.service;
+                const legacyServiceId =
+                    subject.legacyServiceKeyedCompatibility === true
+                        ? resolveFirstPartyConnectedAccountServiceId(service)
+                        : null;
+                if (legacyServiceId) {
+                    const projection = latestConnectedServiceProjectionSnapshot
+                        ?? await fetchConnectedServiceProjectionSnapshot(signal);
+                    signal.throwIfAborted();
+                    const resolved = projection
+                        ? resolveFirstPartyConnectedAccountBinding(
+                            binding,
+                            projection,
+                        )
+                        : null;
+                    return resolved
+                        ? Object.freeze({
+                            ...resolved,
+                            legacyServiceKeyedCompatibility: true as const,
+                        })
+                        : null;
+                }
+                if (
+                    !subject.isCurrent()
+                    || !params.resolveCurrentRequestAuthBinding
+                ) {
+                    return null;
+                }
+                try {
+                    const resolved =
+                        await params.resolveCurrentRequestAuthBinding({
+                            subjectId: subject.subjectId,
+                            binding,
+                            signal,
+                        });
+                    signal.throwIfAborted();
+                    if (!subject.isCurrent() || !resolved) return null;
+                    // The qualified owner never delegates its service target to the
+                    // compatibility adapter. Strip a forged compatibility marker from
+                    // any callback result before it reaches cache/recovery policy.
+                    return Object.freeze({
+                        account: resolved.account,
+                        credentialRevision: resolved.credentialRevision,
+                        ...(resolved.group ? { group: resolved.group } : {}),
+                    });
+                } catch (error) {
+                    signal.throwIfAborted();
+                    if (error instanceof ConnectedAccountRequestAuthError) {
+                        throw error;
+                    }
+                    throw new ConnectedAccountRequestAuthError(
+                        'request_auth_binding_unavailable',
+                    );
+                }
+            },
+            materializeBearer: async ({
+                subject,
+                binding,
+                resolved,
+                materialization,
+                signal,
+            }) => {
+                signal.throwIfAborted();
+                const service = binding.target.kind === 'account'
+                    ? binding.target.account.service
+                    : binding.target.service;
+                const legacyServiceId =
+                    subject.legacyServiceKeyedCompatibility === true
+                        ? resolveFirstPartyConnectedAccountServiceId(service)
+                        : null;
+                if (!legacyServiceId) {
+                    if (!subject.isCurrent()) {
+                        throw new ConnectedAccountRequestAuthError(
+                            'request_auth_not_active',
+                        );
+                    }
+                    if (!params.materializeRequestAuthBearer) {
+                        throw new ConnectedAccountRequestAuthError(
+                            'request_auth_binding_unavailable',
+                        );
+                    }
+                    const result = await params.materializeRequestAuthBearer({
+                        subjectId: subject.subjectId,
                         binding,
-                        latestConnectedServiceProjectionSnapshot,
-                    )
-                    : null
-            ),
-            materializeBearer: async ({ resolved, materialization }) => (
-                await materializeFirstPartyConnectedAccountBearer({
+                        resolved,
+                        materialization,
+                        signal,
+                    });
+                    signal.throwIfAborted();
+                    if (!subject.isCurrent()) {
+                        throw new ConnectedAccountRequestAuthError(
+                            'request_auth_not_active',
+                        );
+                    }
+                    return result;
+                }
+                return await materializeFirstPartyConnectedAccountBearer({
                     resolved,
                     materialization,
+                    signal,
                     transport:
                         params.resolveQualifiedConnectedAccountRequestAuthTransport
                             ? params.resolveQualifiedConnectedAccountRequestAuthTransport(
@@ -2156,12 +2914,19 @@ export async function startDaemonSessionControlRuntime(
                                 params.establishedConnectedAccountRuntimeOwner,
                         }
                         : {}),
-                    resolveCredential: async ({ serviceId, profileId }) => {
+                    resolveCredential: async ({
+                        serviceId,
+                        profileId,
+                        signal: credentialSignal,
+                    }) => {
+                        credentialSignal?.throwIfAborted();
                         const resolutions = await resolveConnectedServiceCredentialResolutions({
                             credentials: params.credentials,
                             api: params.api,
                             bindings: [{ serviceId, profileId }],
+                            ...(credentialSignal ? { signal: credentialSignal } : {}),
                         });
+                        credentialSignal?.throwIfAborted();
                         const resolution = resolutions.get(serviceId) ?? null;
                         // Exact v0.2.1 credentials remain readable for passive compatibility, but
                         // authority-bearing consumers must have a server revision fence.
@@ -2169,94 +2934,23 @@ export async function startDaemonSessionControlRuntime(
                             ? resolution
                             : null;
                     },
-                })
-            ),
-            refreshAfterAuthFailure: async ({ resolved, failure }) => {
-                const before = resolveRequestAuthAccountFingerprint(
-                    resolved,
-                    latestConnectedServiceProjectionSnapshot,
-                );
-                const serviceId = resolveFirstPartyConnectedAccountServiceId(
-                    resolved.account.service,
-                );
-                if (!serviceId) return { status: 'denied' };
-
-                const recovery = await applyConnectedAccountRequestAuthRecovery({
-                    resolved,
-                    failure,
-                    refreshCredential: async (input) => Boolean(
-                        await params.getConnectedServiceRefreshCoordinator()
-                            ?.refreshConnectedServiceCredentialForQuota({
-                                serviceId,
-                                profileId: input.account.accountId,
-                                force: true,
-                                expectedCredentialRevision:
-                                    input.expectedCredentialRevision,
-                            })
-                            .catch(() => null) ?? null
-                    ),
-                    switchAfterClassifiedFailure: async (input) => (
-                        await switchAfterConnectedAccountRequestAuthFailure({
-                            service: resolved.account.service,
-                            legacyServiceId: serviceId,
-                            failure: input,
-                        }).catch(() => null)
-                    ),
-                    recordTemporaryRetry:
-                        recordConnectedAccountRequestAuthTemporaryRetry,
                 });
-                if (recovery.effect === 'stale_context') {
-                    return { status: 'stale_context' };
-                }
-                if (recovery.effect === 'temporary_retry_unavailable') {
-                    return { status: 'denied' };
-                }
-                const projection = await fetchConnectedServiceProjectionSnapshot()
-                    .catch(() => latestConnectedServiceProjectionSnapshot);
-                const after = resolveRequestAuthAccountFingerprint(resolved, projection);
-                return {
-                    status: !after || after !== before
-                        ? 'current_changed'
-                        : 'current_unchanged',
-                };
             },
-            reportQuotaFailure: async ({ resolved, failure }) => {
-                const before = resolveRequestAuthAccountFingerprint(
-                    resolved,
-                    latestConnectedServiceProjectionSnapshot,
-                );
-                const serviceId = resolveFirstPartyConnectedAccountServiceId(
-                    resolved.account.service,
-                );
-                if (!serviceId) return { status: 'denied' };
-                const recovery = await applyConnectedAccountRequestAuthRecovery({
+            refreshAfterAuthFailure: async ({ resolved, failure, signal }) => {
+                return await recoverConnectedAccountRequestAuthFailure({
                     resolved,
                     failure,
-                    refreshCredential: async () => false,
-                    switchAfterClassifiedFailure: async (input) => (
-                        await switchAfterConnectedAccountRequestAuthFailure({
-                            service: resolved.account.service,
-                            legacyServiceId: serviceId,
-                            failure: input,
-                        }).catch(() => null)
-                    ),
-                    recordTemporaryRetry:
-                        recordConnectedAccountRequestAuthTemporaryRetry,
+                    signal,
+                    allowCredentialRefresh: true,
                 });
-                if (recovery.effect === 'stale_context') {
-                    return { status: 'stale_context' };
-                }
-                if (recovery.effect === 'temporary_retry_unavailable') {
-                    return { status: 'denied' };
-                }
-                const projection = await fetchConnectedServiceProjectionSnapshot()
-                    .catch(() => latestConnectedServiceProjectionSnapshot);
-                const after = resolveRequestAuthAccountFingerprint(resolved, projection);
-                return {
-                    status: !after || after !== before
-                        ? 'current_changed'
-                        : 'current_unchanged',
-                };
+            },
+            reportQuotaFailure: async ({ resolved, failure, signal }) => {
+                return await recoverConnectedAccountRequestAuthFailure({
+                    resolved,
+                    failure,
+                    signal,
+                    allowCredentialRefresh: false,
+                });
             },
             // Request-auth route errors are strict safe codes and the control server never logs
             // request/response bodies. Access material is therefore kept out of every diagnostic
@@ -2268,7 +2962,16 @@ export async function startDaemonSessionControlRuntime(
         const previous = latestConnectedServiceProjectionSnapshot;
         latestConnectedServiceProjectionSnapshot = snapshot;
         connectedAccountRequestAuthService.reconcileCredentialLeases({
-            isCurrent: (account, credentialRevision) => {
+            isCurrent: (
+                account,
+                credentialRevision,
+                legacyServiceKeyedCompatibility,
+            ) => {
+                if (legacyServiceKeyedCompatibility !== true) {
+                    // Qualified bindings are re-resolved through their own canonical
+                    // owner on every lookup; this projection has no authority over them.
+                    return true;
+                }
                 if (!snapshot) return false;
                 const serviceId = resolveFirstPartyConnectedAccountServiceId(account.service);
                 return serviceId !== null
@@ -2289,10 +2992,13 @@ export async function startDaemonSessionControlRuntime(
             connectedServicesV2: profile.connectedServicesV2,
             connectedServiceCredentialRevisionsV1:
                 profile.connectedServiceCredentialRevisionsV1,
+            connectedAccountsV4: profile.connectedAccountsV4,
+            connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
         });
         replaceConnectedServiceProjectionSnapshot(snapshot);
         return snapshot;
     };
+    await registerTrackedConnectedServiceRuntimeTargets();
     const resolveCanonicalTrackedSessionId = (pid: number): string => {
         const session = params.pidToTrackedSession.get(pid);
         const sessionId = typeof session?.happySessionId === 'string' ? session.happySessionId.trim() : '';
@@ -2311,14 +3017,143 @@ export async function startDaemonSessionControlRuntime(
         runnerIdentity: object;
     }>) => Promise<void> = async () => {};
     let observeConnectedServiceRestartProcessMissing: ((tracked: TrackedSession) => void) | null = null;
-    const shutdownCancellationDomains = createDaemonShutdownCancellationDomains();
-    const ensureCurrentProjectionForRequestAuth =
-        async (): Promise<void> => {
-            if (latestConnectedServiceProjectionSnapshot) return;
-            await fetchConnectedServiceProjectionSnapshot(
-                shutdownCancellationDomains.daemonWorkSignal,
+    type PendingRequestAuthSourceCutover = {
+        sessionId: string;
+        agentId: string;
+        tracked: TrackedSession;
+        requirement: RequestAuthSourceCutoverRequirement;
+        resolveCurrentCapabilityPath:
+            (tracked: TrackedSession) => string | null;
+        attempt: Promise<RestartSessionRunnerResult> | null;
+        boundaryAttempt: Promise<RestartSessionRunnerResult> | null;
+    };
+    const pendingRequestAuthSourceCutoverBySessionId =
+        new Map<string, PendingRequestAuthSourceCutover>();
+    const retirePendingRequestAuthSourceCutoverForCurrentSuccessor = (
+        pending: PendingRequestAuthSourceCutover,
+    ): boolean => {
+        const matches = Array.from(
+            params.pidToTrackedSession.values(),
+        ).filter(
+            (tracked) =>
+                normalizeOptionalString(
+                    tracked.happySessionId,
+                ) === pending.sessionId,
+        );
+        if (
+            matches.length !== 1
+            || matches[0] === pending.tracked
+        ) {
+            return false;
+        }
+        const successor = matches[0]!;
+        const currentCapabilityPath =
+            pending.resolveCurrentCapabilityPath(successor);
+        if (!currentCapabilityPath) return false;
+        const successorSource =
+            resolveRequestAuthSourceCutoverRequirement({
+                tracked: successor,
+                currentCapabilityPath,
+            });
+        if (successorSource.status !== 'current') {
+            return false;
+        }
+        if (
+            pendingRequestAuthSourceCutoverBySessionId.get(
+                pending.sessionId,
+            ) === pending
+        ) {
+            pendingRequestAuthSourceCutoverBySessionId.delete(
+                pending.sessionId,
             );
-        };
+        }
+        return true;
+    };
+    const requestPendingRequestAuthSourceCutover = (
+        pending: PendingRequestAuthSourceCutover,
+    ): Promise<RestartSessionRunnerResult> => {
+        if (pending.attempt) return pending.attempt;
+        const attempt =
+            (async (): Promise<RestartSessionRunnerResult> => {
+                try {
+                    const result =
+                        await restartSessionRunnerForRequestAuthSourceCutover({
+                            tracked: pending.tracked,
+                            currentIdentity:
+                                resolveCurrentSessionRunnerLaunchIdentity(),
+                            requestRestart:
+                                requestSessionRunnerVersionRuntimeRefresh,
+                            requirement: pending.requirement,
+                            resolveCurrentCapabilityPath: () =>
+                                pending.resolveCurrentCapabilityPath(
+                                    pending.tracked,
+                                ),
+                            resolveActivityDisabledReason:
+                                resolveSessionRunnerActivityDisabledReason,
+                        });
+                    logger.debug(
+                        '[DAEMON RUN] Reattached Agent request-auth source cutover attempt settled',
+                        {
+                            sessionId: pending.sessionId,
+                            agentId: pending.agentId,
+                            status: result.status,
+                            reasonCode:
+                                result.reasonCode ?? null,
+                        },
+                    );
+                    if (
+                        result.status === 'restarted'
+                        && retirePendingRequestAuthSourceCutoverForCurrentSuccessor(
+                            pending,
+                        )
+                    ) {
+                        return result;
+                    }
+                    return result;
+                } catch (error) {
+                    logger.debug(
+                        '[DAEMON RUN] Reattached Agent request-auth source cutover attempt failed closed',
+                        {
+                            sessionId: pending.sessionId,
+                            agentId: pending.agentId,
+                            error: serializeAxiosErrorForLog(error),
+                        },
+                    );
+                    return {
+                        ok: false,
+                        status: 'ineligible',
+                        sessionId: pending.sessionId,
+                        reasonCode:
+                            'runner_generation_unattested',
+                    };
+                }
+            })();
+        pending.attempt = attempt;
+        void attempt.finally(() => {
+            if (pending.attempt === attempt) {
+                pending.attempt = null;
+            }
+        });
+        return attempt;
+    };
+    const requestPendingRequestAuthSourceCutoverAtBoundary = (
+        pending: PendingRequestAuthSourceCutover,
+    ): Promise<RestartSessionRunnerResult> => {
+        if (pending.boundaryAttempt) return pending.boundaryAttempt;
+        const attempt = requestPendingRequestAuthSourceCutover(pending);
+        pending.boundaryAttempt = attempt;
+        void attempt.then((result) => {
+            if (
+                pending.boundaryAttempt === attempt
+                && result.status === 'busy'
+                && result.reasonCode === 'turn_in_progress'
+            ) {
+                pending.boundaryAttempt = null;
+            }
+        });
+        return attempt;
+    };
+    const shutdownCancellationDomains = createDaemonShutdownCancellationDomains();
     const recoverReattachedAgentRequestAuth = async (): Promise<void> => {
         const reattached = [...params.pidToTrackedSession.values()]
             .filter((tracked) => tracked.reattachedFromDiskMarker === true);
@@ -2402,11 +3237,9 @@ export async function startDaemonSessionControlRuntime(
                     continue;
                 }
                 const requestAuthPurposeBindings =
-                    resolveQualifiedRequestAuthPurposeBindingsForAgentSpawn({
-                        agentId,
-                        bindings: parsedBindings.data,
-                        contributions,
-                    });
+                    resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
+                        purposeSnapshot,
+                    );
                 if (requestAuthPurposeBindings.length === 0) {
                     continue;
                 }
@@ -2423,14 +3256,53 @@ export async function startDaemonSessionControlRuntime(
                     resolveConnectedAccountRequestAuthCapabilityPath(
                         materializedRootDir,
                     );
-                const trackedCapabilityPath = normalizeOptionalString(
-                    tracked.spawnOptions?.environmentVariables?.[
-                        CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV
-                    ],
-                );
-                if (trackedCapabilityPath !== capabilityPath) {
-                    unavailable(
-                        'request_auth_capability_path_mismatch',
+                const sourceCutover =
+                    resolveRequestAuthSourceCutoverRequirement({
+                        tracked,
+                        currentCapabilityPath: capabilityPath,
+                        ownedRetainedDevCapabilityPaths:
+                            resolveOwnedRetainedDevRequestAuthCapabilityPaths({
+                                tracked,
+                                agentId,
+                                bindings:
+                                    parsedBindings.data,
+                            }),
+                    });
+                if (sourceCutover.status === 'unavailable') {
+                    unavailable(sourceCutover.reason);
+                    continue;
+                }
+                if (sourceCutover.status === 'required') {
+                    const resolveCurrentCapabilityPath = (
+                        candidate: TrackedSession,
+                    ): string | null => {
+                        const currentMaterializationIdentity =
+                            resolveConnectedServiceMaterializationIdentityFromTrackedSession(
+                                candidate,
+                            );
+                        if (!currentMaterializationIdentity) return null;
+                        return resolveConnectedAccountRequestAuthCapabilityPath(
+                            resolveConnectedServiceMaterializedRootDir({
+                                baseDir:
+                                    params.connectedServicesMaterializationBaseDir,
+                                agentId,
+                                materializationKey:
+                                    currentMaterializationIdentity.id,
+                            }),
+                        );
+                    };
+                    const pending: PendingRequestAuthSourceCutover = {
+                        sessionId,
+                        agentId,
+                        tracked,
+                        requirement: sourceCutover.requirement,
+                        resolveCurrentCapabilityPath,
+                        attempt: null,
+                        boundaryAttempt: null,
+                    };
+                    pendingRequestAuthSourceCutoverBySessionId.set(
+                        sessionId,
+                        pending,
                     );
                     continue;
                 }
@@ -2472,9 +3344,13 @@ export async function startDaemonSessionControlRuntime(
                 const subject =
                     scopeConnectedAccountSessionPurposeBindingLease({
                         lease: sessionPurposeBindingLease,
-                        subjectId:
-                            `${sessionPurposeBindingLease.subjectId}/agent:${agentId}`,
+                        subjectId: sessionPurposeBindingLease.subjectId,
                         uses: purposeSnapshot.requestAuthUses,
+                        ...(readDeclaredCatalogConnectedServiceIds(
+                            contributions.catalogEntriesById[agentId],
+                        ).length > 0
+                            ? { legacyServiceKeyedCompatibility: true as const }
+                            : {}),
                         registerRedaction: redactionLease.add,
                     });
                 const previousAttachCleanup =
@@ -2537,7 +3413,7 @@ export async function startDaemonSessionControlRuntime(
                             httpPort:
                                 requireConnectedAccountRequestAuthHttpPort(),
                             finalizeStagedAuthorityCommit:
-                                async (_descriptor, commit) => {
+                                async (descriptor, commit) => {
                                     const isExactProcessCurrent =
                                         await isPidSafeHappySessionProcess({
                                             pid: expectedPid,
@@ -2546,7 +3422,17 @@ export async function startDaemonSessionControlRuntime(
                                         }, params
                                             .reattachedAgentRequestAuthPidSafetyDependencies);
                                     if (
-                                        !isExactProcessCurrent
+                                        // The running child was launched under the
+                                        // predecessor capability's exact subject
+                                        // scope. Recovering a differently scoped
+                                        // authority onto that same process would
+                                        // commit credentials across a changed
+                                        // subject scope, so the replacement scope
+                                        // must equal the recovered one.
+                                        descriptor.subjectScopeDigest
+                                            !== previousCapability
+                                                .subjectScopeDigest
+                                        || !isExactProcessCurrent
                                         || lifecycleCleanupStarted
                                         || tracked.pid !== expectedPid
                                         || params.pidToTrackedSession.get(
@@ -2672,18 +3558,48 @@ export async function startDaemonSessionControlRuntime(
     );
     const disconnectedTerminalHostResultsBySessionId = new Map<string, DisconnectedTerminalHostSupervisionResult>();
     const terminalizedDisconnectedTerminalHostIds = new Set<string>();
-    const retireDisconnectedTerminalHostCandidate = (input: Readonly<{
+    const registerDisconnectedTerminalHostCandidate = (
+        candidate: DisconnectedTerminalHostCandidate,
+    ): void => {
+        disconnectedTerminalHostResultsBySessionId.delete(candidate.sessionId);
+        terminalizedDisconnectedTerminalHostIds.delete(candidate.attachmentId);
+        unresolvedTerminalHostSessionIds.delete(candidate.sessionId);
+        for (let index = disconnectedTerminalHostCandidates.length - 1; index >= 0; index -= 1) {
+            if (disconnectedTerminalHostCandidates[index]?.sessionId === candidate.sessionId) {
+                disconnectedTerminalHostCandidates.splice(index, 1);
+            }
+        }
+        disconnectedTerminalHostCandidates.push(candidate);
+    };
+    const retireTerminalControlServiceabilityForCurrentAccount = async (
+        input: Omit<Parameters<typeof retireExactTerminalControlServiceability>[0], 'credentials'>,
+    ) => await retireExactTerminalControlServiceability({
+        credentials: params.credentials,
+        ...input,
+    });
+    const retireDisconnectedTerminalHostCandidate = async (input: Readonly<{
         sessionId: string;
         attachmentId?: string;
-    }>): void => {
+    }>): Promise<void> => {
         disconnectedTerminalHostResultsBySessionId.delete(input.sessionId);
+        const markerPids: number[] = [];
         for (let index = disconnectedTerminalHostCandidates.length - 1; index >= 0; index -= 1) {
             const candidate = disconnectedTerminalHostCandidates[index];
             if (!candidate || candidate.sessionId !== input.sessionId) continue;
             if (input.attachmentId && candidate.attachmentId !== input.attachmentId) continue;
             terminalizedDisconnectedTerminalHostIds.add(candidate.attachmentId);
+            markerPids.push(candidate.pid);
             disconnectedTerminalHostCandidates.splice(index, 1);
         }
+        await Promise.all(markerPids.map(async (pid) => {
+            await removeSessionMarker(pid).catch((error) => {
+                logger.debug('[DAEMON RUN] Retired terminal host but failed to remove its disconnected marker', {
+                    sessionId: input.sessionId,
+                    pid,
+                    error,
+                });
+            });
+        }));
     };
     const disconnectedTerminalHostResumeLifecycle = createDisconnectedTerminalHostResumeLifecycle({
         unresolvedTerminalHostSessionIds,
@@ -2719,6 +3635,13 @@ export async function startDaemonSessionControlRuntime(
                 }),
             }),
             onExactTerminalAttachmentRetired: notifyTerminalAttachmentRetiredThroughCatalog,
+            retireExactTerminalControlServiceability: async ({ sessionId, attachmentInfo, terminalMode }) => {
+                return await retireTerminalControlServiceabilityForCurrentAccount({
+                    sessionId,
+                    attachmentId: attachmentInfo.attachmentId,
+                    terminalMode,
+                });
+            },
         });
         disconnectedTerminalHostResultsBySessionId.set(candidate.sessionId, result);
         if (result.state === 'stopped') terminalizedDisconnectedTerminalHostIds.add(candidate.attachmentId);
@@ -2748,6 +3671,16 @@ export async function startDaemonSessionControlRuntime(
                     params.spawnResourceCleanupByPid,
             }),
         loadTerminalHostAdapters: params.loadTerminalHostAdapters,
+        recoverStrandedTerminalControlServiceability: async ({ sessionId, expectedAttachmentId }) =>
+            await recoverStrandedTerminalControlServiceability({
+                credentials: params.credentials,
+                currentMachineId: params.machineId,
+                sessionId,
+                expectedAttachmentId,
+                loadTerminalHostAdapters: async () => await params.loadTerminalHostAdapters?.() ?? {},
+                retireExactTerminalControlServiceability: async (input) =>
+                    await retireTerminalControlServiceabilityForCurrentAccount(input),
+            }),
         waitForTrackedRunnersExit: async ({ sessionId, trackedPids }) => {
             await waitForExistingSessionExitIfStopRequested({
                 sessionId,
@@ -2764,8 +3697,7 @@ export async function startDaemonSessionControlRuntime(
             await notifyTerminalAttachmentRetiredThroughCatalog(input);
         },
         retireExactTerminalControlServiceability: async ({ sessionId, attachmentInfo, terminalMode }) => {
-            await retireExactTerminalControlServiceability({
-                credentials: params.credentials,
+            return await retireTerminalControlServiceabilityForCurrentAccount({
                 sessionId,
                 attachmentId: attachmentInfo.attachmentId,
                 terminalMode,
@@ -2844,11 +3776,8 @@ export async function startDaemonSessionControlRuntime(
                                 sessionId,
                                 serviceability,
                             });
-                        } catch (error) {
-                            logger.debug('[DAEMON RUN] Failed to publish resume target terminal control serviceability', {
-                                sessionId,
-                                error: serializeAxiosErrorForLog(error),
-                            });
+                        } catch {
+                            logger.debug('[DAEMON RUN] Failed to publish resume target terminal control serviceability');
                         }
                         if (serviceability.state !== 'servable') {
                             return {
@@ -2868,6 +3797,7 @@ export async function startDaemonSessionControlRuntime(
                             pidToTrackedSession: params.pidToTrackedSession,
                             readPersistedSessionMetadata: readPersistedConnectedServiceSwitchSessionMetadata,
                         });
+                        await params.onAlreadyRunningSessionAdopted?.(sessionId);
                         if (behavior.nudgeAlreadyRunningPendingQueue) {
                             const nudgeResult = await nudgeAlreadyRunningExistingSessionPendingQueue({
                                 sessionId,
@@ -2876,10 +3806,7 @@ export async function startDaemonSessionControlRuntime(
                                 ...(params.isShuttingDown ? { isShuttingDown: params.isShuttingDown } : {}),
                             });
                             if ('type' in nudgeResult && nudgeResult.type === 'unavailable') {
-                                logger.warn('[DAEMON RUN] Resume target is alive but pending queue materialization probe failed; adopting existing runner and leaving nudge failure advisory', {
-                                    sessionId,
-                                    reason: nudgeResult.reason,
-                                });
+                                logger.warn('[DAEMON RUN] Resume target is alive but pending queue materialization probe failed; adopting existing runner and leaving nudge failure advisory');
                             }
                         }
                         return { action: 'use_existing' };
@@ -2893,6 +3820,7 @@ export async function startDaemonSessionControlRuntime(
                     await executeSpawnSessionRequest({
                         options,
                         credentials: params.credentials,
+                        deviceLocalSecretStorage: params.deviceLocalSecretStorage,
                         api: params.api,
                         loadLocalHandoffMetadataByVendorResumeId: params.loadLocalHandoffMetadataByVendorResumeId,
                         connectedServicesMaterializationBaseDir: params.connectedServicesMaterializationBaseDir,
@@ -2910,7 +3838,7 @@ export async function startDaemonSessionControlRuntime(
                         authGroupSwitchCoordinator: preTurnConnectedServiceAuthGroupSwitchCoordinator,
                         predictiveSwitchGuard: connectedServicePredictiveSwitchGuard ?? undefined,
                         repairMissingConnectedServiceMaterializationIdentityForSpawn: async (input) => {
-                            const identity = await repairMissingConnectedServiceMaterializationIdentityForSpawn({
+                            const repair = await repairMissingConnectedServiceMaterializationIdentityForSpawn({
                                 token: params.credentials.token,
                                 credentials: params.credentials,
                                 sessionId: input.sessionId,
@@ -2918,10 +3846,14 @@ export async function startDaemonSessionControlRuntime(
                                 connectedServices: input.connectedServices,
                                 vendorResumeId: input.vendorResumeId,
                             });
-                            if (identity) {
-                                forgetPersistedConnectedServiceSwitchSessionMetadata(input.sessionId);
-                            }
-                            return identity;
+                            if (!repair) return null;
+                            return {
+                                identity: repair.identity,
+                                persistAfterMaterialization: async () => {
+                                    await repair.persistAfterMaterialization();
+                                    forgetPersistedConnectedServiceSwitchSessionMetadata(input.sessionId);
+                                },
+                            };
                         },
                         pidToTrackedSession: params.pidToTrackedSession,
                         pidToAwaiter: params.pidToAwaiter,
@@ -2958,30 +3890,6 @@ export async function startDaemonSessionControlRuntime(
                                     params.activateSessionPurposeBindings,
                             }
                             : {}),
-                        managedProviderEndpointRuntime: {
-                            materializationBaseDir: join(
-                                configuration.happyHomeDir,
-                                'providers',
-                                'managed',
-                            ),
-                            resolveManagedLocalServicesEnabled: async () => {
-                                const serverSnapshot =
-                                    await resolveServerFeaturesSnapshot();
-                                return resolveCliFeatureDecision({
-                                    featureId: 'localServices.managed',
-                                    env: params.processEnv,
-                                    ...(serverSnapshot
-                                        ? { serverSnapshot }
-                                        : {}),
-                                }).state === 'enabled';
-                            },
-                            localServices:
-                                localServicesRuntime.trustedManagedLocalServices,
-                            exec: managedLocalServicesExec,
-                            requestAuthRegistry: connectedAccountRequestAuthRegistry,
-                            validateRequestAuth:
-                                connectedAccountRequestAuthService.validateRequestAuth,
-                        },
                     }),
                 );
                 if (spawnResult.type === 'success' && options.executionAuthorization && options.existingSessionId) {
@@ -3007,7 +3915,6 @@ export async function startDaemonSessionControlRuntime(
             });
         } catch (error) {
             logger.warn('[DAEMON RUN] Failed before spawn session work started', {
-                error,
                 hasExistingSessionId: typeof options.existingSessionId === 'string' && options.existingSessionId.trim().length > 0,
                 hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
                 backendTargetKind: resolveConcreteBackendTargetRefV2(options.backendTarget)?.kind ?? null,
@@ -3066,6 +3973,7 @@ export async function startDaemonSessionControlRuntime(
         if (tracked) return tracked;
         const token = normalizeOptionalString(params.credentials.token);
         if (!token) return null;
+        const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({ token });
         return await resolveInactiveTemporaryThrottleResumeSource({
             sessionId,
             fallbackMachineId: params.machineId,
@@ -3073,6 +3981,7 @@ export async function startDaemonSessionControlRuntime(
             decryptSessionMetadata: (rawSession) => tryReadSessionMetadataRecord({
                 rawSession,
                 credentials: params.credentials,
+                accountEncryptionMode: accountEncryptionCurrentness.mode,
             }),
         });
     };
@@ -3229,7 +4138,7 @@ export async function startDaemonSessionControlRuntime(
     );
     const runnerRespawnScheduledPids = new Set<number>();
     type CapturedRunnerTerminal =
-        | Readonly<{ status: 'captured'; sessionId: string; committedFenceMs: number }>
+        | Readonly<{ status: 'captured'; sessionId: string; authority: MachineSessionTerminalAuthorityV1 }>
         | Readonly<{ status: 'already_inactive'; sessionId: string }>
         | Readonly<{ status: 'unavailable'; sessionId: string }>;
     type RunnerTerminalCycle = {
@@ -3290,7 +4199,7 @@ export async function startDaemonSessionControlRuntime(
             return;
         }
         if (!cycle || !captured || captured.status === 'unavailable') {
-            logger.debug('[DAEMON RUN] Terminal respawn has no exact Session fence; retaining marker for startup recovery', input);
+            logger.debug('[DAEMON RUN] Terminal respawn has no captured Session publisher authority; retaining marker for startup recovery', input);
             return;
         }
         if (captured.status === 'already_inactive') {
@@ -3305,7 +4214,7 @@ export async function startDaemonSessionControlRuntime(
         try {
             const finalized = await apiMachine.finalizeMachineSessionTerminal({
                 sessionId: captured.sessionId,
-                committedFenceMs: captured.committedFenceMs,
+                authority: captured.authority,
             });
             if (finalized.status === 'rejected') {
                 logger.debug('[DAEMON RUN] Machine Session terminal finalize was rejected; retaining marker for startup recovery', {
@@ -3422,8 +4331,8 @@ export async function startDaemonSessionControlRuntime(
             { min: 1_000, max: 10 * 60_000 },
         ),
         disableDeferral: String(params.processEnv.HAPPIER_CONNECTED_SERVICES_DISABLE_TURN_DEFERRAL ?? '').trim() === '1',
-        emitSessionEvent: (sessionId, event) => {
-            commitConnectedServiceAccountSwitchSessionEventWithNotification({
+        emitSessionEvent: async (sessionId, event) => {
+            await commitConnectedServiceAccountSwitchSessionEventWithNotification({
                 sessionId,
                 event,
                 logContext: 'connected-service switch deferral',
@@ -3432,9 +4341,25 @@ export async function startDaemonSessionControlRuntime(
     });
     const resolveSessionRunnerActivityDisabledReason = (
         sessionId: string,
-    ): SessionRunnerRestartDisabledReason | null => (
-        connectedServiceTurnDeferralQueue.isTurnInFlight(sessionId) ? 'turn_in_progress' : null
-    );
+    ): SessionRunnerRestartDisabledReason | null => {
+        const tracked = findTrackedSessionByHappySessionId(
+            params.pidToTrackedSession.values(),
+            sessionId,
+        );
+        if (
+            normalizeOptionalString(tracked?.activeTurnId)
+            || normalizeOptionalString(
+                tracked?.reattachedInterruptedTurnId,
+            )
+        ) {
+            return 'turn_in_progress';
+        }
+        return connectedServiceTurnDeferralQueue.isTurnInFlight(
+            sessionId,
+        )
+            ? 'turn_in_progress'
+            : null;
+    };
     const resolvePredictiveSoftSwitchModeForInput = async (input: Readonly<{
         sessionId: string;
         serviceId: ConnectedServiceId;
@@ -3513,6 +4438,7 @@ export async function startDaemonSessionControlRuntime(
                 token: params.credentials.token,
                 credentials: params.credentials,
                 sessionId: input.sessionId,
+                currentMachineId: params.machineId,
             });
         const resolvedAgentId = typeof input.agentId === 'string' && input.agentId.trim()
             ? input.agentId.trim()
@@ -3573,6 +4499,10 @@ export async function startDaemonSessionControlRuntime(
         tracked: TrackedSession;
         reason: 'version_runtime_refresh';
         transientSpawnOptions?: SpawnSessionOptions;
+        completionTimeoutMs?: number | null;
+        canSignal?: () =>
+            | PlannedRunnerRestartSignalGateResult
+            | Promise<PlannedRunnerRestartSignalGateResult>;
     }>): Promise<Readonly<{
         signaled: boolean;
         notSignaledReason?: PlannedRunnerRestartNotSignaledReason;
@@ -3590,6 +4520,12 @@ export async function startDaemonSessionControlRuntime(
         const completionWaiter = versionRuntimeRefreshAttemptHandoff.create({
             sessionId: input.sessionId,
             previousPid: input.tracked.pid,
+            ...(input.completionTimeoutMs !== undefined
+                ? {
+                    timeoutMs:
+                        input.completionTimeoutMs,
+                }
+                : {}),
             ...(input.transientSpawnOptions
                 ? { transientSpawnOptions: input.transientSpawnOptions }
                 : {}),
@@ -3601,7 +4537,12 @@ export async function startDaemonSessionControlRuntime(
                 deferral: { kind: 'none' },
                 restartRequestedPids: params.connectedServicesRestartRequestedPids,
                 pidToTrackedSession: params.pidToTrackedSession,
-                canSignal: () => resolveSessionRunnerActivityDisabledReason(input.sessionId) ?? true,
+                canSignal: input.canSignal
+                    ?? (() => (
+                        resolveSessionRunnerActivityDisabledReason(
+                            input.sessionId,
+                        ) ?? true
+                    )),
                 requestSignal: async (signalInput) => {
                     // K5:gated_restart session-runner version refresh uses the shared forced-respawn
                     // signal primitive without a durable connected-service intent or startup re-drive.
@@ -3714,7 +4655,7 @@ export async function startDaemonSessionControlRuntime(
      */
     const verifySessionConnectedServiceAccountAdoption = createSessionConnectedServiceAccountAdoptionVerifier();
 
-    const buildConnectedServiceAuthGroupRestartSession = (builderInput: Readonly<{
+    const buildConnectedServiceAuthApplicationSession = (builderInput: Readonly<{
         sessionId: string;
         interruptedSessionId?: string | null;
         interruptedOriginId?: string | null;
@@ -3726,9 +4667,9 @@ export async function startDaemonSessionControlRuntime(
     }>) => async (restartInput: Readonly<{
         sessionId?: string;
         serviceId: ConnectedServiceId;
-        groupId: string;
+        groupId: string | null;
         activeProfileId: string | null;
-        generation: number;
+        generation: number | null;
         reason?: string;
     }>): Promise<ConnectedServiceAuthGroupGenerationApplyResult> => {
         const tracked = Array.from(params.pidToTrackedSession.values())
@@ -3739,6 +4680,7 @@ export async function startDaemonSessionControlRuntime(
                 token: params.credentials.token,
                 credentials: params.credentials,
                 sessionId: builderInput.sessionId,
+                currentMachineId: params.machineId,
             });
         if (!tracked && !inactiveContext) {
             return connectedServiceAuthGroupGenerationApplyFailure({
@@ -3830,11 +4772,13 @@ export async function startDaemonSessionControlRuntime(
         const previousBinding = previousBindings.bindingsByServiceId[restartInput.serviceId];
         const nextProfileId = normalizeOptionalString(restartInput.activeProfileId)
             || (previousBinding?.source === 'connected' ? previousBinding.profileId : '');
+        const nextGroupId = normalizeOptionalString(restartInput.groupId);
+        const nextGeneration = normalizeNullableGeneration(restartInput.generation);
         if (
             !previousBinding
             || previousBinding.source !== 'connected'
-            || previousBinding.selection !== 'group'
             || !nextProfileId
+            || (previousBinding.selection === 'group' && (!nextGroupId || nextGeneration === null))
         ) {
             return await signalRestartWithoutConfirmedApply();
         }
@@ -3849,6 +4793,7 @@ export async function startDaemonSessionControlRuntime(
                     token: params.credentials.token,
                     credentials: params.credentials,
                     sessionId,
+                    currentMachineId: params.machineId,
                 });
             },
             api: params.api,
@@ -3943,8 +4888,8 @@ export async function startDaemonSessionControlRuntime(
                 interruptedOriginId: builderInput.interruptedOriginId,
                 resumePromptMode: await resolveContinuationResumePromptMode({
                     serviceId: restartInput.serviceId,
-                    groupId: previousBinding.groupId,
-                    loadGroupPolicy: previousBinding.groupId
+                    groupId: previousBinding.selection === 'group' ? previousBinding.groupId : null,
+                    loadGroupPolicy: previousBinding.selection === 'group' && previousBinding.groupId
                         ? async () => (await params.api.getConnectedServiceAuthGroup({
                             serviceId: restartInput.serviceId,
                             groupId: previousBinding.groupId,
@@ -3965,10 +4910,7 @@ export async function startDaemonSessionControlRuntime(
                         turnDeferralQueue: connectedServiceTurnDeferralQueue,
                     }),
             }),
-            recoverAfterRuntimeAuthSwitch: createSelectionPostSwitchRecoveryHandler({
-                getTrackedSessions: () => Array.from(params.pidToTrackedSession.values()),
-                isTurnInFlight: (sessionId) => connectedServiceTurnDeferralQueue.isTurnInFlight(sessionId),
-            }),
+            recoverAfterRuntimeAuthSwitch: createSelectionPostSwitchRecoveryHandler(),
             verifyProviderAccountAdoption: async (verificationInput) => {
                 const result = await verifySessionConnectedServiceAccountAdoption(verificationInput);
                 recordRuntimeAccountIdentityFromVerification({
@@ -3979,16 +4921,18 @@ export async function startDaemonSessionControlRuntime(
                 });
                 return result;
             },
-            hotApply: createSessionConnectedServiceAuthHotApply(),
+            hotApply: createSessionConnectedServiceAuthHotApply({
+                validateGroupMutationCurrentness: validateConnectedServiceGroupMutationCurrentness,
+            }),
             registerHotApplyTargets: registerHotApplyRuntimeTarget,
-            emitSessionEvent: (sessionId, event) => {
+            emitSessionEvent: async (sessionId, event) => {
                 if (!shouldCommitAutomaticGroupApplySessionEvent(event, {
                     commitAccountSwitchEvents: builderInput.commitAccountSwitchEvents,
                     ...(builderInput.executionAuthority
                         ? { executionAuthority: builderInput.executionAuthority }
                         : {}),
                 })) return;
-                commitConnectedServiceAccountSwitchSessionEventWithNotification({
+                await commitConnectedServiceAccountSwitchSessionEventWithNotification({
                     sessionId,
                     event,
                     logContext: 'automatic',
@@ -4002,16 +4946,28 @@ export async function startDaemonSessionControlRuntime(
                     v: 1,
                     bindingsByServiceId: {
                         ...previousBindings.bindingsByServiceId,
-                        [restartInput.serviceId]: {
-                            ...previousBinding,
-                            groupId: restartInput.groupId,
-                            profileId: nextProfileId,
-                        },
+                        [restartInput.serviceId]: previousBinding.selection === 'group'
+                            ? {
+                                ...previousBinding,
+                                groupId: nextGroupId,
+                                profileId: nextProfileId,
+                            }
+                            : {
+                                ...previousBinding,
+                                profileId: nextProfileId,
+                            },
                     },
                 },
-                expectedGroupGenerationByServiceId: {
-                    [restartInput.serviceId]: restartInput.generation,
-                },
+                ...(previousBinding.selection === 'profile'
+                    ? { rematerializeServiceId: restartInput.serviceId }
+                    : {}),
+                ...(previousBinding.selection === 'group' && nextGeneration !== null
+                    ? {
+                        expectedGroupGenerationByServiceId: {
+                            [restartInput.serviceId]: nextGeneration,
+                        },
+                    }
+                    : {}),
             },
             reason: 'automatic_runtime_failure',
         });
@@ -4034,6 +4990,8 @@ export async function startDaemonSessionControlRuntime(
         executionAuthority?: ConnectedServiceGenerationExecutionAuthority;
     }>) => createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator({
         api: params.api,
+        prepareCandidateForSwitch:
+            prepareLegacyAuthGroupCandidateForSwitch,
         runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
         accountUsageStore: providerAccountUsageStore,
         leases: connectedServiceAuthGroupSwitchLeases,
@@ -4047,14 +5005,14 @@ export async function startDaemonSessionControlRuntime(
             latestConnectedServiceProjectionSnapshot?.resolveCredentialRevision(serviceId, profileId) ?? null
         ),
         quotaCoordinator: params.getConnectedServiceQuotasCoordinator(),
-        restartSession: buildConnectedServiceAuthGroupRestartSession({
+        restartSession: buildConnectedServiceAuthApplicationSession({
             sessionId: input.sessionId,
             restartReason: input.reason,
             commitAccountSwitchEvents: false,
             allowRestart: input.allowRestart,
             ...(input.executionAuthority ? { executionAuthority: input.executionAuthority } : {}),
         }),
-        preflightConnectedServiceAuthGeneration: buildConnectedServiceAuthGroupRestartSession({
+        preflightConnectedServiceAuthGeneration: buildConnectedServiceAuthApplicationSession({
             sessionId: input.sessionId,
             restartReason: input.reason,
             commitAccountSwitchEvents: false,
@@ -4135,14 +5093,59 @@ export async function startDaemonSessionControlRuntime(
             }
             return result;
         },
+        applyCredentialUpdate: async (input: Readonly<{
+            sessionId: string;
+            serviceId: ConnectedServiceId;
+            profileId: string;
+            reason: 'account_changed' | 'auth_expired';
+            executionAuthority: ConnectedServiceExecutionAuthorityV1;
+        }>) => {
+            const sessionId = input.sessionId.trim();
+            const tracked = Array.from(params.pidToTrackedSession.values())
+                .find((child) => child.happySessionId === sessionId) ?? null;
+            if (!sessionId || !tracked) {
+                return { status: 'failed' as const, errorCode: 'session_not_found' };
+            }
+            const childSelection = readConnectedServiceChildSelectionsFromEnv(
+                tracked.spawnOptions?.environmentVariables ?? {},
+            )?.get(input.serviceId);
+            const groupSelection = childSelection?.kind === 'group'
+                && childSelection.activeProfileId === input.profileId
+                ? childSelection
+                : null;
+            const result = await buildConnectedServiceAuthApplicationSession({
+                sessionId,
+                restartReason: input.reason,
+                commitAccountSwitchEvents: false,
+                allowRestart: input.executionAuthority !== 'passive_projection',
+                executionAuthority: input.executionAuthority,
+            })({
+                sessionId,
+                serviceId: input.serviceId,
+                groupId: groupSelection?.groupId ?? null,
+                activeProfileId: input.profileId,
+                generation: groupSelection?.generation ?? null,
+                reason: input.reason,
+            });
+            if (!result.ok) {
+                return { status: 'failed' as const, errorCode: result.errorCode };
+            }
+            const action = 'action' in result ? result.action : undefined;
+            switch (action) {
+                case 'hot_applied':
+                    return { status: 'hot_applied' as const };
+                case 'restart_requested':
+                    return { status: 'restart_requested' as const };
+                default:
+                    return { status: 'unchanged' as const };
+            }
+        },
     };
 
     /**
-     * K3 (D7): gated restart adapter for the credential-refresh / reconnect handler. The
-     * refresh handler owns the eligibility/blocking decision; this adapter only enforces
-     * turn-deferral + the spawn-time reachability gate (no raw mid-turn SIGTERM). Pure
-     * refresh has no target generation rebind, so it routes through the gated restart
-     * primitive rather than the FSM.
+     * Gated restart adapter consumed by the canonical session-auth application owner
+     * when a provider cannot adopt the selected credential in place. Credential refresh,
+     * reconnect, manual selection, and quota switching all reach that owner first.
      */
     const requestConnectedServiceRefreshRestartSignal = async (signalParams: Readonly<{
         pid: number;
@@ -4202,141 +5205,2313 @@ export async function startDaemonSessionControlRuntime(
         }
     };
 
+    let foregroundAgentRuntimeHttpPort: number | null = null;
     const foregroundAgentRuntimeAdmission =
         createForegroundAgentRuntimeAdmissionOwner({
-            prepare: prepareForegroundAgentRuntimeAdmission,
+            prepare: (request) =>
+                prepareForegroundAgentRuntimeAdmission(request, {
+                    ...(params.activateSessionPurposeBindings
+                        ? {
+                            activateSessionPurposeBindings:
+                                params.activateSessionPurposeBindings,
+                        }
+                        : {}),
+                    ...(params.resolveCurrentSessionPurposeBindingSnapshot
+                        ? {
+                            resolveExternalAgentSessionPurposeBindingSnapshot:
+                                async ({ authorizedPurposes, signal }) =>
+                                    await params
+                                        .resolveCurrentSessionPurposeBindingSnapshot!({
+                                            authorizedPurposes,
+                                            signal,
+                                        }),
+                        }
+                        : {}),
+                    resolveConnectedServiceAuthForSpawn: async (input) => {
+                        const entry = findCatalogEntry(input.agentId);
+                        if (
+                            !entry
+                            || readDeclaredCatalogConnectedServiceIds(entry).length === 0
+                        ) {
+                            return null;
+                        }
+                        const accountSettings =
+                            getActiveAccountSettingsSnapshot()?.settings
+                            ?? null;
+                        const resumeReachabilityRequired =
+                            Boolean(input.vendorResumeId)
+                            && resolveConnectedServicesProviderStateSharingPolicyV1(
+                                (accountSettings as Readonly<
+                                    Record<string, unknown>
+                                > | null)
+                                    ?.connectedServicesProviderStateSharingSettingsV1,
+                                input.agentId,
+                            ).stateMode === 'shared';
+                        return await resolveConnectedServiceAuthForSpawn({
+                            ...input,
+                            agentId: input.agentId,
+                            activeServerDir: configuration.activeServerDir,
+                            baseDir:
+                                params.connectedServicesMaterializationBaseDir,
+                            credentials: params.credentials,
+                            api: params.api,
+                            accountUsageStore: providerAccountUsageStore,
+                            quotaFreshnessMs: 5 * 60_000,
+                            nowMs: () => Date.now(),
+                            authGroupSwitchCoordinator:
+                                preTurnConnectedServiceAuthGroupSwitchCoordinator,
+                            predictiveSwitchGuard:
+                                connectedServicePredictiveSwitchGuard ?? null,
+                            accountSettings,
+                            processEnv: params.processEnv ?? process.env,
+                            credentialRefreshService:
+                                params.getConnectedServiceRefreshCoordinator(),
+                            resumeReachabilityRequired,
+                            allowLegacyUnfencedOneShotMaterialization: true,
+                            serverContract:
+                                params.getApiMachineForSessions()
+                                    ?.getSessionSyncPendingInputServerContractResult()
+                                ?? null,
+                        });
+                    },
+                    resolveDaemonSpawnHooks: async (agentId) => {
+                        const entry = findCatalogEntry(agentId);
+                        const getDaemonSpawnHooks = entry?.getDaemonSpawnHooks;
+                        return getDaemonSpawnHooks
+                            ? await getDaemonSpawnHooks()
+                            : null;
+                    },
+                    connectedAccountRequestAuthRegistry,
+                    resolveConnectedAccountRequestAuthHttpPort:
+                        requireConnectedAccountRequestAuthHttpPort,
+                    connectedServicesMaterializationBaseDir:
+                        params.connectedServicesMaterializationBaseDir,
+                }),
+            getHttpPort: () => {
+                if (!foregroundAgentRuntimeHttpPort) {
+                    throw new Error(
+                        'Foreground Agent runtime daemon service is unavailable',
+                    );
+                }
+                return foregroundAgentRuntimeHttpPort;
+            },
+            promoteDaemonServiceAuthority: async (input) => {
+                return await promoteForegroundDaemonServiceAuthority({
+                    happyHomeDir: configuration.happyHomeDir,
+                    publicReleaseRing:
+                        configuration.publicReleaseRing,
+                    trackedSessions: params.pidToTrackedSession,
+                    ...input,
+                });
+            },
         });
     const externalSessionHostOperationOwner =
-        createExternalSessionHostOperationOwner();
-    const agentRuntimeSessionBridge = createAgentRuntimeSessionBridgeRoutes({
-        foregroundAdmission: foregroundAgentRuntimeAdmission,
-        authorizeProviderModelTransition: async (input) => {
-            const tracked = findTrackedSessionByHappySessionId(
-                params.pidToTrackedSession.values(),
-                input.sessionId,
-            );
-            return await authorizeDaemonSessionModelTransitionProviderTarget({
-                trackedAgentId: resolveTrackedSessionCatalogAgentId(tracked),
-                trackedSelection:
-                    tracked?.spawnOptions?.modelSelection?.ref ?? null,
-                trackedSessionBindingMetadata:
-                    tracked?.spawnOptions?.providerBindingMetadataV1 ?? null,
-                requestAgentId: input.agentId,
-                requestedSelection: input.selection,
-                authorizeProviderTarget: async (authority) =>
-                    await authorizeSessionModelTransitionProviderTargetWithLease({
-                        sessionId: input.sessionId,
-                        machineId: params.machineId,
-                        agentId: authority.agentId,
-                        agentTargetKey: authority.agentTargetKey,
-                        lease: input.lease,
-                        input: authority.input,
-                    }),
+        params.externalSessionHostOperationOwner
+        ?? createExternalSessionHostOperationOwner();
+    const createSessionManagedProviderCustodyDispatchForSession = async (
+        sessionId: string,
+    ): Promise<RunnerManagedServicesCustodyDispatchV1> => {
+        const transport = await resolveSessionTransportContext({
+            credentials: params.credentials,
+            idOrPrefix: sessionId,
+        });
+        if (!transport.ok || transport.sessionId !== sessionId) {
+            throw new PluginError({
+                code: 'plugin_services_managed_provider_custody_unavailable',
+                message:
+                    'Runner managed Provider custody transport is unavailable',
             });
-        },
-        externalSessionHostOperationOwner,
-        externalSessionHostBindingContext: Object.freeze({
+        }
+        return async (request, options) => {
+                if (options?.signal?.aborted) {
+                    throw new PluginError({
+                        code: 'plugin_operation_aborted',
+                        message:
+                            'Runner managed Provider custody operation was aborted',
+                    });
+                }
+                const rpc = {
+                    token: params.credentials.token,
+                    sessionId: transport.sessionId,
+                    method:
+                        `${transport.sessionId}:${RUNNER_MANAGED_SERVICES_CUSTODY_RPC_METHOD}`,
+                    request,
+                };
+                const raw = transport.mode === 'plain'
+                    ? await callSessionRpc({
+                        ...rpc,
+                        mode: 'plain',
+                    })
+                    : await callSessionRpc({
+                        ...rpc,
+                        mode: 'e2ee',
+                        ctx: transport.ctx,
+                    });
+                if (options?.signal?.aborted) {
+                    throw new PluginError({
+                        code: 'plugin_operation_aborted',
+                        message:
+                            'Runner managed Provider custody operation was aborted',
+                    });
+                }
+                return RunnerManagedServicesCustodyResultV1Schema
+                    .parse(raw);
+        };
+    };
+    const createSessionManagedProviderCustodyDispatch = async (
+        scope: RunnerManagedProviderCustodyScopeV1,
+    ): Promise<RunnerManagedServicesCustodyDispatchV1> =>
+        await createSessionManagedProviderCustodyDispatchForSession(
+            scope.sessionId,
+        );
+    const createSessionManagedServiceEndpointReadRpc = async (
+        sessionId: string,
+    ) => {
+        const transport = await resolveSessionTransportContext({
+            credentials: params.credentials,
+            idOrPrefix: sessionId,
+        });
+        if (!transport.ok || transport.sessionId !== sessionId) {
+            throw new PluginError({
+                code: 'plugin_services_managed_provider_custody_unavailable',
+                message:
+                    'Runner managed-service request transport is unavailable',
+            });
+        }
+        return Object.freeze({
+            async call(rpcInput: Readonly<{
+                method: string;
+                request: unknown;
+                timeoutMs: number;
+                signal?: AbortSignal;
+            }>): Promise<unknown> {
+                const common = {
+                    token: params.credentials.token,
+                    sessionId: transport.sessionId,
+                    method:
+                        `${transport.sessionId}:${rpcInput.method}`,
+                    request: rpcInput.request,
+                    timeoutMs: rpcInput.timeoutMs,
+                    ...(rpcInput.signal
+                        ? { signal: rpcInput.signal }
+                        : {}),
+                };
+                return transport.mode === 'plain'
+                    ? await callSessionRpc({
+                        ...common,
+                        mode: 'plain',
+                    })
+                    : await callSessionRpc({
+                        ...common,
+                        mode: 'e2ee',
+                        ctx: transport.ctx,
+                    });
+            },
+        });
+    };
+    const createSessionManagedProviderCustodyClient = async (
+        scope: RunnerManagedProviderCustodyScopeV1,
+        dependencies: Parameters<
+            typeof createRunnerManagedServicesClient
+        >[0]['dependencies'],
+    ) => {
+        return createRunnerManagedServicesClient({
+            scope,
+            dependencies,
+            dispatch:
+                await createSessionManagedProviderCustodyDispatch(
+                    scope,
+                ),
+            endpointReadRpc:
+                await createSessionManagedServiceEndpointReadRpc(
+                    scope.sessionId,
+                ),
+        });
+    };
+    const runnerDaemonPluginServicesHost =
+        createRunnerDaemonPluginServicesHost({
+            createInvocation: async ({
+                sessionId,
+                runner,
+                retainedAgent,
+                invocationId,
+                witness,
+                managedProviderRetention,
+                signal,
+            }) => {
+                const tracked =
+                    findTrackedSessionByHappySessionId(
+                        params.pidToTrackedSession.values(),
+                        sessionId,
+                    );
+                if (
+                    !tracked
+                    || !authorizeTrackedRunnerAgentDaemonServiceOperation({
+                        tracked,
+                        sessionId,
+                        runner,
+                        retainedAgent,
+                        witness: undefined,
+                        allowIdleCurrentGeneration: true,
+                    })
+                ) {
+                    throw new PluginError({
+                        code:
+                            'plugin_services_runner_authority_unavailable',
+                        message:
+                            'Runner PluginServices exact runner authority is unavailable',
+                    });
+                }
+                const invocationContext =
+                    tracked.runnerAgentInvocationContext
+                        ? Object.freeze({
+                            cwd:
+                                tracked
+                                    .runnerAgentInvocationContext
+                                    .cwd,
+                            environment: Object.freeze({}),
+                            providerBindingActive: false,
+                        })
+                        : tracked.spawnOptions?.directory
+                            ? Object.freeze({
+                                cwd:
+                                    tracked.spawnOptions
+                                        .directory,
+                                environment: Object.freeze({}),
+                                providerBindingActive: false,
+                            })
+                            : null;
+                if (!invocationContext) {
+                    throw new PluginError({
+                        code:
+                            'plugin_services_invocation_context_unavailable',
+                        message:
+                            'Runner PluginServices invocation context is unavailable',
+                    });
+                }
+                const lease =
+                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                        happyHomeDir:
+                            configuration.happyHomeDir,
+                    });
+                let releaseLease = true;
+                const supervisionLaunchAuthorities = new Map<
+                    string,
+                    RunnerManagedProviderServerLaunchAuthority
+                >();
+                const readSupervisionLaunchAuthority = (
+                    serverId: string,
+                ): RunnerManagedProviderServerLaunchAuthority | null =>
+                    supervisionLaunchAuthorities.get(serverId) ?? null;
+                const stampSupervisionLaunchAuthority = (
+                    spec: ManagedServiceSpec,
+                ): void => {
+                    const expected =
+                        projectRunnerManagedProviderServerLaunchAuthority(
+                            spec,
+                        );
+                    if (!expected) return;
+                    const existing = supervisionLaunchAuthorities.get(
+                        expected.serverId,
+                    );
+                    if (existing) {
+                        if (!isDeepStrictEqual(existing, expected)) {
+                            throw new PluginError({
+                                code:
+                                    'plugin_managed_service_spec_conflict',
+                                message:
+                                    'A different managed-service specification already owns this exact lifecycle scope',
+                            });
+                        }
+                        return;
+                    }
+                    supervisionLaunchAuthorities.set(
+                        expected.serverId,
+                        expected,
+                    );
+                };
+                const managedProviderCleanup: {
+                    current: (() => void | Promise<void>) | null;
+                } = { current: null };
+                const cleanupManagedProvider = async () => {
+                    supervisionLaunchAuthorities.clear();
+                    const cleanup = managedProviderCleanup.current;
+                    managedProviderCleanup.current = null;
+                    await cleanup?.();
+                };
+                let releaseManagedProviderInvocation = true;
+                try {
+                    const registration =
+                        lease.registry.agentRuntimesByAgentId.get(
+                            retainedAgent.agentId,
+                        );
+                    let isCurrent = false;
+                    try {
+                        isCurrent =
+                            registration?.isCurrent() === true;
+                    } catch {
+                        isCurrent = false;
+                    }
+                    const binding =
+                        registration?.hasPrimaryRuntime === true
+                            ? registration
+                                .sessionRunnerFactoryBinding
+                            : undefined;
+                    const currentRegistrationIsExact = Boolean(
+                        registration
+                        && registration.hasPrimaryRuntime
+                        && binding
+                        && isCurrent
+                        && registration.pluginId
+                            === retainedAgent.pluginId
+                        && registration.pluginVersion
+                            === retainedAgent.pluginVersion
+                        && registration.agentId
+                            === retainedAgent.agentId
+                        && registration.immutableGenerationId
+                            === retainedAgent.immutableGenerationId
+                        && isDeepStrictEqual(binding, retainedAgent),
+                    );
+                    const capturedAgentRegistration =
+                        currentRegistrationIsExact
+                            ? registration!
+                            : null;
+                    const capturedAgentProviderBinding =
+                        capturedAgentRegistration
+                            ? readLeasedAgentProviderBindingAdapter({
+                                lease,
+                                agentId:
+                                    capturedAgentRegistration.agentId,
+                            })
+                            : null;
+                    const isCapturedAgentRegistrationPreOpen =
+                        (): boolean => {
+                            if (
+                                !capturedAgentRegistration
+                                || !capturedAgentProviderBinding
+                                || capturedAgentRegistration
+                                    .providerBinding
+                                    !== capturedAgentProviderBinding.adapter
+                                || capturedAgentRegistration.pluginId
+                                    !== capturedAgentProviderBinding.pluginId
+                                || tracked
+                                    .agentRuntimeDaemonServiceSessionOpenAttestation
+                                    !== undefined
+                                || tracked
+                                    .agentRuntimeDaemonServiceAdmittedTurnId
+                                    !== undefined
+                            ) {
+                                return false;
+                            }
+                            try {
+                                return capturedAgentRegistration
+                                    .isCurrent() === true;
+                            } catch {
+                                return false;
+                            }
+                        };
+                    const authorizeOperation = (
+                        operationWitness:
+                            typeof witness,
+                        options?: Readonly<{
+                            requireActiveTurn?: boolean;
+                        }>,
+                    ): boolean =>
+                        authorizeTrackedRunnerAgentDaemonServiceOperation({
+                            tracked,
+                            sessionId,
+                            runner,
+                            retainedAgent,
+                            witness:
+                                operationWitness,
+                            allowIdleCurrentGeneration:
+                                options?.requireActiveTurn
+                                    !== true,
+                        });
+                    if (!authorizeOperation(witness)) {
+                        throw new PluginError({
+                            code:
+                                'plugin_services_turn_authority_unavailable',
+                            message:
+                            'Runner PluginServices turn authority is unavailable',
+                        });
+                    }
+                    const revalidateAdoptedManagedProviderPolicy = async (
+                        runtimeBindingBasis:
+                            ProviderRuntimeBindingBasisV1,
+                    ): Promise<boolean> => {
+                        const trackedSelection =
+                            tracked.spawnOptions
+                                ?.modelSelection?.ref
+                            ?? null;
+                        const trackedMetadata =
+                            tracked.spawnOptions
+                                ?.providerBindingMetadataV1
+                            ?? null;
+                        if (
+                            !trackedSelection
+                            || trackedSelection
+                                .providerConnectionId === null
+                            || !trackedMetadata
+                        ) return false;
+                        try {
+                            resolveDaemonSessionModelTransitionAuthority({
+                                trackedAgentId:
+                                    resolveTrackedSessionCatalogAgentId(
+                                        tracked,
+                                    ),
+                                authorizedAgentId:
+                                    retainedAgent.agentId,
+                                trackedSelection,
+                                trackedSessionBindingMetadata:
+                                    trackedMetadata,
+                                requestAgentId:
+                                    retainedAgent.agentId,
+                                requestedSelection: {
+                                    ...trackedSelection,
+                                    providerConnectionId:
+                                        trackedSelection
+                                            .providerConnectionId,
+                                },
+                            });
+                            const accountSnapshot =
+                                getActiveAccountSettingsSnapshot();
+                            if (!accountSnapshot) return false;
+                            const providerSettings =
+                                readProviderSettingsForCli(
+                                    accountSnapshot.settings,
+                                ).settings;
+                            return isRetainedManagedProviderSettingsGrantCurrent({
+                                machineId: params.machineId,
+                                providerSettings,
+                                runtimeBindingBasis,
+                            });
+                        } catch {
+                            return false;
+                        }
+                    };
+                    let managedProvider = await (async () => {
+                        if (managedProviderRetention) {
+                            const retained =
+                                managedProviderRetention;
+                            const scope = retained.scope;
+                            if (
+                                scope.sessionId
+                                    !== sessionId
+                            ) {
+                                throw new PluginError({
+                                    code:
+                                        'plugin_services_managed_provider_retention_mismatch',
+                                    message:
+                                        'Retained managed Provider authority belongs to another Session',
+                                });
+                            }
+                            const createRetainedInvocation =
+                                lease.registry
+                                    .createRetainedManagedProviderRuntimeInvocationServices;
+                            if (!createRetainedInvocation) {
+                                throw new PluginError({
+                                    code:
+                                        'plugin_services_managed_provider_authority_unavailable',
+                                    message:
+                                        'Retained managed Provider invocation services are unavailable',
+                                });
+                            }
+                            const storePaths =
+                                resolvePluginStorePaths({
+                                    happyHomeDir:
+                                        configuration.happyHomeDir,
+                                });
+                            const readsRetainedAuthorityCurrent =
+                                (): boolean => {
+                                    const currentBasis =
+                                        tracked.spawnOptions
+                                            ?.providerBindingMetadataV1
+                                            ?.runtimeBindingBasis;
+                                    return !signal.aborted
+                                        && authorizeTrackedRunnerAgentDaemonServiceOperation({
+                                            tracked,
+                                            sessionId,
+                                            runner,
+                                            retainedAgent,
+                                            witness: undefined,
+                                            allowIdleCurrentGeneration: true,
+                                        })
+                                        && currentBasis !== undefined
+                                        && sameProviderRuntimeBindingBasis(
+                                            currentBasis,
+                                            scope.runtimeBindingBasis,
+                                        );
+                                };
+                            const retainedCustodyDispatch =
+                                await createSessionManagedProviderCustodyDispatch(
+                                    scope,
+                                );
+                            let retainedProviderPolicyFence:
+                                Promise<void> | null = null;
+                            let retainedProviderPolicyFenced = false;
+                            const fenceRetainedProviderPolicy = async () => {
+                                if (retainedProviderPolicyFenced) return;
+                                if (!retainedProviderPolicyFence) {
+                                    const fenceAttempt = (async () => {
+                                            const result =
+                                                await retainedCustodyDispatch({
+                                                    v: 1,
+                                                    kind:
+                                                        'fenceRetainedProviderPolicy',
+                                                    claim: scope,
+                                                });
+                                            if (
+                                                result.kind
+                                                    !== 'retainedProviderPolicyFenced'
+                                            ) {
+                                                throw new PluginError({
+                                                    code:
+                                                        'plugin_services_managed_provider_custody_unavailable',
+                                                    message:
+                                                        'Runner returned an invalid retained Provider policy-fence result',
+                                                });
+                                            }
+                                        })();
+                                    retainedProviderPolicyFence = fenceAttempt;
+                                    try {
+                                        await fenceAttempt;
+                                        retainedProviderPolicyFenced = true;
+                                    } finally {
+                                        if (
+                                            retainedProviderPolicyFence
+                                                === fenceAttempt
+                                        ) {
+                                            retainedProviderPolicyFence = null;
+                                        }
+                                    }
+                                    return;
+                                }
+                                await retainedProviderPolicyFence;
+                            };
+                            const revalidateRetainedProviderPolicy =
+                                async (): Promise<boolean> =>
+                                    await revalidateAdoptedManagedProviderPolicy(
+                                        scope.runtimeBindingBasis,
+                                    );
+                            const readAdoptedPublicOutcome = async () => {
+                                const outcome =
+                                    await retainedCustodyDispatch({
+                                        v: 1,
+                                        kind:
+                                            'readAdoptedPublicOutcome',
+                                        claim: scope,
+                                    });
+                                return outcome.kind
+                                    === 'adoptedPublicOutcome'
+                                    ? outcome.outcome
+                                    : null;
+                            };
+                            const currentHardRevocationRevision =
+                                await readCurrentPluginHardRevocationRevision({
+                                    paths: storePaths,
+                                    pluginId: scope.pluginId,
+                                });
+                            if (
+                                currentHardRevocationRevision
+                                    !== retained
+                                        .providerPluginHardRevocationRevisionAtAdmission
+                                || !await readCurrentPluginImmutableGenerationIntegrityCurrentness({
+                                    paths: storePaths,
+                                    pluginId: scope.pluginId,
+                                    immutableGenerationId:
+                                        scope.immutableGenerationId,
+                                    bundledArtifacts:
+                                        BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
+                                    retainedManifestAuthority:
+                                        scope.manifestAuthority,
+                                })
+                            ) {
+                                throw new PluginError({
+                                    code:
+                                        'plugin_services_managed_provider_authority_unavailable',
+                                    message:
+                                        'Retained managed Provider authority was hard-revoked',
+                                });
+                            }
+                            const created =
+                                await createRetainedInvocation({
+                                    scope: {
+                                        sessionId:
+                                            scope.sessionId,
+                                        runtimeBindingBasis:
+                                            scope.runtimeBindingBasis,
+                                        identity: {
+                                            pluginId:
+                                                scope.pluginId,
+                                            localId:
+                                                scope.providerLocalId,
+                                        },
+                                        activationGeneration:
+                                            scope.activationGeneration,
+                                        immutableGenerationId:
+                                            scope.immutableGenerationId,
+                                        manifestAuthority:
+                                            scope.manifestAuthority,
+                                        operationClaimId:
+                                            scope.operationClaimId,
+                                    },
+                                    signal,
+                                    isCurrent:
+                                        readsRetainedAuthorityCurrent,
+                                    readAdoptedPublicOutcome,
+                                    revalidatePolicy:
+                                        revalidateRetainedProviderPolicy,
+                                });
+                            if (!created) {
+                                throw new PluginError({
+                                    code:
+                                        'plugin_services_managed_provider_authority_unavailable',
+                                    message:
+                                        'Retained managed Provider authority could not be reauthorized',
+                                });
+                            }
+                            managedProviderCleanup.current = () =>
+                                created.cleanup();
+                            const bootstrap = created.bootstrap;
+                            if (
+                                bootstrap.identity.pluginId
+                                    !== scope.pluginId
+                                || bootstrap.identity.localId
+                                    !== scope.providerLocalId
+                                || bootstrap.activationGeneration
+                                    !== scope.activationGeneration
+                                || bootstrap.immutableGenerationId
+                                    !== scope.immutableGenerationId
+                                || bootstrap.manifestAuthority
+                                    !== scope.manifestAuthority
+                                || bootstrap.operationClaimId
+                                    !== scope.operationClaimId
+                                || await readCurrentPluginHardRevocationRevision({
+                                    paths: storePaths,
+                                    pluginId: scope.pluginId,
+                                }) !== currentHardRevocationRevision
+                                || !await readCurrentPluginImmutableGenerationIntegrityCurrentness({
+                                    paths: storePaths,
+                                    pluginId: scope.pluginId,
+                                    immutableGenerationId:
+                                        scope.immutableGenerationId,
+                                    bundledArtifacts:
+                                        BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
+                                    retainedManifestAuthority:
+                                        scope.manifestAuthority,
+                                })
+                            ) {
+                                throw new PluginError({
+                                    code:
+                                        'plugin_services_managed_provider_retention_mismatch',
+                                    message:
+                                        'Replacement daemon reconstructed a different managed Provider authority',
+                                    });
+                            }
+                            const isRetainedProviderCurrent = async () =>
+                                await isRetainedManagedProviderInvocationCurrent({
+                                    readsRetainedAuthorityCurrent,
+                                    revalidatePolicy:
+                                        revalidateRetainedProviderPolicy,
+                                    fenceRetainedPolicy:
+                                        fenceRetainedProviderPolicy,
+                                    readHardRevocationRevision: async () =>
+                                        await readCurrentPluginHardRevocationRevision({
+                                            paths: storePaths,
+                                            pluginId:
+                                                scope.pluginId,
+                                        }),
+                                    readGenerationIntegrityCurrentness:
+                                        async () =>
+                                            await readCurrentPluginImmutableGenerationIntegrityCurrentness({
+                                                paths: storePaths,
+                                                pluginId:
+                                                    scope.pluginId,
+                                                immutableGenerationId:
+                                                    scope.immutableGenerationId,
+                                                bundledArtifacts:
+                                                    BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
+                                                retainedManifestAuthority:
+                                                    scope.manifestAuthority,
+                                            }),
+                                    hardRevocationRevisionAtAdmission:
+                                        currentHardRevocationRevision,
+                                });
+                            const retainedSessionBindingMetadata =
+                                tracked.spawnOptions
+                                    ?.providerBindingMetadataV1;
+                            if (
+                                !retainedSessionBindingMetadata
+                                || !retainedSessionBindingMetadata
+                                    .runtimeBindingBasis
+                                || !sameProviderRuntimeBindingBasis(
+                                    retainedSessionBindingMetadata
+                                        .runtimeBindingBasis,
+                                    scope.runtimeBindingBasis,
+                                )
+                            ) {
+                                throw new PluginError({
+                                    code:
+                                        'plugin_services_managed_provider_materialization_authority_changed',
+                                    message:
+                                        'Retained managed Provider binding metadata is unavailable',
+                                });
+                            }
+                            return Object.freeze({
+                                bootstrap: Object.freeze({
+                                    v: 1 as const,
+                                    scope,
+                                    requestAuth:
+                                        bootstrap.requestAuth,
+                                    providerPluginHardRevocationRevisionAtAdmission:
+                                        currentHardRevocationRevision,
+                                    sessionBindingMetadata:
+                                        retainedSessionBindingMetadata,
+                                }),
+                                connectedAccounts:
+                                    created.connectedAccounts,
+                                readSupervisionLaunchAuthority,
+                                start: async () => {
+                                    const outcome =
+                                        await readAdoptedPublicOutcome();
+                                    if (
+                                        !outcome
+                                        || outcome.operationClaimId
+                                            !== scope.operationClaimId
+                                        || !outcome.endpointTemplateIds
+                                            .includes(
+                                                scope
+                                                    .runtimeBindingBasis
+                                                    .endpoint
+                                                    .endpointTemplateId,
+                                            )
+                                        || !await isRetainedProviderCurrent()
+                                    ) {
+                                        throw new PluginError({
+                                            code:
+                                                'plugin_services_managed_provider_authority_unavailable',
+                                            message:
+                                                'Retained managed Provider public outcome is unavailable',
+                                        });
+                                    }
+                                },
+                                materializeAgentBinding: async ({
+                                    endpointUrl,
+                                    credentialPlaceholder,
+                                }: Readonly<{
+                                    endpointUrl: string;
+                                    credentialPlaceholder: string;
+                                }>) => {
+                                    const basis =
+                                        scope.runtimeBindingBasis;
+                                    const metadata = tracked.spawnOptions
+                                        ?.providerBindingMetadataV1;
+                                    const outcome =
+                                        await readAdoptedPublicOutcome();
+                                    const endpoint = outcome?.endpoints
+                                        .find((entry) => (
+                                            entry.endpointTemplateId
+                                                === basis.endpoint
+                                                    .endpointTemplateId
+                                        ));
+                                    let assessed:
+                                        ReturnType<
+                                            typeof assessProviderEndpoint
+                                        > | null = null;
+                                    try {
+                                        assessed = assessProviderEndpoint(
+                                            endpointUrl,
+                                        );
+                                    } catch {
+                                        assessed = null;
+                                    }
+                                    if (
+                                        !capturedAgentProviderBinding
+                                        || !basis
+                                            .runtimeCredentialTransport
+                                        || !metadata?.model
+                                        || !endpoint
+                                        || !assessed
+                                        || assessed.normalizedUrl
+                                            !== endpoint.endpointUrl
+                                    ) {
+                                        await cleanupManagedProvider()
+                                            .catch(() => undefined);
+                                        throw new PluginError({
+                                            code:
+                                                'plugin_services_managed_provider_materialization_authority_changed',
+                                            message:
+                                                'Retained managed Provider pre-open materialization authority is unavailable',
+                                        });
+                                    }
+                                    return await materializeRunnerManagedProviderAgentBinding({
+                                        capturedAgentBinding:
+                                            capturedAgentProviderBinding,
+                                        isCapturedAgentRegistrationCurrent:
+                                            isCapturedAgentRegistrationPreOpen,
+                                        isManagedProviderCurrent:
+                                            isRetainedProviderCurrent,
+                                        cleanup:
+                                            cleanupManagedProvider,
+                                        binding: {
+                                            v: 1,
+                                            agentTargetKey:
+                                                basis.agentTargetKey,
+                                            selection: {
+                                                connectionId:
+                                                    basis.connectionId,
+                                                model:
+                                                    metadata.model,
+                                            },
+                                            contributionKey:
+                                                basis.contributionKey,
+                                            endpoint: {
+                                                endpointTemplateId:
+                                                    basis.endpoint
+                                                        .endpointTemplateId,
+                                                normalizedUrl:
+                                                    assessed.normalizedUrl,
+                                                protocol:
+                                                    basis.endpoint.protocol,
+                                                publicHeaders:
+                                                    basis.endpoint
+                                                        .publicHeaders,
+                                            },
+                                            runtimeCredentialTransport:
+                                                basis
+                                                    .runtimeCredentialTransport,
+                                            compatibilityFingerprint:
+                                                metadata
+                                                    .compatibilityFingerprint,
+                                        },
+                                        prepared:
+                                            basis.prepared,
+                                        credential: {
+                                            kind: 'apiKey',
+                                            transport:
+                                                basis
+                                                    .runtimeCredentialTransport,
+                                            value:
+                                                credentialPlaceholder,
+                                        },
+                                    });
+                                },
+                                isCurrent:
+                                    isRetainedProviderCurrent,
+                            });
+                        }
+                        const trackedSelection =
+                            tracked.spawnOptions
+                                ?.modelSelection?.ref
+                            ?? null;
+                        const trackedBindingMetadata =
+                            tracked.spawnOptions
+                                ?.providerBindingMetadataV1
+                            ?? null;
+                        const trackedRuntimeBindingBasis =
+                            trackedBindingMetadata
+                                ?.runtimeBindingBasis
+                            ?? null;
+                        if (
+                            !trackedSelection
+                            || trackedSelection
+                                .providerConnectionId === null
+                            || !trackedRuntimeBindingBasis
+                            || trackedRuntimeBindingBasis
+                                .deployment.kind
+                                !== 'managedLocal'
+                        ) {
+                            return null;
+                        }
+                        const authority =
+                            resolveDaemonSessionModelTransitionAuthority({
+                                trackedAgentId:
+                                    resolveTrackedSessionCatalogAgentId(
+                                        tracked,
+                                    ),
+                                authorizedAgentId:
+                                    retainedAgent.agentId,
+                                trackedSelection,
+                                trackedSessionBindingMetadata:
+                                    trackedBindingMetadata,
+                                requestAgentId:
+                                    retainedAgent.agentId,
+                                requestedSelection: {
+                                    ...trackedSelection,
+                                    providerConnectionId:
+                                        trackedSelection
+                                            .providerConnectionId,
+                                },
+                            });
+                        const authorization =
+                            await authorizeSessionModelTransitionProviderTargetWithLease({
+                                sessionId,
+                                machineId: params.machineId,
+                                agentId: authority.agentId,
+                                agentTargetKey:
+                                    authority.agentTargetKey,
+                                lease,
+                                input: authority.input,
+                            });
+                        const runtimeBindingBasis =
+                            authorization.runtimeBindingBasis;
+                        if (
+                            runtimeBindingBasis.deployment.kind
+                                !== 'managedLocal'
+                        ) {
+                            throw new PluginError({
+                                code:
+                                    'plugin_services_managed_provider_authority_unavailable',
+                                message:
+                                    'Runner Provider authorization is not a managed-local binding',
+                            });
+                        }
+                        if (!sameProviderRuntimeBindingBasis(
+                            trackedRuntimeBindingBasis,
+                            runtimeBindingBasis,
+                        )) {
+                            throw new PluginError({
+                                code:
+                                    'plugin_services_managed_provider_authority_unavailable',
+                                message:
+                                    'Runner managed Provider authorization is not current for this Session binding',
+                            });
+                        }
+                        const identity =
+                            runtimeBindingBasis.deployment
+                                .implementationIdentity;
+                        const createInvocation =
+                            lease.registry
+                                .createManagedProviderRuntimeInvocationServices;
+                        if (!createInvocation) {
+                            throw new PluginError({
+                                code:
+                                    'plugin_services_managed_provider_authority_unavailable',
+                                message:
+                                    'Managed Provider runtime invocation services are unavailable',
+                            });
+                        }
+                        const storePaths =
+                            resolvePluginStorePaths({
+                                happyHomeDir:
+                                    configuration.happyHomeDir,
+                            });
+                        const providerPluginHardRevocationRevisionAtAdmission =
+                            await readCurrentPluginHardRevocationRevision({
+                                paths: storePaths,
+                                pluginId: identity.pluginId,
+                            });
+                        let readAdoptedPublicOutcome:
+                            ReturnType<
+                                typeof createRunnerManagedServicesClient
+                            >['readAdoptedPublicOutcome'] | null = null;
+                        let fenceRetainedProviderPolicy:
+                            ReturnType<
+                                typeof createRunnerManagedServicesClient
+                            >['fenceRetainedProviderPolicy'] | null = null;
+                        const readsSessionProviderAuthorityCurrent =
+                            (): boolean => {
+                                const currentBasis =
+                                    tracked.spawnOptions
+                                        ?.providerBindingMetadataV1
+                                        ?.runtimeBindingBasis;
+                                return !signal.aborted
+                                    && authorizeTrackedRunnerAgentDaemonServiceOperation({
+                                        tracked,
+                                        sessionId,
+                                        runner,
+                                        retainedAgent,
+                                        witness: undefined,
+                                        allowIdleCurrentGeneration: true,
+                                    })
+                                    && currentBasis !== undefined
+                                    && sameProviderRuntimeBindingBasis(
+                                        currentBasis,
+                                        runtimeBindingBasis,
+                                    );
+                            };
+                        const revalidateSessionProviderAuthority =
+                            async (): Promise<boolean> => {
+                                if (!readsSessionProviderAuthorityCurrent()) {
+                                    return false;
+                                }
+                                try {
+                                    const refreshed =
+                                        await authorizeSessionModelTransitionProviderTargetWithLease({
+                                            sessionId:
+                                                sessionId,
+                                            machineId:
+                                                params.machineId,
+                                            agentId:
+                                                authority.agentId,
+                                            agentTargetKey:
+                                                authority.agentTargetKey,
+                                            lease,
+                                            input: authority.input,
+                                    });
+                                    return readsSessionProviderAuthorityCurrent()
+                                        && sameProviderRuntimeBindingBasis(
+                                            refreshed
+                                                .runtimeBindingBasis,
+                                            runtimeBindingBasis,
+                                        )
+                                        && await readCurrentPluginHardRevocationRevision({
+                                            paths: storePaths,
+                                            pluginId:
+                                                identity.pluginId,
+                                        })
+                                            === providerPluginHardRevocationRevisionAtAdmission;
+                                } catch {
+                                    return false;
+                                }
+                            };
+                        const createdManagedProviderInvocation =
+                            await createInvocation({
+                                identity,
+                                purposeBindings:
+                                    runtimeBindingBasis
+                                        .deployment.purposeBindings,
+                                operationClaim: {
+                                    kind: 'sessionDemand',
+                                    sessionId,
+                                    runtimeBindingBasis,
+                                    bindSessionCustody: async (
+                                        custodyScope,
+                                        dependencies,
+                                    ) => {
+                                        const runnerCustodyScope:
+                                            RunnerManagedProviderCustodyScopeV1 =
+                                                Object.freeze({
+                                                    v: 1,
+                                                    sessionId:
+                                                        custodyScope
+                                                            .sessionId,
+                                                    runtimeBindingBasis:
+                                                        custodyScope
+                                                            .runtimeBindingBasis,
+                                                    pluginId:
+                                                        custodyScope
+                                                            .identity
+                                                            .pluginId,
+                                                    providerLocalId:
+                                                        custodyScope
+                                                            .identity
+                                                            .localId,
+                                                    activationGeneration:
+                                                        custodyScope
+                                                            .activationGeneration,
+                                                    immutableGenerationId:
+                                                        custodyScope
+                                                            .immutableGenerationId,
+                                                    manifestAuthority:
+                                                        custodyScope
+                                                            .manifestAuthority,
+                                                    operationClaimId:
+                                                        custodyScope
+                                                            .operationClaimId,
+                                                });
+                                        const custodyClient =
+                                            await createSessionManagedProviderCustodyClient(
+                                                runnerCustodyScope,
+                                                dependencies,
+                                            );
+                                        readAdoptedPublicOutcome =
+                                            custodyClient
+                                                .readAdoptedPublicOutcome;
+                                        fenceRetainedProviderPolicy =
+                                            custodyClient
+                                                .fenceRetainedProviderPolicy;
+                                        return Object.freeze({
+                                            managedServices: Object.freeze({
+                                                dependencies:
+                                                    custodyClient.services
+                                                        .dependencies,
+                                                supervise(
+                                                    spec: Parameters<typeof custodyClient.services.supervise>[0],
+                                                    options?: Parameters<typeof custodyClient.services.supervise>[1],
+                                                ) {
+                                                    stampSupervisionLaunchAuthority(
+                                                        spec,
+                                                    );
+                                                    return custodyClient
+                                                        .services
+                                                        .supervise(
+                                                            spec,
+                                                            options,
+                                                        );
+                                                },
+                                            }),
+                                            projectEndpointAccess:
+                                                custodyClient
+                                                    .projectEndpointAccess,
+                                            adoptService: async (
+                                                serviceId,
+                                            ) => {
+                                                await custodyClient
+                                                    .commitAdoption(
+                                                        serviceId,
+                                                    );
+                                            },
+                                            readAdoptedPublicOutcome:
+                                                custodyClient
+                                                    .readAdoptedPublicOutcome,
+                                        });
+                                    },
+                                },
+                                signal,
+                                isCurrent:
+                                    readsSessionProviderAuthorityCurrent,
+                            });
+                        if (!createdManagedProviderInvocation) {
+                            throw new PluginError({
+                                code:
+                                    'plugin_services_managed_provider_authority_unavailable',
+                                message:
+                                    'Managed Provider runtime invocation authority could not be prepared',
+                            });
+                        }
+                        managedProviderCleanup.current = () =>
+                            createdManagedProviderInvocation.cleanup();
+                        const bootstrap =
+                            createdManagedProviderInvocation.bootstrap;
+                        if (
+                            bootstrap.identity.pluginId
+                                !== identity.pluginId
+                            || bootstrap.identity.localId
+                                !== identity.localId
+                            || await readCurrentPluginHardRevocationRevision({
+                                paths: storePaths,
+                                pluginId: identity.pluginId,
+                            })
+                                !== providerPluginHardRevocationRevisionAtAdmission
+                            || !await readCurrentPluginImmutableGenerationIntegrityCurrentness({
+                                paths: storePaths,
+                                pluginId: identity.pluginId,
+                                immutableGenerationId:
+                                    bootstrap.immutableGenerationId,
+                                bundledArtifacts:
+                                    BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
+                            })
+                        ) {
+                            throw new PluginError({
+                                code:
+                                    'plugin_services_managed_provider_authority_unavailable',
+                                message:
+                                    'Managed Provider runtime authority changed while preparing the Runner invocation',
+                            });
+                        }
+                        const managedRuntimeDeclaration =
+                            lease.registry.contributes.providers
+                                ?.find((provider) => (
+                                    provider.identity.pluginId
+                                        === identity.pluginId
+                                    && provider.identity.localId
+                                        === identity.localId
+                                ))
+                                ?.definition.managedRuntime;
+                        if (
+                            managedRuntimeDeclaration?.kind
+                                !== 'managed'
+                            || !lease.registry
+                                .acquireManagedProviderRuntime
+                        ) {
+                            throw new PluginError({
+                                code:
+                                    'plugin_services_managed_provider_authority_unavailable',
+                                message:
+                                    'Managed Provider public runtime declaration is unavailable',
+                            });
+                        }
+                        const providerConnectionRevision =
+                            authorization.sessionBindingMetadata
+                                .connectionRevision;
+                        let adoptionCommitted = false;
+                        let startPromise: Promise<void> | null = null;
+                        const start = (): Promise<void> => {
+                            startPromise ??= (async () => {
+                                const launchResourceScope =
+                                    createProviderLaunchResourceScope();
+                                const started =
+                                    await startPublicManagedProviderRuntime({
+                                        identity,
+                                        request: Object.freeze({
+                                            reason:
+                                                'sessionDemand' as const,
+                                            connectionId:
+                                                trackedSelection
+                                                    .providerConnectionId,
+                                            connectionRevision:
+                                                providerConnectionRevision,
+                                            endpointTemplateIds:
+                                                Object.freeze([
+                                                    ...managedRuntimeDeclaration
+                                                        .endpointTemplateIds,
+                                                ]),
+                                        }),
+                                        acquireRuntime: async (
+                                            requestedIdentity,
+                                        ) => await lease.registry
+                                            .acquireManagedProviderRuntime!(
+                                                requestedIdentity,
+                                            ),
+                                        connectedAccounts:
+                                            createdManagedProviderInvocation
+                                                .connectedAccounts,
+                                        custody:
+                                            createdManagedProviderInvocation,
+                                        isAuthorizationCurrent:
+                                            readsSessionProviderAuthorityCurrent,
+                                        revalidateAuthorization:
+                                            revalidateSessionProviderAuthority,
+                                        signal,
+                                        launchResourceScope,
+                                    });
+                                if (!started.ok) {
+                                    throw new PluginError({
+                                        code: started.code,
+                                        message:
+                                            'Managed Provider Session runtime start failed',
+                                    });
+                                }
+                                adoptionCommitted = true;
+                                const retire =
+                                    launchResourceScope.transfer();
+                                const cleanupInvocation =
+                                    managedProviderCleanup.current;
+                                managedProviderCleanup.current =
+                                    async () => {
+                                        await retire?.();
+                                        await cleanupInvocation?.();
+                                    };
+                            })();
+                            return startPromise;
+                        };
+                        const isManagedProviderCurrent = async () =>
+                            await isManagedProviderSessionInvocationCurrent({
+                                adoptionCommitted: () =>
+                                    adoptionCommitted,
+                                revalidateInitialPolicy:
+                                    revalidateSessionProviderAuthority,
+                                readsRetainedAuthorityCurrent:
+                                    readsSessionProviderAuthorityCurrent,
+                                revalidateRetainedPolicy: async () =>
+                                    await revalidateAdoptedManagedProviderPolicy(
+                                        runtimeBindingBasis,
+                                    ),
+                                fenceRetainedPolicy: async () => {
+                                    if (!fenceRetainedProviderPolicy) {
+                                        throw new PluginError({
+                                            code:
+                                                'plugin_services_managed_provider_custody_unavailable',
+                                            message:
+                                                'Runner retained Provider policy-fence authority is unavailable',
+                                        });
+                                    }
+                                    await fenceRetainedProviderPolicy();
+                                },
+                                readHardRevocationRevision: async () =>
+                                    await readCurrentPluginHardRevocationRevision({
+                                        paths: storePaths,
+                                        pluginId:
+                                            identity.pluginId,
+                                    }),
+                                readGenerationIntegrityCurrentness:
+                                    async () =>
+                                        await readCurrentPluginImmutableGenerationIntegrityCurrentness({
+                                            paths: storePaths,
+                                            pluginId:
+                                                identity.pluginId,
+                                            immutableGenerationId:
+                                                bootstrap
+                                                    .immutableGenerationId,
+                                            bundledArtifacts:
+                                                BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
+                                        }),
+                                hardRevocationRevisionAtAdmission:
+                                    providerPluginHardRevocationRevisionAtAdmission,
+                            });
+                        return Object.freeze({
+                            bootstrap: Object.freeze({
+                                v: 1 as const,
+                                scope: Object.freeze({
+                                    v: 1 as const,
+                                    sessionId:
+                                        sessionId,
+                                    runtimeBindingBasis,
+                                    pluginId:
+                                        identity.pluginId,
+                                    providerLocalId:
+                                        identity.localId,
+                                    activationGeneration:
+                                        bootstrap
+                                            .activationGeneration,
+                                    immutableGenerationId:
+                                        bootstrap
+                                            .immutableGenerationId,
+                                    manifestAuthority:
+                                        bootstrap.manifestAuthority,
+                                    operationClaimId:
+                                        bootstrap
+                                            .operationClaimId,
+                                }),
+                                requestAuth:
+                                    bootstrap.requestAuth,
+                                providerPluginHardRevocationRevisionAtAdmission,
+                                sessionBindingMetadata:
+                                    authorization
+                                        .sessionBindingMetadata,
+                            }),
+                            connectedAccounts:
+                                createdManagedProviderInvocation
+                                    .connectedAccounts,
+                            readSupervisionLaunchAuthority,
+                            start,
+                            materializeAgentBinding: async ({
+                                endpointUrl,
+                                credentialPlaceholder,
+                            }: Readonly<{
+                                endpointUrl: string;
+                                credentialPlaceholder: string;
+                            }>) => {
+                                if (
+                                    !startPromise
+                                    || !capturedAgentProviderBinding
+                                    || !readAdoptedPublicOutcome
+                                    || !runtimeBindingBasis
+                                        .runtimeCredentialTransport
+                                ) {
+                                    await cleanupManagedProvider()
+                                        .catch(() => undefined);
+                                    throw new PluginError({
+                                        code:
+                                            'plugin_services_managed_provider_materialization_authority_changed',
+                                        message:
+                                            'Managed Provider pre-open materialization authority is unavailable',
+                                    });
+                                }
+                                await startPromise;
+                                let assessed:
+                                    ReturnType<
+                                        typeof assessProviderEndpoint
+                                    >;
+                                try {
+                                    assessed = assessProviderEndpoint(
+                                        endpointUrl,
+                                    );
+                                } catch {
+                                    await cleanupManagedProvider()
+                                        .catch(() => undefined);
+                                    throw new PluginError({
+                                        code:
+                                            'plugin_services_managed_provider_materialization_authority_changed',
+                                        message:
+                                            'Managed Provider materialization endpoint is invalid',
+                                    });
+                                }
+                                const adopted =
+                                    await readAdoptedPublicOutcome();
+                                const adoptedEndpoint =
+                                    adopted?.endpoints.find((entry) => (
+                                        entry.endpointTemplateId
+                                            === runtimeBindingBasis
+                                                .endpoint
+                                                .endpointTemplateId
+                                    ));
+                                if (
+                                    assessed.locality !== 'loopback'
+                                    || !adopted
+                                    || adopted.operationClaimId
+                                        !== bootstrap.operationClaimId
+                                    || !adoptedEndpoint
+                                    || assessed.normalizedUrl
+                                        !== adoptedEndpoint.endpointUrl
+                                ) {
+                                    await cleanupManagedProvider()
+                                        .catch(() => undefined);
+                                    throw new PluginError({
+                                        code:
+                                            'plugin_services_managed_provider_materialization_authority_changed',
+                                        message:
+                                            'Managed Provider adopted endpoint materialization facts are unavailable',
+                                    });
+                                }
+                                return await materializeRunnerManagedProviderAgentBinding({
+                                    capturedAgentBinding:
+                                        capturedAgentProviderBinding,
+                                    isCapturedAgentRegistrationCurrent:
+                                        isCapturedAgentRegistrationPreOpen,
+                                    isManagedProviderCurrent,
+                                    cleanup:
+                                        cleanupManagedProvider,
+                                    binding: {
+                                        v: 1,
+                                        agentTargetKey:
+                                            runtimeBindingBasis
+                                                .agentTargetKey,
+                                        selection: {
+                                            connectionId:
+                                                runtimeBindingBasis
+                                                    .connectionId,
+                                            model:
+                                                authorization.model,
+                                        },
+                                        contributionKey:
+                                            runtimeBindingBasis
+                                                .contributionKey,
+                                        endpoint: {
+                                            endpointTemplateId:
+                                                runtimeBindingBasis
+                                                    .endpoint
+                                                    .endpointTemplateId,
+                                            normalizedUrl:
+                                                assessed.normalizedUrl,
+                                            protocol:
+                                                runtimeBindingBasis
+                                                    .endpoint.protocol,
+                                            publicHeaders:
+                                                runtimeBindingBasis
+                                                    .endpoint
+                                                    .publicHeaders,
+                                        },
+                                        runtimeCredentialTransport:
+                                            runtimeBindingBasis
+                                                .runtimeCredentialTransport,
+                                        compatibilityFingerprint:
+                                            authorization
+                                                .sessionBindingMetadata
+                                                .compatibilityFingerprint,
+                                    },
+                                    prepared:
+                                        runtimeBindingBasis.prepared,
+                                    credential: {
+                                        kind: 'apiKey',
+                                        transport:
+                                            runtimeBindingBasis
+                                                .runtimeCredentialTransport,
+                                        value:
+                                            credentialPlaceholder,
+                                    },
+                                });
+                            },
+                            isCurrent:
+                                isManagedProviderCurrent,
+                        });
+                    })().catch(async (error: unknown) => {
+                        if (
+                            managedProviderRetention
+                            && isPluginError(error)
+                            && error.code
+                                === 'plugin_services_managed_provider_authority_unavailable'
+                        ) {
+                            await cleanupManagedProvider()
+                                .catch(() => undefined);
+                            return null;
+                        }
+                        throw error;
+                    });
+                    if (managedProviderRetention && managedProvider) {
+                        let retainedProviderIsCurrent = false;
+                        try {
+                            retainedProviderIsCurrent =
+                                await managedProvider.isCurrent();
+                        } catch {
+                            retainedProviderIsCurrent = false;
+                        }
+                        if (!retainedProviderIsCurrent) {
+                            await cleanupManagedProvider()
+                                .catch(() => undefined);
+                            managedProvider = null;
+                        }
+                    }
+                    const createRetained =
+                        lease.registry
+                            .createRetainedRunnerAgentInvocationServices;
+                    if (!createRetained) {
+                        throw new PluginError({
+                            code:
+                                'plugin_services_retained_generation_unavailable',
+                            message:
+                                'Retained Runner Agent PluginServices are unavailable',
+                        });
+                    }
+                    const invocationProjection =
+                        await createRetained({
+                            binding: retainedAgent,
+                            sessionId,
+                            managedDependencyRetention:
+                                tracked
+                                    .runnerManagedDependencyRetentionV1
+                                ?? {
+                                    v: 1 as const,
+                                    sourceGenerationIds: [],
+                                    qualifiedDependencyIds: [],
+                                },
+                            correlationId:
+                                invocationId,
+                            cwd:
+                                invocationContext.cwd,
+                            environment:
+                                invocationContext.environment,
+                            providerBindingActive:
+                                invocationContext
+                                    .providerBindingActive,
+                            signal,
+                            isGenerationCurrent:
+                                () => authorizeOperation(undefined),
+                        });
+                    const executeCurrentGlobalAction:
+                        RunnerDaemonCurrentGlobalActionExecutor =
+                        async (
+                            actionOrRef,
+                            actionInput,
+                            options,
+                            operationWitness,
+                        ) => {
+                            if (typeof actionOrRef !== 'string') {
+                                throw new PluginError({
+                                    code:
+                                        'plugin_action_generation_private_unavailable',
+                                    message:
+                                        'A retained Runner cannot substitute the current plugin generation for an exact generation-private action handler',
+                                });
+                            }
+                            const currentLease =
+                                await acquireAuthoritativePluginRuntimeRegistryLease({
+                                    happyHomeDir:
+                                        configuration.happyHomeDir,
+                                });
+                            try {
+                                const createCurrentActions =
+                                    currentLease.registry
+                                        .createRetainedRunnerAgentCurrentGlobalActionsService;
+                                if (!createCurrentActions) {
+                                    throw new PluginError({
+                                        code:
+                                            'plugin_services_retained_generation_unavailable',
+                                        message:
+                                            'Retained Runner current-global Actions are unavailable',
+                                    });
+                                }
+                                const currentActions =
+                                    await createCurrentActions({
+                                        binding: retainedAgent,
+                                        sessionId,
+                                        correlationId:
+                                            invocationId,
+                                        signal,
+                                        isGenerationCurrent:
+                                            () => authorizeOperation(
+                                                operationWitness,
+                                                {
+                                                    requireActiveTurn:
+                                                        true,
+                                                },
+                                            ),
+                                    });
+                                if (!authorizeOperation(
+                                    operationWitness,
+                                    { requireActiveTurn: true },
+                                )) {
+                                    throw new PluginError({
+                                        code:
+                                            'plugin_services_turn_authority_unavailable',
+                                        message:
+                                            'Runner PluginServices Action lost its exact active-turn authority before execution',
+                                    });
+                                }
+                                // This is the runtime parse boundary: the
+                                // canonical ActionsService validates the
+                                // action-specific input and output schemas.
+                                const executeCurrentAction =
+                                    currentActions.execute as (
+                                        action: Parameters<
+                                            RunnerDaemonCurrentGlobalActionExecutor
+                                        >[0],
+                                        actionInput: Parameters<
+                                            RunnerDaemonCurrentGlobalActionExecutor
+                                        >[1],
+                                        actionOptions: Parameters<
+                                            RunnerDaemonCurrentGlobalActionExecutor
+                                        >[2],
+                                    ) => Promise<unknown>;
+                                return await executeCurrentAction(
+                                    actionOrRef,
+                                    actionInput,
+                                    options,
+                                );
+                            } finally {
+                                await currentLease.release();
+                            }
+                        };
+                    const currentGlobalMcp:
+                        RunnerDaemonCurrentGlobalMcpOwner =
+                        Object.freeze({
+                            async list(query) {
+                                const currentLease =
+                                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                                        happyHomeDir:
+                                            configuration.happyHomeDir,
+                                    });
+                                try {
+                                    const createCurrentMcp =
+                                        currentLease.registry
+                                            .createRetainedRunnerAgentCurrentGlobalMcpService;
+                                    if (!createCurrentMcp) {
+                                        throw new PluginError({
+                                            code:
+                                                'plugin_services_retained_generation_unavailable',
+                                            message:
+                                                'Retained Runner current-global MCP is unavailable',
+                                        });
+                                    }
+                                    return await (await createCurrentMcp({
+                                        binding: retainedAgent,
+                                        sessionId,
+                                        correlationId: invocationId,
+                                        signal,
+                                        isGenerationCurrent:
+                                            () => authorizeOperation(undefined),
+                                    })).list(query);
+                                } finally {
+                                    await currentLease.release();
+                                }
+                            },
+                            async discover(provider, query, options) {
+                                const currentLease =
+                                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                                        happyHomeDir:
+                                            configuration.happyHomeDir,
+                                    });
+                                try {
+                                    const createCurrentMcp =
+                                        currentLease.registry
+                                            .createRetainedRunnerAgentCurrentGlobalMcpService;
+                                    if (!createCurrentMcp) {
+                                        throw new PluginError({
+                                            code:
+                                                'plugin_services_retained_generation_unavailable',
+                                            message:
+                                                'Retained Runner current-global MCP is unavailable',
+                                        });
+                                    }
+                                    return await (await createCurrentMcp({
+                                        binding: retainedAgent,
+                                        sessionId,
+                                        correlationId: invocationId,
+                                        signal,
+                                        isGenerationCurrent:
+                                            () => authorizeOperation(undefined),
+                                    })).discover(provider, query, options);
+                                } finally {
+                                    await currentLease.release();
+                                }
+                            },
+                            async connect(ref, options) {
+                                const currentLease =
+                                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                                        happyHomeDir:
+                                            configuration.happyHomeDir,
+                                    });
+                                let releaseCurrentLease = true;
+                                try {
+                                    const createCurrentMcp =
+                                        currentLease.registry
+                                            .createRetainedRunnerAgentCurrentGlobalMcpService;
+                                    if (!createCurrentMcp) {
+                                        throw new PluginError({
+                                            code:
+                                                'plugin_services_retained_generation_unavailable',
+                                            message:
+                                                'Retained Runner current-global MCP is unavailable',
+                                        });
+                                    }
+                                    const selectedClient =
+                                        await (await createCurrentMcp({
+                                            binding: retainedAgent,
+                                            sessionId,
+                                            correlationId: invocationId,
+                                            signal,
+                                            isGenerationCurrent:
+                                                () => authorizeOperation(undefined),
+                                        })).connect(ref, options);
+                                    let disposed = false;
+                                    let disposal: Promise<void> | null = null;
+                                    const dispose = () => {
+                                        disposal ??= (async () => {
+                                            if (disposed) return;
+                                            disposed = true;
+                                            signal.removeEventListener(
+                                                'abort',
+                                                disposeOnAbort,
+                                            );
+                                            const results =
+                                                await Promise.allSettled([
+                                                    selectedClient.dispose(),
+                                                    currentLease.release(),
+                                                ]);
+                                            const failures = results.flatMap(
+                                                (result) => result.status
+                                                    === 'rejected'
+                                                    ? [result.reason]
+                                                    : [],
+                                            );
+                                            if (failures.length === 1) {
+                                                throw failures[0];
+                                            }
+                                            if (failures.length > 1) {
+                                                throw new AggregateError(
+                                                    failures,
+                                                    'Retained Runner MCP client cleanup failed',
+                                                );
+                                            }
+                                        })();
+                                        return disposal;
+                                    };
+                                    const disposeOnAbort = () => {
+                                        void dispose().catch(() => {});
+                                    };
+                                    if (signal.aborted) disposeOnAbort();
+                                    else signal.addEventListener(
+                                        'abort',
+                                        disposeOnAbort,
+                                        { once: true },
+                                    );
+                                    releaseCurrentLease = false;
+                                    return Object.freeze({
+                                        listTools:
+                                            selectedClient.listTools,
+                                        callTool:
+                                            selectedClient.callTool,
+                                        listResources:
+                                            selectedClient.listResources,
+                                        listResourceTemplates:
+                                            selectedClient
+                                                .listResourceTemplates,
+                                        readResource:
+                                            selectedClient.readResource,
+                                        subscribeResource:
+                                            selectedClient
+                                                .subscribeResource,
+                                        listPrompts:
+                                            selectedClient.listPrompts,
+                                        getPrompt:
+                                            selectedClient.getPrompt,
+                                        dispose,
+                                    });
+                                } finally {
+                                    if (releaseCurrentLease) {
+                                        await currentLease.release();
+                                    }
+                                }
+                            },
+                        });
+                    const withCurrentGlobalExternalSessions =
+                        async <T>(operation: (
+                            service:
+                                RunnerDaemonCurrentGlobalExternalSessionsOwner,
+                        ) => Promise<T>): Promise<T> => {
+                            const currentLease =
+                                await acquireAuthoritativePluginRuntimeRegistryLease({
+                                    happyHomeDir:
+                                        configuration.happyHomeDir,
+                                });
+                            try {
+                                const createCurrentExternalSessions =
+                                    currentLease.registry
+                                        .createRetainedRunnerAgentCurrentGlobalExternalSessionsService;
+                                if (!createCurrentExternalSessions) {
+                                    throw new PluginError({
+                                        code:
+                                            'plugin_services_retained_generation_unavailable',
+                                        message:
+                                            'Retained Runner current-global External Sessions are unavailable',
+                                    });
+                                }
+                                return await operation(
+                                    await createCurrentExternalSessions({
+                                        binding: retainedAgent,
+                                        sessionId,
+                                        correlationId: invocationId,
+                                        signal,
+                                        isGenerationCurrent:
+                                            () => authorizeOperation(undefined),
+                                    }),
+                                );
+                            } finally {
+                                await currentLease.release();
+                            }
+                        };
+                    const currentGlobalExternalSessions:
+                        RunnerDaemonCurrentGlobalExternalSessionsOwner =
+                        Object.freeze({
+                            async capabilities(options) {
+                                return await withCurrentGlobalExternalSessions(
+                                    async (service) =>
+                                        await service.capabilities(options),
+                                );
+                            },
+                            async list(query, options) {
+                                return await withCurrentGlobalExternalSessions(
+                                    async (service) =>
+                                        await service.list(query, options),
+                                );
+                            },
+                            async attach(ref, options) {
+                                return await withCurrentGlobalExternalSessions(
+                                    async (service) =>
+                                        await service.attach(ref, options),
+                                );
+                            },
+                            async readTranscript(ref, query, options) {
+                                return await withCurrentGlobalExternalSessions(
+                                    async (service) =>
+                                        await service.readTranscript(
+                                            ref,
+                                            query,
+                                            options,
+                                        ),
+                                );
+                            },
+                            async followTranscript(
+                                ref,
+                                options,
+                                listener,
+                            ) {
+                                const currentLease =
+                                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                                        happyHomeDir:
+                                            configuration.happyHomeDir,
+                                    });
+                                let releaseCurrentLease = true;
+                                try {
+                                    const createCurrentExternalSessions =
+                                        currentLease.registry
+                                            .createRetainedRunnerAgentCurrentGlobalExternalSessionsService;
+                                    if (!createCurrentExternalSessions) {
+                                        throw new PluginError({
+                                            code:
+                                                'plugin_services_retained_generation_unavailable',
+                                            message:
+                                                'Retained Runner current-global External Sessions are unavailable',
+                                        });
+                                    }
+                                    const followed = await (
+                                        await createCurrentExternalSessions({
+                                            binding: retainedAgent,
+                                            sessionId,
+                                            correlationId: invocationId,
+                                            signal,
+                                            isGenerationCurrent:
+                                                () => authorizeOperation(undefined),
+                                        })
+                                    ).followTranscript(
+                                        ref,
+                                        options,
+                                        listener,
+                                    );
+                                    if (followed.status === 'unavailable') {
+                                        return followed;
+                                    }
+                                    let disposal: Promise<void> | null = null;
+                                    const dispose = () => {
+                                        disposal ??= (async () => {
+                                            signal.removeEventListener(
+                                                'abort',
+                                                disposeOnAbort,
+                                            );
+                                            const results =
+                                                await Promise.allSettled([
+                                                    followed.subscription.dispose(),
+                                                    currentLease.release(),
+                                                ]);
+                                            const failures = results.flatMap(
+                                                (result) => result.status
+                                                    === 'rejected'
+                                                    ? [result.reason]
+                                                    : [],
+                                            );
+                                            if (failures.length === 1) {
+                                                throw failures[0];
+                                            }
+                                            if (failures.length > 1) {
+                                                throw new AggregateError(
+                                                    failures,
+                                                    'Retained Runner External Sessions follow cleanup failed',
+                                                );
+                                            }
+                                        })();
+                                        return disposal;
+                                    };
+                                    const disposeOnAbort = () => {
+                                        void dispose().catch(() => {});
+                                    };
+                                    if (signal.aborted) disposeOnAbort();
+                                    else signal.addEventListener(
+                                        'abort',
+                                        disposeOnAbort,
+                                        { once: true },
+                                    );
+                                    releaseCurrentLease = false;
+                                    return Object.freeze({
+                                        status: 'following' as const,
+                                        startingCursor:
+                                            followed.startingCursor,
+                                        subscription: Object.freeze({
+                                            dispose,
+                                        }),
+                                    });
+                                } finally {
+                                    if (releaseCurrentLease) {
+                                        await currentLease.release();
+                                    }
+                                }
+                            },
+                            async takeover(ref, request, options) {
+                                return await withCurrentGlobalExternalSessions(
+                                    async (service) =>
+                                        await service.takeover(
+                                            ref,
+                                            request,
+                                            options,
+                                        ),
+                                );
+                            },
+                        });
+                    const invocationRetainsRegistryLease =
+                        managedProvider !== null;
+                    if (!invocationRetainsRegistryLease) {
+                        await lease.release();
+                    }
+                    releaseLease = false;
+                    releaseManagedProviderInvocation = false;
+                    return {
+                        ...invocationProjection,
+                        ...(managedProvider
+                            ? { managedProvider }
+                            : {}),
+                        authorizeOperation,
+                        authorizeManagedProviderMaterialization:
+                            isCapturedAgentRegistrationPreOpen,
+                        executeCurrentGlobalAction,
+                        currentGlobalMcp,
+                        currentGlobalExternalSessions,
+                        dispose: async () => {
+                            await cleanupManagedProvider();
+                            if (invocationRetainsRegistryLease) {
+                                await lease.release();
+                            }
+                        },
+                    };
+                } finally {
+                    if (
+                        releaseManagedProviderInvocation
+                    ) {
+                        await cleanupManagedProvider();
+                    }
+                    if (releaseLease) {
+                        await lease.release();
+                    }
+                }
+            },
+        });
+    const attestRetainedAgentForVoice = async (
+        retainedAgent: unknown,
+    ) => {
+        try {
+            return await verifyRunnerAgentBindingAgainstGeneration({
+                paths: resolvePluginStorePaths({
+                    happyHomeDir: configuration.happyHomeDir,
+                }),
+                binding: retainedAgent,
+            });
+        } catch {
+            return null;
+        }
+    };
+    const runnerAgentDaemonFacetService =
+        createRunnerAgentDaemonFacetService({
+            externalSessionHostOperationOwner,
             machineId: params.machineId,
             readAccountRevision: () =>
                 resolveActiveAccountSettingsSnapshotRevision(
                     getActiveAccountSettingsSnapshot(),
                 ),
-        }),
-        resolveStartupInstructions(sessionId) {
-            const tracked = findTrackedSessionByHappySessionId(
-                params.pidToTrackedSession.values(),
+            authorizeCurrent: async ({
                 sessionId,
-            );
-            const startupInstructions =
-                tracked?.spawnOptions?.agentSessionStartupInstructionsV1;
-            const requiredMarker =
-                tracked?.agentSessionStartupInstructionsMarkerV1;
-            if (!requiredMarker) {
-                return startupInstructions;
-            }
-            if (
-                !startupInstructions
-                || !startupInstructionsMarkerMatchesCarrier(
-                    requiredMarker,
-                    startupInstructions,
-                )
-            ) {
-                throw new Error(
-                    'startup_instructions_required_carrier_unavailable_or_mismatched',
-                );
-            }
-            return startupInstructions;
-        },
-        async onStartupInstructionsApplied(sessionId, marker) {
-            const tracked = findTrackedSessionByHappySessionId(
-                params.pidToTrackedSession.values(),
+                runner,
+                retainedAgent,
+            }) => {
+                const tracked =
+                    findTrackedSessionByHappySessionId(
+                        params.pidToTrackedSession.values(),
+                        sessionId,
+                    );
+                if (
+                    !tracked
+                    || !authorizeTrackedRunnerAgentDaemonServiceOperation({
+                        tracked,
+                        sessionId,
+                        runner,
+                        retainedAgent,
+                        witness: undefined,
+                        allowIdleCurrentGeneration: true,
+                    })
+                ) {
+                    return false;
+                }
+                return (
+                    await authorizeRunnerAgentNewTurn({
+                        retainedAgent,
+                    })
+                ).status === 'admitted';
+            },
+            authorizeActiveTurn: async ({
                 sessionId,
-            );
-            if (!tracked) {
-                throw new Error(
-                    'startup_instructions_marker_session_not_tracked',
-                );
-            }
-            const spawnOptions = tracked.spawnOptions;
-            if (!spawnOptions) {
-                throw new Error(
-                    'startup_instructions_marker_spawn_options_missing',
-                );
-            }
-            const requiredMarker =
-                tracked.agentSessionStartupInstructionsMarkerV1;
-            const startupInstructions =
-                spawnOptions.agentSessionStartupInstructionsV1;
-            if (
-                !requiredMarker
-                || !startupInstructions
-                || !startupInstructionsMarkersEqual(
-                    requiredMarker,
-                    marker,
-                )
-                || !startupInstructionsMarkerMatchesCarrier(
-                    marker,
-                    startupInstructions,
-                )
-            ) {
-                throw new Error(
-                    'startup_instructions_marker_identity_mismatch',
-                );
-            }
-            const acceptedSpawnMarkerGate =
-                tracked.acceptedSpawnMarkerGate;
-            if (
-                acceptedSpawnMarkerGate
-                && !await acceptedSpawnMarkerGate
-            ) {
-                throw new Error(
-                    'startup_instructions_marker_spawn_custody_unproven',
-                );
-            }
-            const {
-                agentSessionStartupInstructionsV1: _appliedStartupInstructions,
-                ...retainedSpawnOptions
-            } = spawnOptions;
-            tracked.spawnOptions = retainedSpawnOptions;
-            const persisted =
-                await updateSessionMarkerAgentSessionStartupInstructionsMarker({
-                    pid: tracked.pid,
-                    sessionId,
-                    marker,
-                    ...(spawnOptions.spawnNonce
-                        ? {
-                            expectedSpawnNonce:
-                                spawnOptions.spawnNonce,
+                runner,
+                retainedAgent,
+                witness,
+            }) => {
+                const tracked =
+                    findTrackedSessionByHappySessionId(
+                        params.pidToTrackedSession.values(),
+                        sessionId,
+                    );
+                if (
+                    !tracked
+                    || !authorizeTrackedRunnerAgentDaemonServiceOperation({
+                        tracked,
+                        sessionId,
+                        runner,
+                        retainedAgent,
+                        witness,
+                        allowIdleCurrentGeneration: false,
+                    })
+                ) {
+                    return false;
+                }
+                return (
+                    await authorizeRunnerAgentNewTurn({
+                        retainedAgent,
+                    })
+                ).status === 'admitted';
+            },
+            resolveCurrentExternalSessionProviderOps:
+                async (agentId) => {
+                    try {
+                        const surface =
+                            await resolveExternalSessionSurfaceOps(
+                                agentId,
+                            );
+                        const {
+                            validateSource,
+                            listCandidates,
+                            resolveLinkIdentity,
+                            canonicalizeLinkedSession,
+                            pageTranscript,
+                            readAfterTranscript,
+                        } = surface;
+                        if (
+                            !validateSource
+                            || !listCandidates
+                            || !resolveLinkIdentity
+                            || !canonicalizeLinkedSession
+                            || !pageTranscript
+                            || !readAfterTranscript
+                        ) {
+                            return null;
                         }
-                        : {}),
+                        return Object.freeze({
+                            validateSource,
+                            listCandidates,
+                            resolveLinkIdentity,
+                            canonicalizeLinkedSession,
+                            pageTranscript,
+                            readAfterTranscript,
+                        });
+                    } catch {
+                        return null;
+                    }
+            },
+            resolveRetainedExternalSessionAgentContribution:
+                async ({ retainedAgent }) => {
+                    try {
+                        const verified =
+                            await verifyRunnerAgentBindingAgainstGeneration({
+                                paths: resolvePluginStorePaths({
+                                    happyHomeDir:
+                                        configuration.happyHomeDir,
+                                }),
+                                binding: retainedAgent,
+                            });
+                        return projectManifestAgentContribution({
+                            definition: verified.declaredAgent,
+                            provenance:
+                                verified.manifestAuthority
+                                    === 'bundled_first_party'
+                                    ? 'first_party'
+                                    : 'external',
+                            source: {
+                                kind: verified.manifestAuthority
+                                    === 'bundled_first_party'
+                                    ? 'bundled'
+                                    : 'package',
+                            },
+                            pluginId: verified.manifest.id,
+                        });
+                    } catch {
+                        return null;
+                    }
+                },
+            snapshotVoiceAuthority: async ({ retainedAgent }) => {
+                const verifiedRetainedAgent =
+                    await attestRetainedAgentForVoice(retainedAgent);
+                if (!verifiedRetainedAgent) return null;
+                const lease =
+                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                        happyHomeDir:
+                            configuration.happyHomeDir,
+                    });
+                try {
+                    if (
+                        (
+                            await authorizeRunnerAgentNewTurn({
+                                retainedAgent:
+                                    verifiedRetainedAgent.binding,
+                            })
+                        ).status !== 'admitted'
+                    ) {
+                        return null;
+                    }
+                    const voiceAuthority =
+                        resolveRetainedAgentSessionRealtimeVoiceAuthority({
+                            runtimeRegistry: lease.registry,
+                            retainedAgent:
+                                verifiedRetainedAgent.binding,
+                        });
+                    if (!voiceAuthority) return null;
+                    return {
+                        agentGeneration: voiceAuthority.generation,
+                        providers:
+                            snapshotAgentSessionRealtimeVoiceProviders({
+                                runtimeRegistry: lease.registry,
+                                policyAgentRef: voiceAuthority.policyAgentRef,
+                            }).flatMap(({ provider, lifecycle }) => {
+                                const declaration =
+                                    voiceAuthority.resolveDeclaration(
+                                        provider.identity,
+                                    );
+                                if (
+                                    !declaration
+                                    || !voiceAuthority.isCurrent(
+                                        provider.identity,
+                                    )
+                                    || voiceAuthority.resolveProviderGeneration(
+                                        provider.identity,
+                                    ) !== lifecycle.generation
+                                ) {
+                                    return [];
+                                }
+                                return [{
+                                    provider: provider.identity,
+                                    providerGeneration: lifecycle.generation,
+                                    declaration,
+                                }];
+                            }),
+                    };
+                } finally {
+                    await lease.release();
+                }
+            },
+            waitVoiceAuthorityRetired: async ({
+                retainedAgent,
+                provider,
+                providerGeneration,
+                signal,
+            }) => {
+                const verifiedRetainedAgent =
+                    await attestRetainedAgentForVoice(retainedAgent);
+                if (!verifiedRetainedAgent) return;
+                const lease =
+                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                        happyHomeDir:
+                            configuration.happyHomeDir,
+                    });
+                let retirementSignal: AbortSignal | null = null;
+                try {
+                    if (
+                        (
+                            await authorizeRunnerAgentNewTurn({
+                                retainedAgent:
+                                    verifiedRetainedAgent.binding,
+                            })
+                        ).status !== 'admitted'
+                    ) {
+                        return;
+                    }
+                    const voiceAuthority =
+                        resolveRetainedAgentSessionRealtimeVoiceAuthority({
+                            runtimeRegistry: lease.registry,
+                            retainedAgent:
+                                verifiedRetainedAgent.binding,
+                        });
+                    retirementSignal =
+                        voiceAuthority
+                        && voiceAuthority.isCurrent(provider)
+                        && voiceAuthority.resolveProviderGeneration(provider)
+                            === providerGeneration
+                            ? voiceAuthority.resolveRetirementSignal(provider)
+                            : null;
+                } finally {
+                    await lease.release();
+                }
+                if (
+                    !retirementSignal
+                    || retirementSignal.aborted
+                ) {
+                    return;
+                }
+                await new Promise<void>((resolve, reject) => {
+                    const onRetired = () => {
+                        cleanup();
+                        resolve();
+                    };
+                    const onAborted = () => {
+                        cleanup();
+                        reject(
+                            new Error(
+                                'voice_authority_wait_aborted',
+                            ),
+                        );
+                    };
+                    const cleanup = () => {
+                        retirementSignal?.removeEventListener(
+                            'abort',
+                            onRetired,
+                        );
+                        signal?.removeEventListener(
+                            'abort',
+                            onAborted,
+                        );
+                    };
+                    retirementSignal.addEventListener(
+                        'abort',
+                        onRetired,
+                        { once: true },
+                    );
+                    signal?.addEventListener(
+                        'abort',
+                        onAborted,
+                        { once: true },
+                    );
+                    if (retirementSignal?.aborted) {
+                        onRetired();
+                    } else if (signal?.aborted) {
+                        onAborted();
+                    }
                 });
-            if (!persisted) {
-                throw new Error(
-                    'startup_instructions_marker_persistence_mismatch',
-                );
-            }
-        },
-    });
+            },
+        });
     const onChildExitedBase = createOnChildExited({
         pidToTrackedSession: params.pidToTrackedSession,
         spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
@@ -4371,7 +7546,7 @@ export async function startDaemonSessionControlRuntime(
                         entry.admission = {
                             status: 'captured',
                             sessionId: captured.sessionId,
-                            committedFenceMs: captured.committedFenceMs,
+                            authority: captured.authority,
                         };
                     } else if (captured?.status === 'already_inactive') {
                         entry.admission = {
@@ -4380,7 +7555,7 @@ export async function startDaemonSessionControlRuntime(
                         };
                     }
                 } catch (error) {
-                    logger.debug('[DAEMON RUN] Failed to capture exact Session fence before respawn; marker will retain recovery custody', {
+                    logger.debug('[DAEMON RUN] Failed to capture Session publisher authority before respawn; marker will retain recovery custody', {
                         sessionId,
                         pid: tracked.pid,
                         error: error instanceof Error ? error.message : String(error),
@@ -4417,7 +7592,59 @@ export async function startDaemonSessionControlRuntime(
         },
         onPidPromoted: onTrackedSessionPidPromoted,
         shouldPreserveSessionMarkerOnExit: ({ trackedSession, unexpected }) => {
-            return unexpected && trackedSession.startedBy === 'daemon';
+            if (unexpected && trackedSession.startedBy === 'daemon') return true;
+            const terminal = trackedSession.happySessionMetadataFromLocalWebhook?.terminal
+                ?? trackedSession.hostedTerminal;
+            return Boolean(trackedSession.publishedTerminalControlServiceabilityAttachmentId)
+                || Boolean(terminal?.mode && terminal.mode !== 'plain');
+        },
+        onFinalTrackedSessionExitStaged: async ({ pid, trackedSession }) => {
+            if (params.connectedServicesRestartRequestedPids.has(pid)) return;
+            const sessionId = normalizeOptionalString(trackedSession.happySessionId);
+            if (!sessionId) return;
+            const terminal = trackedSession.happySessionMetadataFromLocalWebhook?.terminal
+                ?? trackedSession.hostedTerminal;
+            const attachmentInfo = await readTerminalHostAttachmentInfo({
+                happyHomeDir: configuration.happyHomeDir,
+                sessionId,
+            }).catch((error) => {
+                logger.debug('[DAEMON RUN] Preserved runner-exit marker but could not read its terminal-host attachment', {
+                    sessionId,
+                    pid,
+                    error,
+                });
+                throw error;
+            });
+            if (attachmentInfo?.version !== 2) {
+                if (
+                    trackedSession.publishedTerminalControlServiceabilityAttachmentId
+                    || (terminal?.mode && terminal.mode !== 'plain')
+                ) {
+                    throw new Error('terminal_host_attachment_unavailable_after_runner_exit');
+                }
+                return;
+            }
+            const terminalMode = resolveDisconnectedTerminalMode({
+                terminal,
+                hostKind: attachmentInfo.handle.kind,
+                attachmentId: attachmentInfo.attachmentId,
+            });
+            if (!terminalMode) {
+                throw new Error('terminal_host_mode_unresolved_after_runner_exit');
+            }
+
+            registerDisconnectedTerminalHostCandidate({
+                sessionId,
+                pid,
+                happyHomeDir: configuration.happyHomeDir,
+                attachmentId: attachmentInfo.attachmentId,
+                handle: attachmentInfo.handle,
+                terminalMode,
+                ...(trackedSession.publishedTerminalControlServiceabilityAttachmentId
+                    === attachmentInfo.attachmentId
+                    ? { controlDescriptorAvailable: true }
+                    : {}),
+            });
         },
     });
     onChildExited = async (pid, exit) => {
@@ -4446,6 +7673,29 @@ export async function startDaemonSessionControlRuntime(
             });
             return;
         }
+        if (
+            trackedBeforeExit
+                .agentRuntimeDaemonServiceAuthorityFilePath
+            && trackedBeforeExit
+                .agentRuntimeDaemonServiceCapabilityHash
+        ) {
+            await removeAgentRuntimeDaemonServiceAuthorityIfOwned({
+                happyHomeDir: configuration.happyHomeDir,
+                publicReleaseRing: configuration.publicReleaseRing,
+                path: trackedBeforeExit
+                    .agentRuntimeDaemonServiceAuthorityFilePath,
+                capabilityDigest: trackedBeforeExit
+                    .agentRuntimeDaemonServiceCapabilityHash,
+            }).catch((error) => {
+                logger.debug(
+                    '[DAEMON RUN] Runner Agent authority owner cleanup failed (non-fatal)',
+                    error,
+                );
+                return false;
+            });
+        }
+        delete trackedBeforeExit
+            .agentRuntimeDaemonServiceCapabilityHash;
         const restartWasRequested = connectedServiceRestartWasRequested || runnerRespawnScheduledPids.has(pid);
         if (!params.pidToTrackedSession.has(pid)) {
             connectedServiceRuntimeRegistry.unregisterPid(pid);
@@ -4457,15 +7707,7 @@ export async function startDaemonSessionControlRuntime(
             const stillLive = Array.from(params.pidToTrackedSession.values())
                 .some((child) => child.happySessionId === trackedBeforeExit.happySessionId);
             if (!stillLive) {
-                await agentRuntimeSessionBridge.disposeSession(
-                    trackedBeforeExit.happySessionId,
-                ).catch((error) => {
-                    logger.debug(
-                        '[DAEMON RUN] Agent runtime session bridge cleanup failed (non-fatal)',
-                        error,
-                    );
-                });
-                connectedServiceTurnDeferralQueue.cancelSession(
+                await connectedServiceTurnDeferralQueue.cancelSession(
                     trackedBeforeExit.happySessionId,
                     restartWasRequested ? 'session_restarting' : 'session_terminated',
                 );
@@ -4524,15 +7766,49 @@ export async function startDaemonSessionControlRuntime(
         connectedServiceRuntimeRegistry.unregisterPid(tracked.pid);
         sessionRunnerRespawnManager.handleUnexpectedExit(tracked, exit, { forceRestart: true });
     };
-    const stopSession = async (sessionId: string): Promise<StopSessionResult> =>
+    const stopSession = async (
+        sessionId: string,
+        options?: StopSessionOptions,
+    ): Promise<StopSessionResult> =>
         await disconnectedTerminalHostResumeLifecycle.runStop(sessionId, async () => {
             sessionRunnerRespawnManager.markStopRequested(sessionId, { reason: 'daemon_stop_session', requestedAtMs: Date.now() });
+            const automaticRecoveryCancellations = await Promise.allSettled([
+                params.cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop?.({ sessionId })
+                    ?? Promise.resolve(null),
+                runtimeAuthRecoveryScheduler.cancel({ sessionId }),
+                temporaryThrottleScheduler.cancel({ sessionId }),
+            ]);
+            const automaticRecoveryOwners = ['inactive_usage_limit', 'runtime_auth', 'temporary_throttle'] as const;
+            automaticRecoveryCancellations.forEach((result, index) => {
+                if (result.status !== 'rejected') return;
+                logger.warn('[DAEMON RUN] Automatic recovery cancellation failed after explicit Stop', {
+                    sessionId,
+                    owner: automaticRecoveryOwners[index],
+                    error: serializeAxiosErrorForLog(result.reason),
+                });
+            });
+            temporaryThrottleResumeSnapshotsBySessionId.delete(sessionId);
             await connectedServiceRecoverySupersessionCleaner({
                 sessionId,
                 event: { kind: 'manual_session_supersession', reason: 'stop' },
             });
+            if (params.daemonSessionMutationCustody.stage) {
+                await persistExplicitSessionStopUsageLimitRecoveryCancellation({
+                    credentials: params.credentials,
+                    sessionId,
+                    mutationCustody: { stage: params.daemonSessionMutationCustody.stage },
+                }).catch((error) => {
+                    logger.warn('[DAEMON RUN] Failed to publish explicit Stop recovery cancellation', {
+                        sessionId,
+                        error: serializeAxiosErrorForLog(error),
+                    });
+                });
+            }
             physicallyRetiredTerminalAttachmentIdBySessionId.delete(sessionId);
-            const trackedStopResult = await stopSessionCore(sessionId);
+            const trackedStopResult = await stopSessionCore(
+                sessionId,
+                options,
+            );
             const physicallyRetiredAttachmentId = physicallyRetiredTerminalAttachmentIdBySessionId.get(sessionId);
             physicallyRetiredTerminalAttachmentIdBySessionId.delete(sessionId);
             if (isTerminalHostPhysicallyRetiredStopResult(trackedStopResult) && physicallyRetiredAttachmentId) {
@@ -4590,8 +7866,7 @@ export async function startDaemonSessionControlRuntime(
                 }),
                 onExactTerminalAttachmentRetired: notifyTerminalAttachmentRetiredThroughCatalog,
                 retireExactTerminalControlServiceability: async ({ sessionId, attachmentInfo, terminalMode }) => {
-                    await retireExactTerminalControlServiceability({
-                        credentials: params.credentials,
+                    return await retireTerminalControlServiceabilityForCurrentAccount({
                         sessionId,
                         attachmentId: attachmentInfo.attachmentId,
                         terminalMode,
@@ -4755,6 +8030,30 @@ export async function startDaemonSessionControlRuntime(
                 : null,
         });
     };
+    const resolveProviderQualifiedRuntimeAuthFailureSourceForSession: NonNullable<
+        Parameters<typeof authorizeConnectedServiceRuntimeAuthFailureSource>[0]['resolveProviderQualifiedRuntimeAuthFailureSource']
+    > = async ({ classification }) => {
+        const serviceId = ConnectedServiceIdSchema.safeParse(classification.serviceId);
+        const groupId = typeof classification.groupId === 'string' ? classification.groupId.trim() : '';
+        if (!serviceId.success || !groupId) return classification;
+        return await resolveRuntimeAuthFailureSourceProfile({
+            classification,
+            getGroupMembers: async () => (await params.api.getConnectedServiceAuthGroup({
+                serviceId: serviceId.data,
+                groupId,
+            }))?.members ?? null,
+            resolveProviderAccountId: async (profileId) => {
+                const resolution = await resolveConnectedServiceCredentialResolutions({
+                    credentials: params.credentials,
+                    api: params.api,
+                    bindings: [{ serviceId: serviceId.data, profileId }],
+                }).then((byServiceId) => byServiceId.get(serviceId.data) ?? null);
+                return resolution
+                    ? readConnectedServiceCredentialProviderAccountId(resolution.record)
+                    : null;
+            },
+        });
+    };
     const resolveRegisteredRuntimeAuthFailureSourceForSession: NonNullable<
         Parameters<typeof authorizeConnectedServiceRuntimeAuthFailureSource>[0]['resolveRegisteredRuntimeAuthFailureSource']
     > = async ({ sessionId: liveSessionId, tracked, classification: liveClassification }) => {
@@ -4806,40 +8105,116 @@ export async function startDaemonSessionControlRuntime(
                 token: params.credentials.token,
                 credentials: params.credentials,
                 sessionId: input.sessionId,
+                currentMachineId: params.machineId,
             });
-        const switchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
-            api: params.api,
-            runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
-            accountUsageStore: providerAccountUsageStore,
-            leases: connectedServiceAuthGroupSwitchLeases,
-            quotaFreshnessMs: resolvePositiveIntEnv(
-                params.processEnv.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
-                5 * 60_000,
-                { min: 1_000, max: 60 * 60_000 },
-            ),
-            nowMs: () => Date.now(),
-            probeQuotaSnapshotsForGroup: async (groupInput) => {
-                await params.getConnectedServiceQuotasCoordinator()?.probeGroupQuotaSnapshots(groupInput);
-            },
-            // K2: reactive runtime-auth failure routes through the shared FSM apply builder
-            // (hot-apply-in-place when eligible, else gated restart-resume + mid-turn
-            // re-continue). Same builder the proactive quota coordinator uses.
-            restartSession: buildConnectedServiceAuthGroupRestartSession({
-                sessionId: input.sessionId,
-                interruptedSessionId: input.sessionId,
-                interruptedOriginId,
-                restartReason: input.classification?.kind ?? null,
-                commitAccountSwitchEvents: true,
-            }),
-            preflightConnectedServiceAuthGeneration: buildConnectedServiceAuthGroupRestartSession({
-                sessionId: input.sessionId,
-                interruptedSessionId: input.sessionId,
-                interruptedOriginId,
-                restartReason: input.classification?.kind ?? null,
-                commitAccountSwitchEvents: false,
-                dryRun: true,
-            }),
+        const runtimeAuthV4Support =
+            params.resolveQualifiedConnectedAccountV4Support?.()
+            ?? 'absent';
+        const legacyRuntimeAuthService = ConnectedServiceIdSchema.safeParse(
+            input.classification.serviceId,
+        );
+        const qualifiedRuntimeAuthService = legacyRuntimeAuthService.success
+            ? resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
+                legacyRuntimeAuthService.data,
+            )
+            : null;
+        const runtimeAuthGroupQuotaFreshnessMs = resolvePositiveIntEnv(
+            params.processEnv.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
+            5 * 60_000,
+            { min: 1_000, max: 60 * 60_000 },
+        );
+        const buildRuntimeAuthApplication = (options: Readonly<{
+            commitAccountSwitchEvents: boolean;
+            dryRun?: boolean;
+        }>) => buildConnectedServiceAuthApplicationSession({
+            sessionId: input.sessionId,
+            interruptedSessionId: input.sessionId,
+            interruptedOriginId,
+            restartReason: input.classification.kind,
+            commitAccountSwitchEvents: options.commitAccountSwitchEvents,
+            ...(options.dryRun ? { dryRun: true } : {}),
         });
+        const qualifiedRuntimeAuthSwitchCoordinator: NonNullable<
+            Parameters<typeof handleConnectedServiceRuntimeAuthFailureForSession>[0]['switchCoordinator']
+        > | null = (
+            runtimeAuthV4Support === 'advertised'
+            && qualifiedRuntimeAuthService
+            && legacyRuntimeAuthService.success
+        )
+            ? (() => {
+                const legacyServiceId = legacyRuntimeAuthService.data;
+                const qualifiedService = qualifiedRuntimeAuthService;
+                const qualifiedCoordinator =
+                    createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
+                        token: params.credentials.token,
+                        quotaFreshnessMs: runtimeAuthGroupQuotaFreshnessMs,
+                        nowMs: () => Date.now(),
+                        leases: qualifiedConnectedAccountAuthGroupSwitchLeases,
+                        prepareCandidateForSwitch:
+                            prepareQualifiedAuthGroupCandidateForSwitch,
+                        // The V4 coordinator owns group truth and mutation. Runtime application
+                        // remains the bounded scalar-session compatibility seam until runners
+                        // carry qualified binding identities.
+                        applyGeneration: async (generation) => await buildRuntimeAuthApplication({
+                            commitAccountSwitchEvents: true,
+                        })({
+                            ...generation,
+                            serviceId: legacyServiceId,
+                        }),
+                    });
+                return {
+                    switchAfterClassifiedFailure: async (switchInput) => {
+                        // Source authorization can replace a stale report with the exact
+                        // runtime binding. Do not let an already-selected V4 coordinator
+                        // operate on a different scalar compatibility identity.
+                        if (switchInput.serviceId !== legacyServiceId) {
+                            throw new Error(
+                                'qualified_connected_account_runtime_auth_service_mismatch',
+                            );
+                        }
+                        return await qualifiedCoordinator
+                            .switchAfterClassifiedFailure({
+                                ...switchInput,
+                                serviceId: qualifiedService,
+                            });
+                    },
+                };
+            })()
+            : null;
+        const switchCoordinator = qualifiedRuntimeAuthSwitchCoordinator
+            ?? (
+                runtimeAuthV4Support === 'absent'
+                    ? createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+                        api: params.api,
+                        prepareCandidateForSwitch:
+                            prepareLegacyAuthGroupCandidateForSwitch,
+                        runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
+                        accountUsageStore: providerAccountUsageStore,
+                        leases: connectedServiceAuthGroupSwitchLeases,
+                        quotaFreshnessMs: runtimeAuthGroupQuotaFreshnessMs,
+                        nowMs: () => Date.now(),
+                        probeQuotaSnapshotsForGroup: async (groupInput) => {
+                            const coordinator = params.getConnectedServiceQuotasCoordinator();
+                            return coordinator
+                                ? await coordinator.probeGroupQuotaSnapshots(groupInput)
+                                : {
+                                    status: 'incomplete' as const,
+                                    requestedProfileCount: groupInput.profileIds.length,
+                                    completedProfileCount: 0,
+                                    reason: 'probe_unavailable' as const,
+                                };
+                        },
+                        restartSession: buildRuntimeAuthApplication({
+                            commitAccountSwitchEvents: true,
+                        }),
+                        preflightConnectedServiceAuthGeneration:
+                            buildRuntimeAuthApplication({
+                                commitAccountSwitchEvents: false,
+                                dryRun: true,
+                            }),
+                    })
+                    : null
+            );
         const runtimeAuthCapabilityAgentId = input.sourceAuthorization?.status === 'authorized'
             ? input.sourceAuthorization.tracked
                 ? resolveTrackedSessionCatalogAgentId(input.sourceAuthorization.tracked)
@@ -4851,6 +8226,33 @@ export async function startDaemonSessionControlRuntime(
             sessionId: input.sessionId,
             ...(runtimeAuthCapabilityAgentId ? { agentId: runtimeAuthCapabilityAgentId } : {}),
         });
+        const continueAfterRuntimeAuthSwitch = createConnectedServiceContinuationHandler({
+            credentials: params.credentials,
+            interruptedOriginId,
+            resumePromptMode: await resolveContinuationResumePromptMode({
+                serviceId: ConnectedServiceIdSchema.parse(input.classification.serviceId),
+                groupId: input.classification.groupId,
+                explicit: input.resumePromptMode,
+                loadGroupPolicy: input.classification.groupId
+                    ? async () => (await params.api.getConnectedServiceAuthGroup({
+                        serviceId: ConnectedServiceIdSchema.parse(input.classification.serviceId),
+                        groupId: input.classification.groupId!,
+                    }))?.policy ?? null
+                    : undefined,
+            }),
+            customResumePrompt: readContinuationCustomResumePrompt(getActiveAccountSettingsSnapshot()?.settings ?? null),
+            recoveryKind: input.classification.kind,
+            resolveInterruption: ({ sessionId, action, switchReason }) =>
+                resolveConnectedServiceContinuationInterruptionForSwitch({
+                    sessionId,
+                    interruptedSessionId: input.sessionId,
+                    action,
+                    switchReason,
+                    failureDriven: true,
+                    turnDeferralQueue: connectedServiceTurnDeferralQueue,
+            }),
+        });
+        let supersedingSourceConverged = false;
         const result = await handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => Array.from(params.pidToTrackedSession.values()),
             resolveInactiveSession: async ({ sessionId }) => {
@@ -4861,16 +8263,18 @@ export async function startDaemonSessionControlRuntime(
                     token: params.credentials.token,
                     credentials: params.credentials,
                     sessionId,
+                    currentMachineId: params.machineId,
                 });
             },
             resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
             resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
+            resolveProviderQualifiedRuntimeAuthFailureSource: resolveProviderQualifiedRuntimeAuthFailureSourceForSession,
             switchCoordinator,
             switchAttemptTracker: connectedServiceRuntimeAuthSwitchAttempts,
             switchCore: connectedServiceSessionAuthSwitchCore,
             temporaryThrottleRecovery,
-            emitSessionEvent: (sessionId, event) => {
-                commitConnectedServiceAccountSwitchSessionEventWithNotification({
+            emitSessionEvent: async (sessionId, event) => {
+                await commitConnectedServiceAccountSwitchSessionEventWithNotification({
                     sessionId,
                     event,
                     logContext: 'runtime-auth',
@@ -4901,41 +8305,55 @@ export async function startDaemonSessionControlRuntime(
                 }
                 return await refreshCoordinator.refreshConnectedServiceCredentialForRuntimeAuthFailure(refreshInput);
             },
-            continueAfterRuntimeAuthSwitch: createConnectedServiceContinuationHandler({
-                credentials: params.credentials,
-                interruptedOriginId,
-                resumePromptMode: await resolveContinuationResumePromptMode({
-                    serviceId: ConnectedServiceIdSchema.parse(input.classification.serviceId),
-                    groupId: input.classification.groupId,
-                    explicit: input.resumePromptMode,
-                    loadGroupPolicy: input.classification.groupId
-                        ? async () => (await params.api.getConnectedServiceAuthGroup({
-                            serviceId: ConnectedServiceIdSchema.parse(input.classification.serviceId),
-                            groupId: input.classification.groupId!,
-                        }))?.policy ?? null
-                        : undefined,
-                }),
-                customResumePrompt: readContinuationCustomResumePrompt(getActiveAccountSettingsSnapshot()?.settings ?? null),
-                recoveryKind: input.classification.kind,
-                resolveInterruption: ({ sessionId, action, switchReason }) =>
-                    resolveConnectedServiceContinuationInterruptionForSwitch({
-                        sessionId,
-                        interruptedSessionId: input.sessionId,
-                        action,
-                        switchReason,
-                        failureDriven: true,
-                        turnDeferralQueue: connectedServiceTurnDeferralQueue,
-                    }),
-            }),
+            continueAfterRuntimeAuthSwitch,
+            settleSupersedingRuntimeGroupGeneration: async (settlementInput) => {
+                await settleSupersedingRuntimeAuthGenerationForSource({
+                    recovery: { status: 'switch_attempted', result: settlementInput.result },
+                    serviceId: settlementInput.serviceId,
+                    groupId: settlementInput.groupId,
+                    sessionId: settlementInput.sessionId,
+                    fromProfileId: settlementInput.fromProfileId,
+                    consumeCommittedAuthGroupGeneration,
+                });
+                supersedingSourceConverged = true;
+            },
         });
-        if (
-            result
-            && typeof result === 'object'
-            && 'status' in result
-            && result.status === 'recovery_superseded'
-            && 'reason' in result
-            && (result.reason === 'source_tuple_unavailable' || result.reason === 'source_tuple_mismatch')
-        ) return result;
+        if (await continueAfterSupersededRuntimeAuthFailure({
+            result,
+            sessionId: input.sessionId,
+            interruptedOriginId,
+            continueAfterRuntimeAuthSwitch,
+            reconcileCurrentRuntimeAuthTarget: async ({ sessionId, serviceId, groupId }) => {
+                const target = connectedServiceRuntimeRegistry.getBySessionId(sessionId);
+                if (
+                    !target
+                    || !isCurrentRuntimeGenerationTarget(target)
+                    || !target.activeBindings.some((binding) => (
+                        binding.serviceId === serviceId && binding.groupId === groupId
+                    ))
+                ) return false;
+                await scheduleRuntimeTargetGenerationReconciliation(target, undefined, true);
+                const currentTarget = connectedServiceRuntimeRegistry.getBySessionId(sessionId);
+                if (!currentTarget || !isCurrentRuntimeGenerationTarget(currentTarget)) return false;
+                const snapshot = latestConnectedServiceProjectionSnapshot;
+                const group = snapshot?.groups.find((candidate) => (
+                    candidate.serviceId === serviceId && candidate.groupId === groupId
+                )) ?? null;
+                if (!group?.activeProfileId) return false;
+                const credentialPresence = snapshot?.resolveCredentialPresence(serviceId, group.activeProfileId);
+                if (!credentialPresence || credentialPresence.status === 'absent') return false;
+                return currentTarget.activeBindings.some((binding) => (
+                    binding.serviceId === serviceId
+                    && binding.groupId === groupId
+                    && binding.profileId === group.activeProfileId
+                    && binding.groupGeneration === group.generation
+                    && (
+                        credentialPresence.status === 'legacy_unfenced'
+                        || binding.credentialRevision === credentialPresence.credentialRevision
+                    )
+                ));
+            },
+        })) return result;
         if (
             input.recoveryInvocationSource !== 'scheduler_retry'
             && input.classification.kind === 'usage_limit'
@@ -4960,7 +8378,13 @@ export async function startDaemonSessionControlRuntime(
                         sourceAccountLabel: input.classification.sourceAccountLabel ?? null,
                         sourceGroupGeneration: input.classification.groupGeneration ?? null,
                         resetAtMs: input.classification.resetsAtMs,
-                        ...(committedGeneration ?? {}),
+                        ...(committedGeneration
+                            ? {
+                                committedGeneration: committedGeneration.committedGeneration,
+                                sourceRequiresConvergence:
+                                    committedGeneration.sourceRequiresConvergence && !supersedingSourceConverged,
+                            }
+                            : {}),
                     });
                 } catch (error) {
                     logger.debug('[DAEMON RUN] Failed to fan out connected-service runtime usage-limit exhaustion (non-fatal)', error);
@@ -4977,15 +8401,13 @@ export async function startDaemonSessionControlRuntime(
         }));
         return result;
     };
-    const deliverRuntimeAuthRecoveryVisibleEvent = async (delivery: Readonly<{
-        sessionId: string;
-        attemptId: string;
-        transition: string;
-        transcriptEvent: unknown;
-    }>): Promise<void> => {
-        await commitRuntimeAuthRecoveryVisibleEventDelivery({
-            credentials: params.credentials,
-            delivery,
+    const deliverRuntimeAuthRecoveryVisibleEvent = async (
+        delivery: RuntimeAuthRecoveryVisibleEventDelivery,
+    ): Promise<void> => {
+        await params.daemonSessionMutationCustody.stageTranscriptEvent({
+            sessionId: delivery.sessionId,
+            eventId: buildRuntimeAuthRecoveryAttemptTransitionLocalId(delivery),
+            data: { ...delivery.transcriptEvent },
         });
     };
     const runtimeAuthRecoveryScheduler = createRuntimeAuthRecoverySchedulerForDaemon({
@@ -5046,7 +8468,6 @@ export async function startDaemonSessionControlRuntime(
             serverUrl: configuration.serverUrl,
             timeoutMs: 1_500,
         }));
-    const managedLocalServicesExec = createPluginExecService();
     const localServicesRuntime = createLocalServicesDaemonRuntime({
         machineId: params.machineId,
         processEnv: params.processEnv,
@@ -5067,308 +8488,12 @@ export async function startDaemonSessionControlRuntime(
         hostedWebStaticAssets: {
             verifyArtifact: verifyHostedWebStaticAssetArtifact,
         },
-        // A.16x.8 flip: supply the canonical binary-safe managed exec service so plugin-contributed
-        // hosted-web surfaces backed by a managed dev server actually spawn (assignAndInject /
-        // detectAfterLaunch) instead of degrading to the `managed_service_unavailable` fallback.
-        // The daemon abort signal stops launches once the control runtime tears down. Preview-URL
-        // minting has no daemon owner today, so the managed preview is surfaced through the existing
-        // local-service preview routes (no `registerPreviewEndpoint` hook is invented here).
-        managedLocalServices: {
-            exec: managedLocalServicesExec,
-            signal: shutdownCancellationDomains.managedLocalServicesProcessSignal,
-        },
     });
-    params.onProviderManagedLocalServicesOwnerReady?.({
-        dispatch: createProviderManagedLocalServicesDispatch({
-            startTrusted: localServicesRuntime.trustedManagedLocalServices.start,
-            processEnv: params.processEnv,
-            signal: shutdownCancellationDomains.managedLocalServicesProcessSignal,
-        }),
-        getManagedSnapshot: localServicesRuntime.managedRoutes.getSnapshot,
+    params.onProviderManagedCatalogRuntimeOwnerReady?.({
         managedCatalogRuntime: createProviderManagedCatalogRuntimePort({
-            materializationBaseDir: join(
-                configuration.happyHomeDir,
-                'providers',
-                'managed',
-                'catalog',
-            ),
-            resolveManagedLocalServicesEnabled: async () => {
-                const serverSnapshot = await resolveServerFeaturesSnapshot();
-                return resolveCliFeatureDecision({
-                    featureId: 'localServices.managed',
-                    env: params.processEnv,
-                    ...(serverSnapshot ? { serverSnapshot } : {}),
-                }).state === 'enabled';
-            },
-            localServices: localServicesRuntime.trustedManagedLocalServices,
-            exec: managedLocalServicesExec,
+            happyHomeDir: configuration.happyHomeDir,
         }),
     });
-    const startupManagedProviderRecoveryCandidates =
-        params.startupManagedProviderRecoveryCandidates ?? [];
-    const recoverStartupManagedProviderCandidates = async (
-        requestAuthHttpPort: number,
-    ): Promise<void> => {
-        const recoverySignal =
-            shutdownCancellationDomains.daemonWorkSignal;
-        const settingsReady =
-            await warmActiveAccountSettingsSnapshotBestEffort({
-                credentials: params.credentials,
-                logger,
-            });
-        if (!settingsReady || recoverySignal.aborted) {
-            logger.debug(
-                '[DAEMON RUN] Managed Provider startup recovery left request-auth unavailable',
-                {
-                    candidateCount:
-                        startupManagedProviderRecoveryCandidates.length,
-                    reason: recoverySignal.aborted
-                        ? 'daemon_shutdown'
-                        : 'account_settings_unavailable',
-                },
-            );
-            return;
-        }
-        try {
-            await fetchConnectedServiceProjectionSnapshot(recoverySignal);
-        } catch {
-            logger.debug(
-                '[DAEMON RUN] Managed Provider startup recovery left request-auth unavailable',
-                {
-                    candidateCount:
-                        startupManagedProviderRecoveryCandidates.length,
-                    reason: recoverySignal.aborted
-                        ? 'daemon_shutdown'
-                        : 'connected_service_projection_unavailable',
-                },
-            );
-            return;
-        }
-        if (recoverySignal.aborted) return;
-        let providersEnabled = false;
-        let managedLocalServicesEnabled = false;
-        try {
-            const serverSnapshot = await resolveServerFeaturesSnapshot();
-            providersEnabled = resolveCliFeatureDecision({
-                featureId: 'providers',
-                env: params.processEnv,
-                ...(serverSnapshot ? { serverSnapshot } : {}),
-            }).state === 'enabled';
-            managedLocalServicesEnabled = resolveCliFeatureDecision({
-                featureId: 'localServices.managed',
-                env: params.processEnv,
-                ...(serverSnapshot ? { serverSnapshot } : {}),
-            }).state === 'enabled';
-        } catch {
-            providersEnabled = false;
-            managedLocalServicesEnabled = false;
-        }
-        if (recoverySignal.aborted) return;
-        await Promise.all(startupManagedProviderRecoveryCandidates.map(
-            async (candidate) => {
-                if (recoverySignal.aborted) return;
-                const tracked = params.pidToTrackedSession.get(candidate.pid);
-                const options = tracked?.spawnOptions;
-                const selection = options?.modelSelection;
-                const previousBinding = options?.providerBindingMetadataV1 ?? null;
-                const backendTarget = options?.backendTarget;
-                const agentId = resolveTrackedSessionCatalogAgentId(tracked);
-                const failClosedWithoutRecovery = async (
-                    reason: string,
-                ): Promise<void> => {
-                    logger.debug(
-                        '[DAEMON RUN] Managed Provider startup recovery left request-auth unavailable',
-                        {
-                            sessionId: candidate.sessionId,
-                            reason,
-                        },
-                    );
-                };
-                if (
-                    !providersEnabled
-                    || !managedLocalServicesEnabled
-                    || !tracked
-                    || !selection
-                    || selection.ref.providerConnectionId === null
-                    || !previousBinding
-                    || !backendTarget
-                    || !agentId
-                ) {
-                    await failClosedWithoutRecovery(
-                        'managed_provider_recovery_prerequisites_unavailable',
-                    );
-                    return;
-                }
-
-                let runtimeLease: Awaited<ReturnType<
-                    typeof acquireAuthoritativePluginRuntimeRegistryLease
-                >> | null = null;
-                let cleanupRequested = false;
-                let runtimeLeaseReleased = false;
-                let attemptForCleanup:
-                    | Extract<
-                        Awaited<ReturnType<typeof prepareProviderLaunch>>,
-                        { ok: true; kind: 'provider' }
-                    >['attempt']
-                    | null = null;
-                const cleanupAuthorization = async (): Promise<void> => {
-                    cleanupRequested = true;
-                    attemptForCleanup?.cleanupOnFailure();
-                    const lease = runtimeLease;
-                    if (!lease || runtimeLeaseReleased) return;
-                    runtimeLeaseReleased = true;
-                    await lease.release().catch(() => undefined);
-                };
-                const abortRecovery = (): void => {
-                    void cleanupAuthorization();
-                };
-                recoverySignal.addEventListener(
-                    'abort',
-                    abortRecovery,
-                    { once: true },
-                );
-                try {
-                    if (recoverySignal.aborted) {
-                        await cleanupAuthorization();
-                        return;
-                    }
-                    const prepared = await prepareProviderLaunch({
-                        selection,
-                        backendTarget,
-                        machineId: params.machineId,
-                        agentId,
-                        sessionId: candidate.sessionId,
-                        previousBinding,
-                        // Startup is passive: a security change cannot prompt.
-                        confirmation: null,
-                        connectedServices: null,
-                        featureEnabled: true,
-                        resolvePrerequisites: async () => ({ ok: true }),
-                        createAuthorizationAttempt: async (context) => {
-                            runtimeLease =
-                                await acquireAuthoritativePluginRuntimeRegistryLease({
-                                    happyHomeDir: configuration.happyHomeDir,
-                                });
-                            if (
-                                cleanupRequested
-                                || recoverySignal.aborted
-                            ) {
-                                await cleanupAuthorization();
-                                throw new Error('daemon_shutdown');
-                            }
-                            return await createRuntimeProviderSpawnAuthorizationAttempt({
-                                selection: context.selection,
-                                machineId: context.machineId,
-                                agentTargetKey: context.agentTargetKey,
-                                agentId: context.agentId,
-                                lease: runtimeLease,
-                                getAccountSettingsSnapshot:
-                                    getActiveAccountSettingsSnapshot,
-                                subscribeAccountSettingsSnapshot: (listener) =>
-                                    subscribeActiveAccountSettingsSnapshot(
-                                        () => listener(),
-                                    ),
-                                runtimeStateStore:
-                                    createProviderRuntimeStateStore({
-                                        happyHomeDir:
-                                            configuration.happyHomeDir,
-                                        machineId: context.machineId,
-                                    }),
-                                materializationBaseDir: join(
-                                    configuration.happyHomeDir,
-                                    'providers',
-                                    'materialized',
-                                ),
-                                sessionId: candidate.sessionId,
-                                ...(params.resolveManagedPurposeBindingIntent
-                                    ? {
-                                        resolveManagedPurposeBindingIntent:
-                                            params.resolveManagedPurposeBindingIntent,
-                                    }
-                                    : {}),
-                                ...(context.managedPurposeBindingSnapshot
-                                    ? {
-                                        managedPurposeBindingSnapshot:
-                                            context.managedPurposeBindingSnapshot,
-                                    }
-                                    : {}),
-                            });
-                        },
-                    });
-                    if (prepared.ok && prepared.kind === 'provider') {
-                        attemptForCleanup = prepared.attempt;
-                    }
-                    if (cleanupRequested || recoverySignal.aborted) {
-                        await cleanupAuthorization();
-                        return;
-                    }
-                    if (
-                        !prepared.ok
-                        || prepared.kind !== 'provider'
-                        || !(
-                            'materializeManagedEndpoint'
-                            in prepared.attempt
-                        )
-                    ) {
-                        await cleanupAuthorization();
-                        await failClosedWithoutRecovery(
-                            'managed_provider_authorization_reconstruction_failed',
-                        );
-                        return;
-                    }
-                    const recovery = await recoverManagedProviderEndpoint({
-                        sessionId: candidate.sessionId,
-                        attachment: candidate.attachment,
-                        attempt: prepared.attempt,
-                        requestAuthHttpPort,
-                        processEnv: params.processEnv,
-                        localServices:
-                            localServicesRuntime.trustedManagedLocalServices,
-                        requestAuthRegistry:
-                            connectedAccountRequestAuthRegistry,
-                        validateRequestAuth:
-                            connectedAccountRequestAuthService.validateRequestAuth,
-                        clearMarkerAttachment: async () => {
-                            await clearSessionMarkerManagedLocalServiceRunAttachment({
-                                pid: candidate.pid,
-                                ownership: candidate.markerOwnership,
-                                attachment: candidate.attachment,
-                            });
-                        },
-                        cleanupMaterialization: async () => {
-                            await rm(
-                                candidate.attachment.materialization.rootDir,
-                                { recursive: true, force: true },
-                            );
-                        },
-                        cleanupAuthorization,
-                    });
-                    if (!recovery.ok) {
-                        logger.debug(
-                            '[DAEMON RUN] Managed Provider startup recovery left request-auth unavailable',
-                            {
-                                sessionId: candidate.sessionId,
-                                reason: recovery.code,
-                                detail: recovery.detail,
-                            },
-                        );
-                    }
-                } catch (error) {
-                    await cleanupAuthorization();
-                    await failClosedWithoutRecovery(
-                        error instanceof Error
-                            ? error.message
-                            : 'managed_provider_recovery_failed',
-                    );
-                } finally {
-                    recoverySignal.removeEventListener(
-                        'abort',
-                        abortRecovery,
-                    );
-                }
-            },
-        ));
-    };
     const resolveTrackedHostedWebStaticAssetSessionIds = (): readonly string[] => Object.freeze([
         ...new Set([...params.pidToTrackedSession.values()]
             .map((tracked) => normalizeOptionalString(tracked.happySessionId))
@@ -5594,6 +8719,10 @@ export async function startDaemonSessionControlRuntime(
     let browserRecordingRoutesPublished = false;
     let refreshBrowserRouteOwnersInFlight: Promise<void> | null = null;
     let controlRuntimeResourcesDisposed = false;
+    let managedServiceDurabilityOwner: ManagedServiceDurabilityOwner | null = null;
+    let managedServiceEndpointReadOwner:
+        ReturnType<typeof createDaemonManagedServiceEndpointReadOwner>
+        | null = null;
     const publishBrowserRouteOwners = (): void => {
         if (browserControlRoutes && !browserControlRoutesPublished) {
             browserControlRoutesPublished = true;
@@ -5924,14 +9053,16 @@ export async function startDaemonSessionControlRuntime(
     const apiMachineForSessions = params.getApiMachineForSessions();
     apiMachineForSessions?.registerLocalServicesRoutes(localServicesMachineRpcRoutes);
     apiMachineForSessions?.registerSimulatorPreviewRoutes(simulatorPreviewRuntime.routes);
-    const disposeControlRuntimeResources = async (
-        managedLocalServicesDisposition: 'permanent' | 'transfer' = 'permanent',
-    ): Promise<void> => {
+    const disposeControlRuntimeResources = async (): Promise<void> => {
         if (controlRuntimeResourcesDisposed) return;
         controlRuntimeResourcesDisposed = true;
+        await managedServiceEndpointReadOwner?.dispose();
+        managedServiceEndpointReadOwner = null;
         unsubscribeConnectedServiceRuntimeTargetRegistrations();
         unsubscribeConnectedServiceRuntimeTargetRegistrations = () => {};
-        connectedServiceTurnDeferralQueue.cancelAll('daemon_shutdown');
+        unsubscribeRunnerAgentAuthorityCurrentness();
+        unsubscribeRunnerAgentAuthorityCurrentness = () => {};
+        await connectedServiceTurnDeferralQueue.cancelAll('daemon_shutdown');
         providerAccountUsagePersistence.dispose();
         shutdownCancellationDomains.beginShutdown();
         // Stop recovery timers so a waiting intent cannot fire switch/restart work into a stopped
@@ -5962,10 +9093,7 @@ export async function startDaemonSessionControlRuntime(
         await disposeBrowserSidecarControlAdapter?.();
         runtimeActionRouteProviderTarget.setLocalServicesRuntimeActionRoutesProvider?.(null);
         runtimeActionRouteProviderTarget.setSimulatorPreviewRoutesProvider?.(null);
-        await shutdownCancellationDomains.stopManagedLocalServices(
-            localServicesRuntime,
-            managedLocalServicesDisposition,
-        );
+        await shutdownCancellationDomains.stopManagedLocalServices(localServicesRuntime);
         browserRecordingRuntime?.stop();
         await simulatorPreviewRuntime.stop();
         // Tear down the long-lived iOS helper child process (SIGTERM) so a verified signed helper
@@ -5990,36 +9118,38 @@ export async function startDaemonSessionControlRuntime(
             lease = await acquireAuthoritativePluginRuntimeRegistryLease({
                 happyHomeDir: configuration.happyHomeDir,
             });
-            const entry = lease
-                .registry
-                .daemonAuthBridgesByServiceId
-                ?.get(serviceId) ?? null;
-            if (!entry) return null;
-            const refresh: ConnectedServiceDaemonAuthBridgeRefresh | null = await (
-                lease.registry.contributes.catalogEntriesById[entry.pluginId]
-                    ?.getConnectedServiceDaemonAuthBridgeRefresh?.()
-                ?? Promise.resolve(null)
-            );
-            if (refresh) {
-                return Object.freeze({
-                    pluginId: entry.pluginId,
-                    registration: Object.freeze({
-                        ...entry.registration,
-                        refresh: async (request: Parameters<ConnectedServiceDaemonAuthBridgeRegistration['refresh']>[0]) => {
-                            const refreshCoordinator = params.getConnectedServiceRefreshCoordinator();
-                            if (!refreshCoordinator) {
-                                throw new Error('connected_service_daemon_auth_bridge_refresh_handler_unavailable');
-                            }
-                            return await refresh({
-                                serviceId,
-                                request,
-                                refreshCoordinator,
-                            });
-                        },
+            const candidates = await Promise.all(
+                Object.entries(lease.registry.contributes.catalogEntriesById)
+                    .filter(([, entry]) => entry.connectedServiceIds?.includes(serviceId) === true)
+                    .map(async ([pluginId, entry]) => {
+                        const refresh: ConnectedServiceDaemonAuthBridgeRefresh | null = await (
+                            entry.getConnectedServiceDaemonAuthBridgeRefresh?.(serviceId) ?? null
+                        );
+                        return refresh ? Object.freeze({ pluginId, refresh }) : null;
                     }),
-                });
-            }
-            return entry;
+            );
+            const bridges = candidates.filter((candidate): candidate is NonNullable<typeof candidate> => (
+                candidate !== null
+            ));
+            if (bridges.length !== 1) return null;
+            const bridge = bridges[0]!;
+            return Object.freeze({
+                pluginId: bridge.pluginId,
+                registration: Object.freeze({
+                    serviceId,
+                    refresh: async (request: Parameters<ConnectedServiceDaemonAuthBridgeRegistration['refresh']>[0]) => {
+                        const refreshCoordinator = params.getConnectedServiceRefreshCoordinator();
+                        if (!refreshCoordinator) {
+                            throw new Error('connected_service_daemon_auth_bridge_refresh_handler_unavailable');
+                        }
+                        return await bridge.refresh({
+                            serviceId,
+                            request,
+                            refreshCoordinator,
+                        });
+                    },
+                }),
+            });
         } catch (error) {
             logger.debug('[DAEMON RUN] Failed to resolve daemon auth bridge from plugin runtime registry', error);
             return null;
@@ -6265,6 +9395,101 @@ export async function startDaemonSessionControlRuntime(
         allowProviderInputAdmissionWrites?: boolean;
     }>) => {
         const allowProviderInputAdmissionWrites = options?.allowProviderInputAdmissionWrites === true;
+        const enforceGenerationProviderInputAdmissions = async (input: Readonly<{
+            target: Readonly<{
+                serviceId: ConnectedServiceId;
+                groupId: string;
+                profileId: string;
+                generation: number;
+                credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+            }>;
+            sessionIds: readonly string[];
+            executionAuthority: ConnectedServiceGenerationExecutionAuthority;
+        }>): Promise<
+            | Readonly<{
+                status: 'ready';
+                admissionsBySessionId: Map<string, EnforcedCurrentTruthProviderInputAdmission>;
+            }>
+            | Readonly<{
+                status: 'failed';
+                result: Readonly<{ reconciliationDisposition: 'failed'; errorCode: string }>;
+            }>
+        > => {
+            const admissionsBySessionId = new Map<string, EnforcedCurrentTruthProviderInputAdmission>();
+            for (const sessionId of input.sessionIds) {
+                const unavailable = enforcedUnavailableProviderInputAdmissions.get(
+                    providerInputAdmissionScopeKey(sessionId, input.target.serviceId, input.target.groupId),
+                );
+                if (unavailable && isCurrentProviderInputAdmissionTarget(unavailable.targetWitness)) {
+                    admissionsBySessionId.set(sessionId, unavailable);
+                }
+            }
+            if (input.executionAuthority === 'passive_projection') {
+                return { status: 'ready', admissionsBySessionId };
+            }
+            for (const sessionId of input.sessionIds) {
+                if (admissionsBySessionId.get(sessionId)?.kind === 'group_unavailable') continue;
+                const admissionTarget = connectedServiceRuntimeRegistry.getBySessionId(sessionId);
+                if (!admissionTarget) continue;
+                const targetWitness = captureProviderInputAdmissionTargetWitness(admissionTarget);
+                if (!targetWitness) {
+                    return {
+                        status: 'failed',
+                        result: { reconciliationDisposition: 'failed', errorCode: 'provider_input_admission_target_released' },
+                    };
+                }
+                const epochId = buildProviderInputGenerationEpochId({
+                    runtimeIdentityKey: admissionTarget.runtimeIdentityKey,
+                    targetRevision: admissionTarget.revision,
+                    serviceId: input.target.serviceId,
+                    groupId: input.target.groupId,
+                    desired: {
+                        profileId: input.target.profileId,
+                        generation: input.target.generation,
+                        credentialRevision: input.target.credentialRevision,
+                    },
+                });
+                const admissionOutcome = await requestProviderInputAdmissionForTarget(admissionTarget, {
+                    action: 'enforce',
+                    reason: 'generation_pending',
+                    serviceId: input.target.serviceId,
+                    groupId: input.target.groupId,
+                    epochId,
+                }, targetWitness);
+                if (admissionOutcome.status === 'cancelled') {
+                    return {
+                        status: 'failed',
+                        result: { reconciliationDisposition: 'failed', errorCode: 'provider_input_admission_cancelled' },
+                    };
+                }
+                const enforcedAdmission = {
+                    kind: 'generation_pending' as const,
+                    target: admissionTarget,
+                    targetWitness,
+                    epochId,
+                    desired: input.target,
+                };
+                admissionsBySessionId.set(sessionId, enforcedAdmission);
+                enforcedProviderInputAdmissions.set(
+                    providerInputAdmissionScopeKey(sessionId, input.target.serviceId, input.target.groupId),
+                    enforcedAdmission,
+                );
+                pendingProviderInputAdmissionsByEpochId.set(epochId, enforcedAdmission);
+            }
+            return { status: 'ready', admissionsBySessionId };
+        };
+        const recordGenerationProviderInputAdmissions = (input: Readonly<{
+            admissionsBySessionId: ReadonlyMap<string, EnforcedCurrentTruthProviderInputAdmission>;
+            adoptedTarget: object;
+        }>): void => {
+            for (const [sessionId, admission] of input.admissionsBySessionId) {
+                providerInputAdmissionRecords.record({
+                    sessionId,
+                    adoptedTarget: input.adoptedTarget,
+                    record: admission,
+                });
+            }
+        };
         return new ConnectedServiceAuthGroupGenerationConsumer({
         enforceGroupUnavailable: async ({ sessionId, serviceId, groupId }) => {
             const target = connectedServiceRuntimeRegistry.getBySessionId(sessionId);
@@ -6409,6 +9634,7 @@ export async function startDaemonSessionControlRuntime(
                             action: 'clear',
                             serviceId: adopted.serviceId,
                             groupId: adopted.groupId,
+                            applicationSettled: true,
                             ...(admission.kind === 'generation_pending' ? { epochId: admission.epochId } : {}),
                         }, admission.targetWitness);
                         if (clearOutcome.status === 'cancelled') {
@@ -6428,6 +9654,7 @@ export async function startDaemonSessionControlRuntime(
                         action: 'clear',
                         serviceId: adopted.serviceId,
                         groupId: adopted.groupId,
+                        applicationSettled: true,
                     });
                     return { status: 'cleared' as const };
                 },
@@ -6478,6 +9705,111 @@ export async function startDaemonSessionControlRuntime(
                 agentId ? agentId as CatalogAgentId : applicationOwnerId as CatalogAgentId | null,
             );
         },
+        applySharedGenerationApplication: async ({
+            applicationOwnerId,
+            applicationCohortSessionIds,
+            committedGeneration,
+            executionAuthority,
+        }) => {
+            const target = committedGeneration.decisionCommittedTarget;
+            const admissions = await enforceGenerationProviderInputAdmissions({
+                target,
+                sessionIds: [...new Set(applicationCohortSessionIds)],
+                executionAuthority,
+            });
+            if (admissions.status === 'failed') return admissions.result;
+            if (target.credentialRevision === null) {
+                return { reconciliationDisposition: 'failed', errorCode: 'credential_revision_missing' };
+            }
+            const ownerId = applicationOwnerId as CatalogAgentId;
+            const scope = await resolveConnectedServiceGenerationApplicationScope(target.serviceId, ownerId);
+            if (scope.status !== 'supported' || scope.scope !== 'shared_group_auth_surface') {
+                return { reconciliationDisposition: 'failed', errorCode: 'shared_generation_application_unavailable' };
+            }
+            const resolutions = await resolveConnectedServiceCredentialResolutions({
+                credentials: params.credentials,
+                api: params.api,
+                bindings: [{ serviceId: target.serviceId, profileId: target.profileId }],
+            }).catch(() => null);
+            const resolution = resolutions?.get(target.serviceId) ?? null;
+            if (
+                !resolution
+                || resolution.revisionSemantics !== 'revisioned'
+                || resolution.credentialRevision !== target.credentialRevision
+            ) {
+                return { reconciliationDisposition: 'failed', errorCode: 'credential_revision_superseded' };
+            }
+            const targetMaterializedEnv = await resolveSharedGenerationTargetMaterializedEnv({
+                ownerId,
+                tracked: null,
+                target,
+            });
+            const adapter = await getConnectedServiceRuntimeAuthAdapter(ownerId).catch(() => null);
+            if (!targetMaterializedEnv || !adapter?.hotApply) {
+                return { reconciliationDisposition: 'failed', errorCode: 'shared_generation_application_unavailable' };
+            }
+            const applied = await adapter.hotApply({
+                target: { agentId: ownerId },
+                selection: {
+                    serviceId: target.serviceId,
+                    groupId: target.groupId,
+                    activeProfileId: target.profileId,
+                    profileId: target.profileId,
+                    groupGeneration: target.generation,
+                    credentialRevision: target.credentialRevision,
+                    record: resolution.record,
+                    targetMaterializedEnv,
+                },
+                targetMaterializedEnv,
+                validateCurrentBeforeMutation: async () => await validateConnectedServiceGroupMutationCurrentness({
+                    serviceId: target.serviceId,
+                    groupId: target.groupId,
+                    profileId: target.profileId,
+                    generation: target.generation,
+                    credentialRevision: target.credentialRevision,
+                }),
+            }).catch(() => null);
+            if (!applied?.applied) {
+                if (
+                    applied?.status === 'superseded_after_apply'
+                    && typeof applied.activeProfileId === 'string'
+                    && typeof applied.generation === 'number'
+                    && (typeof applied.credentialRevision === 'string' || applied.credentialRevision === null)
+                ) {
+                    return mapCommittedGenerationApplyResult({
+                        committedGeneration,
+                        result: {
+                            status: 'superseded_after_apply',
+                            activeProfileId: applied.activeProfileId,
+                            generation: applied.generation,
+                            credentialRevision: applied.credentialRevision,
+                            errorCode: typeof applied.reason === 'string' ? applied.reason : null,
+                        },
+                    });
+                }
+                return {
+                    reconciliationDisposition: 'failed',
+                    errorCode: typeof applied?.reason === 'string'
+                        ? applied.reason
+                        : 'shared_generation_application_unverified',
+                };
+            }
+            const adopted = await resolveSharedGenerationApplicationProof({
+                agentId: ownerId,
+                targetMaterializedEnv,
+                committedGeneration,
+                resolveCredentialResolution: async () => resolution,
+                resolveRuntimeAuthAdapter: async () => adapter,
+            });
+            if (!adopted) {
+                return { reconciliationDisposition: 'failed', errorCode: 'shared_generation_application_unverified' };
+            }
+            recordGenerationProviderInputAdmissions({
+                admissionsBySessionId: admissions.admissionsBySessionId,
+                adoptedTarget: adopted,
+            });
+            return { reconciliationDisposition: 'converged', errorCode: null, providerAdoptedTarget: adopted };
+        },
         applyCommittedGeneration: async ({
             sessionId,
             committedGeneration,
@@ -6487,140 +9819,15 @@ export async function startDaemonSessionControlRuntime(
             applicationCohortSessionIds,
         }) => {
             const target = committedGeneration.decisionCommittedTarget;
-            const runtimeTarget = connectedServiceRuntimeRegistry.getBySessionId(sessionId);
             const admissionSessionIds = [...new Set(applicationCohortSessionIds ?? [sessionId])];
-            const enforcedAdmissionsBySessionId = new Map<string, EnforcedCurrentTruthProviderInputAdmission>();
-            for (const admissionSessionId of admissionSessionIds) {
-                const unavailable = enforcedUnavailableProviderInputAdmissions.get(
-                    providerInputAdmissionScopeKey(admissionSessionId, target.serviceId, target.groupId),
-                );
-                if (unavailable && isCurrentProviderInputAdmissionTarget(unavailable.targetWitness)) {
-                    enforcedAdmissionsBySessionId.set(admissionSessionId, unavailable);
-                }
-            }
-            if (executionAuthority !== 'passive_projection') {
-                // A shared auth surface has one provider mutation, but every currently reachable
-                // runner sharing it remains a producer until that exact mutation is proven.
-                // Offline/no-runtime recipients deliberately have no admission endpoint.
-                for (const admissionSessionId of admissionSessionIds) {
-                    if (enforcedAdmissionsBySessionId.get(admissionSessionId)?.kind === 'group_unavailable') {
-                        continue;
-                    }
-                    const admissionTarget = connectedServiceRuntimeRegistry.getBySessionId(admissionSessionId);
-                    if (!admissionTarget) continue;
-                    const targetWitness = captureProviderInputAdmissionTargetWitness(admissionTarget);
-                    if (!targetWitness) {
-                        return { reconciliationDisposition: 'failed', errorCode: 'provider_input_admission_target_released' };
-                    }
-                    const epochId = buildProviderInputGenerationEpochId({
-                        runtimeIdentityKey: admissionTarget.runtimeIdentityKey,
-                        targetRevision: admissionTarget.revision,
-                        serviceId: target.serviceId,
-                        groupId: target.groupId,
-                        desired: {
-                            profileId: target.profileId,
-                            generation: target.generation,
-                            credentialRevision: target.credentialRevision,
-                        },
-                    });
-                    const admissionOutcome = await requestProviderInputAdmissionForTarget(admissionTarget, {
-                        action: 'enforce',
-                        reason: 'generation_pending',
-                        serviceId: target.serviceId,
-                        groupId: target.groupId,
-                        epochId,
-                    }, targetWitness);
-                    if (admissionOutcome.status === 'cancelled') {
-                        return { reconciliationDisposition: 'failed', errorCode: 'provider_input_admission_cancelled' };
-                    }
-                    const enforcedAdmission = {
-                        kind: 'generation_pending' as const,
-                        target: admissionTarget,
-                        targetWitness,
-                        epochId,
-                        desired: target,
-                    };
-                    enforcedAdmissionsBySessionId.set(admissionSessionId, enforcedAdmission);
-                    enforcedProviderInputAdmissions.set(
-                        providerInputAdmissionScopeKey(admissionSessionId, target.serviceId, target.groupId),
-                        enforcedAdmission,
-                    );
-                    pendingProviderInputAdmissionsByEpochId.set(epochId, enforcedAdmission);
-                }
-            }
+            const admissions = await enforceGenerationProviderInputAdmissions({
+                target,
+                sessionIds: admissionSessionIds,
+                executionAuthority,
+            });
+            if (admissions.status === 'failed') return admissions.result;
             const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
-            if (!tracked) {
-                if (target.credentialRevision === null) {
-                    return { reconciliationDisposition: 'failed', errorCode: 'credential_revision_missing' };
-                }
-                const scope = await resolveConnectedServiceGenerationApplicationScope(
-                    target.serviceId,
-                    applicationOwnerId as CatalogAgentId | undefined,
-                );
-                if (scope.status !== 'supported' || scope.scope !== 'shared_group_auth_surface') {
-                    return { reconciliationDisposition: 'failed', errorCode: 'session_not_found' };
-                }
-                const ownerId = scope.ownerId as CatalogAgentId;
-                const resolutions = await resolveConnectedServiceCredentialResolutions({
-                    credentials: params.credentials,
-                    api: params.api,
-                    bindings: [{ serviceId: target.serviceId, profileId: target.profileId }],
-                }).catch(() => null);
-                const resolution = resolutions?.get(target.serviceId) ?? null;
-                if (
-                    !resolution
-                    || resolution.revisionSemantics !== 'revisioned'
-                    || resolution.credentialRevision
-                        !== target.credentialRevision
-                ) {
-                    return { reconciliationDisposition: 'failed', errorCode: 'credential_revision_superseded' };
-                }
-                const targetMaterializedEnv = await resolveSharedGenerationTargetMaterializedEnv({
-                    ownerId,
-                    tracked: null,
-                    target,
-                });
-                const adapter = await getConnectedServiceRuntimeAuthAdapter(ownerId).catch(() => null);
-                if (!targetMaterializedEnv || !adapter?.hotApply) {
-                    return { reconciliationDisposition: 'failed', errorCode: 'shared_generation_application_unavailable' };
-                }
-                const selection = {
-                    serviceId: target.serviceId,
-                    groupId: target.groupId,
-                    activeProfileId: target.profileId,
-                    profileId: target.profileId,
-                    groupGeneration: target.generation,
-                    credentialRevision: target.credentialRevision,
-                    record: resolution.record,
-                    targetMaterializedEnv,
-                };
-                const applied = await adapter.hotApply({
-                    target: { agentId: ownerId },
-                    selection,
-                    targetMaterializedEnv,
-                }).catch(() => null);
-                if (!applied?.applied) {
-                    return { reconciliationDisposition: 'failed', errorCode: 'shared_generation_application_unverified' };
-                }
-                const adopted = await resolveSharedGenerationApplicationProof({
-                    agentId: ownerId,
-                    targetMaterializedEnv,
-                    committedGeneration,
-                    resolveCredentialResolution: async () => resolution,
-                    resolveRuntimeAuthAdapter: async () => adapter,
-                });
-                if (!adopted) {
-                    return { reconciliationDisposition: 'failed', errorCode: 'shared_generation_application_unverified' };
-                }
-                for (const [admissionSessionId, enforcedAdmission] of enforcedAdmissionsBySessionId) {
-                    providerInputAdmissionRecords.record({
-                        sessionId: admissionSessionId,
-                        adoptedTarget: adopted,
-                        record: enforcedAdmission,
-                    });
-                }
-                return { reconciliationDisposition: 'converged', errorCode: null, providerAdoptedTarget: adopted };
-            }
+            if (!tracked) return { reconciliationDisposition: 'failed', errorCode: 'session_not_found' };
             const result = await connectedServiceAuthGroupPreTurnSwitchCoordinator.applyCommittedGeneration({
                 sessionId,
                 serviceId: target.serviceId,
@@ -6634,18 +9841,20 @@ export async function startDaemonSessionControlRuntime(
             });
             const mapped = mapCommittedGenerationApplyResult({ committedGeneration, result });
             if (mapped.providerAdoptedTarget) {
-                for (const [admissionSessionId, enforcedAdmission] of enforcedAdmissionsBySessionId) {
-                    providerInputAdmissionRecords.record({
-                        sessionId: admissionSessionId,
-                        adoptedTarget: mapped.providerAdoptedTarget,
-                        record: enforcedAdmission,
-                    });
-                }
+                recordGenerationProviderInputAdmissions({
+                    admissionsBySessionId: admissions.admissionsBySessionId,
+                    adoptedTarget: mapped.providerAdoptedTarget,
+                });
             }
             return mapped;
         },
         });
     };
+    const consumeCommittedAuthGroupGeneration = async (
+        input: Parameters<ConnectedServiceAuthGroupGenerationConsumer['consume']>[0],
+    ) => await createDurableGenerationConsumer({
+        allowProviderInputAdmissionWrites: input.executionAuthority !== 'passive_projection',
+    }).consume(input);
     const runtimeGenerationTarget = (target: ReturnType<ConnectedServiceRuntimeRegistry['listTargets']>[number]) => ({
         sessionId: target.sessionId,
         agentId: target.agentId,
@@ -6663,10 +9872,33 @@ export async function startDaemonSessionControlRuntime(
         connectedServiceRuntimeRegistry.listTargets().some((candidate) => candidate === target);
     const reconciledProjectionByRuntimeTarget = new WeakMap<ConnectedServiceRuntimeTarget, ConnectedServiceProjectionSnapshot>();
     let runtimeTargetReconciliationTail: Promise<void> = Promise.resolve();
+    const reconcileDirectCredentialProjectionForTargets = async (
+        projectionSnapshot: ConnectedServiceProjectionSnapshot,
+        targets: ReadonlyArray<ConnectedServiceRuntimeTarget>,
+        executionAuthority: ConnectedServicesProjectionNotification['executionAuthority'],
+        signal?: AbortSignal,
+    ): Promise<void> => {
+        await reconcileConnectedServiceDirectCredentialRevisions({
+            credentialRevisions: projectionSnapshot.credentialRevisions,
+            resolveCredentialPresence: projectionSnapshot.resolveCredentialPresence,
+            listRuntimeTargets: () => targets.map(runtimeGenerationTarget),
+            applyLiveCredentialRevision: async (input) => {
+                await applyConnectedServiceProjectionCredentialUpdate({
+                    input,
+                    listRuntimeTargets: () => connectedServiceRuntimeRegistry.listRefreshTargets(),
+                    stopSession,
+                    getRefreshCoordinator: params.getConnectedServiceRefreshCoordinator,
+                });
+            },
+            executionAuthority,
+            ...(signal ? { signal } : {}),
+        });
+    };
     const reconcileRuntimeTargetGenerationForTarget = async (
         target: ConnectedServiceRuntimeTarget,
         sessionMetadata?: Readonly<Record<string, unknown>>,
         requireFreshProjection = false,
+        reconcileDirectCredentialProjection = true,
     ): Promise<void> => {
         // Execution runs have no proven in-place generation-apply capability. Their exact run-key
         // pre-effect admission fence owns current-generation enforcement, so a retained parent
@@ -6694,12 +9926,19 @@ export async function startDaemonSessionControlRuntime(
         if (reconciledProjectionByRuntimeTarget.get(target) === projectionSnapshot) return;
         let effectiveSessionMetadata = sessionMetadata;
         if (!effectiveSessionMetadata) {
-            const rawSession = await fetchSessionByIdCompat({
-                token: params.credentials.token,
-                sessionId,
-            });
+            const [rawSession, accountEncryptionCurrentness] = await Promise.all([
+                fetchSessionByIdCompat({
+                    token: params.credentials.token,
+                    sessionId,
+                }),
+                fetchAccountEncryptionCurrentness({ token: params.credentials.token }),
+            ]);
             effectiveSessionMetadata = rawSession
-                ? tryDecryptSessionOwnerMetadataView({ credentials: params.credentials, rawSession }) ?? undefined
+                ? tryDecryptSessionOwnerMetadataView({
+                    credentials: params.credentials,
+                    rawSession,
+                    accountEncryptionMode: accountEncryptionCurrentness.mode,
+                }) ?? undefined
                 : undefined;
         }
         if (
@@ -6719,22 +9958,16 @@ export async function startDaemonSessionControlRuntime(
             resolveCredentialPresence: projectionSnapshot.resolveCredentialPresence,
             executionAuthority: 'passive_projection',
         });
-        await reconcileConnectedServiceDirectCredentialRevisions({
-            credentialRevisions: projectionSnapshot.credentialRevisions,
-            resolveCredentialPresence: projectionSnapshot.resolveCredentialPresence,
-            listRuntimeTargets: () => [runtimeGenerationTarget(target)],
-            applyLiveCredentialRevision: async (input) => {
-                await applyConnectedServiceProjectionCredentialUpdate({
-                    input,
-                    listRuntimeTargets: () => connectedServiceRuntimeRegistry.listRefreshTargets(),
-                    stopSession,
-                    getRefreshCoordinator: params.getConnectedServiceRefreshCoordinator,
-                });
-            },
-            executionAuthority: 'passive_projection',
-        });
+        if (reconcileDirectCredentialProjection) {
+            await reconcileDirectCredentialProjectionForTargets(
+                projectionSnapshot,
+                [target],
+                'passive_projection',
+            );
+        }
         if (
-            isCurrentRuntimeGenerationTarget(target)
+            reconcileDirectCredentialProjection
+            && isCurrentRuntimeGenerationTarget(target)
             && latestConnectedServiceProjectionSnapshot === projectionSnapshot
         ) {
             reconciledProjectionByRuntimeTarget.set(target, projectionSnapshot);
@@ -6744,6 +9977,7 @@ export async function startDaemonSessionControlRuntime(
         offeredTarget: ConnectedServiceRuntimeTarget,
         sessionMetadata?: Readonly<Record<string, unknown>>,
         requireFreshProjection = false,
+        reconcileDirectCredentialProjection = true,
     ): Promise<void> => {
         const scheduled = runtimeTargetReconciliationTail.then(async () => {
             const currentTarget = isCurrentRuntimeGenerationTarget(offeredTarget) ? offeredTarget : null;
@@ -6752,6 +9986,7 @@ export async function startDaemonSessionControlRuntime(
                 currentTarget,
                 sessionMetadata,
                 requireFreshProjection,
+                reconcileDirectCredentialProjection,
             );
         });
         runtimeTargetReconciliationTail = scheduled.catch(() => undefined);
@@ -6772,6 +10007,498 @@ export async function startDaemonSessionControlRuntime(
             });
         },
     );
+    const refreshTrackedRunnerAgentAuthority = async (
+        tracked: TrackedSession,
+        sessionId: string,
+        httpPort: number,
+    ): Promise<void> => {
+        await refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority({
+            happyHomeDir: configuration.happyHomeDir,
+            publicReleaseRing: configuration.publicReleaseRing,
+            httpPort,
+            sessionId,
+            tracked,
+            resolveCurrentRetainedAgent: async ({ agentId }) => {
+                const lease =
+                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                        happyHomeDir: configuration.happyHomeDir,
+                    });
+                try {
+                    const registration =
+                        lease.registry.agentRuntimesByAgentId.get(agentId);
+                    if (
+                        !registration
+                        || !registration.hasPrimaryRuntime
+                        || !registration.sessionRunnerFactoryBinding
+                        || registration.isCurrent() !== true
+                    ) {
+                        throw new Error(
+                            `Runner Agent '${agentId}' has no current retained binding`,
+                        );
+                    }
+                    return registration.sessionRunnerFactoryBinding;
+                } finally {
+                    await lease.release();
+                }
+            },
+            ...(params.hardRevokeRunningSessionsForGenerationIntegrityFailure
+                ? {
+                    hardRevokeRunningSessionsForGenerationIntegrityFailure:
+                        params.hardRevokeRunningSessionsForGenerationIntegrityFailure,
+                }
+                : {}),
+            reserveManagedDependencyRetention: async (retainedAgent) => {
+                const lease =
+                    await acquireAuthoritativePluginRuntimeRegistryLease({
+                        happyHomeDir: configuration.happyHomeDir,
+                    });
+                try {
+                    return lease.registry
+                        .reserveManagedDependencyRetention?.(retainedAgent)
+                        ?? {
+                            retention: {
+                                v: 1 as const,
+                                sourceGenerationIds: [],
+                                qualifiedDependencyIds: [],
+                            },
+                            release() {},
+                        };
+                } finally {
+                    await lease.release();
+                }
+            },
+        });
+    };
+    unsubscribeRunnerAgentAuthorityCurrentness =
+        pluginReloadController.subscribeRunningSessionDisposition((result) => {
+            if (
+                result.changedPluginIds.length === 0
+                || result.runningSessionDisposition
+                    !== 'revokeRunningSessions'
+            ) {
+                return;
+            }
+            const providerFences = new Set<string>();
+            for (const tracked of params.pidToTrackedSession.values()) {
+                const sessionId =
+                    normalizeOptionalString(tracked.happySessionId);
+                const runnerPid =
+                    tracked.sessionRunnerPid ?? tracked.pid;
+                let authorityRemoval: Promise<boolean> | null = null;
+                const denyRunnerAgentAuthority = (): Promise<boolean> => {
+                    if (authorityRemoval) return authorityRemoval;
+                    const authorityPath =
+                        tracked.agentRuntimeDaemonServiceAuthorityFilePath;
+                    const capabilityDigest =
+                        tracked.agentRuntimeDaemonServiceCapabilityHash;
+                    tracked.agentRuntimeRunnerRestartDisposition =
+                        'runner_authority_unavailable';
+                    delete tracked
+                        .agentRuntimeDaemonServiceCapabilityHash;
+                    delete tracked
+                        .agentRuntimeDaemonServiceAdmittedTurnId;
+                    delete tracked
+                        .agentRuntimeDaemonServiceAdmittedInputId;
+                    delete tracked
+                        .agentRuntimeDaemonServiceAdmittedUserMessageSeq;
+                    delete tracked
+                        .agentRuntimeDaemonServiceAdmittedUserMessageSeqs;
+                    authorityRemoval = authorityPath && capabilityDigest
+                        ? removeAgentRuntimeDaemonServiceAuthorityIfOwned({
+                            happyHomeDir: configuration.happyHomeDir,
+                            publicReleaseRing:
+                                configuration.publicReleaseRing,
+                            path: authorityPath,
+                            capabilityDigest,
+                        }).catch(() => false)
+                        : Promise.resolve(false);
+                    return authorityRemoval;
+                };
+                const agentTargeted = (async (): Promise<boolean> => {
+                    const authorityPath =
+                        tracked.agentRuntimeDaemonServiceAuthorityFilePath;
+                    const processStartTimeMs =
+                        tracked.processStartTimeMs;
+                    const processCommandHash =
+                        tracked.processCommandHash;
+                    if (
+                        !sessionId
+                        || !authorityPath
+                        || !Number.isSafeInteger(runnerPid)
+                        || runnerPid < 1
+                        || typeof processStartTimeMs !== 'number'
+                        || !Number.isSafeInteger(processStartTimeMs)
+                        || processStartTimeMs < 0
+                        || typeof processCommandHash !== 'string'
+                    ) {
+                        return false;
+                    }
+                    const authority =
+                        await readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker({
+                            happyHomeDir: configuration.happyHomeDir,
+                            publicReleaseRing:
+                                configuration.publicReleaseRing,
+                            path: authorityPath,
+                            sessionId,
+                            runner: {
+                                pid: runnerPid,
+                                processStartTimeMs,
+                                processCommandHash,
+                            },
+                        });
+                    if (
+                        !authority
+                        || tracked.runnerAgentImmutableGenerationId
+                            !== authority.retainedAgent
+                                .immutableGenerationId
+                        || !isPluginRunningSessionDispositionTarget(
+                            result,
+                            authority.retainedAgent,
+                        )
+                    ) {
+                        return false;
+                    }
+                    const capturedRunnerIdentity = {
+                        pid: tracked.pid,
+                        sessionRunnerPid: tracked.sessionRunnerPid,
+                        processStartTimeMs,
+                        processCommandHash,
+                    };
+                    const activeTurnId =
+                        tracked.activeTurnId
+                        ?? tracked.reattachedInterruptedTurnId
+                        ?? tracked
+                            .agentRuntimeDaemonServiceAdmittedTurnId
+                        ?? null;
+                    // Hard disable/trust loss/quarantine is a live revocation:
+                    // fence tracked admission synchronously with durable
+                    // publication, then retire the exact document and runner
+                    // through their existing owners.
+                    const targetedAuthorityRemoval =
+                        denyRunnerAgentAuthority();
+                    await updateSessionMarkerActiveTurn({
+                        pid: runnerPid,
+                        sessionId,
+                        activeTurnId,
+                    }).catch(() => false);
+                    await targetedAuthorityRemoval;
+                    const currentTracked =
+                        params.pidToTrackedSession.get(
+                            capturedRunnerIdentity.pid,
+                        );
+                    if (
+                        currentTracked !== tracked
+                        || tracked.sessionRunnerPid
+                            !== capturedRunnerIdentity.sessionRunnerPid
+                        || tracked.processStartTimeMs
+                            !== capturedRunnerIdentity.processStartTimeMs
+                        || tracked.processCommandHash
+                            !== capturedRunnerIdentity.processCommandHash
+                    ) {
+                        return true;
+                    }
+                    await stopSession(sessionId, {
+                        expectedTrackedRunner: {
+                            tracked,
+                            sessionRunnerPid:
+                                capturedRunnerIdentity.sessionRunnerPid,
+                            processStartTimeMs:
+                                capturedRunnerIdentity.processStartTimeMs,
+                            processCommandHash:
+                                capturedRunnerIdentity.processCommandHash,
+                        },
+                    }).catch((error) => {
+                        logger.debug(
+                            '[DAEMON RUN] Failed to terminate hard-revoked Runner Agent session',
+                            error,
+                        );
+                    });
+                    return true;
+                })().catch((error) => {
+                    logger.debug(
+                        '[DAEMON RUN] Failed to resolve direct Runner Agent revocation authority',
+                        error,
+                    );
+                    return false;
+                });
+                void (async () => {
+                    const persistedMarker = sessionId
+                        ? await readSessionMarkerForPid(runnerPid)
+                        : null;
+                    const persistedMarkerIsExact = Boolean(
+                        persistedMarker
+                        && persistedMarker.happySessionId === sessionId
+                        && persistedMarker.processCommandHash
+                            === tracked.processCommandHash
+                        && persistedMarker.processStartTimeMs
+                            === tracked.processStartTimeMs,
+                    );
+                    const persistedManagedProviderAuthority =
+                        persistedMarkerIsExact
+                            ? persistedMarker
+                                ?.runnerManagedDependencyRetentionV1
+                                ?.adoptedManagedProviderAuthority
+                                ?? null
+                            : null;
+                    // The marker is the sole live P authority writer. The
+                    // tracked projection may retain only an exact cleanup
+                    // identity after policy fencing so a later hard
+                    // revocation remains idempotent; it never authorizes
+                    // Provider effects.
+                    const managedProviderAuthority =
+                        persistedManagedProviderAuthority
+                        ?? tracked.runnerManagedDependencyRetentionV1
+                            ?.adoptedManagedProviderAuthority
+                        ?? null;
+                    const providerTargeted = Boolean(
+                        sessionId
+                        && managedProviderAuthority
+                        && isPluginRunningSessionDispositionTarget(
+                            result,
+                            managedProviderAuthority,
+                        ),
+                    );
+                    if (
+                        !providerTargeted
+                        || !sessionId
+                        || !managedProviderAuthority
+                    ) {
+                        return;
+                    }
+
+                    const fenceKey =
+                        `${sessionId}\0${managedProviderAuthority.pluginId}${result.runningSessionRevocationScope
+                            ? `\0${result.runningSessionRevocationScope.immutableGenerationId}`
+                            : ''}`;
+                    if (providerFences.has(fenceKey)) return;
+                    providerFences.add(fenceKey);
+                    const capturedProviderRunnerIdentity = {
+                        pid: tracked.pid,
+                        sessionRunnerPid:
+                            tracked.sessionRunnerPid,
+                        processStartTimeMs:
+                            tracked.processStartTimeMs,
+                        processCommandHash:
+                            tracked.processCommandHash,
+                    };
+                    void (async () => {
+                        try {
+                            const dispatch =
+                                await createSessionManagedProviderCustodyDispatchForSession(
+                                    sessionId,
+                                );
+                            const fenced = await dispatch({
+                                v: 1,
+                                kind: 'fenceHardRevocation',
+                                pluginId:
+                                    managedProviderAuthority.pluginId,
+                                ...(result
+                                    .runningSessionRevocationScope
+                                    ? {
+                                        immutableGenerationId:
+                                            result
+                                                .runningSessionRevocationScope
+                                                .immutableGenerationId,
+                                    }
+                                    : {}),
+                            });
+                            if (
+                                fenced.kind
+                                    !== 'hardRevocationFenced'
+                            ) {
+                                throw new Error(
+                                    'Runner returned the wrong managed Provider hard-revocation result',
+                                );
+                            }
+                        } catch (error) {
+                            logger.debug(
+                                '[DAEMON RUN] Failed to fence hard-revoked managed Provider custody',
+                                error,
+                            );
+                            if (await agentTargeted) {
+                                // The Agent revocation path above owns the
+                                // exact runner stop for a combined plugin.
+                                return;
+                            }
+                            const currentTracked =
+                                params.pidToTrackedSession.get(
+                                    capturedProviderRunnerIdentity.pid,
+                                );
+                            if (
+                                currentTracked !== tracked
+                                || normalizeOptionalString(
+                                    tracked.happySessionId,
+                                ) !== sessionId
+                                || tracked.sessionRunnerPid
+                                    !== capturedProviderRunnerIdentity
+                                        .sessionRunnerPid
+                                || tracked.processStartTimeMs
+                                    !== capturedProviderRunnerIdentity
+                                        .processStartTimeMs
+                                || tracked.processCommandHash
+                                    !== capturedProviderRunnerIdentity
+                                        .processCommandHash
+                            ) {
+                                return;
+                            }
+                            await stopSessionCore(sessionId, {
+                                expectedTrackedRunner: {
+                                    tracked,
+                                    sessionRunnerPid:
+                                        capturedProviderRunnerIdentity
+                                            .sessionRunnerPid,
+                                    processStartTimeMs:
+                                        capturedProviderRunnerIdentity
+                                            .processStartTimeMs,
+                                    processCommandHash:
+                                        capturedProviderRunnerIdentity
+                                            .processCommandHash,
+                                },
+                                beforeSignalExactTrackedRunner: () => {
+                                    sessionRunnerRespawnManager
+                                        .markStopRequested(sessionId, {
+                                            reason:
+                                                'daemon_stop_session',
+                                            requestedAtMs: Date.now(),
+                                        });
+                                },
+                            }).catch((stopError) => {
+                                logger.debug(
+                                    '[DAEMON RUN] Failed to terminate Runner after managed Provider custody revocation failure',
+                                    stopError,
+                                );
+                            });
+                        }
+                    })();
+                })().catch((error) => {
+                    logger.debug(
+                        '[DAEMON RUN] Failed to resolve durable Runner revocation authority',
+                        error,
+                    );
+                });
+            }
+        });
+    const managedServiceEndpointProjectionRoot = join(
+        resolvePluginStorePaths({
+            happyHomeDir: configuration.happyHomeDir,
+        }).stateDir,
+        'managed-servers',
+    );
+    managedServiceDurabilityOwner = createManagedServiceDurabilityOwner({
+        rootDir: managedServiceEndpointProjectionRoot,
+        observeProcessStartIdentity:
+            observeManagedServiceProcessStartIdentity,
+    });
+    managedServiceEndpointReadOwner =
+        createDaemonManagedServiceEndpointReadOwner({
+            credentials: params.credentials,
+            resolveProjection: async (query) =>
+                await managedServiceDurabilityOwner!
+                    .resolveEndpointProjection(query),
+        });
+    params.onManagedServiceEndpointReadHostReady?.(
+        managedServiceEndpointReadOwner
+            .bindHost,
+    );
+    const resolveTrackedRunnerRuntimeCurrentness = async (
+        tracked: TrackedSession | null | undefined,
+    ) => await resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness(
+        tracked,
+        {
+            machineId: params.machineId,
+            accountSettings:
+                getActiveAccountSettingsSnapshot()?.settings ?? null,
+        },
+    );
+    const resolveSessionRunnerStatusState = async (input: Readonly<{
+        sessionId: string;
+        observedAtMs?: number;
+    }>) => {
+        const tracked = findTrackedSessionByHappySessionId(
+            params.pidToTrackedSession.values(),
+            input.sessionId,
+        );
+        const agentRuntimeCurrentness =
+            await resolveTrackedRunnerRuntimeCurrentness(
+                tracked,
+            );
+        const state = resolveSessionRunnerRuntimeState({
+            sessionId: input.sessionId,
+            tracked,
+            currentIdentity: resolveCurrentSessionRunnerLaunchIdentity(),
+            agentRuntimeVersionState:
+                agentRuntimeCurrentness.versionState,
+            agentRuntimeRestartUnavailableReason:
+                agentRuntimeCurrentness.restartUnavailableReason,
+            resolveActivityDisabledReason:
+                resolveSessionRunnerActivityDisabledReason,
+            machineId: params.machineId,
+            observedAtMs: input.observedAtMs ?? Date.now(),
+        });
+        return { state, tracked };
+    };
+    const resolveSessionRunnerStatus = async (input: Readonly<{
+        sessionId: string;
+        observedAtMs?: number;
+    }>) => (await resolveSessionRunnerStatusState(input)).state;
+    const resolveSessionRunnerStatusV2 = async (input: Readonly<{
+        sessionId: string;
+        observedAtMs?: number;
+    }>) => {
+        const { state, tracked } =
+            await resolveSessionRunnerStatusState(input);
+        return await resolveSessionRunnerRuntimeStatusV2({ state, tracked });
+    };
+    const onSessionStartupFailure = createOnDaemonSessionStartupFailure({
+        pidToTrackedSession: params.pidToTrackedSession,
+        pidToAwaiter: params.pidToAwaiter,
+    });
+    /**
+     * The control-runtime shutdown phases, in the one order the daemon uses. Each
+     * phase is independent: a runner cleanup that rejects must not stop External
+     * Session generations from retiring, control-runtime resources from being
+     * disposed, or the control socket from being stopped — a shutdown that skipped
+     * them would still report itself finished. Failures are collected and rethrown
+     * afterwards so the caller still sees exactly what failed.
+     */
+    const runControlRuntimeShutdownPhases = async (
+        trailingPhases: ReadonlyArray<
+            readonly [phase: string, run: () => Promise<void>]
+        > = [],
+    ): Promise<void> => {
+        const failures: unknown[] = [];
+        const phases: ReadonlyArray<readonly [string, () => Promise<void>]> = [
+            ['runner_plugin_services_host', async () => {
+                await runnerDaemonPluginServicesHost.dispose();
+            }],
+            ['runner_agent_daemon_facets', async () => {
+                await runnerAgentDaemonFacetService.dispose();
+            }],
+            ['external_session_host_operations', async () => {
+                await externalSessionHostOperationOwner.retire();
+            }],
+            ['control_runtime_resources', disposeControlRuntimeResources],
+            ...trailingPhases,
+        ];
+        for (const [phase, run] of phases) {
+            try {
+                await run();
+            } catch (error) {
+                failures.push(error);
+                logger.debug(
+                    `[DAEMON RUN] Control-runtime shutdown phase failed: ${phase}`,
+                    error,
+                );
+            }
+        }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+            throw new AggregateError(
+                failures,
+                'Daemon control-runtime shutdown phases failed',
+            );
+        }
+    };
     const { port: controlPort, stop: stopControlServer } = await startDaemonControlServer({
         getChildren: () => Array.from(params.pidToTrackedSession.values()),
         machineId: params.machineId,
@@ -6783,17 +10510,44 @@ export async function startDaemonSessionControlRuntime(
         ...(params.pluginChangeService ? { pluginChangeService: params.pluginChangeService } : {}),
         pluginActionCurrentIntent: createCredentialedTargetActionCurrentIntent(params.credentials),
         ...(params.isShuttingDown ? { isShuttingDown: params.isShuttingDown } : {}),
-        beforeShutdown: async ({ managedLocalServicesDisposition }) => {
-            await agentRuntimeSessionBridge.dispose();
-            await externalSessionHostOperationOwner.retire();
-            await disposeControlRuntimeResources(managedLocalServicesDisposition);
+        beforeShutdown: async () => {
             const beforeShutdown = params.beforeShutdown;
-            if (typeof beforeShutdown === 'function') {
-                await beforeShutdown({ managedLocalServicesDisposition });
-            }
+            await runControlRuntimeShutdownPhases(
+                typeof beforeShutdown === 'function'
+                    ? [['daemon_before_shutdown', async () => {
+                        await beforeShutdown();
+                    }]]
+                    : [],
+            );
         },
-        onHappySessionWebhook: async (sessionId, sessionMetadata) => {
-            await params.onHappySessionWebhook(sessionId, sessionMetadata);
+        onHappySessionWebhook: async (
+            sessionId,
+            sessionMetadata,
+            _reconcileCanonicalReadiness,
+            sessionCreationOutcome,
+        ) => {
+            await params.onHappySessionWebhook(
+                sessionId,
+                sessionMetadata,
+                async (tracked) => {
+                    if (!tracked.agentRuntimeDaemonServiceAuthorityFilePath) {
+                        return;
+                    }
+                    const canonicalSessionId =
+                        normalizeOptionalString(tracked.happySessionId);
+                    if (!canonicalSessionId) {
+                        throw new Error(
+                            'Runner Agent canonical session authority is unavailable',
+                        );
+                    }
+                    await refreshTrackedRunnerAgentAuthority(
+                        tracked,
+                        canonicalSessionId,
+                        controlPort,
+                    );
+                },
+                sessionCreationOutcome,
+            );
             void queueHostedWebStaticAssetSync('session_webhook');
             const normalizedSessionId = normalizeOptionalString(sessionId);
             if (!normalizedSessionId) return;
@@ -6846,6 +10600,7 @@ export async function startDaemonSessionControlRuntime(
             if (!currentTarget) return;
             await scheduleRuntimeTargetGenerationReconciliation(currentTarget, sessionMetadata, true);
         },
+        onSessionStartupFailure,
         ...(params.admitPersistedTakeover
             ? { admitPersistedTakeover: params.admitPersistedTakeover }
             : {}),
@@ -6856,24 +10611,1413 @@ export async function startDaemonSessionControlRuntime(
         localServicesPreview: localServicesRuntime.previewRoutes,
         localServicesActions: localServicesRuntime.actionRoutes,
         localServicesPublicPreview: localServicesRuntimeActionRoutes.publicPreviewRoutes,
-        localServicesPluginBridge: localServicesRuntime.pluginBridgeRoutes,
-        agentRuntimeSessionBridge,
+        agentRuntimeDaemonServices: {
+            dispatch: async (request, context) => {
+                const {
+                    sessionId,
+                    runner,
+                    retainedAgent,
+                    trackedSession,
+                } = context;
+                if (
+                    request.operation.kind
+                    === 'turn.admission.authorize'
+                ) {
+                    const decision =
+                        await authorizeRunnerAgentNewTurn({
+                            retainedAgent,
+                        });
+                    if (decision.status === 'admitted') {
+                        return {
+                            ok: true as const,
+                            result: {
+                                kind: 'turn.admission' as const,
+                                status: 'admitted' as const,
+                                witness:
+                                    request.operation.witness,
+                            },
+                        };
+                    }
+                    return {
+                        ok: true as const,
+                        result: {
+                            kind: 'turn.admission' as const,
+                            status: 'denied' as const,
+                            reason: decision.reason,
+                        },
+                    };
+                }
+                if (
+                    request.operation.kind
+                    === 'session.open.attest'
+                ) {
+                    const tracked = trackedSession;
+                    if (
+                        !tracked
+                        || tracked.happySessionId
+                            !== sessionId
+                    ) {
+                        return {
+                            ok: false as const,
+                            error: {
+                                code:
+                                    'agent_runtime_daemon_service_session_open_attestation_unavailable',
+                                message:
+                                    'Runner Agent session-open attestation custody is unavailable',
+                            },
+                        };
+                    }
+                    const attestation =
+                        await recordTrackedRunnerAgentSessionOpenAttestation({
+                            tracked,
+                            retainedAgent,
+                            runner,
+                            phase: request.operation.phase,
+                            request:
+                                request.operation.request,
+                            providerSessionId:
+                                request.operation
+                                    .providerSessionId,
+                        });
+                    return attestation
+                        ? {
+                            ok: true as const,
+                            result: {
+                                kind:
+                                    'session.open.attestation' as const,
+                                status: request.operation.phase
+                                    === 'prepare'
+                                    ? 'accepted' as const
+                                    : 'recorded' as const,
+                            },
+                        }
+                        : {
+                            ok: false as const,
+                            error: {
+                                code:
+                                    'agent_runtime_daemon_service_session_open_attestation_unavailable',
+                                message:
+                                    'Runner Agent session-open attestation could not be recorded',
+                            },
+                        };
+                }
+                const pluginServiceOperation =
+                    RunnerDaemonPluginServiceOperationV1Schema.safeParse(
+                        request.operation,
+                    );
+                if (pluginServiceOperation.success) {
+                    try {
+                        return {
+                            ok: true as const,
+                            result:
+                                await runnerDaemonPluginServicesHost
+                                    .dispatch({
+                                        sessionId,
+                                        runner,
+                                        retainedAgent,
+                                        operation:
+                                            pluginServiceOperation
+                                                .data,
+                                        ...(context.signal
+                                            ? {
+                                                signal:
+                                                    context.signal,
+                                            }
+                                            : {}),
+                                    }),
+                        };
+                    } catch (error) {
+                        const candidateCode =
+                            isPluginError(error)
+                                ? error.code
+                                : (
+                                    error
+                                    && typeof error === 'object'
+                                    && typeof Reflect.get(
+                                        error,
+                                        'code',
+                                    ) === 'string'
+                                )
+                                    ? Reflect.get(error, 'code')
+                                    : '';
+                        const code =
+                            typeof candidateCode === 'string'
+                            && /^[a-z][a-z0-9_]{0,127}$/u
+                                .test(candidateCode)
+                                ? candidateCode
+                                : 'runner_plugin_services_unavailable';
+                        return {
+                            ok: false as const,
+                            error: {
+                                code,
+                                message:
+                                    'Runner PluginServices operation is unavailable',
+                            },
+                        };
+                    }
+                }
+                const facetOperation =
+                    RunnerAgentDaemonFacetOperationV1Schema.safeParse(
+                        request.operation,
+                    );
+                if (facetOperation.success) {
+                    try {
+                        return {
+                            ok: true as const,
+                            result:
+                                await runnerAgentDaemonFacetService
+                                    .dispatch({
+                                        sessionId,
+                                        runner,
+                                        retainedAgent,
+                                        operation:
+                                            facetOperation.data,
+                                        ...(context.signal
+                                            ? {
+                                                signal:
+                                                    context.signal,
+                                            }
+                                            : {}),
+                                    }),
+                        };
+                    } catch (error) {
+                        const candidateCode =
+                            isPluginError(error)
+                                ? error.code
+                                : (
+                                    error
+                                    && typeof error === 'object'
+                                    && typeof Reflect.get(
+                                        error,
+                                        'code',
+                                    ) === 'string'
+                                )
+                                    ? Reflect.get(error, 'code')
+                                    : (
+                                        error instanceof Error
+                                            ? error.message
+                                            : ''
+                                    );
+                        const code =
+                            typeof candidateCode === 'string'
+                            && /^[a-z][a-z0-9_]{0,127}$/u
+                                .test(candidateCode)
+                                ? candidateCode
+                                : 'agent_runtime_daemon_facet_unavailable';
+                        return {
+                            ok: false as const,
+                            error: {
+                                code,
+                                message:
+                                    'Runner Agent daemon-owned facet is unavailable',
+                            },
+                        };
+                    }
+                }
+                if (
+                    request.operation.kind
+                    === 'turn_contributions.resolve'
+                    || request.operation.kind
+                    === 'model_transition.authorize'
+                    || request.operation.kind
+                    === 'session.input.admit'
+                ) {
+                    const decision =
+                        await authorizeRunnerAgentNewTurn({
+                            retainedAgent,
+                        });
+                    if (decision.status !== 'admitted') {
+                        return {
+                            ok: false as const,
+                            error: {
+                                code:
+                                    'agent_runtime_daemon_service_generation_not_current',
+                                message:
+                                    'Runner Agent generation is not current',
+                            },
+                        };
+                    }
+                    if (
+                        request.operation.kind
+                        === 'session.input.admit'
+                    ) {
+                        const admissionRequest =
+                            request.operation.request;
+                        const admission =
+                            admissionRequest.sessionId !== sessionId
+                                ? {
+                                    status: 'rejected' as const,
+                                    code: 'session_input_source_authority_mismatch' as const,
+                                }
+                                : admissionRequest.targetMachineId
+                                    !== params.machineId
+                                    ? {
+                                        status: 'rejected' as const,
+                                        code: 'session_input_target_update_required' as const,
+                                    }
+                                    : await params
+                                        .getApiMachineForSessions()
+                                        ?.enqueueSessionPendingByMachine(
+                                            admissionRequest,
+                                            context.signal
+                                                ? { signal: context.signal }
+                                                : undefined,
+                                        )
+                                        ?? {
+                                            status: 'rejected' as const,
+                                            code: 'session_input_target_unavailable' as const,
+                                        };
+                        return {
+                            ok: true as const,
+                            result: {
+                                kind: 'session.input.admission' as const,
+                                status: 'resolved' as const,
+                                admission,
+                            },
+                        };
+                    }
+                    const lease =
+                        await acquireAuthoritativePluginRuntimeRegistryLease({
+                            happyHomeDir:
+                                configuration.happyHomeDir,
+                        });
+                    try {
+                        if (
+                            request.operation.kind
+                            === 'model_transition.authorize'
+                        ) {
+                            const tracked =
+                                findTrackedSessionByHappySessionId(
+                                    params.pidToTrackedSession
+                                        .values(),
+                                    sessionId,
+                                );
+                            const authorization =
+                                AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema.parse(
+                                await authorizeDaemonSessionModelTransitionProviderTarget({
+                                    trackedAgentId:
+                                        resolveTrackedSessionCatalogAgentId(
+                                            tracked,
+                                        ),
+                                    trackedSelection:
+                                        tracked?.spawnOptions
+                                            ?.modelSelection?.ref
+                                        ?? null,
+                                    trackedSessionBindingMetadata:
+                                        tracked?.spawnOptions
+                                            ?.providerBindingMetadataV1
+                                        ?? null,
+                                    requestAgentId:
+                                        retainedAgent.agentId,
+                                    requestedSelection:
+                                        request.operation
+                                            .selection,
+                                    authorizeProviderTarget:
+                                        async (authority) =>
+                                            await authorizeSessionModelTransitionProviderTargetWithLease({
+                                                sessionId,
+                                                machineId:
+                                                    params.machineId,
+                                                agentId:
+                                                    authority.agentId,
+                                                agentTargetKey:
+                                                    authority
+                                                        .agentTargetKey,
+                                                lease,
+                                                input:
+                                                    authority.input,
+                                            }),
+                                }),
+                            );
+                            return {
+                                ok: true as const,
+                                result: {
+                                    kind:
+                                        'model_transition' as const,
+                                    status:
+                                        'authorized' as const,
+                                    authorization,
+                                },
+                            };
+                        }
+                        const operationRequest =
+                            request.operation.request;
+                        if (
+                            operationRequest.kind
+                            === 'composition'
+                        ) {
+                            const composition =
+                                await resolveAgentCompositionThroughRuntimeRegistry(
+                                    lease.registry,
+                                    {
+                                        sessionId,
+                                        agentId: retainedAgent.agentId,
+                                        runtimeFamily:
+                                            operationRequest.runtimeFamily,
+                                        ...(operationRequest.machineId
+                                            ? {
+                                                machineId:
+                                                    operationRequest.machineId,
+                                            }
+                                            : {}),
+                                        ...(operationRequest.featureIds
+                                            ? {
+                                                featureIds:
+                                                    operationRequest.featureIds,
+                                            }
+                                            : {}),
+                                        ...(context.signal
+                                            ? { signal: context.signal }
+                                            : {}),
+                                    },
+                                );
+                            return {
+                                ok: true as const,
+                                result: {
+                                    kind:
+                                        'turn_contributions' as const,
+                                    status:
+                                        'resolved' as const,
+                                    contributions:
+                                        AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
+                                            kind:
+                                                'composition' as const,
+                                            ...composition,
+                                        }),
+                                },
+                            };
+                        }
+                        if (
+                            operationRequest.kind
+                            === 'prompt'
+                        ) {
+                            const promptAssetBlocks =
+                                await lease.registry
+                                    .resolvePromptAssetBlocks({
+                                        agentId:
+                                            retainedAgent.agentId,
+                                        sessionId,
+                                        ...(operationRequest
+                                            .selectedAsset
+                                            ? {
+                                                selectedAsset:
+                                                    operationRequest
+                                                        .selectedAsset,
+                                            }
+                                            : {}),
+                                        ...(operationRequest
+                                            .machineId
+                                            ? {
+                                                machineId:
+                                                    operationRequest
+                                                        .machineId,
+                                            }
+                                            : {}),
+                                        ...(operationRequest
+                                            .featureIds
+                                            ? {
+                                                featureIds:
+                                                    operationRequest
+                                                        .featureIds,
+                                            }
+                                            : {}),
+                                        ...(operationRequest
+                                            .excludePluginIds
+                                            ? {
+                                                excludePluginIds:
+                                                    operationRequest
+                                                        .excludePluginIds,
+                                            }
+                                            : {}),
+                                    });
+                            return {
+                                ok: true as const,
+                                result: {
+                                    kind:
+                                        'turn_contributions' as const,
+                                    status:
+                                        'resolved' as const,
+                                    contributions:
+                                        AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
+                                        kind:
+                                            'prompt' as const,
+                                        promptAssetBlocks,
+                                        toolPromptContributions:
+                                            resolvePluginToolPromptContributionsThroughRuntimeRegistry(
+                                                lease.registry,
+                                                operationRequest.excludePluginIds
+                                                    ? {
+                                                        excludePluginIds:
+                                                            operationRequest
+                                                                .excludePluginIds,
+                                                    }
+                                                    : undefined,
+                                            ).map(({ pluginId: _pluginId, ...contribution }) => contribution),
+                                        }),
+                                },
+                            };
+                        }
+                        if (
+                            operationRequest.kind
+                            === 'composerReference'
+                        ) {
+                            const references =
+                                lease.registry
+                                    .composerReferences;
+                            if (!references) {
+                                throw new PluginError({
+                                    code:
+                                        'composer_reference_unavailable',
+                                    message:
+                                        'Composer references are unavailable',
+                                });
+                            }
+                            const resolution =
+                                await references.resolve({
+                                    reference:
+                                        operationRequest.reference,
+                                    candidateId:
+                                        operationRequest.candidateId,
+                                    signal:
+                                        context.signal
+                                        ?? new AbortController().signal,
+                                });
+                            return {
+                                ok: true as const,
+                                result: {
+                                    kind:
+                                        'turn_contributions' as const,
+                                    status:
+                                        'resolved' as const,
+                                    contributions:
+                                        AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
+                                            kind:
+                                                'composerReference' as const,
+                                            resolution,
+                                        }),
+                                },
+                            };
+                        }
+                        if (
+                            operationRequest.kind
+                            === 'composerAttachment'
+                        ) {
+                            if (
+                                operationRequest.request.sessionId
+                                !== sessionId
+                            ) {
+                                throw new PluginError({
+                                    code:
+                                        'composer_attachment_session_mismatch',
+                                    message:
+                                        'Composer attachment resolution session does not match the authenticated Runner session',
+                                });
+                            }
+                            const attachments =
+                                lease.registry
+                                    .composerAttachments;
+                            if (!attachments) {
+                                throw new PluginError({
+                                    code:
+                                        'composer_attachment_unavailable',
+                                    message:
+                                        'Composer attachments are unavailable',
+                                });
+                            }
+                            if (
+                                !attachments.isDeclared(
+                                    operationRequest.attachment,
+                                )
+                            ) {
+                                throw new PluginError({
+                                    code:
+                                        'composer_attachment_unavailable',
+                                    message:
+                                        `Composer attachment '${operationRequest.attachment.pluginId}/${operationRequest.attachment.localId}' is unavailable`,
+                                });
+                            }
+                            const result = attachments.requires({
+                                attachment: operationRequest.attachment,
+                                phase: 'resolveForDispatch',
+                            })
+                                ? await (async () => {
+                                    if (!await attachments.supports({
+                                        attachment:
+                                            operationRequest.attachment,
+                                        phase: 'resolveForDispatch',
+                                    })) {
+                                        throw new PluginError({
+                                            code:
+                                                'composer_attachment_callback_unavailable',
+                                            message:
+                                                `Composer attachment '${operationRequest.attachment.pluginId}/${operationRequest.attachment.localId}' does not provide 'resolveForDispatch'`,
+                                        });
+                                    }
+                                    return await attachments.resolveForDispatch({
+                                        attachment:
+                                            operationRequest.attachment,
+                                        request:
+                                            operationRequest.request,
+                                        signal:
+                                            context.signal
+                                            ?? new AbortController().signal,
+                                    });
+                                })()
+                                : Object.freeze({
+                                    attachments: Object.freeze(
+                                        operationRequest.request.attachments.map(
+                                            (attachment) => Object.freeze({
+                                                instanceId:
+                                                    attachment.instanceId,
+                                                status: 'ready' as const,
+                                            }),
+                                        ),
+                                    ),
+                                });
+                            return {
+                                ok: true as const,
+                                result: {
+                                    kind:
+                                        'turn_contributions' as const,
+                                    status:
+                                        'resolved' as const,
+                                    contributions:
+                                        AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
+                                            kind:
+                                                'composerAttachment' as const,
+                                            result,
+                                        }),
+                                },
+                            };
+                        }
+                        if (
+                            operationRequest.kind
+                            === 'composerAttachmentAccepted'
+                        ) {
+                            if (
+                                operationRequest.event.sessionId
+                                !== sessionId
+                            ) {
+                                throw new PluginError({
+                                    code:
+                                        'composer_attachment_session_mismatch',
+                                    message:
+                                        'Composer attachment acceptance session does not match the authenticated Runner session',
+                                });
+                            }
+                            const attachments =
+                                lease.registry
+                                    .composerAttachments;
+                            if (!attachments) {
+                                throw new PluginError({
+                                    code:
+                                        'composer_attachment_unavailable',
+                                    message:
+                                        'Composer attachments are unavailable',
+                                });
+                            }
+                            if (
+                                !attachments.isDeclared(
+                                    operationRequest.attachment,
+                                )
+                            ) {
+                                throw new PluginError({
+                                    code:
+                                        'composer_attachment_unavailable',
+                                    message:
+                                        `Composer attachment '${operationRequest.attachment.pluginId}/${operationRequest.attachment.localId}' is unavailable`,
+                                });
+                            }
+                            if (attachments.requires({
+                                attachment: operationRequest.attachment,
+                                phase: 'afterMessageAccepted',
+                            })) {
+                                if (!await attachments.supports({
+                                    attachment: operationRequest.attachment,
+                                    phase: 'afterMessageAccepted',
+                                })) {
+                                    throw new PluginError({
+                                        code:
+                                            'composer_attachment_callback_unavailable',
+                                        message:
+                                            `Composer attachment '${operationRequest.attachment.pluginId}/${operationRequest.attachment.localId}' does not provide 'afterMessageAccepted'`,
+                                    });
+                                }
+                                await attachments.afterMessageAccepted({
+                                    attachment:
+                                        operationRequest.attachment,
+                                    event: operationRequest.event,
+                                    signal:
+                                        context.signal
+                                        ?? new AbortController().signal,
+                                });
+                            }
+                            return {
+                                ok: true as const,
+                                result: {
+                                    kind:
+                                        'turn_contributions' as const,
+                                    status:
+                                        'resolved' as const,
+                                    contributions:
+                                        AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
+                                            kind:
+                                                'composerAttachmentAccepted' as const,
+                                        }),
+                                },
+                            };
+                        }
+                        if (
+                            operationRequest.kind
+                            === 'settleComposerStagedMedia'
+                        ) {
+                            const tracked =
+                                findTrackedSessionByHappySessionId(
+                                    params.pidToTrackedSession.values(),
+                                    sessionId,
+                                );
+                            // A late runner reply no longer has a current Session owner.
+                            // Keep it inert: neither release a stage nor delete durable media
+                            // after the tracked lifecycle has ended or been replaced.
+                            if (!tracked) {
+                                return {
+                                    ok: true as const,
+                                    result: {
+                                        kind: 'turn_contributions' as const,
+                                        status: 'resolved' as const,
+                                        contributions:
+                                            AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
+                                                kind:
+                                                    'settleComposerStagedMedia' as const,
+                                            }),
+                                    },
+                                };
+                            }
+                            if (
+                                operationRequest.outcome
+                                === 'accepted'
+                            ) {
+                                const stageStore =
+                                    createActiveDaemonComposerMediaStageStore({
+                                        machineId: params.machineId,
+                                    });
+                                await Promise.all(
+                                    operationRequest.settlement.releaseIntents
+                                        .map(async (intent) => {
+                                            await stageStore.release(intent);
+                                        }),
+                                );
+                            } else {
+                                const workingDirectory =
+                                    tracked?.spawnOptions?.directory;
+                                if (
+                                    typeof workingDirectory === 'string'
+                                    && workingDirectory.trim().length > 0
+                                ) {
+                                    await garbageCollectUncommittedSessionMedia({
+                                        workingDirectory,
+                                        candidateWorkspaceRelativePaths:
+                                            operationRequest.settlement
+                                                .createdWorkspaceRelativePaths,
+                                        reason: 'failed_durable_write',
+                                        logger,
+                                    });
+                                }
+                            }
+                            return {
+                                ok: true as const,
+                                result: {
+                                    kind:
+                                        'turn_contributions' as const,
+                                    status:
+                                        'resolved' as const,
+                                    contributions:
+                                        AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
+                                            kind:
+                                                'settleComposerStagedMedia' as const,
+                                        }),
+                                },
+                            };
+                        }
+                        let payload: Readonly<Record<string, unknown>>;
+                        if (operationRequest.kind === 'transformSessionInput') {
+                            const signal = context.signal
+                                ?? new AbortController().signal;
+                            const transformed =
+                                await transformSessionInputThroughRuntimeRegistry(
+                                    lease.registry,
+                                    operationRequest.payload,
+                                    { signal },
+                                );
+                            const sourceMeta = operationRequest.payload.meta;
+                            const sourceMetaRecord = sourceMeta
+                                && typeof sourceMeta === 'object'
+                                && !Array.isArray(sourceMeta)
+                                ? sourceMeta as Record<string, unknown>
+                                : {};
+                            const transformedMeta = transformed.meta;
+                            const transformedMetaRecord = transformedMeta
+                                && typeof transformedMeta === 'object'
+                                && !Array.isArray(transformedMeta)
+                                ? transformedMeta as Record<string, unknown>
+                                : null;
+                            const meta = preserveComposerAttachmentSelectionAcrossSessionInputTransformV1({
+                                sourceMeta: sourceMetaRecord,
+                                transformedMeta: transformedMetaRecord,
+                            });
+                            if (!meta) {
+                                payload = transformed;
+                            } else {
+                                const selected =
+                                    validateSessionStructuredInputIngressV1({
+                                        meta,
+                                    });
+                                if (selected.length === 0) {
+                                    payload = meta === transformedMetaRecord
+                                        ? transformed
+                                        : Object.freeze({ ...transformed, meta });
+                                } else {
+                                    if (
+                                        operationRequest.payload.sessionId
+                                        !== sessionId
+                                    ) {
+                                        throw new PluginError({
+                                            code:
+                                                'composer_attachment_session_mismatch',
+                                            message:
+                                                'Composer attachment preparation session does not match the authenticated Runner session',
+                                        });
+                                    }
+                                    const attachments =
+                                        lease.registry
+                                            .composerAttachments;
+                                    if (!attachments) {
+                                        throw new PluginError({
+                                            code:
+                                                'composer_attachment_unavailable',
+                                            message:
+                                                'Composer attachments are unavailable',
+                                        });
+                                    }
+                                    const admittedSelected = attachments.admit({
+                                        phase: 'draft',
+                                        attachments: selected,
+                                    });
+                                    const groups = new Map<string, {
+                                        attachment: (typeof admittedSelected)[number]['attachment'];
+                                        inputs: Array<(typeof admittedSelected)[number]>;
+                                    }>();
+                                    for (const input of admittedSelected) {
+                                        const attachment = input.attachment;
+                                        const key = `${attachment.pluginId}\u0000${attachment.localId}`;
+                                        let group = groups.get(key);
+                                        if (!group) {
+                                            group = {
+                                                attachment: Object.freeze({
+                                                    pluginId:
+                                                        attachment.pluginId,
+                                                    localId:
+                                                        attachment.localId,
+                                                }),
+                                                inputs: [],
+                                            };
+                                            groups.set(key, group);
+                                        }
+                                        group.inputs.push(input);
+                                    }
+                                    const preparedByInstanceId = new Map<
+                                        string,
+                                        (typeof admittedSelected)[number]
+                                    >();
+                                    for (const group of groups.values()) {
+                                        if (
+                                            !attachments.isDeclared(
+                                                group.attachment,
+                                            )
+                                        ) {
+                                            throw new PluginError({
+                                                code:
+                                                    'composer_attachment_unavailable',
+                                                message:
+                                                    `Composer attachment '${group.attachment.pluginId}/${group.attachment.localId}' is unavailable`,
+                                            });
+                                        }
+                                        const parsedRequest =
+                                            ComposerAttachmentPrepareRequestV1Schema
+                                                .safeParse({
+                                                    sessionId,
+                                                    localId:
+                                                        operationRequest.payload
+                                                            .localId,
+                                                    attachments: group.inputs.map(
+                                                        (input) => ({
+                                                            instanceId:
+                                                                input.instanceId,
+                                                            key: input.key,
+                                                            value: input.value,
+                                                            ...(input.content
+                                                                ? {
+                                                                    content:
+                                                                        input.content,
+                                                                }
+                                                                : {}),
+                                                        }),
+                                                    ),
+                                                });
+                                        if (!parsedRequest.success) {
+                                            throw new PluginError({
+                                                code:
+                                                    'composer_attachment_request_invalid',
+                                                message:
+                                                    'Composer attachment preparation requires the canonical session and local identity',
+                                            });
+                                        }
+                                        if (
+                                            !attachments.requires({
+                                                attachment: group.attachment,
+                                                phase: 'prepareForSend',
+                                            })
+                                        ) {
+                                            for (const input of group.inputs) {
+                                                preparedByInstanceId.set(
+                                                    input.instanceId,
+                                                    input,
+                                                );
+                                            }
+                                            continue;
+                                        }
+                                        if (
+                                            !await attachments.supports({
+                                                attachment: group.attachment,
+                                                phase: 'prepareForSend',
+                                            })
+                                        ) {
+                                            throw new PluginError({
+                                                code:
+                                                    'composer_attachment_callback_unavailable',
+                                                message:
+                                                    `Composer attachment '${group.attachment.pluginId}/${group.attachment.localId}' does not provide 'prepareForSend'`,
+                                            });
+                                        }
+                                        const result =
+                                            await attachments.prepareForSend({
+                                                attachment: group.attachment,
+                                                request: parsedRequest.data,
+                                                signal,
+                                            });
+                                        result.attachments.forEach(
+                                            (outcome, index) => {
+                                                // Message preparation is all-or-none, like the
+                                                // dispatch-phase resolution owner: a blocked
+                                                // outcome rejects the whole preparation and
+                                                // keeps the plugin's typed reason, instead of
+                                                // silently admitting the remaining attachments.
+                                                if (
+                                                    outcome.status !== 'ready'
+                                                ) {
+                                                    throw new PluginError({
+                                                        code:
+                                                            `composer_attachment_prepare_${outcome.status}`,
+                                                        retryable:
+                                                            outcome.retryable,
+                                                        message: outcome.message
+                                                            ?? `Composer attachment preparation is ${outcome.status}`,
+                                                    });
+                                                }
+                                                const input =
+                                                    group.inputs[index]!;
+                                                preparedByInstanceId.set(
+                                                    input.instanceId,
+                                                    Object.freeze({
+                                                        ...input,
+                                                        value: outcome.value,
+                                                        ...(outcome.content
+                                                            ? {
+                                                                content:
+                                                                    outcome.content,
+                                                            }
+                                                            : {}),
+                                                        ...(outcome.presentation
+                                                            ? {
+                                                                presentation:
+                                                                    Object.freeze({
+                                                                        ...input.presentation,
+                                                                        ...outcome.presentation,
+                                                                    }),
+                                                            }
+                                                            : {}),
+                                                    }),
+                                                );
+                                            },
+                                        );
+                                    }
+                                    const preparedDraftAttachments =
+                                        admittedSelected.flatMap((input) => {
+                                            const prepared =
+                                                preparedByInstanceId.get(
+                                                    input.instanceId,
+                                                );
+                                            return prepared ? [prepared] : [];
+                                        });
+                                    const messageLocalId =
+                                        typeof operationRequest.payload.localId
+                                        === 'string'
+                                            ? operationRequest.payload.localId
+                                                .trim()
+                                            : '';
+                                    if (!messageLocalId) {
+                                        throw new PluginError({
+                                            code:
+                                                'composer_attachment_request_invalid',
+                                            message:
+                                                'Composer attachment finalization requires the canonical Message local identity',
+                                        });
+                                    }
+                                    const tracked =
+                                        findTrackedSessionByHappySessionId(
+                                            params.pidToTrackedSession.values(),
+                                            sessionId,
+                                        );
+                                    const workingDirectory =
+                                        tracked?.spawnOptions?.directory;
+                                    const finalization =
+                                        await finalizeComposerStagedMediaToSession({
+                                            sessionId,
+                                            messageLocalId,
+                                            workingDirectory:
+                                                typeof workingDirectory === 'string'
+                                                    ? workingDirectory
+                                                    : '',
+                                            executionTarget: {
+                                                serverId:
+                                                    configuration.activeServerId,
+                                                machineId: params.machineId,
+                                            },
+                                            stageStore:
+                                                createActiveDaemonComposerMediaStageStore({
+                                                    machineId: params.machineId,
+                                                }),
+                                            meta,
+                                            attachments:
+                                                preparedDraftAttachments,
+                                            logger,
+                                        });
+                                    try {
+                                        const preparedComposerAttachments =
+                                            attachments.admit({
+                                                phase: 'prepared',
+                                                attachments:
+                                                    finalization.attachments,
+                                            });
+                                        const {
+                                            [COMPOSER_STAGED_MEDIA_ADMISSION_SETTLEMENT_FIELD]: _discardedSettlement,
+                                            ...transformedWithoutSettlement
+                                        } = transformed;
+                                        payload = Object.freeze({
+                                            ...transformedWithoutSettlement,
+                                            meta: finalization.meta,
+                                            preparedComposerAttachments,
+                                            ...(finalization.releaseIntents.length > 0
+                                                ? {
+                                                    [COMPOSER_STAGED_MEDIA_ADMISSION_SETTLEMENT_FIELD]: {
+                                                        v: 1,
+                                                        releaseIntents:
+                                                            finalization.releaseIntents,
+                                                        createdWorkspaceRelativePaths:
+                                                            finalization.createdWorkspaceRelativePaths,
+                                                    },
+                                                }
+                                                : {}),
+                                        });
+                                    } catch (error) {
+                                        if (
+                                            typeof workingDirectory === 'string'
+                                            && workingDirectory.trim().length > 0
+                                        ) {
+                                            await garbageCollectUncommittedSessionMedia({
+                                                workingDirectory,
+                                                candidateWorkspaceRelativePaths:
+                                                    finalization
+                                                        .createdWorkspaceRelativePaths,
+                                                reason: 'failed_durable_write',
+                                                logger,
+                                            });
+                                        }
+                                        throw error;
+                                    }
+                                }
+                            }
+                        } else if (operationRequest.kind === 'transformAgentRequest') {
+                            const rawRequest = operationRequest.payload.request;
+                            if (
+                                !rawRequest
+                                || typeof rawRequest !== 'object'
+                                || Array.isArray(rawRequest)
+                            ) {
+                                throw new PluginError({
+                                    code: 'agent_request_transform_invalid',
+                                    message: 'Agent request transformation requires a raw ACP request object',
+                                });
+                            }
+                            payload =
+                                await transformAgentRequestThroughRuntimeRegistry(
+                                    lease.registry,
+                                    Object.freeze({
+                                        sessionId,
+                                        agentId: retainedAgent.agentId,
+                                        runtimeFamily: 'acpSession',
+                                        method: 'session/prompt',
+                                        request: rawRequest,
+                                        timestampMs: Date.now(),
+                                    }),
+                                    context.signal
+                                        ? { signal: context.signal }
+                                        : undefined,
+                                );
+                        } else {
+                            payload =
+                                await transformAgentContextThroughPluginRuntimeRegistry(
+                                    lease.registry,
+                                    operationRequest.payload,
+                                    context.signal
+                                        ? { signal: context.signal }
+                                        : undefined,
+                                );
+                        }
+                        return {
+                            ok: true as const,
+                            result: {
+                                kind:
+                                    'turn_contributions' as const,
+                                status:
+                                    'resolved' as const,
+                                contributions:
+                                    AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
+                                    kind:
+                                        operationRequest.kind,
+                                    payload,
+                                    }),
+                            },
+                        };
+                    } finally {
+                        await lease.release();
+                    }
+                }
+                const authority = {
+                    sessionId,
+                    pluginId:
+                        retainedAgent.pluginId,
+                };
+                if (
+                    request.operation.kind
+                    === 'managed_server.endpoint.read.claim'
+                ) {
+                    const claimed = managedServiceEndpointReadOwner?.claim({
+                        requestId: request.operation.requestId,
+                        projectionToken:
+                            request.operation.projectionToken,
+                        sessionId: authority.sessionId,
+                        pluginId: authority.pluginId,
+                    }) === true;
+                    return {
+                        ok: true as const,
+                        result: {
+                            kind:
+                                'managed_server.endpoint.read' as const,
+                            status: claimed
+                                ? 'claimed' as const
+                                : 'unavailable' as const,
+                            requestId: request.operation.requestId,
+                        },
+                    };
+                }
+                if (
+                    request.operation.kind
+                    === 'managed_server.supervision.authorize'
+                ) {
+                    const managedProviderAuthority =
+                        request.operation.operationClaimId
+                            ? await runnerDaemonPluginServicesHost
+                                .readManagedProviderSupervisionAuthority({
+                                    sessionId,
+                                    runner,
+                                    retainedAgent,
+                                    contributionId:
+                                        request.operation.contributionId,
+                                    operationClaimId:
+                                        request.operation.operationClaimId,
+                                    serverId: request.operation.serverId,
+                                })
+                            : null;
+                    if (
+                        managedProviderAuthority
+                        && !managedProviderAuthority.expectedLaunch
+                    ) {
+                        throw new PluginError({
+                            code: 'plugin_managed_server_launch_denied',
+                            message: 'Managed Provider server launch has no exact operation-input authority',
+                        });
+                    }
+                    const authorization = managedProviderAuthority
+                        ? await authorizeRunnerManagedProviderServerSupervision({
+                                paths: resolvePluginStorePaths({
+                                    happyHomeDir:
+                                        configuration.happyHomeDir,
+                                }),
+                                sessionId,
+                                request: {
+                                    ...request.operation,
+                                    immutableGenerationId:
+                                        managedProviderAuthority
+                                            .bootstrap.scope
+                                            .immutableGenerationId,
+                                },
+                                bootstrap:
+                                    managedProviderAuthority.bootstrap,
+                                expectedLaunch:
+                                    managedProviderAuthority
+                                        .expectedLaunch!,
+                            })
+                        : await authorizeRunnerManagedServiceSupervision({
+                                paths: resolvePluginStorePaths({
+                                    happyHomeDir:
+                                        configuration.happyHomeDir,
+                                }),
+                                binding: retainedAgent,
+                                request: {
+                                    ...request.operation,
+                                    immutableGenerationId:
+                                        retainedAgent
+                                            .immutableGenerationId,
+                                },
+                                ...(context.signal
+                                    ? { signal: context.signal }
+                                    : {}),
+                            });
+                    return AgentRuntimeDaemonServiceResponseV1Schema.parse({
+                        ok: true as const,
+                        result: {
+                            kind:
+                                'managed_server.supervision' as const,
+                            status: 'authorized' as const,
+                            launch: authorization.launch,
+                        },
+                    });
+                }
+                if (
+                    request.operation.kind
+                    === 'managed_server.endpoint.publish'
+                ) {
+                    const projection =
+                        request.operation.projection;
+                    const managedProviderAuthority =
+                        projection.operationClaimId
+                            ? await runnerDaemonPluginServicesHost
+                                .readManagedProviderSupervisionAuthority({
+                                    sessionId,
+                                    runner,
+                                    retainedAgent,
+                                    contributionId:
+                                        projection.contributionId,
+                                    operationClaimId:
+                                        projection.operationClaimId,
+                                })
+                            : null;
+                    const managedProviderBootstrap =
+                        managedProviderAuthority?.bootstrap ?? null;
+                    const isExactAgentContribution =
+                        projection.contributionId
+                            === `${retainedAgent.pluginId}/agents/${retainedAgent.localAgentId}`;
+                    if (
+                        (
+                            !managedProviderBootstrap
+                            && !isExactAgentContribution
+                        )
+                        || (
+                            managedProviderBootstrap
+                            && projection.pluginId
+                                !== managedProviderBootstrap
+                                    .scope.pluginId
+                        )
+                    ) {
+                        return {
+                            ok: true as const,
+                            result: {
+                                kind:
+                                    'managed_server.endpoint' as const,
+                                status: 'unavailable' as const,
+                            },
+                        };
+                    }
+                    const result =
+                        await executeRunnerManagedServiceEndpointProjectionBridgeOperation({
+                            authority: managedProviderBootstrap
+                                ? {
+                                    sessionId:
+                                        managedProviderBootstrap
+                                            .scope.sessionId,
+                                    pluginId:
+                                        managedProviderBootstrap
+                                            .scope.pluginId,
+                                }
+                                : authority,
+                            operation: {
+                                kind:
+                                    'managed_server_endpoint_publish',
+                                projection:
+                                    request.operation.projection,
+                            },
+                            owner:
+                                managedServiceDurabilityOwner!,
+                        });
+                    if (
+                        result.kind
+                        !== 'managed_server_endpoint_published'
+                    ) {
+                        throw new Error(
+                            'Managed server endpoint publish returned the wrong result',
+                        );
+                    }
+                    return {
+                        ok: true as const,
+                        result: {
+                            kind:
+                                'managed_server.endpoint' as const,
+                            status: 'published' as const,
+                            projectionToken:
+                                result.projectionToken,
+                        },
+                    };
+                }
+                if (
+                    request.operation.kind
+                    === 'managed_server.endpoint.release'
+                ) {
+                    const result =
+                        await executeRunnerManagedServiceEndpointProjectionBridgeOperation({
+                            authority: {
+                                sessionId: authority.sessionId,
+                                pluginId:
+                                    request.operation.pluginId,
+                            },
+                            operation: {
+                                kind:
+                                    'managed_server_endpoint_release',
+                                instanceId:
+                                    request.operation.instanceId,
+                                projectionToken:
+                                    request.operation
+                                        .projectionToken,
+                            },
+                            owner:
+                                managedServiceDurabilityOwner!,
+                        });
+                    if (
+                        result.kind
+                        !== 'managed_server_endpoint_released'
+                    ) {
+                        throw new Error(
+                            'Managed server endpoint release returned the wrong result',
+                        );
+                    }
+                    return {
+                        ok: true as const,
+                        result: {
+                            kind:
+                                'managed_server.endpoint' as const,
+                            status: 'released' as const,
+                            released: result.released,
+                        },
+                    };
+                }
+                if (
+                    request.operation.kind
+                    !== 'managed_server.endpoint.resolve'
+                ) {
+                    return {
+                        ok: true as const,
+                        result: {
+                            kind:
+                                'managed_server.endpoint' as const,
+                            status: 'unavailable' as const,
+                        },
+                    };
+                }
+                const projection =
+                    await managedServiceDurabilityOwner!
+                        .resolveEndpointProjection({
+                            pluginId: authority.pluginId,
+                            sessionId: authority.sessionId,
+                            selector:
+                                request.operation.selector,
+                        });
+                return projection
+                    && projection.custodyOwner
+                        === 'sessionRunner'
+                    ? {
+                        ok: true as const,
+                        result: {
+                            kind:
+                                'managed_server.endpoint' as const,
+                            status: 'resolved' as const,
+                            projection,
+                        },
+                    }
+                    : {
+                        ok: true as const,
+                        result: {
+                            kind:
+                                'managed_server.endpoint' as const,
+                            status: 'unavailable' as const,
+                        },
+                    };
+            },
+        },
+        recordAgentRuntimeDaemonServiceAdmission:
+            async (tracked, admission) => {
+                const sessionId =
+                    normalizeOptionalString(tracked.happySessionId);
+                if (!sessionId) return false;
+                return await updateSessionMarkerActiveTurn({
+                    pid:
+                        tracked.sessionRunnerPid
+                        ?? tracked.pid,
+                    sessionId,
+                    activeTurnId: admission.turnId,
+                    agentRuntimeDaemonServiceActiveAdmission:
+                        admission,
+                });
+            },
+        clearAgentRuntimeDaemonServiceAdmission:
+            async (tracked, admission) => {
+                const sessionId =
+                    normalizeOptionalString(tracked.happySessionId);
+                if (!sessionId) return false;
+                return await updateSessionMarkerActiveTurn({
+                    pid:
+                        tracked.sessionRunnerPid
+                        ?? tracked.pid,
+                    sessionId,
+                    activeTurnId:
+                        tracked.activeTurnId
+                        ?? null,
+                    expectedAgentRuntimeDaemonServiceActiveAdmission:
+                        admission,
+                });
+            },
         foregroundAgentRuntimeAdmission,
         simulatorPreview: simulatorPreviewRuntime.routes,
         connectedAccountRequestAuth: {
             authenticate: connectedAccountRequestAuthRegistry.authenticate,
             lookupRequestAuth: async (input) => {
-                await ensureCurrentProjectionForRequestAuth();
                 return await connectedAccountRequestAuthService
                     .lookupRequestAuth(input);
             },
             refreshAfterAuthFailure: async (input) => {
-                await ensureCurrentProjectionForRequestAuth();
                 return await connectedAccountRequestAuthService
                     .refreshAfterAuthFailure(input);
             },
             reportQuotaFailure: async (input) => {
-                await ensureCurrentProjectionForRequestAuth();
                 return await connectedAccountRequestAuthService
                     .reportQuotaFailure(input);
             },
@@ -6924,6 +12068,7 @@ export async function startDaemonSessionControlRuntime(
                         token: params.credentials.token,
                         credentials: params.credentials,
                         sessionId,
+                        currentMachineId: params.machineId,
                     });
                 },
                 api: params.api,
@@ -7061,10 +12206,7 @@ export async function startDaemonSessionControlRuntime(
                             turnDeferralQueue: connectedServiceTurnDeferralQueue,
                         }),
                 }),
-                recoverAfterRuntimeAuthSwitch: createSelectionPostSwitchRecoveryHandler({
-                    getTrackedSessions: () => Array.from(params.pidToTrackedSession.values()),
-                    isTurnInFlight: (sessionId) => connectedServiceTurnDeferralQueue.isTurnInFlight(sessionId),
-                }),
+                recoverAfterRuntimeAuthSwitch: createSelectionPostSwitchRecoveryHandler(),
                 verifyProviderAccountAdoption: async (verificationInput) => {
                     const result = await verifySessionConnectedServiceAccountAdoption(verificationInput);
                     recordRuntimeAccountIdentityFromVerification({
@@ -7075,10 +12217,12 @@ export async function startDaemonSessionControlRuntime(
                     });
                     return result;
                 },
-                hotApply: createSessionConnectedServiceAuthHotApply(),
+                hotApply: createSessionConnectedServiceAuthHotApply({
+                    validateGroupMutationCurrentness: validateConnectedServiceGroupMutationCurrentness,
+                }),
                 registerHotApplyTargets: registerHotApplyRuntimeTarget,
-                emitSessionEvent: (sessionId, event) => {
-                    commitConnectedServiceAccountSwitchSessionEventWithNotification({
+                emitSessionEvent: async (sessionId, event) => {
+                    await commitConnectedServiceAccountSwitchSessionEventWithNotification({
                         sessionId,
                         event,
                         logContext: 'manual',
@@ -7102,10 +12246,28 @@ export async function startDaemonSessionControlRuntime(
                 params.pidToTrackedSession.values(),
                 request.sessionId,
             );
+            const expectedRunnerProcessIdentity = tracked && !('v' in request)
+                ? captureRunnerRestartIdentityWitness(tracked)
+                : undefined;
+            const currentIdentity =
+                resolveCurrentSessionRunnerLaunchIdentity();
+            const agentRuntimeCurrentness =
+                await resolveTrackedRunnerRuntimeCurrentness(
+                    tracked,
+                );
             return await restartSessionRunnerOnCurrentRuntime({
                 request,
+                expectedRunnerProcessIdentity,
                 tracked,
-                currentIdentity: resolveCurrentSessionRunnerLaunchIdentity(),
+                currentIdentity,
+                resolveCurrentIdentity:
+                    resolveCurrentSessionRunnerLaunchIdentity,
+                agentRuntimeVersionState:
+                    agentRuntimeCurrentness.versionState,
+                agentRuntimeRestartUnavailableReason:
+                    agentRuntimeCurrentness.restartUnavailableReason,
+                resolveAgentRuntimeCurrentness:
+                    resolveTrackedRunnerRuntimeCurrentness,
                 requestRestart: requestSessionRunnerVersionRuntimeRefresh,
                 resolveActivityDisabledReason: resolveSessionRunnerActivityDisabledReason,
             });
@@ -7116,23 +12278,23 @@ export async function startDaemonSessionControlRuntime(
                 reason: request.reason,
                 dryRun: request.dryRun === true,
                 currentIdentity: resolveCurrentSessionRunnerLaunchIdentity(),
+                resolveCurrentIdentity:
+                    resolveCurrentSessionRunnerLaunchIdentity,
                 trackedSessions: Array.from(params.pidToTrackedSession.values()),
                 requestRestart: requestSessionRunnerVersionRuntimeRefresh,
                 resolveActivityDisabledReason: resolveSessionRunnerActivityDisabledReason,
+                resolveAgentRuntimeCurrentness:
+                    resolveTrackedRunnerRuntimeCurrentness,
             });
         },
         handleSessionRunnerStatusGet: async (request) => {
-            const tracked = findTrackedSessionByHappySessionId(
-                params.pidToTrackedSession.values(),
-                request.sessionId,
-            );
-            return resolveSessionRunnerRuntimeState({
+            return await resolveSessionRunnerStatus({
                 sessionId: request.sessionId,
-                tracked,
-                currentIdentity: resolveCurrentSessionRunnerLaunchIdentity(),
-                resolveActivityDisabledReason: resolveSessionRunnerActivityDisabledReason,
-                machineId: params.machineId,
-                observedAtMs: Date.now(),
+            });
+        },
+        handleSessionRunnerStatusV2Get: async (request) => {
+            return await resolveSessionRunnerStatusV2({
+                sessionId: request.sessionId,
             });
         },
         handleConnectedServiceRuntimeAuthFailure: runConnectedServiceRuntimeAuthFailureRecovery,
@@ -7146,9 +12308,11 @@ export async function startDaemonSessionControlRuntime(
                         token: params.credentials.token,
                         credentials: params.credentials,
                         sessionId: inactiveSessionId,
+                        currentMachineId: params.machineId,
                     }),
                 resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
                 resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
+                resolveProviderQualifiedRuntimeAuthFailureSource: resolveProviderQualifiedRuntimeAuthFailureSourceForSession,
                 sessionId,
                 classification,
                 runtimeAuthApplyCapability: await resolveRuntimeAuthApplyCapabilityForInput({ sessionId }),
@@ -7162,16 +12326,89 @@ export async function startDaemonSessionControlRuntime(
         runtimeAuthRecoveryScheduler,
         handleConnectedServiceTurnLifecycle: async (input) => {
             const lifecycleObservedAtMs = Date.now();
+            let pendingSourceCutover =
+                pendingRequestAuthSourceCutoverBySessionId.get(
+                    input.sessionId,
+                ) ?? null;
+            if (
+                pendingSourceCutover
+                && retirePendingRequestAuthSourceCutoverForCurrentSuccessor(
+                    pendingSourceCutover,
+                )
+            ) {
+                pendingSourceCutover = null;
+            }
+            if (
+                pendingSourceCutover
+                && input.event === 'prompt_or_steer'
+            ) {
+                if (
+                    !input.requestedAction
+                    || input.activeTurnId === undefined
+                ) {
+                    return CONNECTED_SERVICE_TURN_LIFECYCLE_SOURCE_CUTOVER_BLOCK;
+                }
+                if (input.activeTurnId === null) {
+                    const idleCustody =
+                        await applyTrackedSessionTurnLifecycle({
+                            trackedSessions:
+                                params.pidToTrackedSession.values(),
+                            sessionId: input.sessionId,
+                            event: input.event,
+                            activeTurnIdWitness: null,
+                    });
+                    if (idleCustody.status === 'recorded') {
+                        connectedServiceTurnDeferralQueue
+                            .recordTurnLifecycleEvent({
+                                sessionId: input.sessionId,
+                                event: input.event,
+                                activeTurnIdWitness: null,
+                            });
+                        await requestPendingRequestAuthSourceCutoverAtBoundary(
+                            pendingSourceCutover,
+                        );
+                    }
+                    return CONNECTED_SERVICE_TURN_LIFECYCLE_SOURCE_CUTOVER_BLOCK;
+                }
+                const isLiveSteer =
+                    input.requestedAction.kind === 'steer_if_active'
+                    || input.requestedAction.kind === 'steer_now';
+                const retainedActiveTurnId =
+                    normalizeOptionalString(
+                        pendingSourceCutover.tracked.activeTurnId,
+                    )
+                    || normalizeOptionalString(
+                        pendingSourceCutover.tracked
+                            .reattachedInterruptedTurnId,
+                    );
+                if (
+                    !isLiveSteer
+                    || retainedActiveTurnId
+                        !== input.activeTurnId
+                ) {
+                    return CONNECTED_SERVICE_TURN_LIFECYCLE_SOURCE_CUTOVER_BLOCK;
+                }
+            }
             const turnCustody = await applyTrackedSessionTurnLifecycle({
                 trackedSessions: params.pidToTrackedSession.values(),
                 sessionId: input.sessionId,
                 event: input.event,
                 ...(input.turnId ? { turnId: input.turnId } : {}),
+                ...(pendingSourceCutover
+                    && input.event === 'prompt_or_steer'
+                    && input.activeTurnId !== undefined
+                    ? {
+                        activeTurnIdWitness:
+                            input.activeTurnId,
+                    }
+                    : {}),
             });
             const acceptsDownstreamLifecycle = turnCustody.status === 'recorded'
                 || turnCustody.status === 'ignored_missing_exact_turn';
             if (!acceptsDownstreamLifecycle || controlRuntimeResourcesDisposed) {
-                return { status: turnCustody.status, turnCustody };
+                return connectedServiceTurnLifecycleContinue(
+                    turnCustody,
+                );
             }
             const runtimeTargetAtAcceptance =
                 connectedServiceRuntimeRegistry.getBySessionId(input.sessionId) ?? null;
@@ -7250,7 +12487,21 @@ export async function startDaemonSessionControlRuntime(
                     error: serializeAxiosErrorForLog(error),
                 });
             });
-            return { status: turnCustody.status, turnCustody };
+            if (
+                pendingSourceCutover
+                && turnCustody.status === 'recorded'
+                && (
+                    input.event === 'assistant_message_end'
+                    || input.event === 'turn_cancelled'
+                )
+            ) {
+                await requestPendingRequestAuthSourceCutoverAtBoundary(
+                    pendingSourceCutover,
+                );
+            }
+            return connectedServiceTurnLifecycleContinue(
+                turnCustody,
+            );
         },
         handleConnectedServiceQuotaRecoveryCreditConsume: async (input) => {
             const coordinator = params.getConnectedServiceQuotasCoordinator();
@@ -7265,24 +12516,76 @@ export async function startDaemonSessionControlRuntime(
         },
         handleProviderAccountUsageSnapshot: async (input) => {
             let qualifiedUsageSource: ConnectedServiceUsageSourceV1 | null = null;
+            let claimedSource = input.source;
+            if (
+                claimedSource?.bindingKind === 'group_member'
+                && input.snapshot.accountSubject.kind === 'providerSubject'
+            ) {
+                const groupSource = claimedSource;
+                claimedSource = await resolveProviderAccountUsageSourceProfile({
+                    source: groupSource,
+                    providerAccountId: input.snapshot.accountSubject.id,
+                    getCurrentGroup: async () => await params.api.getConnectedServiceAuthGroup({
+                        serviceId: groupSource.serviceId,
+                        groupId: groupSource.groupId,
+                    }),
+                    resolveProviderAccountId: async (profileId) => {
+                        const resolution = await resolveConnectedServiceCredentialResolutions({
+                            credentials: params.credentials,
+                            api: params.api,
+                            bindings: [{ serviceId: groupSource.serviceId, profileId }],
+                        }).then((byServiceId) => byServiceId.get(groupSource.serviceId) ?? null);
+                        return resolution
+                            ? readConnectedServiceCredentialProviderAccountId(resolution.record)
+                            : null;
+                    },
+                });
+            }
+            const shouldResolveSourceCredential = claimedSource
+                && (
+                    input.deriveCredentialFingerprintFromSource === true
+                    || input.credentialFingerprint !== undefined
+                );
+            const sourceForCredential = shouldResolveSourceCredential ? claimedSource : null;
+            const sourceCredentialResolution = sourceForCredential
+                ? await resolveConnectedServiceCredentialResolutions({
+                    credentials: params.credentials,
+                    api: params.api,
+                    bindings: [{
+                        serviceId: sourceForCredential.serviceId,
+                        profileId: sourceForCredential.profileId,
+                    }],
+                }).then((byServiceId) => byServiceId.get(sourceForCredential.serviceId) ?? null)
+                : null;
+            const sourceCredentialRecord = sourceCredentialResolution?.revisionSemantics === 'revisioned'
+                ? sourceCredentialResolution.record
+                : null;
+            const credentialFingerprint = claimedSource
+                && input.deriveCredentialFingerprintFromSource === true
+                && input.credentialFingerprint === undefined
+                ? sourceCredentialRecord?.kind === 'oauth'
+                    ? computeConnectedServiceAccessTokenFingerprint(
+                        sourceCredentialRecord.oauth.accessToken,
+                    )
+                    : null
+                : input.credentialFingerprint;
             const result = await recordProviderAccountUsageSnapshotForSession({
                 getChildren: () => Array.from(params.pidToTrackedSession.values()),
                 store: providerAccountUsageStore,
                 persistence: providerAccountUsagePersistence,
-                ...(input.source ? { observation: { sources: [input.source] as const } } : {}),
-                credentialFingerprint: input.credentialFingerprint,
+                ...(claimedSource ? { observation: { sources: [claimedSource] as const } } : {}),
+                credentialFingerprint,
                 verifyCredentialFingerprint: async (candidate) => {
                     const serviceId = ConnectedServiceIdSchema.safeParse(candidate.serviceId);
                     if (!serviceId.success) return false;
-                    const resolution = await resolveConnectedServiceCredentialResolutions({
-                        credentials: params.credentials,
-                        api: params.api,
-                        bindings: [{ serviceId: serviceId.data, profileId: candidate.profileId }],
-                    }).then((byServiceId) => byServiceId.get(serviceId.data) ?? null);
-                    if (resolution?.revisionSemantics !== 'revisioned') {
+                    if (
+                        claimedSource?.serviceId !== serviceId.data
+                        || claimedSource.profileId !== candidate.profileId
+                        || sourceCredentialResolution?.revisionSemantics !== 'revisioned'
+                    ) {
                         return false;
                     }
-                    const record = resolution.record;
+                    const record = sourceCredentialResolution.record;
                     return record?.kind === 'oauth'
                         && record.oauth.providerAccountId === candidate.providerAccountId
                         && computeConnectedServiceAccessTokenFingerprint(record.oauth.accessToken) === candidate.credentialFingerprint;
@@ -7335,7 +12638,7 @@ export async function startDaemonSessionControlRuntime(
                 if (
                     isProviderAccountUsageStoreMutationAccepted(result)
                     && qualifiedUsageSource
-                    && input.credentialFingerprint
+                    && credentialFingerprint
                     && input.snapshot.accountSubject.kind === 'providerSubject'
                 ) {
                     const source = qualifiedUsageSource;
@@ -7346,18 +12649,16 @@ export async function startDaemonSessionControlRuntime(
                         source,
                     });
                     const credentialResolution = serviceId.success
-                        ? await resolveConnectedServiceCredentialResolutions({
-                            credentials: params.credentials,
-                            api: params.api,
-                            bindings: [{ serviceId: serviceId.data, profileId: source.profileId }],
-                        }).then((byServiceId) => byServiceId.get(serviceId.data) ?? null).catch(() => null)
+                        && claimedSource?.serviceId === serviceId.data
+                        && claimedSource.profileId === source.profileId
+                        ? sourceCredentialResolution
                         : null;
                     const credential = credentialResolution?.record ?? null;
                     sourceIsExactlyCurrent =
                         credentialResolution?.revisionSemantics === 'revisioned'
                         && credential?.kind === 'oauth'
                         && credential.oauth.providerAccountId === input.snapshot.accountSubject.id
-                        && computeConnectedServiceAccessTokenFingerprint(credential.oauth.accessToken) === input.credentialFingerprint;
+                        && computeConnectedServiceAccessTokenFingerprint(credential.oauth.accessToken) === credentialFingerprint;
                     if (
                         serviceId.success
                         && coordinator
@@ -7389,7 +12690,7 @@ export async function startDaemonSessionControlRuntime(
                                 groupId,
                                 groupGeneration,
                                 providerAccountId: input.snapshot.accountSubject.id,
-                                materialFingerprint: input.credentialFingerprint,
+                                materialFingerprint: credentialFingerprint,
                             },
                             snapshot: projected,
                         });
@@ -7488,19 +12789,42 @@ export async function startDaemonSessionControlRuntime(
         },
         releaseConnectedServicesForExecutionRun: executionRunConnectedServicesBridge.release,
     });
+    foregroundAgentRuntimeHttpPort = controlPort;
     connectedAccountRequestAuthHttpPort = controlPort;
-    if (startupManagedProviderRecoveryCandidates.length > 0) {
-        void recoverStartupManagedProviderCandidates(controlPort).catch((error: unknown) => {
+    params.onConnectedAccountRequestAuthHttpPortReady?.(controlPort);
+    const reattachedAuthorityRefreshes = await Promise.allSettled(
+        [...params.pidToTrackedSession.values()]
+            .filter((tracked) => (
+                tracked.reattachedFromDiskMarker === true
+                && Boolean(
+                    normalizeOptionalString(tracked.happySessionId)
+                    && tracked.agentRuntimeDaemonServiceAuthorityFilePath,
+                )
+            ))
+            .map(async (tracked) => {
+                const sessionId =
+                    normalizeOptionalString(tracked.happySessionId);
+                if (!sessionId) return;
+                await refreshTrackedRunnerAgentAuthority(
+                    tracked,
+                    sessionId,
+                    controlPort,
+                );
+            }),
+    );
+    for (const outcome of reattachedAuthorityRefreshes) {
+        if (outcome.status === 'rejected') {
             logger.debug(
-                '[DAEMON RUN] Managed Provider startup recovery failed',
-                serializeAxiosErrorForLog(error),
+                '[DAEMON RUN] Reattached Runner Agent authority refresh failed closed',
+                outcome.reason,
             );
-        });
+        }
     }
     await rehydrateLiveExecutionRunTargets({
         markers: listExecutionRunMarkersForRehydration,
         adopt: executionRunConnectedServicesBridge.adoptLiveMaterialization,
         proveRunnerLive: async (marker) => {
+            if (marker.happySessionId === null) return false;
             const tracked = params.pidToTrackedSession.get(marker.pid);
             if (!tracked || tracked.happySessionId !== marker.happySessionId) return false;
             return await isSessionRunnerActiveInDaemon({
@@ -7512,11 +12836,20 @@ export async function startDaemonSessionControlRuntime(
         logger.debug('[DAEMON RUN] Passive execution-run target re-registration failed (non-fatal)', error);
     });
     await recoverReattachedAgentRequestAuth();
-    void Promise.allSettled(
-        connectedServiceRuntimeRegistry.listTargets().map((target) => (
-            scheduleRuntimeTargetGenerationReconciliation(target)
+    const reattachedRuntimeTargets = connectedServiceRuntimeRegistry
+        .listTargets()
+        .filter((target) => !connectedServiceRuntimeRegistry.isRunTarget(target));
+    const initialRuntimeTargetGenerationReconciliation = Promise.allSettled(
+        reattachedRuntimeTargets.map((target) => (
+            scheduleRuntimeTargetGenerationReconciliation(
+                target,
+                undefined,
+                false,
+                false,
+            )
         )),
-    ).then((outcomes) => {
+    );
+    void initialRuntimeTargetGenerationReconciliation.then((outcomes) => {
         for (const outcome of outcomes) {
             if (outcome.status === 'rejected') {
                 logger.debug('[DAEMON RUN] Failed to reconcile connected-service provider adoption after daemon replacement', {
@@ -7525,22 +12858,43 @@ export async function startDaemonSessionControlRuntime(
             }
         }
     });
+    let reattachedCredentialProjectionReconciliation: Promise<void> | null = null;
+    const reconcileReattachedConnectedServiceCredentialProjection = (): Promise<void> => {
+        if (reattachedCredentialProjectionReconciliation) {
+            return reattachedCredentialProjectionReconciliation;
+        }
+        reattachedCredentialProjectionReconciliation = (async () => {
+            const initialReconciliationOutcomes =
+                await initialRuntimeTargetGenerationReconciliation;
+            const currentTargets = reattachedRuntimeTargets.filter(
+                (target) => isCurrentRuntimeGenerationTarget(target),
+            );
+            if (currentTargets.length === 0) return;
+            const projectionSnapshot =
+                await fetchConnectedServiceProjectionSnapshot();
+            await reconcileDirectCredentialProjectionForTargets(
+                projectionSnapshot,
+                currentTargets,
+                'passive_projection',
+            );
+            if (latestConnectedServiceProjectionSnapshot !== projectionSnapshot) return;
+            for (const [index, target] of reattachedRuntimeTargets.entries()) {
+                if (initialReconciliationOutcomes[index]?.status !== 'fulfilled') {
+                    continue;
+                }
+                if (isCurrentRuntimeGenerationTarget(target)) {
+                    reconciledProjectionByRuntimeTarget.set(target, projectionSnapshot);
+                }
+            }
+        })();
+        return reattachedCredentialProjectionReconciliation;
+    };
     const stopControlServerWithConnectedServiceDeferralCleanup = async (): Promise<void> => {
-        await externalSessionHostOperationOwner.retire();
-        await disposeControlRuntimeResources();
-        await stopControlServer();
+        await runControlRuntimeShutdownPhases([
+            ['control_server_stop', stopControlServer],
+        ]);
     };
 
-    // Fix-activation lag closeout: when this daemon generation comes up (the dist-guard restarts the
-    // daemon on a dist-closure fingerprint change, already gated on stack-side quiescence), roll any
-    // runners still serving a STALE code generation onto the current dist. Reuses the existing
-    // version/entrypoint-aware `if_stale` rollout (the same owner + adopt-first restart the manual
-    // `handleSessionRunnerRestartAll` RPC uses) — runners already on the current entrypoint are
-    // skipped (`already_current`), busy runners are skipped by the activity gate and re-checked on a
-    // bounded re-arm, and every respawn routes through the adopt-first owner (relay reconstructed; the
-    // healthy claude is never relaunched). Automatic rollout is hard-disabled until a reviewed
-    // current-generation action owner exists. startDaemon still starts the inert scheduler after
-    // reattach so this composition cannot bypass the canonical config owner.
     const reconcileConnectedServicesProjection = async (
         notification: ConnectedServicesProjectionNotification,
     ): Promise<void> => {
@@ -7548,6 +12902,8 @@ export async function startDaemonSessionControlRuntime(
         const projectionSnapshot = parseConnectedServiceProjectionSnapshot({
             connectedServicesV2: notification.connectedServicesV2,
             connectedServiceCredentialRevisionsV1: notification.connectedServiceCredentialRevisionsV1,
+            connectedAccountsV4: notification.connectedAccountsV4,
+            connectedAccountGroupsV4: notification.connectedAccountGroupsV4,
         });
         notification.signal.throwIfAborted();
         await publishObservedConnectedServiceProjectionThenApply({
@@ -7558,23 +12914,13 @@ export async function startDaemonSessionControlRuntime(
                     await scheduleRuntimeTargetGenerationReconciliation(target);
                 }));
                 notification.signal.throwIfAborted();
-                await reconcileConnectedServiceDirectCredentialRevisions({
-                    credentialRevisions: projectionSnapshot.credentialRevisions,
-                    resolveCredentialPresence: projectionSnapshot.resolveCredentialPresence,
-                    listRuntimeTargets: () => connectedServiceRuntimeRegistry.listTargets()
-                        .filter((target) => connectedServiceRuntimeRegistry.isRunTarget(target))
-                        .map(runtimeGenerationTarget),
-                    applyLiveCredentialRevision: async (input) => {
-                        await applyConnectedServiceProjectionCredentialUpdate({
-                            input,
-                            listRuntimeTargets: () => connectedServiceRuntimeRegistry.listRefreshTargets(),
-                            stopSession,
-                            getRefreshCoordinator: params.getConnectedServiceRefreshCoordinator,
-                        });
-                    },
-                    executionAuthority: notification.executionAuthority,
-                    signal: notification.signal,
-                });
+                await reconcileDirectCredentialProjectionForTargets(
+                    projectionSnapshot,
+                    connectedServiceRuntimeRegistry.listTargets()
+                        .filter((target) => connectedServiceRuntimeRegistry.isRunTarget(target)),
+                    notification.executionAuthority,
+                    notification.signal,
+                );
                 notification.signal.throwIfAborted();
             },
         });
@@ -7592,19 +12938,23 @@ export async function startDaemonSessionControlRuntime(
         connectedServiceAuthGroupPreTurnSwitchCoordinator,
         connectedServicePredictiveSwitchGuard,
         connectedServiceRuntimeAuthApplyCapabilityResolver: resolveRuntimeAuthApplyCapabilityForInput,
-        consumeCommittedAuthGroupGeneration: async (input: Parameters<ConnectedServiceAuthGroupGenerationConsumer['consume']>[0]) =>
-            await createDurableGenerationConsumer({
-                allowProviderInputAdmissionWrites: input.executionAuthority !== 'passive_projection',
-            }).consume(input),
-        // K3: gated credential-refresh / reconnect restart adapter (turn-deferral + reachability).
+        consumeCommittedAuthGroupGeneration,
+        // Gated application fallback restart adapter (turn-deferral + reachability).
         requestConnectedServiceRefreshRestartSignal,
         cancelConnectedServiceRuntimeAuthRecovery: async ({ sessionId, attemptId }) =>
             await runtimeAuthRecoveryScheduler.cancelExact({ sessionId, attemptId }),
         retryTemporaryThrottleNow: async ({ sessionId }) =>
             await temporaryThrottleScheduler.wake({ sessionId, reason: 'manual' }),
+        reconcileReattachedConnectedServiceCredentialProjection,
         reconcileConnectedServicesProjection,
-        awaitAgentSessionOpen:
-            agentRuntimeSessionBridge.awaitAgentSessionOpen,
+        awaitAgentSessionOpen: async (input) =>
+            await awaitTrackedRunnerAgentSessionOpen({
+                getTrackedSessions: () =>
+                    Array.from(
+                        params.pidToTrackedSession.values(),
+                    ),
+                ...input,
+            }),
         installExternalSessionHostOperations: (operations) =>
             externalSessionHostOperationOwner.install(operations),
         providerAccountUsageStore,
@@ -7625,11 +12975,9 @@ export async function startDaemonSessionControlRuntime(
             }),
             requestAuth: {
                 lookupRequestAuth: async (input) => {
-                    await ensureCurrentProjectionForRequestAuth();
                     return await connectedAccountRequestAuthService.lookupRequestAuth(input);
                 },
                 refreshAfterAuthFailure: async (input) => {
-                    await ensureCurrentProjectionForRequestAuth();
                     return await connectedAccountRequestAuthService.refreshAfterAuthFailure(input);
                 },
             },

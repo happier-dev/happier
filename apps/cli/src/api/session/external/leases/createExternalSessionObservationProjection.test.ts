@@ -115,9 +115,11 @@ function observationLinkInput(linkGeneration = 'link-generation-1') {
     } as const;
 }
 
-function setup() {
+function setup(
+    retirementSignal?: AbortSignal,
+    observerDispose = vi.fn(async () => {}),
+) {
     let emit: ((value: ExternalAgentObservationLinkEvidenceBatchV1) => void) | null = null;
-    const observerDispose = vi.fn(async () => {});
     const acquireObserver = vi.fn(async (input: Readonly<{
         emit(value: ExternalAgentObservationLinkEvidenceBatchV1): void;
     }>) => {
@@ -140,6 +142,10 @@ function setup() {
         linkKey?: string;
     }>) => projection.reconcileLink({
         ...observationLinkInput(overrides?.linkGeneration),
+        resource: {
+            ...observationLinkInput(overrides?.linkGeneration).resource,
+            ...(retirementSignal ? { retirementSignal } : {}),
+        },
         link: {
             ...observationLinkInput(overrides?.linkGeneration).link,
             linkKey: overrides?.linkKey ?? 'native-session-1',
@@ -440,7 +446,7 @@ describe('createExternalSessionObservationProjection', () => {
     });
 
     it.each(['status', 'fallback'] as const)(
-        'awaits grouping descriptor admission before %s evidence reconciliation',
+        'keeps %s-only demand out of descriptor hydration',
         async (surface) => {
             const reconcileResource = vi.fn(async (input: Readonly<{
                 purpose: 'observation_evidence' | 'resource_descriptors';
@@ -484,12 +490,10 @@ describe('createExternalSessionObservationProjection', () => {
                     demanded: true,
                 }]);
 
-            await expect(reconciliation).rejects.toThrow(
-                'unauthorized file set',
-            );
+            await reconciliation;
             expect(reconcileResource.mock.calls.map(
                 ([request]) => request.purpose,
-            )).toEqual(['resource_descriptors']);
+            )).toEqual(['observation_evidence']);
             await projection.dispose();
         },
     );
@@ -735,6 +739,34 @@ describe('createExternalSessionObservationProjection', () => {
         await owner.projection.dispose();
     });
 
+    it('retains the projection after expiry while transcript follow still demands observation', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const owner = setup();
+        await owner.projection.reconcileTranscriptDemand({
+            resolved: observationLinkInput(),
+            demanded: true,
+        });
+
+        owner.emit(batch('native-session-1', workingFact()));
+        await owner.projection.flush();
+        await vi.advanceTimersByTimeAsync(1_000);
+        await owner.projection.flush();
+
+        expect(owner.projection.readSnapshot('session-1')).toMatchObject({
+            status: 'unknown',
+        });
+        expect(owner.observerDispose).not.toHaveBeenCalled();
+
+        owner.emit(batch('native-session-1', workingFact(2_001, 3_000)));
+        await owner.projection.flush();
+        expect(owner.projection.readSnapshot('session-1')).toMatchObject({
+            status: 'working',
+        });
+
+        await owner.projection.dispose();
+    });
+
     it('chunks a very-future expiry within the Node timer ceiling without expiring early', async () => {
         const maxTimerDelayMs = 2_147_483_647;
         let nowMs = 1_000;
@@ -916,6 +948,115 @@ describe('createExternalSessionObservationProjection', () => {
         await owner.projection.flush();
         expect(owner.publishField.mock.calls.map(([call]) => call.value.status))
             .toEqual(['working', 'unknown']);
+        await owner.projection.dispose();
+    });
+
+    it('retries a failed fail-closed unknown publication after the link retires', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const owner = setup();
+        owner.publishField
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error('temporary metadata failure'))
+            .mockResolvedValue(undefined);
+        await owner.reconcile();
+
+        owner.emit(batch('native-session-1', workingFact(1_000, 10_000)));
+        await owner.projection.flush();
+        await owner.projection.removeLink(observationLinkInput().link);
+        await owner.projection.flush();
+
+        expect(owner.publishField.mock.calls.map(([call]) => call.value.status))
+            .toEqual(['working', 'unknown']);
+
+        await vi.advanceTimersByTimeAsync(250);
+        await owner.projection.flush();
+
+        expect(owner.publishField.mock.calls.map(([call]) => call.value.status))
+            .toEqual(['working', 'unknown', 'unknown']);
+        await owner.projection.dispose();
+    });
+
+    it('releases account-scope custody without overwriting the last durable observation', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const owner = setup();
+        owner.publishField.mockRejectedValueOnce(
+            new Error('temporary metadata failure'),
+        );
+        await owner.reconcile();
+        owner.emit(batch('native-session-1', workingFact(1_000, 10_000)));
+        await owner.projection.flush();
+
+        await owner.projection.releaseLink(observationLinkInput().link);
+        await owner.projection.flush();
+        owner.emit(batch('native-session-1', workingFact(2_000, 20_000)));
+        await vi.advanceTimersByTimeAsync(10_000);
+        await owner.projection.flush();
+
+        expect(owner.publishField.mock.calls.map(([call]) => call.value.status))
+            .toEqual(['working']);
+        expect(owner.projection.readSnapshot('session-1')).toBeNull();
+        expect(owner.observerDispose).toHaveBeenCalledOnce();
+        await owner.projection.dispose();
+    });
+
+    it('fails a tracked observation closed when its generation retires before local release', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const retirement = new AbortController();
+        const owner = setup(retirement.signal);
+        await owner.reconcile();
+        owner.emit(batch('native-session-1', workingFact(1_000, 10_000)));
+        await owner.projection.flush();
+
+        retirement.abort();
+        await owner.projection.releaseLink(observationLinkInput().link);
+        await owner.projection.flush();
+
+        expect(owner.publishField.mock.calls.map(([call]) => call.value.status))
+            .toEqual(['working', 'unknown']);
+        expect(owner.projection.readSnapshot('session-1')).toBeNull();
+        expect(owner.observerDispose).toHaveBeenCalledOnce();
+        await owner.projection.dispose();
+    });
+
+    it('fails closed when generation retirement lands during local observer disposal', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const retirement = new AbortController();
+        let finishDisposal!: () => void;
+        const disposalBarrier = new Promise<void>((resolve) => {
+            finishDisposal = resolve;
+        });
+        const disposalStarted = vi.fn();
+        const observerDispose = vi.fn(async () => {
+            disposalStarted();
+            await disposalBarrier;
+        });
+        const owner = setup(retirement.signal, observerDispose);
+        await owner.reconcile();
+        owner.emit(batch('native-session-1', workingFact(1_000, 10_000)));
+        await owner.projection.flush();
+
+        const release = owner.projection.releaseLink(
+            observationLinkInput().link,
+        );
+        await vi.waitFor(() => {
+            expect(disposalStarted).toHaveBeenCalledOnce();
+        });
+        retirement.abort();
+        finishDisposal();
+        await release;
+        await owner.projection.flush();
+        owner.emit(batch('native-session-1', workingFact(2_000, 20_000)));
+        await vi.advanceTimersByTimeAsync(10_000);
+        await owner.projection.flush();
+
+        expect(owner.publishField.mock.calls.map(([call]) => call.value.status))
+            .toEqual(['working', 'unknown']);
+        expect(owner.projection.readSnapshot('session-1')).toBeNull();
+        expect(observerDispose).toHaveBeenCalledOnce();
         await owner.projection.dispose();
     });
 

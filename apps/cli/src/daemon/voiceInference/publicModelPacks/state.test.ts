@@ -18,7 +18,7 @@ const metadata: InstalledVoiceModelPackMetadataV1 = {
   identity: { pluginId: 'acme.speech', packId: 'english' },
   directoryKey: deriveVoiceModelPackDirectoryKeyV1({ pluginId: 'acme.speech', packId: 'english' }),
   pluginVersion: '2.0.0',
-  pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+  artifactBinding: { kind: 'sourceIntegrity', integrity: `sha256:${'b'.repeat(64)}` },
   packVersion: '1.0.0',
   manifestDigest: 'c'.repeat(64),
   verifiedAtMs: 100,
@@ -26,8 +26,16 @@ const metadata: InstalledVoiceModelPackMetadataV1 = {
 const licenseBinding = {
   licenseSourceUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
   licenseTextDigest: `sha256:${'c'.repeat(64)}`,
-  artifactDigest: metadata.pluginSourceDigest,
+  artifactBinding: metadata.artifactBinding,
 } as const;
+
+const legacyDigestBoundMetadata = (() => {
+  const { artifactBinding: _artifactBinding, ...withoutBinding } = metadata;
+  return {
+    ...withoutBinding,
+    pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+  };
+})();
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'happier-public-model-pack-state-'));
@@ -79,6 +87,58 @@ describe('daemon public voice model-pack durable state', () => {
     });
   });
 
+  it('round-trips local materialization custody without aliasing it to an external source-integrity value', async () => {
+    const localMetadata: InstalledVoiceModelPackMetadataV1 = {
+      ...metadata,
+      artifactBinding: {
+        kind: 'materialization',
+        immutableGenerationId: 'generation-local-1',
+      },
+    };
+    const localArtifactBinding = localMetadata.artifactBinding;
+    if (localArtifactBinding.kind !== 'materialization') {
+      throw new Error('local fixture must use materialization custody');
+    }
+    const localLicenseBinding = {
+      ...licenseBinding,
+      artifactBinding: localArtifactBinding,
+    } as const;
+    const store = createDaemonPublicVoiceModelPackStateStore({
+      stateFilePath,
+      accountId: 'account-a',
+      machineId: 'machine-a',
+    });
+    await store.recordInstalled(localMetadata);
+    await store.acceptLicense({
+      identity: localMetadata.identity,
+      packVersion: localMetadata.packVersion,
+      licenseId: 'Apache-2.0',
+      ...localLicenseBinding,
+      acceptedAtMs: 200,
+    });
+
+    const restarted = createDaemonPublicVoiceModelPackStateStore({
+      stateFilePath,
+      accountId: 'account-a',
+      machineId: 'machine-a',
+    });
+    await expect(restarted.read()).resolves.toMatchObject({
+      installed: [expect.objectContaining({ artifactBinding: localMetadata.artifactBinding })],
+      licenseAcceptances: [expect.objectContaining({ artifactBinding: localMetadata.artifactBinding })],
+    });
+    await expect(restarted.findAcceptedLicense({
+      identity: localMetadata.identity,
+      packVersion: localMetadata.packVersion,
+      licenseId: 'Apache-2.0',
+      licenseSourceUrl: localLicenseBinding.licenseSourceUrl,
+      licenseTextDigest: localLicenseBinding.licenseTextDigest,
+      artifactBinding: {
+        kind: 'sourceIntegrity',
+        integrity: localArtifactBinding.immutableGenerationId,
+      },
+    })).resolves.toBeUndefined();
+  });
+
   it('preserves the exact validated license URL used by the contribution binding', async () => {
     const store = createDaemonPublicVoiceModelPackStateStore({
       stateFilePath,
@@ -93,7 +153,7 @@ describe('daemon public voice model-pack durable state', () => {
       licenseId: 'Example-1.0',
       licenseSourceUrl: exactLicenseUrl,
       licenseTextDigest: licenseBinding.licenseTextDigest,
-      artifactDigest: licenseBinding.artifactDigest,
+      artifactBinding: licenseBinding.artifactBinding,
       acceptedAtMs: 200,
     });
 
@@ -131,7 +191,7 @@ describe('daemon public voice model-pack durable state', () => {
         packId: 'english',
         packVersion: '1.0.0',
         licenseId: 'Apache-2.0',
-        pluginSourceDigest: metadata.pluginSourceDigest,
+        pluginSourceDigest: legacyDigestBoundMetadata.pluginSourceDigest,
       }],
     }), 'utf8');
     const store = createDaemonPublicVoiceModelPackStateStore({
@@ -164,7 +224,9 @@ describe('daemon public voice model-pack durable state', () => {
         packId: 'english',
         packVersion: '1.0.0',
         licenseId: 'Apache-2.0',
-        pluginSourceDigest: metadata.pluginSourceDigest,
+        licenseSourceUrl: licenseBinding.licenseSourceUrl,
+        licenseTextDigest: licenseBinding.licenseTextDigest,
+        artifactBinding: licenseBinding.artifactBinding,
         acceptedAtMs: 200,
       }],
     }), 'utf8');
@@ -241,7 +303,7 @@ describe('daemon public voice model-pack durable state', () => {
       packVersion: metadata.packVersion,
       licenseId: 'Apache-2.0',
       ...licenseBinding,
-      artifactDigest: `sha256:${'d'.repeat(64)}`,
+      artifactBinding: { kind: 'sourceIntegrity', integrity: `sha256:${'d'.repeat(64)}` },
     })).resolves.toBeUndefined();
     expect((await store.read()).licenseAcceptances).toHaveLength(1);
   });
@@ -263,5 +325,43 @@ describe('daemon public voice model-pack durable state', () => {
       machineId: 'machine-a',
     });
     await expect(restarted.read()).resolves.toMatchObject({ installed: [] });
+  });
+
+  it('quarantines old digest-bound metadata as cleanup-only and removes it without loading it', async () => {
+    await writeFile(stateFilePath, JSON.stringify({
+      schemaVersion: 1,
+      accountId: 'account-a',
+      machineId: 'machine-a',
+      installed: [legacyDigestBoundMetadata],
+      licenseAcceptances: [],
+    }), 'utf8');
+    const store = createDaemonPublicVoiceModelPackStateStore({
+      stateFilePath,
+      accountId: 'account-a',
+      machineId: 'machine-a',
+    });
+
+    const state = await store.read();
+    expect(state.installed).toEqual([]);
+    expect((state as typeof state & {
+      unboundInstalled?: readonly Readonly<{ identity: typeof metadata.identity; directoryKey: string }> [];
+    }).unboundInstalled).toEqual([{
+      identity: metadata.identity,
+      directoryKey: metadata.directoryKey,
+    }]);
+    await expect(store.removeInstalled(metadata.identity)).resolves.toBe(true);
+    await expect(store.read()).resolves.toMatchObject({ installed: [], unboundInstalled: [] });
+  });
+
+  it('rejects a persisted binding shape with an obsolete digest alias instead of silently accepting it', async () => {
+    const store = createDaemonPublicVoiceModelPackStateStore({
+      stateFilePath,
+      accountId: 'account-a',
+      machineId: 'machine-a',
+    });
+    await expect(store.recordInstalled({
+      ...metadata,
+      pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+    } as unknown as InstalledVoiceModelPackMetadataV1)).rejects.toThrow('voice_model_pack_state_invalid');
   });
 });

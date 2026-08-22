@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from "axios";
 import {
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
@@ -45,6 +46,7 @@ import { resolveServerHttpBaseUrl } from "./serverHttpBaseUrl";
 
 function requestHeaders(token: string): Readonly<Record<string, string>> {
     return {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${token}`,
     };
 }
@@ -508,6 +510,7 @@ export async function executeQualifiedConnectedAccountNegotiatedOperation<
 export async function listQualifiedConnectedAccountsV4(params: Readonly<{
     token: string;
     service: QualifiedConnectedAccountServiceRef;
+    signal?: AbortSignal;
 }>) {
     const service =
         QualifiedConnectedAccountServiceRefSchema.parse(params.service);
@@ -522,6 +525,7 @@ export async function listQualifiedConnectedAccountsV4(params: Readonly<{
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status !== 200) {
@@ -536,6 +540,7 @@ export async function listQualifiedConnectedAccountGroupsV4(
     params: Readonly<{
         token: string;
         service: QualifiedConnectedAccountServiceRef;
+        signal?: AbortSignal;
     }>,
 ) {
     const service =
@@ -551,6 +556,7 @@ export async function listQualifiedConnectedAccountGroupsV4(
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status !== 200) {
@@ -567,6 +573,7 @@ export async function readQualifiedConnectedAccountGroupV4(
     params: Readonly<{
         token: string;
         group: QualifiedConnectedAccountGroupRef;
+        signal?: AbortSignal;
     }>,
 ) {
     const group = QualifiedConnectedAccountGroupRefSchema.parse(
@@ -584,6 +591,7 @@ export async function readQualifiedConnectedAccountGroupV4(
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) => status === 200 || status === 404,
+            ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status === 404) return null;
@@ -693,6 +701,7 @@ export async function readQualifiedConnectedAccountCredentialV4(
     params: Readonly<{
         token: string;
         ref: QualifiedConnectedAccountRef;
+        signal?: AbortSignal;
     }>,
 ) {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
@@ -708,6 +717,7 @@ export async function readQualifiedConnectedAccountCredentialV4(
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) => status === 200 || status === 404,
+            ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status === 404) return null;
@@ -725,6 +735,7 @@ export async function readQualifiedConnectedAccountConfigurationV4(
     params: Readonly<{
         token: string;
         target: QualifiedConnectedAccountConfigurationTargetV4;
+        signal?: AbortSignal;
     }>,
 ) {
     const target =
@@ -743,6 +754,7 @@ export async function readQualifiedConnectedAccountConfigurationV4(
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) => status === 200 || status === 404,
+            ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status === 404) return null;
@@ -886,6 +898,7 @@ export async function readQualifiedConnectedAccountQuotaV4(
     params: Readonly<{
         token: string;
         ref: QualifiedConnectedAccountRef;
+        signal?: AbortSignal;
     }>,
 ) {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
@@ -895,6 +908,7 @@ export async function readQualifiedConnectedAccountQuotaV4(
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) => status === 200 || status === 404,
+            ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status === 404) return null;

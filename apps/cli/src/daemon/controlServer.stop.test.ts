@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { createDaemonControlApp } from './controlServer';
+import { createDaemonShutdownController } from './lifecycle/shutdown';
+import {
+  getActiveAccountSettingsSnapshot,
+  resetActiveAccountSettingsSnapshotForTests,
+  setActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -71,6 +78,44 @@ describe('daemon control server: /stop', () => {
     }
   });
 
+  it('revokes Account custody when an accepted stop reaches the daemon lifecycle owner', async () => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse({}),
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      scopeKey: 'account:a',
+    });
+    const lifecycle = createDaemonShutdownController();
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' } as const),
+      requestShutdown: () => lifecycle.requestShutdown('happier-cli'),
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const response = await app.inject({
+        method: 'POST',
+        url: '/stop',
+        headers: { 'x-happier-daemon-token': 'test-token' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      await lifecycle.resolvesWhenShutdownRequested;
+      expect(getActiveAccountSettingsSnapshot()).toBeNull();
+    } finally {
+      await app.close();
+      resetActiveAccountSettingsSnapshotForTests();
+    }
+  });
+
   it('passes authenticated managed-service transfer intent only for an explicit takeover stop', async () => {
     const beforeShutdown = vi.fn(async () => undefined);
     const requestShutdown = vi.fn();
@@ -94,13 +139,11 @@ describe('daemon control server: /stop', () => {
           'Content-Type': 'application/json',
           'x-happier-daemon-token': 'test-token',
         },
-        payload: JSON.stringify({ transferManagedLocalServices: true }),
+        payload: JSON.stringify({}),
       });
       expect(res.statusCode).toBe(200);
 
-      await vi.waitFor(() => expect(beforeShutdown).toHaveBeenCalledWith({
-        managedLocalServicesDisposition: 'transfer',
-      }));
+      await vi.waitFor(() => expect(beforeShutdown).toHaveBeenCalledOnce());
       expect(requestShutdown).toHaveBeenCalledOnce();
     } finally {
       await app.close();

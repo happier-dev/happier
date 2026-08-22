@@ -1,6 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { readProcessIdentityByPid } from './processIdentity';
+import {
+  processGenerationMatches,
+  processGenerationProvesReuse,
+  readProcessIdentityByPid,
+} from './processIdentity';
+
+describe('process generation identity', () => {
+  it('uses process start time as generation identity independently of command drift', () => {
+    expect(processGenerationMatches(1_000, 1_000)).toBe(true);
+    expect(processGenerationProvesReuse(1_000, 2_000)).toBe(true);
+    expect(processGenerationProvesReuse(undefined, 2_000)).toBe(false);
+    expect(processGenerationProvesReuse(1_000, undefined)).toBe(false);
+  });
+});
 
 describe('readProcessIdentityByPid', () => {
   it('reads one exact Windows process identity through the bounded CIM command boundary', async () => {

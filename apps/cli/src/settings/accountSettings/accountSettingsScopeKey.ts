@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsCachePath } from './accountSettingsCache';
 
 function tokenScopeKey(token: string): string {
@@ -15,9 +15,17 @@ export function createAccountSettingsScopeKey(params: Readonly<{
   return `${params.cachePath}::${tokenScopeKey(params.token)}`;
 }
 
-export function resolveAccountSettingsScopeKey(credentials: Credentials): string {
+/**
+ * The one process-local Account lifetime identity shared by settings-backed
+ * host consumers that only have the authenticated token available.
+ */
+export function resolveAccountSettingsScopeKeyForToken(token: string): string {
   return createAccountSettingsScopeKey({
-    cachePath: resolveAccountSettingsCachePath(credentials),
-    token: credentials.token,
+    cachePath: resolveAccountSettingsCachePath({ token }),
+    token,
   });
+}
+
+export function resolveAccountSettingsScopeKey(credentials: StoredCredentials): string {
+  return resolveAccountSettingsScopeKeyForToken(credentials.token);
 }

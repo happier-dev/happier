@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Update } from '../../../types';
 import { createSessionClientUpdateRuntime } from './createSessionClientUpdateRuntime';
 
-function createRuntime(overrides: Partial<Parameters<typeof createSessionClientUpdateRuntime>[0]> = {}) {
+function createRuntime(
+  overrides: Partial<Omit<
+    Parameters<typeof createSessionClientUpdateRuntime>[0],
+    'mode' | 'ctx'
+  >> = {},
+) {
   return createSessionClientUpdateRuntime({
     sessionId: 'session-1',
-    sessionEncryptionMode: 'plain',
-    encryptionKey: new Uint8Array(32),
-    encryptionVariant: 'legacy',
     getMetadata: () => null,
     setMetadata: vi.fn(),
     getMetadataVersion: () => 0,
@@ -22,6 +24,8 @@ function createRuntime(overrides: Partial<Parameters<typeof createSessionClientU
     markAgentQueueEchoSuppressedLocalId: vi.fn(),
     initialLastObservedMessageSeq: 0,
     ...overrides,
+    mode: 'plain',
+    ctx: null,
   });
 }
 

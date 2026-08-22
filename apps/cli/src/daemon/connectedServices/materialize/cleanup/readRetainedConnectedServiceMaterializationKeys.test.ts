@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  sealSessionOwnerMetadataV1,
+  type AccountEncryptionCurrentnessResponse,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import { readRetainedConnectedServiceMaterializationKeys } from './readRetainedConnectedServiceMaterializationKeys';
 
 const legacySecret = new Uint8Array(32).fill(1);
@@ -12,6 +13,13 @@ const credentials: Credentials = {
   token: 'token',
   encryption: { type: 'legacy', secret: legacySecret },
 };
+const plainAccountEncryptionCurrentness = Object.freeze({
+  mode: 'plain' as const,
+  version: 1,
+  signingKeyFingerprint: null,
+  contentKeyFingerprint: null,
+  updatedAt: 1,
+}) satisfies AccountEncryptionCurrentnessResponse;
 
 describe('readRetainedConnectedServiceMaterializationKeys', () => {
   it('retains an inactive layout-v1 materialization identity from its sealed owner envelope', async () => {
@@ -33,11 +41,7 @@ describe('readRetainedConnectedServiceMaterializationKeys', () => {
         encryptionMode: 'plain',
         metadataLayoutVersion: 1,
         metadata: JSON.stringify({ v: 1 }),
-        ownerMetadata: sealSessionOwnerMetadataV1({
-          material: { type: 'legacy', secret: legacySecret },
-          ownerMetadata,
-          randomBytes: (length) => new Uint8Array(length).fill(7),
-        }),
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
       }],
       nextCursor: null,
       hasNext: false,
@@ -46,6 +50,7 @@ describe('readRetainedConnectedServiceMaterializationKeys', () => {
     await expect(readRetainedConnectedServiceMaterializationKeys({
       credentials,
       fetchSessionsPage,
+      getAccountEncryptionCurrentness: async () => plainAccountEncryptionCurrentness,
     })).resolves.toEqual(['layout-v1-retained']);
   });
 
@@ -69,7 +74,7 @@ describe('readRetainedConnectedServiceMaterializationKeys', () => {
         hasNext: false,
       });
     const decryptSessionMetadata = vi.fn((_input: {
-      credentials: Credentials;
+      credentials: StoredCredentials;
       rawSession: { id?: unknown };
     }) => {
       if (_input.rawSession.id === 'inactive-1') {
@@ -97,6 +102,7 @@ describe('readRetainedConnectedServiceMaterializationKeys', () => {
       credentials,
       fetchSessionsPage,
       decryptSessionMetadata,
+      getAccountEncryptionCurrentness: async () => plainAccountEncryptionCurrentness,
       pageLimit: 2,
     })).resolves.toEqual(['identity-one', 'identity-two']);
 

@@ -1,17 +1,48 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { ConnectedServiceCredentialUnsupportedFormatError } from '@/api/client/connectedServiceCredentialApi';
+
 import {
   revokeRevisionedLegacyConnectedAccount,
 } from './revokeRevisionedLegacyConnectedAccount';
 
 const service = Object.freeze({
-  pluginId: 'happier.scm.hosting.github',
+  pluginId: 'happier.scm.forge.github',
   localId: 'github-account',
 });
 const account = Object.freeze({ service, accountId: 'work' });
 const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
 
 describe('revokeRevisionedLegacyConnectedAccount', () => {
+  it('does not delete an authoritative plaintext credential whose format is unsupported', async () => {
+    const unsupported = new ConnectedServiceCredentialUnsupportedFormatError(
+      'github',
+      'work',
+    );
+    const deleteCredential = vi.fn(async () => undefined);
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceCredentialPlain: vi.fn(async () => {
+        throw unsupported;
+      }),
+      getConnectedServiceCredentialSealed: vi.fn(),
+      deleteConnectedServiceCredentialRevisioned: deleteCredential,
+    };
+
+    await expect(revokeRevisionedLegacyConnectedAccount({
+      account,
+      serviceId: 'github',
+      cleanupGroupReferences: true,
+      api,
+      resolvePeerOperationTransport: () => ({
+        kind: 'legacy',
+        peerClass: 'revisioned_v2_v3',
+        serviceId: 'github',
+      }),
+    })).rejects.toBe(unsupported);
+    expect(deleteCredential).not.toHaveBeenCalled();
+  });
+
   it('rechecks the exact revisioned transport after mode discovery and before credential read issuance', async () => {
     let transport: 'revisioned' | 'exact-old' = 'revisioned';
     const readCredential = vi.fn(async () => null);

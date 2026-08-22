@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import { AccountProfileResponseSchema, type AccountProfileResponse } from '@happier-dev/protocol';
 
@@ -6,7 +7,7 @@ import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
 export async function fetchAccountProfile(opts: Readonly<{ token: string; signal?: AbortSignal }>): Promise<AccountProfileResponse> {
     const response = await axios.get(`${resolveServerHttpBaseUrl()}/v1/account/profile`, {
-        headers: { Authorization: `Bearer ${opts.token}`, 'Content-Type': 'application/json' },
+        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${opts.token}`, 'Content-Type': 'application/json' },
         timeout: 15_000,
         ...(opts.signal ? { signal: opts.signal } : {}),
         validateStatus: () => true,

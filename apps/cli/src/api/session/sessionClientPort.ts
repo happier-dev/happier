@@ -1,14 +1,18 @@
 import type { RpcHandlerManagerLike } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
 import type { AgentState, Metadata } from '../types';
-import type { ProviderTranscriptDispatchRequest } from './client/transcript/providerDispatch';
 import type {
-  SessionSystemRecord,
+  LegacyHostSessionSystemRecord as SessionSystemRecord,
   SessionSystemRecordNamespace,
-  SessionSystemRecordUpsertRequest,
+  LegacyHostSessionSystemRecordUpsertRequest as SessionSystemRecordUpsertRequest,
   SessionTurnMutationV1,
-  SessionTranscriptObservationProvenanceV1,
+  SessionPermissionMediationRecordIdentityV1,
+  SessionPermissionMediationRecordListQuery,
+  SessionPermissionMediationRecordPruneRequest,
+  SessionPermissionMediationRecordStored,
+  SessionPermissionMediationRecordWriteRequest,
 } from '@happier-dev/protocol';
+import type { CommittedTranscriptMessageOptions } from './transcriptPort';
 import type {
   SessionEncryptionContext,
   SessionStoredContentEncryptionMode,
@@ -22,6 +26,7 @@ import type {
   PendingMaterializationDeliveryTiming,
 } from './pendingQueueV2Transport';
 import type { CommittedUserMessageSeqListener } from './committedUserMessageSeqTracker';
+import type { CommittedTranscriptLocalIdBaseline } from './client/transcript/committedTranscriptLocalIdBaseline';
 
 export type MaterializeNextPendingResult =
   | {
@@ -34,7 +39,7 @@ export type MaterializeNextPendingResult =
       deliveryState?: PendingMaterializationDeliveryState;
     }
   | { type: 'no_pending' }
-  | { type: 'retryable_transport' }
+  | { type: 'retryable_transport'; retryAfterMs?: number }
   | { type: 'auth_failure' }
   | { type: 'deferred'; reason: 'supervisor_offline' | 'supervisor_auth_failed' | 'runtime_activity_active' | 'runtime_activity_unknown' };
 
@@ -56,15 +61,26 @@ export interface SessionClientPort {
   sessionId: string;
   rpcHandlerManager: RpcHandlerManagerLike;
 
-  sendSessionEvent(event: SessionEventMessage, id?: string): void;
-  sendProviderMessage(request: ProviderTranscriptDispatchRequest): void;
-  sendAgentMessage(provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }): void;
+  enqueueSessionEventCommitted?(
+    event: SessionEventMessage,
+    id?: string,
+  ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+  enqueueUserTextMessageCommitted?(
+    text: string,
+    opts: CommittedTranscriptMessageOptions,
+  ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   enqueueAgentMessageCommitted?(
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
+    opts: CommittedTranscriptMessageOptions,
   ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
-  sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }): Promise<void>;
+  fetchCommittedTranscriptLocalIdBaseline?(
+    opts?: {
+      take?: number;
+      signal?: AbortSignal;
+      deadlineAtMs?: number;
+    },
+  ): Promise<CommittedTranscriptLocalIdBaseline>;
 
   updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
   updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void>;
@@ -77,10 +93,33 @@ export interface SessionClientPort {
     namespace: SessionSystemRecordNamespace;
     localId: string;
   }>): Promise<SessionSystemRecord | null>;
+  readPermissionMediationRecord?(params: Readonly<{
+    identity: SessionPermissionMediationRecordIdentityV1;
+    signal?: AbortSignal;
+  }>): Promise<SessionPermissionMediationRecordStored | null>;
+  writePermissionMediationRecord?(params: Readonly<{
+    identity: SessionPermissionMediationRecordIdentityV1;
+    request: SessionPermissionMediationRecordWriteRequest;
+    signal?: AbortSignal;
+  }>): Promise<SessionPermissionMediationRecordStored>;
+  prunePermissionMediationRecord?(params: Readonly<{
+    identity: SessionPermissionMediationRecordIdentityV1;
+    request: SessionPermissionMediationRecordPruneRequest;
+    signal?: AbortSignal;
+  }>): Promise<void>;
+  listPermissionMediationRecords?(params?: Readonly<{
+    query?: SessionPermissionMediationRecordListQuery;
+    signal?: AbortSignal;
+  }>): Promise<Readonly<{
+    records: readonly SessionPermissionMediationRecordStored[];
+    nextCursor: string | null;
+    hasNext: boolean;
+  }>>;
   getStoredContentEncryptionContext?(): Readonly<{
     mode: SessionStoredContentEncryptionMode;
     ctx?: SessionEncryptionContext;
   }>;
+  getAuthenticatedAccountId?(): Promise<string | null>;
   enqueueSessionTurnMutation?(mutation: SessionTurnMutationV1): void | Promise<void>;
   enqueueRegisteredSessionStateFieldMutation?(mutation: RegisteredSessionStateFieldMutationV1): void | Promise<void>;
   setSessionRuntimeControls?(controls: SessionRuntimeControls | null): void;

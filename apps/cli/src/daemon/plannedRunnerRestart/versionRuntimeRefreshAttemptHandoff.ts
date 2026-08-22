@@ -27,6 +27,11 @@ export function createVersionRuntimeRefreshAttemptHandoff<TCompletion>(params: R
     sessionId: string;
     previousPid: number;
     transientSpawnOptions?: SpawnSessionOptions;
+    /**
+     * `null` delegates completion exclusively to the canonical respawn owner.
+     * Omit this field to retain the bounded public/manual restart behavior.
+     */
+    timeoutMs?: number | null;
   }>): Readonly<{
     promise: Promise<TCompletion>;
     cancel: () => void;
@@ -38,14 +43,26 @@ export function createVersionRuntimeRefreshAttemptHandoff<TCompletion>(params: R
     const promise = new Promise<TCompletion>((resolve) => {
       resolveCompletion = resolve;
     });
-    const timer = setTimeout(() => {
-      settle(input.sessionId, currentPid, params.timeoutCompletion);
-    }, params.timeoutMs) as NodeJS.Timeout & { unref?: () => void };
-    timer.unref?.();
+    const timeoutMs =
+      input.timeoutMs === undefined
+        ? params.timeoutMs
+        : input.timeoutMs;
+    const timer = timeoutMs === null
+      ? null
+      : setTimeout(() => {
+          settle(
+            input.sessionId,
+            currentPid,
+            params.timeoutCompletion,
+          );
+        }, timeoutMs) as NodeJS.Timeout & {
+          unref?: () => void;
+        };
+    timer?.unref?.();
     const settleAttempt = (completion: TCompletion) => {
       if (resolved) return;
       resolved = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       resolveCompletion(completion);
     };
     const attemptKey = key(input.sessionId, input.previousPid);
@@ -66,7 +83,7 @@ export function createVersionRuntimeRefreshAttemptHandoff<TCompletion>(params: R
       cancel: () => {
         if (resolved) return;
         resolved = true;
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         attemptsBySessionAndPid.delete(key(input.sessionId, currentPid));
         resolveCompletion(params.cancelledCompletion);
       },

@@ -1,3 +1,4 @@
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
@@ -35,6 +36,7 @@ export function createLoopbackReadinessProbe(params: Readonly<{
         timeout: 5_000,
         validateStatus: () => true,
         headers: {
+          ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
           Authorization: `Bearer ${params.token}`,
         },
       });

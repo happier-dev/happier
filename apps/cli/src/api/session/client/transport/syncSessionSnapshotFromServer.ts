@@ -2,20 +2,21 @@ import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSup
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 
 import type { AgentState, Metadata } from '../../../types';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { SessionMetadataEnvelopeTupleSnapshot } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type { KnownPendingQueueState } from '../../pendingQueueState';
 import { fetchSessionSnapshotUpdateFromServer } from '../../snapshotSync';
 import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
 import type { LatestTurnStatusSnapshot } from '../../sessionTurnStatusSnapshot';
+import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 
 export async function syncSessionSnapshotFromServer(
     params: Readonly<{
         token: string;
         sessionId: string;
-        credentials?: Credentials | null;
-        encryptionKey: Uint8Array;
-        encryptionVariant: 'legacy' | 'dataKey';
+        credentials?: StoredCredentials | null;
+        accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
         currentMetadataLayoutVersion: number;
         currentMetadataVersion: number;
         currentAgentStateVersion: number;
@@ -31,14 +32,16 @@ export async function syncSessionSnapshotFromServer(
         applyPendingQueueState: (state: KnownPendingQueueState) => void;
         applyLatestTurnStatus: (status: LatestTurnStatusSnapshot, observedAt?: number) => void;
         reason: SessionSnapshotRefreshReason;
-    }>,
+    }> & SessionStoredContentCryptoContext,
 ): Promise<boolean> {
     const request = () => fetchSessionSnapshotUpdateFromServer({
         token: params.token,
         sessionId: params.sessionId,
         credentials: params.credentials,
-        encryptionKey: params.encryptionKey,
-        encryptionVariant: params.encryptionVariant,
+        accountEncryptionCurrentness: params.accountEncryptionCurrentness,
+        ...(params.mode === 'plain'
+            ? { mode: 'plain' as const, ctx: null }
+            : { mode: 'e2ee' as const, ctx: params.ctx }),
         currentMetadataLayoutVersion: params.currentMetadataLayoutVersion,
         currentMetadataVersion: params.currentMetadataVersion,
         currentAgentStateVersion: params.currentAgentStateVersion,

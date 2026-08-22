@@ -102,6 +102,7 @@ export function buildQualifiedConnectedAccountAuthGroupSwitchState(input: Readon
         serviceId: input.group.ref.service,
         groupId: input.group.ref.groupId,
         activeProfileId: input.group.activeConnectedAccountId,
+        incarnation: input.group.incarnation,
         generation: input.group.generation,
         runtimeStateRevision: input.group.runtimeStateRevision,
         credentialRevision: activeProfile?.credentialRevision ?? null,

@@ -1,37 +1,21 @@
 import {
-    CURRENT_SESSION_SYNC_PROTOCOL_VERSION,
-    ClientCompatibilityDeclarationV1Schema,
-    ClientUpgradeRequiredV1Schema,
-    buildClientCompatibilitySocketAuthV1,
-    buildClientCompatibilityHttpHeadersV1,
-    type ClientCompatibilityDeclarationV1,
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    AnyClientUpgradeRequiredV1Schema,
+    buildAccountStoredContentCompatibilityHttpHeadersV1,
+    buildAccountStoredContentCompatibilitySocketAuthV1,
 } from '@happier-dev/protocol';
-import { configuration } from '@/configuration';
 
-type CurrentCliClientCompatibilityKind = Extract<
-    ClientCompatibilityDeclarationV1['clientKind'],
-    'daemon' | 'session-runner'
->;
-
-export function readCurrentCliClientCompatibilityDeclaration(
-    clientKind: CurrentCliClientCompatibilityKind,
-) {
-    return ClientCompatibilityDeclarationV1Schema.parse({
-        v: 1,
-        clientKind,
-        appVersion: configuration.currentCliVersion,
-        sessionSyncProtocolVersion: CURRENT_SESSION_SYNC_PROTOCOL_VERSION,
-    });
-}
-
-export function readCurrentSessionRunnerCompatibilityDeclaration() {
-    return readCurrentCliClientCompatibilityDeclaration('session-runner');
-}
+type CurrentCliClientCompatibilityKind = 'daemon' | 'session-runner';
 
 export function buildCurrentCliClientCompatibilitySocketAuth(
     clientKind: CurrentCliClientCompatibilityKind,
 ) {
-    return buildClientCompatibilitySocketAuthV1(readCurrentCliClientCompatibilityDeclaration(clientKind));
+    void clientKind;
+    return {
+        ...buildAccountStoredContentCompatibilitySocketAuthV1(
+            CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+        ),
+    };
 }
 
 export function buildCurrentSessionRunnerCompatibilitySocketAuth() {
@@ -39,7 +23,22 @@ export function buildCurrentSessionRunnerCompatibilitySocketAuth() {
 }
 
 export function buildCurrentSessionRunnerCompatibilityHttpHeaders() {
-    return buildClientCompatibilityHttpHeadersV1(readCurrentSessionRunnerCompatibilityDeclaration());
+    return buildCurrentCliClientCompatibilityHttpHeaders('session-runner');
+}
+
+export function buildCurrentAccountStoredContentCompatibilityHttpHeaders() {
+    return buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    );
+}
+
+export function buildCurrentCliClientCompatibilityHttpHeaders(
+    clientKind: CurrentCliClientCompatibilityKind,
+) {
+    void clientKind;
+    return {
+        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+    };
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -63,7 +62,7 @@ export function readCliClientUpgradeRequired(value: unknown) {
         readRecord(record?.response)?.data,
     ];
     for (const candidate of candidates) {
-        const parsed = ClientUpgradeRequiredV1Schema.safeParse(candidate);
+        const parsed = AnyClientUpgradeRequiredV1Schema.safeParse(candidate);
         if (parsed.success) return parsed.data;
     }
     return null;

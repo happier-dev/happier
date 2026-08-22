@@ -163,6 +163,8 @@ describe('qualified Connected Account daemon old-peer compatibility', () => {
           service: claudeSubscriptionService,
           accountId: 'work',
         },
+        revisionSemantics: 'revisioned',
+        credentialRevision,
         authenticationModeId: 'setup-token',
         configurationReady: false,
         configurationRevision: null,
@@ -245,6 +247,9 @@ describe('qualified Connected Account daemon old-peer compatibility', () => {
       }),
       resolveSessionSyncPendingInputServerContractResult: () => ({
         mode: 'released_server_v0_2_1',
+        runtimeActivity: 'legacy',
+        pendingInput: 'released_server_v0_2_1',
+        publisherAuthority: 'indeterminate',
         sessionConnectionEpoch: 4,
         socket: { connected: true },
       }),

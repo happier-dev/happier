@@ -8,8 +8,12 @@ import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 
 import { getPreferredHostName } from '../machine/metadata';
 import { stopDaemon, isDaemonRunningCurrentlyInstalledHappyVersion } from '../controlClient';
-import { setRespawnDescriptorEncryptionMaterialForRestore } from '../reattach';
 import type { DaemonStartupSource } from '../ownership/daemonOwnershipMetadata';
+import { configuration } from '@/configuration';
+import {
+    readOrCreateDeviceLocalSecretStorage,
+    type DeviceLocalSecretStorage,
+} from '../deviceLocalSecretStorage';
 
 export async function prepareDaemonBootstrapContext(
     params: Readonly<{
@@ -25,12 +29,12 @@ export async function prepareDaemonBootstrapContext(
     metadataForRegistration: MachineMetadata;
     preflightMachineRegistration: Awaited<ReturnType<typeof ensureMachineRegistered>> | null;
     machineId: string;
+    deviceLocalSecretStorage: DeviceLocalSecretStorage;
 }>> {
     const auth = await authAndSetupMachineIfNeeded();
     const credentials = auth.credentials;
     let machineId = auth.machineId;
     logger.debug('[DAEMON RUN] Auth and machine setup complete');
-    setRespawnDescriptorEncryptionMaterialForRestore(credentials?.encryption ?? null);
 
     const api = await ApiClient.create(credentials);
     const preferredHost = await getPreferredHostName();
@@ -76,6 +80,9 @@ export async function prepareDaemonBootstrapContext(
         process.exit(0);
     }
 
+    const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({
+        path: configuration.deviceLocalSecretKeyFile,
+    });
     const caffeinateStarted = startCaffeinate();
     if (caffeinateStarted) {
         logger.debug('[DAEMON RUN] Sleep prevention enabled');
@@ -89,5 +96,6 @@ export async function prepareDaemonBootstrapContext(
         metadataForRegistration,
         preflightMachineRegistration,
         machineId,
+        deviceLocalSecretStorage,
     };
 }

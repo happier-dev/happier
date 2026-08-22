@@ -15,9 +15,9 @@ import {
 } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { projectPath } from '@/projectPath';
 import {
-  normalizeProcessCommandPathValue,
-  processCommandContainsPathFragment,
-} from '@/subprocess/processCommandPathMatch';
+  daemonProcessMatchesCurrentScope,
+  isDaemonProcessForCurrentRuntimeRoot,
+} from './daemonProcessScopeIdentity';
 
 import type { DaemonLocallyPersistedState } from '@/persistence';
 
@@ -46,98 +46,14 @@ function resolveCurrentCliVersion(): string {
   });
 }
 
-function normalizeScopeValue(value: string | null | undefined): string {
-  return String(value ?? '').trim();
-}
-
-function normalizeServerUrl(value: string | null | undefined): string {
-  return normalizeScopeValue(value).replace(/\/+$/, '').toLowerCase();
-}
-
-function processEnvValueMatchesCurrent(
-  processValue: string | null | undefined,
-  currentValue: string | null | undefined,
-  normalize: (value: string) => string = normalizeScopeValue,
-): boolean {
-  const processScopeValue = normalizeScopeValue(processValue);
-  if (!processScopeValue) return true;
-  const currentScopeValue = normalizeScopeValue(currentValue);
-  if (!currentScopeValue) return true;
-  return normalize(processScopeValue) === normalize(currentScopeValue);
-}
-
-function daemonProcessMatchesCurrentScope(processInfo: HappyProcessInfo): boolean {
-  const env = processInfo.daemonOwnershipEnvironmentVariables;
-  if (!env) return true;
-
-  if (!processEnvValueMatchesCurrent(
-    env.HAPPIER_HOME_DIR,
-    configuration.happyHomeDir,
-    normalizeProcessCommandPathValue,
-  )) {
-    return false;
-  }
-  const processLifecycleScopeId = normalizeScopeValue(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID);
-  const currentLifecycleScopeId = normalizeScopeValue(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID);
-  if (processLifecycleScopeId) {
-    // Explicit lifecycle scope is the canonical owner identity. Endpoint profiles and URLs are
-    // independently mutable connection facts and must not disqualify that exact owner.
-    return Boolean(currentLifecycleScopeId && processLifecycleScopeId === currentLifecycleScopeId);
-  }
-
-  // Released stack daemons predate the explicit lifecycle-scope variable. Only that old shape may
-  // fall back to the active-server identity and endpoint URL comparison.
-  const currentFallbackScope = currentLifecycleScopeId || configuration.activeServerId;
-  if (!processEnvValueMatchesCurrent(env.HAPPIER_ACTIVE_SERVER_ID, currentFallbackScope)) {
-    return false;
-  }
-
-  const processServerUrl = normalizeServerUrl(env.HAPPIER_SERVER_URL);
-  if (processServerUrl) {
-    const currentServerUrls = new Set([
-      normalizeServerUrl(configuration.serverUrl),
-      normalizeServerUrl(configuration.apiServerUrl),
-      normalizeServerUrl(configuration.publicServerUrl),
-    ].filter(Boolean));
-    if (currentServerUrls.size > 0 && !currentServerUrls.has(processServerUrl)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-export function isDaemonProcessForCurrentRuntimeRoot(processInfo: HappyProcessInfo, currentRuntimeRoot: string): boolean {
-  if (processInfo.pid === process.pid) return false;
-  if (processInfo.type !== 'daemon' && processInfo.type !== 'dev-daemon') return false;
-
-  const command = normalizeProcessCommandPathValue(processInfo.command);
-  if (!processCommandContainsPathFragment(command, currentRuntimeRoot)) return false;
-
-  // The public Node wrappers re-exec through `_importRuntimeEntrypoint.mjs` so warning handles
-  // cannot leak into the runtime process. During that synchronous re-exec, the parent command
-  // still ends in `<wrapper> daemon start-sync`; it is only a bootstrapper, not a relay owner.
-  // The imported child includes additional runtime arguments between the wrapper path and
-  // `daemon start-sync`, so it remains visible as the real owner.
-  if (/\/bin\/happier(?:-dev)?\.mjs["']?\s+daemon\s+start-sync(?:\s|$)/u.test(command)) {
-    return false;
-  }
-
-  // The process classifier labels both the transient `daemon start` launcher and the actual
-  // `daemon start-sync` daemon as `daemon`/`dev-daemon`. Only `start-sync` is a real, long-lived
-  // daemon owner. The launcher is a bootstrapper that spawns the detached daemon and then blocks
-  // waiting for the relay, so counting it here makes managed startup conflict with its own
-  // launcher — producing the all-"unknown" stateless-owner conflict that prevents the daemon from
-  // ever coming up.
-  return command.includes('daemon start-sync');
-}
+export { isDaemonProcessForCurrentRuntimeRoot } from './daemonProcessScopeIdentity';
 
 async function findStateLessDaemonProcessForCurrentRuntimeRoot(): Promise<HappyProcessInfo | null> {
   if (process.env.NODE_ENV === 'test' && process.env.HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK !== '1') {
     return null;
   }
 
-  const currentRuntimeRoot = normalizeProcessCommandPathValue(projectPath());
+  const currentRuntimeRoot = projectPath();
   const matching = (await findAllHappyProcesses())
     .filter((processInfo) => isDaemonProcessForCurrentRuntimeRoot(processInfo, currentRuntimeRoot))
     .filter((processInfo) => daemonProcessMatchesCurrentScope(processInfo))

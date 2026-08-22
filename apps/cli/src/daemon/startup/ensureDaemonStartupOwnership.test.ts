@@ -12,6 +12,8 @@ describe('ensureDaemonStartupOwnership', () => {
     'HAPPIER_ACTIVE_SERVER_ID',
     'HAPPIER_PUBLIC_RELEASE_CHANNEL',
     'HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK',
+    'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
+    'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
   ]);
 
   afterEach(() => {
@@ -29,6 +31,8 @@ describe('ensureDaemonStartupOwnership', () => {
         HAPPIER_ACTIVE_SERVER_ID: 'cloud',
         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
         HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK: '1',
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
       });
       vi.resetModules();
       const daemonCommand = `${process.execPath} ${join(process.cwd(), 'package-dist/index.mjs')} daemon start-sync`;
@@ -64,7 +68,7 @@ describe('ensureDaemonStartupOwnership', () => {
     });
   });
 
-  it('force-stops a state-less relay process when takeover is requested', async () => {
+  it('fails closed instead of force-stopping a state-less relay process when takeover is requested', async () => {
     await withTempDir('happier-daemon-startup-process-only-takeover-', async (homeDir) => {
       const daemonCommand = `${process.execPath} ${join(process.cwd(), 'package-dist/index.mjs')} daemon start-sync`;
       const processOnlyOwner = {
@@ -77,6 +81,8 @@ describe('ensureDaemonStartupOwnership', () => {
         HAPPIER_ACTIVE_SERVER_ID: 'cloud',
         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
         HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK: '1',
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
       });
       vi.resetModules();
       vi.doMock('@/daemon/doctor', () => ({
@@ -92,14 +98,17 @@ describe('ensureDaemonStartupOwnership', () => {
         return true;
       }) as typeof process.kill);
 
-      const result = await ensureDaemonStartupOwnership({
+      await expect(ensureDaemonStartupOwnership({
         takeoverRequested: true,
         startupSource: 'manual',
         runtimeId: 'runtime-test',
+      })).rejects.toMatchObject({
+        code: 'daemon_stop_incomplete',
+        reason: 'process_identity_unverified',
+        pid: processOnlyOwner.pid,
       });
 
-      expect(result).toEqual({ action: 'continue' });
-      expect(killSpy).toHaveBeenCalledWith(processOnlyOwner.pid, 'SIGTERM');
+      expect(killSpy).not.toHaveBeenCalledWith(processOnlyOwner.pid, 'SIGTERM');
     });
   });
 });

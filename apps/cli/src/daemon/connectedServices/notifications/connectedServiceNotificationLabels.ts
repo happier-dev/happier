@@ -1,5 +1,10 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol';
+import {
+  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  ConnectedServiceIdSchema,
+  type ConnectedServiceId,
+} from '@happier-dev/protocol';
+
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 export type ConnectedServiceNotificationProfileSummary = Readonly<{
   profileId: string;
@@ -24,6 +29,23 @@ export function resolveConnectedServiceNotificationProfileLabel(
   return readConnectedServiceNotificationDisplayText(profile?.displayName)
     ?? readConnectedServiceNotificationDisplayText(profile?.providerEmail)
     ?? readConnectedServiceNotificationDisplayText(profileId);
+}
+
+export function resolveConnectedServiceNotificationDisplayName(
+  serviceId: ConnectedServiceId,
+): string | null {
+  const compatibility =
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
+  if (!compatibility) return null;
+  const contribution = getResolvedContributionRegistry()
+    .connectedAccountDescriptors
+    ?.find((candidate) => (
+      candidate.pluginId === compatibility.service.pluginId
+      && candidate.definition.id === compatibility.service.localId
+    ));
+  return readConnectedServiceNotificationDisplayText(
+    contribution?.definition.title,
+  );
 }
 
 export async function loadConnectedServiceNotificationProfilesById(input: Readonly<{

@@ -1,7 +1,7 @@
 type InferenceWarmEntry<TModel> = Readonly<{
   model: TModel;
   releaseTimer: ReturnType<typeof setTimeout> | null;
-  residentBytes: number;
+  loadedBytes: number;
   lastUsedTick: number;
 }>;
 
@@ -9,8 +9,8 @@ export type InferenceWarmupCoordinator<TModel> = Readonly<{
   warm: (modelId: string, loader: () => Promise<TModel>) => Promise<TModel>;
   release: (modelId: string, options?: Readonly<{ skipOnRelease?: boolean }>) => Promise<void>;
   isWarm: (modelId: string) => boolean;
-  /** Total resident bytes across currently warm models (0 when no budget is configured). */
-  residentBytes: () => number;
+  /** Total caller-accounted bytes across currently warm models. */
+  loadedBytes: () => number;
 }>;
 
 /**
@@ -18,24 +18,25 @@ export type InferenceWarmupCoordinator<TModel> = Readonly<{
  *
  * Two independent eviction pressures act on the warm set:
  *  - Idle residency: a per-model timer releases a model after `residencyMs` of no use.
- *  - Memory budget: when `maxResidentBytes` is positive, loading a new model evicts the
- *    least-recently-used resident model(s) until the total resident footprint is within
+ *  - Byte budget: when `maxLoadedBytes` is positive, loading a new model evicts the
+ *    least-recently-used model(s) until the total caller-accounted loaded bytes are within
  *    budget. A model reported as in-use (`isInUse`) is never evicted mid-inference.
  *
- * `maxResidentBytes <= 0` (the default) disables the memory budget entirely.
+ * `maxLoadedBytes <= 0` (the default) disables the byte budget entirely. The caller defines
+ * the accounting through `resolveLoadedBytes`; this coordinator does not measure memory.
  */
 export function createInferenceWarmupCoordinator<TModel>(params?: Readonly<{
   residencyMs?: number;
-  maxResidentBytes?: number;
-  resolveResidentBytes?: (modelId: string, model: TModel) => number;
+  maxLoadedBytes?: number;
+  resolveLoadedBytes?: (modelId: string, model: TModel) => number;
   isInUse?: (modelId: string) => boolean;
   scheduleRelease?: typeof setTimeout;
   cancelRelease?: typeof clearTimeout;
   onRelease?: (modelId: string, model: TModel) => Promise<void> | void;
 }>): InferenceWarmupCoordinator<TModel> {
   const residencyMs = params?.residencyMs ?? Number.POSITIVE_INFINITY;
-  const maxResidentBytes = params?.maxResidentBytes ?? 0;
-  const resolveResidentBytes = params?.resolveResidentBytes ?? (() => 0);
+  const maxLoadedBytes = params?.maxLoadedBytes ?? 0;
+  const resolveLoadedBytes = params?.resolveLoadedBytes ?? (() => 0);
   const isInUse = params?.isInUse ?? (() => false);
   const scheduleRelease = params?.scheduleRelease ?? setTimeout;
   const cancelRelease = params?.cancelRelease ?? clearTimeout;
@@ -54,10 +55,10 @@ export function createInferenceWarmupCoordinator<TModel>(params?: Readonly<{
     return releaseVersionByModelId.get(modelId) ?? 0;
   }
 
-  function currentResidentBytes(): number {
+  function currentLoadedBytes(): number {
     let total = 0;
     for (const entry of readyByModelId.values()) {
-      total += entry.residentBytes;
+      total += entry.loadedBytes;
     }
     return total;
   }
@@ -77,7 +78,7 @@ export function createInferenceWarmupCoordinator<TModel>(params?: Readonly<{
         readyByModelId.set(modelId, {
           model: current.model,
           releaseTimer: schedule(modelId, current.model),
-          residentBytes: current.residentBytes,
+          loadedBytes: current.loadedBytes,
           lastUsedTick: current.lastUsedTick,
         });
         return;
@@ -95,16 +96,16 @@ export function createInferenceWarmupCoordinator<TModel>(params?: Readonly<{
     readyByModelId.set(modelId, {
       model,
       releaseTimer: schedule(modelId, model),
-      residentBytes: Math.max(0, Math.trunc(resolveResidentBytes(modelId, model))),
+      loadedBytes: Math.max(0, Math.trunc(resolveLoadedBytes(modelId, model))),
       lastUsedTick: nextUseTick(),
     });
   }
 
-  function enforceMemoryBudget(): void {
-    if (maxResidentBytes <= 0) {
+  function enforceLoadedByteBudget(): void {
+    if (maxLoadedBytes <= 0) {
       return;
     }
-    while (currentResidentBytes() > maxResidentBytes) {
+    while (currentLoadedBytes() > maxLoadedBytes) {
       let lruModelId: string | null = null;
       let lruEntry: InferenceWarmEntry<TModel> | null = null;
       for (const [modelId, entry] of readyByModelId) {
@@ -149,7 +150,7 @@ export function createInferenceWarmupCoordinator<TModel>(params?: Readonly<{
           return model;
         }
         reschedule(modelId, model);
-        enforceMemoryBudget();
+        enforceLoadedByteBudget();
         return model;
       })();
       warmByModelId.set(modelId, promise);
@@ -172,6 +173,6 @@ export function createInferenceWarmupCoordinator<TModel>(params?: Readonly<{
       }
     },
     isWarm: (modelId) => readyByModelId.has(modelId),
-    residentBytes: () => currentResidentBytes(),
+    loadedBytes: () => currentLoadedBytes(),
   };
 }

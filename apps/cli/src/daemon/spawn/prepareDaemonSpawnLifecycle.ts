@@ -5,22 +5,15 @@ import {
     serializeProviderBindingLaunchHandoffForEnv,
     type ProviderBindingLaunchHandoffV1,
 } from '@/plugins/runtime/providerBindings/handoff';
-import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
-import { resolveAbsentSessionControlEnvKeys } from '@/session/runtime/control/sessionControlEnvironment';
+import {
+    HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY,
+    resolveAbsentSessionControlEnvKeys,
+} from '@/session/runtime/control/sessionControlEnvironment';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
-import type {
-    AccountScopedCryptoMaterial,
-    BackendTargetRefV2,
-    ConnectedServiceMaterializationIdentityV1,
-} from '@happier-dev/protocol';
-import type {
-    ManagedLocalServiceRunAttachmentMarkerOwnership,
-    ManagedLocalServiceRunAttachmentV1,
-} from '../sessionRegistry';
+import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 import type {
     DaemonSpawnStartupReadinessFailure,
-    TrackedSession,
 } from '../types';
 
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServices/connectedServiceChildEnvironment';
@@ -29,11 +22,12 @@ import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/re
 import type { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { createSessionAttachFile } from '../sessionAttachFile';
 import { createSpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
-import { preparePluginLocalServicesBridge } from './preparePluginLocalServicesBridge';
-import { prepareAgentRuntimeSessionBridge } from './prepareAgentRuntimeSessionBridge';
-import type { SpawnPluginRuntimeLease } from './spawnPluginRuntimeLease';
+import type {
+    prepareRunnerAgentSessionBootstrapForLease,
+} from './prepareAgentRuntimeSessionBridge';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './resolveStackProcessKindOverrideForSessionSpawn';
 import { persistAcceptedSpawnMarker } from './persistAcceptedSpawnMarker';
+import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 type SpawnResourceCleanup = () => void | Promise<void>;
 
@@ -52,10 +46,12 @@ function buildDaemonOwnedSpawnChildEnv(): Record<string, string> {
 }
 
 export async function prepareDaemonSpawnLifecycle(input: Readonly<{
-    effectiveBackendTarget: BackendTargetRefV2;
-    pluginRuntimeLease: SpawnPluginRuntimeLease;
-    launchResourceScope: ProviderLaunchResourceScope;
+    runnerAgentSessionBootstrap: Awaited<ReturnType<
+        typeof prepareRunnerAgentSessionBootstrapForLease
+    >>;
     normalizedExistingSessionId: string;
+    /** One-shot daemon attempt correlation returned only through startup control. */
+    spawnNonce?: string;
     sessionAttachPayload: Parameters<typeof createSessionAttachFile>[0]['payload'] | null;
     extraEnv: Record<string, string>;
     extraEnvForChild: Record<string, string>;
@@ -64,7 +60,7 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
     processEnv: NodeJS.ProcessEnv;
     effectiveConnectedServicesBindings: SpawnSessionOptions['connectedServices'];
     connectedServiceSelectionsEnv?: Readonly<Record<string, string>>;
-    catalogAgentId: CatalogAgentId;
+    catalogAgentId: CatalogAgentId | null;
     connectedServiceAuthSessionId?: string;
     sessionDirectory?: string;
     materializationKey: string;
@@ -81,22 +77,14 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
     setPendingSessionAttachCleanup: (cleanup: (() => Promise<void>) | null) => void;
     getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
     onSpawnResourceCleanupArmed: () => void;
-    respawnDescriptorEncryptionMaterial: AccountScopedCryptoMaterial;
-    managedLocalServiceRunAttachment?: ManagedLocalServiceRunAttachmentV1;
-    onManagedLocalServiceRunAttachmentPersisted?: (input: Readonly<{
-        pid: number;
-        ownership: ManagedLocalServiceRunAttachmentMarkerOwnership;
-        attachment: ManagedLocalServiceRunAttachmentV1;
-    }>) => void | Promise<void>;
-    onManagedLocalServiceRunAttachmentPidPromoted?: NonNullable<
-        TrackedSession['onManagedLocalServiceMarkerPidPromoted']
-    >;
+    deviceLocalSecretStorage?: DeviceLocalSecretStorage;
 }>): Promise<Readonly<{
     extraEnvForChildWithMessage: Record<string, string>;
     unsetEnvKeys: readonly string[];
-    localServicesBridgeAuthorization: Awaited<ReturnType<typeof preparePluginLocalServicesBridge>>['authorization'];
-    agentRuntimeSessionBridgeAuthorization:
-        NonNullable<Awaited<ReturnType<typeof prepareAgentRuntimeSessionBridge>>>['authorization'] | null;
+    runnerAgentSessionBootstrapAuthorization:
+        NonNullable<Awaited<ReturnType<
+            typeof prepareRunnerAgentSessionBootstrapForLease
+        >>>['authorization'] | null;
     spawnLifecycleCallbacks: ReturnType<typeof createSpawnLifecycleCallbacks>;
     cleanupPendingSessionAttach: () => Promise<void>;
 }>> {
@@ -115,19 +103,8 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
         input.setPendingSessionAttachCleanup(attach.cleanup);
     }
 
-    const appliedPluginRuntimeLease = await input.pluginRuntimeLease.acquire();
-    const localServicesBridge = await preparePluginLocalServicesBridge({
-        target: input.effectiveBackendTarget,
-        acceptedRegistry: appliedPluginRuntimeLease.registry,
-    });
-    input.launchResourceScope.register(localServicesBridge.cleanupTokenFile);
-    const agentRuntimeSessionBridge = await prepareAgentRuntimeSessionBridge({
-        target: input.effectiveBackendTarget,
-        pluginRuntimeLease: input.pluginRuntimeLease,
-    });
-    if (agentRuntimeSessionBridge) {
-        input.launchResourceScope.register(agentRuntimeSessionBridge.cleanupTokenFile);
-    }
+    const runnerAgentSessionBootstrap =
+        input.runnerAgentSessionBootstrap;
     const extraEnvForChildWithMessage = {
         ...input.extraEnvForChild,
         ...(input.providerBindingLaunchHandoff
@@ -140,8 +117,12 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
             }
             : {}),
         ...buildDaemonOwnedSpawnChildEnv(),
-        ...localServicesBridge.childEnv,
-        ...(agentRuntimeSessionBridge ? agentRuntimeSessionBridge.childEnv : {}),
+        ...(typeof input.spawnNonce === 'string' && input.spawnNonce.trim()
+            ? { [HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY]: input.spawnNonce.trim() }
+            : {}),
+        ...(runnerAgentSessionBootstrap
+            ? runnerAgentSessionBootstrap.childEnv
+            : {}),
         ...(sessionAttachFilePath ? { HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath } : {}),
         ...resolveStackProcessKindOverrideForSessionSpawn(input.processEnv),
     };
@@ -201,21 +182,12 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
             trackedSession,
             options,
         ) => {
-            if (input.managedLocalServiceRunAttachment) {
-                trackedSession.managedLocalServiceRunAttachment =
-                    input.managedLocalServiceRunAttachment;
-                trackedSession.onManagedLocalServiceMarkerPidPromoted =
-                    input.onManagedLocalServiceRunAttachmentPidPromoted;
+            if (!input.deviceLocalSecretStorage) {
+                throw new Error('Device-local secret storage is unavailable for accepted spawn custody');
             }
             await persistAcceptedSpawnMarker({
                 trackedSession,
-                encryptionMaterial: input.respawnDescriptorEncryptionMaterial,
-                ...(input.managedLocalServiceRunAttachment
-                    ? {
-                        managedLocalServiceRunAttachment:
-                            input.managedLocalServiceRunAttachment,
-                    }
-                    : {}),
+                deviceLocalSecretStorage: input.deviceLocalSecretStorage,
                 ...(options?.processPid !== undefined
                     ? { processPid: options.processPid }
                     : {}),
@@ -226,35 +198,14 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
                     }
                     : {}),
             });
-            if (
-                input.managedLocalServiceRunAttachment
-                && trackedSession.processCommandHash
-                && trackedSession.processStartTimeMs !== undefined
-            ) {
-                const markerPid =
-                    options?.processPid
-                    ?? trackedSession.pid;
-                await input.onManagedLocalServiceRunAttachmentPersisted?.({
-                    pid: markerPid,
-                    ownership: {
-                        happySessionId:
-                            trackedSession.happySessionId?.trim()
-                            || `PID-${markerPid}`,
-                        processCommandHash: trackedSession.processCommandHash,
-                        processStartTimeMs: trackedSession.processStartTimeMs,
-                    },
-                    attachment: input.managedLocalServiceRunAttachment,
-                });
-            }
         },
     });
 
     return {
         extraEnvForChildWithMessage,
         unsetEnvKeys,
-        localServicesBridgeAuthorization: localServicesBridge.authorization,
-        agentRuntimeSessionBridgeAuthorization:
-            agentRuntimeSessionBridge?.authorization ?? null,
+        runnerAgentSessionBootstrapAuthorization:
+            runnerAgentSessionBootstrap?.authorization ?? null,
         spawnLifecycleCallbacks,
         cleanupPendingSessionAttach: async () => {
             if (!sessionAttachCleanup) return;

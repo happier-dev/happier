@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import axios from 'axios';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import {
+  callSessionProviderInputAdmission,
   clearProviderInputAdmissionAfterDurableAdoption,
   continueProviderInputAdmissionReconciliationAfterLifecycleFence,
   createProviderInputAdmissionRecordTracker,
@@ -8,7 +12,87 @@ import {
   waitForProviderInputAdmissionGrace,
 } from './providerInputAdmissionRuntime';
 
+vi.mock('@/session/transport/rpc/sessionRpc', () => ({
+  callSessionRpc: vi.fn(),
+}));
+
 describe('provider input admission daemon composition', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.mocked(callSessionRpc).mockReset();
+  });
+
+  it('admits provider input for a plain Session with token-only credentials', async () => {
+    const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 'session-plain-123',
+          encryptionMode: 'plain',
+          metadata: '{}',
+          dataEncryptionKey: null,
+        }),
+      },
+    } as never);
+    vi.mocked(callSessionRpc).mockResolvedValueOnce({ status: 'enforced' });
+
+    await expect(callSessionProviderInputAdmission({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      sessionId: 'session-plain-123',
+      action: 'enforce',
+      serviceId: 'openai-codex',
+      groupId: 'group-1',
+      reason: 'group_unavailable',
+    })).resolves.toEqual({ status: 'enforced' });
+
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(callSessionRpc).toHaveBeenCalledWith({
+      token: 'token-only',
+      sessionId: 'session-plain-123',
+      ctx: null,
+      mode: 'plain',
+      method: 'session-plain-123:session.providerInput.admission',
+      request: {
+        action: 'enforce',
+        serviceId: 'openai-codex',
+        groupId: 'group-1',
+        reason: 'group_unavailable',
+      },
+    });
+  });
+
+  it('preserves typed material-unavailable failure for a retained E2EE Session', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 'session-e2ee-123',
+          encryptionMode: 'e2ee',
+          metadata: 'retained-ciphertext',
+          dataEncryptionKey: 'retained-data-key-envelope',
+        }),
+      },
+    } as never);
+
+    await expect(callSessionProviderInputAdmission({
+      credentials: {
+        token: 'token-only',
+        encryption: null,
+      },
+      sessionId: 'session-e2ee-123',
+      action: 'clear',
+      serviceId: 'openai-codex',
+      groupId: 'group-1',
+    })).rejects.toMatchObject({
+      code: 'encryption_material_unavailable',
+      name: 'AccountEncryptionMaterialUnavailableError',
+    });
+    expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
   it('tracks exact admission records by both adopted proof object and session', () => {
     const tracker = createProviderInputAdmissionRecordTracker<{ epochId: string }>();
     const adoptedA = {};

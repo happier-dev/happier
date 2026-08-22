@@ -1,22 +1,30 @@
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, open, realpath } from 'node:fs/promises';
+import { lstat, open, realpath, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_RELATIVE_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
   parseConnectedAccountRequestAuthCapabilityDocument,
-  readConnectedAccountRequestAuthCapabilityFile,
   resolveConnectedAccountRequestAuthCapabilityPath,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 
 import {
   constantTimeEqualUtf8,
   hashPrivateBearer,
   removePrivateBearerFile,
-  replacePrivateBearerFile,
 } from '@/daemon/privateBearerFile';
+import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
+import {
+  readProtectedLocalStateFile,
+  verifyProtectedLocalStatePath,
+  writeProtectedLocalStateFileAtomic,
+  type ProtectedLocalStateOptions,
+} from '@/utils/fs/protectedLocalState';
+import {
+  isPrivateConnectedServiceMaterializedRootStat,
+} from '../materialize/privateMaterializedRoot';
 
 export type ConnectedAccountRequestAuthCapabilityDescriptor = Readonly<{
   path: string;
@@ -30,6 +38,22 @@ export type ConnectedAccountRequestAuthCapabilityRecoveryFacts = Readonly<{
   materializationId: string;
   subjectScopeDigest: string;
 }>;
+
+const CAPABILITY_MUTATION_LOCK_TIMEOUT_MS = 5_000;
+const CAPABILITY_MUTATION_LOCK_STALE_AFTER_MS = 30_000;
+
+async function withCapabilityMutationLock<T>(
+  materializedRootDir: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const rootDir = resolve(materializedRootDir);
+  return await withJsonOwnerFileLock({
+    lockPath: `${rootDir}.request-auth-capability.lock`,
+    timeoutMs: CAPABILITY_MUTATION_LOCK_TIMEOUT_MS,
+    staleAfterMs: CAPABILITY_MUTATION_LOCK_STALE_AFTER_MS,
+    errorCode: 'connected_account_request_auth_capability_lock_timeout',
+  }, operation);
+}
 
 function normalizeNonEmpty(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -45,26 +69,6 @@ function fixedDigestEquals(left: string, right: string): boolean {
     && constantTimeEqualUtf8(left, right);
 }
 
-function isPrivateDirectoryStat(
-  stat: Readonly<{
-    isSymbolicLink: () => boolean;
-    isDirectory: () => boolean;
-    mode: number;
-    uid: number;
-  }>,
-  currentUid: number | null,
-): boolean {
-  return !stat.isSymbolicLink()
-    && stat.isDirectory()
-    && (
-      process.platform === 'win32'
-      || (
-        (stat.mode & 0o777) === 0o700
-        && (currentUid === null || stat.uid === currentUid)
-      )
-    );
-}
-
 export function digestConnectedAccountRequestAuthCapability(value: unknown): string {
   const normalized = normalizeNonEmpty(value);
   if (!normalized) return '';
@@ -76,6 +80,7 @@ export async function writeConnectedAccountRequestAuthCapabilityFile(input: Read
   materializationId: string;
   subjectScopeDigest: string;
   httpPort: number;
+  protectedLocalStateOptions?: ProtectedLocalStateOptions;
 }>): Promise<ConnectedAccountRequestAuthCapabilityDescriptor> {
   const capability = randomBytes(32).toString('base64url');
   const document = parseConnectedAccountRequestAuthCapabilityDocument({
@@ -92,15 +97,28 @@ export async function writeConnectedAccountRequestAuthCapabilityFile(input: Read
 
   const rootDir = resolve(input.rootDir);
   const rootStat = await lstat(rootDir);
-  const currentUid = typeof process.getuid === 'function' ? process.getuid() : null;
-  if (!isPrivateDirectoryStat(rootStat, currentUid)) {
+  const protectedLocalStateOptions = input.protectedLocalStateOptions ?? {};
+  const platform = protectedLocalStateOptions.platform ?? process.platform;
+  const currentUid = platform === 'win32'
+    ? null
+    : (protectedLocalStateOptions.expectedUid
+      ?? (typeof process.getuid === 'function' ? process.getuid() : null));
+  if (!isPrivateConnectedServiceMaterializedRootStat(rootStat, currentUid, platform)) {
     throw new Error('connected_account_request_auth_capability_path_unsafe');
   }
 
   const path = resolveConnectedAccountRequestAuthCapabilityPath(rootDir);
-  await replacePrivateBearerFile({
-    path,
-    contents: `${JSON.stringify(document)}\n`,
+  await withCapabilityMutationLock(rootDir, async () => {
+    try {
+      await verifyProtectedLocalStatePath(rootDir, 'directory', protectedLocalStateOptions);
+    } catch {
+      throw new Error('connected_account_request_auth_capability_path_unsafe');
+    }
+    await writeProtectedLocalStateFileAtomic(
+      path,
+      `${JSON.stringify(document)}\n`,
+      protectedLocalStateOptions,
+    );
   });
 
   return Object.freeze({
@@ -117,6 +135,7 @@ export async function verifyConnectedAccountRequestAuthCapabilityFile(input: Rea
   materializationId: string;
   subjectScopeDigest: string;
   capabilityDigest: string;
+  protectedLocalStateOptions?: ProtectedLocalStateOptions;
 }>): Promise<ConnectedAccountRequestAuthCapabilityDescriptor | null> {
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
@@ -124,6 +143,17 @@ export async function verifyConnectedAccountRequestAuthCapabilityFile(input: Rea
     const canonicalPath = resolveConnectedAccountRequestAuthCapabilityPath(rootDir);
     if (resolve(input.path) !== canonicalPath) return null;
     const capabilityDir = dirname(canonicalPath);
+    const protectedLocalStateOptions = input.protectedLocalStateOptions ?? {};
+    const platform = protectedLocalStateOptions.platform ?? process.platform;
+    const currentUid = platform === 'win32'
+      ? null
+      : (protectedLocalStateOptions.expectedUid
+        ?? (typeof process.getuid === 'function' ? process.getuid() : null));
+    await Promise.all([
+      verifyProtectedLocalStatePath(rootDir, 'directory', protectedLocalStateOptions),
+      verifyProtectedLocalStatePath(capabilityDir, 'directory', protectedLocalStateOptions),
+      verifyProtectedLocalStatePath(canonicalPath, 'file', protectedLocalStateOptions),
+    ]);
     const [rootStat, directoryStat, pathStat] = await Promise.all([
       lstat(rootDir),
       lstat(capabilityDir),
@@ -132,10 +162,9 @@ export async function verifyConnectedAccountRequestAuthCapabilityFile(input: Rea
     const realRoot = await realpath(rootDir);
     const expectedCapabilityDir = join(realRoot, dirname(CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_RELATIVE_PATH));
     const expectedRealPath = join(realRoot, CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_RELATIVE_PATH);
-    const currentUid = typeof process.getuid === 'function' ? process.getuid() : null;
     if (
-      !isPrivateDirectoryStat(rootStat, currentUid)
-      || !isPrivateDirectoryStat(directoryStat, currentUid)
+      !isPrivateConnectedServiceMaterializedRootStat(rootStat, currentUid, platform)
+      || !isPrivateConnectedServiceMaterializedRootStat(directoryStat, currentUid, platform)
       || pathStat.isSymbolicLink()
       || !pathStat.isFile()
       || await realpath(capabilityDir) !== expectedCapabilityDir
@@ -149,7 +178,7 @@ export async function verifyConnectedAccountRequestAuthCapabilityFile(input: Rea
     const fileStat = await handle.stat();
     if (
       !fileStat.isFile()
-      || (process.platform !== 'win32' && (fileStat.mode & 0o777) !== 0o600)
+      || (platform !== 'win32' && (fileStat.mode & 0o777) !== 0o600)
       || (pathStat.dev !== 0 && fileStat.dev !== 0 && pathStat.dev !== fileStat.dev)
       || (pathStat.ino !== 0 && fileStat.ino !== 0 && pathStat.ino !== fileStat.ino)
     ) {
@@ -167,8 +196,8 @@ export async function verifyConnectedAccountRequestAuthCapabilityFile(input: Rea
       lstat(canonicalPath),
     ]);
     if (
-      !isPrivateDirectoryStat(finalRootStat, currentUid)
-      || !isPrivateDirectoryStat(finalDirectoryStat, currentUid)
+      !isPrivateConnectedServiceMaterializedRootStat(finalRootStat, currentUid, platform)
+      || !isPrivateConnectedServiceMaterializedRootStat(finalDirectoryStat, currentUid, platform)
       || finalPathStat.isSymbolicLink()
       || !finalPathStat.isFile()
       || (rootStat.dev !== 0 && finalRootStat.dev !== 0 && rootStat.dev !== finalRootStat.dev)
@@ -183,6 +212,11 @@ export async function verifyConnectedAccountRequestAuthCapabilityFile(input: Rea
     ) {
       return null;
     }
+    await Promise.all([
+      verifyProtectedLocalStatePath(rootDir, 'directory', protectedLocalStateOptions),
+      verifyProtectedLocalStatePath(capabilityDir, 'directory', protectedLocalStateOptions),
+      verifyProtectedLocalStatePath(canonicalPath, 'file', protectedLocalStateOptions),
+    ]);
 
     const materializationId = input.materializationId;
     const subjectScopeDigest = input.subjectScopeDigest;
@@ -209,6 +243,23 @@ export async function verifyConnectedAccountRequestAuthCapabilityFile(input: Rea
 }
 
 /**
+ * The daemon-side recovery path verifies the root and capability directory before
+ * calling this helper; it verifies the secret-bearing file itself.
+ */
+export async function readConnectedAccountRequestAuthCapabilityFile(
+  path: string,
+  protectedLocalStateOptions: ProtectedLocalStateOptions = {},
+) {
+  try {
+    return parseConnectedAccountRequestAuthCapabilityDocument(
+      JSON.parse(await readProtectedLocalStateFile(path, protectedLocalStateOptions)),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Reads only the non-secret facts needed to prove daemon-replacement recovery.
  * The temporary capability value never leaves this owner and is used solely to
  * drive the existing strict, symlink-safe verifier over the exact same file.
@@ -216,16 +267,29 @@ export async function verifyConnectedAccountRequestAuthCapabilityFile(input: Rea
 export async function inspectConnectedAccountRequestAuthCapabilityFile(input: Readonly<{
   path: string;
   materializedRootDir: string;
+  protectedLocalStateOptions?: ProtectedLocalStateOptions;
 }>): Promise<ConnectedAccountRequestAuthCapabilityRecoveryFacts | null> {
   try {
-    const document = await readConnectedAccountRequestAuthCapabilityFile(input.path);
+    const rootDir = resolve(input.materializedRootDir);
+    const canonicalPath = resolveConnectedAccountRequestAuthCapabilityPath(rootDir);
+    if (resolve(input.path) !== canonicalPath) return null;
+    const protectedLocalStateOptions = input.protectedLocalStateOptions ?? {};
+    await Promise.all([
+      verifyProtectedLocalStatePath(rootDir, 'directory', protectedLocalStateOptions),
+      verifyProtectedLocalStatePath(dirname(canonicalPath), 'directory', protectedLocalStateOptions),
+    ]);
+    const document = await readConnectedAccountRequestAuthCapabilityFile(
+      canonicalPath,
+      protectedLocalStateOptions,
+    );
     if (!document) return null;
     const verified = await verifyConnectedAccountRequestAuthCapabilityFile({
-      path: input.path,
-      materializedRootDir: input.materializedRootDir,
+      path: canonicalPath,
+      materializedRootDir: rootDir,
       materializationId: document.materializationId,
       subjectScopeDigest: document.subjectScopeDigest,
       capabilityDigest: digestConnectedAccountRequestAuthCapability(document.capability),
+      protectedLocalStateOptions,
     });
     if (!verified) return null;
     return Object.freeze({
@@ -242,4 +306,25 @@ export async function removeConnectedAccountRequestAuthCapabilityFile(path: stri
   await removePrivateBearerFile(path);
 }
 
-export { readConnectedAccountRequestAuthCapabilityFile };
+export async function removeConnectedAccountRequestAuthCapabilityFileIfOwned(
+  input: Readonly<{
+    descriptor: ConnectedAccountRequestAuthCapabilityDescriptor;
+    materializedRootDir: string;
+    removeMaterializedRoot?: boolean;
+  }>,
+): Promise<boolean> {
+  const rootDir = resolve(input.materializedRootDir);
+  return await withCapabilityMutationLock(rootDir, async () => {
+    const current = await verifyConnectedAccountRequestAuthCapabilityFile({
+      ...input.descriptor,
+      materializedRootDir: rootDir,
+    });
+    if (!current) return false;
+    if (input.removeMaterializedRoot === true) {
+      await rm(rootDir, { recursive: true, force: true });
+    } else {
+      await removePrivateBearerFile(current.path);
+    }
+    return true;
+  });
+}

@@ -75,7 +75,7 @@ export async function verifySessionMarkerProcessLiveness(
     processStartTimeMs,
     readRunState: deps.readRunState,
     verifyIdentity: async (pid) => {
-      if (!processCommandHash || processStartTimeMs === undefined) return 'unknown';
+      if (!processCommandHash && processStartTimeMs === undefined) return 'unknown';
       const verifyHappyProcessIdentity =
         deps.verifyHappyProcessIdentity ?? isPidSafeHappySessionProcess;
       return await verifyHappyProcessIdentity({

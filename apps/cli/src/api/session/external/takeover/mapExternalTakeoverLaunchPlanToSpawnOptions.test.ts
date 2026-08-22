@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
     AgentExternalSessionTakeoverLaunchPlan,
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     mapExternalTakeoverLaunchPlanToSpawnOptions,
@@ -50,6 +50,34 @@ function resolvedIdentity(
 }
 
 describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
+    it('keeps the host-selected local target when a plugin returns a remote provider directory', () => {
+        expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
+            plan: {
+                directory: '/remote/provider/workspace',
+                backendModeHint: 'native-mode',
+            },
+            targetDirectory: '/local/selected/workspace',
+            resolvedIdentity: resolvedIdentity(),
+            linkedSessionId: 'session-linked',
+            targetAgent: targetAgent(),
+        })).toMatchObject({
+            directory: '/local/selected/workspace',
+            backendMode: 'native-mode',
+        });
+    });
+
+    it('preserves every byte of an already-admitted POSIX target directory', () => {
+        expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
+            plan: { directory: '/remote/provider/workspace' },
+            targetDirectory: '/work/repo ',
+            resolvedIdentity: resolvedIdentity(),
+            linkedSessionId: 'session-linked',
+            targetAgent: targetAgent(),
+        })).toMatchObject({
+            directory: '/work/repo ',
+        });
+    });
+
     it('maps only accepted launch hints while the host supplies target and fresh resume identity', () => {
         const plan: AgentExternalSessionTakeoverLaunchPlan = {
             directory: '/workspace/fresh',
@@ -61,6 +89,7 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
 
         expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
             plan,
+            targetDirectory: '/workspace/fresh',
             resolvedIdentity: resolvedIdentity(),
             linkedSessionId: 'session-linked',
             targetAgent: targetAgent({
@@ -86,6 +115,7 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
     it('maps an arbitrary external Agent to the configured backend target without an Agent-id branch', () => {
         expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
             plan: { directory: '/workspace/custom' },
+            targetDirectory: '/workspace/custom',
             resolvedIdentity: resolvedIdentity({
                 remoteSessionId: 'remote-custom',
             }),
@@ -118,6 +148,7 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
                     UNDECLARED_KEY: 'must-reject-the-plan',
                 },
             },
+            targetDirectory: '/workspace',
             resolvedIdentity: resolvedIdentity(),
             linkedSessionId: 'session-linked',
             targetAgent: targetAgent({
@@ -134,6 +165,7 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
                     happier_session_attach_file: '/tmp/attacker-controlled',
                 },
             },
+            targetDirectory: '/workspace',
             resolvedIdentity: resolvedIdentity(),
             linkedSessionId: 'session-linked',
             targetAgent: targetAgent({

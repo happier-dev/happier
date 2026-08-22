@@ -1,32 +1,236 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const createAuthorizationMock = vi.hoisted(() => vi.fn(
+const createBootstrapAuthorizationMock = vi.hoisted(() => vi.fn(
     async (input: Readonly<{ descriptor: unknown }>) => ({
         authorization: {
-            tokenHash: 'token-hash',
             descriptor: input.descriptor,
-            tokenFilePath: '/tmp/agent-runtime-token',
+            bootstrapFilePath: '/tmp/runner-agent-bootstrap',
+            authorityFilePath: '/tmp/runner-agent-authority',
         },
         childEnv: {
-            HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE:
-                '/tmp/agent-runtime-token',
+            HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE:
+                '/tmp/runner-agent-bootstrap',
+            HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE:
+                '/tmp/runner-agent-authority',
         },
-        cleanupTokenFile: async () => undefined,
+        cleanupBootstrapFile: async () => undefined,
     }),
 ));
 
 vi.mock('../agentRuntime/sessionBridgeAuthorization', () => ({
-    createAgentRuntimeSessionBridgeAuthorization: createAuthorizationMock,
+    createRunnerAgentSessionBootstrapAuthorization:
+        createBootstrapAuthorizationMock,
 }));
 
 import {
-    prepareAgentRuntimeSessionBridgeForLease,
+    prepareRunnerAgentSessionBootstrapForLease,
 } from './prepareAgentRuntimeSessionBridge';
 
-describe('prepareAgentRuntimeSessionBridgeForLease', () => {
+describe('prepareRunnerAgentSessionBootstrapForLease', () => {
+    it('fails before spawn when the selected backend is absent from the admitted registry', async () => {
+        const activateContributionsOnDemand = vi.fn(async () => []);
+
+        await expect(prepareRunnerAgentSessionBootstrapForLease({
+            target: {
+                kind: 'backend',
+                sourceKind: 'built_in',
+                backendId: 'pi',
+            },
+            lease: {
+                registry: {
+                    contributes: {
+                        agentDefinitionsById: new Map(),
+                        voiceProviders: [],
+                    },
+                    agentRuntimesByAgentId: new Map(),
+                    runtimeCapabilitiesByPluginId: new Map(),
+                    activateContributionsOnDemand,
+                },
+            },
+        } as never)).rejects.toThrow(
+            "Runner Agent backend 'pi' is unavailable in the admitted plugin registry",
+        );
+        expect(activateContributionsOnDemand).not.toHaveBeenCalled();
+        expect(createBootstrapAuthorizationMock).not.toHaveBeenCalled();
+    });
+
+    it('leaves the existing host-owned configured ACP backend outside plugin runtime admission', async () => {
+        const activateContributionsOnDemand = vi.fn(async () => []);
+
+        await expect(prepareRunnerAgentSessionBootstrapForLease({
+            target: {
+                kind: 'backend',
+                sourceKind: 'configured',
+                backendId: 'acp-catalog',
+            },
+            lease: {
+                registry: {
+                    contributes: {
+                        agentDefinitionsById: new Map(),
+                        voiceProviders: [],
+                    },
+                    agentRuntimesByAgentId: new Map(),
+                    runtimeCapabilitiesByPluginId: new Map(),
+                    activateContributionsOnDemand,
+                },
+            },
+        } as never)).resolves.toBeNull();
+        expect(activateContributionsOnDemand).not.toHaveBeenCalled();
+        expect(createBootstrapAuthorizationMock).not.toHaveBeenCalled();
+    });
+
+    it('fails before spawn when activation does not publish the selected Agent runtime', async () => {
+        const pluginId = 'happier.agent.pi';
+        const agent = {
+            id: 'pi',
+            identity: {
+                pluginId,
+                localId: 'pi',
+            },
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+            definition: {
+                kindVersion: 1,
+                id: 'pi',
+                ownedBackendIds: ['pi'],
+            },
+            richDefinition: {
+                provenance: 'first_party',
+                definition: {
+                    id: 'pi',
+                    title: {
+                        key: 'agents.pi.title',
+                        fallback: 'Pi',
+                    },
+                    runtime: { kind: 'custom' },
+                    primary: 'sessions',
+                    capabilities: {
+                        sessions: {
+                            open: ['create'],
+                            delivery: ['newTurn'],
+                            cancel: true,
+                        },
+                    },
+                },
+            },
+            pluginId,
+        };
+        const activateContributionsOnDemand = vi.fn(async () => [{
+            pluginId,
+            diagnostics: [],
+        }]);
+
+        await expect(prepareRunnerAgentSessionBootstrapForLease({
+            target: {
+                kind: 'backend',
+                sourceKind: 'built_in',
+                backendId: 'pi',
+            },
+            lease: {
+                registry: {
+                    contributes: {
+                        agentDefinitionsById: new Map([['pi', agent]]),
+                        voiceProviders: [],
+                    },
+                    agentRuntimesByAgentId: new Map(),
+                    runtimeCapabilitiesByPluginId:
+                        new Map([[pluginId, new Set()]]),
+                    activateContributionsOnDemand,
+                },
+            },
+        } as never)).rejects.toThrow(
+            "Runner Agent runtime 'happier.agent.pi/pi' was not published by activation",
+        );
+        expect(activateContributionsOnDemand).toHaveBeenCalledWith([{
+            pluginId,
+            family: 'agents',
+            localId: 'pi',
+        }]);
+        expect(createBootstrapAuthorizationMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps the plugin-local Agent id separate from its catalog backend id', async () => {
+        const pluginId = 'happier.agent.ohmypi';
+        const agent = {
+            id: 'ohMyPi',
+            identity: {
+                pluginId,
+                localId: 'ohmypi',
+            },
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+            definition: {
+                kindVersion: 1,
+                id: 'ohMyPi',
+                ownedBackendIds: ['ohMyPi'],
+            },
+            richDefinition: {
+                provenance: 'first_party',
+                definition: {
+                    id: 'ohMyPi',
+                    title: {
+                        key: 'agents.ohMyPi.title',
+                        fallback: 'Oh My Pi',
+                    },
+                    runtime: { kind: 'custom' },
+                    primary: 'sessions',
+                    capabilities: {
+                        sessions: {
+                            open: ['create'],
+                            delivery: ['newTurn'],
+                            cancel: true,
+                        },
+                    },
+                },
+            },
+            pluginId,
+        };
+        const registry = {
+            contributes: {
+                agentDefinitionsById: new Map([['ohMyPi', agent]]),
+                voiceProviders: [],
+            },
+            agentRuntimesByAgentId: new Map([['ohMyPi', {
+                pluginId,
+                pluginVersion: '1.0.0',
+                agentId: 'ohMyPi',
+                generation: 'activation-generation-1',
+                immutableGenerationId: 'immutable-generation-1',
+                hasPrimaryRuntime: true,
+            }]]),
+            runtimeCapabilitiesByPluginId:
+                new Map([[pluginId, new Set()]]),
+            activateContributionsOnDemand: async () => [],
+        };
+
+        const prepared = await prepareRunnerAgentSessionBootstrapForLease({
+            target: {
+                kind: 'backend',
+                sourceKind: 'built_in',
+                backendId: 'ohMyPi',
+            },
+            lease: { registry },
+        } as never);
+
+        expect(prepared?.authorization.descriptor).toMatchObject({
+            pluginId,
+            agentId: 'ohmypi',
+            backendId: 'ohMyPi',
+            agentDeclaration: {
+                definition: {
+                    id: 'ohmypi',
+                },
+            },
+        });
+    });
+
     it('carries the activated manifest authority without transferring the registry lease', async () => {
         const agent = {
             id: 'claude',
+            identity: {
+                pluginId: 'happier.agent.claude',
+                localId: 'claude',
+            },
             provenance: 'first_party',
             source: { kind: 'bundled' },
             definition: {
@@ -66,7 +270,6 @@ describe('prepareAgentRuntimeSessionBridgeForLease', () => {
                         pluginId: 'happier.voice.claude-realtime',
                         localId: 'conversation',
                     },
-                    manifestDigest: 'manifest:voice-provider',
                     definition: {
                         id: 'conversation',
                         title: 'Claude realtime',
@@ -84,6 +287,19 @@ describe('prepareAgentRuntimeSessionBridgeForLease', () => {
                                 localId: 'claude',
                             },
                         },
+                        settings: {
+                            schemaVersion: 2,
+                            fields: [],
+                            connectedServicesBinding: {
+                                id: 'globalConnectedServices',
+                                title: 'Agent account',
+                                agent: {
+                                    pluginId: 'happier.agent.claude',
+                                    localId: 'claude',
+                                },
+                                serviceIds: ['anthropic'],
+                            },
+                        },
                         client: {
                             artifactId: 'claude-realtime',
                             modulePath: './voice',
@@ -96,27 +312,23 @@ describe('prepareAgentRuntimeSessionBridgeForLease', () => {
                 pluginId: 'happier.agent.claude',
                 pluginVersion: '1.0.0',
                 agentId: 'claude',
-                generation: 'generation-1',
-                immutableGenerationId: null,
+                generation: 'activation-generation-1',
+                immutableGenerationId: 'immutable-generation-1',
                 hasPrimaryRuntime: true,
             }]]),
-            permissionsByPluginId: new Map([[
-                'happier.agent.claude',
-                new Set(['session.hooks.control', 'process.spawn']),
-            ]]),
             runtimeCapabilitiesByPluginId: new Map([[
                 'happier.agent.claude',
                 new Set(['sessionHooks', 'agents']),
             ]]),
             activateContributionsOnDemand: async () => [],
-            resolveContributionRuntimeLifecycle: vi.fn(() => ({
+            resolveVoiceProviderRuntimeLifecycle: vi.fn(() => ({
                 generation: 'provider-generation-9',
                 isCurrent: () => true,
                 retirementSignal: new AbortController().signal,
             })),
         };
 
-        const prepared = await prepareAgentRuntimeSessionBridgeForLease({
+        const prepared = await prepareRunnerAgentSessionBootstrapForLease({
             target: {
                 kind: 'backend',
                 sourceKind: 'built_in',
@@ -128,32 +340,20 @@ describe('prepareAgentRuntimeSessionBridgeForLease', () => {
         expect(prepared?.authorization.descriptor).toEqual(expect.objectContaining({
             pluginId: 'happier.agent.claude',
             agentId: 'claude',
-            runtimeSurfaces: {
-                terminal: true,
-                realtimeConversation: {
-                    providers: [{
-                        identity: {
-                            pluginId: 'happier.voice.claude-realtime',
-                            localId: 'conversation',
-                        },
-                        manifestDigest: 'manifest:voice-provider',
-                        generation: 'provider-generation-9',
-                        declaration: registry.contributes.voiceProviders[0]
-                            .definition,
-                    }],
-                },
+            generation: 'activation-generation-1',
+            immutableGenerationId: 'immutable-generation-1',
+            agentDeclaration: {
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                definition: agent.richDefinition.definition,
             },
             runtimeAuthority: {
-                permissions: ['process.spawn', 'session.hooks.control'],
                 runtimeCapabilities: ['agents', 'sessionHooks'],
             },
         }));
         expect(prepared?.authorization.descriptor).not.toHaveProperty('registry');
         expect(prepared?.authorization.descriptor).not.toHaveProperty('lease');
-        expect(registry.resolveContributionRuntimeLifecycle)
-            .toHaveBeenCalledWith({
-                pluginId: 'happier.voice.claude-realtime',
-                manifestDigest: 'manifest:voice-provider',
-            });
+        expect(registry.resolveVoiceProviderRuntimeLifecycle)
+            .not.toHaveBeenCalled();
     });
 });

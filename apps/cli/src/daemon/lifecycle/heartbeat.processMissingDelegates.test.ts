@@ -89,6 +89,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -102,7 +103,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     expect(pidToTrackedSession.has(pid)).toBe(false);
   });
 
-  it('keeps an exact live runner but prunes a reused PID through the existing exit cleanup exactly once', async () => {
+  it('keeps an exact copied-source runner but prunes a reused PID through the existing exit cleanup exactly once', async () => {
     vi.mocked(readDaemonState).mockResolvedValue({
       pid: process.pid,
       httpPort: 4001,
@@ -118,7 +119,23 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     const samePid = 111112;
     const reusedPid = 111113;
-    const sameCommand = 'happier session --existing-session sess-exact-live';
+    const sameCommand = [
+      '/usr/local/bin/node',
+      '--preserve-symlinks',
+      '--preserve-symlinks-main',
+      '--import',
+      '/repo/node_modules/tsx/dist/esm/index.mjs',
+      '--no-warnings',
+      '--no-deprecation',
+      '/repo/.project/tmp/cli-source-snapshot-source-51405-1785848300000-1/src/index.ts',
+      'pi',
+      '--happy-starting-mode',
+      'remote',
+      '--started-by',
+      'daemon',
+      '--existing-session',
+      'sess-exact-live',
+    ].join(' ');
     const oldCommand = 'happier session --existing-session sess-reused';
     const pidToTrackedSession = new Map<number, any>([
       [samePid, {
@@ -152,14 +169,8 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     const readProcessIdentityByPidFn = vi.fn(async (pid: number) => ({
       pid,
       processStartTimeMs: pid === samePid ? 1_000 : 9_000,
-      command: pid === samePid ? sameCommand : 'foreign reused command',
+      command: pid === samePid ? `${sameCommand} --same-process-command-drift` : 'foreign reused command',
     }));
-    const findHappyProcessByPidFn = vi.fn(async (pid: number) => ({
-      pid,
-      command: sameCommand,
-      type: 'daemon-spawned-session',
-    }));
-
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
       pidToTrackedSession,
@@ -169,7 +180,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       onChildExited,
       pidSafetyDependencies: {
         readProcessIdentityByPidFn,
-        findHappyProcessByPidFn,
       },
       controlPort: 8765,
       fileState: {
@@ -181,6 +191,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -200,7 +211,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     expect(cleanupReusedPid).toHaveBeenCalledOnce();
     expect(readProcessIdentityByPidFn).toHaveBeenCalledWith(samePid);
     expect(readProcessIdentityByPidFn).toHaveBeenCalledWith(reusedPid);
-    expect(findHappyProcessByPidFn).toHaveBeenCalledWith(samePid);
     expect(killSpy.mock.calls.every(([, signal]) => signal === 0)).toBe(true);
   });
 
@@ -268,11 +278,6 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       getApiMachineForSessions: () => null,
       onChildExited,
       pidSafetyDependencies: {
-        findHappyProcessByPidFn: vi.fn(async () => ({
-          pid,
-          command,
-          type: 'daemon-spawned-session',
-        })),
         readProcessIdentityByPidFn: vi.fn(async () => {
           markIdentityReadEntered?.();
           return await identityReadResult;
@@ -288,6 +293,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       },
       currentCliVersion: '0.9.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
       requestSelfRestart,
       isShuttingDown: () => shuttingDown,
     });
@@ -343,6 +349,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
@@ -394,6 +401,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -458,6 +466,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown: vi.fn(),
+      writeDaemonStateForCurrentOwner: vi.fn(() => true),
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -470,7 +479,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     expect(pidToTrackedSession.has(pid)).toBe(true);
   });
 
-  it('does not request shutdown when the state file is clobbered by another pid', async () => {
+  it('requests shutdown when exact lock ownership is lost before heartbeat publication', async () => {
     vi.mocked(readDaemonState).mockResolvedValue({
       pid: process.pid + 1234,
       httpPort: 4001,
@@ -485,6 +494,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     }) as any);
 
     const requestShutdown = vi.fn();
+    const writeDaemonStateForCurrentOwner = vi.fn(() => false);
 
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
@@ -502,6 +512,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       },
       currentCliVersion: '1.0.0',
       requestShutdown,
+      writeDaemonStateForCurrentOwner,
     });
 
     expect(setIntervalSpy).toHaveBeenCalled();
@@ -510,9 +521,13 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     await tick!();
 
-    expect(requestShutdown).not.toHaveBeenCalled();
-    expect(writeDaemonState).toHaveBeenCalledWith(expect.objectContaining({
+    expect(writeDaemonStateForCurrentOwner).toHaveBeenCalledWith(expect.objectContaining({
       pid: process.pid,
     }));
+    expect(requestShutdown).toHaveBeenCalledWith(
+      'exception',
+      'daemon_state_publication_ownership_lost',
+    );
+    expect(writeDaemonState).not.toHaveBeenCalled();
   });
 });

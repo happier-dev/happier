@@ -165,21 +165,17 @@ describe('projectProviderDiscoveryCandidates', () => {
     })[0]?.normalizedEndpointUrl).toBe('http://192.168.1.9:22434/');
   });
 
-  it('reports owned only while the managed registry exposes the live stop capability for the exact inventory run', () => {
-    const owned = projectProviderDiscoveryCandidates({
+  it('keeps passive Provider discovery independent from the UI Local Services managed snapshot', () => {
+    const inputWithObsoleteManagedSnapshot = {
       snapshot: snapshot(), registry,
       managedServices: [{
         inventoryId: 'volatile-inventory-id', phase: 'running', supportedActions: ['stop_managed'],
       }],
-    });
-    expect(owned[0]?.ownership).toBe('owned');
-    const afterHandleLoss = projectProviderDiscoveryCandidates({
-      snapshot: snapshot(), registry,
-      managedServices: [{
-        inventoryId: 'volatile-inventory-id', phase: 'running', supportedActions: [],
-      }],
-    });
-    expect(afterHandleLoss[0]?.ownership).toBe('adopted');
+    } as const;
+    const discovered = projectProviderDiscoveryCandidates(
+      inputWithObsoleteManagedSnapshot,
+    );
+    expect(discovered[0]?.ownership).toBe('adopted');
   });
 
   it('matches an existing connection only by its resolved endpoint', () => {

@@ -422,7 +422,6 @@ export function createProviderDraftProbeService(input: Readonly<{
         runtimeStore: createEphemeralRuntimeStore(input.machineId),
         now,
         createObservationId: randomUUID,
-        retryDelayMs: () => 30_000,
       });
       return service.refresh({
         connectionId: request.draftConnectionId,

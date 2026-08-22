@@ -91,7 +91,23 @@ const changedError = createProviderErrorV1('provider_authorization_changed', {
   machineId: 'machine-a',
 });
 
-function managedCurrentnessBasis(accountId: string) {
+function managedCurrentnessRuntime() {
+  return {
+    runtime: {
+      async start() {
+        throw new Error('not invoked by currentness test');
+      },
+    },
+    activationGeneration: 'managed-provider-generation-p',
+    immutableGenerationId: 'managed-provider-generation-p',
+    isCurrent: () => true,
+  };
+}
+
+function managedCurrentnessBasis(
+  accountId: string,
+  runtime = managedCurrentnessRuntime(),
+) {
   return {
     ticket: {
       connectionId,
@@ -101,8 +117,6 @@ function managedCurrentnessBasis(accountId: string) {
     },
     deployment: {
       contribution: {
-        provenance: 'first_party' as const,
-        source: { kind: 'bundled' as const },
         identity: {
           pluginId: 'happier.provider.gateway',
           localId: 'gateway',
@@ -113,28 +127,10 @@ function managedCurrentnessBasis(accountId: string) {
           pluginId: 'happier.provider.gateway',
           localId: 'gateway',
         },
-        facet: {
-          managedEndpoint: {
-            localService: {
-              id: 'gateway-managed',
-              launch: {
-                kind: 'packaged-runtime-binary' as const,
-                directorySegments: ['tools', 'unpacked'],
-                executableBaseName: 'gateway-managed',
-                privateConfigPathFlag: '--config',
-              },
-              launchMode: {
-                kind: 'assignAndInject' as const,
-                portPolicy: { kind: 'allocated' as const },
-              },
-              hostPolicy: { kind: 'loopback' as const },
-              name: { strategy: 'fixed' as const, name: 'Gateway' },
-              healthCheck: { kind: 'http' as const, path: '/healthz' },
-              restart: { kind: 'never' as const },
-              cleanup: { staleAfterMs: 60_000 },
-            },
-            protocols: ['openai-responses' as const],
-          },
+        managedRuntime: {
+          kind: 'managed' as const,
+          dependencies: [],
+          endpointTemplateIds: ['responses'],
           connectedAccounts: [{
             purpose: 'upstream',
             service: {
@@ -142,6 +138,7 @@ function managedCurrentnessBasis(accountId: string) {
               localId: 'example',
             },
             required: true,
+            materializationKinds: ['httpHeaders'],
           }],
           requestAuthUses: [{
             purpose: 'upstream',
@@ -152,6 +149,7 @@ function managedCurrentnessBasis(accountId: string) {
             },
           }],
         },
+        runtime,
         purposeBindings: {
           v: 1 as const,
           bindings: [{
@@ -180,22 +178,208 @@ function managedCurrentnessBasis(accountId: string) {
 }
 
 describe('provider spawn authorization lifecycle', () => {
+  it('does not latch a pre-adoption retained check and ignores desired Q after exact custody binds', () => {
+    let desiredCurrent = true;
+    let retainedPolicyCurrent = true;
+    let exactRetainedRuntimeCurrent = true;
+    const attempt = createProviderSpawnAuthorizationAttempt({
+      initial: authorization(),
+      revalidate: async () => ({
+        ok: true as const,
+        authorization: authorization(),
+      }),
+      resolveCredential: () => ({
+        ok: true as const,
+        credential: { kind: 'apiKey' as const, value: 'secret-value' },
+      }),
+      materialize: async () => ({ v: 1, kind: 'spawnEnv', env: [] }),
+      materializationBaseDir: '/unused',
+      sessionId: 'session-retained-p',
+      isCurrent: () => desiredCurrent && retainedPolicyCurrent,
+      isRetainedPolicyCurrent: () => retainedPolicyCurrent,
+    });
+
+    expect(attempt.isAuthorizationCurrent()).toBe(true);
+    expect(attempt.isRetainedAuthorizationCurrent({})).toBe(false);
+
+    desiredCurrent = false;
+    expect(attempt.isAuthorizationCurrent()).toBe(false);
+    expect(attempt.isRetainedAuthorizationCurrent({
+      isExactRetainedRuntimeCurrent: () => exactRetainedRuntimeCurrent,
+    })).toBe(true);
+
+    desiredCurrent = true;
+    expect(attempt.isRetainedAuthorizationCurrent({})).toBe(true);
+
+    expect(attempt.isAuthorizationCurrent()).toBe(false);
+    expect(exactRetainedRuntimeCurrent).toBe(true);
+  });
+
+  it.each([
+    {
+      label: 'exact runtime release',
+      revoke: (state: { exactCurrent: boolean; retainedPolicyCurrent: boolean }) => {
+        state.exactCurrent = false;
+      },
+    },
+    {
+      label: 'settings, account, grant, trust, or security revocation',
+      revoke: (state: { exactCurrent: boolean; retainedPolicyCurrent: boolean }) => {
+        state.retainedPolicyCurrent = false;
+      },
+    },
+  ])('never restores retained P after $label', ({ revoke }) => {
+    const state = {
+      exactCurrent: true,
+      retainedPolicyCurrent: true,
+    };
+    const attempt = createProviderSpawnAuthorizationAttempt({
+      initial: authorization(),
+      revalidate: async () => ({
+        ok: true as const,
+        authorization: authorization(),
+      }),
+      resolveCredential: () => ({
+        ok: true as const,
+        credential: { kind: 'apiKey' as const, value: 'secret-value' },
+      }),
+      materialize: async () => ({ v: 1, kind: 'spawnEnv', env: [] }),
+      materializationBaseDir: '/unused',
+      sessionId: 'session-retained-p',
+      isCurrent: () => true,
+      isRetainedPolicyCurrent: () => state.retainedPolicyCurrent,
+    });
+    const isExactRetainedRuntimeCurrent = () => state.exactCurrent;
+
+    expect(attempt.isRetainedAuthorizationCurrent({
+      isExactRetainedRuntimeCurrent,
+    })).toBe(true);
+
+    revoke(state);
+    expect(attempt.isRetainedAuthorizationCurrent({})).toBe(false);
+
+    state.exactCurrent = true;
+    state.retainedPolicyCurrent = true;
+    expect(attempt.isRetainedAuthorizationCurrent({
+      isExactRetainedRuntimeCurrent,
+    })).toBe(false);
+  });
+
+  it('fails closed and permanently when the exact custody callback throws after binding', () => {
+    let shouldThrow = false;
+    const attempt = createProviderSpawnAuthorizationAttempt({
+      initial: authorization(),
+      revalidate: async () => ({
+        ok: true as const,
+        authorization: authorization(),
+      }),
+      resolveCredential: () => ({
+        ok: true as const,
+        credential: { kind: 'apiKey' as const, value: 'secret-value' },
+      }),
+      materialize: async () => ({ v: 1, kind: 'spawnEnv', env: [] }),
+      materializationBaseDir: '/unused',
+      sessionId: 'session-retained-p',
+      isCurrent: () => true,
+      isRetainedPolicyCurrent: () => true,
+    });
+    const isExactRetainedRuntimeCurrent = () => {
+      if (shouldThrow) throw new Error('custody unavailable');
+      return true;
+    };
+
+    expect(attempt.isRetainedAuthorizationCurrent({
+      isExactRetainedRuntimeCurrent,
+    })).toBe(true);
+    shouldThrow = true;
+    expect(attempt.isRetainedAuthorizationCurrent({})).toBe(false);
+    shouldThrow = false;
+    expect(attempt.isRetainedAuthorizationCurrent({
+      isExactRetainedRuntimeCurrent,
+    })).toBe(false);
+  });
+
   it('keeps managed lifetime currentness owned by security, grant, and implementation facts', () => {
-    const initial = managedCurrentnessBasis('account-a');
+    const runtime = managedCurrentnessRuntime();
+    const initial = managedCurrentnessBasis('account-a', runtime);
     expect(sameManagedProviderAuthorizationCurrentnessBasis(
       initial,
-      managedCurrentnessBasis('account-a'),
+      managedCurrentnessBasis('account-a', runtime),
     )).toBe(true);
     expect(sameManagedProviderAuthorizationCurrentnessBasis(
       initial,
-      managedCurrentnessBasis('account-b'),
-    )).toBe(true);
+      managedCurrentnessBasis('account-b', runtime),
+    )).toBe(false);
     expect(sameManagedProviderAuthorizationCurrentnessBasis(
       initial,
       {
-        ...managedCurrentnessBasis('account-a'),
+        ...managedCurrentnessBasis('account-a', runtime),
+        deployment: {
+          ...managedCurrentnessBasis('account-a', runtime).deployment,
+          contribution: {
+            ...managedCurrentnessBasis('account-a', runtime).deployment.contribution,
+            identity: {
+              pluginId: 'happier.provider.gateway',
+              localId: 'gateway-q',
+            },
+          },
+        },
+      },
+    )).toBe(false);
+    expect(sameManagedProviderAuthorizationCurrentnessBasis(
+      initial,
+      {
+        ...managedCurrentnessBasis('account-a', runtime),
+        deployment: {
+          ...managedCurrentnessBasis('account-a', runtime).deployment,
+          implementation: {
+            ...managedCurrentnessBasis('account-a', runtime).deployment.implementation,
+            runtime: {
+              ...runtime,
+              activationGeneration: 'managed-provider-generation-q',
+            },
+          },
+        },
+      },
+    )).toBe(false);
+    expect(sameManagedProviderAuthorizationCurrentnessBasis(
+      initial,
+      {
+        ...managedCurrentnessBasis('account-a', runtime),
+        deployment: {
+          ...managedCurrentnessBasis('account-a', runtime).deployment,
+          implementation: {
+            ...managedCurrentnessBasis('account-a', runtime).deployment.implementation,
+            runtime: {
+              ...runtime,
+              immutableGenerationId: 'managed-provider-generation-q',
+            },
+          },
+        },
+      },
+    )).toBe(false);
+    expect(sameManagedProviderAuthorizationCurrentnessBasis(
+      initial,
+      {
+        ...managedCurrentnessBasis('account-a', runtime),
+        deployment: {
+          ...managedCurrentnessBasis('account-a', runtime).deployment,
+          implementation: {
+            ...managedCurrentnessBasis('account-a', runtime).deployment.implementation,
+            runtime: {
+              ...runtime,
+              runtime: { ...runtime.runtime },
+            },
+          },
+        },
+      },
+    )).toBe(false);
+    expect(sameManagedProviderAuthorizationCurrentnessBasis(
+      initial,
+      {
+        ...managedCurrentnessBasis('account-a', runtime),
         ticket: {
-          ...managedCurrentnessBasis('account-a').ticket,
+          ...managedCurrentnessBasis('account-a', runtime).ticket,
           grantFingerprint: 'machine-grant:v1:revoked',
         },
       },
@@ -203,10 +387,141 @@ describe('provider spawn authorization lifecycle', () => {
     expect(sameManagedProviderAuthorizationCurrentnessBasis(
       initial,
       {
-        ...managedCurrentnessBasis('account-a'),
+        ...managedCurrentnessBasis('account-a', runtime),
         ticket: {
-          ...managedCurrentnessBasis('account-a').ticket,
+          ...managedCurrentnessBasis('account-a', runtime).ticket,
           connectionSecurityFingerprint: 'connection-security:v1:changed',
+        },
+      },
+    )).toBe(false);
+  });
+
+  it('treats managed purpose declarations and bindings as sets without reordering endpoint templates', () => {
+    const runtime = managedCurrentnessRuntime();
+    const base = managedCurrentnessBasis('account-a', runtime);
+    const expected = {
+      ...base,
+      deployment: {
+        ...base.deployment,
+        implementation: {
+          ...base.deployment.implementation,
+          managedRuntime: {
+            ...base.deployment.implementation.managedRuntime,
+            dependencies: ['bridge-a', 'bridge-b'],
+            endpointTemplateIds: ['responses', 'chat'],
+            connectedAccounts: [
+              {
+                ...base.deployment.implementation.managedRuntime
+                  .connectedAccounts[0],
+                materializationKinds: ['environment', 'httpHeaders'],
+              },
+              {
+                purpose: 'audit',
+                service: {
+                  pluginId: 'happier.connected-account.audit',
+                  localId: 'audit',
+                },
+                materializationKinds: ['httpHeaders'],
+              },
+            ],
+            requestAuthUses: [
+              {
+                ...base.deployment.implementation.managedRuntime
+                  .requestAuthUses[0],
+                materialization: {
+                  ...base.deployment.implementation.managedRuntime
+                    .requestAuthUses[0].materialization,
+                  headerNames: ['authorization', 'x-trace-id'],
+                },
+              },
+              {
+                purpose: 'audit',
+                materialization: {
+                  kind: 'httpHeaders' as const,
+                  origin: 'https://audit.example.test',
+                  headerNames: ['authorization'],
+                },
+              },
+            ],
+          },
+          purposeBindings: {
+            v: 1 as const,
+            bindings: [
+              ...base.deployment.implementation.purposeBindings.bindings,
+              {
+                purpose: {
+                  consumer: {
+                    pluginId: 'happier.provider.gateway',
+                    localId: 'gateway',
+                  },
+                  purpose: 'audit',
+                },
+                target: {
+                  kind: 'account' as const,
+                  account: {
+                    service: {
+                      pluginId: 'happier.connected-account.audit',
+                      localId: 'audit',
+                    },
+                    accountId: 'account-audit',
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    } satisfies Parameters<typeof sameManagedProviderAuthorizationCurrentnessBasis>[0];
+    const permuted = {
+      ...expected,
+      deployment: {
+        ...expected.deployment,
+        implementation: {
+          ...expected.deployment.implementation,
+          managedRuntime: {
+            ...expected.deployment.implementation.managedRuntime,
+            dependencies: [...expected.deployment.implementation.managedRuntime.dependencies].reverse(),
+            connectedAccounts: [
+              ...expected.deployment.implementation.managedRuntime.connectedAccounts,
+            ].reverse(),
+            requestAuthUses: expected.deployment.implementation.managedRuntime
+              .requestAuthUses
+              .map((use) => ({
+                ...use,
+                materialization: {
+                  ...use.materialization,
+                  headerNames: [...use.materialization.headerNames].reverse(),
+                },
+              }))
+              .reverse(),
+          },
+          purposeBindings: {
+            ...expected.deployment.implementation.purposeBindings,
+            bindings: [
+              ...expected.deployment.implementation.purposeBindings.bindings,
+            ].reverse(),
+          },
+        },
+      },
+    } satisfies Parameters<typeof sameManagedProviderAuthorizationCurrentnessBasis>[0];
+
+    expect(sameManagedProviderAuthorizationCurrentnessBasis(
+      expected,
+      permuted,
+    )).toBe(true);
+    expect(sameManagedProviderAuthorizationCurrentnessBasis(
+      expected,
+      {
+        ...permuted,
+        deployment: {
+          ...permuted.deployment,
+          implementation: {
+            ...permuted.deployment.implementation,
+            managedRuntime: {
+              ...permuted.deployment.implementation.managedRuntime,
+              endpointTemplateIds: ['chat', 'responses'],
+            },
+          },
         },
       },
     )).toBe(false);

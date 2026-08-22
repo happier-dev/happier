@@ -18,6 +18,7 @@ import {
   readDaemonStartWaitPollMs,
   readDaemonStartWaitTimeoutMs,
 } from '@/daemon/startupWaitDefaults';
+import { hasObservableDaemonStartProcessExited } from '@/daemon/waitForDaemonRunningWithinBudget';
 
 export function shouldAutoStartDaemonAfterAuth(
   params: Readonly<{ env: NodeJS.ProcessEnv; isDaemonProcess: boolean; startedBy: 'daemon' | 'terminal' }>,
@@ -61,6 +62,9 @@ export async function ensureDaemonRunningForSessionCommand(): Promise<void> {
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, pollMs));
       if (await isDaemonRunningCurrentlyInstalledHappyVersion()) {
+        return;
+      }
+      if (hasObservableDaemonStartProcessExited(daemonProcess)) {
         return;
       }
     }

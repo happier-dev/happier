@@ -13,6 +13,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type {
+  ContributedProviderCatalogParserBinding,
   ProviderCatalogRefreshResult,
   ProviderManagedCatalogSource,
   ProviderProbeEndpoint,
@@ -21,6 +22,7 @@ import { createProviderCatalogRefreshFingerprint } from './catalog';
 import {
   PROVIDER_PROBE_REFRESH_TRIGGERS,
   type ProviderProbeRefreshTrigger,
+  type ProviderProbeSchedulerWaiterOptions,
 } from './scheduler';
 import type { ProviderCatalogCommandFallbackV1, ProviderCatalogProbeV1 } from '@happier-dev/protocol';
 
@@ -40,6 +42,13 @@ export type ResolvedProviderProbeRpcRequest = Readonly<{
   probes: readonly ProviderCatalogProbeV1[];
   catalogFallback?: ProviderCatalogCommandFallbackV1;
   managedSource?: ProviderManagedCatalogSource;
+  /**
+   * Implementations of the catalog wire formats the resolved Provider's plugin
+   * contributes, bound to the activation generation that owns them. Host-private
+   * and deliberately outside every fingerprint: the declared format id is the
+   * durable fact, its implementation and generation are not.
+   */
+  contributedCatalogParsers?: ContributedProviderCatalogParserBinding;
   observationAuthorizationFingerprints: readonly z.infer<typeof ProviderObservationAuthorizationFingerprintV1Schema>[];
   authorizationGrant: Readonly<{
     kind: 'account' | 'machine';
@@ -67,6 +76,12 @@ export type ProviderSavedModelsRpcResult =
       models: readonly ProviderSavedModelsRpcRow[];
     }>
   | Readonly<{ status: 'error'; error: ReturnType<typeof createProviderErrorV1> }>;
+
+/** A transport caller owns only its interest in shared scheduler work. */
+export type ProviderProbeWaiterLifetime = Readonly<Pick<
+  ProviderProbeSchedulerWaiterOptions<ProviderCatalogRefreshResult>,
+  'signal' | 'isCurrent'
+>>;
 
 const SavedConnectionMachineRequestSchema = z.object({
   connectionId: ProviderConnectionIdSchema,
@@ -117,18 +132,36 @@ export function createResolvedProviderProbeObservationIdentity(
 
 export function createResolvedProviderProbeRunner(dependencies: Readonly<{
   refresh(input: ResolvedProviderProbeRpcRequest): Promise<ProviderCatalogRefreshResult>;
-  schedule<T extends ProviderCatalogRefreshResult>(
+  schedule(
     key: string,
     trigger: ProviderProbeRefreshTrigger,
-    operation: () => Promise<T>,
-  ): Promise<T>;
+    operation: () => Promise<ProviderCatalogRefreshResult>,
+    options: ProviderProbeSchedulerWaiterOptions<ProviderCatalogRefreshResult>,
+  ): Promise<ProviderCatalogRefreshResult>;
 }>) {
   return (
     resolved: ResolvedProviderProbeRpcRequest,
     trigger: ProviderProbeRefreshTrigger,
+    waiterLifetime: ProviderProbeWaiterLifetime = {},
   ): Promise<ProviderCatalogRefreshResult> => {
     const key = createResolvedProviderProbeObservationIdentity(resolved);
-    return dependencies.schedule(key, trigger, () => dependencies.refresh(resolved));
+    const identity = {
+      connectionId: resolved.connectionId,
+      machineId: resolved.machineId,
+    };
+    return dependencies.schedule(key, trigger, () => dependencies.refresh(resolved), {
+      ...waiterLifetime,
+      unavailable: () => ({
+        status: 'error',
+        error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+      }),
+      // No endpoint request is attempted when local probe admission is full,
+      // so the refusal must not read as a provider outage.
+      localCapacityUnavailable: () => ({
+        status: 'error',
+        error: createProviderErrorV1('provider_probe_capacity_exhausted', identity),
+      }),
+    });
   };
 }
 
@@ -140,14 +173,18 @@ export function createResolvedProviderProbeRunner(dependencies: Readonly<{
 export function createProviderProbeRpcHandler(dependencies: Readonly<{
   resolveSaved(input: Readonly<{ connectionId: string; machineId: string }>): Promise<ResolvedProviderProbeRpcRequest>;
   refresh(input: ResolvedProviderProbeRpcRequest): Promise<ProviderCatalogRefreshResult>;
-  schedule<T extends ProviderCatalogRefreshResult>(
+  schedule(
     key: string,
     trigger: ProviderProbeRefreshTrigger,
-    operation: () => Promise<T>,
-  ): Promise<T>;
+    operation: () => Promise<ProviderCatalogRefreshResult>,
+    options: ProviderProbeSchedulerWaiterOptions<ProviderCatalogRefreshResult>,
+  ): Promise<ProviderCatalogRefreshResult>;
 }>) {
   const runResolved = createResolvedProviderProbeRunner(dependencies);
-  return async (rawInput: unknown): Promise<ProviderCatalogRefreshResult> => {
+  return async (
+    rawInput: unknown,
+    waiterLifetime: ProviderProbeWaiterLifetime = {},
+  ): Promise<ProviderCatalogRefreshResult> => {
     const input = ProbeRequestSchema.parse(rawInput);
     let resolved: ResolvedProviderProbeRpcRequest;
     try {
@@ -158,7 +195,7 @@ export function createProviderProbeRpcHandler(dependencies: Readonly<{
       }
       throw error;
     }
-    return runResolved(resolved, input.trigger);
+    return runResolved(resolved, input.trigger, waiterLifetime);
   };
 }
 
@@ -168,10 +205,16 @@ export function createProviderProbeRpcHandler(dependencies: Readonly<{
  */
 export function createProviderSavedProbeRpcHandler(dependencies: Readonly<{
   machineId: string;
-  probe(input: Readonly<{ connectionId: string; machineId: string }>): Promise<ProviderCatalogRefreshResult>;
+  probe(
+    input: Readonly<{ connectionId: string; machineId: string }>,
+    waiterLifetime?: ProviderProbeWaiterLifetime,
+  ): Promise<ProviderCatalogRefreshResult>;
 }>) {
   const ownedMachineId = ProviderMachineIdSchema.parse(dependencies.machineId);
-  return async (rawInput: unknown): Promise<ProviderCatalogRefreshResult> => {
+  return async (
+    rawInput: unknown,
+    waiterLifetime?: ProviderProbeWaiterLifetime,
+  ): Promise<ProviderCatalogRefreshResult> => {
     const input = SavedConnectionMachineRequestSchema.parse(rawInput);
     if (input.machineId !== ownedMachineId) {
       return {
@@ -179,7 +222,9 @@ export function createProviderSavedProbeRpcHandler(dependencies: Readonly<{
         error: createProviderErrorV1('provider_not_enabled_on_machine', input),
       };
     }
-    return dependencies.probe(input);
+    return waiterLifetime
+      ? dependencies.probe(input, waiterLifetime)
+      : dependencies.probe(input);
   };
 }
 

@@ -60,6 +60,9 @@ const exactOldServer: CliServerFeaturesSnapshot = {
 };
 const exactOldServerContract = {
     mode: "released_server_v0_2_1" as const,
+    runtimeActivity: "legacy" as const,
+    pendingInput: "released_server_v0_2_1" as const,
+    publisherAuthority: "indeterminate" as const,
     sessionConnectionEpoch: 7,
     socket: { connected: true },
 };

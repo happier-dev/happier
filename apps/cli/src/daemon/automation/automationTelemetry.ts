@@ -7,6 +7,8 @@ export function logAutomationInfo(message: string, data?: Record<string, unknown
 export function logAutomationWarn(message: string, error?: unknown, data?: Record<string, unknown>): void {
   logger.warn(`[DAEMON AUTOMATION] ${message}`, {
     ...(data ?? {}),
-    error: error instanceof Error ? error.message : (error ? String(error) : undefined),
+    // Run failure details are private Account content. Keep structural context
+    // in `data`, but never promote an arbitrary boundary error into telemetry.
+    error: error ? 'redacted' : undefined,
   });
 }

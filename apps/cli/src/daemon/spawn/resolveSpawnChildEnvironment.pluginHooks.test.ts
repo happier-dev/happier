@@ -87,10 +87,37 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
   registerDecisionHandler?: boolean;
   resolveInstallableInDecision?: string;
 }>): Promise<void> {
+  if (params.agentId) {
+    await writeFile(
+      join(params.pluginRoot, 'agentRuntime.mjs'),
+      [
+        'export function createSpawnHookAgentRuntime() {',
+        '  return {',
+        '    sessions: {',
+        '      async open(request) {',
+        '        return {',
+        '          async send() { return { status: "admitted" }; },',
+        '          watch() { return { dispose() {} }; },',
+        '          async dispose() {},',
+        '          sessionId: request.sessionId,',
+        '        };',
+        '      },',
+        '    },',
+        '  };',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+  }
+
   await writeLocalExtensionPackageFixture({
     pluginRoot: params.pluginRoot,
     daemonModuleContents: [
       'import { appendFile } from "node:fs/promises";',
+      ...(params.agentId
+        ? ['import { createSpawnHookAgentRuntime } from "./agentRuntime.mjs";']
+        : []),
       '',
       'export async function validateSpawn(event = {}, context = {}) {',
       `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "decision", event, hasToolContext: typeof context?.tools?.resolveManagedInstallable === "function", hasRunToolContext: typeof context?.tools?.runSystemTool === "function" }) + "\\n", "utf8");`,
@@ -113,18 +140,13 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
       'export function activate(api) {',
       ...(params.agentId
         ? [
-          `  api.agents.register(${JSON.stringify(params.agentId)}, () => ({`,
-          '    sessions: {',
-          '      async open(request) {',
-          '        return {',
-          '          async send() { return { status: "admitted" }; },',
-          '          watch() { return { dispose() {} }; },',
-          '          async dispose() {},',
-          '          sessionId: request.sessionId,',
-          '        };',
-          '      },',
+          `  api.agents.register(${JSON.stringify(params.agentId)}, createSpawnHookAgentRuntime, {`,
+          '    sessionRunnerFactory: {',
+          '      module: "./agentRuntime.mjs",',
+          '      export: "createSpawnHookAgentRuntime",',
+          '      runtimeApiVersion: 1,',
           '    },',
-          '  }));',
+          '  });',
         ]
         : []),
       ...(params.registerDecisionHandler === false
@@ -227,6 +249,47 @@ async function readOptionalMarkerRecords(markerPath: string): Promise<ReadonlyAr
 }
 
 describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
+  it('activates the copied bundled Codex prerequisite hook in a fresh daemon registry', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-codex-spawn-hook-home-'));
+    let appliedRuntime: AppliedPluginRuntime | null = null;
+
+    try {
+      appliedRuntime = await acquireAppliedPluginRuntime(happyHomeDir);
+
+      const result = await resolveSpawnChildEnvironment({
+        happyHomeDir,
+        pluginRuntimeRegistry: appliedRuntime.lease.registry,
+        options: {
+          directory: '/repo',
+          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+          codexBackendMode: 'appServer',
+        },
+        profileEnvironmentVariables: {},
+        daemonSpawnHooks: null,
+        processEnv: { HAPPIER_CODEX_PATH: process.execPath },
+        logDebug: () => {},
+        logInfo: () => {},
+        logWarn: () => {},
+        connectedServiceAuth: null,
+      });
+
+      expect(result).toMatchObject({ ok: true });
+      expect(appliedRuntime.lease.registry.activatedPluginIds).toContain('happier.agent.codex');
+      expect(
+        appliedRuntime.lease.registry.hookHandlersByHookId.get('agent.resolvePrerequisites'),
+      ).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          pluginId: 'happier.agent.codex',
+          localId: 'resolve-prerequisites',
+          handler: expect.any(Function),
+        }),
+      ]));
+    } finally {
+      await releaseAppliedPluginRuntime(appliedRuntime);
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
   it('runs plugin-owned spawn prerequisite and env augmentation hooks through the executable runtime registry', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-spawn-hook-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-spawn-hook-root-'));

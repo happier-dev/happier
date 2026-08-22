@@ -5,6 +5,7 @@ import type {
   ProviderConnectionV1,
   ProviderContributionV1,
   ProviderErrorCodeV1,
+  ResolvedProviderManagedRuntimeDeclarationV1,
   ProviderSettingsParseDiagnosticV1,
   ProviderWireProtocol,
   QualifiedConnectedAccountPurposeBindingsV1,
@@ -14,7 +15,6 @@ import type {
   ResolvedContributionProvenance,
   ResolvedProviderContribution,
 } from '@/plugins/projection/registry/types';
-import type { ResolvedFirstPartyManagedProviderFacet } from '@/providers/managed/types';
 
 export type ProviderContributionRegistryView = Readonly<{
   providersByContributionKey: ReadonlyMap<string, ResolvedProviderContribution>;
@@ -99,7 +99,7 @@ export type ResolvedProviderConnectionRecord =
             pluginId: string;
             localId: string;
           }>;
-          facet: ResolvedFirstPartyManagedProviderFacet;
+          managedRuntime: ResolvedProviderManagedRuntimeDeclarationV1;
           purposeBindingIntents: QualifiedConnectedAccountPurposeBindingsV1;
         }>;
         endpoints: readonly [];

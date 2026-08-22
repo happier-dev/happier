@@ -151,7 +151,8 @@ export function createProviderLocalInstallationReader(input: ProviderLocalToolRe
             contributionKey,
             providerName: contribution.definition.name,
             ...(descriptor.presenceCheck ? { presenceCheck: descriptor.presenceCheck } : {}),
-            managedStartAvailable: descriptor.managedStart !== undefined,
+            managedStartAvailable:
+              contribution.definition.managedRuntime?.kind === 'managed',
           });
         })());
       }
