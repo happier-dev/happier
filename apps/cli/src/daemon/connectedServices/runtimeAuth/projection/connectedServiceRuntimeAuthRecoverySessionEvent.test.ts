@@ -246,24 +246,29 @@ describe('projectConnectedServiceRuntimeAuthRecoveryReport', () => {
       },
     } satisfies ConnectedServiceRuntimeAuthFailureDaemonReport;
 
-    projectConnectedServiceRuntimeAuthRecoveryReport({
-      report,
-      classification: {
-        kind: 'usage_limit',
-        serviceId: 'openai-codex',
-        profileId: 'primary',
-        groupId: 'codex-main',
-        resetsAtMs: 1_700_000_060_000,
-        retryAfterMs: null,
-        planType: null,
-        rateLimits: null,
-        source: 'structured_provider_error',
-      },
-      commitUsageLimitRecoveryMetadata: ((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) => {
-        nextMetadata = updater({});
-        return true;
-      }) as never,
-    } as never);
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      projectConnectedServiceRuntimeAuthRecoveryReport({
+        report,
+        classification: {
+          kind: 'usage_limit',
+          serviceId: 'openai-codex',
+          profileId: 'primary',
+          groupId: 'codex-main',
+          resetsAtMs: 1_700_000_060_000,
+          retryAfterMs: null,
+          planType: null,
+          rateLimits: null,
+          source: 'structured_provider_error',
+        },
+        commitUsageLimitRecoveryMetadata: ((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) => {
+          nextMetadata = updater({});
+          return true;
+        }) as never,
+      } as never);
+    } finally {
+      dateNow.mockRestore();
+    }
 
     expect(nextMetadata).toMatchObject({
       [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
