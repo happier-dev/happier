@@ -117,6 +117,16 @@ function resolveTypedImportFailureMessage(
     : 'The installed Agent version cannot safely import this handoff';
 }
 
+function resolvePrepareTargetFailureCode(message: string): string | undefined {
+  if (message === directPeerTransferUnavailable().error) {
+    return directPeerTransferUnavailable().errorCode;
+  }
+  if (message === missingHandoffMetadataV2().error) {
+    return missingHandoffMetadataV2().errorCode;
+  }
+  return undefined;
+}
+
 export async function runSessionHandoffPrepareTargetJob(
   params: RunSessionHandoffPrepareTargetJobInput,
 ): Promise<void> {
@@ -552,6 +562,12 @@ export async function runSessionHandoffPrepareTargetJob(
       const failedAtMs = Date.now();
       const currentJob = await prepareJobStore.read(jobId);
       const typedImportFailure = resolveTypedImportFailure(error);
+      const lastErrorMessage = typedImportFailure
+        ? resolveTypedImportFailureMessage(typedImportFailure)
+        : error instanceof Error
+          ? error.message
+          : 'Failed to prepare handoff target';
+      const lastErrorCode = resolvePrepareTargetFailureCode(lastErrorMessage);
       const { failure: _previousFailure, ...currentStatusWithoutFailure } =
         currentJob?.status ?? pendingStatus;
       const failedStatus: SessionHandoffStatus = {
@@ -576,11 +592,8 @@ export async function runSessionHandoffPrepareTargetJob(
         createdAtMs,
         updatedAtMs: failedAtMs,
         ...(currentJob?.cancelRequestedAtMs ? { cancelRequestedAtMs: currentJob.cancelRequestedAtMs, abortedAtMs: failedAtMs } : { failedAtMs }),
-        lastErrorMessage: typedImportFailure
-          ? resolveTypedImportFailureMessage(typedImportFailure)
-          : error instanceof Error
-            ? error.message
-            : 'Failed to prepare handoff target',
+        ...(lastErrorCode ? { lastErrorCode } : {}),
+        lastErrorMessage,
         status: failedStatus,
       }));
     }
