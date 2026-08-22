@@ -37,7 +37,7 @@ function assertAnalyticsKey(mode: string) {
             throw new Error(
                 'VITE_POSTHOG_KEY is not set. happier.dev has never recorded a $pageview; ' +
                     'shipping another unmeasured build is not an accident worth repeating. ' +
-                    'Set it in the Cloudflare Pages project environment (Production and Preview), ' +
+                    'Set it as the VITE_POSTHOG_KEY repository variable the release workflow passes in, ' +
                     'or export VITE_POSTHOG_KEY="" to build an intentionally blind bundle.',
             );
         },
@@ -92,6 +92,49 @@ export default defineConfig(({ isSsrBuild, mode }) => ({
     resolve: {
         alias: {
             '@': path.resolve(__dirname, './src'),
+            /*
+             * PREACT, NOT REACT, IN THE SHIPPED BUNDLE.
+             *
+             * react + react-dom + scheduler is 59 KB gzip of the 134 KB every
+             * route on this site shares, and it is the same 59 KB on a page
+             * whose only interactive parts are a theme toggle, a locale
+             * switcher and an analytics opt-out. preact/compat is the same API
+             * surface at roughly a tenth of the weight.
+             *
+             * The aliases are on `resolve`, not on the source: nothing under
+             * src/ imports preact, every file still says `react`, and the
+             * accuracy suites still typecheck against @types/react. Swapping
+             * the alias back is a two-line revert with no source churn.
+             *
+             * `react-dom/server` must map to a real renderer or
+             * scripts/prerender.mjs loses renderToString — the SSR bundle is
+             * the one place react-dom/server is imported (src/entry-server.tsx).
+             *
+             * `react/jsx-runtime` is listed because @vitejs/plugin-react emits
+             * `jsx`/`jsxs` imports from it in every compiled file; without the
+             * entry each one resolves back to real React and both libraries end
+             * up in the bundle.
+             */
+            /*
+             * ORDER IS LOAD-BEARING. Vite turns this object into an array of
+             * prefix matchers in key order and takes the FIRST hit, so every
+             * subpath has to precede its own bare package or it never matches.
+             * The first version listed `react-dom` above `react-dom/server`,
+             * which sent the SSR entry to preact/compat instead of the
+             * renderer — prerender then recursed until the stack blew, with
+             * "Maximum call stack size exceeded" and no file named.
+             *
+             * `preact/compat/server` is the real export; `preact-render-to-string/compat`
+             * (which the first version used) does not exist — that package
+             * publishes only `.`, `./jsx`, `./stream` and `./stream-node`.
+             */
+            'react-dom/server': 'preact/compat/server',
+            'react-dom/client': 'preact/compat/client',
+            'react-dom/test-utils': 'preact/test-utils',
+            'react-dom': 'preact/compat',
+            'react/jsx-runtime': 'preact/jsx-runtime',
+            'react/jsx-dev-runtime': 'preact/jsx-dev-runtime',
+            react: 'preact/compat',
         },
     },
     css: {
@@ -166,7 +209,17 @@ export default defineConfig(({ isSsrBuild, mode }) => ({
                        * page.
                        */
                       manualChunks(id: string) {
-                          if (/node_modules[/\\](react|react-dom|scheduler)[/\\]/.test(id)) {
+                          // `preact` is matched alongside react because
+                          // resolve.alias points react at preact/compat; the
+                          // chunk keeps its name so assert-perf-budget.mjs's
+                          // "exactly one vendor-react chunk, statically imported
+                          // by every route entry" assertion still means what it
+                          // says.
+                          if (
+                              /node_modules[/\\](react|react-dom|scheduler|preact|preact-render-to-string)[/\\]/.test(
+                                  id,
+                              )
+                          ) {
                               return 'vendor-react';
                           }
                           return undefined;

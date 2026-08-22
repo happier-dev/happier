@@ -38,6 +38,15 @@ export const REVEAL_DELAY_ATTR = 'data-reveal-delay';
 export const REVEAL_STAGGER_ATTR = 'data-reveal-stagger';
 
 /** The class a word ships in, and the class it is swapped to when armed. */
+/**
+ * The second kind of reveal: a whole element that fades and lifts in, rather
+ * than a run of words. src/sections/AlternatingFeatures.tsx is the only user
+ * today. It gets its own attribute because the two arm differently — words swap
+ * a class per word, a panel takes one class on itself.
+ */
+export const REVEAL_PANEL_ATTR = 'data-reveal-panel';
+export const REVEAL_PANEL_ARMED_CLASS = 'is-in';
+
 export const REVEAL_IDLE_CLASS = 'reveal-word-idle';
 export const REVEAL_ARMED_CLASS = 'reveal-word';
 

@@ -3,9 +3,9 @@
  *
  * Deliberately mirrors the shipped app's language registry at
  * `remote-dev/apps/ui/sources/text/_all.ts` so the two surfaces cannot drift on
- * language codes. The app already ships ten fully translated languages
- * (en, ru, pl, es, it, pt, ca, zh-Hans, zh-Hant, ja); the website starts with a
- * subset and grows into the same code space rather than inventing its own.
+ * language codes. The app ships twelve fully translated languages
+ * (en, ru, pl, es, fr, it, pt, ca, de, zh-Hans, zh-Hant, ja); the website starts
+ * with a subset and grows into the same code space rather than inventing its own.
  *
  * `productLanguage` is the app-side `SupportedLanguage` code. Keeping it
  * explicit means a website locale can always be traced back to a translated
@@ -13,7 +13,7 @@
  */
 
 /**
- * The same eleven codes the app ships, in the same spelling.
+ * The same twelve codes the app ships, in the same spelling.
  *
  * `zh-Hant` is listed BEFORE `zh-Hans` because `suggestLocale` and
  * `localeFromPathname` both resolve longest-match-first, and a Traditional
@@ -31,6 +31,7 @@ export const LOCALES = [
     'it',
     'pt',
     'ca',
+    'de',
 ] as const;
 
 export type Locale = (typeof LOCALES)[number];
@@ -236,6 +237,24 @@ export const LOCALE_META: Record<Locale, LocaleMeta> = {
             dismiss: 'Fechar',
         },
         productLanguage: 'pt',
+    },
+    de: {
+        htmlLang: 'de',
+        pathPrefix: '/de',
+        nativeName: 'Deutsch',
+        englishName: 'German',
+        // Bare `de` covers de-DE, de-AT and de-CH: the copy avoids Germany-only
+        // idiom, and Swiss readers get standard German rather than the English
+        // page. The ß is kept — Swiss orthography tolerates it far better than
+        // an Austrian or German reader tolerates its absence.
+        acceptLanguagePrefixes: ['de'],
+        ogLocale: 'de_DE',
+        suggestion: {
+            offer: 'Diese Seite gibt es auch auf Deutsch.',
+            action: 'Auf Deutsch lesen',
+            dismiss: 'Schließen',
+        },
+        productLanguage: 'de',
     },
     ca: {
         htmlLang: 'ca',

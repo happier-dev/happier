@@ -10,7 +10,7 @@
     "prebuild": "yarn -s generate:plugin-manifest-schema && yarn -s i18n:extract && yarn -s optimize:images",
     "predev": "yarn -s generate:plugin-manifest-schema",
     "dev": "vite",
-    "build": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit && yarn -s build:client && yarn -s prune:source-images && yarn -s build:server && yarn -s prerender && yarn -s assert:crawlable && yarn -s assert:locale-links && yarn -s assert:perf",
+    "build": "yarn -s build:server && yarn -s i18n:slice && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit && yarn -s build:client && yarn -s build:server && yarn -s prune:source-images && yarn -s prerender && yarn -s assert:crawlable && yarn -s assert:locale-links && yarn -s assert:perf",
     "build:client": "vite build",
     "build:server": "vite build --ssr src/entry-server.tsx",
     "prerender": "node scripts/prerender.mjs",
@@ -27,12 +27,15 @@
     "optimize:images": "node scripts/optimize-images.mjs",
     "i18n:extract": "node scripts/i18n-extract.mjs",
     "i18n:check": "node scripts/i18n-extract.mjs --check",
-    "verify:analytics": "node scripts/verify-analytics.mjs"
+    "verify:analytics": "node scripts/verify-analytics.mjs",
+    "i18n:slice": "node scripts/i18n-slice-overlays.mjs"
   },
   "dependencies": {
     "@happier-dev/protocol": "0.0.0",
     "clsx": "^2.1.1",
     "posthog-js": "1.414.0",
+    "preact": "10.28.4",
+    "preact-render-to-string": "6.6.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

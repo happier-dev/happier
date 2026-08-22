@@ -23,29 +23,10 @@ export function FeatureGrid() {
                     />
                 </div>
 
-                <div
-                    className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
-                    style={{ borderColor: 'var(--card-border)' }}
-                >
-                    {GRID_FEATURES.map((feature, idx) => {
-                        const col = idx % 4;
-                        const row = Math.floor(idx / 4);
-                        const totalRows = Math.ceil(GRID_FEATURES.length / 4);
+                <div className="fgrid">
+                    {GRID_FEATURES.map((feature) => {
                         return (
-                            <div
-                                key={feature.id}
-                                className="px-6 py-7 md:px-7 md:py-8"
-                                style={{
-                                    borderColor: 'var(--card-border)',
-                                    borderTopWidth: row === 0 ? '1px' : '0',
-                                    borderBottomWidth: '1px',
-                                    borderLeftWidth: col === 0 ? '1px' : '0',
-                                    borderRightWidth: '1px',
-                                    borderStyle: 'solid',
-                                    // On mobile (1-col) and sm (2-col), override the
-                                    // desktop border logic with simpler rules via CSS.
-                                }}
-                            >
+                            <div key={feature.id} className="fgrid__cell">
                                 <h3
                                     className="text-[17px] font-semibold leading-[1.3] md:text-[18px]"
                                     style={{ color: 'var(--fg)' }}

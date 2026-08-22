@@ -532,7 +532,25 @@ html.js .reveal-word-idle {
     transform-origin: center bottom;
     animation: reveal-word 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     animation-delay: var(--delay, 0ms);
-    will-change: transform, opacity, filter;
+    /*
+     * NO `will-change` HERE, DELIBERATELY — it used to say
+     * `will-change: transform, opacity, filter`.
+     *
+     * `will-change` reserves compositor memory UP FRONT and holds it for as
+     * long as the declaration applies. This animation is one-shot: 0.9s and
+     * done. But armReveals swaps a word to `.reveal-word` permanently, so the
+     * hint outlived its animation by the entire session, and because words arm
+     * as they scroll into view the promoted-layer count only ever GREW —
+     * 82 word spans and 106 layers by the bottom of the homepage, in a
+     * 30,000px document that also runs mix-blend-mode on sixteen panels and a
+     * backdrop-filter header. Past the phone's budget the compositor evicts
+     * tiles, and evicted tiles are blank content that is still on screen.
+     * That is what "things disappear as I scroll" was.
+     *
+     * Nothing is lost by dropping it: opacity/transform/filter animations are
+     * promoted automatically for as long as they RUN, which is the only window
+     * the hint was ever useful in, and the browser then releases the layer.
+     */
 }
 
 @keyframes reveal-word {
@@ -547,7 +565,8 @@ html.js .reveal-word-idle {
     .reveal-word {
         filter: blur(2px);
         transform: translate3d(0, 18px, 0) scale(0.96);
-        will-change: transform, opacity;
+        /* Same reasoning as above, and it mattered most here: this is the
+           phone branch, where the memory ceiling is lowest. */
     }
 
     @keyframes reveal-word {
@@ -717,6 +736,37 @@ html.js .fpanel.is-in {
     opacity: 1;
     --ty: 0px;
     --tsc: 1;
+}
+
+/*
+ * The art's own entrance, moved out of React.
+ *
+ * AlternatingFeatures used to render `opacity: visible ? 1 : 0` inline from a
+ * useState fed by its own IntersectionObserver. After the islands migration the
+ * section is prose, so that state never ran again and every feature card was a
+ * blank space — worst on mobile, where the art is the whole panel. The panel is
+ * armed by armReveals now, and the art follows the panel's class instead of
+ * carrying state of its own.
+ */
+html.js .fpanel__art {
+    opacity: 0;
+    transform: translate3d(0, 20px, 0);
+    transition:
+        opacity 1150ms cubic-bezier(0.16, 1, 0.3, 1) 140ms,
+        transform 1250ms cubic-bezier(0.16, 1, 0.3, 1) 140ms;
+}
+
+html.js .fpanel.is-in .fpanel__art {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html.js .fpanel__art {
+        transition: opacity 200ms linear;
+        transform: none;
+    }
+    html.js .fpanel.is-in .fpanel__art { transform: none; }
 }
 
 /* Hover: the panel lifts a hair, its shadow deepens, and an amber flare warms
@@ -963,4 +1013,164 @@ html.light {
 
 @media (prefers-reduced-transparency: reduce) {
     .fpanel__star { opacity: calc(var(--so) * var(--fp-star-gain) * 0.55); }
+}
+
+/*
+ * The "everything else you didn't know you needed" grid.
+ *
+ * Cell borders used to be computed in the markup as INLINE styles from
+ * `idx % 4`, which went wrong in two directions at once. Inline styles cannot
+ * be overridden by a media query, so the one-column phone layout was stuck
+ * inside a full box per cell; and the modulus was hard-coded to four while the
+ * grid is actually two columns between sm and lg, so at that width the interior
+ * seams were drawn in the wrong places. Both are the same mistake — a column
+ * count baked into markup, when only the stylesheet knows the column count.
+ *
+ * The seams are drawn here instead, and without counting anything: every cell
+ * carries its top and left edge, and the container closes the remaining right
+ * and bottom. Interior seams are therefore single (never doubled), the outer
+ * box is complete, and it stays correct at one, two, four — or any future
+ * number of columns, because nothing in it knows how many there are.
+ */
+.fgrid {
+    display: grid;
+    grid-template-columns: 1fr;
+}
+
+/*
+ * Phone: one column, no box, no padding.
+ *
+ * At this width a rule between items AND a box around each is two separators
+ * doing one job, and the box is most of the ink on the screen — twelve stacked
+ * rectangles read as a table the reader has to parse, when the content is just
+ * a list of titles with a line of prose under each. Stripping both leaves the
+ * type to do the grouping, which is what it is already shaped to do.
+ *
+ * The rhythm moves to the grid gap, set to one of the paddings it replaces so
+ * the items keep the spacing they had rather than collapsing together.
+ */
+@media (max-width: 639px) {
+    .fgrid {
+        row-gap: 28px;
+    }
+}
+
+@media (min-width: 640px) {
+    .fgrid {
+        grid-template-columns: repeat(2, 1fr);
+        border-right: 1px solid var(--card-border);
+        border-bottom: 1px solid var(--card-border);
+    }
+
+    .fgrid__cell {
+        padding: 28px 24px;
+        border-top: 1px solid var(--card-border);
+        border-left: 1px solid var(--card-border);
+    }
+}
+
+@media (min-width: 768px) {
+    .fgrid__cell {
+        padding: 32px 28px;
+    }
+}
+
+@media (min-width: 1024px) {
+    .fgrid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+/*
+ * FAQ disclosure.
+ *
+ * No rule between the items and no doubled padding: adjacent rows each used to
+ * contribute 24px, so the questions sat 48px apart AND carried a border, which
+ * made a list of fourteen short lines read as a table. The spacing now comes
+ * from one padding value, giving the same 24px rhythm as the other single-column
+ * blocks on this page.
+ *
+ * That padding is on the SUMMARY rather than on the <details>, and it is doing
+ * two jobs. It sets the visual rhythm, and it is the tap target — the summary's
+ * box is otherwise just the question's line box, about 27px tall on a phone,
+ * well under the 44px a finger needs. Padding it to ~51px makes the whole row
+ * pressable rather than the text alone.
+ */
+.faq__item {
+    border: 0;
+}
+
+.faq__q {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding-block: 12px;
+    cursor: pointer;
+    list-style: none;
+}
+
+/* Safari still paints its own triangle without this. */
+.faq__q::-webkit-details-marker {
+    display: none;
+}
+
+.faq__chev {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    margin-top: 3px;
+    color: var(--muted);
+    transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.faq__item[open] .faq__chev {
+    transform: rotate(180deg);
+}
+
+.faq__a {
+    padding-bottom: 12px;
+}
+
+/*
+ * Animated open/close where the browser can do it.
+ *
+ * `<details>` has always snapped, because `height: auto` was not an animatable
+ * value. `interpolate-size: allow-keywords` makes it one, and `::details-content`
+ * is the box to animate. Guarded because the fallback is the snap this has done
+ * for its whole life — nothing is lost on a browser without it, so this can be a
+ * plain progressive enhancement rather than a decision.
+ */
+@supports (interpolate-size: allow-keywords) and (selector(::details-content)) {
+    .faq__item {
+        interpolate-size: allow-keywords;
+    }
+
+    .faq__item::details-content {
+        overflow: hidden;
+        block-size: 0;
+        opacity: 0;
+        transition:
+            block-size 340ms cubic-bezier(0.16, 1, 0.3, 1),
+            opacity 240ms ease,
+            content-visibility 340ms allow-discrete;
+        transition-behavior: allow-discrete;
+    }
+
+    .faq__item[open]::details-content {
+        block-size: auto;
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .faq__chev {
+        transition: none;
+    }
+
+    @supports (interpolate-size: allow-keywords) and (selector(::details-content)) {
+        .faq__item::details-content {
+            transition: none;
+        }
+    }
 }

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MobileThemePreview } from './heroShowcase/MobileThemePreview';
+import { PHONE_FRAME_ASPECT } from './heroShowcase/PhoneFrame';
 import { Picture } from '../components/Picture';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
@@ -18,8 +19,8 @@ import { useSiteData } from '../i18n/siteData';
  * Phones (< sm): stacked —
  *   1. Desktop in a height-capped, horizontally pannable window (so it can't
  *      tower over the page the way a natural-size screenshot would).
- *   2. Phone in a 4:5 window whose screenshot translates on scroll (parallax
- *      reveal), driven imperatively so scrolling never re-renders React.
+ *   2. The SAME phone as sm+ — one `PhoneFrame`, one theme switcher — sized by
+ *      height so it sits at the desktop shot's visual weight.
  */
 export function HeroShowcase() {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
@@ -112,7 +113,7 @@ export function HeroShowcase() {
             {/* --- Phones (< sm): stacked with scroll behaviors --- */}
             <div className="relative flex flex-col gap-10 sm:hidden">
                 <DesktopScrollable visible={visible} />
-                <PhoneParallax visible={visible} />
+                <PhoneShowcase visible={visible} />
             </div>
         </div>
     );
@@ -177,94 +178,43 @@ function DesktopScrollable({ visible }: { visible: boolean }) {
 }
 
 /**
- * Phone screenshot in a fixed 4:5 window. As the page scrolls, the inner
- * screenshot translates upward to reveal its lower half (parallax). The
- * transform is written imperatively inside a rAF — no React re-render and no
- * CSS transition chasing the scroll value — so it stays smooth on mobile.
+ * The phone, on a phone.
+ *
+ * This used to be its own thing: `mobile.png` — a device mockup with a frame
+ * baked into the pixels — cropped into a 6:5 window that panned on scroll. So
+ * the site carried TWO phone frames for one product shot, and the one only
+ * mobile visitors ever saw was the photographed one. Worse, a 6:5 window over a
+ * 994x2160 device shot cuts the device roughly in half: the crop ran straight
+ * through the phone, so what read as "a phone" on desktop read as a floating
+ * rectangle of UI here. The scroll-pan existed to make that crop tolerable — it
+ * was compensating for the wrong asset rather than showing anything.
+ *
+ * It is the same component as desktop now. The frame is drawn rather than
+ * photographed, so it stays sharp at any width and matches the desktop shot
+ * exactly; the screenshot inside sits at the screen's own aspect and is never
+ * cropped; and mobile finally reaches the theme switcher, which it previously
+ * had no way to see at all.
+ *
+ * Width is derived from HEIGHT, not from the column. A phone at full column
+ * width would stand ~775px tall on a 390px viewport and shove everything below
+ * it off the fold. Capping height near the desktop screenshot's own 62vh keeps
+ * the two shots at the same visual weight, which is what makes the stack read
+ * as a pair instead of as two unrelated pictures.
  */
-function PhoneParallax({ visible }: { visible: boolean }) {
-    const { pageProse: { PAGE_PROSE } } = useSiteData();
-
-    const windowRef = useRef<HTMLDivElement | null>(null);
-    const imgRef = useRef<HTMLImageElement | null>(null);
-    const frame = useRef(0);
-
-    const update = useCallback(() => {
-        frame.current = 0;
-        const win = windowRef.current;
-        const img = imgRef.current;
-        // Inert on lg+ where this lives inside a `lg:hidden` (display:none)
-        // wrapper: offsetParent is null, so we skip the layout reads entirely
-        // and never pay forced-reflow cost on the (common) desktop viewport.
-        if (!win || !img || win.offsetParent === null) return;
-
-        const rect = win.getBoundingClientRect();
-        const viewportH = window.innerHeight || 1;
-        // 0 when the window's top is at the bottom of the viewport, 1 when it
-        // has scrolled fully past the top.
-        const range = viewportH + rect.height;
-        const progress = Math.max(0, Math.min(1, (viewportH - rect.top) / range));
-
-        const overflow = Math.max(0, img.offsetHeight - win.offsetHeight);
-        const ty = -(overflow * progress);
-        img.style.transform = `translate3d(0, ${ty.toFixed(1)}px, 0)`;
-    }, []);
-
-    const onScroll = useCallback(() => {
-        if (frame.current) return;
-        frame.current = window.requestAnimationFrame(update);
-    }, [update]);
-
-    useEffect(() => {
-        window.addEventListener('scroll', onScroll, { passive: true });
-        window.addEventListener('resize', onScroll, { passive: true });
-        update();
-        return () => {
-            window.removeEventListener('scroll', onScroll);
-            window.removeEventListener('resize', onScroll);
-            if (frame.current) window.cancelAnimationFrame(frame.current);
-        };
-    }, [onScroll, update]);
-
+function PhoneShowcase({ visible }: { visible: boolean }) {
     return (
         <div
-            className="mx-auto w-full max-w-[460px] px-4"
+            className="flex justify-center px-4"
             data-reveal
             style={{
                 opacity: visible ? 1 : 0,
                 transform: visible ? 'translateY(0)' : 'translateY(48px)',
-                transition: 'opacity 900ms cubic-bezier(0.16,1,0.3,1) 180ms, transform 900ms cubic-bezier(0.16,1,0.3,1) 180ms',
+                transition:
+                    'opacity 900ms cubic-bezier(0.16,1,0.3,1) 180ms, transform 900ms cubic-bezier(0.16,1,0.3,1) 180ms',
             }}
         >
-            <div
-                ref={windowRef}
-                className="relative overflow-hidden rounded-[30px] ring-1 ring-white/10"
-                style={{
-                    aspectRatio: '6 / 5',
-                    boxShadow: '0 44px 90px rgba(0,0,0,0.5), 0 10px 26px rgba(0,0,0,0.32)',
-                }}
-            >
-                <Picture
-                    id="showcaseMobile"
-                    imgRef={imgRef}
-                    alt={PAGE_PROSE.heroShowcase.p4}
-                    onLoad={onScroll}
-                    className="block w-full"
-                    imgClassName="w-full select-none"
-                    draggable={false}
-                    style={{ willChange: 'transform' }}
-                />
-                {/* Soft top/bottom fades so the crop reads as a window, not a cut. */}
-                <div
-                    aria-hidden
-                    className="pointer-events-none absolute inset-x-0 top-0 h-8"
-                    style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.28), transparent)' }}
-                />
-                <div
-                    aria-hidden
-                    className="pointer-events-none absolute inset-x-0 bottom-0 h-10"
-                    style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.34), transparent)' }}
-                />
+            <div style={{ width: `min(72vw, calc(64vh * ${PHONE_FRAME_ASPECT}))` }}>
+                <MobileThemePreview />
             </div>
         </div>
     );

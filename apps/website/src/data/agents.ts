@@ -438,7 +438,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'claude',
         vendorDocs: 'https://claude.ai',
         vendorSetupGuide: 'https://code.claude.com/docs/en/setup',
-        happierDocsPath: '/providers/claude',
+        happierDocsPath: '/agents/claude',
         installKind: 'vendor-script',
         managedSource: null,
         runtime: {
@@ -497,7 +497,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'codex',
         vendorDocs: 'https://github.com/openai/codex',
         vendorSetupGuide: null,
-        happierDocsPath: '/providers/codex',
+        happierDocsPath: '/agents/codex',
         installKind: 'happier-managed-release',
         managedSource: 'openai/codex',
         runtime: {
@@ -550,7 +550,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'opencode',
         vendorDocs: 'https://opencode.ai',
         vendorSetupGuide: 'https://opencode.ai/docs',
-        happierDocsPath: '/providers/opencode',
+        happierDocsPath: '/agents/opencode',
         installKind: 'happier-managed-package',
         managedSource: 'opencode-ai',
         runtime: {
@@ -656,7 +656,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'gemini',
         vendorDocs: 'https://goo.gle/gemini-cli-auth-docs',
         vendorSetupGuide: null,
-        happierDocsPath: '/providers/gemini',
+        happierDocsPath: '/agents/gemini',
         installKind: 'happier-managed-package',
         managedSource: '@google/gemini-cli',
         runtime: {
@@ -709,7 +709,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'copilot',
         vendorDocs: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
         vendorSetupGuide: null,
-        happierDocsPath: '/providers/copilot',
+        happierDocsPath: '/agents/copilot',
         installKind: 'happier-managed-package',
         managedSource: '@github/copilot',
         runtime: {
@@ -762,7 +762,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'qwen',
         vendorDocs: null,
         vendorSetupGuide: 'https://qwenlm.github.io/qwen-code-docs/',
-        happierDocsPath: '/providers/qwen',
+        happierDocsPath: '/agents/qwen',
         installKind: 'happier-managed-package',
         managedSource: '@qwen-code/qwen-code',
         runtime: {
@@ -815,7 +815,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'kimi',
         vendorDocs: 'https://code.kimi.com',
         vendorSetupGuide: 'https://kimi.moonshot.cn/docs/cli',
-        happierDocsPath: '/providers/kimi',
+        happierDocsPath: '/agents/kimi',
         installKind: 'vendor-script',
         managedSource: null,
         runtime: {
@@ -868,7 +868,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'kilo',
         vendorDocs: 'https://kilo.ai/docs/cli',
         vendorSetupGuide: null,
-        happierDocsPath: '/providers/kilo',
+        happierDocsPath: '/agents/kilo',
         installKind: 'happier-managed-package',
         managedSource: '@kilocode/cli',
         runtime: {
@@ -939,7 +939,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         // kiro.dev/docs/cli/installation/ redirects here, and kiro.dev/docs/cli/
         // setup/ links here for the install step.
         vendorSetupGuide: 'https://kiro.dev/docs/getting-started/installation/',
-        happierDocsPath: '/providers/kiro',
+        happierDocsPath: '/agents/kiro',
         installKind: 'you-install-it',
         managedSource: null,
         runtime: {
@@ -999,7 +999,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         // platforms (macOS, Windows WSL, Linux) and the shells, then `auggie
         // login`. Verified August 2026.
         vendorSetupGuide: 'https://docs.augmentcode.com/cli/setup-auggie/install-auggie-cli',
-        happierDocsPath: '/providers/augment',
+        happierDocsPath: '/agents/augment',
         installKind: 'happier-managed-package',
         managedSource: '@augmentcode/auggie',
         runtime: {
@@ -1052,7 +1052,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'pi',
         vendorDocs: null,
         vendorSetupGuide: 'https://github.com/badlogic/pi-mono',
-        happierDocsPath: '/providers/pi',
+        happierDocsPath: '/agents/pi',
         installKind: 'happier-managed-package',
         managedSource: '@earendil-works/pi-coding-agent',
         runtime: {
@@ -1111,7 +1111,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         binary: 'grok',
         vendorDocs: 'https://x.ai',
         vendorSetupGuide: 'https://x.ai/cli',
-        happierDocsPath: '/providers/grok',
+        happierDocsPath: '/agents/grok',
         installKind: 'vendor-script',
         managedSource: null,
         runtime: {

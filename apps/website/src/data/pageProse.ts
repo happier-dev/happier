@@ -112,6 +112,8 @@ export const PAGE_PROSE = {
         p7: "Desktop",
         p8: "Download for {platform}",
         p9: "Show desktop download options",
+        p10: "Show Android download options",
+        p11: "Get it on",
     },
     downloadStats: {
         p0: "downloads",

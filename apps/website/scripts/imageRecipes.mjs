@@ -128,6 +128,16 @@ export const RECIPES = [
         'sessions-team',
         'what-needs-you',
         'review',
+        // These two are cropped at their own TOP edge, not their bottom like
+        // every asset above: the phone runs off the top of the frame and the
+        // composition ends where the content ends. `.fpanel__art img` hangs from
+        // `top: 0`, so that crop lands flush against the panel's top edge and the
+        // panel crops nothing the eye misses — the reverse of `artFloor`. It is
+        // also why the transparent band the sources carried BELOW the content was
+        // trimmed before they landed here: shipped as-is it would have opened a
+        // gap at the panel floor that no rule closes.
+        'agent-switching',
+        'navigation',
         'voice',
         'mcp',
         'subscriptions',

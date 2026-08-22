@@ -1,5 +1,7 @@
 import {
     REVEAL_ARMED_CLASS,
+    REVEAL_PANEL_ARMED_CLASS,
+    REVEAL_PANEL_ATTR,
     REVEAL_DEFAULT_STAGGER_MS,
     REVEAL_DELAY_ATTR,
     REVEAL_GROUP_ATTR,
@@ -66,6 +68,11 @@ function numberAttr(group: Element, attr: string, fallback: number): number {
  * armed from here animate the same way.
  */
 function arm(group: Element): void {
+    if (group.hasAttribute(REVEAL_PANEL_ATTR)) {
+        group.classList.add(REVEAL_PANEL_ARMED_CLASS);
+        return;
+    }
+
     const delay = numberAttr(group, REVEAL_DELAY_ATTR, 0);
     const stagger = numberAttr(group, REVEAL_STAGGER_ATTR, REVEAL_DEFAULT_STAGGER_MS);
     const words = group.querySelectorAll<HTMLElement>(`.${REVEAL_IDLE_CLASS}`);
@@ -93,11 +100,24 @@ function arm(group: Element): void {
  * produce is a word left in `.reveal-word-idle`.
  */
 export function armReveals(root: ParentNode = document): () => void {
+    /*
+     * Two kinds of reveal, one observer.
+     *
+     * Word groups swap a class per word; panels take one class on themselves
+     * (src/sections/AlternatingFeatures.tsx). They are armed together because
+     * they fail together: `html.js` sets BOTH `.reveal-word-idle` and `.fpanel`
+     * to `opacity: 0`, so anything this function does not reach is not
+     * un-animated, it is invisible. The panels were exactly that after the
+     * islands migration — the section is prose, so the `useState` that used to
+     * add `is-in` never ran again and the feature cards were a blank column.
+     */
     const groups = Array.from(root.querySelectorAll<HTMLElement>(`[${REVEAL_GROUP_ATTR}]`));
-    if (groups.length === 0) return () => {};
+    const panels = Array.from(root.querySelectorAll<HTMLElement>(`[${REVEAL_PANEL_ATTR}]`));
+    const targets = [...groups, ...panels];
+    if (targets.length === 0) return () => {};
 
     if (typeof IntersectionObserver === 'undefined' || prefersReducedMotion()) {
-        for (const group of groups) arm(group);
+        for (const target of targets) arm(target);
         return () => {};
     }
 
@@ -109,6 +129,39 @@ export function armReveals(root: ParentNode = document): () => void {
         }
     }, resolveRevealIntersectionOptions(hasMobilePointer()));
 
-    for (const group of groups) observer.observe(group);
-    return () => observer.disconnect();
+    for (const target of targets) observer.observe(target);
+
+    /*
+     * THE BACKSTOP, and why it is not belt-and-braces.
+     *
+     * This file's own contract is "the one outcome this function must never
+     * produce is a word left in `.reveal-word-idle`", because `html.js` makes
+     * that class `opacity: 0` — an unarmed heading is not an un-animated
+     * heading, it is an invisible one. Everything above fails open for the
+     * conditions it can TEST for (no IntersectionObserver, reduced motion, an
+     * empty group). It cannot test for an observer that exists, accepts the
+     * observe() call, and then never fires — which is a real state: some
+     * embedded webviews, some headless and automation contexts, and any
+     * environment that never composites the page.
+     *
+     * So: after a delay far longer than any legitimate reveal, arm whatever is
+     * still idle. A visitor on a working browser has seen every one of these
+     * animate long before it runs and it does nothing; a visitor on a browser
+     * where the observer is inert gets the text, un-animated, instead of a blank
+     * page. That is the correct direction to fail in, and it is the only
+     * direction this file is allowed to fail in.
+     */
+    const backstop = window.setTimeout(() => {
+        for (const target of targets) {
+            const unarmed = target.hasAttribute(REVEAL_PANEL_ATTR)
+                ? !target.classList.contains(REVEAL_PANEL_ARMED_CLASS)
+                : target.querySelector(`.${REVEAL_IDLE_CLASS}`) !== null;
+            if (unarmed) arm(target);
+        }
+    }, 4000);
+
+    return () => {
+        window.clearTimeout(backstop);
+        observer.disconnect();
+    };
 }

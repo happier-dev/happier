@@ -1,4 +1,4 @@
-import { ThemeProvider } from '../components/ThemeContext';
+import { Island } from '../islands';
 import { TerminalBackground } from '../components/TerminalBackground';
 import { Hero } from '../sections/Hero';
 import { HeroShowcase } from '../sections/HeroShowcase';
@@ -18,27 +18,25 @@ import { Footer } from '../sections/Footer';
  */
 export function Home() {
     return (
-        <ThemeProvider>
             <div className="relative min-h-screen">
-                <TerminalBackground />
+                <Island name="terminal-background" component={TerminalBackground} />
                 <main className="relative z-[2]">
                     <Hero />
-                    <HeroShowcase />
+                    <Island name="hero-showcase" component={HeroShowcase} />
                     <GetStarted />
                     <AlternatingFeatures />
                     <FeatureGrid />
-                    <TabbedExplorer />
-                    <SelfHost />
+                    <Island name="tabbed-explorer" component={TabbedExplorer} />
+                    <Island name="self-host" component={SelfHost} />
                     {/* Objection then reassurance, both before the closing CTA:
                         a visitor who reaches the install command should have
                         already had "why not Remote Control?" and "is this free?"
                         answered rather than carrying them past the button. */}
                     <VsRemoteControl />
                     <Faq />
-                    <CallToAction />
+                    <Island name="call-to-action" component={CallToAction} />
                 </main>
-                <Footer />
+                <Island name="footer" component={Footer} />
             </div>
-        </ThemeProvider>
     );
 }

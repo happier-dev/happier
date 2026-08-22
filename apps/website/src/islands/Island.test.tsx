@@ -60,7 +60,12 @@ describe('<Island>', () => {
     it('keeps the wrapper out of layout', () => {
         // A plain <div> here would stop an island being a flex item of its
         // parent — the nav row, the badge row — and reflow it silently.
-        expect(renderToString(<Island name="bare" component={Bare} />)).toContain('style="display:contents"');
+        // Matched with an optional trailing `;`: React serialises the style as
+        // `display:contents`, Preact as `display:contents;`. Identical CSS, and
+        // pinning one renderer's punctuation is not what this test is about.
+        expect(renderToString(<Island name="bare" component={Bare} />)).toMatch(
+            /style="display:contents;?"/,
+        );
     });
 
     it('omits the props attribute for an island that takes none', () => {

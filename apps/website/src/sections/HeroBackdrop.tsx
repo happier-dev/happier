@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTheme, type ThemeName } from '../components/ThemeContext';
+import { useTheme, type ThemeName } from '../islands/themeStore';
 import { IMAGES } from '../data/generatedImages';
 
 /**

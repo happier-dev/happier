@@ -1,3 +1,7 @@
+# PositionalBinding=$false: without it the [string] parameters below bind
+# positionally and silently swallow -Run arguments (e.g. `-Run setup-relay
+# --flag` set $Channel to '--flag'), so $RunArgs never received them.
+[CmdletBinding(PositionalBinding = $false)]
 param(
   [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" }),
   [string] $Version = $(if ($env:HAPPIER_INSTALL_VERSION) { $env:HAPPIER_INSTALL_VERSION } else { "" }),
@@ -5,6 +9,11 @@ param(
   [switch] $WithDaemon,
   [switch] $WithoutDaemon,
   [string] $Run = $(if ($env:HAPPIER_INSTALLER_RUN_ACTION) { $env:HAPPIER_INSTALLER_RUN_ACTION } else { "" }),
+  # Declared as $Yes with -NonInteractive as an alias on purpose: PowerShell
+  # variable names are case-insensitive, so a [switch] $NonInteractive would
+  # collide with the $Noninteractive string below.
+  [Alias('NonInteractive')]
+  [switch] $Yes,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]] $RunArgs = @()
 )
@@ -66,7 +75,11 @@ if ($env:HAPPIER_BIN_DIR) {
     Write-Warning "Ignoring HAPPIER_BIN_DIR on Windows; the managed install bin directory is the canonical PATH target."
   }
 }
-$Noninteractive = if ($env:HAPPIER_NONINTERACTIVE) { $env:HAPPIER_NONINTERACTIVE } else { "0" }
+$Noninteractive = if ($Yes.IsPresent) { "1" } elseif ($env:HAPPIER_NONINTERACTIVE) { $env:HAPPIER_NONINTERACTIVE } else { "0" }
+if ($Yes.IsPresent) {
+  # Mirror install.sh: the flag must reach every child `happier` invocation too.
+  $env:HAPPIER_NONINTERACTIVE = "1"
+}
 $NoPathUpdate = if ($env:HAPPIER_NO_PATH_UPDATE) { $env:HAPPIER_NO_PATH_UPDATE } else { "0" }
 $WithDaemonExplicit = $false
 if ($WithDaemon.IsPresent) {
@@ -733,6 +746,11 @@ function Invoke-InstallerCommandWithDaemonServiceContext {
       $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY = $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY
     }
     & $CliPath @CommandArgs
+    # Native non-zero exits do not throw under Windows PowerShell 5.1, even
+    # with ErrorActionPreference=Stop. Capture the only authoritative signal
+    # before the finally block runs so explicit -Run can propagate it and the
+    # automatic handoff can distinguish incomplete setup from success.
+    $script:LastInstallerCommandExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
   }
   finally {
     if ($null -eq $previousHomeDir) {
@@ -1246,6 +1264,132 @@ function Get-SupportedSetupRelayDefaultArgs {
   return $filteredArgs
 }
 
+# Root help is asked for once per surface check; a real CLI start-up is slow
+# enough that repeating it on the first-run path is worth avoiding.
+$script:InstalledCliRootHelpPath = ""
+$script:InstalledCliRootHelp = ""
+
+function Get-InstalledCliRootHelp {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  if ($script:InstalledCliRootHelpPath -ne $CliPath) {
+    $help = ""
+    try {
+      $help = (& $CliPath --help 2>$null | Out-String)
+    }
+    catch {
+      $help = ""
+    }
+    $script:InstalledCliRootHelp = [string]$help
+    $script:InstalledCliRootHelpPath = $CliPath
+  }
+  return $script:InstalledCliRootHelp
+}
+
+# Mirror install.sh's installed_cli_supports_command_surface: the single owner for
+# "does the installed CLI actually expose this command surface?". Older CLI builds
+# let an unknown subcommand fall through into the default "start a session" path,
+# which can prompt for authentication, so every installer-initiated invocation
+# checks the CLI's own help first.
+function Test-InstalledCliSupportsCommandSurface {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath,
+    # Deliberately lower-cased: installers_windows_run_actions pins the exact
+    # `$pattern` literal below, including the variable name it interpolates.
+    [Parameter(Mandatory = $true)] [string] $requiredSubcommand
+  )
+
+  $invokerName = (Split-Path -Leaf $CliPath)
+  if ([string]::IsNullOrWhiteSpace($invokerName)) { $invokerName = "happier" }
+
+  $helpOutput = ""
+  if ($requiredSubcommand -eq "relay") {
+    try {
+      $helpOutput = (& $CliPath relay --help 2>$null | Out-String)
+    }
+    catch {
+      $helpOutput = ""
+    }
+  }
+  else {
+    $helpOutput = Get-InstalledCliRootHelp -CliPath $CliPath
+  }
+
+  $pattern = "(?m)^\s*($([Regex]::Escape($invokerName))|happier)\s+$([Regex]::Escape($requiredSubcommand))\b"
+  return [bool]($helpOutput -match $pattern)
+}
+
+# `happier setup` is the CLI's own guided first run. The installer hands off to
+# it after the binary is ready; every question a first run needs to ask belongs
+# to the CLI.
+# Whether this computer already has an account on its active relay. Ask the CLI
+# instead of re-deriving credential paths here: which credential file counts
+# depends on the active relay profile, and that is the CLI's to own.
+$script:PostInstallMachineIsConfigured = $false
+# Whether guided setup has already been completed during this installer run.
+$script:PostInstallSetupIsDone = $false
+
+function Test-InstalledCliReportsConfiguredMachine {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  if (-not (Test-InstalledCliSupportsCommandSurface -CliPath $CliPath -requiredSubcommand "auth")) {
+    return $false
+  }
+
+  try {
+    $statusResult = Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout `
+      -CliPath $CliPath `
+      -CommandArgs @("auth", "status", "--json") `
+      -HomeDir $DaemonServiceStateHomeDir `
+      -TimeoutMs (Resolve-InstallerPreInstallCommandTimeoutMs)
+  }
+  catch {
+    return $false
+  }
+
+  $statusJson = [string]$statusResult.Output
+  return [bool](
+    ($statusJson -match '"authenticated"\s*:\s*true') -and
+    ($statusJson -match '"machineRegistered"\s*:\s*true')
+  )
+}
+
+# Hand off only when a person is actually watching. -Yes / -NonInteractive,
+# HAPPIER_NONINTERACTIVE=1 and redirected stdin all mean "decline optional
+# setup", exactly like the background-service prompt. An already-configured
+# machine is left alone: a re-install is not a first run.
+function Test-ShouldHandOffToGuidedSetup {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliPath
+  )
+
+  if ($InstallerAction -ne "install") { return $false }
+  if ($script:PostInstallMachineIsConfigured) { return $false }
+  if (-not (Test-InteractiveInstallerPromptAvailable)) { return $false }
+  return (Test-InstalledCliSupportsCommandSurface -CliPath $CliPath -requiredSubcommand "setup")
+}
+
+# The one-liner must never end on a version string. Name the commands that take
+# the user forward from wherever this install actually left them -- and never
+# point an already-configured machine back at setup.
+function Write-PostInstallGetStarted {
+  param (
+    [Parameter(Mandatory = $true)] [string] $CliName
+  )
+
+  Write-Host ""
+  Write-Host "Get started"
+  if (-not $script:PostInstallSetupIsDone) {
+    Write-Host ("  {0,-20} {1}" -f "$CliName setup", "Connect this computer and sign in")
+  }
+  Write-Host ("  {0,-20} {1}" -f $CliName, "Start a session")
+  Write-Host ("  {0,-20} {1}" -f "$CliName status", "Check this computer's connection")
+}
+
 function Invoke-PostInstallAction {
   param (
     [Parameter(Mandatory = $true)] [string] $CliPath
@@ -1303,20 +1447,7 @@ function Invoke-PostInstallAction {
   }
 
   if ($requiredSubcommand) {
-    $invokerName = (Split-Path -Leaf $CliPath)
-    if ([string]::IsNullOrWhiteSpace($invokerName)) { $invokerName = "happier" }
-    $helpOutput = ""
-    try {
-      if ($requiredSubcommand -eq "relay") {
-        $helpOutput = (& $CliPath relay --help 2>$null | Out-String)
-      } else {
-        $helpOutput = (& $CliPath --help 2>$null | Out-String)
-      }
-    } catch {
-      $helpOutput = ""
-    }
-    $pattern = "(?m)^\\s*($([Regex]::Escape($invokerName))|happier)\\s+$([Regex]::Escape($requiredSubcommand))\\b"
-    if (-not ($helpOutput -match $pattern)) {
+    if (-not (Test-InstalledCliSupportsCommandSurface -CliPath $CliPath -requiredSubcommand $requiredSubcommand)) {
       throw "Installed Happier CLI does not support the '$requiredSubcommand' command surface required for -Run $runValue. Update your Happier CLI (or switch installer channel) and try again."
     }
   }
@@ -1329,8 +1460,9 @@ if ($InstallerAction -eq "payload-reversion") {
 }
 
 if ($Run -and -not $SetupRelay -and ($existing = Resolve-InstalledCliInvoker)) {
+  $script:LastInstallerCommandExitCode = 0
   Invoke-PostInstallAction -CliPath $existing
-  exit 0
+  exit $script:LastInstallerCommandExitCode
 }
 
 function Get-ReleaseAssetVersionFromName {
@@ -1518,7 +1650,7 @@ function Test-InstallerTransientWebException {
 
   $message = if ($exception) { [string]$exception.Message } else { [string]$ErrorRecord }
   foreach ($code in $retryableStatusCodes) {
-    if ($message -match "(^|\\D)$code(\\D|$)") {
+    if ($message -match "(^|\D)$code(\D|$)") {
       return $true
     }
   }
@@ -2375,6 +2507,8 @@ if (-not $signatureAsset) {
   throw "Unable to locate minisign signature asset on release tag $tag."
 }
 
+$script:PostInstallRunStatus = 0
+$script:PostInstallActionWasExplicit = [bool]($Run -or $SetupRelay)
 $tmpDir = New-InstallerStagingDirectory -InstallHomeDir $InstallDir
 try {
   $archivePath = Join-Path $tmpDir.FullName "happier.tar.gz"
@@ -2645,8 +2779,45 @@ try {
     }
   }
 
-  Invoke-PostInstallAction -CliPath $invoker
+  $script:PostInstallMachineIsConfigured = Test-InstalledCliReportsConfiguredMachine -CliPath $invoker
+  $script:PostInstallSetupIsDone = $script:PostInstallMachineIsConfigured
+
+  if ($Run -or $SetupRelay) {
+    $script:LastInstallerCommandExitCode = 0
+    Invoke-PostInstallAction -CliPath $invoker
+    $script:PostInstallRunStatus = $script:LastInstallerCommandExitCode
+    if (([string]$Run).Trim().ToLowerInvariant() -eq "setup" -and $script:PostInstallRunStatus -eq 0) {
+      $script:PostInstallSetupIsDone = $true
+    }
+  }
+  elseif (Test-ShouldHandOffToGuidedSetup -CliPath $invoker) {
+    Write-Host ""
+    # Reuse the existing -Run machinery rather than adding a second dispatch path.
+    $Run = "setup"
+    $RunArgs = @()
+    try {
+      $script:LastInstallerCommandExitCode = 0
+      Invoke-PostInstallAction -CliPath $invoker
+      # An incomplete guided setup is not a failed binary install, but it is
+      # also not "done". Keep the next-steps line until setup exits zero.
+      $script:PostInstallSetupIsDone = ($script:LastInstallerCommandExitCode -eq 0)
+    }
+    catch {
+      # A declined or failed setup does not fail the install; the next-steps
+      # block below still tells the user how to pick it back up.
+      Write-Warning "Guided setup did not finish: $($_.Exception.Message)"
+    }
+  }
+
+  Write-PostInstallGetStarted -CliName $displayShimBasename
 }
 finally {
   Remove-InstallerStagingDirectory -Directory $tmpDir
+}
+
+# Match install.sh: an explicitly requested post-install action is part of the
+# command's contract and propagates its status. The automatic guided handoff is
+# best-effort and never turns a successful binary install into a failed install.
+if ($script:PostInstallActionWasExplicit) {
+  exit $script:PostInstallRunStatus
 }

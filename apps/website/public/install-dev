@@ -990,14 +990,20 @@ tar_extract_gz() {
   mkdir -p "${dest_dir}"
   # GNU tar on Linux emits noisy, non-actionable warnings when extracting archives created by bsdtar/libarchive:
   #   "Ignoring unknown extended header keyword 'LIBARCHIVE.xattr...'"
-  # Never restore archive-supplied owners: root tar defaults to preserving them, which could make a
-  # privileged installation writable by a local builder uid recorded in a malformed or legacy archive.
-  # Filter the known metadata warnings while preserving real errors.
-  if [[ "${VERBOSE_MODE}" == "1" ]]; then
-    tar --no-same-owner -xzf "${archive_path}" -C "${dest_dir}"
+  # GNU tar run as root restores archive owners unless told not to. BSD tar
+  # (the macOS implementation) does not restore them unless -p is requested and
+  # rejects GNU's --no-same-owner flag, so select only the flavor-specific flag.
+  if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
+    if [[ "${VERBOSE_MODE}" == "1" ]]; then
+      tar --no-same-owner -xzf "${archive_path}" -C "${dest_dir}"
+      return
+    fi
+    tar --no-same-owner -xzf "${archive_path}" -C "${dest_dir}" 2> >(grep -v -E "^tar: Ignoring unknown extended header keyword" >&2 || true)
     return
   fi
-  tar --no-same-owner -xzf "${archive_path}" -C "${dest_dir}" 2> >(grep -v -E "^tar: Ignoring unknown extended header keyword" >&2 || true)
+  # The warning filter is only needed for GNU tar. Keeping BSD tar on its
+  # native invocation also avoids process-substitution differences in Bash 3.2.
+  tar -xzf "${archive_path}" -C "${dest_dir}"
 }
 
 normalize_channel() {
@@ -1062,7 +1068,7 @@ prompt_for_daemon_install_choice() {
   local default_choice="$1"
   local has_existing_services="${2:-0}"
 
-  if ! installer_has_controlling_tty; then
+  if ! installer_can_prompt; then
     echo "0"
     return
   fi
@@ -1233,7 +1239,7 @@ print_background_service_report_text_if_supported() {
   # user for each finding. Otherwise fall back to the read-only report, which
   # prints the CTA `To handle these interactively: happier doctor repair`
   # footer so the user still knows the next step.
-  if installer_has_controlling_tty; then
+  if installer_can_prompt; then
     invoke_installer_command_with_daemon_service_context "${cli_bin}" doctor repair </dev/tty || true
   else
     invoke_installer_command_with_daemon_service_context "${cli_bin}" doctor repair --report-only 2>/dev/null || true
@@ -1476,6 +1482,17 @@ installer_has_controlling_tty() {
   return 1
 }
 
+# Single gate for every prompt the installer owns. `--yes`/`--non-interactive`
+# (HAPPIER_NONINTERACTIVE=1) and a missing controlling tty both mean "do not
+# ask"; callers then take the documented default, which never creates
+# background-service state the user did not ask for.
+installer_can_prompt() {
+  if [[ "${NONINTERACTIVE}" == "1" ]]; then
+    return 1
+  fi
+  installer_has_controlling_tty
+}
+
 resolve_existing_background_service_install_strategy() {
   local services_json="$1"
 
@@ -1494,7 +1511,7 @@ resolve_existing_background_service_install_strategy() {
     return
   fi
 
-  if ! installer_has_controlling_tty; then
+  if ! installer_can_prompt; then
     echo "skip"
     return
   fi
@@ -1704,6 +1721,10 @@ Relay setup (install CLI if needed, then host a relay locally):
   curl -fsSL https://happier.dev/install | bash -s -- --setup-relay
   curl -fsSL https://happier.dev/install | bash -s -- --channel dev --setup-relay
 
+Unattended install (CI or scripted; never prompts, declines optional automatic startup):
+  curl -fsSL https://happier.dev/install | bash -s -- --yes
+  curl -fsSL https://happier.dev/install | HAPPIER_NONINTERACTIVE=1 bash
+
 Options:
   --channel <stable|preview|dev>
   --stable
@@ -1719,6 +1740,7 @@ Options:
   --restart
   --uninstall [--purge]
   --reset
+  --yes, --non-interactive   (same as HAPPIER_NONINTERACTIVE=1)
   --verbose
   --debug
   -h, --help
@@ -1831,6 +1853,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --purge)
       PURGE_INSTALL_DIR="1"
+      shift 1
+      ;;
+    -y|--yes|--non-interactive|--noninteractive)
+      # Same switch as HAPPIER_NONINTERACTIVE=1. Keep the shell variable and the
+      # environment variable in agreement so the installer AND every `happier`
+      # command it invokes stay non-interactive.
+      NONINTERACTIVE="1"
+      export HAPPIER_NONINTERACTIVE="1"
       shift 1
       ;;
     --verbose)
@@ -1976,6 +2006,44 @@ filter_supported_setup_relay_default_args() {
   done
 }
 
+# Root help is asked for once per surface check; a real CLI start-up is slow
+# enough that repeating it on the first-run path is worth avoiding.
+INSTALLED_CLI_ROOT_HELP_BIN=""
+INSTALLED_CLI_ROOT_HELP=""
+
+installed_cli_root_help() {
+  local cli_bin="$1"
+  if [[ "${INSTALLED_CLI_ROOT_HELP_BIN}" != "${cli_bin}" ]]; then
+    INSTALLED_CLI_ROOT_HELP="$("${cli_bin}" --help 2>/dev/null || true)"
+    INSTALLED_CLI_ROOT_HELP_BIN="${cli_bin}"
+  fi
+  printf '%s\n' "${INSTALLED_CLI_ROOT_HELP}"
+}
+
+# Single owner for "does the installed CLI actually expose this command surface?".
+# Older CLI builds let an unknown subcommand fall through into the default
+# "start a session" path, which can prompt for authentication, so every
+# installer-initiated invocation checks the CLI's own help first.
+installed_cli_supports_command_surface() {
+  local cli_bin="$1"
+  local required_subcommand="$2"
+
+  local help_output=""
+  if [[ "${required_subcommand}" == "relay" ]]; then
+    help_output="$("${cli_bin}" relay --help 2>/dev/null || true)"
+  else
+    help_output="$(installed_cli_root_help "${cli_bin}")"
+  fi
+
+  local help_prefix=""
+  help_prefix="$(basename "${cli_bin}" 2>/dev/null || true)"
+  if [[ -z "${help_prefix}" ]]; then
+    help_prefix="happier"
+  fi
+
+  printf '%s\n' "${help_output}" | grep -Eq "^[[:space:]]*(${help_prefix}|happier)[[:space:]]+${required_subcommand}\\b"
+}
+
 run_post_install_action() {
   local cli_bin="$1"
 
@@ -2015,22 +2083,8 @@ run_post_install_action() {
       ;;
   esac
 
-  # Guard against older CLI builds where unknown subcommands fall through into the
-  # default "start a session" path (which can prompt for authentication).
-  # We fail fast with a clear message instead of launching an unrelated flow.
   if [[ -n "${required_subcommand}" ]]; then
-    local help_output=""
-    if [[ "${required_subcommand}" == "relay" ]]; then
-      help_output="$("${cli_bin}" relay --help 2>/dev/null || true)"
-    else
-      help_output="$("${cli_bin}" --help 2>/dev/null || true)"
-    fi
-    local help_prefix=""
-    help_prefix="$(basename "${cli_bin}" 2>/dev/null || true)"
-    if [[ -z "${help_prefix}" ]]; then
-      help_prefix="happier"
-    fi
-    if ! printf '%s\n' "${help_output}" | grep -Eq "^[[:space:]]*(${help_prefix}|happier)[[:space:]]+${required_subcommand}\\b"; then
+    if ! installed_cli_supports_command_surface "${cli_bin}" "${required_subcommand}"; then
       echo "Installed Happier CLI does not support the '${required_subcommand}' command surface required for --run ${op}." >&2
       echo "Update your Happier CLI (or switch installer channel) and try again." >&2
       return 1
@@ -2057,6 +2111,68 @@ run_post_install_action() {
   fi
 
   invoke_installer_command_with_daemon_service_context "${cli_bin}" "${command_args[@]}"
+}
+
+# `happier setup` is the CLI's own guided first run. The installer hands off to
+# it after the binary is ready; every question a first run needs to ask belongs
+# to the CLI. These helpers decide only whether to hand off and what to leave on
+# screen.
+
+# Whether this computer already has an account on its active server. Ask the CLI
+# instead of re-deriving credential paths here: which credential file counts
+# depends on the active server profile, and that is the CLI's to own.
+POST_INSTALL_MACHINE_IS_CONFIGURED="0"
+# Whether guided setup has already been completed during this installer run.
+POST_INSTALL_SETUP_IS_DONE="0"
+
+read_post_install_machine_configuration_state() {
+  local cli_bin="$1"
+
+  POST_INSTALL_MACHINE_IS_CONFIGURED="0"
+  if [[ "${PRODUCT}" != "cli" ]] || [[ "${ACTION}" != "install" ]]; then
+    return 0
+  fi
+  if ! installed_cli_supports_command_surface "${cli_bin}" "auth"; then
+    return 0
+  fi
+
+  local status_json=""
+  status_json="$(invoke_installer_command_with_daemon_service_context "${cli_bin}" auth status --json 2>/dev/null || true)"
+  if printf '%s' "${status_json}" | grep -Eq '"authenticated"[[:space:]]*:[[:space:]]*true' \
+    && printf '%s' "${status_json}" | grep -Eq '"machineRegistered"[[:space:]]*:[[:space:]]*true'; then
+    POST_INSTALL_MACHINE_IS_CONFIGURED="1"
+  fi
+  return 0
+}
+
+# Hand off only when a person is actually watching. `--yes`,
+# `--non-interactive`, HAPPIER_NONINTERACTIVE=1 and a missing controlling tty
+# all mean "decline optional setup", exactly like the background-service prompt.
+# An already-configured machine is left alone: a re-install is not a first run,
+# and `happier setup` would walk it through daemon and agent setup again.
+should_hand_off_to_guided_setup() {
+  local cli_bin="$1"
+
+  [[ "${PRODUCT}" == "cli" ]] || return 1
+  [[ "${ACTION}" == "install" ]] || return 1
+  [[ "${POST_INSTALL_MACHINE_IS_CONFIGURED}" != "1" ]] || return 1
+  installer_can_prompt || return 1
+  installed_cli_supports_command_surface "${cli_bin}" "setup"
+}
+
+# The one-liner must never end on a version string. Name the commands that take
+# the user forward from wherever this install actually left them -- and never
+# point an already-configured machine back at setup.
+print_post_install_get_started() {
+  local cli_name="$1"
+
+  echo
+  say "${COLOR_BOLD}Get started${COLOR_RESET}"
+  if [[ "${POST_INSTALL_SETUP_IS_DONE}" != "1" ]]; then
+    printf '  %-20s %s\n' "${cli_name} setup" "Connect this computer and sign in"
+  fi
+  printf '  %-20s %s\n' "${cli_name}" "Start a session"
+  printf '  %-20s %s\n' "${cli_name} status" "Check this computer's connection"
 }
 
 if [[ "${ACTION}" == "check" ]]; then
@@ -2742,7 +2858,34 @@ if [[ "${NONINTERACTIVE}" != "1" ]]; then
   fi
 fi
 
+if [[ "${PRODUCT}" == "cli" && "${ACTION}" == "install" ]]; then
+  read_post_install_machine_configuration_state "${DISPLAY_SHIM_PATH}"
+fi
+POST_INSTALL_SETUP_IS_DONE="${POST_INSTALL_MACHINE_IS_CONFIGURED}"
+
+POST_INSTALL_RUN_STATUS=0
 if [[ -n "${RUN_ACTION}" ]]; then
   echo
-  run_post_install_action "${DISPLAY_SHIM_PATH}"
+  run_post_install_action "${DISPLAY_SHIM_PATH}" || POST_INSTALL_RUN_STATUS=$?
+  if [[ "${RUN_ACTION}" == "setup" && "${POST_INSTALL_RUN_STATUS}" == "0" ]]; then
+    POST_INSTALL_SETUP_IS_DONE="1"
+  fi
+elif should_hand_off_to_guided_setup "${DISPLAY_SHIM_PATH}"; then
+  echo
+  RUN_ACTION="setup"
+  RUN_ACTION_DEFAULT_ARGS=()
+  RUN_ACTION_ARGS=()
+  # `curl ... | bash` leaves stdin on the exhausted pipe, so the CLI's own
+  # prompts have to read the controlling terminal -- the same redirection
+  # `doctor repair` already uses. should_hand_off_to_guided_setup proved
+  # /dev/tty is there. A declined or failed setup does not fail the install.
+  if run_post_install_action "${DISPLAY_SHIM_PATH}" </dev/tty; then
+    POST_INSTALL_SETUP_IS_DONE="1"
+  fi
 fi
+
+if [[ "${PRODUCT}" == "cli" && "${ACTION}" == "install" ]]; then
+  print_post_install_get_started "$(basename "${DISPLAY_SHIM_PATH}")"
+fi
+
+exit "${POST_INSTALL_RUN_STATUS}"

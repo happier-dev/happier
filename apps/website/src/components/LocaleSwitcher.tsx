@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { LOCALES, LOCALE_META, pathForLocale, useI18n } from '../i18n';
-import { useTheme } from './ThemeContext';
+import { useTheme } from '../islands/themeStore';
 
 /**
  * The language picker in the footer.

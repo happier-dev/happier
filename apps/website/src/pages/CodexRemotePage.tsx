@@ -4,6 +4,7 @@ import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
 import { useLocalePath } from '../i18n';
+import { Island } from '../islands';
 
 /**
  * /vs/codex-remote
@@ -208,7 +209,7 @@ export function CodexRemotePage() {
             <Prose heading={PAGE_PROSE.codexRemotePage.p20} data-section="codex-cta">
                 <P>{rich(PAGE_PROSE.codexRemotePage.p7)}</P>
                 <div data-cta-location="call-to-action">
-                    <InstallCommand />
+                    <Island name="install-command" component={InstallCommand} />
                 </div>
                 <P>{rich(PAGE_PROSE.codexRemotePage.p8, { 1: (c: ReactNode) => <code className="font-mono">{c}</code>, 2: (c: ReactNode) => <code className="font-mono">{c}</code> })}</P>
             </Prose>

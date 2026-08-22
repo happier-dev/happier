@@ -1,0 +1,149 @@
+{
+  "/": {
+    "title": "Happier — Open-Source-App für Claude Code, Codex & 11",
+    "description": "Fahr Claude Code, Codex und 11 weitere Agents vom Handy, Browser oder Desktop. Open Source, Ende-zu-Ende-verschlüsselt, selbst hostbar.",
+    "ogTitle": "Happier — Ein Client für jeden KI-Coding-Agent.",
+    "ogDescription": "Claude Code, Codex, OpenCode, Cursor und 9 weitere – in einer Ende-zu-Ende-verschlüsselten App, auf jedem Gerät, mit deinen eigenen Abos. Open Source und selbst hostbar.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot und 7 weitere."
+  },
+  "/agents": {
+    "title": "Jeder KI-Coding-Agent, den Happier fährt – 13 und mehr",
+    "description": "Eine Open-Source-App für 13 Kommandozeilen-Coding-Agents – Claude Code, Codex, OpenCode, Pi und neun weitere – auf deinen Rechnern, mit deinen Konten.",
+    "ogTitle": "Jeder KI-Coding-Agent, den Happier fährt",
+    "ogDescription": "Dreizehn Kommandozeilen-Coding-Agents, eine App auf Handy, Browser und Desktop. Jeder läuft auf deinem eigenen Rechner, unter deinem Abo oder API-Key.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/claude-code": {
+    "title": "Open-Source-App für Claude Code — Happier",
+    "description": "Fahr Claude Code auf deinem eigenen Rechner und steuer ihn vom Handy, Browser oder Desktop. Open Source, Ende-zu-Ende-verschlüsselt, MIT-lizenziert.",
+    "ogTitle": "Open-Source-App für Claude Code",
+    "ogDescription": "Claude Code läuft weiter auf deinem eigenen Rechner, angemeldet mit deinem eigenen Anthropic-Konto. Happier gibt ihm ein Handy, einen Browser-Tab und ein Desktop-Fenster.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/codex": {
+    "title": "Codex CLI auf deinem Handy — Happier, Open Source",
+    "description": "Die openai/codex-CLI läuft auf deinem Rechner unter deinem ChatGPT-Abo oder API-Key. Lies mit, bestätige und steuer sie von jedem Gerät. Kostenlos.",
+    "ogTitle": "Codex auf deinem Handy, aus einer Open-Source-App",
+    "ogDescription": "Die openai/codex-CLI läuft auf Hardware, die dir gehört, unter deinem ChatGPT-Abo oder deinem eigenen API-Key. Happier ist das Fenster darauf, wo immer du bist.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/opencode": {
+    "title": "Open-Source-App für OpenCode — Handy und Desktop",
+    "description": "OpenCode läuft auf Hardware, die du kontrollierst, mit deinen eigenen opencode-Zugangsdaten. Happier ergänzt Handy-, Browser- und Desktop-Clients.",
+    "ogTitle": "Open-Source-App für OpenCode",
+    "ogDescription": "OpenCode ist Open Source. Happier ist Open Source, MIT-lizenziert und selbst hostbar. Keines von beiden braucht einen Server, den du nicht kontrollierst.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/cursor": {
+    "title": "Cursor Agent CLI vom Handy fahren — Happier",
+    "description": "Das headless cursor-agent-Binary auf deinem eigenen Rechner oder Server, mit Unterhaltung, Diffs und Zustimmungen auf dem Handy. Open Source, MIT.",
+    "ogTitle": "Cursor Agent CLI vom Handy aus fahren",
+    "ogDescription": "Cursor liefert einen headless Agent, der kein Editor-Fenster braucht. Happier fährt ihn auf deinem Rechner und legt die Unterhaltung auf dein Handy.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/gemini": {
+    "title": "Gemini CLI auf jedem Gerät — Happier",
+    "description": "Googles Open-Source-Terminal-Agent läuft in deiner eigenen Umgebung, auch in deinem Cloud-Projekt. Happier trägt die Session verschlüsselt aufs Handy.",
+    "ogTitle": "Gemini CLI auf jedem Gerät, das du nutzt",
+    "ogDescription": "Googles Open-Source-Terminal-Agent, laufend gegen dein eigenes Google-Cloud-Projekt, wenn deine Organisation so arbeitet – lesbar vom Handy aus.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/github-copilot": {
+    "title": "GitHub Copilot CLI vom Handy — Happier",
+    "description": "Fahr den Copilot-CLI-Agent auf deinem Rechner oder Build-Server und steuer ihn von überall. Unabhängiger Open-Source-Client, kein GitHub-Produkt.",
+    "ogTitle": "GitHub Copilot CLI, vom Handy aus gefahren",
+    "ogDescription": "Der Copilot-Kommandozeilen-Agent, laufend auf deinem eigenen Rechner oder deinem eigenen Build-Server, mit der Session in deiner Hosentasche.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/qwen": {
+    "title": "Open-Source-App für Qwen Code — Happier",
+    "description": "Qwen Code läuft auf deinem eigenen Rechner mit deinem eigenen Konto. Happier legt die Session über ein verschlüsseltes Relay auf jedes deiner Geräte.",
+    "ogTitle": "Open-Source-App für Qwen Code",
+    "ogDescription": "Qwen Code auf deinem eigenen Rechner, mit der Session auf dem Handy. Beide Hälften sind Open Source, und keine braucht ein Konto bei uns, um nützlich zu sein.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/kimi": {
+    "title": "Kimi CLI vom Handy, Browser oder Desktop",
+    "description": "Moonshots Terminal-Coding-Agent bleibt auf deinem Rechner, während du ihn von überall liest und steuerst. Kostenlos, MIT-lizenziert, verschlüsselt.",
+    "ogTitle": "Kimi CLI vom Handy, Browser oder Desktop",
+    "ogDescription": "Moonshots Terminal-Agent bleibt auf deinem Rechner. Die Unterhaltung geht mit, wohin du gehst – verschlüsselt auf dem Weg.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/kilo": {
+    "title": "Kilo CLI auf Handy, Laptop und im Browser",
+    "description": "Eine Open-Source-App für Kilo CLI und zwölf weitere Kommandozeilen-Coding-Agents, auf deinen Rechnern mit deinen Konten. Keine Plätze, kein Gate.",
+    "ogTitle": "Kilo CLI auf Handy, Laptop und im Browser",
+    "ogDescription": "Eine Open-Source-App für Kilo und die zwölf anderen Kommandozeilen-Coding-Agents, die du installiert haben könntest.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/kiro": {
+    "title": "Kiro CLI von überall fahren — Happier",
+    "description": "Die agentische CLI von AWS auf deinem Rechner oder EC2-Server, unter deiner AWS-Identität, mit der Session lesbar vom Handy. Relay selbst hostbar.",
+    "ogTitle": "Kiro CLI von überall fahren, wo du bist",
+    "ogDescription": "Die agentische CLI von AWS, laufend unter deiner eigenen AWS-Identität auf deinem eigenen Rechner, mit einer App davor.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/auggie": {
+    "title": "Auggie auf Handy und Desktop — Happier",
+    "description": "Die CLI von Augment Code läuft auf deinem eigenen Rechner unter deiner Lizenz. Happier sammelt Transcript und Zustimmungen neben deinen Agents.",
+    "ogTitle": "Auggie, auf deinem Handy und deinem Desktop",
+    "ogDescription": "Die CLI von Augment Code, laufend auf deinem eigenen Rechner unter deiner eigenen Augment-Lizenz, mit der Unterhaltung auf jedem Gerät, das dir gehört.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/pi": {
+    "title": "Open-Source-App für den Pi Coding Agent",
+    "description": "Pi bringt deine eigenen API-Keys mit; Happier die Clients für Handy, Browser und Desktop. Keiner hält deine Keys auf einem Server. MIT-lizenziert.",
+    "ogTitle": "Open-Source-App für den Pi Coding Agent",
+    "ogDescription": "Pi bringt eigene Keys mit und kein eigenes Modell. Happier bringt Handy, Browser und Desktop-App – und keinen Server dazwischen.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/agents/grok": {
+    "title": "Grok Build CLI vom Handy — Happier",
+    "description": "Die Coding-CLI von xAI auf deinem eigenen Rechner, von jedem Gerät gesteuert. Die Integration ist experimentell, und diese Seite nennt ihre Lücken.",
+    "ogTitle": "Grok Build CLI vom Handy oder Schreibtisch",
+    "ogDescription": "Die Coding-CLI von xAI, laufend auf deinem eigenen Rechner mit deinem eigenen xAI-Konto. Die Happier-Integration ist experimentell, und diese Seite sagt das, bevor du etwas installierst.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/vs/claude-code-remote-control": {
+    "title": "Claude Code Remote Control vs. Happier im Vergleich",
+    "description": "Remote Control ist kostenlos und gut. Es ist auch aus bei API-Keys, Gateways, Bedrock, Foundry und ZDR. Was jedes abdeckt, nebeneinander gestellt.",
+    "ogTitle": "Claude Code Remote Control vs. Happier",
+    "ogDescription": "Was Anthropics eigenes Remote gut macht, die fünf Situationen, in denen es sich abschaltet, und was ein Client für dreizehn Agents stattdessen tut.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/vs/codex-remote": {
+    "title": "Codex vom Handy — Codex Remote vs. Happier",
+    "description": "OpenAI koppelt die ChatGPT-App mit einem Mac oder Windows-PC, auf dem Codex läuft. Was Remote abdeckt, seine fünf Bedingungen – und was Happier tut.",
+    "ogTitle": "Codex Remote und Happier im Vergleich",
+    "ogDescription": "Was OpenAIs eigenes Remote gut macht, die fünf Bedingungen, unter denen es läuft, und was ein Client für jeden Coding-Agent stattdessen tut.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/features/usage-limits": {
+    "title": "Nutzungslimits bei Claude Code und Codex aushalten",
+    "description": "Erreichst du ein Limit bei Claude Code oder Codex, wartet die Session den Reset ab und macht weiter – auf Wunsch automatisch. Oder bündle die Konten.",
+    "ogTitle": "Ein Nutzungslimit sollte deine Session nicht beenden.",
+    "ogDescription": "Die Session hält ihren Platz durch ein Nutzungslimit hindurch, wartet den Reset ab und nimmt die Arbeit wieder auf – auf einem Konto oder über deinen Pool.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/features/terminal": {
+    "title": "Claude Code und Codex im Terminal – und in der App",
+    "description": "Fahr Claude Code, Codex oder OpenCode in ihrer eigenen TUI und verfolg dieselbe Session vom Handy. Häng dich über tmux an oder gib sie zurück.",
+    "ogTitle": "Behalt deine Claude-Code-, Codex- und OpenCode-Terminals – oder arbeite aus der App",
+    "ogDescription": "Eine Session, zwei Frontends: die eigene TUI des Providers in deiner Shell und Happier auf dem Handy. Gleiche Session-ID, gleiches Transcript, gleiche Warteschlange auf beiden Seiten des Wechsels.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/security": {
+    "title": "Ende-zu-Ende-Verschlüsselung – was das Relay sieht",
+    "description": "Session-Inhalte werden auf dem Gerät versiegelt, das sie geschrieben hat. Die Schlüssel, die noch lesbaren Spalten und was Klartext-Storage ändert.",
+    "ogTitle": "Ende-zu-Ende-Verschlüsselung, mit den Schlüsseln auf deinen eigenen Geräten",
+    "ogDescription": "Deine Session wird auf dem Gerät, das sie erzeugt hat, unter einem eigenen Session-Schlüssel verschlüsselt, und das Relay bekommt eine versiegelte Kopie, die es nicht öffnen kann. Was es dennoch sieht, steht hier – benannt, nicht beschönigt.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  },
+  "/enterprise": {
+    "title": "Happier selbst hosten — SSO, mTLS, deine Daten",
+    "description": "Betreib das Happier-Relay selbst: GitHub-Org- und OIDC-Gruppen-Gating, mTLS, Offboarding-Prüfungen, Storage-Policy, Aufbewahrung, Docker mit Postgres.",
+    "ogTitle": "Host das Happier-Relay hinter deinem eigenen SSO",
+    "ogDescription": "Ein Relay, das du hostest, gebunden an deine GitHub-Org oder OIDC-Gruppen, mit Client-Zertifikaten, Offboarding-Prüfungen und einer Storage-Policy deiner Wahl. Alles MIT-lizenziert.",
+    "ogImageAlt": "Der Happier-Schriftzug über den Worten: Ein Client für jeden KI-Coding-Agent."
+  }
+}

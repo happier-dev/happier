@@ -14,6 +14,20 @@ registerAllOverlays();
 export type { RouteManifestEntry } from './routes';
 
 /**
+ * Re-exported for scripts/i18n-slice-overlays.mjs ONLY.
+ *
+ * The slicer has to re-render a route against a candidate subset of a locale's
+ * translations and compare the bytes against the full-overlay render; that
+ * needs to swap what `siteData` resolves, which is what registerOverlay does
+ * (it also clears the per-locale cache, which is the part that makes a second
+ * render actually observe the change).
+ *
+ * Nothing in the browser bundle can reach this: entry-server is built by
+ * `vite build --ssr` and never shipped.
+ */
+export { registerOverlay, __recordNamespaceReads } from './i18n/siteData';
+
+/**
  * Server entry used only at build time by scripts/prerender.mjs.
  *
  * It deliberately does NOT import ./styles/globals.css — the client build owns

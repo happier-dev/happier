@@ -11,6 +11,7 @@ import { rich, substitute } from '../i18n/rich';
 import type { ReactNode } from 'react';
 import { useSiteData } from '../i18n/siteData';
 import { useLocalePath } from '../i18n';
+import { Island } from '../islands';
 
 /** The slot renderer every message in this file uses for an inline code span. */
 const CODE = (c: ReactNode) => <code className="font-mono">{c}</code>;
@@ -526,7 +527,7 @@ export function AgentDetail({ slug }: { slug: string }) {
             {/*
               * "in two commands" is countable on the page rather than a
               * flourish: the block below is the install one-liner
-              * (<InstallCommand /> renders exactly one, per platform) and then
+              * (<Island name="install-command" component={InstallCommand} /> renders exactly one, per platform) and then
               * `happier <id>` in the repository. If a third step ever appears
               * here, the number in this heading is wrong.
               */}
@@ -536,7 +537,7 @@ export function AgentDetail({ slug }: { slug: string }) {
             >
                 <P>{rich(PAGE_PROSE.agentDetail.p9, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> }, { id: agent.id })}</P>
                 <div data-cta-location="call-to-action">
-                    <InstallCommand />
+                    <Island name="install-command" component={InstallCommand} />
                 </div>
                 <P>{rich(PAGE_PROSE.agentDetail.p10, { 1: (c: ReactNode) => <a
                         href={GUIDES_URL}

@@ -17948,6 +17948,16 @@ posthog-react-native@^4.16.2:
   dependencies:
     "@posthog/core" "1.14.1"
 
+preact-render-to-string@6.6.4:
+  version "6.6.4"
+  resolved "https://registry.npmjs.org/preact-render-to-string/-/preact-render-to-string-6.6.4.tgz#4a3317d1771d21d0b093f731f39c49054db06805"
+  integrity sha512-Bn6eQZ5SQ5loVEcC/mZmKT7HzO5Z/+vYzxfE/W2N468oSoNMJVdFGApF0GyXq0lDthuyXKTmtZ8k20NpYjr6Rw==
+
+preact@10.28.4:
+  version "10.28.4"
+  resolved "https://registry.npmjs.org/preact/-/preact-10.28.4.tgz#8ffab01c5c0590535bdaecdd548801f44c6e483a"
+  integrity sha512-uKFfOHWuSNpRFVTnljsCluEFq57OKT+0QdOiQo8XWnQ/pSvg7OpX5eNOejELXJMWy+BwM2nobz0FkvzmnpCNsQ==
+
 preact@^10.29.3:
   version "10.29.8"
   resolved "https://registry.npmjs.org/preact/-/preact-10.29.8.tgz#fc85b82dc2474e245b1430b51781d417361f5fc3"

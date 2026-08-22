@@ -3,6 +3,7 @@ import { RevealText } from '../components/RevealText';
 import { InstallCommand } from '../components/InstallCommand';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
+import { Island } from '../islands';
 
 /**
  * The CTA for each step, keyed by the id in GET_STARTED_STEPS.
@@ -13,7 +14,7 @@ import { useSiteData } from '../i18n/siteData';
  * cannot drift apart when a step is added or reordered.
  */
 const STEP_CTAS: Record<string, ReactNode> = {
-    install: <InstallCommand />,
+    install: <Island name="install-command" component={InstallCommand} />,
     setup: <CommandChip command="happier setup" />,
     pair: <QrChip />,
     session: <CommandChip command="happier claude" />,

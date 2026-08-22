@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
+import { REVEAL_PANEL_ATTR } from '../islands/revealOptions';
 import { type Feature } from '../data/features';
 import { RevealText } from '../components/RevealText';
 import { Picture } from '../components/Picture';
@@ -74,6 +74,8 @@ const LAYOUT: Record<string, PanelSpec> = {
     queue:            { span: 12, tall: true, sz: '262%', sp: '70% 26%', so: 0.4 },
     attention:        { span: 5,              sz: '322%', sp: '70% 50%', so: 0.46 },
     review:           { span: 7,  tall: true, sz: '380%', sp: '66% 24%', so: 0.5 },
+    agentSwitching:   { span: 7,  tall: true, sz: '318%', sp: '68% 28%', so: 0.52 },
+    navigation:       { span: 5,  tall: true, sz: '344%', sp: '62% 46%', so: 0.46 },
     voice:            { span: 12, tall: true, sz: '224%', sp: '78% 30%', so: 0.54 },
     machines:         { span: 5,              sz: '330%', sp: '72% 34%', so: 0.5  },
     surfaces:         { span: 7,              sz: '286%', sp: '64% 38%', so: 0.46 },
@@ -127,26 +129,6 @@ export function AlternatingFeatures() {
 
 function FeaturePanel({ feature }: { feature: Feature }) {
     const spec: PanelSpec = LAYOUT[feature.id] ?? { span: 7, sz: '300%', sp: '70% 30%', so: 0.48 };
-    const ref = useRef<HTMLElement | null>(null);
-    const [visible, setVisible] = useState(false);
-
-    useEffect(() => {
-        const node = ref.current;
-        if (!node) return;
-        const observer = new IntersectionObserver(
-            (entries) => {
-                for (const entry of entries) {
-                    if (entry.isIntersecting) {
-                        setVisible(true);
-                        observer.disconnect();
-                    }
-                }
-            },
-            { threshold: 0.14, rootMargin: '0px 0px -8% 0px' },
-        );
-        observer.observe(node);
-        return () => observer.disconnect();
-    }, []);
 
     const wide = spec.span === 12;
     const hasArt = Boolean(feature.image);
@@ -156,8 +138,8 @@ function FeaturePanel({ feature }: { feature: Feature }) {
 
     return (
         <article
-            ref={ref}
-            className={clsx('fpanel', SPAN_CLASS[spec.span], visible && 'is-in')}
+            className={clsx('fpanel', SPAN_CLASS[spec.span])}
+            {...{ [REVEAL_PANEL_ATTR]: '' }}
             style={
                 {
                     '--sz': spec.sz,
@@ -223,7 +205,6 @@ function FeaturePanel({ feature }: { feature: Feature }) {
                         feature={feature}
                         wide={wide}
                         floor={Boolean(spec.artFloor)}
-                        visible={visible}
                     />
                 )}
             </div>
@@ -281,12 +262,10 @@ function PanelArt({
     feature,
     wide,
     floor,
-    visible,
 }: {
     feature: Feature;
     wide: boolean;
     floor: boolean;
-    visible: boolean;
 }) {
     const image = feature.image;
     if (!image) return null;
@@ -302,12 +281,6 @@ function PanelArt({
                 image.ownShadow && 'fpanel__art--own-shadow',
             )}
             data-reveal
-            style={{
-                opacity: visible ? 1 : 0,
-                transform: visible ? 'translate3d(0,0,0)' : 'translate3d(0,20px,0)',
-                transition:
-                    'opacity 1150ms cubic-bezier(0.16,1,0.3,1) 140ms, transform 1250ms cubic-bezier(0.16,1,0.3,1) 140ms',
-            }}
         >
             <Picture id={image.id} alt={feature.title} draggable={false} />
         </div>

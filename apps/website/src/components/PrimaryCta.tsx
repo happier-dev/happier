@@ -5,6 +5,7 @@ import { VerifyInstaller } from './VerifyInstaller';
 import { isHandheld, usePlatform } from './usePlatform';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
+import { Island } from '../islands';
 
 /**
  * The single above-the-fold action block, resolved per device.
@@ -18,9 +19,9 @@ import { useSiteData } from '../i18n/siteData';
  *                    two-step in the disclosure.
  *   unknown          identical to macOS. This is also what the prerenderer and
  *                    every crawler get, so the fold has real text in the HTML.
- *   iOS / iPadOS     <HandoffToComputer />, then the App Store link labelled as
+ *   iOS / iPadOS     <Island name="handoff-to-computer" component={HandoffToComputer} />, then the App Store link labelled as
  *                    the companion it is.
- *   Android          <HandoffToComputer />, then the APK link — because there is
+ *   Android          <Island name="handoff-to-computer" component={HandoffToComputer} />, then the APK link — because there is
  *                    no Play listing to send anyone to (see data/downloads.ts).
  */
 export function PrimaryCta() {
@@ -31,7 +32,7 @@ export function PrimaryCta() {
     if (isHandheld(platform)) {
         return (
             <div className="flex flex-col items-start gap-4">
-                <HandoffToComputer />
+                <Island name="handoff-to-computer" component={HandoffToComputer} />
                 <p className="text-[13px] leading-[1.55]" style={{ color: 'var(--muted)' }}>
                     Already have a machine set up?{' '}
                     {platform === 'android' ? (
@@ -68,7 +69,7 @@ export function PrimaryCta() {
     return (
         <div className="flex flex-col items-start gap-3.5">
             <div className="flex flex-wrap items-center gap-2.5">
-                <InstallCommand />
+                <Island name="install-command" component={InstallCommand} />
                 <a
                     href={WEB_APP_URL}
                     target="_blank"

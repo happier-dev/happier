@@ -43,11 +43,20 @@ const RAIL_METAL =
     'linear-gradient(135deg,#6a6a70 0%,#34343a 22%,#4c4c52 48%,#232327 72%,#5e5e65 100%)';
 const BUTTON_METAL = 'linear-gradient(to left,#2a2a2e,#5c5c63)';
 
+/**
+ * The frame's outer aspect ratio (width / height) — an iPhone 14 Pro's
+ * 1170x2532, the same box the superellipse paths above were generated for.
+ * Exported because callers have to size the frame by HEIGHT (a full-width phone
+ * is taller than a phone viewport), and they must not re-guess this number.
+ */
+export const PHONE_FRAME_ASPECT = 1170 / 2532;
+
 export function PhoneFrame({ children }: PhoneFrameProps) {
     return (
         <div
-            className="relative aspect-[1170/2532] w-full"
+            className="relative w-full"
             style={{
+                aspectRatio: String(PHONE_FRAME_ASPECT),
                 filter: 'drop-shadow(0 44px 90px rgba(0,0,0,0.5)) drop-shadow(0 10px 26px rgba(0,0,0,0.32))',
             }}
         >

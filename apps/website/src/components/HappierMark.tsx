@@ -1,4 +1,4 @@
-import { useTheme } from './ThemeContext';
+import { useTheme } from '../islands/themeStore';
 import { Picture } from './Picture';
 import { useSiteData } from '../i18n/siteData';
 import { useLocalePath } from '../i18n';
