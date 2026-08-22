@@ -7,6 +7,7 @@ import {
   API_CORS_EXPOSED_HEADERS,
   createApiCorsOptions,
   DEFAULT_API_CORS_MAX_AGE_SECONDS,
+  enableContentTypeParsers,
   resolveApiCorsMaxAgeSeconds,
   resolveApiListenHost,
 } from './api';
@@ -101,5 +102,92 @@ describe('createApiCorsOptions', () => {
     expect(preflight.headers['access-control-allow-headers']).toContain('x-happier-session-list-timing');
     expect(response.headers['server-timing']).toBe('happier_v2_sessions_total;dur=1.000');
     expect(response.headers['access-control-expose-headers']).toContain('server-timing');
+  });
+});
+
+describe('enableContentTypeParsers', () => {
+  it('allows bodyless chunked POST requests without Content-Type to succeed without 415', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-archive', async (request) => {
+      return { success: true, body: request.body };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-archive',
+      headers: {
+        'transfer-encoding': 'chunked',
+      },
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ success: true });
+  });
+
+  it('keeps Fastify JSON parsing for supported payloads', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-json', async (request) => {
+      return { received: request.body };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-json',
+      headers: {
+        'content-type': 'application/json',
+      },
+      payload: JSON.stringify({ hello: 'world' }),
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ received: { hello: 'world' } });
+  });
+
+  it('allows empty bodies with otherwise unsupported media types', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-empty', async () => {
+      return { ok: true };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-empty',
+      headers: {
+        'content-type': 'application/x-happier-proxy',
+      },
+      payload: '',
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true });
+  });
+
+  it('rejects non-empty bodies with unsupported media types', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-unsupported', async (request) => {
+      return { received: request.body };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-unsupported',
+      headers: {
+        'content-type': 'application/x-happier-proxy',
+      },
+      payload: JSON.stringify({ hello: 'world' }),
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(415);
+    expect(response.json()).toEqual(expect.objectContaining({
+      code: 'FST_ERR_CTP_INVALID_MEDIA_TYPE',
+    }));
   });
 });
