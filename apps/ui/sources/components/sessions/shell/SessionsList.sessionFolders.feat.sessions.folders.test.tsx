@@ -184,6 +184,9 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => (
+        profile.serverIdentityId ?? profile.id
+    ),
     areServerProfileIdentifiersEquivalent: (left: string | null | undefined, right: string | null | undefined) => left === right,
     getServerProfileById: getServerProfileByIdSpy,
     // `serverRuntime.getActiveServerSnapshot` re-exports this; the session-list

@@ -153,6 +153,9 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => (
+        profile.serverIdentityId ?? profile.id
+    ),
     getServerProfileById: (serverId: string) => serverId === 'server-a'
         ? { id: 'server-a', serverUrl: 'https://server-a.test' }
         : null,

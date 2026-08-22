@@ -299,6 +299,9 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     },
 }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => (
+        profile.serverIdentityId ?? profile.id
+    ),
     getServerProfileById: (serverId: string) => ({
         id: serverId,
         serverUrl: 'https://server.example.test',
