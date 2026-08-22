@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PENDING_DELIVERY_BLOCKED_REASONS,
   PendingDeliveryBlockedReasonSchema,
+  isConditionalPendingSteerClaim,
   normalizePendingDeliveryBlockedReason,
 } from './pendingDeliveryBlockedReason.js';
 
@@ -31,6 +32,20 @@ describe('PendingDeliveryBlockedReasonSchema', () => {
   it('accepts inherited provider claims with an uncertain outcome', () => {
     expect(PendingDeliveryBlockedReasonSchema.parse('delivery_outcome_uncertain')).toBe('delivery_outcome_uncertain');
     expect(normalizePendingDeliveryBlockedReason('delivery_outcome_uncertain')).toBe('delivery_outcome_uncertain');
+  });
+
+  it('classifies only a conditional server steer claim as fallback-safe', () => {
+    expect(isConditionalPendingSteerClaim({
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+      providerAction: 'steer',
+    })).toBe(true);
+    expect(isConditionalPendingSteerClaim({
+      requestedAction: { v: 1, kind: 'steer_now' },
+      providerAction: 'steer',
+    })).toBe(false);
+    expect(PendingDeliveryBlockedReasonSchema.parse('conditional_steer_unavailable')).toBe(
+      'conditional_steer_unavailable',
+    );
   });
 
   it('rejects unknown or empty reason values', () => {

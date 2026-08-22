@@ -75,6 +75,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
       localId: 'exact-steer-unavailable',
       meta: {},
       pendingProviderAction: 'steer',
+      pendingRequestedAction: { v: 1, kind: 'steer_if_active' },
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -85,6 +86,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
       localIds: ['exact-steer-unavailable'],
       userMessageSeq: 71,
       userMessageSeqs: [71],
+      reason: 'conditional_steer_unavailable',
     });
   });
 
@@ -169,6 +171,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     expect(rejectPromptBeforeProvider).toHaveBeenCalledExactlyOnceWith({
       localIds: ['exact-steer-stale-before-dispatch'],
       userMessageSeq: null,
+      reason: 'steering_unavailable',
     });
     expect(reportPromptEffectMayHaveOccurred).not.toHaveBeenCalled();
   });

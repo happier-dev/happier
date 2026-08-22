@@ -884,12 +884,31 @@ export async function blockPendingQueueV2Delivery(params: {
     sessionId: string;
     localId: string;
     reason: PendingQueueDeliveryBlockedReason;
-}): Promise<{ pendingQueueState?: KnownPendingQueueState }> {
-    return postPendingQueueV2DeliveryAction({
-        ...params,
-        action: 'block',
-        body: { reason: params.reason },
-    });
+}): Promise<{
+    pendingQueueState?: KnownPendingQueueState;
+    usedLegacySteeringUnavailableFallback?: true;
+}> {
+    try {
+        return await postPendingQueueV2DeliveryAction({
+            ...params,
+            action: 'block',
+            body: { reason: params.reason },
+        });
+    } catch (error) {
+        if (
+            params.reason !== 'conditional_steer_unavailable'
+            || !axios.isAxiosError(error)
+            || error.response?.status !== 400
+        ) {
+            throw error;
+        }
+        const fallback = await postPendingQueueV2DeliveryAction({
+            ...params,
+            action: 'block',
+            body: { reason: 'steering_unavailable' },
+        });
+        return { ...fallback, usedLegacySteeringUnavailableFallback: true };
+    }
 }
 
 export async function markPendingQueueV2DeliveryHandled(params: {

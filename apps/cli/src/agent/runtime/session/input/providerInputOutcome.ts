@@ -68,6 +68,8 @@ export type SessionProviderInputRejectedBeforeEffectReason =
     | 'terminal_composer_draft'
     | 'runtime_config_blocked'
     | 'provider_unavailable_before_acceptance'
+    | 'steering_unavailable'
+    | 'conditional_steer_unavailable'
     | 'unsupported_action';
 
 export function isReversibleSessionProviderInputBlockReason(
@@ -84,6 +86,8 @@ function readSessionProviderInputRejectedBeforeEffectReason(
     return value === 'terminal_composer_draft'
         || value === 'runtime_config_blocked'
         || value === 'provider_unavailable_before_acceptance'
+        || value === 'steering_unavailable'
+        || value === 'conditional_steer_unavailable'
         || value === 'unsupported_action'
         ? value
         : 'provider_rejected_before_acceptance';

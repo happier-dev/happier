@@ -358,6 +358,7 @@ export function createSessionClientInteractionApi(
         deliverMaterializedUserMessageToAgentQueue?: (
             message: UserMessage,
             providerAction: PendingQueueMaterializedMessage['providerAction'],
+            requestedAction?: PendingQueueMaterializedMessage['requestedAction'],
         ) => boolean;
         clearStartupMessageCatchUpRetryTimer: () => void;
         clearCommittedLocalIdCleanupTimers: () => void;
@@ -556,6 +557,7 @@ export function createSessionClientInteractionApi(
             ? (deps.deliverMaterializedUserMessageToAgentQueue?.(
                 materializedUserMessage,
                 materializedMessage?.providerAction ?? null,
+                materializedMessage?.requestedAction,
             ) ?? false)
             : false;
         const state = deps.getPendingQueueState();

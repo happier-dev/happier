@@ -3,6 +3,7 @@ import axios from 'axios';
 import { SocketAckError } from '@/session/transport/shared/socketAck';
 
 import {
+    blockPendingQueueV2Delivery,
     PendingQueueAcceptedSettlementError,
     isAcceptedPendingQueueV2DeliveryAckResponseLoss,
     listPendingQueueV2DeliveryStatusesFromServer,
@@ -25,6 +26,9 @@ vi.mock('axios', () => ({
     default: {
         get: mockGet,
         post: mockPost,
+        isAxiosError: (error: unknown) => Boolean(
+            error && typeof error === 'object' && (error as { isAxiosError?: unknown }).isAxiosError === true,
+        ),
     },
 }));
 
@@ -32,6 +36,25 @@ describe('pendingQueueV2Transport', () => {
     beforeEach(() => {
         mockGet.mockReset();
         mockPost.mockReset();
+    });
+
+    it('degrades a conditional-steer settlement to a strict block on an older server', async () => {
+        mockPost
+            .mockRejectedValueOnce({ isAxiosError: true, response: { status: 400 } })
+            .mockResolvedValueOnce({
+                data: { ok: true, pendingCount: 1, pendingBlockedCount: 1, pendingVersion: 3 },
+            });
+
+        await expect(blockPendingQueueV2Delivery({
+            token: 'token',
+            sessionId: 'session-1',
+            localId: 'conditional-steer-1',
+            reason: 'conditional_steer_unavailable',
+        })).resolves.toMatchObject({ usedLegacySteeringUnavailableFallback: true });
+        expect(mockPost.mock.calls.map((call) => call[1])).toEqual([
+            { reason: 'conditional_steer_unavailable' },
+            { reason: 'steering_unavailable' },
+        ]);
     });
 
     it('uses the exact released-server socket request and accepts only its strict positive ACK', async () => {

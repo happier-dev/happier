@@ -626,6 +626,61 @@ describe('ApiSessionClient provider-input settlement', () => {
 
   });
 
+  it('releases local custody only when the current server requeues a conditional steer', async () => {
+    blockDeliveryMock.mockResolvedValueOnce({
+      pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 5 },
+    });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const localId = 'conditional-steer-requeued-local';
+    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId(localId);
+    (client as any).materializationRuntime.markAgentQueueEchoSuppressedLocalId(localId);
+
+    await expect(client.observeProviderInputSettlement({
+      kind: 'rejected_before_effect',
+      localId,
+      userMessageSeq: 42,
+      reason: 'conditional_steer_unavailable',
+      diagnostic: { code: 'steering_unavailable', severity: 'warning' },
+      retryable: true,
+    })).resolves.toBe(false);
+
+    expect(blockDeliveryMock).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      localId,
+      reason: 'conditional_steer_unavailable',
+    }));
+    expect(client.hasPendingProviderInput(localId)).toBe(false);
+    expect((client as any).materializationRuntime.hasAgentQueueEchoSuppressedLocalId(localId)).toBe(false);
+    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId(localId);
+    expect(client.hasPendingProviderInput(localId)).toBe(true);
+  });
+
+  it('does not reopen delivery when an older server degrades a conditional steer to a strict block', async () => {
+    blockDeliveryMock.mockResolvedValueOnce({
+      pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 1, pendingVersion: 5 },
+      usedLegacySteeringUnavailableFallback: true,
+    });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const localId = 'conditional-steer-legacy-blocked-local';
+    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId(localId);
+    (client as any).materializationRuntime.markAgentQueueEchoSuppressedLocalId(localId);
+
+    await expect(client.observeProviderInputSettlement({
+      kind: 'rejected_before_effect',
+      localId,
+      userMessageSeq: 43,
+      reason: 'conditional_steer_unavailable',
+      diagnostic: { code: 'steering_unavailable', severity: 'warning' },
+      retryable: true,
+    })).resolves.toBe(false);
+
+    expect(client.hasPendingProviderInput(localId)).toBe(false);
+    expect((client as any).materializationRuntime.hasAgentQueueEchoSuppressedLocalId(localId)).toBe(true);
+  });
+
   it('publishes the accepted dispatch-time model without changing selected-next intent', async () => {
     resolveAcceptedMock.mockResolvedValueOnce({
       didResolve: true,

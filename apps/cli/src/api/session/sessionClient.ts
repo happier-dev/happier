@@ -675,10 +675,15 @@ export class ApiSessionClient extends EventEmitter {
     private deliverUserMessageToAgentQueue(
         prompt: UserMessage,
         providerAction?: import('@happier-dev/protocol').PendingProviderAction | null,
+        requestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1,
     ): boolean {
         const localId = readPendingLocalId(prompt.localId);
-        const deliveredPrompt = providerAction
-            ? { ...prompt, pendingProviderAction: providerAction }
+        const deliveredPrompt = providerAction || requestedAction
+            ? {
+                ...prompt,
+                ...(providerAction ? { pendingProviderAction: providerAction } : {}),
+                ...(requestedAction ? { pendingRequestedAction: requestedAction } : {}),
+            }
             : prompt;
         if (localId !== null) {
             this.materializationRuntime.markAgentQueueEchoSuppressedLocalId(localId);
@@ -1280,8 +1285,8 @@ export class ApiSessionClient extends EventEmitter {
             handleSessionScopedUpdate: (data) => this.updateRuntime.handleUpdate(data, {
                 source: 'session-scoped',
             }),
-            deliverMaterializedUserMessageToAgentQueue: (message, providerAction) =>
-                this.deliverUserMessageToAgentQueue(message, providerAction),
+            deliverMaterializedUserMessageToAgentQueue: (message, providerAction, requestedAction) =>
+                this.deliverUserMessageToAgentQueue(message, providerAction, requestedAction),
             clearStartupMessageCatchUpRetryTimer: () => this.recoveryRuntime.clearStartupMessageCatchUpRetryTimer(),
             clearCommittedLocalIdCleanupTimers: () => this.materializationRuntime.clearCommittedLocalIdCleanupTimers(),
             clearPendingMaterializedState: () => {
@@ -3326,8 +3331,15 @@ export class ApiSessionClient extends EventEmitter {
                 localId,
                 reason,
             });
+            const didRequeueConditionalSteer =
+                reason === 'conditional_steer_unavailable'
+                && result.usedLegacySteeringUnavailableFallback !== true;
             if (result.pendingQueueState && this.materializationRuntime.applyPendingQueueState(result.pendingQueueState)) {
                 this.emit('metadata-updated');
+            }
+            if (didRequeueConditionalSteer) {
+                this.materializationRuntime.deleteMaterializedLocalId(localId);
+                this.materializationRuntime.clearAgentQueueEchoSuppressedLocalId(localId);
             }
             if (
                 outcome.kind === 'rejected_before_effect'

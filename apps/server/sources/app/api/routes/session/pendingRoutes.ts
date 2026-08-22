@@ -711,6 +711,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "delivery-settlement-conflict") return reply.code(409).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
             }
 

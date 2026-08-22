@@ -1,6 +1,8 @@
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 import {
   readPendingLocalId,
+  isConditionalPendingSteerClaim,
+  normalizePendingRequestedActionV1,
   readHappierStructuredInputV1FromMeta,
   readSessionInputCausalPermissionAuthorityV1,
   readSessionMessageProvenanceV1,
@@ -114,7 +116,7 @@ export type InFlightSteerController = Readonly<{
     localIds?: readonly string[];
     userMessageSeq: number | null;
     userMessageSeqs?: readonly number[];
-    reason?: 'unsupported_action';
+    reason?: 'unsupported_action' | 'steering_unavailable' | 'conditional_steer_unavailable';
   }>) => void;
   /**
    * Publish conservative effect-possible evidence after a provider steer invocation throws.
@@ -278,6 +280,21 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       ? message.pendingProviderAction
       : null;
     const isExactClaimedSteer = pendingProviderAction === 'steer';
+    const requestedAction = (() => {
+      try {
+        return normalizePendingRequestedActionV1(
+          message.pendingRequestedAction,
+        );
+      } catch {
+        return null;
+      }
+    })();
+    const exactSteerRejectionReason = isConditionalPendingSteerClaim({
+      requestedAction,
+      providerAction: pendingProviderAction,
+    })
+      ? 'conditional_steer_unavailable' as const
+      : 'steering_unavailable' as const;
     const queueMode: PermissionModeQueuedPromptMode = {
       permissionMode: resolvedMode.queuePermissionMode,
       ...resolveAppendSystemPromptModeOverride(message.meta),
@@ -366,7 +383,11 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           ...(localIds.length === 0 ? {} : { localIds }),
           userMessageSeq,
           ...(userMessageSeq === null ? {} : { userMessageSeqs: [userMessageSeq] }),
+          reason: exactSteerRejectionReason,
         });
+        if (exactSteerRejectionReason === 'conditional_steer_unavailable') {
+          releaseHandledUserPromptIdentity(localId, userMessageSeq);
+        }
       } catch {
         // Evidence publication must not crash the session input consumer.
       }
@@ -612,6 +633,11 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     }
   };
 
+  const releaseHandledUserPromptIdentity = (localId: string | null, userMessageSeq: number | null): void => {
+    if (localId !== null) handledUserPromptLocalIds.delete(localId);
+    if (userMessageSeq !== null) handledUserPromptSeqs.delete(userMessageSeq);
+  };
+
   const releaseRejectedBeforeProviderPromptIdentity = (
     session: PermissionModeQueueSessionBinding,
     message: PermissionModeQueuedPrompt,
@@ -620,11 +646,11 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     const localIds = new Set<string>([message.localId, ...(message.localIds ?? [])]
       .filter((localId): localId is string => typeof localId === 'string' && localId.length > 0));
     for (const localId of localIds) {
-      handledUserPromptLocalIds.delete(localId);
+      releaseHandledUserPromptIdentity(localId, null);
     }
     for (const userMessageSeq of [message.userMessageSeq, ...(message.userMessageSeqs ?? [])]) {
       if (typeof userMessageSeq === 'number' && Number.isFinite(userMessageSeq)) {
-        handledUserPromptSeqs.delete(userMessageSeq);
+        releaseHandledUserPromptIdentity(null, userMessageSeq);
       }
     }
   };

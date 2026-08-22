@@ -2170,6 +2170,7 @@ export {
 export {
   PENDING_DELIVERY_BLOCKED_REASONS,
   PendingDeliveryBlockedReasonSchema,
+  isConditionalPendingSteerClaim,
   isPendingDeliveryBlockedReason,
   normalizePendingDeliveryBlockedReason,
   type PendingDeliveryBlockedReason,
