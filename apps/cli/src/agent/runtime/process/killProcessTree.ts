@@ -1,6 +1,6 @@
-import type { ChildProcess } from 'node:child_process';
-
 import psList from 'ps-list';
+
+type ProcessTreeRoot = Readonly<{ pid?: number }>;
 
 function isAlive(pid: number): boolean {
   try {
@@ -54,7 +54,7 @@ async function waitForAllGone(pids: number[], timeoutMs: number): Promise<void> 
 }
 
 export async function killProcessTree(
-  proc: ChildProcess,
+  proc: ProcessTreeRoot,
   opts?: {
     graceMs?: number;
   }
@@ -64,9 +64,8 @@ export async function killProcessTree(
 
   const graceMs = Math.max(1, opts?.graceMs ?? 1000);
 
-  // Outer test harnesses often terminate the CLI process tree by pid. If we spawn ACP CLIs with
-  // `detached: true`, the agent process falls outside that tree and can leak. Keep agents attached,
-  // and explicitly kill descendants on dispose.
+  // Keep child runtimes attached to their owning CLI process tree and explicitly terminate
+  // descendants on disposal so provider processes cannot outlive their supervisor.
   const descendants = await resolveDescendantPids(pid).catch(() => []);
   const all = [...descendants, pid];
 
@@ -80,4 +79,3 @@ export async function killProcessTree(
   for (const targetPid of remaining) bestEffortKillPid(targetPid, 'SIGKILL');
   await waitForAllGone(remaining, Math.min(250, graceMs));
 }
-

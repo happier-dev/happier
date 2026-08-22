@@ -17,7 +17,7 @@ import {
   AcpPromptSubmissionPhaseError,
   type AcpPromptSubmissionEvidence,
 } from '@/agent/acp/AcpBackend';
-import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { logger } from '@/ui/logger';
 import {
   HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,

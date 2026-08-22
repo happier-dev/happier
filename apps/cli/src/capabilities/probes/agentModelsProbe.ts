@@ -5,7 +5,7 @@ import { isAcpModelConfigOptionLike, normalizeAcpConfigOptionChoices } from '@/a
 import type { AgentBackend } from '@/agent/core';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
-import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { getAgentModelConfig, getAgentStaticModels } from '@happier-dev/agents';

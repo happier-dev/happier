@@ -565,8 +565,10 @@ describe('createStopSession', () => {
     ]);
   });
 
-  it('does not destroy the terminal attachment when the exact runner does not exit before the bound', async () => {
+  it('force-terminates a verified runner that ignores SIGTERM before destroying its terminal attachment', async () => {
     const { createStopSession } = await import('./stopSession');
+    isPidSafeHappySessionProcess.mockClear();
+    isPidSafeHappySessionProcess.mockResolvedValue(true);
     const attachmentId = 'attachment-stop-timeout' as NonNullable<import('@/integrations/terminalHost/_types').TerminalHostHandle['attachmentId']>;
     const attachmentInfo = {
       version: 2,
@@ -597,7 +599,9 @@ describe('createStopSession', () => {
     } as const;
     const dispose = vi.fn(async () => undefined);
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
-    const waitForTrackedRunnersExit = vi.fn(async () => false);
+    const waitForTrackedRunnersExit = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
     const stop = createStopSession({
       pidToTrackedSession: new Map<number, any>([
         [444, { startedBy: 'terminal', pid: 444, happySessionId: 'sess-timeout', processCommandHash: 'h4' }],
@@ -616,14 +620,73 @@ describe('createStopSession', () => {
       waitForTrackedRunnersExit,
     });
 
-    await expect(stop('sess-timeout')).resolves.toEqual({
+    await expect(stop('sess-timeout')).resolves.toEqual({ status: 'stopped' });
+
+    expect(killSpy).toHaveBeenCalledWith(444, 'SIGTERM');
+    expect(killSpy).toHaveBeenCalledWith(444, 'SIGKILL');
+    expect(isPidSafeHappySessionProcess).toHaveBeenCalledTimes(2);
+    expect(waitForTrackedRunnersExit).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not force-signal a replacement process when runner identity changes after the graceful wait', async () => {
+    const { createStopSession } = await import('./stopSession');
+    isPidSafeHappySessionProcess.mockClear();
+    isPidSafeHappySessionProcess.mockResolvedValue(true);
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const originalTracked = {
+      startedBy: 'terminal',
+      pid: 445,
+      happySessionId: 'sess-timeout-reused',
+      processCommandHash: 'original-command',
+    };
+    const pidToTrackedSession = new Map<number, any>([[445, originalTracked]]);
+    const waitForTrackedRunnersExit = vi.fn(async () => {
+      pidToTrackedSession.set(445, {
+        ...originalTracked,
+        processCommandHash: 'replacement-command',
+      });
+      return false;
+    });
+    const stop = createStopSession({
+      pidToTrackedSession,
+      waitForTrackedRunnersExit,
+    });
+
+    await expect(stop('sess-timeout-reused')).resolves.toEqual({
       status: 'incomplete',
       reason: 'runner_exit_timeout',
     });
-
-    expect(killSpy).toHaveBeenCalledWith(444, 'SIGTERM');
+    expect(killSpy).toHaveBeenCalledWith(445, 'SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith(445, 'SIGKILL');
     expect(waitForTrackedRunnersExit).toHaveBeenCalledTimes(1);
-    expect(dispose).not.toHaveBeenCalled();
+  });
+
+  it('accepts positive runner death observed between the graceful timeout and force escalation', async () => {
+    const { createStopSession } = await import('./stopSession');
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const areTrackedRunnersExited = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const waitForTrackedRunnersExit = vi.fn(async () => false);
+    const stop = createStopSession({
+      pidToTrackedSession: new Map<number, any>([[
+        446,
+        {
+          startedBy: 'terminal',
+          pid: 446,
+          happySessionId: 'sess-exited-before-force',
+          processCommandHash: 'runner-command',
+        },
+      ]]),
+      areTrackedRunnersExited,
+      waitForTrackedRunnersExit,
+    });
+
+    await expect(stop('sess-exited-before-force')).resolves.toEqual({ status: 'stopped' });
+    expect(killSpy).toHaveBeenCalledWith(446, 'SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith(446, 'SIGKILL');
+    expect(waitForTrackedRunnersExit).toHaveBeenCalledTimes(1);
   });
 
   it('does not destroy a replacement attachment installed after the runner exits', async () => {

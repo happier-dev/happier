@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import { isPidAlive, spawnInlineNodeParentWithChild, waitForProcessExit } from '@/testkit/process/spawn';
 import { AcpBackend } from '../AcpBackend';
-import { killProcessTree } from '../killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
 describe('AcpBackend.dispose', () => {
   it('kills the whole ACP CLI process tree (posix)', async () => {

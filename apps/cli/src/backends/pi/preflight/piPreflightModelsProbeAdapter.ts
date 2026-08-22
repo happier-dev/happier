@@ -2,7 +2,7 @@ import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
 import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { spawn } from 'node:child_process';
 import { createPiModelCatalogEntry, type PiModelCatalogEntry } from '@/backends/pi/models/piModelCatalog';
 

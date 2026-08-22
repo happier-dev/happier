@@ -32,7 +32,7 @@ import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJ
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process'
 import { resolveExistingManagedJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers'
-import { killProcessTree } from '@/agent/acp/killProcessTree'
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree'
 import { isolateClaudeRuntimeAuthEnv } from '@/backends/claude/spawn/isolateClaudeRuntimeAuthEnv'
 import { logClaudeRuntimeAuthEnvDiagnostic } from '@/backends/claude/spawn/logClaudeRuntimeAuthEnvDiagnostic'
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from '@/daemon/spawn/spawnExplicitEnvKeysMarker'

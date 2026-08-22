@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { isPidAlive, spawnInlineNodeParentWithChild, waitForProcessExit } from '@/testkit/process/spawn';
-import { killProcessTree } from '../killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
 describe('killProcessTree', () => {
   it('kills a process and its descendants (posix)', async () => {

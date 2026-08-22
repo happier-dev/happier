@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
-import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { logger } from '@/ui/logger';
 import { expandHomeDirPath } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
