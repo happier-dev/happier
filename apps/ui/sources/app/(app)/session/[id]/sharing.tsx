@@ -29,7 +29,7 @@ import {
 import { sync } from '@/sync/sync';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { HappyError } from '@/utils/errors/errors';
-import { getFriendsList } from '@/sync/api/social/apiFriends';
+import { getSessionFriendsList } from '@/sync/api/social/createSessionSocialRequest';
 import { UserProfile } from '@/sync/domains/social/friendTypes';
 import { encryptDataKeyForPublicShare } from '@/sync/encryption/publicShareEncryption';
 import { getRandomBytes } from 'expo-crypto';
@@ -39,60 +39,80 @@ import { Text } from '@/components/ui/text/Text';
 import { mergePublicShareWithCachedToken } from '@/sync/domains/social/mergePublicShareWithCachedToken';
 import { createPublicShareWithClientToken } from '@/sync/domains/social/createPublicShareWithClientToken';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveSessionShareRecipientEligibility } from '@/sync/domains/social/sessionShareRecipientEligibility';
 
+type SharingData = Readonly<{
+    shares: SessionShare[];
+    publicShare: PublicSessionShare | null;
+    friends: UserProfile[];
+}>;
+
+type SharingDataState = Readonly<{
+    data: SharingData | null;
+    loading: boolean;
+    error: boolean;
+}>;
 
 function SharingManagementContent({ sessionId }: { sessionId: string }) {
     const { theme } = useUnistyles();
     const session = useSession(sessionId);
     const canManage = !session?.accessLevel || session.accessLevel === 'admin';
 
-    const [shares, setShares] = useState<SessionShare[]>([]);
-    const [publicShare, setPublicShare] = useState<PublicSessionShare | null>(null);
     const publicShareTokenRef = useRef<string | null>(null);
-    const [friends, setFriends] = useState<UserProfile[]>([]);
+    const sharingDataRequestRevisionRef = useRef(0);
+    const [sharingDataState, setSharingDataState] = useState<SharingDataState>({
+        data: null,
+        loading: true,
+        error: false,
+    });
+    const shares = sharingDataState.data?.shares ?? [];
+    const publicShare = sharingDataState.data?.publicShare ?? null;
+    const friends = sharingDataState.data?.friends ?? [];
 
     // Load sharing data
     const loadSharingData = useCallback(async () => {
         // Non-admin collaborators can view the session, but must not see or manage sharing settings.
         // Avoiding these calls prevents noisy 403 spam and misleading "Not shared" UI states.
         if (!canManage) return;
+        const requestRevision = ++sharingDataRequestRevisionRef.current;
+        setSharingDataState((current) => ({ ...current, loading: true, error: false }));
         const credentials = sync.getCredentials();
-
-        // Load shares
         try {
-            const sharesData = await getSessionShares(credentials, sessionId);
-            setShares(sharesData);
-        } catch (error) {
-            console.error('Failed to load session shares:', error);
-        }
-
-        // Load public share
-        try {
-            const publicShareData = await getPublicShare(credentials, sessionId);
-            setPublicShare((prev) => {
+            const [sharesData, publicShareData, friendsData] = await Promise.all([
+                getSessionShares(credentials, sessionId),
+                getPublicShare(credentials, sessionId),
+                getSessionFriendsList(credentials, sessionId),
+            ]);
+            if (sharingDataRequestRevisionRef.current !== requestRevision) return;
+            setSharingDataState((current) => {
                 const merged = mergePublicShareWithCachedToken({
-                    previousPublicShare: prev,
+                    previousPublicShare: current.data?.publicShare ?? null,
                     cachedToken: publicShareTokenRef.current,
                     outcome: { ok: true, publicShare: publicShareData },
                 });
                 publicShareTokenRef.current = merged.cachedToken;
-                return merged.publicShare;
+                return {
+                    data: {
+                        shares: sharesData,
+                        publicShare: merged.publicShare,
+                        friends: friendsData,
+                    },
+                    loading: false,
+                    error: false,
+                };
             });
         } catch (error) {
-            console.error('Failed to load public share:', error);
-        }
-
-        // Load friends list
-        try {
-            const friendsData = await getFriendsList(credentials);
-            setFriends(friendsData);
-        } catch (error) {
-            console.error('Failed to load friends list:', error);
+            if (sharingDataRequestRevisionRef.current !== requestRevision) return;
+            console.error('Failed to load sharing data:', error);
+            setSharingDataState((current) => ({ ...current, loading: false, error: true }));
         }
     }, [canManage, sessionId]);
 
     useEffect(() => {
-        loadSharingData();
+        void loadSharingData();
+        return () => {
+            sharingDataRequestRevisionRef.current += 1;
+        };
     }, [loadSharingData]);
 
     // Handle adding a new share
@@ -103,6 +123,15 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
             const friend = friends.find(f => f.id === userId);
             if (!friend) {
                 throw new HappyError(t('errors.operationFailed'), false);
+            }
+            const eligibility = resolveSessionShareRecipientEligibility(friend);
+            if (!eligibility.eligible) {
+                throw new HappyError(
+                    eligibility.reason === 'missing-content-keys'
+                        ? t('session.sharing.recipientMissingKeys')
+                        : t(`friends.status.${friend.status}`),
+                    false,
+                );
             }
             const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
@@ -206,7 +235,6 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                 api: { createPublicShare },
             });
 
-            setPublicShare(created);
             await loadSharingData();
             return created;
         } catch (error) {
@@ -312,9 +340,53 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
         );
     }
 
+    if (sharingDataState.data === null) {
+        if (sharingDataState.loading) {
+            return (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+                    <Text style={{
+                        color: theme.colors.text.secondary,
+                        fontSize: 17,
+                        marginTop: 16,
+                        ...Typography.default('semiBold')
+                    }}>
+                        {t('common.loading')}
+                    </Text>
+                </View>
+            );
+        }
+        return (
+            <ItemList>
+                <ItemGroup>
+                    <Item
+                        testID="session-sharing-load-retry"
+                        title={t('errors.operationFailed')}
+                        subtitle={t('common.retry')}
+                        icon={<Icon name="warning-circle" size={29} color={theme.colors.state.warning.foreground} />}
+                        onPress={loadSharingData}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            </ItemList>
+        );
+    }
+
     return (
         <>
             <ItemList>
+                {sharingDataState.error ? (
+                    <ItemGroup>
+                        <Item
+                            testID="session-sharing-refresh-retry"
+                            title={t('errors.operationFailed')}
+                            subtitle={t('common.retry')}
+                            icon={<Icon name="warning-circle" size={29} color={theme.colors.state.warning.foreground} />}
+                            onPress={loadSharingData}
+                            showChevron={false}
+                        />
+                    </ItemGroup>
+                ) : null}
                 {/* Current Shares */}
                 <ItemGroup title={t('session.sharing.directSharing')}>
                     {shares.length > 0 ? (

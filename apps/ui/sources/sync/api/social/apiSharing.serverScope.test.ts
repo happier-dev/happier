@@ -51,6 +51,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
 import { createSessionShare, getSessionShares } from './apiSharing';
+import { getSessionFriendsList } from './createSessionSocialRequest';
 
 const ACTIVE_TOKEN = 'hdr.eyJzdWIiOiJhY3RpdmUtdXNlciJ9.sig';
 const OWNER_TOKEN = 'hdr.eyJzdWIiOiJvd25lci11c2VyIn0.sig';
@@ -141,5 +142,44 @@ describe('apiSharing server-scoped session routes', () => {
         expect(createCall).toBeTruthy();
         expectHeaderValue(createCall?.[1]?.headers, 'Authorization', `Bearer ${OWNER_TOKEN}`);
         expectHeaderValue(createCall?.[1]?.headers, 'Content-Type', 'application/json');
+    });
+
+    it('gets shareable friends through the preferred session owner server', async () => {
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: OWNER_TOKEN, secret: 'owner-secret' });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+            friends: [{
+                id: 'user-2',
+                username: 'lee',
+                firstName: 'Lee',
+                lastName: null,
+                avatar: null,
+                bio: null,
+                publicKey: null,
+                status: 'friend',
+            }],
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        const friends = await getSessionFriendsList(
+            { token: ACTIVE_TOKEN, secret: 'active-secret' },
+            'session-1',
+        );
+
+        expect(friends.map((friend) => friend.id)).toEqual(['user-2']);
+        expect(serverFetchMock).not.toHaveBeenCalled();
+        expect(runtimeFetchMock).toHaveBeenCalledWith(
+            'https://owner.example/v1/friends',
+            expect.objectContaining({ method: 'GET' }),
+        );
+        const friendsCall = runtimeFetchMock.mock.calls.find((call) => call[0] === 'https://owner.example/v1/friends');
+        expect(friendsCall).toBeTruthy();
+        expectHeaderValue(friendsCall?.[1]?.headers, 'Authorization', `Bearer ${OWNER_TOKEN}`);
     });
 });
