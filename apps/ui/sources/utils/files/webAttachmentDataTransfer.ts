@@ -38,11 +38,13 @@ export function extractWebAttachmentFilesFromDataTransfer(dataTransfer: DataTran
         files.push(file);
     }
 
-    for (const file of arrayFromMaybeArrayLike(dataTransfer?.files)) {
-        const identity = buildFileIdentity(file);
-        if (seen.has(identity)) continue;
-        seen.add(identity);
-        files.push(file);
+    if (files.length === 0) {
+        for (const file of arrayFromMaybeArrayLike(dataTransfer?.files)) {
+            const identity = buildFileIdentity(file);
+            if (seen.has(identity)) continue;
+            seen.add(identity);
+            files.push(file);
+        }
     }
 
     return files;
