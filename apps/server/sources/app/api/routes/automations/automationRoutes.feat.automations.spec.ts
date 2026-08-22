@@ -43,6 +43,11 @@ const verifyAutomationConversationTargetV1 = vi.fn(async () => ({
     reason: "notFound" as const,
 }));
 const listAutomationConversationTargetsV1 = vi.fn(async () => ({ items: [], nextCursor: null }));
+const createAutomationConversationTargetV1 = vi.fn(async () => ({
+    kind: "created" as const,
+    automationId: "automation-1",
+    templateVersion: 1,
+}));
 const claimAutomationRun = vi.fn(async () => ({
     run: {
         id: "run-1",
@@ -120,8 +125,8 @@ vi.mock("@/app/automations/automationClaimService", () => ({
     claimAutomationRun,
 }));
 vi.mock("@/app/automations/automationConversationTargetVerificationService", () => ({
-    AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1: "happier.channels",
     AutomationConversationTargetVerificationCallerError: class extends Error {},
+    createAutomationConversationTargetV1,
     listAutomationConversationTargetsV1,
     verifyAutomationConversationTargetV1,
 }));
@@ -229,6 +234,13 @@ describe("automationRoutes", () => {
         expect(eventListRoute.routeExists).toBe(false);
         expect(eventAdmitRoute.handler).toBeTypeOf("function");
         expect(conversationTargetVerifyRoute.routeExists).toBe(true);
+        expect(createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/automations/conversation/targets/list",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        }).routeExists).toBe(true);
     });
 
     it("does not register routes when HAPPIER_FEATURE_AUTOMATIONS__ENABLED=0", async () => {

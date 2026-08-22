@@ -725,6 +725,75 @@ describe("automationCrudService (integration)", () => {
         })).seq).toBe(account.seq + 6);
     });
 
+    it("removes the Event source status a selector change made unreachable and keeps every other definition's", async () => {
+        const account = await seedEventWriterAccount();
+        const changing = await createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Changing source",
+                description: null,
+                enabled: true,
+                pluginEvent: eventWriterTrigger("repository-1"),
+                executionRecipe: eventExecutionRecipe(1),
+                assignments: [{ machineId: EVENT_MACHINE_ID }],
+            },
+        });
+        const untouched = await createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Untouched source",
+                description: null,
+                enabled: true,
+                pluginEvent: eventWriterTrigger("repository-9"),
+                executionRecipe: eventExecutionRecipe(1),
+                assignments: [{ machineId: EVENT_MACHINE_ID }],
+            },
+        });
+        const supersededSelector = changing!.triggerSourceSelectorId!;
+        for (const automation of [changing!, untouched!]) {
+            await db.automationEventSourceStatus.create({
+                data: {
+                    automationId: automation.id,
+                    eventPluginId: EVENT_PLUGIN_ID,
+                    eventLocalId: EVENT_LOCAL_ID,
+                    sourceSelectorId: automation.triggerSourceSelectorId!,
+                    templateVersion: automation.templateVersion,
+                    reporterMachineId: EVENT_MACHINE_ID,
+                    reporterMachineInstallationId: EVENT_MACHINE_INSTALLATION_ID,
+                    reporterMaterializationId: EVENT_MATERIALIZATION_ID,
+                    state: "observing",
+                },
+            });
+        }
+
+        const changed = await updateAutomation({
+            accountId: account.id,
+            automationId: changing!.id,
+            expectedTriggerKind: "pluginEvent",
+            expectedTemplateVersion: changing!.templateVersion,
+            input: {
+                name: "Changing source",
+                description: null,
+                enabled: true,
+                pluginEvent: eventWriterTrigger("repository-2"),
+                executionRecipe: eventExecutionRecipe(2),
+                assignments: [{ machineId: EVENT_MACHINE_ID }],
+            },
+        });
+        expect(changed?.triggerSourceSelectorId).not.toBe(supersededSelector);
+
+        // The projection only ever reads the current selector, so the previous
+        // row is unreachable and must not accumulate. Every other definition's
+        // status is untouched.
+        await expect(db.automationEventSourceStatus.findMany({
+            orderBy: { automationId: "asc" },
+            select: { automationId: true, sourceSelectorId: true },
+        })).resolves.toEqual([{
+            automationId: untouched!.id,
+            sourceSelectorId: untouched!.triggerSourceSelectorId,
+        }]);
+    });
+
     it("does not change the Event source catalog revision for an assignment-only V3 update", async () => {
         const account = await seedEventWriterAccount();
         const event = await createAutomation({

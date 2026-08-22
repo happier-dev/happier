@@ -10,6 +10,7 @@ import {
     deriveAutomationOccurrenceKeyV1,
     evaluateAutomationEventFilterV1,
     freezeAutomationRunPluginEventExecutionRecipeV1,
+    isAutomationEventObservationFreshV1,
     isAutomationEventTriggerEvidenceCiphertextV1,
     isSameAutomationEventDeclarationReleaseV1,
     isValidPluginJsonSchemaValue,
@@ -1112,12 +1113,11 @@ export async function admitAutomationEventV1(params: Readonly<{
                 assignGroupResult(results, group, refresh("observationTargetChanged"));
                 continue;
             }
-            if (
-                triggerDefinition.data.maximumObservationAgeMs !== null
-                && input.observationReceivedAt >= input.occurredAt
-                && input.observationReceivedAt - input.occurredAt
-                    > triggerDefinition.data.maximumObservationAgeMs
-            ) {
+            if (!isAutomationEventObservationFreshV1({
+                occurredAt: input.occurredAt,
+                observationReceivedAt: input.observationReceivedAt,
+                maximumObservationAgeMs: triggerDefinition.data.maximumObservationAgeMs,
+            })) {
                 assignGroupResult(results, group, skipped("outsideFreshness"));
                 continue;
             }

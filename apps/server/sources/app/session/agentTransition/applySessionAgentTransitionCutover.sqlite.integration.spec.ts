@@ -9,14 +9,67 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { applySessionAgentTransitionCutover } from "@/app/session/agentTransition/applySessionAgentTransitionCutover";
+import { commitSessionAgentCurrentViewInTx } from "@/app/session/agentTransition/commitSessionAgentCurrentView";
 import {
     createSessionMessage,
     patchSessionInTx,
-    updateSessionMetadataEnvelopeTupleInTx,
 } from "@/app/session/sessionWriteService";
 import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+
+/**
+ * Lets the archive route win the one window the transition owner's own pre-read
+ * cannot close.
+ *
+ * `commitSessionAgentCurrentViewInTx` reads the archive state together with the
+ * stored current view, and only then writes through a layout CAS owner. This
+ * commits the archive immediately after that pre-read returns an UNARCHIVED row,
+ * so the `:261` fast path passes and only the `requireUnarchivedSession`
+ * predicate threaded into the CAS write can still refuse. Two writers cannot be
+ * interleaved at that instant from outside a single transaction, which is why
+ * the concurrent write is injected at the database boundary; the owner, both
+ * layout writers, the transaction and the database are all real.
+ *
+ * `raced()` reports whether the interleaving actually happened. Every caller
+ * asserts it, so an owner that stops issuing the pre-read fails loudly instead
+ * of passing through the archived fast path.
+ */
+function archiveAfterCurrentViewPreRead(tx: Tx, sessionId: string) {
+    let raced = false;
+    const session = new Proxy(tx.session, {
+        get(target, property) {
+            if (property !== "findUnique") {
+                const value: unknown = Reflect.get(target, property);
+                return typeof value === "function" ? value.bind(target) : value;
+            }
+            return async (args: never) => {
+                const row: unknown = await target.findUnique(args);
+                const isCurrentViewPreRead = !raced
+                    && row !== null
+                    && typeof row === "object"
+                    && "archivedAt" in row
+                    && "agentStateVersion" in row;
+                if (isCurrentViewPreRead) {
+                    raced = true;
+                    await tx.session.update({
+                        where: { id: sessionId },
+                        data: { archivedAt: new Date(1_700_000_000_000) },
+                    });
+                }
+                return row;
+            };
+        },
+    });
+    const proxied = new Proxy(tx, {
+        get(target, property) {
+            if (property === "session") return session;
+            const value: unknown = Reflect.get(target, property);
+            return typeof value === "function" ? value.bind(target) : value;
+        },
+    });
+    return { tx: proxied, raced: () => raced };
+}
 
 const STORED_PLAIN_OWNER_METADATA_ENVELOPE = JSON.stringify(
     createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 }),
@@ -25,7 +78,13 @@ const STORED_SHARED_METADATA = JSON.stringify(
     projectSessionSharedMetadataV1({ metadata: {} }),
 );
 
-function dividerContent(params: Readonly<{ fromAgentId: string; toAgentId: string; id?: string }>) {
+function dividerContent(params: Readonly<{
+    fromAgentId: string;
+    toAgentId: string;
+    id?: string;
+    sourceCutoffSeqInclusive?: number;
+    returningAgentLastSeenSeqInclusive?: number;
+}>) {
     return {
         t: "plain" as const,
         v: {
@@ -42,6 +101,10 @@ function dividerContent(params: Readonly<{ fromAgentId: string; toAgentId: strin
                         v: 1,
                         fromAgentId: params.fromAgentId,
                         toAgentId: params.toAgentId,
+                        sourceCutoffSeqInclusive: params.sourceCutoffSeqInclusive ?? 29_979,
+                        ...(params.returningAgentLastSeenSeqInclusive === undefined
+                            ? {}
+                            : { returningAgentLastSeenSeqInclusive: params.returningAgentLastSeenSeqInclusive }),
                     },
                 },
             },
@@ -479,11 +542,17 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
         });
 
         // The current view IS committed, so this can never ride `rejected`.
-        expect(result).toEqual({
+        expect(result).toMatchObject({
             ok: false,
             effect: "current_view_committed",
             error: "divider-conflict",
         });
+        // ...and the committed view travels WITH the failure, so the caller can
+        // announce the Agent change that really happened instead of leaving
+        // every other client on the old Agent until a change-cursor catch-up.
+        expect(result).toHaveProperty("currentView.publication.kind", "legacy_v0");
+        expect((result as { currentView: { participantCursors: unknown[] } }).currentView.participantCursors)
+            .not.toHaveLength(0);
 
         const rows = await db.sessionMessage.findMany({
             where: { sessionId: session.id },
@@ -492,6 +561,72 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
         expect(rows).toHaveLength(1);
         // The pre-existing row was NOT overwritten in place.
         expect(rows[0]?.content).toEqual(stale);
+    }, 60_000);
+
+    it("refuses a same-Agent divider whose replay bounds differ", async () => {
+        for (const [label, stale] of [
+            [
+                "source cutoff",
+                dividerContent({
+                    fromAgentId: "claude",
+                    toAgentId: "codex",
+                    sourceCutoffSeqInclusive: 29_978,
+                }),
+            ],
+            [
+                "native-return lower bound",
+                dividerContent({
+                    fromAgentId: "claude",
+                    toAgentId: "codex",
+                    sourceCutoffSeqInclusive: 29_979,
+                    returningAgentLastSeenSeqInclusive: 130,
+                }),
+            ],
+        ] as const) {
+            const owner = await createOwner();
+            const session = await createLayoutZeroSession(owner.id);
+            const localId = buildSessionAgentTransitionDividerLocalId(`submitted-${randomUUID()}`);
+            const seeded = await createSessionMessage({
+                actorUserId: owner.id,
+                sessionId: session.id,
+                localId,
+                content: stale,
+                messageRole: "event",
+            });
+            expect(seeded.ok, label).toBe(true);
+
+            const fresh = await db.session.findUniqueOrThrow({
+                where: { id: session.id },
+                select: { metadataVersion: true, agentStateVersion: true },
+            });
+            const result = await applySessionAgentTransitionCutover({
+                actorUserId: owner.id,
+                sessionId: session.id,
+                currentView: {
+                    kind: "legacy_v0",
+                    expectedMetadataVersion: fresh.metadataVersion,
+                    metadataCiphertext: JSON.stringify({ flavor: "codex" }),
+                    expectedAgentStateVersion: fresh.agentStateVersion,
+                    agentStateCiphertext: null,
+                },
+                divider: {
+                    localId,
+                    content: dividerContent({ fromAgentId: "claude", toAgentId: "codex" }),
+                },
+            });
+
+            expect(result, label).toMatchObject({
+                ok: false,
+                effect: "current_view_committed",
+                error: "divider-conflict",
+            });
+            const rows = await db.sessionMessage.findMany({
+                where: { sessionId: session.id },
+                select: { content: true },
+            });
+            expect(rows, label).toHaveLength(1);
+            expect(rows[0]?.content, label).toEqual(stale);
+        }
     }, 60_000);
 
     /**
@@ -710,40 +845,56 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
      * one of two shipped layout CAS owners. An archive committing between that
      * read and the write used to be invisible to both predicates, so archive and
      * transition could both commit and unarchiving would reveal a silently
-     * changed current Agent. These two exercise the predicate itself: the row is
-     * archived AFTER the pre-read would have passed, so only the CAS can refuse.
+     * changed current Agent.
+     *
+     * These two drive the TRANSITION OWNER, not the layout writers, because the
+     * predicate is opt-in: a version of this owner that simply stops asking for
+     * `requireUnarchivedSession` is a plausible implementation, and only a test
+     * that routes through the owner can see it. The layout writers honouring the
+     * flag when it IS passed is proven by the same run, one frame lower.
      */
     it("refuses the layout-zero current-view CAS when an archive lands after the pre-read", async () => {
         const owner = await createOwner();
         const session = await createLayoutZeroSession(owner.id);
 
-        const result = await inTx(async (tx) => {
-            // The archive route wins the race here — after the transition owner
-            // pre-read an unarchived row, before its CAS write lands.
-            await tx.session.update({
-                where: { id: session.id },
-                data: { archivedAt: new Date(1_700_000_000_000) },
-            });
-            return await patchSessionInTx(tx, {
+        const race = await inTx(async (tx) => {
+            const interleaved = archiveAfterCurrentViewPreRead(tx, session.id);
+            const result = await commitSessionAgentCurrentViewInTx(interleaved.tx, {
                 actorUserId: owner.id,
                 sessionId: session.id,
-                metadata: {
-                    ciphertext: JSON.stringify({ flavor: "codex" }),
-                    expectedVersion: session.metadataVersion,
+                currentView: {
+                    kind: "legacy_v0",
+                    expectedMetadataVersion: session.metadataVersion,
+                    metadataCiphertext: JSON.stringify({ flavor: "codex" }),
+                    expectedAgentStateVersion: session.agentStateVersion,
+                    agentStateCiphertext: null,
                 },
-                agentState: { ciphertext: null, expectedVersion: session.agentStateVersion },
-                sessionExpectation: { kind: "inactive_model_intent" },
-            }, { requireUnarchivedSession: true });
+            });
+            return { result, raced: interleaved.raced() };
         });
 
-        expect(result).toEqual({ ok: false, error: "session_archived" });
+        // The pre-read really did pass before the archive committed, so this is
+        // the CAS refusing and not the `:261` fast path.
+        expect(race.raced).toBe(true);
+        expect(race.result).toEqual({ ok: false, error: "archived" });
         const after = await db.session.findUniqueOrThrow({
             where: { id: session.id },
-            select: { metadata: true, metadataVersion: true, agentStateVersion: true },
+            select: {
+                metadata: true,
+                metadataVersion: true,
+                agentStateVersion: true,
+                archivedAt: true,
+                runtimeActivityState: true,
+                runtimeActivityRevision: true,
+            },
         });
+        expect(after.archivedAt).not.toBeNull();
         expect(after.metadataVersion).toBe(session.metadataVersion);
         expect(after.agentStateVersion).toBe(session.agentStateVersion);
         expect(after.metadata).toBe(JSON.stringify({ flavor: "claude", claudeSessionId: "src-1" }));
+        // Nothing in the transaction ran past the refused write.
+        expect(after.runtimeActivityState).toBe("active");
+        expect(after.runtimeActivityRevision).toBe(BigInt(1));
     }, 60_000);
 
     it("refuses the layout-one current-view CAS when an archive lands after the pre-read", async () => {
@@ -753,38 +904,50 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
             projectSessionSharedMetadataV1({ metadata: { flavor: "codex" } }),
         );
 
-        const result = await inTx(async (tx) => {
-            await tx.session.update({
-                where: { id: session.id },
-                data: { archivedAt: new Date(1_700_000_000_000) },
-            });
-            return await updateSessionMetadataEnvelopeTupleInTx(tx, {
-                mode: "owner_inactive_model_intent",
+        const race = await inTx(async (tx) => {
+            const interleaved = archiveAfterCurrentViewPreRead(tx, session.id);
+            const result = await commitSessionAgentCurrentViewInTx(interleaved.tx, {
                 actorUserId: owner.id,
                 sessionId: session.id,
-                metadataLayoutVersion: 1,
-                expectedOwnerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 }),
-                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({
-                    v: 1,
-                    runtime: { permissionMode: "default" },
-                }),
-                sharedMetadata: {
-                    ciphertext: nextShared,
-                    expectedVersion: session.metadataVersion,
+                currentView: {
+                    kind: "envelope_tuple_v1",
+                    ownerPatch: {
+                        mode: "owner_inactive_model_intent",
+                        metadataLayoutVersion: 1,
+                        expectedOwnerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 }),
+                        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({
+                            v: 1,
+                            runtime: { permissionMode: "default" },
+                        }),
+                        sharedMetadata: {
+                            ciphertext: nextShared,
+                            expectedVersion: session.metadataVersion,
+                        },
+                        agentState: { ciphertext: null, expectedVersion: session.agentStateVersion },
+                        sessionExpectation: { kind: "inactive_model_intent" },
+                    },
                 },
-                agentState: { ciphertext: null, expectedVersion: session.agentStateVersion },
-                sessionExpectation: { kind: "inactive_model_intent" },
-            }, { requireUnarchivedSession: true });
+            });
+            return { result, raced: interleaved.raced() };
         });
 
-        expect(result).toEqual({ ok: false, error: "session_archived" });
+        expect(race.raced).toBe(true);
+        expect(race.result).toEqual({ ok: false, error: "archived" });
         const after = await db.session.findUniqueOrThrow({
             where: { id: session.id },
-            select: { metadata: true, metadataVersion: true, agentStateVersion: true },
+            select: {
+                metadata: true,
+                metadataVersion: true,
+                agentStateVersion: true,
+                ownerMetadata: true,
+                archivedAt: true,
+            },
         });
+        expect(after.archivedAt).not.toBeNull();
         expect(after.metadataVersion).toBe(session.metadataVersion);
         expect(after.agentStateVersion).toBe(session.agentStateVersion);
         expect(after.metadata).toBe(STORED_SHARED_METADATA);
+        expect(after.ownerMetadata).toBe(STORED_PLAIN_OWNER_METADATA_ENVELOPE);
     }, 60_000);
 
     it("leaves every other inactive-model-intent writer free to patch an archived Session", async () => {

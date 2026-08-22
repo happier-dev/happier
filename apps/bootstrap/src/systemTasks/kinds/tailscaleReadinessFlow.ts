@@ -24,7 +24,12 @@ export type TailscaleReadinessBaseParams = Readonly<{
 
 export type TailscaleReadinessState = Readonly<{
   installed: boolean;
+  /** Whether this machine has ever completed tailnet sign-in. */
   loggedIn: boolean;
+  /** Whether tailscaled is up and carrying traffic right now. */
+  running: boolean;
+  /** Whether `tailscale status` reached the local tailscaled at all. */
+  daemonReachable: boolean;
   authUrl: string | null;
   shareableHttpsUrl: string | null;
 }>;
@@ -54,6 +59,20 @@ export type TailscaleReadinessFlowDeps<TParams extends TailscaleReadinessBasePar
   }>;
 
 const MIN_TAILSCALE_POLL_COMMAND_TIMEOUT_MS = 1;
+
+/**
+ * Without a reachable tailscaled there is no login state to report, so
+ * `loggedIn: false` must not be read as "sign in again" — the user needs to
+ * start Tailscale, and re-running sign-in would not help.
+ */
+function assertTailscaleDaemonReachable(state: TailscaleReadinessState): void {
+  if (state.installed && !state.daemonReachable) {
+    throw new systemTasks.SystemTaskExecutionError(
+      'tailscale_not_running',
+      'Start Tailscale before enabling secure access.',
+    );
+  }
+}
 
 export function createTailscaleReadinessRuntimeDeps<TParams extends TailscaleReadinessBaseParams>(
   overrides?: Partial<TailscaleReadinessRuntimeDeps<TParams>>,
@@ -110,6 +129,8 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
         'Install Tailscale and rerun secure access setup.',
       );
     }
+
+    assertTailscaleDaemonReachable(state);
 
     if (!state.loggedIn) {
       const actionUrl = state.authUrl ?? installPrompt.url;
@@ -180,6 +201,8 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
       'Install Tailscale before enabling secure access.',
     );
   }
+
+  assertTailscaleDaemonReachable(state);
 
   if (!state.loggedIn) {
     if (params.loginPolicy !== 'interactive') {
@@ -277,6 +300,16 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
     }
   }
 
+  // Signed in is not the same as usable: a stopped backend keeps full node
+  // identity, so this gate is what stops the flow from reporting readiness for
+  // a machine whose relay nothing can reach.
+  if (!state.running) {
+    throw new systemTasks.SystemTaskExecutionError(
+      'tailscale_not_running',
+      'Start Tailscale before enabling secure access.',
+    );
+  }
+
   return state;
 }
 
@@ -292,6 +325,8 @@ export async function inspectLocalTailscaleReadinessState(
     return {
       installed: true,
       loggedIn: status.loggedIn,
+      running: status.running,
+      daemonReachable: status.daemonReachable,
       authUrl: status.authUrl,
       shareableHttpsUrl: null,
     };
@@ -300,6 +335,8 @@ export async function inspectLocalTailscaleReadinessState(
       return {
         installed: false,
         loggedIn: false,
+        running: false,
+        daemonReachable: false,
         authUrl: null,
         shareableHttpsUrl: null,
       };

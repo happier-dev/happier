@@ -68,7 +68,6 @@ function noStore(reply: { header(name: string, value: string): unknown }): void 
 
 function endpointErrorStatus(error: PluginWebhookEndpointStoreError): number {
     if (error.code === "idempotency_conflict" || error.code === "source_conflict") return 409;
-    if (error.code === "identity_collision") return 503;
     return 404;
 }
 

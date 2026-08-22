@@ -82,6 +82,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 return {
                     installed: false,
                     loggedIn: false,
+                    running: false,
+                    daemonReachable: false,
                     authUrl: null,
                     shareableHttpsUrl: null,
                 };
@@ -89,6 +91,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             return {
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: 'https://relay.tailf00.ts.net',
             };
@@ -167,6 +171,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             tailnetName: 'example-tailnet',
             tailscaleIps: ['100.64.0.10'],
             loggedIn: true,
+            running: true,
+            daemonReachable: true,
         });
 
         const { result } = await collectHandlerRun({
@@ -174,6 +180,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 inspectState: vi.fn(async () => ({
                     installed: true,
                     loggedIn: true,
+                    running: true,
+                    daemonReachable: true,
                     authUrl: null,
                     shareableHttpsUrl: null,
                 })),
@@ -232,6 +240,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 inspectState: vi.fn(async () => ({
                     installed: true,
                     loggedIn: true,
+                    running: true,
+                    daemonReachable: true,
                     authUrl: null,
                     shareableHttpsUrl: null,
                 })),
@@ -317,18 +327,24 @@ describe('createSecureAccessTailscaleHandler', () => {
             .mockResolvedValueOnce({
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: null,
             })
             .mockResolvedValueOnce({
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: null,
             })
             .mockResolvedValueOnce({
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: 'https://relay.tailf00.ts.net',
             });
@@ -388,6 +404,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             return {
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: null,
             };
@@ -473,6 +491,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             return {
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: null,
             };
@@ -533,6 +553,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             tailnetName: 'tailnet.ts.net',
             tailscaleIps: [],
             loggedIn: true,
+            running: true,
+            daemonReachable: true,
         });
         tailscaleMocks.runTailscaleServeStatus
             .mockResolvedValueOnce('No serve config')
@@ -602,6 +624,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 tailnetName: null,
                 tailscaleIps: [],
                 loggedIn: false,
+                running: false,
+                daemonReachable: true,
             })
             .mockResolvedValueOnce({
                 backendState: 'Running',
@@ -610,6 +634,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 tailnetName: 'example-tailnet',
                 tailscaleIps: ['100.64.0.10'],
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
             });
 
         tailscaleMocks.runTailscaleLogin.mockResolvedValueOnce({
@@ -672,6 +698,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 tailnetName: 'example-tailnet',
                 tailscaleIps: ['100.64.0.10'],
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
             }),
             stderr: '',
         }));
@@ -682,6 +710,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             tailnetName: 'example-tailnet',
             tailscaleIps: ['100.64.0.10'],
             loggedIn: true,
+            running: true,
+            daemonReachable: true,
         });
         const createExecutionContext = vi.fn(() => ({
             env: process.env,
@@ -841,6 +871,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             inspectState: vi.fn(async () => ({
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: 'https://relay.tailf00.ts.net',
             })),

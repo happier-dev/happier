@@ -6,6 +6,7 @@ import {
     normalizeAutomationTemplateEnvelopeStoredRead,
     parseAutomationRunExecutionRecipeV1,
     validateAutomationTriggerDefinitionStoredEnvelopeOuterForModeV1,
+    openAutomationTriggerDefinitionStoredEnvelopeV1,
     type AutomationRunExecutionInputV1,
     type AutomationTriggerDefinitionBindingV1,
     type AutomationStoredContentEnvelopeV1,

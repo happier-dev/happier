@@ -113,6 +113,11 @@ function encodePlainStoredJson(value: unknown): string {
     ).toString("base64");
 }
 
+const CONVERSATION_OWNER_REF = {
+    pluginId: "happier.channels",
+    localId: "provider/observation-ingest-v1",
+} as const;
+
 function encodeConversationTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     templateVersion: number;
@@ -129,6 +134,7 @@ function encodeConversationTriggerDefinitionEnvelope(params: Readonly<{
     const definition = {
         v: 1,
         bindingId: "route-account-encryption-conversation",
+        owner: CONVERSATION_OWNER_REF,
     };
     return JSON.stringify(params.mode === "plain"
         ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
@@ -2336,7 +2342,11 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                     },
                     token: null,
                 })),
-                metadata: { v: 3, storage: "plain_json_v1", kind: "oauth", providerAccountId: "acct-retained", providerEmail: null },
+                // The arrange step seeds usage through the legacy boundary, and
+                // `resolveQualifiedCredential` refuses an unfenced credential there.
+                // The subject of this test is the route's stored-content refusal, so
+                // the credential carries a revision like every other fixture here.
+                metadata: { v: 3, storage: "plain_json_v1", kind: "oauth", providerAccountId: "acct-retained", providerEmail: null, credentialRevision: "csr_AAAAAAAAAAAAAAAAAAAAAA" },
             },
         });
         const snapshot = createUsageSnapshot({

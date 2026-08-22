@@ -86,6 +86,7 @@ const RELEASE_FACTS = normalizePluginReleaseFactsV1({
                 scopes: ["global"],
                 surfaces: ["plugin"],
                 dangerLevel: "safe",
+                execution: { target: "daemon" },
             }],
             webhooks: [{
                 id: "github-events",

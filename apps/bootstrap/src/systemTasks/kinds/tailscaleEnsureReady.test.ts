@@ -45,6 +45,8 @@ describe('createTailscaleEnsureReadyHandler', () => {
                 return {
                     installed: false,
                     loggedIn: false,
+                    running: false,
+                    daemonReachable: false,
                     authUrl: null,
                     shareableHttpsUrl: null,
                 };
@@ -53,6 +55,8 @@ describe('createTailscaleEnsureReadyHandler', () => {
                 return {
                     installed: true,
                     loggedIn: false,
+                    running: false,
+                    daemonReachable: true,
                     authUrl: 'https://login.tailscale.com/a/example',
                     shareableHttpsUrl: null,
                 };
@@ -60,6 +64,8 @@ describe('createTailscaleEnsureReadyHandler', () => {
             return {
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: null,
             };
@@ -122,6 +128,8 @@ describe('createTailscaleEnsureReadyHandler', () => {
                 inspectState: vi.fn(async () => ({
                     installed: false,
                     loggedIn: false,
+                    running: false,
+                    daemonReachable: false,
                     authUrl: null,
                     shareableHttpsUrl: null,
                 })),
@@ -167,6 +175,8 @@ describe('createTailscaleEnsureReadyHandler', () => {
             return {
                 installed: true,
                 loggedIn: false,
+                running: false,
+                daemonReachable: true,
                 authUrl: 'https://login.tailscale.com/a/example',
                 shareableHttpsUrl: null,
             };

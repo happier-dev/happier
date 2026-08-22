@@ -22,6 +22,9 @@ import {
 } from "@/testkit/lightSqliteHarness";
 
 import { migrateAutomationAccountEncryptionInTx } from "./automationCrudService";
+import {
+    ACCOUNT_ENCRYPTION_TRANSITION_PEP1_CAPACITY_MEASUREMENT,
+} from "../encryption/accountEncryptionTransitionMeasuredCapacity";
 
 const ENABLED = process.env.HAPPIER_PEP1_MEASURE === "1";
 const BATCH_SIZE = 500;
@@ -131,6 +134,11 @@ function deterministicRandomBytes(length: number): Uint8Array {
     return new Uint8Array(length).fill(7);
 }
 
+const CONVERSATION_OWNER_REF = {
+    pluginId: "happier.channels",
+    localId: "provider/observation-ingest-v1",
+} as const;
+
 function buildTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     templateVersion: number;
@@ -166,7 +174,7 @@ function buildTriggerDefinitionEnvelope(params: Readonly<{
             filter: null,
             maximumObservationAgeMs: null,
         }
-        : { v: 1, bindingId: "pep1-measurement-conversation" };
+        : { v: 1, bindingId: "pep1-measurement-conversation", owner: CONVERSATION_OWNER_REF };
     return JSON.stringify(params.mode === "plain"
         ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
             mode: "plain",
@@ -805,6 +813,24 @@ describe.skipIf(!ENABLED)("PEP1 Automation Run measurement (integration)", () =>
         });
         expect(retainedRunRowsAfterLegacyAttempt).toBe(seededRunRows);
 
+        // The Account transition owner's source census enumerates exactly two
+        // row classes: every Automation definition, then every Run holding
+        // retained content. Both are counted above against the same predicates,
+        // so their sum is this Account's participant census.
+        const censusParticipantRows = participatingRunRows + await db.automation.count({
+            where: { accountId: seeded.result.accountId },
+        });
+        // These are the two facts the Account transition owner's recorded
+        // capacity is derived from. Re-running this harness after a fixture,
+        // schema, or Protocol-bound change turns RED here instead of letting
+        // the recorded bound silently age.
+        expect({
+            censusParticipantRows,
+            nearMaximumParticipantEncodedBytes: BigInt(
+                payloadBytes.nearMaximumPerRow,
+            ),
+        }).toEqual({ ...ACCOUNT_ENCRYPTION_TRANSITION_PEP1_CAPACITY_MEASUREMENT });
+
         const metrics = {
             scope: "one_account_10k_all_origin_participating_retained_runs",
             batchSize: BATCH_SIZE,
@@ -818,6 +844,7 @@ describe.skipIf(!ENABLED)("PEP1 Automation Run measurement (integration)", () =>
                 row._count._all,
             ])),
             sourceRetainedContentUtf8Bytes: seeded.result.sourceRetainedContentUtf8Bytes,
+            censusParticipantRows,
             accountRows: await db.account.count(),
             automationRows: await db.automation.count(),
             requestRunSegmentBytes: payloadBytes,

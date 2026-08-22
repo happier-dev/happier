@@ -1771,24 +1771,31 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                                 : { kind: "preserve" },
                         accountChangeHint,
                     });
-                if (finalized.status === "collections_migration_incomplete") {
-                    throw new AccountEncryptionMigrationDomainRejectedError(
-                        "plugin_data",
-                        "migration_too_large",
-                    );
-                }
                 if (
-                    finalized.status === "collections_invalid_content"
+                    finalized.status === "collections_migration_incomplete"
                     || finalized.status
                         === "collections_identity_relocation_unsupported"
                 ) {
-                    // A Collection that declares mode-derived identity cannot
-                    // be relocated by any transition the platform can perform,
-                    // so the refusal is terminal rather than a size or
-                    // currentness failure a client could retry past. The
-                    // established plugin-data rejection channel keeps it a
-                    // closed 400 instead of inventing wire vocabulary for an
-                    // operation no shipped client can reach.
+                    // This transition carries the zero-sized assert-empty
+                    // Collection directive, so `migration_incomplete` here can
+                    // only mean a live row exists — never a capacity or
+                    // currentness failure a client could retry past. A
+                    // declared mode-derived identity is terminal for the same
+                    // live row: the platform holds neither the Account key
+                    // material nor the plugin's private components needed to
+                    // recompute its address. Both are the same actionable
+                    // fact, so they share the named Collection refusal instead
+                    // of misreporting a size or an invalid request.
+                    throw new AccountEncryptionMigrationDomainRejectedError(
+                        "plugin_data",
+                        "not_empty",
+                    );
+                }
+                if (finalized.status === "collections_invalid_content") {
+                    // Distinct from the refusals above: the row's persisted
+                    // envelope or projection is inconsistent with its own
+                    // contract, which is a content-integrity fact rather than
+                    // a "remove your data and retry" one.
                     throw new AccountEncryptionMigrationDomainRejectedError(
                         "plugin_data",
                         "invalid_content",
@@ -2015,6 +2022,15 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                             ? { error: "invalid-params" }
                             : { error: "pets_not_empty" },
                     );
+                }
+                if (error.domain === "plugin_data") {
+                    // The predecessor body carries no Collection directive, so
+                    // a live row is refused as an operation-level upgrade
+                    // requirement long before this transition runs. Only a
+                    // current request reaches here.
+                    return reply.code(400).send({
+                        error: "plugin_collections_not_empty",
+                    });
                 }
                 return reply.code(400).send({
                     error: "artifacts_not_empty",

@@ -19,6 +19,8 @@ import {
     ReorderSessionOrganizationResponseSchema,
     SessionOrganizationSnapshotRequestSchema,
     SessionOrganizationSnapshotResponseSchema,
+    SetSessionAttentionStandingRequestSchema,
+    SetSessionAttentionStandingResponseSchema,
     SetSessionFolderAssignmentRequestSchema,
     SetSessionFolderAssignmentResponseSchema,
     SetSessionPinRequestSchema,
@@ -42,6 +44,7 @@ import {
     deleteSessionOrganizationTag,
     importLegacySessionOrganization,
     moveSessionFolderAssignments,
+    setSessionAttentionStanding,
     setSessionFolderAssignment,
     setSessionPin,
     setSessionTagAssignments,
@@ -104,6 +107,9 @@ function buildSnapshotRequestFromQuery(query: unknown) {
             : {}),
         ...(parseOptionalBoolean(record.includeAllTagAssignments) !== undefined
             ? { includeAllTagAssignments: parseOptionalBoolean(record.includeAllTagAssignments) }
+            : {}),
+        ...(parseOptionalBoolean(record.includeAttentionStandings) !== undefined
+            ? { includeAttentionStandings: parseOptionalBoolean(record.includeAttentionStandings) }
             : {}),
         ...(parseDelimitedQueryList(record.assignmentSessionIds) ? { assignmentSessionIds: parseDelimitedQueryList(record.assignmentSessionIds) } : {}),
         ...(parseDelimitedQueryList(record.folderIds) ? { folderIds: parseDelimitedQueryList(record.folderIds) } : {}),
@@ -193,6 +199,53 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
                 return reply.code(404).send({ error: "Session not found" });
             }
             return reply.code(409).send({ error: result.error });
+        }
+
+        return reply.send(result);
+    });
+
+    app.put("/v2/session-organization/attention-standings/:sessionId", {
+        preHandler: app.authenticate,
+        schema: {
+            params: sessionIdParamsSchema,
+            body: SetSessionAttentionStandingRequestSchema,
+            response: {
+                200: SetSessionAttentionStandingResponseSchema,
+                400: z.object({ error: z.literal("invalid-session-attention-standing") }),
+                404: z.object({ error: z.literal("Session not found") }),
+                409: z.object({ error: z.literal("session-attention-standing-limit-exceeded") }),
+            },
+        },
+    }, async (request, reply) => {
+        const parsedParams = sessionIdParamsSchema.safeParse(request.params);
+        const parsedBody = SetSessionAttentionStandingRequestSchema.safeParse(request.body);
+        if (!parsedParams.success || !parsedBody.success) {
+            return reply.code(400).send({ error: "invalid-session-attention-standing" });
+        }
+
+        const visible = parsedBody.data.standing === null
+            ? await canAccessSyncedSessionForOrganization({
+                accountId: request.userId,
+                sessionId: parsedParams.data.sessionId,
+            })
+            : await canAccessVisibleUnarchivedSessionForOrganization({
+                accountId: request.userId,
+                sessionId: parsedParams.data.sessionId,
+            });
+        if (!visible) {
+            return reply.code(404).send({ error: "Session not found" });
+        }
+
+        const result = await setSessionAttentionStanding({
+            accountId: request.userId,
+            sessionId: parsedParams.data.sessionId,
+            request: parsedBody.data,
+        });
+        if ("error" in result) {
+            if (result.error === "session-attention-standing-limit-exceeded") {
+                return reply.code(409).send({ error: result.error });
+            }
+            return reply.code(404).send({ error: "Session not found" });
         }
 
         return reply.send(result);

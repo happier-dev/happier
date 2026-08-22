@@ -14,7 +14,12 @@ function storedAgentEvent(data: unknown): PrismaJson.SessionMessageContent {
     } as PrismaJson.SessionMessageContent;
 }
 
-function divider(sidecar: unknown = { v: 1, fromAgentId: "claude", toAgentId: "codex" }) {
+function divider(sidecar: unknown = {
+    v: 1,
+    fromAgentId: "claude",
+    toAgentId: "codex",
+    sourceCutoffSeqInclusive: 29_979,
+}) {
     return {
         type: "message",
         message: SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
@@ -29,23 +34,42 @@ function divider(sidecar: unknown = { v: 1, fromAgentId: "claude", toAgentId: "c
  * survive this path.
  */
 describe("resolveMessageAttentionImpact — Agent-transition divider", () => {
+    const DIVIDER_LOCAL_ID = "agent-transition:local_01";
+
     it("inherits no user attention for a stored transition divider", () => {
-        expect(resolveMessageAttentionImpact({ content: storedAgentEvent(divider()) }))
-            .toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
+        expect(resolveMessageAttentionImpact({
+            content: storedAgentEvent(divider()),
+            localId: DIVIDER_LOCAL_ID,
+        })).toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
     });
 
     it("keeps an ordinary passthrough agent message attention-bearing", () => {
         expect(resolveMessageAttentionImpact({
             content: storedAgentEvent({ type: "message", message: "Context was reset" }),
+            localId: DIVIDER_LOCAL_ID,
         })).toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
+    });
+
+    it("does not silence a divider sidecar carried by an ordinary row", () => {
+        // The sidecar key is writable by anyone who can post an agent event, so
+        // the exemption must also require the reserved localId that only the
+        // owner-only cutover can produce.
+        for (const localId of ["local_01", "agent-transition", null]) {
+            expect(resolveMessageAttentionImpact({
+                content: storedAgentEvent(divider()),
+                localId,
+            }), String(localId)).toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
+        }
     });
 
     it("does not silence a malformed or unknown-version sidecar", () => {
         expect(resolveMessageAttentionImpact({
             content: storedAgentEvent(divider({ v: 2, fromAgentId: "claude", toAgentId: "codex" })),
+            localId: DIVIDER_LOCAL_ID,
         })).toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
         expect(resolveMessageAttentionImpact({
             content: storedAgentEvent(divider({ v: 1 })),
+            localId: DIVIDER_LOCAL_ID,
         })).toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
     });
 
@@ -56,6 +80,7 @@ describe("resolveMessageAttentionImpact — Agent-transition divider", () => {
     it("cannot re-derive attention for an opaque encrypted row and stays attention-bearing", () => {
         expect(resolveMessageAttentionImpact({
             content: { t: "encrypted", c: "opaque" } as PrismaJson.SessionMessageContent,
+            localId: DIVIDER_LOCAL_ID,
         })).toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
     });
 });

@@ -179,7 +179,7 @@ describe("plugin webhook endpoint lifecycle store", () => {
         })).rejects.toMatchObject({ code: "idempotency_conflict" } satisfies Partial<PluginWebhookEndpointStoreError>);
     });
 
-    it("classifies an existing source binding before generating retry identities", async () => {
+    it("classifies an existing source binding before generating endpoint identities", async () => {
         await seedAccount();
         await ensurePluginWebhookEndpointV1({
             accountId: ACCOUNT_ID,
@@ -204,7 +204,7 @@ describe("plugin webhook endpoint lifecycle store", () => {
         await expect(db.pluginWebhookEndpoint.count()).resolves.toBe(1);
     });
 
-    it("classifies an authorized duplicate shared installation before generating retry identities", async () => {
+    it("classifies an authorized duplicate shared installation before generating endpoint identities", async () => {
         await seedAccount();
         await seedSharedInstallationRoute();
         const first = ensureInput({
@@ -367,6 +367,7 @@ describe("plugin webhook endpoint lifecycle store", () => {
                     scopes: ["global"],
                     surfaces: ["plugin"],
                     dangerLevel: "safe",
+                    execution: { target: "daemon" },
                 }],
                 webhooks: [{
                     id: "github-events",

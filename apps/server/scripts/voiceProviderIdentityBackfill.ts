@@ -13,7 +13,7 @@ import {
     type DbProvider,
 } from "../sources/storage/db";
 import { resolveLightSqliteDatabaseUrl } from "../sources/flavors/light/env";
-import { expandHomeDirPath } from "../sources/utils/path/expandHomeDirPath";
+import { expandHomeDirPath } from "@happier-dev/cli-common/path";
 
 async function initializeDatabase(provider: DbProvider): Promise<void> {
     if (provider === "postgres") {

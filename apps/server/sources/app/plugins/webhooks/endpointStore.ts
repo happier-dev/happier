@@ -25,8 +25,6 @@ import { encryptPluginWebhookCredentialSecretV1 } from "./credentialCipher";
 import { createGeneratedPluginWebhookCredentialMaterialV1 } from "./credentialMaterial";
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
 
-const MAX_IDENTITY_COLLISION_ATTEMPTS_V1 = 4;
-
 export class PluginWebhookEndpointStoreError extends Error {
     constructor(readonly code:
         | "idempotency_conflict"
@@ -34,7 +32,6 @@ export class PluginWebhookEndpointStoreError extends Error {
         | "route_unavailable"
         | "source_conflict"
         | "installation_conflict"
-        | "identity_collision"
     ) {
         super(code);
         this.name = "PluginWebhookEndpointStoreError";
@@ -210,120 +207,115 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
 
     const randomBytes = params.randomBytes
         ?? ((length: number) => Uint8Array.from(nodeRandomBytes(length)));
-    for (let attempt = 0; attempt < MAX_IDENTITY_COLLISION_ATTEMPTS_V1; attempt += 1) {
-        const endpointId = PluginWebhookEndpointIdV1Schema.parse(formatPluginWebhookEndpointIdV1(randomBytes(16)));
-        const opaqueRouteId = `wh_route_${Buffer.from(randomBytes(16)).toString("base64url")}`;
-        const credential = params.contribution.routingKind === "accountEndpoint"
-            ? createGeneratedPluginWebhookCredentialMaterialV1({ randomBytes })
-            : null;
-        try {
-            return await inTx(async (tx) => {
-                const raced = await tx.pluginWebhookEndpoint.findFirst({
-                    where: { accountId: params.accountId, ensureIdempotencyKey: params.input.idempotencyKey },
-                    select: {
-                        id: true,
-                        revision: true,
-                        routingKind: true,
-                        ensureRequestFingerprint: true,
-                        route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true } },
-                    },
-                });
-                if (raced) return projectEnsureRejoin(raced, requestFingerprint, params.publicBaseUrl);
+    const endpointId = PluginWebhookEndpointIdV1Schema.parse(formatPluginWebhookEndpointIdV1(randomBytes(16)));
+    const opaqueRouteId = `wh_route_${Buffer.from(randomBytes(16)).toString("base64url")}`;
+    const credential = params.contribution.routingKind === "accountEndpoint"
+        ? createGeneratedPluginWebhookCredentialMaterialV1({ randomBytes })
+        : null;
+    try {
+        return await inTx(async (tx) => {
+            const raced = await tx.pluginWebhookEndpoint.findFirst({
+                where: { accountId: params.accountId, ensureIdempotencyKey: params.input.idempotencyKey },
+                select: {
+                    id: true,
+                    revision: true,
+                    routingKind: true,
+                    ensureRequestFingerprint: true,
+                    route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true } },
+                },
+            });
+            if (raced) return projectEnsureRejoin(raced, requestFingerprint, params.publicBaseUrl);
 
-                const route = params.contribution.routingKind === "accountEndpoint"
-                    ? await tx.pluginWebhookRoute.create({
-                        data: {
-                            opaqueRouteId,
-                            verifierKind: params.contribution.verifierKind,
-                            routingKind: params.contribution.routingKind,
-                        },
-                        select: { id: true, opaqueRouteId: true },
-                    })
-                    : await tx.pluginWebhookRoute.findFirst({
-                        where: {
-                            operatorPluginId: params.contribution.pluginId,
-                            operatorWebhookContributionId: params.contribution.localId,
-                            verifierKind: params.contribution.verifierKind,
-                            routingKind: params.contribution.routingKind,
-                            enabled: true,
-                            revokedAt: null,
-                            currentCredentialId: { not: null },
-                        },
-                        select: { id: true, opaqueRouteId: true },
-                    });
-                if (!route) throw new PluginWebhookEndpointStoreError("route_unavailable");
-
-                const endpoint = await tx.pluginWebhookEndpoint.create({
+            const route = params.contribution.routingKind === "accountEndpoint"
+                ? await tx.pluginWebhookRoute.create({
                     data: {
-                        id: endpointId,
-                        accountId: params.accountId,
-                        pluginId: params.contribution.pluginId,
-                        webhookContributionId: params.contribution.localId,
-                        handlerActionId: params.contribution.handlerActionLocalId,
-                        sourceInstanceId: params.input.sourceInstanceId,
-                        ensureIdempotencyKey: params.input.idempotencyKey,
-                        ensureRequestFingerprint: requestFingerprint,
-                        setupKind: params.input.setup.kind,
-                        routeId: route.id,
-                        routingKind: params.contribution.routingKind,
-                        providerInstallationId: params.input.setup.kind === "githubSharedInstallationV1"
-                            ? params.input.setup.installationId
-                            : null,
-                        targetMachineId: params.target.materialization.machineId,
-                        targetMachineInstallationId: params.target.machineInstallationId,
-                        targetMaterializationId: params.target.materialization.materializationId,
-                        targetPluginVersion: params.target.pluginVersion,
-                    },
-                    select: { id: true, revision: true },
-                });
-
-                if (credential) {
-                    const encryptedSecret = encryptPluginWebhookCredentialSecretV1({
-                        routeId: route.id,
+                        opaqueRouteId,
                         verifierKind: params.contribution.verifierKind,
-                        credentialVersionId: credential.credentialVersionId,
-                        secret: credential.secret,
-                    });
-                    const row = await tx.pluginWebhookCredential.create({
-                        data: {
-                            routeId: route.id,
-                            credentialVersionId: credential.credentialVersionId,
-                            verifierKind: params.contribution.verifierKind,
-                            encryptedSecret,
-                            state: "current",
-                        },
-                        select: { id: true },
-                    });
-                    await tx.pluginWebhookRoute.update({
-                        where: { id: route.id },
-                        data: { currentCredentialId: row.id, accountEndpointId: endpoint.id },
-                    });
-                }
-                await markPluginWebhookAccountChangedInTxV1(tx, {
+                        routingKind: params.contribution.routingKind,
+                    },
+                    select: { id: true, opaqueRouteId: true },
+                })
+                : await tx.pluginWebhookRoute.findFirst({
+                    where: {
+                        operatorPluginId: params.contribution.pluginId,
+                        operatorWebhookContributionId: params.contribution.localId,
+                        verifierKind: params.contribution.verifierKind,
+                        routingKind: params.contribution.routingKind,
+                        enabled: true,
+                        revokedAt: null,
+                        currentCredentialId: { not: null },
+                    },
+                    select: { id: true, opaqueRouteId: true },
+                });
+            if (!route) throw new PluginWebhookEndpointStoreError("route_unavailable");
+
+            const endpoint = await tx.pluginWebhookEndpoint.create({
+                data: {
+                    id: endpointId,
                     accountId: params.accountId,
                     pluginId: params.contribution.pluginId,
-                });
-                return PluginWebhookEndpointEnsureResultV1Schema.parse({
-                    webhookEndpointId: endpoint.id,
-                    revision: endpoint.revision,
-                    publicUrl: formatPluginWebhookEndpointPublicUrlV1(params.publicBaseUrl, route.opaqueRouteId),
-                    readiness: credential ? "providerConfirmationRequired" : "ready",
-                    ...(credential ? { oneTimeGeneratedSecret: credential.secret } : {}),
-                });
+                    webhookContributionId: params.contribution.localId,
+                    handlerActionId: params.contribution.handlerActionLocalId,
+                    sourceInstanceId: params.input.sourceInstanceId,
+                    ensureIdempotencyKey: params.input.idempotencyKey,
+                    ensureRequestFingerprint: requestFingerprint,
+                    setupKind: params.input.setup.kind,
+                    routeId: route.id,
+                    routingKind: params.contribution.routingKind,
+                    providerInstallationId: params.input.setup.kind === "githubSharedInstallationV1"
+                        ? params.input.setup.installationId
+                        : null,
+                    targetMachineId: params.target.materialization.machineId,
+                    targetMachineInstallationId: params.target.machineInstallationId,
+                    targetMaterializationId: params.target.materialization.materializationId,
+                    targetPluginVersion: params.target.pluginVersion,
+                },
+                select: { id: true, revision: true },
             });
-        } catch (error) {
-            if (error instanceof PluginWebhookEndpointStoreError) throw error;
-            if (!isPrismaErrorCode(error, "P2002")) throw error;
-            const raced = await readEnsureIdempotencyV1(params.accountId, params.input.idempotencyKey);
-            if (raced) return projectEnsureRejoin(raced, requestFingerprint, params.publicBaseUrl);
-            const deterministicConflict = await readEnsureDeterministicConflictV1(params);
-            if (deterministicConflict) throw new PluginWebhookEndpointStoreError(deterministicConflict);
-            if (attempt + 1 === MAX_IDENTITY_COLLISION_ATTEMPTS_V1) {
-                throw new PluginWebhookEndpointStoreError("identity_collision");
+
+            if (credential) {
+                const encryptedSecret = encryptPluginWebhookCredentialSecretV1({
+                    routeId: route.id,
+                    verifierKind: params.contribution.verifierKind,
+                    credentialVersionId: credential.credentialVersionId,
+                    secret: credential.secret,
+                });
+                const row = await tx.pluginWebhookCredential.create({
+                    data: {
+                        routeId: route.id,
+                        credentialVersionId: credential.credentialVersionId,
+                        verifierKind: params.contribution.verifierKind,
+                        encryptedSecret,
+                        state: "current",
+                    },
+                    select: { id: true },
+                });
+                await tx.pluginWebhookRoute.update({
+                    where: { id: route.id },
+                    data: { currentCredentialId: row.id, accountEndpointId: endpoint.id },
+                });
             }
-        }
+            await markPluginWebhookAccountChangedInTxV1(tx, {
+                accountId: params.accountId,
+                pluginId: params.contribution.pluginId,
+            });
+            return PluginWebhookEndpointEnsureResultV1Schema.parse({
+                webhookEndpointId: endpoint.id,
+                revision: endpoint.revision,
+                publicUrl: formatPluginWebhookEndpointPublicUrlV1(params.publicBaseUrl, route.opaqueRouteId),
+                readiness: credential ? "providerConfirmationRequired" : "ready",
+                ...(credential ? { oneTimeGeneratedSecret: credential.secret } : {}),
+            });
+        });
+    } catch (error) {
+        if (error instanceof PluginWebhookEndpointStoreError) throw error;
+        if (!isPrismaErrorCode(error, "P2002")) throw error;
+        const raced = await readEnsureIdempotencyV1(params.accountId, params.input.idempotencyKey);
+        if (raced) return projectEnsureRejoin(raced, requestFingerprint, params.publicBaseUrl);
+        const deterministicConflict = await readEnsureDeterministicConflictV1(params);
+        if (deterministicConflict) throw new PluginWebhookEndpointStoreError(deterministicConflict);
+        throw error;
     }
-    throw new PluginWebhookEndpointStoreError("identity_collision");
 }
 
 export async function readPluginWebhookEndpointV1(params: Readonly<{

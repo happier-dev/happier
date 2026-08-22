@@ -2021,9 +2021,19 @@ describe("sessionWriteService", () => {
 
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique
+                // `ensureSessionEditAccess` reads the activity-badge inputs, so the
+                // pre-write badge contribution is derived from THIS row.
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     shares: [{ sharedWithUserId: "u2" }],
+                    currentStorageState: "hosted",
+                    seq: 9,
+                    lastViewedSessionSeq: 9,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
                 })
                 .mockResolvedValueOnce({
                     accountId: "u1",
@@ -6085,7 +6095,10 @@ describe("sessionWriteService", () => {
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
+                    ...hostedTranscriptPublication(),
                 })
+                // `markSessionParticipantsChanged` loads the publication again through
+                // `loadSessionTranscriptPublication`; it is a second read, not the badge row.
                 .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
@@ -6124,7 +6137,10 @@ describe("sessionWriteService", () => {
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
+                    ...hostedTranscriptPublication(),
                 })
+                // `markSessionParticipantsChanged` loads the publication again through
+                // `loadSessionTranscriptPublication`; it is a second read, not the badge row.
                 .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
@@ -6163,7 +6179,11 @@ describe("sessionWriteService", () => {
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
-                });
+                    ...hostedTranscriptPublication(),
+                })
+                // `markSessionParticipantsChanged` loads the publication again through
+                // `loadSessionTranscriptPublication`; it is a second read, not the badge row.
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
@@ -6201,6 +6221,7 @@ describe("sessionWriteService", () => {
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
+                    ...hostedTranscriptPublication(),
                 });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
 
@@ -6371,7 +6392,9 @@ describe("sessionWriteService", () => {
                     sidechainId: null,
                     id: { in: ["m10", "m9", "m8", "m7"] },
                 },
-                select: { id: true, content: true },
+                // The unread scan reads each row's localId so the divider attention
+                // exemption is answered by the reserved-localId namespace, not the sidecar alone.
+                select: { id: true, content: true, localId: true },
             });
             expect(finalTx.session.updateMany).toHaveBeenCalledWith({
                 where: {
@@ -6725,7 +6748,10 @@ describe("sessionWriteService", () => {
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
+                    ...hostedTranscriptPublication(),
                 })
+                // `markSessionParticipantsChanged` loads the publication again through
+                // `loadSessionTranscriptPublication`; it is a second read, not the badge row.
                 .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });

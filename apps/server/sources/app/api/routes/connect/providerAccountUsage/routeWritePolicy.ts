@@ -253,6 +253,8 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
         if (!incomingFingerprint) {
             if (!isNewer) return "stale";
             nextWrite = buildWriteParams(params, {
+                legacyQuotaCompatibilityProjections:
+                    nextLegacyQuotaProjections,
                 ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
             });
             result = "written";

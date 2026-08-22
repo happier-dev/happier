@@ -95,6 +95,7 @@ describe("plugin webhook unresolved Automation native database contract", () => 
                     scopes: ["global"],
                     surfaces: ["plugin"],
                     dangerLevel: "safe",
+                    execution: { target: "daemon" },
                 }],
                 webhooks: [{
                     id: "github-events",

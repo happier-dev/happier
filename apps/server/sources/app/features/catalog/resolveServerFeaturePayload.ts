@@ -1,3 +1,4 @@
+import { isSessionTurnTranscriptAnchorProjectionProtocolActive } from "@/app/session/turns/sessionTurnTranscriptAnchorProjectionProtocolContract";
 import { featuresSchema, type FeaturesResponse } from '../types';
 import {
     applyFeatureDependencies,
@@ -83,7 +84,17 @@ export function resolveServerFeaturePayload(
             },
         }));
     }
-    Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, { session: { messages: { role: true } } }));
+    // `turns` is advertised only while the transcript anchor projection is active: before that,
+    // `SessionTurn` rows may still be v0 and their anchors cannot be trusted to describe turn
+    // boundaries, so the route would have nothing sound to serve.
+    Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, {
+        session: {
+            messages: {
+                role: true,
+                turns: isSessionTurnTranscriptAnchorProjectionProtocolActive(),
+            },
+        },
+    }));
     if (isSessionSystemRecordsProtocolV1Active()) {
         Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, {
             session: { systemRecords: { protocolVersions: [1] } },

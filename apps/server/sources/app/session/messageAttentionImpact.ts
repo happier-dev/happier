@@ -8,6 +8,13 @@ import {
 
 export function resolveMessageAttentionImpact(params: Readonly<{
     content: PrismaJson.SessionMessageContent;
+    /**
+     * The row's local id. Required, because the Agent-transition divider's
+     * attention exemption is only trustworthy when the reserved localId
+     * namespace — which every generic ingress refuses — backs the sidecar.
+     * `null` for a row that genuinely has none.
+     */
+    localId: string | null;
     explicitAttentionImpact?: SessionMessageAttentionImpact;
 }>): SessionMessageAttentionImpact {
     if (params.explicitAttentionImpact) return params.explicitAttentionImpact;
@@ -17,5 +24,7 @@ export function resolveMessageAttentionImpact(params: Readonly<{
         return SESSION_MESSAGE_USER_ATTENTION_IMPACT;
     }
     const event = TranscriptRawAgentEventV1Schema.safeParse(record.data.content.data);
-    return event.success ? agentEventAttentionImpact(event.data) : SESSION_MESSAGE_USER_ATTENTION_IMPACT;
+    return event.success
+        ? agentEventAttentionImpact(event.data, params.localId)
+        : SESSION_MESSAGE_USER_ATTENTION_IMPACT;
 }

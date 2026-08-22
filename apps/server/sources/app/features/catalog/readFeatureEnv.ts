@@ -26,6 +26,7 @@ import {
   MACHINE_TUNNEL_SERVER_ROUTED_MAX_SUBSTREAMS_HARD_MAX,
   MachineLiveStreamRelayCapsV1Schema,
   LocalServicePublicExposureModeV1Schema,
+  PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
   PLUGIN_COLLECTION_LIMITS_V1,
   PluginDataCollectionsCapabilitiesSchema,
   normalizeMachineTunnelAllowedPorts,
@@ -801,13 +802,13 @@ function readWebhookIngressPolicyV1(env: NodeJS.ProcessEnv): WebhookIngressPolic
   });
 }
 
-const DEFAULT_PLUGIN_DATA_COLLECTIONS_LIMITS: PluginDataCollectionsCapabilities = Object.freeze({
-  maxRowEncodedBytes: 512 * 1024,
-  maxBatchBytes: 16 * 1024 * 1024,
-  maxBatchRows: 100,
-  maxAccountRows: 10_000,
-  maxAccountBytes: 256 * 1024 * 1024,
-});
+/**
+ * The shipped deployment policy is protocol-owned so a client that has not yet
+ * read this deployment's published capability assumes the same numbers this
+ * server would enforce.
+ */
+const DEFAULT_PLUGIN_DATA_COLLECTIONS_LIMITS: PluginDataCollectionsCapabilities =
+  PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1;
 
 function readCollectionDeploymentPositiveInt(input: Readonly<{
   env: NodeJS.ProcessEnv;

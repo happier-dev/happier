@@ -22,7 +22,7 @@ import type { Tx } from "@/storage/inTx";
 import {
     findPluginCollectionActivationQuotaIncompatibility,
     PluginCollectionQuotaCensusInconsistencyError,
-    readPluginCollectionAccountUsageInTx,
+    readPluginCollectionAccountActivationUsageInTx,
     readPluginCollectionPrefixQuotaUsageInTx,
     type PluginCollectionQuotaIncompatibility,
     type PluginCollectionPrefixQuotaUsage,
@@ -437,9 +437,10 @@ export async function preparePluginCollectionWritableContractsTx(input: Readonly
 
     let usage;
     try {
-        usage = await readPluginCollectionAccountUsageInTx({
+        usage = await readPluginCollectionAccountActivationUsageInTx({
             tx: input.tx,
             accountId: input.accountId,
+            deployment: readPluginsFeatureEnv(process.env).collectionLimits,
         });
     } catch (error) {
         if (error instanceof PluginCollectionQuotaCensusInconsistencyError) {

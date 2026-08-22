@@ -34,6 +34,11 @@ const TRIGGER_DEFINITION_MATERIAL = {
     machineKey: new Uint8Array(32).fill(9),
 };
 
+const CONVERSATION_OWNER_REF = {
+    pluginId: "happier.channels",
+    localId: "provider/observation-ingest-v1",
+} as const;
+
 function buildTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     templateVersion: number;
@@ -69,7 +74,7 @@ function buildTriggerDefinitionEnvelope(params: Readonly<{
             filter: null,
             maximumObservationAgeMs: null,
         }
-        : { v: 1, bindingId: "migration-conversation" };
+        : { v: 1, bindingId: "migration-conversation", owner: CONVERSATION_OWNER_REF };
     return JSON.stringify(params.mode === "plain"
         ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
             mode: "plain",

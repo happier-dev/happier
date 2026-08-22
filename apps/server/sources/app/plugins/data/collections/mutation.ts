@@ -631,12 +631,13 @@ async function resolveWritableCollectionInTx(input: Readonly<{
     };
 }
 
-export async function resolveDerivedCollectionInTx(input: Readonly<{
+async function resolveDerivedCollectionWithExpectedBuildStateInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
     encryptionMode: "plain" | "e2ee";
     contractId: string;
     contract: NormalizedPluginAccountCollectionContractV1;
+    expectedBuildState: "building" | "ready";
 }>): Promise<ResolvedWritableCollection> {
     const indexStates = await input.tx.pluginCollectionIndexState.findMany({
         where: {
@@ -661,8 +662,12 @@ export async function resolveDerivedCollectionInTx(input: Readonly<{
             !state
             || state.contractId !== input.contractId
             || state.contractDigest !== input.contract.contractDigest
-            || state.buildState !== "ready"
-            || state.indexedThroughRevision === null
+            || state.buildState !== input.expectedBuildState
+            || (
+                input.expectedBuildState === "ready"
+                    ? state.indexedThroughRevision === null
+                    : state.indexedThroughRevision !== null
+            )
         ) {
             throw new PluginCollectionMutationOperationError("collection_index_not_ready");
         }
@@ -673,6 +678,19 @@ export async function resolveDerivedCollectionInTx(input: Readonly<{
         contract: input.contract,
         indexStates,
     };
+}
+
+export async function resolveDerivedCollectionInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    encryptionMode: "plain" | "e2ee";
+    contractId: string;
+    contract: NormalizedPluginAccountCollectionContractV1;
+}>): Promise<ResolvedWritableCollection> {
+    return await resolveDerivedCollectionWithExpectedBuildStateInTx({
+        ...input,
+        expectedBuildState: "ready",
+    });
 }
 
 /**
@@ -705,8 +723,8 @@ export async function preparePluginCollectionDerivedStateForPromotionInTx(input:
                     data: {
                         ...identity,
                         contractId: input.contractId,
-                        buildState: "ready",
-                        indexedThroughRevision: 0,
+                        buildState: "building",
+                        indexedThroughRevision: null,
                     },
                     select: { id: true, contractId: true },
                 });
@@ -721,13 +739,107 @@ export async function preparePluginCollectionDerivedStateForPromotionInTx(input:
         if (!state || state.contractId !== input.contractId) {
             throw new PluginCollectionMutationOperationError("collection_contract_inconsistent");
         }
-        await input.tx.pluginCollectionIndexEntry.deleteMany({ where: { indexStateId: state.id } });
         await input.tx.pluginCollectionIndexState.update({
             where: { id: state.id },
-            data: { buildState: "ready", indexedThroughRevision: 0 },
+            data: { buildState: "building", indexedThroughRevision: null },
         });
+        await input.tx.pluginCollectionIndexEntry.deleteMany({ where: { indexStateId: state.id } });
     }
-    return await resolveDerivedCollectionInTx(input);
+    return await resolveDerivedCollectionWithExpectedBuildStateInTx({
+        ...input,
+        expectedBuildState: "building",
+    });
+}
+
+/**
+ * Finishes the target index build inside the Availability promotion transaction.
+ * The target contract is not publishable until every live row is at the exact
+ * target contract and has one current entry for each declared target index.
+ */
+export async function finalizePluginCollectionDerivedStateForPromotionInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    resolved: ResolvedWritableCollection;
+}>): Promise<void> {
+    const statesByIndex = new Map(input.resolved.indexStates.map((state) => [state.indexId, state]));
+    const states = input.resolved.contract.indexes.map((index) => {
+        const state = statesByIndex.get(index.id);
+        if (
+            !state
+            || state.contractId !== input.resolved.contractId
+            || state.contractDigest !== input.resolved.contract.contractDigest
+            || state.buildState !== "building"
+            || state.indexedThroughRevision !== null
+        ) {
+            throw new PluginCollectionMutationOperationError("collection_index_not_ready");
+        }
+        return state;
+    });
+    if (states.length === 0) return;
+
+    const liveRows = await input.tx.pluginCollectionRow.findMany({
+        where: {
+            accountId: input.accountId,
+            pluginId: input.resolved.contract.pluginId,
+            collectionId: input.resolved.contract.collectionId,
+            deletedAt: null,
+        },
+        select: {
+            rowId: true,
+            revision: true,
+            contractId: true,
+            contractDigest: true,
+            schemaVersion: true,
+        },
+    });
+    const rowsById = new Map(liveRows.map((row) => [row.rowId, row]));
+    if (
+        rowsById.size !== liveRows.length
+        || liveRows.some((row) => (
+            row.contractId !== input.resolved.contractId
+            || row.contractDigest !== input.resolved.contract.contractDigest
+            || row.schemaVersion !== input.resolved.contract.schemaVersion
+        ))
+    ) {
+        throw new PluginCollectionMutationOperationError("collection_index_not_ready");
+    }
+
+    const entries = await input.tx.pluginCollectionIndexEntry.findMany({
+        where: { indexStateId: { in: states.map((state) => state.id) } },
+        select: { indexStateId: true, rowId: true, rowRevision: true },
+    });
+    const entriesByState = new Map<string, Map<string, number>>();
+    for (const entry of entries) {
+        const entriesByRowId = entriesByState.get(entry.indexStateId) ?? new Map<string, number>();
+        if (entriesByRowId.has(entry.rowId)) {
+            throw new PluginCollectionMutationOperationError("collection_index_not_ready");
+        }
+        entriesByRowId.set(entry.rowId, entry.rowRevision);
+        entriesByState.set(entry.indexStateId, entriesByRowId);
+    }
+    for (const state of states) {
+        const entriesByRowId = entriesByState.get(state.id);
+        if (
+            !entriesByRowId
+            || entriesByRowId.size !== rowsById.size
+            || [...rowsById.values()].some((row) => entriesByRowId.get(row.rowId) !== row.revision)
+        ) {
+            throw new PluginCollectionMutationOperationError("collection_index_not_ready");
+        }
+    }
+
+    const indexedThroughRevision = Math.max(0, ...liveRows.map((row) => row.revision));
+    const finalized = await input.tx.pluginCollectionIndexState.updateMany({
+        where: {
+            id: { in: states.map((state) => state.id) },
+            buildState: "building",
+            indexedThroughRevision: null,
+        },
+        data: { buildState: "ready", indexedThroughRevision },
+    });
+    if (finalized.count !== states.length) {
+        throw new PluginCollectionMutationOperationError("collection_index_not_ready");
+    }
 }
 
 function conflictFor(input: Readonly<{
@@ -1490,6 +1602,7 @@ async function mutatePluginCollectionInTx(input: Readonly<{
         beforeQuotaUsage = await readPluginCollectionAccountUsageInTx({
             tx: input.tx,
             accountId: input.accountId,
+            deployment: input.deployment,
         });
         beforeQuotaPolicies = collectPluginCollectionQuotaPolicies({
             usages: [beforeQuotaUsage],
@@ -1665,6 +1778,7 @@ async function mutatePluginCollectionInTx(input: Readonly<{
         afterQuotaUsage = await readPluginCollectionAccountUsageInTx({
             tx: input.tx,
             accountId: input.accountId,
+            deployment: input.deployment,
         });
         afterQuotaPolicies = collectPluginCollectionQuotaPolicies({
             usages: [beforeQuotaUsage, afterQuotaUsage],

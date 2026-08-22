@@ -45,6 +45,10 @@ import {
 import { parseStoredSessionTurns } from "@/app/session/turns/parseSessionTurnState";
 import { isSessionTurnTranscriptAnchorProjectionCurrent } from "@/app/session/turns/sessionTurnTranscriptAnchorProjection";
 import { isSessionTurnTranscriptAnchorProjectionProtocolActive } from "@/app/session/turns/sessionTurnTranscriptAnchorProjectionProtocolContract";
+import {
+    resolveSessionTurnProjectionSeqs,
+    type SessionTurnProjectionSeqs,
+} from "./resolveSessionTurnProjectionSeqs";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { buildCurrentSessionParticipantWhere, checkSessionAccess } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
@@ -381,7 +385,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 afterSeq: z.coerce.number().int().min(0).optional(),
                 role: SessionMessageRoleSchema.optional(),
                 roles: z.string().optional(),
-                projection: z.literal("externalShareableV1").optional(),
+                projection: z.enum(["externalShareableV1", "turns"]).optional(),
             }).superRefine((value, ctx) => {
                 if (value.beforeSeq !== undefined && value.afterSeq !== undefined) {
                     ctx.addIssue({
@@ -393,6 +397,20 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     ctx.addIssue({
                         code: z.ZodIssueCode.custom,
                         message: "sidechainId is required when scope=sidechain",
+                    });
+                }
+                if (value.projection === "turns" && value.afterSeq !== undefined) {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: "projection=turns pages backwards only",
+                    });
+                }
+                if (value.projection === "turns" && value.scope === "all") {
+                    // A turn is an ordering within ONE chain; interleaving chains would pair a
+                    // prompt with a reply from a different conversation.
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: "projection=turns requires a single chain scope",
                     });
                 }
                 if (
@@ -437,6 +455,11 @@ export function registerSessionMessageRoutes(app: Fastify) {
               }>
             | undefined;
         const externalShareableProjection = query?.projection === "externalShareableV1";
+        // Served from the MATERIALISED turn anchors, and only once the anchor projection has
+        // been operator-activated — before that, `SessionTurn` rows may still be v0 and their
+        // anchors cannot be trusted to describe turn boundaries.
+        const turnProjection = query?.projection === "turns"
+            && isSessionTurnTranscriptAnchorProjectionProtocolActive();
         const { beforeSeq, afterSeq } = query ?? {};
         const limit = query?.limit ?? (externalShareableProjection
             ? EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1
@@ -482,9 +505,39 @@ export function registerSessionMessageRoutes(app: Fastify) {
             publicationBlocked,
             externalShareableSnapshot,
             currentlyAccessible,
+            turnProjectionNextBeforeSeq,
         } = await inTx(async (tx) => {
             const publication = await loadSessionTranscriptPublication(tx, sessionId);
             const currentParticipantWhere = buildCurrentSessionParticipantWhere({ userId, sessionId });
+
+            // TURN PROJECTION: each prompt plus that turn's final reply, read from the anchors
+            // `SessionTurn` already materialises. Constraining `where` HERE (rather than
+            // querying messages directly) is what keeps the publication filter below applying
+            // to this projection exactly as it does to an ordinary page.
+            let turnProjectionPaging: SessionTurnProjectionSeqs | null = null;
+            if (turnProjection) {
+                const turnRows = await tx.sessionTurn.findMany({
+                    where: {
+                        sessionId,
+                        session: currentParticipantWhere,
+                        transcriptAnchorProjectionVersion: 1,
+                        ...(beforeSeq !== undefined
+                            ? { transcriptAnchorMinSeq: { lt: beforeSeq } }
+                            : {}),
+                    },
+                    // Uses SessionTurn_transcript_anchor_range_idx.
+                    orderBy: { transcriptAnchorMaxSeq: 'desc' },
+                    // One extra turn so `hasMore` is observed rather than guessed.
+                    take: limit + 1,
+                    select: {
+                        transcriptAnchorsJson: true,
+                        transcriptAnchorMinSeq: true,
+                        transcriptAnchorMaxSeq: true,
+                    },
+                });
+                turnProjectionPaging = resolveSessionTurnProjectionSeqs({ turnRows, turnLimit: limit });
+                where.seq = { in: [...turnProjectionPaging.seqs] };
+            }
             const publicationWhere = externalShareableProjection
                 ? buildShareableSessionMessagePublicationWhere({
                     where,
@@ -501,7 +554,9 @@ export function registerSessionMessageRoutes(app: Fastify) {
             const fetchedMessages = await tx.sessionMessage.findMany({
                 where: publicationWhere,
                 orderBy: { seq: afterSeq !== undefined ? 'asc' : 'desc' },
-                take: limit + 1,
+                // The turn projection is already bounded by the seq set it resolved; a row take
+                // would truncate a turn's reply away from its prompt.
+                ...(turnProjectionPaging === null ? { take: limit + 1 } : {}),
                 select: {
                     id: true,
                     seq: true,
@@ -518,8 +573,12 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     inputAdmissionReceipt: true,
                 },
             });
-            const hasMore = fetchedMessages.length > limit;
-            const messages = hasMore ? fetchedMessages.slice(0, limit) : fetchedMessages;
+            const hasMore = turnProjectionPaging !== null
+                ? turnProjectionPaging.hasMore
+                : fetchedMessages.length > limit;
+            const messages = turnProjectionPaging !== null
+                ? fetchedMessages
+                : hasMore ? fetchedMessages.slice(0, limit) : fetchedMessages;
             let externalShareableSnapshot: ReturnType<typeof ExternalShareableTranscriptSnapshotV1Schema.parse> | undefined;
             let turnSettlementBlockedFromSeq: number | null = null;
             let publicationBlockedFromSeq: number | null = null;
@@ -690,6 +749,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     && isSessionTranscriptPublicationBlocked(publication),
                 externalShareableSnapshot,
                 currentlyAccessible: (await checkSessionAccess(userId, sessionId, tx)) !== null,
+                turnProjectionNextBeforeSeq: turnProjectionPaging?.nextBeforeSeq ?? null,
             };
         });
         if (!currentlyAccessible) {
@@ -712,9 +772,13 @@ export function registerSessionMessageRoutes(app: Fastify) {
         const nextBeforeSeq =
             afterSeq !== undefined
                 ? null
-                : hasMore && resultMessages.length > 0
-                    ? resultMessages[resultMessages.length - 1].seq
-                    : null;
+                // The turn projection pages by TURN, so its cursor is the oldest prompt kept —
+                // the last ROW returned is a reply, and paging below that would skip its prompt.
+                : turnProjection
+                    ? turnProjectionNextBeforeSeq
+                    : hasMore && resultMessages.length > 0
+                        ? resultMessages[resultMessages.length - 1].seq
+                        : null;
 
         const nextAfterSeq =
             afterSeq !== undefined

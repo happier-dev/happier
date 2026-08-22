@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDbMocks, createDbTransactionMock, installDbModuleMock } from '../../api/testkit/dbMocks';
 import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
@@ -24,7 +24,20 @@ dbMocks.db.account.updateMany.mockImplementation((...args: any[]) => updateMany(
 
 installDbModuleMock({ db: dbTransactionMock.wrapDb(dbMocks.db) });
 
+let retentionRule: typeof import('./accountChangeRetentionRule');
+
 describe('accountChangeRetentionRule', () => {
+    // `installDbModuleMock` uses `vi.doMock`, which is not hoisted, so the rule
+    // can only be imported after the mocks are registered. That first import
+    // pulls `@/storage/prisma` — and with it the PGlite/Prisma client graph —
+    // which measured 24.2 s and 26.1 s on this host against the unit suite's
+    // 20 s `testTimeout`. The cost is paid once for the whole file, so it is
+    // loaded here, sized from that measurement, instead of being charged to
+    // whichever test happens to run first.
+    beforeAll(async () => {
+        retentionRule = await import('./accountChangeRetentionRule');
+    }, 120_000);
+
     beforeEach(() => {
         applyEnvValues({
             HAPPY_DB_PROVIDER: undefined,
@@ -49,7 +62,7 @@ describe('accountChangeRetentionRule', () => {
             .mockResolvedValueOnce({ count: 0 });
         updateMany.mockResolvedValueOnce({ count: 1 });
 
-        const { runAccountChangeRetentionRule } = await import('./accountChangeRetentionRule');
+        const { runAccountChangeRetentionRule } = retentionRule;
         const result = await runAccountChangeRetentionRule({
             cutoff: new Date('2025-01-01T00:00:00.000Z'),
             batchSize: 10,
@@ -98,7 +111,7 @@ describe('accountChangeRetentionRule', () => {
             { accountId: 'owner-a', kind: 'session', entityId: 'a-12', cursor: 12 },
         ]);
 
-        const { runAccountChangeRetentionRule } = await import('./accountChangeRetentionRule');
+        const { runAccountChangeRetentionRule } = retentionRule;
         const result = await runAccountChangeRetentionRule({
             cutoff: new Date('2025-01-01T00:00:00.000Z'),
             batchSize: 2,

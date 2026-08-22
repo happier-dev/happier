@@ -1,4 +1,5 @@
 import {
+    SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS,
     SESSION_ORGANIZATION_MAX_FOLDERS,
     SESSION_ORGANIZATION_MAX_LABELS,
     SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
@@ -12,6 +13,7 @@ import {
     type ImportLegacySessionOrganizationResponse,
     type MoveSessionFolderAssignmentsResponse,
     type ReorderSessionOrganizationRequest,
+    type SetSessionAttentionStandingRequest,
     type SetSessionPinRequest,
     type SetSessionTagAssignmentsRequest,
     type UpsertSessionOrganizationLabelRequest,
@@ -36,6 +38,7 @@ import {
 } from "./changes";
 import { hashSessionOrganizationKey } from "./hashKeys";
 import {
+    mapSessionAttentionStanding,
     mapSessionOrganizationFolder,
     mapSessionOrganizationLabel,
     mapSessionOrganizationPin,
@@ -354,6 +357,86 @@ export async function setSessionPin(params: Readonly<{
     request: SetSessionPinRequest;
 }>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded" | "session-not-found" }> {
     return await inTx(async (tx) => await setSessionPinInTx(tx, params));
+}
+
+/**
+ * Writes the account-scoped attention standing override for one session.
+ *
+ * `standing: null` clears the override so the account default applies again; that clear path
+ * deliberately skips the visibility guard (mirroring pin removal) so an account can always drop
+ * state it owns, even for a session that is no longer visible or has been archived.
+ */
+export async function setSessionAttentionStandingInTx(tx: SessionOrganizationTx, params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    request: SetSessionAttentionStandingRequest;
+}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" | "session-attention-standing-limit-exceeded" }> {
+    if (params.request.standing === null) {
+        await tx.sessionAttentionStanding.deleteMany({
+            where: { accountId: params.accountId, sessionId: params.sessionId },
+        });
+        await markSessionOrganizationChanged(tx, {
+            accountId: params.accountId,
+            scope: "attentionStandings",
+            sessionIds: [params.sessionId],
+        });
+        return { standing: null };
+    }
+
+    const visible = await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, {
+        accountId: params.accountId,
+        sessionId: params.sessionId,
+    });
+    if (!visible) {
+        return { error: "session-not-found" };
+    }
+
+    // Bound the collection at its writer, the way the pin limit is enforced, so the snapshot's
+    // `.max()` can never reject a whole organization payload that this account was allowed to store.
+    // Only a row that does not exist yet grows it; overwriting an existing standing is always allowed
+    // so a user at the bound can still flip a session they already declared.
+    const existingStanding = await tx.sessionAttentionStanding.findUnique({
+        where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+        select: { id: true },
+    });
+    if (!existingStanding) {
+        const standingCount = await tx.sessionAttentionStanding.count({
+            where: {
+                accountId: params.accountId,
+                session: createVisibleUnarchivedOrganizationSessionWhere(params.accountId),
+            },
+        });
+        if (standingCount >= SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS) {
+            return { error: "session-attention-standing-limit-exceeded" };
+        }
+    }
+
+    const standing = await tx.sessionAttentionStanding.upsert({
+        where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+        create: {
+            accountId: params.accountId,
+            sessionId: params.sessionId,
+            standing: params.request.standing,
+        },
+        update: { standing: params.request.standing },
+        select: { sessionId: true, standing: true, updatedAt: true },
+    });
+
+    await markSessionOrganizationChanged(tx, {
+        accountId: params.accountId,
+        scope: "attentionStandings",
+        sessionIds: [params.sessionId],
+    });
+
+    return { standing: mapSessionAttentionStanding(standing) };
+}
+
+export async function setSessionAttentionStanding(params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    request: SetSessionAttentionStandingRequest;
+}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" | "session-attention-standing-limit-exceeded" }> {
+    return await inTx(async (tx) => await setSessionAttentionStandingInTx(tx, params));
 }
 
 export async function upsertSessionOrganizationFolderInTx(tx: SessionOrganizationTx, params: Readonly<{

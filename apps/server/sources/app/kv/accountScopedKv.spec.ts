@@ -6,6 +6,7 @@ import {
     buildPluginAccountStoragePhysicalKey,
     buildPluginDeclarativeSettingsPhysicalKey,
     classifyAccountScopedKvKey,
+    decodeAccountScopedKvJson,
 } from "./accountScopedKv";
 
 describe("AccountScopedKv namespace classifier", () => {
@@ -57,5 +58,15 @@ describe("AccountScopedKv namespace classifier", () => {
         expect(() => assertPublicGenericKvKey(malformed)).toThrow(
             AccountScopedKvReservedKeyError,
         );
+    });
+
+    it("does not normalize a byte-order mark into an unsupported stored JSON representation", () => {
+        expect(() => decodeAccountScopedKvJson(Uint8Array.from([
+            0xef,
+            0xbb,
+            0xbf,
+            0x7b,
+            0x7d,
+        ]))).toThrow();
     });
 });

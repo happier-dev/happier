@@ -17,8 +17,12 @@ import {
     type AutomationEventCallerV1,
 } from "./automationEventCurrentness";
 
-export const AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1 = "happier.channels";
-
+/**
+ * Any plugin may bind a conversation to an Automation the Account owns, so the
+ * only caller question left here is whether the host-stamped materialization is
+ * still current for this Account. Which plugin is asking is not an authority
+ * input; the ActionSpec declaration and its executor own that decision.
+ */
 export class AutomationConversationTargetVerificationCallerError extends Error {
     constructor() {
         super("automation_conversation_target_caller_not_current");
@@ -48,18 +52,19 @@ function readAutomationConversationTargetLabel(row: Readonly<{ id: string; name:
 }
 
 /**
- * Side-effect-free target verification for Channels persistence. Automation
- * storage and plugin-materialization currentness remain at their incumbent
- * owners; this projection returns no definition bytes or replacement version.
+ * Side-effect-free target verification for conversation-binding persistence.
+ * A conversation binding is an additional invocation source for an Automation
+ * the Account already owns, so every current Automation is a valid target
+ * whatever its primary trigger, and several bindings may name the same one.
+ * Automation storage and plugin-materialization currentness remain at their
+ * incumbent owners; this projection returns no definition bytes or replacement
+ * version.
  */
 export async function verifyAutomationConversationTargetV1(params: Readonly<{
     accountId: string;
     caller: AutomationEventCallerV1;
     input: unknown;
 }>): Promise<AutomationConversationTargetVerifyResultV1> {
-    if (params.caller.pluginId !== AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1) {
-        throw new AutomationConversationTargetVerificationCallerError();
-    }
     const input = AutomationConversationTargetVerifyInputV1Schema.parse(params.input);
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
 
@@ -79,12 +84,6 @@ export async function verifyAutomationConversationTargetV1(params: Readonly<{
             return AutomationConversationTargetVerifyResultV1Schema.parse({
                 kind: "notVerified",
                 reason: "notFound",
-            });
-        }
-        if (automation.triggerKind !== "conversation") {
-            return AutomationConversationTargetVerifyResultV1Schema.parse({
-                kind: "notVerified",
-                reason: "notConversation",
             });
         }
         if (automation.templateVersion !== input.expectedTemplateVersion) {
@@ -107,18 +106,18 @@ export async function verifyAutomationConversationTargetV1(params: Readonly<{
 }
 
 /**
- * Narrow, current-materialization-scoped selector for Channels binding
- * composition. Verification remains the final authority at binding create;
- * this projection neither carries nor grants target execution authority.
+ * Current-materialization-scoped selector for conversation-binding
+ * composition. Any Automation the Account owns can take a conversation as an
+ * additional invocation source, so this projects every current Automation
+ * whatever its primary trigger. Verification remains the final authority at
+ * binding create; this projection neither carries nor grants target execution
+ * authority.
  */
 export async function listAutomationConversationTargetsV1(params: Readonly<{
     accountId: string;
     caller: AutomationEventCallerV1;
     input: unknown;
 }>): Promise<AutomationConversationTargetsListResultV1> {
-    if (params.caller.pluginId !== AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1) {
-        throw new AutomationConversationTargetVerificationCallerError();
-    }
     const input = AutomationConversationTargetsListInputV1Schema.parse(params.input);
     const limit = input.limit ?? 100;
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
@@ -135,25 +134,26 @@ export async function listAutomationConversationTargetsV1(params: Readonly<{
             where: {
                 accountId: params.accountId,
                 deletedAt: null,
-                triggerKind: "conversation",
                 ...(input.cursor === undefined || input.cursor === null
                     ? {}
                     : { id: { gt: input.cursor } }),
             },
             orderBy: { id: "asc" },
+            // One lookahead row so the picker's "Show more" affordance appears
+            // only when a further Automation really exists, including when the
+            // last page exactly fills the requested limit.
             take: limit + 1,
             select: { id: true, name: true, templateVersion: true },
         });
-        const hasNextPage = rows.length > limit;
-        const items = rows.slice(0, limit).map((row) => ({
-            automationId: row.id,
-            templateVersion: row.templateVersion,
-            label: readAutomationConversationTargetLabel(row),
-        }));
+        const page = rows.slice(0, limit);
 
         return AutomationConversationTargetsListResultV1Schema.parse({
-            items,
-            nextCursor: hasNextPage ? items[items.length - 1]?.automationId ?? null : null,
+            items: page.map((row) => ({
+                automationId: row.id,
+                templateVersion: row.templateVersion,
+                label: readAutomationConversationTargetLabel(row),
+            })),
+            nextCursor: rows.length > limit ? page[page.length - 1]?.id ?? null : null,
         });
     });
 }

@@ -57,6 +57,7 @@ describe("plugin webhook Account status projection", () => {
                     scopes: ["global"],
                     surfaces: ["plugin"],
                     dangerLevel: "safe",
+                    execution: { target: "daemon" },
                 }],
                 webhooks: [{
                     id: "github-events",

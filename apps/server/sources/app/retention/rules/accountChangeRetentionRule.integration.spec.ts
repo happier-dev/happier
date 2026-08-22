@@ -445,7 +445,11 @@ describe('accountChangeRetentionRule', () => {
             expect(exactCommitted).toBe(false);
 
             pause.release();
-            await expect(retention).resolves.toEqual({ deleted: 1 });
+            await expect(retention).resolves.toEqual({
+                deleted: 1,
+                candidatesExamined: 1,
+                hasMore: true,
+            });
             expect(await exactChange).toBe(2);
 
             await withAuthenticatedTestApp(
@@ -531,7 +535,11 @@ describe('accountChangeRetentionRule', () => {
                 batchSize: 1,
                 dryRun: false,
                 maxDeletesPerRulePerRun: 1,
-            })).resolves.toEqual({ deleted: 1 });
+            })).resolves.toEqual({
+                deleted: 1,
+                candidatesExamined: 1,
+                hasMore: true,
+            });
             await expect(inTx(async (tx) => await markAccountChanged(tx, {
                 accountId: account.id,
                 kind: 'pluginDomain',

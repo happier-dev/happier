@@ -3641,32 +3641,38 @@ describe("plugin collection UI query route", () => {
                 results: [{ rowId: "task-new", revision: 1, deleted: false }],
             });
 
-            expect(findManyInputs).toContainEqual({
-                where: {
-                    accountId,
-                    deletedAt: null,
-                },
-                select: {
-                    pluginId: true,
-                    collectionId: true,
-                    rowId: true,
-                    contentEnvelope: true,
-                    contract: {
-                        select: {
-                            id: true,
-                            pluginId: true,
-                            collectionId: true,
-                            schemaVersion: true,
-                            contractDigest: true,
-                            normalizedSchema: true,
-                            indexes: true,
-                            relations: true,
-                            privacyProjection: true,
-                        },
-                    },
-                    projections: { select: { fieldId: true, typedEncodedValue: true } },
-                },
+            // One Account-wide census reads every live row through the same
+            // stored-row metric — envelope plus typed projections plus the
+            // contract that owns the quota — instead of measuring each
+            // Collection separately. It is paged, and the page is bounded and
+            // walked in the supporting index's own column order.
+            const censusPages = findManyInputs.filter((input): input is Readonly<{
+                where: Readonly<{ accountId?: unknown; pluginId?: unknown; deletedAt?: unknown }>;
+                orderBy?: unknown;
+                take?: unknown;
+                select?: Readonly<Record<string, unknown>>;
+            }> => {
+                if (typeof input !== "object" || input === null || !("where" in input)) return false;
+                const where = (input as Readonly<{ where?: Readonly<Record<string, unknown>> }>).where;
+                return where?.accountId === accountId
+                    && where?.deletedAt === null
+                    && where?.pluginId === undefined;
             });
+            expect(censusPages.length).toBeGreaterThan(0);
+            for (const page of censusPages) {
+                expect(page.select).toMatchObject({
+                    contentEnvelope: true,
+                    projections: { select: { fieldId: true, typedEncodedValue: true } },
+                    contract: { select: { normalizedSchema: true, privacyProjection: true } },
+                });
+                expect(page.orderBy).toEqual([
+                    { accountId: "asc" },
+                    { deletedAt: "asc" },
+                    { id: "asc" },
+                ]);
+                expect(typeof page.take).toBe("number");
+                expect(page.take as number).toBeGreaterThanOrEqual(1);
+            }
             await expect(mutatePluginCollection({
                 accountId,
                 request: {

@@ -18,6 +18,14 @@ function encodeEnvelope(value: unknown): Uint8Array {
     return new TextEncoder().encode(JSON.stringify(value));
 }
 
+function encodeEnvelopeWithMalformedUtf8(): Uint8Array {
+    const prefix = new TextEncoder().encode(
+        '{"t":"plain","v":{"v":1,"values":{"theme":"',
+    );
+    const suffix = new TextEncoder().encode('"}}}');
+    return Uint8Array.from([...prefix, 0xff, ...suffix]);
+}
+
 function createE2eeAccount() {
     const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
     const content = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(23));
@@ -122,6 +130,23 @@ describe("plugin declarative settings storage", () => {
             revision: 4,
             envelope,
         });
+    });
+
+    it("rejects malformed UTF-8 bytes instead of coercing them into a valid Settings envelope", async () => {
+        const { buildPluginDeclarativeSettingsPhysicalKey } = await import("./accountScopedKv");
+        const { readPluginDeclarativeSettingsInTx } = await import("./pluginDeclarativeSettingsStorage");
+        const { tx } = createTx({
+            row: {
+                key: buildPluginDeclarativeSettingsPhysicalKey("example.tasks"),
+                value: encodeEnvelopeWithMalformedUtf8(),
+                version: 4,
+            },
+        });
+
+        await expect(readPluginDeclarativeSettingsInTx(tx as never, {
+            accountId: "account-1",
+            pluginId: "example.tasks",
+        })).resolves.toEqual({ status: "invalid-stored-content" });
     });
 
     it("rejects a mode-mismatched envelope before any CAS mutation", async () => {

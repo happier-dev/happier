@@ -14,7 +14,7 @@ import {
     type QualifiedConnectedServiceUsageSourceV4,
     type SealedConnectedServiceQuotaSnapshotV1,
 } from "@happier-dev/protocol";
-import { AGENTS_CORE } from "@happier-dev/agents";
+import { isConnectedServiceUsageProviderCompatible } from "@happier-dev/agents";
 
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
@@ -853,16 +853,10 @@ export async function writeQualifiedProviderAccountUsageRecordFromLegacyBoundary
             "Legacy usage source does not map to a built-in service",
         );
     }
-    const providerId = params.recordKey.providerId.trim();
-    const provider = Object.entries(AGENTS_CORE).find(
-        ([agentId]) => agentId === providerId,
-    )?.[1];
-    if (
-        providerId !== serviceId
-        && provider?.connectedServices?.supportedServiceIds.includes(
-            serviceId,
-        ) !== true
-    ) {
+    if (!isConnectedServiceUsageProviderCompatible({
+        providerId: params.recordKey.providerId,
+        serviceId,
+    })) {
         throw new ConnectedServiceUsageSourceOwnershipError(
             "Provider account usage record is not compatible with the connected-service source",
         );

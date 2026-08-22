@@ -1,6 +1,7 @@
 import {
     parseAutomationRunExecutionRecipeV1,
     type AutomationRunExecutionRecipeV1,
+    type AutomationRunStateV3,
     type AutomationV3PluginEventDefinitionTriggerInput,
 } from '@happier-dev/protocol';
 
@@ -11,18 +12,8 @@ export type AutomationLegacyTargetType = Exclude<
     AutomationTargetType,
     'execution_run'
 >;
-export type AutomationRunState =
-    | 'queued'
-    | 'claimed'
-    | 'running'
-    | 'succeeded'
-    | 'failed'
-    | 'cancelled'
-    | 'expired'
-    | 'dispatch_failed'
-    | 'skipped'
-    | 'missed'
-    | 'outcome_uncertain';
+/** The canonical Run-state vocabulary; the Protocol schema is its one owner. */
+export type AutomationRunState = AutomationRunStateV3;
 
 /** States whose lifecycle is complete and therefore cannot hold Run capacity. */
 export const AUTOMATION_RUN_TERMINAL_STATES = [

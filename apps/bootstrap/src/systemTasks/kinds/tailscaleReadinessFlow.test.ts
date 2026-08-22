@@ -42,6 +42,8 @@ describe('runTailscaleReadinessFlow', () => {
             return {
                 installed: true,
                 loggedIn: false,
+                running: false,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: null,
             };
@@ -113,6 +115,8 @@ describe('runTailscaleReadinessFlow', () => {
             return {
                 installed: true,
                 loggedIn: false,
+                running: false,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: null,
             };
@@ -171,5 +175,86 @@ describe('runTailscaleReadinessFlow', () => {
                 process.env.HAPPIER_TAILSCALE_LOGIN_POLL_INTERVAL_MS = previousPollIntervalMs;
             }
         }
+    });
+});
+
+describe('runTailscaleReadinessFlow backend liveness', () => {
+    function baseDeps(
+        inspectState: TailscaleReadinessFlowDeps<TestParams>['inspectState'],
+        overrides?: Partial<TailscaleReadinessFlowDeps<TestParams>>,
+    ): TailscaleReadinessFlowDeps<TestParams> {
+        return {
+            inspectState,
+            ensureInstalled: vi.fn(async () => ({
+                outcome: 'ready' as const,
+                installedNow: false,
+                installerLaunched: false,
+                tailscaleBin: '/tmp/tailscale',
+            })),
+            loginInteractive: vi.fn(async () => {
+                throw new Error('login must not run for a machine that is already signed in');
+            }),
+            resolveInstallPrompt: vi.fn(async () => ({ platform: 'darwin' as NodeJS.Platform, url: 'https://tailscale.com/download' })),
+            sleep: vi.fn(async () => undefined),
+            now: () => 0,
+            ...overrides,
+        };
+    }
+
+    async function runFlow(params: Readonly<{
+        deps: TailscaleReadinessFlowDeps<TestParams>;
+        mode?: 'normalUser' | 'managedAdmin';
+    }>): Promise<void> {
+        const iterator = runTailscaleReadinessFlow<TestParams>({
+            installPolicy: 'skip',
+            loginPolicy: 'interactive',
+            mode: params.mode ?? 'normalUser',
+        }, params.deps);
+        while (!(await iterator.next()).done) {
+            // drain
+        }
+    }
+
+    it('refuses to report readiness for a signed-in machine whose backend is stopped', async () => {
+        // `tailscale down` keeps node identity, so loggedIn stays true while no
+        // traffic can flow. Reporting that as ready hands the user a relay URL
+        // their other devices cannot reach.
+        const deps = baseDeps(vi.fn(async () => ({
+            installed: true,
+            loggedIn: true,
+            running: false,
+            daemonReachable: true,
+            authUrl: null,
+            shareableHttpsUrl: null,
+        })));
+
+        await expect(runFlow({ deps })).rejects.toMatchObject({ code: 'tailscale_not_running' });
+    });
+
+    it('asks the user to start tailscale, not to sign in, when tailscaled never answered', async () => {
+        const deps = baseDeps(vi.fn(async () => ({
+            installed: true,
+            loggedIn: false,
+            running: false,
+            daemonReachable: false,
+            authUrl: null,
+            shareableHttpsUrl: null,
+        })));
+
+        await expect(runFlow({ deps })).rejects.toMatchObject({ code: 'tailscale_not_running' });
+        expect(deps.loginInteractive).not.toHaveBeenCalled();
+    });
+
+    it('asks a managed admin to start tailscale rather than prompting a fresh sign-in', async () => {
+        const deps = baseDeps(vi.fn(async () => ({
+            installed: true,
+            loggedIn: false,
+            running: false,
+            daemonReachable: false,
+            authUrl: null,
+            shareableHttpsUrl: null,
+        })));
+
+        await expect(runFlow({ deps, mode: 'managedAdmin' })).rejects.toMatchObject({ code: 'tailscale_not_running' });
     });
 });

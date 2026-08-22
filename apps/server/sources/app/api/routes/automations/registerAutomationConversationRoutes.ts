@@ -13,7 +13,6 @@ import {
     AutomationConversationAdmissionCallerError,
 } from "@/app/automations/automationConversationAdmissionService";
 import {
-    AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1,
     AutomationConversationTargetVerificationCallerError,
     listAutomationConversationTargetsV1,
     verifyAutomationConversationTargetV1,
@@ -78,12 +77,7 @@ export function registerAutomationConversationRoutes(
                 required: true,
             });
             if (!publisher) return reply.code(401).send(null);
-            if (
-                request.body.caller.pluginId
-                    !== AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1
-                || request.body.caller.materialization.machineId
-                    !== publisher.machineId
-            ) {
+            if (request.body.caller.materialization.machineId !== publisher.machineId) {
                 return reply.code(401).send(null);
             }
 
@@ -130,12 +124,7 @@ export function registerAutomationConversationRoutes(
                 required: true,
             });
             if (!publisher) return reply.code(401).send(null);
-            if (
-                request.body.caller.pluginId
-                    !== AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1
-                || request.body.caller.materialization.machineId
-                    !== publisher.machineId
-            ) {
+            if (request.body.caller.materialization.machineId !== publisher.machineId) {
                 return reply.code(401).send(null);
             }
 
@@ -182,12 +171,7 @@ export function registerAutomationConversationRoutes(
                 required: true,
             });
             if (!publisher) return reply.code(401).send(null);
-            if (
-                request.body.caller.pluginId
-                    !== AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1
-                || request.body.caller.materialization.machineId
-                    !== publisher.machineId
-            ) {
+            if (request.body.caller.materialization.machineId !== publisher.machineId) {
                 return reply.code(401).send(null);
             }
 

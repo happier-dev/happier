@@ -5,7 +5,11 @@ import {
 
 import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
-import { applySessionAgentTransitionCutover } from "@/app/session/agentTransition/applySessionAgentTransitionCutover";
+import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
+import {
+    applySessionAgentTransitionCutover,
+    type ApplySessionAgentTransitionCutoverResult,
+} from "@/app/session/agentTransition/applySessionAgentTransitionCutover";
 import { publishSessionCurrentViewUpdates } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
@@ -19,8 +23,19 @@ import { type Fastify } from "../../types";
  * adds no server-side Agent policy, decryption, or transition state. The server
  * never learns the Agent ids of an E2EE Session: the current view is compared by
  * metadata tuple/version CAS, not by a plaintext Agent field.
+ *
+ * `sessions.agentSwitching` is enforced HERE, through the shared server feature
+ * gate, because this route is the only place the switch becomes durable. The
+ * gate is enabled by default; a server owner who sets
+ * `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED=0` must actually refuse the
+ * lifecycle mutation rather than merely stop advertising it, otherwise one
+ * direct call still switches the Session. Clients keep learning the same answer
+ * from the `/v1/features` bit this gate reads.
  */
-export function registerSessionAgentTransitionRoute(app: Fastify) {
+export function registerSessionAgentTransitionRoute(
+    app: Fastify,
+    env: NodeJS.ProcessEnv = process.env,
+) {
     const currentViewSchema = z.union([
         z.object({
             kind: z.literal("legacy_v0"),
@@ -36,7 +51,10 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
     ]);
 
     app.post("/v2/sessions/:sessionId/agent-transition/cutover", {
-        preHandler: app.authenticate,
+        preHandler: [
+            createServerFeatureGatePreHandler("sessions.agentSwitching", env),
+            app.authenticate,
+        ],
         schema: {
             params: z.object({ sessionId: z.string() }),
             body: z.object({
@@ -60,7 +78,12 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
                 }).strict(),
                 400: z.object({ error: z.literal("Invalid parameters") }).strict(),
                 403: z.object({ error: z.literal("Forbidden") }).strict(),
-                404: z.object({ error: z.literal("Session not found") }).strict(),
+                404: z.union([
+                    z.object({ error: z.literal("Session not found") }).strict(),
+                    // The server owner disabled `sessions.agentSwitching`. The
+                    // shared gate answers before this handler runs.
+                    z.object({ error: z.literal("not_found") }).strict(),
+                ]),
                 409: z.object({
                     effect: z.enum(["none", "current_view_committed"]),
                     error: z.enum([
@@ -79,6 +102,28 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
         },
     }, async (request, reply) => {
         const { sessionId } = request.params;
+
+        // The committed current view is announced through the SAME publisher
+        // every other metadata writer uses, on EVERY path that committed it.
+        // Without this the divider push would reach clients before anything told
+        // them the Session's Agent changed, and the new identity would land only
+        // on the next change-cursor catch-up. An exact retry commits nothing and
+        // carries no publication.
+        const publishCommittedCurrentView = async (
+            committed: Extract<
+                ApplySessionAgentTransitionCutoverResult,
+                { currentView: unknown }
+            >["currentView"],
+        ): Promise<boolean> => {
+            if (!committed.publication) return true;
+            const published = await publishSessionCurrentViewUpdates({
+                sessionId,
+                participantCursors: committed.participantCursors,
+                source: committed.publication,
+            });
+            return published.ok;
+        };
+
         const result = await applySessionAgentTransitionCutover({
             actorUserId: request.userId,
             sessionId,
@@ -105,6 +150,14 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
                 }
                 return reply.code(409).send({ effect: "none" as const, error: result.error });
             }
+            // The current view DID commit, so it is announced before the divider
+            // failure is reported. Not publishing it here would leave every other
+            // connected client on the old Agent while this response already says
+            // the write landed. A publication failure does not change the answer:
+            // the divider error is the more specific truth and the same
+            // committed-effect discriminator already tells the caller what
+            // happened, so participants converge through their change cursor.
+            await publishCommittedCurrentView(result.currentView);
             if (result.error === "internal") {
                 return reply.code(500).send({
                     effect: "current_view_committed" as const,
@@ -117,26 +170,14 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
             });
         }
 
-        // The committed current view is announced through the SAME publisher
-        // every other metadata writer uses. Without this the divider push would
-        // reach clients before anything told them the Session's Agent changed,
-        // and the new identity would land only on the next change-cursor
-        // catch-up. An exact retry commits nothing and carries no publication.
-        if (result.currentView.publication) {
-            const published = await publishSessionCurrentViewUpdates({
-                sessionId,
-                participantCursors: result.currentView.participantCursors,
-                source: result.currentView.publication,
+        if (!await publishCommittedCurrentView(result.currentView)) {
+            // The cutover DID commit, so this can never be reported as an
+            // untouched Session. Participants still converge through their
+            // change cursor.
+            return reply.code(500).send({
+                effect: "current_view_committed" as const,
+                error: "internal" as const,
             });
-            if (!published.ok) {
-                // The cutover DID commit, so this can never be reported as an
-                // untouched Session. Participants still converge through their
-                // change cursor.
-                return reply.code(500).send({
-                    effect: "current_view_committed" as const,
-                    error: "internal" as const,
-                });
-            }
         }
 
         // A same-localId re-append returns the existing sequence with nothing to

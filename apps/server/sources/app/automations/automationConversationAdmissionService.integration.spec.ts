@@ -17,9 +17,12 @@ import {
     findNextAutomationReplyHandoffDueAt,
 } from "./automationReplyHandoffService";
 import {
-    AutomationConversationAdmissionCallerError,
     admitAutomationConversationV1,
 } from "./automationConversationAdmissionService";
+import {
+    listAutomationConversationTargetsV1,
+    verifyAutomationConversationTargetV1,
+} from "./automationConversationTargetVerificationService";
 
 const ACCOUNT_ID = "account-conversation-admission";
 const MACHINE_ID = "machine-conversation-admission";
@@ -88,24 +91,6 @@ function strictConversationDefinitionRecipe(): string {
         throw new Error("Failed to construct a strict Conversation Automation definition");
     }
     return serialized.serialized;
-}
-
-function conversationTriggerDefinitionEnvelope(
-    definition: PluginJsonValueV2 = { v: 1, bindingId: BINDING_ID },
-    automationId = AUTOMATION_ID,
-): string {
-    return JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
-        mode: "plain",
-        binding: {
-            v: 1,
-            automationId,
-            templateVersion: 3,
-            triggerKind: "conversation",
-            eventRef: null,
-            sourceSelectorId: null,
-        },
-        definition,
-    }));
 }
 
 const FINAL_RESULT_DELIVERY: AutomationConversationResultDeliveryV1 = {
@@ -225,8 +210,7 @@ describe("Automation Conversation admission database boundary", () => {
                 targetType: "execution_run",
                 templateCiphertext: strictConversationDefinitionRecipe(),
                 templateVersion: 3,
-                triggerKind: "conversation",
-                triggerDefinitionEnvelope: conversationTriggerDefinitionEnvelope(),
+                triggerKind: "manual",
             },
         });
     });
@@ -307,41 +291,41 @@ describe("Automation Conversation admission database boundary", () => {
         });
     });
 
-    it("requires the exact persisted Conversation binding before it can create a Run", async () => {
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
-            data: { triggerDefinitionEnvelope: conversationTriggerDefinitionEnvelope({}) },
-        });
-        await expect(admitAutomationConversationV1({
+    it("feeds one Automation from several conversation bindings without disturbing its trigger", async () => {
+        // A Discord thread and a Telegram chat can both drive the same daily
+        // Automation. Each binding keeps its own occurrence identity, so both
+        // admit distinct Runs against one durable target.
+        const first = await admitAutomationConversationV1({
             accountId: ACCOUNT_ID,
             caller,
-            input: conversationInput({ resultDelivery: { kind: "none" } }),
-        })).resolves.toEqual({
-            kind: "blocked",
-            reason: "temporarilyUnavailable",
-            checkpointSafe: false,
-        });
-        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
-
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
-            data: {
-                triggerDefinitionEnvelope: conversationTriggerDefinitionEnvelope({
-                    v: 1,
-                    bindingId: "binding-other",
-                }),
+            input: {
+                ...conversationInput({ resultDelivery: { kind: "none" } }),
+                bindingId: "binding-discord-thread-a",
             },
         });
-        await expect(admitAutomationConversationV1({
+        const second = await admitAutomationConversationV1({
             accountId: ACCOUNT_ID,
             caller,
-            input: conversationInput({ resultDelivery: { kind: "none" } }),
-        })).resolves.toEqual({
-            kind: "blocked",
-            reason: "temporarilyUnavailable",
-            checkpointSafe: false,
+            input: {
+                ...conversationInput({ resultDelivery: { kind: "none" } }),
+                bindingId: "binding-telegram-chat-b",
+            },
         });
-        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
+
+        expect(first).toEqual({ kind: "admitted", runId: expect.any(String), checkpointSafe: true });
+        expect(second).toEqual({ kind: "admitted", runId: expect.any(String), checkpointSafe: true });
+        if (first.kind !== "admitted" || second.kind !== "admitted") {
+            throw new Error("Expected both bindings to admit into the same Automation");
+        }
+        expect(first.runId).not.toBe(second.runId);
+        await expect(db.automationRun.count({
+            where: { accountId: ACCOUNT_ID, automationId: AUTOMATION_ID },
+        })).resolves.toBe(2);
+        // The Automation's own trigger is untouched by either binding.
+        await expect(db.automation.findUniqueOrThrow({
+            where: { id: AUTOMATION_ID },
+            select: { triggerKind: true, triggerDefinitionEnvelope: true },
+        })).resolves.toEqual({ triggerKind: "manual", triggerDefinitionEnvelope: null });
     });
 
     it("rejoins only the same logical Channels caller across a materialization rollover", async () => {
@@ -555,11 +539,9 @@ describe("Automation Conversation admission database boundary", () => {
                 targetType: "execution_run",
                 templateCiphertext: strictConversationDefinitionRecipe(),
                 templateVersion: 3,
-                triggerKind: "conversation",
-                triggerDefinitionEnvelope: conversationTriggerDefinitionEnvelope(
-                    undefined,
-                    secondAutomationId,
-                ),
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
             },
         });
 
@@ -623,7 +605,172 @@ describe("Automation Conversation admission database boundary", () => {
         await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(1);
     });
 
-    it("refuses a current non-Channels materialization before it can admit a Conversation run", async () => {
+    it("lists, verifies, and admits an existing Account Automation for an out-of-tree plugin", async () => {
+        const externalPluginId = "acme.slack-bridge";
+        const externalMaterializationId = "materialization-acme-slack-bridge";
+        const externalReleaseFacts = normalizePluginReleaseFactsV1({
+            ref: { pluginId: externalPluginId, version: PLUGIN_VERSION },
+            archiveDigestSha256: ARCHIVE_DIGEST,
+            normalizedManifest: {
+                schemaVersion: 2,
+                id: externalPluginId,
+                version: PLUGIN_VERSION,
+                displayName: "Out-of-tree bridge fixture",
+                engines: { happier: "^1.0.0" },
+                runtime: { apiVersion: 1 },
+                entrypoints: { daemon: "./dist/index.js" },
+                contributes: { actions: [], events: [], webhooks: [] },
+            },
+            collectionContracts: [],
+            uiSlots: [],
+            packageAssetArchive: releaseFacts.packageAssetArchive,
+        });
+        await db.accountPluginIntent.create({
+            data: {
+                accountId: ACCOUNT_ID,
+                pluginId: externalPluginId,
+                desiredVersion: PLUGIN_VERSION,
+                enabled: true,
+                writableCollections: [],
+            },
+        });
+        await db.accountPluginRelease.create({
+            data: {
+                accountId: ACCOUNT_ID,
+                pluginId: externalPluginId,
+                version: PLUGIN_VERSION,
+                archiveDigestSha256: externalReleaseFacts.archiveDigestSha256,
+                normalizedManifest: externalReleaseFacts.normalizedManifest,
+                collectionContracts: externalReleaseFacts.collectionContracts,
+                uiSlots: externalReleaseFacts.uiSlots,
+                packageAssetArchive: externalReleaseFacts.packageAssetArchive,
+            },
+        });
+        await db.pluginMachineMaterialization.create({
+            data: {
+                accountId: ACCOUNT_ID,
+                serverIdentityId: SERVER_IDENTITY_ID,
+                machineId: MACHINE_ID,
+                materializationId: externalMaterializationId,
+                pluginId: externalPluginId,
+                version: PLUGIN_VERSION,
+                sourceClass: "registryPackage",
+                portableRelease: true,
+                archiveDigestSha256: ARCHIVE_DIGEST,
+                uiArtifacts: [],
+                enabled: true,
+                trustState: "trusted",
+                observedAt: new Date("2026-08-12T00:00:00.000Z"),
+            },
+        });
+
+        const externalCaller = {
+            pluginId: externalPluginId,
+            contributionLocalId: "slack/observation-ingest-v1",
+            machineId: MACHINE_ID,
+            machineInstallationId: MACHINE_INSTALLATION_ID,
+            materializationId: externalMaterializationId,
+        } as const;
+        const externalBindingId = "binding-acme-slack-bridge";
+
+        // The target is an ordinary Account Automation with its own schedule.
+        // The out-of-tree plugin never authors it; it binds the one the user
+        // already has, exactly as the bundled plugin would.
+        const scheduledAutomationId = "automation-conversation-admission-scheduled";
+        await db.automation.create({
+            data: {
+                id: scheduledAutomationId,
+                accountId: ACCOUNT_ID,
+                name: "Slack bridge conversation",
+                enabled: true,
+                targetType: "execution_run",
+                templateCiphertext: strictConversationDefinitionRecipe(),
+                templateVersion: 3,
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+            },
+        });
+        await db.automationAssignment.create({
+            data: {
+                automationId: scheduledAutomationId,
+                machineId: MACHINE_ID,
+                enabled: true,
+            },
+        });
+        const created = { kind: "created" as const, automationId: scheduledAutomationId };
+
+        const externalTargets = await listAutomationConversationTargetsV1({
+            accountId: ACCOUNT_ID,
+            caller: externalCaller,
+            input: {},
+        });
+        const channelsTargets = await listAutomationConversationTargetsV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {},
+        });
+        // Identical capability: the out-of-tree plugin sees exactly the same
+        // Account targets the bundled plugin does.
+        expect(externalTargets).toEqual(channelsTargets);
+        expect(externalTargets.items.map((item) => item.automationId).sort())
+            .toEqual([AUTOMATION_ID, scheduledAutomationId].sort());
+
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller: externalCaller,
+            input: { automationId: created.automationId, expectedTemplateVersion: 3 },
+        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: { automationId: created.automationId, expectedTemplateVersion: 3 },
+        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+
+        await expect(admitAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller: externalCaller,
+            input: {
+                automationId: created.automationId,
+                bindingId: externalBindingId,
+                templateVersion: 3,
+                occurrenceId: "slack:event:1",
+                occurredAt: 1_724_000_000_000,
+                sender: { id: "U-123" },
+                text: "Please summarize the latest change.",
+                resultDelivery: {
+                    kind: "finalResult",
+                    actionRef: {
+                        pluginId: externalPluginId,
+                        localId: "automation/reply-deliver-v1",
+                    },
+                    opaqueContext: { channelId: "C-123" },
+                },
+            },
+        })).resolves.toEqual({
+            kind: "admitted",
+            runId: expect.any(String),
+            checkpointSafe: true,
+        });
+
+        // The reply handoff is frozen onto the authoring plugin's own Action.
+        await expect(db.automationRun.findFirst({
+            where: { automationId: created.automationId },
+            select: {
+                replyHandoffActionPluginId: true,
+                replyHandoffActionLocalId: true,
+                replyHandoffTargetMachineId: true,
+                replyHandoffState: true,
+            },
+        })).resolves.toEqual({
+            replyHandoffActionPluginId: externalPluginId,
+            replyHandoffActionLocalId: "automation/reply-deliver-v1",
+            replyHandoffTargetMachineId: MACHINE_ID,
+            replyHandoffState: "awaitingResult",
+        });
+    });
+
+    it("admits a current external plugin materialization through the generic conversation policy", async () => {
         const otherReleaseFacts = normalizePluginReleaseFactsV1({
             ref: { pluginId: OTHER_PLUGIN_ID, version: PLUGIN_VERSION },
             archiveDigestSha256: ARCHIVE_DIGEST,
@@ -680,16 +827,44 @@ describe("Automation Conversation admission database boundary", () => {
             },
         });
 
+        const externalCaller = {
+            ...caller,
+            pluginId: OTHER_PLUGIN_ID,
+            materializationId: "materialization-other-plugin",
+        };
+        // The Account's Automations belong to the user, not to a plugin: an
+        // out-of-tree plugin binds the very same target the bundled plugin can,
+        // with byte-identical capability and no policy row naming either id.
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller: externalCaller,
+            input: { automationId: AUTOMATION_ID, expectedTemplateVersion: 3 },
+        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+        await expect(listAutomationConversationTargetsV1({
+            accountId: ACCOUNT_ID,
+            caller: externalCaller,
+            input: {},
+        })).resolves.toEqual({
+            items: [{
+                automationId: AUTOMATION_ID,
+                templateVersion: 3,
+                label: "Conversation admission",
+            }],
+            nextCursor: null,
+        });
         await expect(admitAutomationConversationV1({
             accountId: ACCOUNT_ID,
-            caller: {
-                ...caller,
-                pluginId: OTHER_PLUGIN_ID,
-                materializationId: "materialization-other-plugin",
+            caller: externalCaller,
+            input: {
+                ...conversationInput({ resultDelivery: { kind: "none" } }),
+                bindingId: "binding-out-of-tree",
             },
-            input: conversationInput({ resultDelivery: { kind: "none" } }),
-        })).rejects.toBeInstanceOf(AutomationConversationAdmissionCallerError);
-        await expect(db.automationRun.count()).resolves.toBe(0);
+        })).resolves.toEqual({
+            kind: "admitted",
+            runId: expect.any(String),
+            checkpointSafe: true,
+        });
+        await expect(db.automationRun.count()).resolves.toBe(1);
     });
 
     it("freezes finalResult custody and rejects a rejoin with a changed opaque context", async () => {

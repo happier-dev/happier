@@ -624,6 +624,20 @@ describe("plugin Availability operations", () => {
             },
         });
 
+        // A stale caller must lose to Availability's currentness contract
+        // before Data evaluates whether this incomplete candidate is ready.
+        await expect(service.setIntent({
+            accountId: ACCOUNT_ID,
+            input: {
+                pluginId: PLUGIN_ID,
+                desiredVersion: targetRelease.version,
+                enabled: true,
+                offlineUiHosting: "disabled",
+                writableCollections: targetContracts,
+                expectedRevision: "1",
+            },
+        })).rejects.toMatchObject({ code: "plugin_intent_revision_conflict" });
+
         await expect(service.setIntent({
             accountId: ACCOUNT_ID,
             input: {

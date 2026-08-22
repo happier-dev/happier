@@ -4,7 +4,9 @@ import {
     PluginAccountSettingsMutationRequestV1Schema,
     type PluginAccountSettingsContentV1,
 } from "@happier-dev/protocol";
-import * as privacyKit from "privacy-kit";
+import {
+    buildPluginDomainAccountChangeEntityId,
+} from "@happier-dev/protocol/changes";
 
 import {
     deriveAccountEncryptionCurrentnessFromRow,
@@ -16,6 +18,8 @@ import { inTx, type Tx } from "@/storage/inTx";
 
 import {
     buildPluginDeclarativeSettingsPhysicalKey,
+    decodeAccountScopedKvJson,
+    encodeAccountScopedKvJson,
 } from "./accountScopedKv";
 import {
     applyUserKvMutationsInTx,
@@ -63,19 +67,13 @@ type DecodedEnvelope =
     | Readonly<{ status: "invalid-stored-content" }>;
 
 function encodeEnvelope(envelope: PluginDeclarativeSettingsEnvelope): string | null {
-    try {
-        const serialized = JSON.stringify(envelope);
-        if (typeof serialized !== "string") return null;
-        return privacyKit.encodeBase64(new TextEncoder().encode(serialized));
-    } catch {
-        return null;
-    }
+    return encodeAccountScopedKvJson(envelope);
 }
 
 function decodeEnvelope(value: Uint8Array): DecodedEnvelope {
     try {
         const parsed = PluginDeclarativeSettingsEnvelopeSchema.safeParse(
-            JSON.parse(new TextDecoder().decode(value)),
+            decodeAccountScopedKvJson(value),
         );
         return parsed.success
             ? { status: "present", envelope: parsed.data }
@@ -278,7 +276,7 @@ export async function mutatePluginDeclarativeSettingsInTx(
     const cursor = await markAccountChanged(tx, {
         accountId: input.accountId,
         kind: "pluginDomain",
-        entityId: `pluginDomain/${input.pluginId}/settings`,
+        entityId: buildPluginDomainAccountChangeEntityId(hint),
         hint,
     });
     return { status: "updated", revision: result.version, cursor };

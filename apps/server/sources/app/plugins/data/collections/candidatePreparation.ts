@@ -51,11 +51,11 @@ import {
 } from "./candidatePreparationPromotion";
 import { retirePluginCollectionCandidatePreparationStagesTx } from "./candidatePreparationLifecycle";
 import {
-    extendPluginCollectionAccountUsageWithStoredRows,
+    extendPluginCollectionAccountActivationUsageWithStoredRows,
     findPluginCollectionActivationQuotaIncompatibility,
     findPluginCollectionBatchQuotaIncompatibility,
     PluginCollectionQuotaCensusInconsistencyError,
-    readPluginCollectionAccountUsageInTx,
+    readPluginCollectionAccountActivationUsageInTx,
     type PluginCollectionQuotaIncompatibility,
     type PluginCollectionQuotaPolicy,
 } from "./quota";
@@ -715,9 +715,10 @@ async function assertCandidateStageBatchQuotaInTx(input: Readonly<{
     candidateIdentity: string;
 }>): Promise<void> {
     try {
-        const usage = await readPluginCollectionAccountUsageInTx({
+        const usage = await readPluginCollectionAccountActivationUsageInTx({
             tx: input.tx,
             accountId: input.accountId,
+            deployment: input.deployment,
         });
         const policies = new Map<string, PluginCollectionQuotaPolicy>();
         for (const persisted of usage.contracts.values()) {
@@ -747,7 +748,7 @@ async function assertCandidateStageBatchQuotaInTx(input: Readonly<{
         for (const prospective of input.prospective) {
             addCandidateQuotaPolicy(policies, prospective.target.contract);
         }
-        const prospectiveUsage = extendPluginCollectionAccountUsageWithStoredRows({
+        const prospectiveUsage = extendPluginCollectionAccountActivationUsageWithStoredRows({
             usage,
             rows: [
                 ...stageRows,

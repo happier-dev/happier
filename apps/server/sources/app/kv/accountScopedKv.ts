@@ -1,4 +1,5 @@
 import { PluginIdSchema } from "@happier-dev/protocol";
+import * as privacyKit from "privacy-kit";
 
 import { isTodoKvKey } from "./todoKvStoredContent";
 
@@ -13,6 +14,9 @@ export const PLUGIN_ACCOUNT_STORAGE_KEY_PREFIX =
     "@happier/account/plugin-storage/v1/" as const;
 export const PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX =
     "@happier/account/plugin-settings/v1/" as const;
+
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 export type AccountScopedKvKeyClassification =
     | Readonly<{ kind: "generic" }>
@@ -43,6 +47,26 @@ export function buildPluginAccountStoragePhysicalKey(pluginId: string): string {
 
 export function buildPluginDeclarativeSettingsPhysicalKey(pluginId: string): string {
     return `${PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX}${PluginIdSchema.parse(pluginId)}`;
+}
+
+/**
+ * Reserved Account-KV rows persist canonical JSON as opaque base64 bytes. The
+ * domain owner still validates the decoded value against its own schema.
+ */
+export function encodeAccountScopedKvJson(value: unknown): string | null {
+    try {
+        const serialized = JSON.stringify(value);
+        return typeof serialized === "string"
+            ? privacyKit.encodeBase64(textEncoder.encode(serialized))
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Throws for malformed UTF-8 or JSON so domain readers fail closed. */
+export function decodeAccountScopedKvJson(value: Uint8Array): unknown {
+    return JSON.parse(textDecoder.decode(value));
 }
 
 /**

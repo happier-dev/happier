@@ -151,22 +151,100 @@ describe("Automation conversation target-verification route", () => {
             method: "POST",
             url: LIST_PATH,
             headers: {},
-            body: {
-                ...LIST_BODY,
-                caller: {
-                    ...LIST_BODY.caller,
-                    pluginId: "com.acme.other",
-                    materialization: {
-                        ...LIST_BODY.caller.materialization,
-                        pluginId: "com.acme.other",
-                    },
-                },
-            },
+            body: LIST_BODY,
         }, reply);
 
         expect(reply.code).toHaveBeenCalledWith(401);
         expect(reply.send).toHaveBeenCalledWith(null);
-        expect(listTargets).not.toHaveBeenCalled();
+        expect(listTargets).toHaveBeenCalledTimes(1);
+    });
+
+    it("drives the whole conversation flow for a third-party plugin that is not Channels", async () => {
+        const app = createFakeRouteApp();
+        const thirdPartyCaller = {
+            pluginId: "acme.slack-bridge",
+            contributionLocalId: "slack/binding-v1",
+            materialization: {
+                machineId: "machine-1",
+                materializationId: "materialization-slack-1",
+                pluginId: "acme.slack-bridge",
+            },
+        } as const;
+        const stampedCaller = {
+            pluginId: "acme.slack-bridge",
+            machineId: "machine-1",
+            machineInstallationId: "installation-1",
+            materializationId: "materialization-slack-1",
+        } as const;
+        const listTargets = vi.fn(async () => ({
+            items: [{ automationId: "automation-1", templateVersion: 3, label: "Conversation target" }],
+            nextCursor: null,
+        }));
+        const verifyTarget = vi.fn(async () => ({ kind: "verified" as const, templateVersion: 3 }));
+        const admit = vi.fn(async () => ({
+            kind: "admitted" as const,
+            runId: "run-1",
+            checkpointSafe: true as const,
+        }));
+        registerAutomationConversationRoutes(app as never, {
+            listTargets,
+            verifyTarget,
+            admit,
+            verifyPublisher: vi.fn(async () => ({
+                machineId: "machine-1",
+                installationId: "installation-1",
+            })),
+        });
+
+        for (const [path, body] of [
+            [LIST_PATH, { ...LIST_BODY, caller: thirdPartyCaller }],
+            [PATH, { ...BODY, caller: thirdPartyCaller }],
+            [ADMIT_PATH, {
+                ...ADMIT_BODY,
+                caller: {
+                    ...thirdPartyCaller,
+                    contributionLocalId: "slack/observation-ingest-v1",
+                },
+                input: {
+                    ...ADMIT_BODY.input,
+                    resultDelivery: {
+                        ...ADMIT_BODY.input.resultDelivery,
+                        actionRef: {
+                            pluginId: "acme.slack-bridge",
+                            localId: "slack/result-deliver-v1",
+                        },
+                    },
+                },
+            }],
+        ] as const) {
+            const reply = createReplyStub();
+            await getRouteHandler(app, "POST", path)({
+                userId: "account-1",
+                method: "POST",
+                url: path,
+                headers: {},
+                body,
+            }, reply);
+            expect(reply.code).not.toHaveBeenCalledWith(401);
+        }
+
+        expect(listTargets).toHaveBeenCalledWith({
+            accountId: "account-1",
+            caller: stampedCaller,
+            input: LIST_BODY.input,
+        });
+        expect(verifyTarget).toHaveBeenCalledWith({
+            accountId: "account-1",
+            caller: stampedCaller,
+            input: BODY.input,
+        });
+        expect(admit).toHaveBeenCalledWith(expect.objectContaining({
+            accountId: "account-1",
+            caller: {
+                ...stampedCaller,
+                contributionLocalId: "slack/observation-ingest-v1",
+            },
+        }));
     });
 
     it("registers canonical conversation admission with the same host-derived caller fence", async () => {
@@ -217,6 +295,56 @@ describe("Automation conversation target-verification route", () => {
             input: ADMIT_BODY.input,
         });
         expect(reply.headers).toEqual({ "Cache-Control": "no-store" });
+        expect(reply.send).toHaveBeenCalledWith({
+            kind: "admitted",
+            runId: "run-1",
+            checkpointSafe: true,
+        });
+    });
+
+    it("admits a publisher-stamped external plugin caller through the generic admission policy", async () => {
+        const app = createFakeRouteApp();
+        const admit = vi.fn(async () => ({
+            kind: "admitted" as const,
+            runId: "run-1",
+            checkpointSafe: true as const,
+        }));
+        registerAutomationConversationRoutes(app as never, {
+            admit,
+            verifyPublisher: vi.fn(async () => ({
+                machineId: "machine-1",
+                installationId: "installation-1",
+            })),
+        });
+        const reply = createReplyStub();
+        const externalCaller = {
+            ...ADMIT_BODY.caller,
+            pluginId: "com.acme.other",
+            materialization: {
+                ...ADMIT_BODY.caller.materialization,
+                pluginId: "com.acme.other",
+            },
+        } as const;
+
+        await getRouteHandler(app, "POST", ADMIT_PATH)({
+            userId: "account-1",
+            method: "POST",
+            url: ADMIT_PATH,
+            headers: {},
+            body: { ...ADMIT_BODY, caller: externalCaller },
+        }, reply);
+
+        expect(admit).toHaveBeenCalledWith({
+            accountId: "account-1",
+            caller: {
+                pluginId: "com.acme.other",
+                contributionLocalId: "provider/observation-ingest-v1",
+                machineId: "machine-1",
+                machineInstallationId: "installation-1",
+                materializationId: "materialization-1",
+            },
+            input: ADMIT_BODY.input,
+        });
         expect(reply.send).toHaveBeenCalledWith({
             kind: "admitted",
             runId: "run-1",
@@ -275,8 +403,8 @@ describe("Automation conversation target-verification route", () => {
 
     it.each([
         "notFound",
-        "notConversation",
         "templateVersionMismatch",
+        "resultDeliveryUnsupported",
     ] as const)("returns %s as a normal nondisclosing domain result", async (reason) => {
         const app = createFakeRouteApp();
         registerAutomationConversationRoutes(app as never, {
@@ -300,8 +428,8 @@ describe("Automation conversation target-verification route", () => {
         expect(reply.send).toHaveBeenCalledWith({ kind: "notVerified", reason });
     });
 
-    it("rejects wrong plugin, publisher machine, or stale materialization before disclosure", async () => {
-        for (const scenario of ["plugin", "machine", "currentness"] as const) {
+    it("rejects a mismatched publisher machine or stale materialization before disclosure", async () => {
+        for (const scenario of ["machine", "currentness"] as const) {
             const app = createFakeRouteApp();
             const verifyTarget = scenario === "currentness"
                 ? vi.fn(async () => {
@@ -321,19 +449,7 @@ describe("Automation conversation target-verification route", () => {
                 method: "POST",
                 url: PATH,
                 headers: {},
-                body: scenario === "plugin"
-                    ? {
-                        ...BODY,
-                        caller: {
-                            ...BODY.caller,
-                            pluginId: "com.acme.other",
-                            materialization: {
-                                ...BODY.caller.materialization,
-                                pluginId: "com.acme.other",
-                            },
-                        },
-                    }
-                    : BODY,
+                body: BODY,
             }, reply);
 
             expect(reply.code).toHaveBeenCalledWith(401);

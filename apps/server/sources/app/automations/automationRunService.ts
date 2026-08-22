@@ -77,6 +77,18 @@ async function hasCompatibleAutomationAccountEncryptionTx(params: Readonly<{
         && observed.contentKeyFingerprint === params.expected.contentKeyFingerprint;
 }
 
+/**
+ * The per-transition Run audit trail. `AutomationRun` keeps only the current
+ * terminal fact — one state, one errorCode — so the ordered transition history
+ * (which attempt started, which dispatch retry was scheduled, and why a Run
+ * became uncertain rather than cancelled) exists only here.
+ *
+ * It is deliberately write-only inside the server today: no API, projection, or
+ * client reads it. Its consumer is the operator, through the published
+ * `automationRunEvents` retention domain that decides how long this history is
+ * kept. Exposing it through a product surface is an open product decision; it
+ * is not dead persistence, and it must not be dropped as a side effect of one.
+ */
 async function appendRunEventTx(params: {
     tx: any;
     runId: string;
@@ -399,7 +411,7 @@ async function blockAwaitingReplyHandoffForTerminalRunTx(params: {
     tx: Tx;
     accountId: string;
     runId: string;
-    state: "failed" | "cancelled";
+    state: "failed" | "cancelled" | "outcome_uncertain";
     now: Date;
 }): Promise<void> {
     await params.tx.automationRun.updateMany({
@@ -576,6 +588,17 @@ async function settleSucceededAutomationRun(params: {
                 claimedByMachineId: params.machineId,
                 attempt: params.attempt,
                 state: { in: ["claimed", "running"] },
+                // A permitted dispatch is settled only by the execution
+                // dispatch owner; a generic success claim cannot know the
+                // external outcome it would be asserting. Retained rows that
+                // predate dispatch-state initialization hold NULL and are the
+                // same "never dispatched" fact as `notStarted`, so they are
+                // matched explicitly rather than left to provider NULL
+                // comparison semantics.
+                OR: [
+                    { executionDispatchState: null },
+                    { executionDispatchState: { not: "dispatchPermitted" } },
+                ],
                 leaseExpiresAt: { gt: now },
                 ...(params.expectedTriggerKind
                     ? { automation: { triggerKind: params.expectedTriggerKind } }
@@ -1059,6 +1082,83 @@ function resolveStartedExecutionDispatchSettlement(
 }
 
 /**
+ * A permitted dispatch may be superseded by cancellation before its worker can
+ * report the start it already issued. The published terminality stands, but the
+ * native identity is the only pointer back to an execution that may still be
+ * running, so the settlement owner retains it exactly as the incumbent
+ * fail/cancel owner retains a known canonical Session identity.
+ */
+async function retainSupersededExecutionDispatchIdentityTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    runId: string;
+    machineId: string;
+    attempt: number;
+    outcome: AutomationExecutionDispatchOutcome;
+    now: Date;
+    expectedTriggerKind?: AutomationTriggerKind;
+}>): Promise<AutomationRunItem | null> {
+    if (params.outcome.kind !== "started") return null;
+    const superseded = await params.tx.automationRun.findFirst({
+        where: {
+            id: params.runId,
+            accountId: params.accountId,
+            claimedByMachineId: params.machineId,
+            attempt: params.attempt,
+            state: "outcome_uncertain",
+            executionDispatchState: "outcomeUnknown",
+            executionNativeRunId: null,
+            ...(params.expectedTriggerKind
+                ? { automation: { triggerKind: params.expectedTriggerKind } }
+                : {}),
+        },
+        select: { revision: true },
+    });
+    if (!superseded) return null;
+    const retained = await params.tx.automationRun.updateMany({
+        where: {
+            id: params.runId,
+            accountId: params.accountId,
+            claimedByMachineId: params.machineId,
+            attempt: params.attempt,
+            state: "outcome_uncertain",
+            executionDispatchState: "outcomeUnknown",
+            executionNativeRunId: null,
+            revision: superseded.revision,
+        },
+        data: {
+            executionNativeRunId: params.outcome.runId,
+            executionNativeCallId: params.outcome.callId,
+            executionNativeSidechainId: params.outcome.sidechainId,
+            revision: { increment: 1 },
+            updatedAt: params.now,
+        },
+    });
+    if (retained.count !== 1) return null;
+    const run = await fetchRunForAccount({
+        tx: params.tx,
+        accountId: params.accountId,
+        runId: params.runId,
+        expectedTriggerKind: params.expectedTriggerKind,
+    });
+    if (!run || run.state !== "outcome_uncertain") return null;
+    const cursor = await markRunAutomationChanged({
+        tx: params.tx,
+        accountId: params.accountId,
+        automationId: run.automationId,
+    });
+    afterTx(params.tx, () => {
+        emitAutomationRunTransition({
+            accountId: params.accountId,
+            run: run as AutomationRunItem,
+            previousState: "outcome_uncertain",
+            cursor,
+        });
+    });
+    return run as AutomationRunItem;
+}
+
+/**
  * Commits the result of the one Action call authorized by dispatchPermitted.
  * Only strict pre-creation rejection returns the same logical Run to the
  * ordinary claim queue; every ambiguous or started result is terminal locally.
@@ -1103,7 +1203,18 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
                 executionAttempt: true,
             },
         });
-        if (!candidate) return null;
+        if (!candidate) {
+            return await retainSupersededExecutionDispatchIdentityTx({
+                tx,
+                accountId: params.accountId,
+                runId: params.runId,
+                machineId: params.machineId,
+                attempt: params.attempt,
+                outcome: params.outcome,
+                now,
+                expectedTriggerKind: params.expectedTriggerKind,
+            });
+        }
 
         const shouldRetry = params.outcome.kind === "noRunCreated"
             && candidate.executionAttempt < 3;
@@ -1398,6 +1509,14 @@ export async function terminalizeRetiredAutomationRunAfterLeaseExpiryTx(params: 
     });
     if (updated.count !== 1) return null;
 
+    await blockAwaitingReplyHandoffForTerminalRunTx({
+        tx: params.tx,
+        accountId: params.accountId,
+        runId: params.runId,
+        state: terminalState,
+        now: params.now,
+    });
+
     const run = await fetchRunForAccount({
         tx: params.tx,
         accountId: params.accountId,
@@ -1580,6 +1699,13 @@ async function failAutomationRunInternal(params: {
                 claimedByMachineId: params.machineId,
                 attempt: params.attempt,
                 state: { in: ["claimed", "running"] },
+                // See settleSucceededAutomationRun: a permitted dispatch keeps
+                // its outcome with the execution dispatch settlement owner, and
+                // a retained NULL dispatch state means the same as `notStarted`.
+                OR: [
+                    { executionDispatchState: null },
+                    { executionDispatchState: { not: "dispatchPermitted" } },
+                ],
                 leaseExpiresAt: { gt: now },
                 ...(params.expectedTriggerKind
                     ? { automation: { triggerKind: params.expectedTriggerKind } }
@@ -1856,11 +1982,19 @@ export async function cancelAutomationRun(params: {
                 })?.kind !== "available"
             )
         ) return null;
+        // Dispatch permission is the boundary after which one external
+        // execution may already be running. Cancellation is still honoured,
+        // but it cannot report an outcome nothing established: the Run becomes
+        // explicitly uncertain, and only the execution-dispatch settlement
+        // owner may write dispatch truth over it.
+        const dispatchPermitted = previousRun.executionDispatchState === "dispatchPermitted";
+        const terminalState = dispatchPermitted ? "outcome_uncertain" : "cancelled";
         const updated = await tx.automationRun.updateMany({
             where: {
                 id: params.runId,
                 accountId: params.accountId,
                 state: previousRun.state,
+                executionDispatchState: previousRun.executionDispatchState,
                 ...(params.requireV2RunRepresentability
                     ? {
                         executionInputEnvelope: previousRun.executionInputEnvelope,
@@ -1872,7 +2006,14 @@ export async function cancelAutomationRun(params: {
                     : {}),
             },
             data: {
-                state: "cancelled",
+                state: terminalState,
+                ...(dispatchPermitted
+                    ? {
+                        executionDispatchState: "outcomeUnknown",
+                        executionDispatchDueAt: null,
+                        errorCode: "execution_run_cancelled_outcome_unknown",
+                    }
+                    : {}),
                 finishedAt: now,
                 revision: { increment: 1 },
                 updatedAt: now,
@@ -1886,7 +2027,7 @@ export async function cancelAutomationRun(params: {
             tx,
             accountId: params.accountId,
             runId: params.runId,
-            state: "cancelled",
+            state: terminalState,
             now,
         });
 
@@ -1900,8 +2041,11 @@ export async function cancelAutomationRun(params: {
         await appendRunEventTx({
             tx,
             runId: run.id,
-            type: "run_cancelled",
+            type: dispatchPermitted ? "run_outcome_uncertain" : "run_cancelled",
             now,
+            ...(dispatchPermitted
+                ? { payload: { reason: "cancelled_after_dispatch_permitted" } }
+                : {}),
         });
 
         const nextRun = await maybeEnqueueFollowUpRun({ tx, run: run as AutomationRunItem, now });

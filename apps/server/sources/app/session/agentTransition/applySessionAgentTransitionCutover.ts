@@ -1,7 +1,8 @@
 import {
     SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
+    isSameSessionAgentTransitionDividerV1,
     isSessionAgentTransitionDividerLocalId,
-    readSessionAgentTransitionDividerV1,
+    readSessionAgentTransitionDividerFromStoredRecordV1,
 } from "@happier-dev/protocol";
 
 import {
@@ -66,6 +67,17 @@ type CommittedCurrentView = Extract<
     { ok: true }
 >;
 
+/**
+ * What the current-view transaction committed and to whom it must be announced.
+ * The route republishes it through the shared `publishSessionCurrentViewUpdates`
+ * owner; an exact retry commits nothing and therefore carries no cursors and no
+ * publication.
+ */
+type CommittedCurrentViewPublication = Pick<
+    CommittedCurrentView,
+    "currentView" | "participantCursors" | "publication"
+>;
+
 type SuccessfulCreateSessionMessageResult = Extract<
     CreateSessionMessageResult,
     { ok: true }
@@ -75,16 +87,7 @@ export type ApplySessionAgentTransitionCutoverResult =
     | {
         ok: true;
         dividerSeq: number;
-        /**
-         * What the current-view transaction committed and to whom it must be
-         * announced. The route republishes it through the shared
-         * `publishSessionCurrentViewUpdates` owner; an exact retry commits
-         * nothing and therefore carries no cursors and no publication.
-         */
-        currentView: Pick<
-            CommittedCurrentView,
-            "currentView" | "participantCursors" | "publication"
-        >;
+        currentView: CommittedCurrentViewPublication;
         /**
          * Present only when this call actually wrote or updated the divider
          * row. A same-localId re-append returns the existing sequence with
@@ -110,6 +113,15 @@ export type ApplySessionAgentTransitionCutoverResult =
         ok: false;
         effect: "current_view_committed";
         error: "divider-conflict" | "divider-rejected" | "internal";
+        /**
+         * The SAME committed current view the success arm carries. The divider
+         * failing does not un-commit it, so withholding it would leave every
+         * other connected client showing the old Agent until a change-cursor
+         * catch-up while this response already admits the write landed. The
+         * divider failure surfaces through `error`, not by muting the effect
+         * that did happen.
+         */
+        currentView: CommittedCurrentViewPublication;
       };
 
 /**
@@ -172,24 +184,21 @@ async function resolveExistingDividerDisposition(params: Readonly<{
         return { kind: "existing-unverified", seq: existing.seq };
     }
 
-    const storedDivider = readTransitionDividerFromStoredRecord(stored.v);
-    const candidateDivider = readTransitionDividerFromStoredRecord(
-        params.candidateContent.v,
-    );
+    // Both rows are read at the reserved localId this lookup keyed on, so the
+    // canonical reader gets the full divider identity rather than the sidecar
+    // alone.
+    const storedDivider = readSessionAgentTransitionDividerFromStoredRecordV1({
+        localId: params.localId,
+        record: stored.v,
+    });
+    const candidateDivider = readSessionAgentTransitionDividerFromStoredRecordV1({
+        localId: params.localId,
+        record: params.candidateContent.v,
+    });
     if (!storedDivider || !candidateDivider) return { kind: "conflict" };
-    return storedDivider.fromAgentId === candidateDivider.fromAgentId
-        && storedDivider.toAgentId === candidateDivider.toAgentId
+    return isSameSessionAgentTransitionDividerV1(storedDivider, candidateDivider)
         ? { kind: "same-operation", seq: existing.seq }
         : { kind: "conflict" };
-}
-
-function readTransitionDividerFromStoredRecord(value: unknown) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const record = value as { role?: unknown; content?: unknown };
-    if (record.role !== "agent") return null;
-    const content = record.content as { type?: unknown; data?: unknown } | undefined;
-    if (!content || content.type !== "event") return null;
-    return readSessionAgentTransitionDividerV1(content.data);
 }
 
 export async function applySessionAgentTransitionCutover(
@@ -207,6 +216,14 @@ export async function applySessionAgentTransitionCutover(
         return { ok: false, effect: "none", error: committed.error };
     }
 
+    // Built BEFORE the divider work so every committed-effect return — success
+    // or failure — announces the same thing.
+    const committedCurrentView: CommittedCurrentViewPublication = {
+        currentView: committed.currentView,
+        participantCursors: committed.participantCursors,
+        publication: committed.publication,
+    };
+
     let disposition: Awaited<ReturnType<typeof resolveExistingDividerDisposition>>;
     try {
         disposition = await resolveExistingDividerDisposition({
@@ -215,20 +232,21 @@ export async function applySessionAgentTransitionCutover(
             candidateContent: params.divider.content,
         });
     } catch {
-        return { ok: false, effect: "current_view_committed", error: "internal" };
+        return {
+            ok: false,
+            effect: "current_view_committed",
+            error: "internal",
+            currentView: committedCurrentView,
+        };
     }
     if (disposition.kind === "conflict") {
         return {
             ok: false,
             effect: "current_view_committed",
             error: "divider-conflict",
+            currentView: committedCurrentView,
         };
     }
-    const committedCurrentView = {
-        currentView: committed.currentView,
-        participantCursors: committed.participantCursors,
-        publication: committed.publication,
-    };
 
     if (disposition.kind === "same-operation" || disposition.kind === "existing-unverified") {
         // No new sequence, no cursor movement, no republication of the divider.
@@ -263,6 +281,7 @@ export async function applySessionAgentTransitionCutover(
             ok: false,
             effect: "current_view_committed",
             error: written.error === "internal" ? "internal" : "divider-rejected",
+            currentView: committedCurrentView,
         };
     }
     return {

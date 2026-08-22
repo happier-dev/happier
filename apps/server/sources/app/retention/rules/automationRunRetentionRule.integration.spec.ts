@@ -265,7 +265,12 @@ describe("automationRunRetentionRule", () => {
             dryRun: false,
             maxDeletesPerRulePerRun: 100,
             now: new Date("2026-08-12T00:00:00.000Z"),
-        })).resolves.toEqual({ id: "automationRuns", deleted: 14 });
+        })).resolves.toEqual({
+            id: "automationRuns",
+            deleted: 14,
+            candidatesExamined: 14,
+            hasMore: false,
+        });
 
         await expect(db.automationRun.findMany({
             where: { accountId: account.id },
@@ -279,5 +284,136 @@ describe("automationRunRetentionRule", () => {
             { id: "run-queued", state: "queued" },
             { id: "run-running", state: "running" },
         ]);
+    });
+
+    it("finishes a soft-deleted Automation's deletion once retention removed its last retained Run", async () => {
+        const account = await db.account.create({
+            data: { id: "account-automation-finalize", encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const deletedAt = new Date("2026-08-01T00:00:00.000Z");
+        await db.automation.createMany({
+            data: [
+                {
+                    id: "automation-deleted-with-run",
+                    accountId: account.id,
+                    name: "Deleted with a retained Run",
+                    enabled: false,
+                    deletedAt,
+                    targetType: "execution_run",
+                    triggerKind: "conversation",
+                    templateCiphertext: "retention-fixture",
+                    templateVersion: 1,
+                    triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                },
+                {
+                    id: "automation-deleted-without-run",
+                    accountId: account.id,
+                    name: "Deleted with no retained Run",
+                    enabled: false,
+                    deletedAt,
+                    targetType: "execution_run",
+                    triggerKind: "conversation",
+                    templateCiphertext: "retention-fixture",
+                    templateVersion: 1,
+                    triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                },
+                {
+                    id: "automation-live",
+                    accountId: account.id,
+                    name: "Still live",
+                    enabled: true,
+                    targetType: "execution_run",
+                    triggerKind: "conversation",
+                    templateCiphertext: "retention-fixture",
+                    templateVersion: 1,
+                    triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                },
+            ],
+        });
+        const finishedAt = new Date("2026-08-10T00:00:00.000Z");
+        await db.automationRun.createMany({
+            data: [
+                {
+                    id: "run-finalize-expired",
+                    automationId: "automation-deleted-without-run",
+                    accountId: account.id,
+                    state: "cancelled",
+                    originKind: "conversation",
+                    triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                    occurrenceKey: "retention-finalize-expired",
+                    originOccurredAt: finishedAt,
+                    scheduledAt: finishedAt,
+                    dueAt: finishedAt,
+                    finishedAt,
+                },
+                {
+                    id: "run-finalize-retained",
+                    automationId: "automation-deleted-with-run",
+                    accountId: account.id,
+                    state: "running",
+                    originKind: "conversation",
+                    triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                    occurrenceKey: "retention-finalize-retained",
+                    originOccurredAt: finishedAt,
+                    scheduledAt: finishedAt,
+                    dueAt: finishedAt,
+                },
+            ],
+        });
+
+        const rule = createAutomationRunRetentionRule();
+        await expect(rule.run({
+            policy: createPolicy(),
+            batchSize: 100,
+            dryRun: false,
+            maxDeletesPerRulePerRun: 100,
+            now: new Date("2026-08-12T00:00:00.000Z"),
+        })).resolves.toMatchObject({ id: "automationRuns", deleted: 1 });
+
+        // The parent whose last Run just disappeared is gone; the one that still
+        // restricts its parent, and the live definition, are untouched.
+        await expect(db.automation.findMany({
+            where: { accountId: account.id },
+            orderBy: { id: "asc" },
+            select: { id: true },
+        })).resolves.toEqual([
+            { id: "automation-deleted-with-run" },
+            { id: "automation-live" },
+        ]);
+    });
+
+    it("does not finalize a soft-deleted Automation during a dry run", async () => {
+        const account = await db.account.create({
+            data: { id: "account-automation-finalize-dry", encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.automation.create({
+            data: {
+                id: "automation-deleted-dry-run",
+                accountId: account.id,
+                name: "Deleted during a dry run",
+                enabled: false,
+                deletedAt: new Date("2026-08-01T00:00:00.000Z"),
+                targetType: "execution_run",
+                triggerKind: "conversation",
+                templateCiphertext: "retention-fixture",
+                templateVersion: 1,
+                triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+            },
+        });
+
+        const rule = createAutomationRunRetentionRule();
+        await rule.run({
+            policy: createPolicy(),
+            batchSize: 100,
+            dryRun: true,
+            maxDeletesPerRulePerRun: 100,
+            now: new Date("2026-08-12T00:00:00.000Z"),
+        });
+
+        await expect(db.automation.count({
+            where: { id: "automation-deleted-dry-run" },
+        })).resolves.toBe(1);
     });
 });

@@ -15,7 +15,11 @@ import {
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { inTx, type Tx } from "@/storage/inTx";
 
-import { buildPluginAccountStoragePhysicalKey } from "./accountScopedKv";
+import {
+    buildPluginAccountStoragePhysicalKey,
+    decodeAccountScopedKvJson,
+    encodeAccountScopedKvJson,
+} from "./accountScopedKv";
 import {
     applyUserKvMutationsInTx,
     type KVMutation,
@@ -71,20 +75,13 @@ type DecodedEnvelope =
     | Readonly<{ status: "invalid-stored-content" }>;
 
 function encodeEnvelope(envelope: PluginAccountStorageEnvelopeV1): string | null {
-    try {
-        const serialized = JSON.stringify(envelope);
-        return typeof serialized === "string"
-            ? Buffer.from(serialized, "utf8").toString("base64")
-            : null;
-    } catch {
-        return null;
-    }
+    return encodeAccountScopedKvJson(envelope);
 }
 
 function decodeEnvelope(value: Uint8Array): DecodedEnvelope {
     try {
         const parsed = PluginAccountStorageEnvelopeV1Schema.safeParse(
-            JSON.parse(Buffer.from(value).toString("utf8")),
+            decodeAccountScopedKvJson(value),
         );
         return parsed.success
             ? { status: "present", envelope: parsed.data }

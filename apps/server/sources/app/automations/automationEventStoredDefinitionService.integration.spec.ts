@@ -61,6 +61,7 @@ function releaseFacts(params: Readonly<{
                     scopes: ["global"],
                     surfaces: ["plugin"],
                     dangerLevel: "safe",
+                    execution: { target: "daemon" },
                 }] : [],
                 events: [{
                     id: EVENT_LOCAL_ID,

@@ -1,4 +1,12 @@
+import { createHmac } from "node:crypto";
+
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+const emitUpdate = vi.hoisted(() => vi.fn());
+
+vi.mock("@/app/events/connectionEventRouter", () => ({
+    eventRouter: { emitUpdate },
+}));
 
 import {
     normalizePluginReleaseFactsV1,
@@ -13,7 +21,9 @@ import {
     admitPluginWebhookDeliveryV1,
     movePendingPluginWebhookDeliveriesV1,
 } from "./deliveryStore";
+import { ingestPluginWebhookV1, type PluginWebhookIngestDependenciesV1 } from "./ingest";
 import { createPluginWebhookStoredEnvelopeV1 } from "./storedEnvelope";
+import { emitPluginWebhookDeliveryCommittedWakeV1 } from "./wake";
 
 const NOW = new Date("2026-08-10T00:00:00.000Z");
 const SERVER_IDENTITY_ID = "srv_webhookDeliveryStore1";
@@ -63,6 +73,7 @@ const RELEASE_FACTS = normalizePluginReleaseFactsV1({
                 scopes: ["global"],
                 surfaces: ["plugin"],
                 dangerLevel: "safe",
+                execution: { target: "daemon" },
             }],
             webhooks: [{
                 id: "github-events",
@@ -258,6 +269,90 @@ describe("plugin webhook durable delivery admission", () => {
             cursor: expect.any(Number),
             hint: { pluginDomain: "webhook", pluginId: "acme.github" },
         });
+    });
+
+    it("routes verified ingress through durable admission before emitting one exact-machine AccountChange wake", async () => {
+        await seedCurrentTarget();
+        emitUpdate.mockClear();
+        const rawBody = Uint8Array.from(Buffer.from('{"action":"opened"}', "utf8"));
+        const signature = `sha256=${createHmac("sha256", "ingress-secret").update(rawBody).digest("hex")}`;
+        const dependencies: PluginWebhookIngestDependenciesV1 = {
+            findRoute: vi.fn(async () => ({
+                routeId: "route-delivery",
+                verifierKind: "github_hmac_sha256_v1" as const,
+                routingKind: "accountEndpoint" as const,
+                policyVersion: 1 as const,
+            })),
+            readCredentials: vi.fn(async () => [{ credentialVersionId: "credential-1", secret: "ingress-secret" }]),
+            parseInstallationId: vi.fn(() => null),
+            resolveEndpoint: vi.fn(async () => ({
+                endpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+                revision: 1,
+                accountId: "account-delivery",
+                pluginId: "acme.github",
+                webhookContributionId: "github-events",
+                handlerActionId: "handle-webhook",
+                sourceInstanceId: "source-1",
+                routingKind: "accountEndpoint" as const,
+                providerInstallationId: null,
+                targetMaterialization: {
+                    machineId: "machine-1",
+                    materializationId: "materialization-1",
+                    pluginId: "acme.github",
+                },
+                targetMachineInstallationId: "installation-1",
+                targetPluginVersion: "1.0.0",
+            })),
+            readAccount: async (accountId) => await db.account.findUnique({
+                where: { id: accountId },
+                select: {
+                    publicKey: true,
+                    encryptionMode: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                },
+            }),
+            admitDelivery: admitPluginWebhookDeliveryV1,
+        };
+
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId: "opaque-delivery",
+            rawBody,
+            headers: {
+                "x-hub-signature-256": signature,
+                "x-github-delivery": "delivery-guid-ingress-wake-1",
+                "x-github-event": "issues",
+                "content-type": "application/json",
+            },
+            now: NOW,
+            onCommittedWake: emitPluginWebhookDeliveryCommittedWakeV1,
+            dependencies,
+        })).resolves.toMatchObject({ kind: "accepted", duplicate: false });
+
+        const row = await db.pluginWebhookDelivery.findFirstOrThrow({
+            where: { accountId: "account-delivery" },
+        });
+        const change = await readWebhookChange();
+        expect(row).toMatchObject({
+            accountId: "account-delivery",
+            targetMachineId: "machine-1",
+            targetMaterializationId: "materialization-1",
+            state: "queued",
+        });
+        expect(emitUpdate).toHaveBeenCalledWith({
+            userId: "account-delivery",
+            payload: expect.objectContaining({
+                seq: change.cursor,
+                body: { t: "account-change" },
+            }),
+            recipientFilter: { type: "machine-only", machineId: "machine-1" },
+        });
+        expect(emitUpdate.mock.calls.filter(([event]) => (
+            (event as Readonly<{ recipientFilter?: Readonly<{ type?: string; machineId?: string }> }>).recipientFilter?.type
+            === "machine-only"
+            && (event as Readonly<{ recipientFilter?: Readonly<{ type?: string; machineId?: string }> }>).recipientFilter?.machineId
+            === "machine-1"
+        ))).toHaveLength(1);
     });
 
     it("reobserves a duplicate without mutating payload, target, attempts, or wake state", async () => {

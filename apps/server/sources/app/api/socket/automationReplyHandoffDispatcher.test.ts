@@ -1,7 +1,4 @@
-import {
-    AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
-    AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
-} from "@happier-dev/protocol";
+import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from "@happier-dev/protocol";
 import type { Server } from "socket.io";
 import { describe, expect, it, vi } from "vitest";
 
@@ -18,6 +15,12 @@ const correspondence = {
     handoffId: "handoff-1",
 } as const;
 
+/** A synthetic out-of-tree bridge, so no first-party id is load-bearing here. */
+const thirdPartyDeliveryActionRef = {
+    pluginId: "acme.slack-bridge",
+    localId: "automation/reply-deliver-v1",
+} as const;
+
 const request = {
     v: 1,
     kind: "automation.replyHandoff.dispatch",
@@ -26,7 +29,7 @@ const request = {
         machineId: "machine-1",
         machineInstallationId: "installation-1",
         materializationId: "materialization-1",
-        actionRef: AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
+        actionRef: thirdPartyDeliveryActionRef,
     },
     handoff: {
         handoffId: correspondence.handoffId,

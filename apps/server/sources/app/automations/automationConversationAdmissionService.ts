@@ -2,15 +2,14 @@ import {
     AutomationConversationAdmitInputV1Schema,
     AutomationConversationAdmitResultV1Schema,
     AutomationConversationOccurrenceEvidenceV1Schema,
-    AutomationConversationTriggerDefinitionStoredPayloadV1Schema,
     AutomationReplyHandoffTargetV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
     MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT,
     computeCanonicalDomainSeparatedDigest,
     createCanonicalJsonSigningInput,
     deriveAutomationOccurrenceKeyV1,
+    isAutomationConversationResultDeliveryOwnedByCallerV1,
     openAutomationConversationReplyContextStoredEnvelopeV1,
-    openAutomationTriggerDefinitionStoredEnvelopeV1,
     sealAutomationConversationReplyContextStoredEnvelopeV1,
     type AutomationConversationAdmitInputV1,
     type AutomationConversationAdmitResultV1,
@@ -33,9 +32,6 @@ import {
     AutomationEventCurrentnessError,
     type AutomationEventCallerV1,
 } from "./automationEventCurrentness";
-import {
-    AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1,
-} from "./automationConversationTargetVerificationService";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import {
     classifyPlainAutomationOccurrenceEvidence,
@@ -44,11 +40,7 @@ import {
     rejoinAutomationOccurrenceInsertRace,
 } from "./automationOccurrencePersistence";
 import { freezeAutomationRunExecutionRecipe } from "./automationRunQueueService";
-import {
-    assertAutomationExecutionInputEnvelopeOuterForMode,
-    readAutomationTriggerDefinitionBinding,
-    validateAutomationTriggerDefinitionEnvelopeOuterForMode,
-} from "./automationStoredContentRead";
+import { assertAutomationExecutionInputEnvelopeOuterForMode } from "./automationStoredContentRead";
 import {
     AUTOMATION_RUN_TERMINAL_STATES,
     initialAutomationExecutionDispatchStateForRun,
@@ -59,6 +51,12 @@ export type AutomationConversationAdmissionCallerV1 = AutomationEventCallerV1 & 
     contributionLocalId: string;
 }>;
 
+/**
+ * Any plugin may admit a Conversation for an Automation the Account owns. The
+ * caller questions that remain are Account-scoped: is the host-stamped
+ * materialization still current, and does the frozen reply target stay inside
+ * the admitting plugin. Which plugin is asking is not itself an authority input.
+ */
 export class AutomationConversationAdmissionCallerError extends Error {
     constructor() {
         super("automation_conversation_admission_caller_not_current");
@@ -300,7 +298,7 @@ function existingOccurrenceMatchesAdmission(params: Readonly<{
 }
 
 /**
- * Sole server writer for a Channels Conversation occurrence. It retains only
+ * Sole server writer for a plugin-admitted Conversation occurrence. It retains only
  * the immutable Conversation evidence and the optional incumbent handoff
  * custody; target execution and result settlement remain with their existing
  * Run owners.
@@ -310,10 +308,17 @@ export async function admitAutomationConversationV1(params: Readonly<{
     caller: AutomationConversationAdmissionCallerV1;
     input: unknown;
 }>): Promise<AutomationConversationAdmitResultV1> {
-    if (params.caller.pluginId !== AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1) {
+    const input = AutomationConversationAdmitInputV1Schema.parse(params.input);
+    // This writer is the one place the caller-stamped machine/installation/
+    // materialization is frozen next to the payload-named delivery Action. Any
+    // plugin may be that target; it must be the admitting plugin's own
+    // contribution so a reply cannot be misrouted into another plugin.
+    if (!isAutomationConversationResultDeliveryOwnedByCallerV1({
+        callerPluginId: params.caller.pluginId,
+        resultDelivery: input.resultDelivery,
+    })) {
         throw new AutomationConversationAdmissionCallerError();
     }
-    const input = AutomationConversationAdmitInputV1Schema.parse(params.input);
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
 
     return await rejoinAutomationOccurrenceInsertRace(() => inTx(async (tx) => {
@@ -364,50 +369,22 @@ export async function admitAutomationConversationV1(params: Readonly<{
                 : blocked("occurrenceConflict");
         }
 
+        // A conversation is an additional invocation source for an Automation
+        // the Account already owns, so any current Automation admits whatever
+        // its primary trigger is, and several bindings may feed one Automation.
+        // The binding stays in the occurrence identity above, which is already
+        // namespaced by the host-stamped caller plugin.
         const automation = await loadAutomationTx(tx, {
             accountId: params.accountId,
             automationId: input.automationId,
-            expectedTriggerKind: "conversation",
         });
         if (
             !automation
             || !automation.enabled
             || automation.templateVersion !== input.templateVersion
-            || automation.triggerDefinitionEnvelope === null
         ) {
             return blocked("temporarilyUnavailable");
         }
-        const definitionBinding = readAutomationTriggerDefinitionBinding({
-            automationId: automation.id,
-            templateVersion: automation.templateVersion,
-            triggerKind: automation.triggerKind,
-            triggerEventPluginId: automation.triggerEventPluginId,
-            triggerEventLocalId: automation.triggerEventLocalId,
-            triggerSourceSelectorId: automation.triggerSourceSelectorId,
-        });
-        if (definitionBinding === null) return blocked("temporarilyUnavailable");
-        const definitionOuter = validateAutomationTriggerDefinitionEnvelopeOuterForMode({
-            raw: automation.triggerDefinitionEnvelope,
-            mode: "plain",
-            binding: definitionBinding,
-        });
-        const openedDefinition = definitionOuter.kind === "available"
-            ? openAutomationTriggerDefinitionStoredEnvelopeV1({
-                mode: "plain",
-                binding: definitionBinding,
-                envelope: definitionOuter.envelope,
-            })
-            : null;
-        const triggerDefinition = openedDefinition?.kind === "available"
-            ? AutomationConversationTriggerDefinitionStoredPayloadV1Schema.safeParse(
-                openedDefinition.definition,
-            )
-            : null;
-        if (
-            !triggerDefinition
-            || !triggerDefinition.success
-            || triggerDefinition.data.bindingId !== input.bindingId
-        ) return blocked("temporarilyUnavailable");
 
         const occupied = await tx.automationRun.count({
             where: {

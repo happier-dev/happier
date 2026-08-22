@@ -481,6 +481,45 @@ describe("Automation API projections", () => {
         }, "plain")).toThrow("Automation stored content is invalid");
     });
 
+    it("publishes the existing-Session association on the bounded list and withholds it for a retained template", () => {
+        const serialized = serializeAutomationRunExecutionRecipeV1({
+            v: 1,
+            templateVersion: 2,
+            template: { t: "plain", v: { v: 1, prompt: "Summarize this session." } },
+            triggerEvidence: null,
+            target: { kind: "existingSession", sessionId: "session-77" },
+        });
+        if (serialized.kind !== "available") {
+            throw new Error("Existing-session recipe fixture must serialize");
+        }
+        const current = {
+            ...scheduleAutomation(),
+            id: "automation-existing-session",
+            targetType: "existing_session" as const,
+            templateCiphertext: serialized.serialized,
+        };
+
+        const listItem = toAutomationV3DefinitionListItemApiDto(current);
+        expect(listItem.existingSessionId).toBe("session-77");
+        expect(listItem).not.toHaveProperty("templateCiphertext");
+        expect(listItem).not.toHaveProperty("executionRecipe");
+        expect(toAutomationV3DefinitionDetailApiDto(current, ACCOUNT_CURRENTNESS).existingSessionId)
+            .toBe("session-77");
+
+        // A stale recipe revision and a retained predecessor template are both
+        // undisclosed: only a reader that can open the template may trust them.
+        expect(toAutomationV3DefinitionListItemApiDto({
+            ...current,
+            templateVersion: 3,
+        }).existingSessionId).toBeNull();
+        expect(toAutomationV3DefinitionListItemApiDto({
+            ...current,
+            templateCiphertext: V2_TEMPLATE_CIPHERTEXT,
+        }).existingSessionId).toBeNull();
+        expect(toAutomationV3DefinitionListItemApiDto(scheduleAutomation()).existingSessionId)
+            .toBeNull();
+    });
+
     it("does not manufacture Event status without the batch projection owner", () => {
         const event = eventAutomation();
 

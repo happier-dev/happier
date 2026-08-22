@@ -107,6 +107,7 @@ model Account {
     automationEventSourceCatalogStatuses AutomationEventSourceCatalogStatus[]
     SessionFolderAssignment SessionFolderAssignment[]
     SessionPin                    SessionPin[]
+    SessionAttentionStanding      SessionAttentionStanding[]
     SessionOrganizationFolder     SessionOrganizationFolder[]
     SessionOrganizationTag        SessionOrganizationTag[]
     SessionTagAssignment          SessionTagAssignment[]
@@ -550,6 +551,7 @@ model Session {
     publicShare       PublicSessionShare?
     sessionFolderAssignments SessionFolderAssignment[]
     sessionPins                   SessionPin[]
+    sessionAttentionStandings     SessionAttentionStanding[]
     sessionTagAssignments         SessionTagAssignment[]
     systemRecords    SessionSystemRecord[]
     subagentCustodyRecords SessionSubagentCustody[]
@@ -641,6 +643,22 @@ model SessionPin {
 
     @@unique([accountId, sessionId])
     @@index([accountId, sortKey])
+    @@index([sessionId])
+}
+
+model SessionAttentionStanding {
+    id        String   @id @default(cuid())
+    accountId String
+    sessionId String
+    standing  Boolean
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId])
+    @@index([accountId, standing])
     @@index([sessionId])
 }
 
@@ -2050,6 +2068,11 @@ model PluginCollectionRow {
     @@unique([accountId, pluginId, collectionId, rowId], map: "PluginCollectionRow_account_identity_key")
     @@index([accountId, pluginId, collectionId, deletedAt], map: "PluginCollectionRow_account_live_idx")
     @@index([accountId, pluginId, collectionId, contractDigest], map: "PluginCollectionRow_account_contract_idx")
+    /// Serves the Account-wide live-row keyset walk the quota census performs
+    /// before and after every Collection mutation batch. The three indexes above
+    /// all lead with the collection identity, so without this one the census
+    /// falls back to the primary key and filters out every other tenant's rows.
+    @@index([accountId, deletedAt, id], map: "PluginCollectionRow_account_live_scan_idx")
 }
 
 /// The authoritative server-readable values for a collection row. Index and relation records are

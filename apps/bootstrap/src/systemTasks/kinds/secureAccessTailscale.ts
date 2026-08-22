@@ -313,7 +313,10 @@ async function inspectSecureAccessTailscaleState(
     upstreamUrl: params.upstreamUrl,
   });
   const status = await inspectTailscaleReadinessStateForExecutionContext(executionContext, options);
-  if (!status.installed || !status.loggedIn) {
+  // Relay-access config survives `tailscale down`, so asking a provider for its
+  // share URL while the backend is stopped yields a URL nothing is listening on.
+  // Only a running backend may contribute a shareable URL.
+  if (!status.installed || !status.running) {
     return {
       ...status,
     };
@@ -331,6 +334,8 @@ async function inspectSecureAccessTailscaleState(
   return {
     installed: true,
     loggedIn: true,
+    running: true,
+    daemonReachable: true,
     authUrl: status.authUrl,
     shareableHttpsUrl: appendServePathToHttpsUrl(relayAccessStatus.shareUrl ?? null, params.servePath),
   };

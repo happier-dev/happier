@@ -55,6 +55,11 @@ import {
     type AccountEncryptionTransitionAutomationStageCursor,
     writeAccountEncryptionTransitionAutomationStageTargetsInTx,
 } from "./accountEncryptionTransitionAutomationStage";
+import {
+    ACCOUNT_ENCRYPTION_TRANSITION_PEP1_CAPACITY_MEASUREMENT,
+    deriveAccountEncryptionTransitionMeasuredCapacity,
+    type AccountEncryptionTransitionMeasuredCapacity,
+} from "./accountEncryptionTransitionMeasuredCapacity";
 import { inTx, type Tx } from "@/storage/inTx";
 
 /**
@@ -72,8 +77,8 @@ const V4_EMPTY_COLLECTION_TRANSITION_LIMITS = {
 /**
  * Lifecycle work is deliberately separate from the V5 wire page/batch limits:
  * neither number is an Account aggregate-capacity decision. The cleanup chunk
- * only bounds one transaction's envelope deletion work. Aggregate target
- * capacity remains unmeasured and therefore unavailable to live V5 staging.
+ * only bounds one transaction's envelope deletion work. Aggregate capacity is
+ * owned separately by `ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY`.
  *
  * The fixed ten-minute lifetime matches the incumbent first-key external-auth
  * pending default. It is deliberately non-renewable: each retry reuses the
@@ -90,6 +95,14 @@ export const ACCOUNT_ENCRYPTION_TRANSITION_LIFECYCLE = Object.freeze({
  * PEP2's only fixed participant ceiling is the complete all-origin retained
  * Run census. It is distinct from the Account owner's measured aggregate
  * stage capacity, which also reserves the paired Definition/Collection facts.
+ *
+ * The number is not a nearby capacity guess: the Account-transition owner
+ * approved `PLAINTEXT-ACCOUNTS-2026-08-11.PEP2` only for at most 10,000
+ * retained participating Automation Runs across all origins, so this bound is
+ * the authorization scope itself. The measured aggregate capacity subsumes it
+ * whenever `participantLimit` is the tighter of the two, but it must not be
+ * removed in favour of that capacity: a measurement above the approved scope
+ * would otherwise admit a transition nobody authorized.
  */
 const ACCOUNT_ENCRYPTION_TRANSITION_AUTOMATION_RUN_MAX_PARTICIPANTS = 10_000;
 
@@ -546,17 +559,31 @@ const accountEncryptionTransitionSelect = {
     measuredEncodedByteLimit: true,
 } as const;
 
-type AccountEncryptionTransitionMeasuredCapacity = Readonly<{
-    participantLimit: number;
-    encodedByteLimit: bigint;
-    reservedCapacityBytes: bigint;
-}>;
+/**
+ * The one aggregate capacity every prepared transition is stamped with. It is
+ * derived at load from the recorded offline PEP1 measurement and the released
+ * census page unit this owner actually walks, so no snapshot of the derived
+ * numbers can drift away from the measurement that justifies them.
+ *
+ * `reservedCapacityBytes` is stamped alongside the two measured limits because
+ * `measuredCapacityFromTransition` treats all three as one fact: a transition
+ * missing any of them can inspect source facts but must not accept a target
+ * envelope or activate one.
+ */
+export const ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY:
+    AccountEncryptionTransitionMeasuredCapacity = Object.freeze(
+        deriveAccountEncryptionTransitionMeasuredCapacity({
+            measurement: ACCOUNT_ENCRYPTION_TRANSITION_PEP1_CAPACITY_MEASUREMENT,
+            censusPageItems:
+                ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS,
+        }),
+    );
 
 /**
- * Aggregate capacity is a provider-measured deployment fact, never a reuse of
- * the public 500-row/8 MiB transport bounds. Until all three provider
- * measurements are recorded by the sole Account transition owner, V5 may
- * inspect source facts but must not accept a target envelope or activate one.
+ * Aggregate capacity is a measured deployment fact, never a reuse of the public
+ * 500-row/8 MiB transport bounds. A transition whose stamped capacity is
+ * missing or non-positive may inspect source facts but must not accept a target
+ * envelope or activate one.
  */
 function measuredCapacityFromTransition(transition: Readonly<{
     measuredParticipantLimit: number | null;
@@ -1272,13 +1299,16 @@ export async function prepareAccountEncryptionTransitionCoordinatorInTx(
             stagedSourceBytes: 0n,
             stagedTargetBytes: 0n,
             // No source-controlled transport value is an aggregate capacity.
-            // The V5 route is intentionally unavailable until a provider
-            // measurement writes these fields through the complete Account
-            // transition owner; staging rejects this null record before it
-            // can retain any target content.
-            reservedCapacityBytes: 0n,
-            measuredParticipantLimit: null,
-            measuredEncodedByteLimit: null,
+            // These three come from the recorded offline PEP1 measurement,
+            // derived through this owner's single capacity derivation, and are
+            // stamped on the transition so every later fence reads the exact
+            // bounds this transition was admitted under.
+            reservedCapacityBytes:
+                ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY.reservedCapacityBytes,
+            measuredParticipantLimit:
+                ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY.participantLimit,
+            measuredEncodedByteLimit:
+                ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY.encodedByteLimit,
         },
     });
     return {

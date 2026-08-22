@@ -43,6 +43,24 @@ export type PluginCollectionAccountUsage = Readonly<{
     contracts: ReadonlyMap<string, PluginCollectionPersistedContractForQuota>;
 }>;
 
+/**
+ * The activation path needs aggregate row measurements, not the identity of
+ * every retained row. Mutation keeps the fuller census above because its
+ * monotonic transition rule compares individual row identities.
+ */
+export type PluginCollectionActivationUsage = Readonly<{
+    rows: number;
+    encodedBytes: number;
+    maximumRowEncodedBytes: number;
+}>;
+
+export type PluginCollectionAccountActivationUsage = Readonly<{
+    rows: number;
+    encodedBytes: number;
+    collections: ReadonlyMap<string, PluginCollectionActivationUsage>;
+    contracts: ReadonlyMap<string, PluginCollectionPersistedContractForQuota>;
+}>;
+
 /** A non-canonical staged row measured through the same stored-row metric. */
 export type PluginCollectionAdditionalStoredRowForQuota = Readonly<{
     storageKey: string;
@@ -105,6 +123,16 @@ export type PluginCollectionPersistedContractForQuota = Readonly<{
     privacyProjection: unknown;
 }>;
 
+type PluginCollectionQuotaCensusRow = Readonly<{
+    id: string;
+    pluginId: string;
+    collectionId: string;
+    rowId: string;
+    contentEnvelope: unknown;
+    contract: PluginCollectionPersistedContractForQuota;
+    projections: readonly Readonly<{ fieldId: string; typedEncodedValue: string }>[];
+}>;
+
 function collectionKey(pluginId: string, collectionId: string): string {
     return `${pluginId}\u0000${collectionId}`;
 }
@@ -123,6 +151,22 @@ function usageForCollection(
     collectionId: string,
 ): PluginCollectionUsage {
     return usage.collections.get(collectionKey(pluginId, collectionId)) ?? emptyUsage();
+}
+
+function emptyActivationUsage(): PluginCollectionActivationUsage {
+    return {
+        rows: 0,
+        encodedBytes: 0,
+        maximumRowEncodedBytes: 0,
+    };
+}
+
+function activationUsageForCollection(
+    usage: PluginCollectionAccountActivationUsage,
+    pluginId: string,
+    collectionId: string,
+): PluginCollectionActivationUsage {
+    return usage.collections.get(collectionKey(pluginId, collectionId)) ?? emptyActivationUsage();
 }
 
 /**
@@ -152,36 +196,45 @@ export function measurePluginCollectionStoredRowEncodedBytes(input: Readonly<{
 }
 
 /**
- * Extends the one Account census with bounded non-authoritative stage bytes.
- * The caller chooses collision-free storage keys because one logical row can
- * temporarily exist as both canonical source and prospective target.
+ * Extends the compact activation census with bounded non-authoritative stage
+ * bytes. Candidate storage identities are deliberately NUL-prefixed while
+ * public row identities reject NUL, so canonical source and target rows stay
+ * distinct without retaining every live row identity in memory.
  */
-export function extendPluginCollectionAccountUsageWithStoredRows(input: Readonly<{
-    usage: PluginCollectionAccountUsage;
+export function extendPluginCollectionAccountActivationUsageWithStoredRows(input: Readonly<{
+    usage: PluginCollectionAccountActivationUsage;
     rows: readonly PluginCollectionAdditionalStoredRowForQuota[];
-}>): PluginCollectionAccountUsage {
-    const collections = new Map<string, {
+}>): PluginCollectionAccountActivationUsage {
+    const collections = new Map<string, PluginCollectionActivationUsage>(input.usage.collections);
+    const changedCollections = new Map<string, {
         rows: number;
         encodedBytes: number;
-        rowEncodedBytesByRowId: Map<string, number>;
+        maximumRowEncodedBytes: number;
+        storageKeys: Set<string>;
     }>();
-    for (const [key, usage] of input.usage.collections) {
-        collections.set(key, {
-            rows: usage.rows,
-            encodedBytes: usage.encodedBytes,
-            rowEncodedBytesByRowId: new Map(usage.rowEncodedBytesByRowId),
-        });
-    }
     let rows = input.usage.rows;
     let encodedBytes = input.usage.encodedBytes;
     for (const row of input.rows) {
-        const key = collectionKey(row.pluginId, row.collectionId);
-        let collection = collections.get(key);
-        if (!collection) {
-            collection = { rows: 0, encodedBytes: 0, rowEncodedBytesByRowId: new Map() };
-            collections.set(key, collection);
+        if (!row.storageKey.includes('\u0000')) {
+            throw new PluginCollectionQuotaCensusInconsistencyError(
+                "Collection staged quota census storage identity can overlap a public row identity.",
+            );
         }
-        if (collection.rowEncodedBytesByRowId.has(row.storageKey)) {
+        const key = collectionKey(row.pluginId, row.collectionId);
+        let collection = changedCollections.get(key);
+        if (!collection) {
+            const existing = collections.get(key);
+            collection = existing
+                ? {
+                    rows: existing.rows,
+                    encodedBytes: existing.encodedBytes,
+                    maximumRowEncodedBytes: existing.maximumRowEncodedBytes,
+                    storageKeys: new Set(),
+                }
+                : { rows: 0, encodedBytes: 0, maximumRowEncodedBytes: 0, storageKeys: new Set() };
+            changedCollections.set(key, collection);
+        }
+        if (collection.storageKeys.has(row.storageKey)) {
             throw new PluginCollectionQuotaCensusInconsistencyError(
                 "Collection staged quota census has a duplicate storage identity.",
             );
@@ -193,21 +246,22 @@ export function extendPluginCollectionAccountUsageWithStoredRows(input: Readonly
         });
         collection.rows += 1;
         collection.encodedBytes += measured;
-        collection.rowEncodedBytesByRowId.set(row.storageKey, measured);
+        collection.maximumRowEncodedBytes = Math.max(collection.maximumRowEncodedBytes, measured);
+        collection.storageKeys.add(row.storageKey);
         rows += 1;
         encodedBytes += measured;
+    }
+    for (const [key, usage] of changedCollections) {
+        collections.set(key, Object.freeze({
+            rows: usage.rows,
+            encodedBytes: usage.encodedBytes,
+            maximumRowEncodedBytes: usage.maximumRowEncodedBytes,
+        }));
     }
     return Object.freeze({
         rows,
         encodedBytes,
-        collections: new Map([...collections.entries()].map(([key, usage]) => [
-            key,
-            Object.freeze({
-                rows: usage.rows,
-                encodedBytes: usage.encodedBytes,
-                rowEncodedBytesByRowId: usage.rowEncodedBytesByRowId,
-            }),
-        ])),
+        collections,
         contracts: input.usage.contracts,
     });
 }
@@ -264,36 +318,136 @@ export function findPluginCollectionDeclaredQuotaIncompatibility(input: Readonly
     return null;
 }
 
-/** Reads live persisted state once for every Collection quota consumer. */
+/**
+ * The working set one census page may materialize before the next round trip.
+ *
+ * The census reads every live stored row, keeps only its measured byte count,
+ * and discards the row, so the page — not the Account — is what has to be
+ * bounded, and it has to be bounded in bytes. `maxRowEncodedBytes` is a
+ * rejection ceiling (512 KiB by default, 2 MiB at the protocol ceiling) that
+ * ordinary rows sit orders of magnitude below: a page fixed at that ceiling
+ * costs hundreds of round trips for a normal Account, and a page fixed at
+ * ordinary row sizes is unbounded for a pathological one. So the first page is
+ * sized from the ceiling and every later page from the largest row this census
+ * has actually measured.
+ */
+const PLUGIN_COLLECTION_QUOTA_CENSUS_PAGE_BYTES = 16 * 1024 * 1024;
+
+/** Round-trip ceiling: no page asks a provider for more rows than this. */
+const PLUGIN_COLLECTION_QUOTA_CENSUS_MAX_PAGE_ROWS = 1_000;
+
+/**
+ * A census page never depends on `maxBatchRows`: that limit bounds how many row
+ * operations one inbound client mutation may carry, not how much stored data
+ * this server reads per round trip.
+ */
+function resolvePluginCollectionQuotaCensusPageRows(largestRowEncodedBytes: number): number {
+    if (!Number.isFinite(largestRowEncodedBytes) || largestRowEncodedBytes < 1) {
+        throw new PluginCollectionQuotaCensusInconsistencyError(
+            'Collection quota census requires a positive stored-row byte ceiling.',
+        );
+    }
+    return Math.max(1, Math.min(
+        PLUGIN_COLLECTION_QUOTA_CENSUS_MAX_PAGE_ROWS,
+        Math.floor(PLUGIN_COLLECTION_QUOTA_CENSUS_PAGE_BYTES / largestRowEncodedBytes),
+    ));
+}
+
+/** The single bounded live-row reader shared by mutation and activation census shapes. */
+async function forEachLivePluginCollectionQuotaCensusRowInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    deployment: PluginDataCollectionsCapabilities;
+    visit: (visited: Readonly<{ row: PluginCollectionQuotaCensusRow; encodedBytes: number }>) => void;
+}>): Promise<void> {
+    let largestRowEncodedBytes = input.deployment.maxRowEncodedBytes;
+    let afterId: string | null = null;
+    while (true) {
+        const take = resolvePluginCollectionQuotaCensusPageRows(largestRowEncodedBytes);
+        const rows: readonly PluginCollectionQuotaCensusRow[] = await input.tx.pluginCollectionRow.findMany({
+            where: {
+                accountId: input.accountId,
+                deletedAt: null,
+                ...(afterId === null ? {} : { id: { gt: afterId } }),
+            },
+            // Naming the supporting index's own column order, not just `id`, is
+            // what keeps the walk on `PluginCollectionRow_account_live_scan_idx`.
+            // `accountId` and `deletedAt` are pinned by the predicate above, so
+            // this is the same row order as `id` alone — but measured on
+            // PostgreSQL 16, ordering by the bare `id` leaves the planner on the
+            // primary key under `LIMIT`, filtering out every other tenant's rows
+            // (200,000 rows removed and 17,443 buffers for one page against 12
+            // buffers here).
+            orderBy: [{ accountId: 'asc' }, { deletedAt: 'asc' }, { id: 'asc' }],
+            take,
+            select: {
+                id: true,
+                pluginId: true,
+                collectionId: true,
+                rowId: true,
+                contentEnvelope: true,
+                contract: {
+                    select: {
+                        id: true,
+                        pluginId: true,
+                        collectionId: true,
+                        schemaVersion: true,
+                        contractDigest: true,
+                        normalizedSchema: true,
+                        indexes: true,
+                        relations: true,
+                        privacyProjection: true,
+                    },
+                },
+                projections: {
+                    select: { fieldId: true, typedEncodedValue: true },
+                },
+            },
+        });
+        let largestObservedRowEncodedBytes = 0;
+        for (const row of rows) {
+            const encodedBytes = measurePluginCollectionStoredRowEncodedBytes({
+                rowId: row.rowId,
+                contentEnvelope: row.contentEnvelope,
+                projections: row.projections,
+            });
+            largestObservedRowEncodedBytes = Math.max(largestObservedRowEncodedBytes, encodedBytes);
+            input.visit({ row, encodedBytes });
+        }
+        if (rows.length < take) return;
+        const last = rows[rows.length - 1];
+        if (!last) return;
+        afterId = last.id;
+        largestRowEncodedBytes = Math.max(1, largestObservedRowEncodedBytes);
+    }
+}
+
+function recordPluginCollectionQuotaCensusContract(input: Readonly<{
+    contracts: Map<string, PluginCollectionPersistedContractForQuota>;
+    contract: PluginCollectionPersistedContractForQuota;
+}>): void {
+    const existingContract = input.contracts.get(input.contract.id);
+    if (existingContract && (
+        existingContract.pluginId !== input.contract.pluginId
+        || existingContract.collectionId !== input.contract.collectionId
+        || existingContract.contractDigest !== input.contract.contractDigest
+    )) {
+        throw new PluginCollectionQuotaCensusInconsistencyError(
+            'Collection quota census found an ambiguous contract identity.',
+        );
+    }
+    input.contracts.set(input.contract.id, input.contract);
+}
+
+/**
+ * Reads the complete live-row census required by mutation's monotonic
+ * per-row transition checks. Activation must use the compact census below.
+ */
 export async function readPluginCollectionAccountUsageInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
+    deployment: PluginDataCollectionsCapabilities;
 }>): Promise<PluginCollectionAccountUsage> {
-    const rows = await input.tx.pluginCollectionRow.findMany({
-        where: { accountId: input.accountId, deletedAt: null },
-        select: {
-            pluginId: true,
-            collectionId: true,
-            rowId: true,
-            contentEnvelope: true,
-            contract: {
-                select: {
-                    id: true,
-                    pluginId: true,
-                    collectionId: true,
-                    schemaVersion: true,
-                    contractDigest: true,
-                    normalizedSchema: true,
-                    indexes: true,
-                    relations: true,
-                    privacyProjection: true,
-                },
-            },
-            projections: {
-                select: { fieldId: true, typedEncodedValue: true },
-            },
-        },
-    });
     const mutableCollections = new Map<string, {
         rows: number;
         encodedBytes: number;
@@ -302,41 +456,75 @@ export async function readPluginCollectionAccountUsageInTx(input: Readonly<{
     const contracts = new Map<string, PluginCollectionPersistedContractForQuota>();
     let accountRows = 0;
     let accountEncodedBytes = 0;
-    for (const row of rows) {
-        const existingContract = contracts.get(row.contract.id);
-        if (existingContract && (
-            existingContract.pluginId !== row.contract.pluginId
-            || existingContract.collectionId !== row.contract.collectionId
-            || existingContract.contractDigest !== row.contract.contractDigest
-        )) {
-            throw new PluginCollectionQuotaCensusInconsistencyError(
-                'Collection quota census found an ambiguous contract identity.',
-            );
-        }
-        contracts.set(row.contract.id, row.contract);
-        const key = collectionKey(row.pluginId, row.collectionId);
-        let collection = mutableCollections.get(key);
-        if (!collection) {
-            collection = { rows: 0, encodedBytes: 0, rowEncodedBytesByRowId: new Map() };
-            mutableCollections.set(key, collection);
-        }
-        const encodedBytes = measurePluginCollectionStoredRowEncodedBytes({
-            rowId: row.rowId,
-            contentEnvelope: row.contentEnvelope,
-            projections: row.projections,
-        });
-        collection.rows += 1;
-        collection.encodedBytes += encodedBytes;
-        collection.rowEncodedBytesByRowId.set(row.rowId, encodedBytes);
-        accountRows += 1;
-        accountEncodedBytes += encodedBytes;
-    }
+    await forEachLivePluginCollectionQuotaCensusRowInTx({
+        ...input,
+        visit: ({ row, encodedBytes }) => {
+            recordPluginCollectionQuotaCensusContract({ contracts, contract: row.contract });
+            const key = collectionKey(row.pluginId, row.collectionId);
+            let collection = mutableCollections.get(key);
+            if (!collection) {
+                collection = { rows: 0, encodedBytes: 0, rowEncodedBytesByRowId: new Map() };
+                mutableCollections.set(key, collection);
+            }
+            collection.rows += 1;
+            collection.encodedBytes += encodedBytes;
+            collection.rowEncodedBytesByRowId.set(row.rowId, encodedBytes);
+            accountRows += 1;
+            accountEncodedBytes += encodedBytes;
+        },
+    });
     const collections = new Map<string, PluginCollectionUsage>();
     for (const [key, usage] of mutableCollections) {
         collections.set(key, Object.freeze({
             rows: usage.rows,
             encodedBytes: usage.encodedBytes,
             rowEncodedBytesByRowId: usage.rowEncodedBytesByRowId,
+        }));
+    }
+    return Object.freeze({ rows: accountRows, encodedBytes: accountEncodedBytes, collections, contracts });
+}
+
+/**
+ * Reads the bounded aggregate needed for contract activation and candidate
+ * staging. It intentionally retains no per-row identity map: all activation
+ * row-size checks reduce exactly to the collection maximum.
+ */
+export async function readPluginCollectionAccountActivationUsageInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    deployment: PluginDataCollectionsCapabilities;
+}>): Promise<PluginCollectionAccountActivationUsage> {
+    const mutableCollections = new Map<string, {
+        rows: number;
+        encodedBytes: number;
+        maximumRowEncodedBytes: number;
+    }>();
+    const contracts = new Map<string, PluginCollectionPersistedContractForQuota>();
+    let accountRows = 0;
+    let accountEncodedBytes = 0;
+    await forEachLivePluginCollectionQuotaCensusRowInTx({
+        ...input,
+        visit: ({ row, encodedBytes }) => {
+            recordPluginCollectionQuotaCensusContract({ contracts, contract: row.contract });
+            const key = collectionKey(row.pluginId, row.collectionId);
+            let collection = mutableCollections.get(key);
+            if (!collection) {
+                collection = { rows: 0, encodedBytes: 0, maximumRowEncodedBytes: 0 };
+                mutableCollections.set(key, collection);
+            }
+            collection.rows += 1;
+            collection.encodedBytes += encodedBytes;
+            collection.maximumRowEncodedBytes = Math.max(collection.maximumRowEncodedBytes, encodedBytes);
+            accountRows += 1;
+            accountEncodedBytes += encodedBytes;
+        },
+    });
+    const collections = new Map<string, PluginCollectionActivationUsage>();
+    for (const [key, usage] of mutableCollections) {
+        collections.set(key, Object.freeze({
+            rows: usage.rows,
+            encodedBytes: usage.encodedBytes,
+            maximumRowEncodedBytes: usage.maximumRowEncodedBytes,
         }));
     }
     return Object.freeze({ rows: accountRows, encodedBytes: accountEncodedBytes, collections, contracts });
@@ -373,15 +561,20 @@ function prefixQuotaStateIdentity(input: Readonly<{
     return [input.pluginId, input.collectionId, input.indexId, input.contractDigest].join('\u0000');
 }
 
+type PluginCollectionAccountRowsUsage = Readonly<{
+    collections: ReadonlyMap<string, Readonly<{ rows: number }>>;
+}>;
+
 /**
  * Counts normalized indexed-prefix quota membership through the one raw-byte
- * range primitive. Both readiness admission and mutation pass their current
- * Account census here, so no consumer owns a competing prefix decision.
+ * range primitive. Both compact activation and mutation census shapes pass
+ * their current Account rows here, so no consumer owns a competing prefix
+ * decision.
  */
 export async function readPluginCollectionPrefixQuotaUsageInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
-    usage: PluginCollectionAccountUsage;
+    usage: PluginCollectionAccountRowsUsage;
     policies: readonly PluginCollectionPrefixQuotaPolicy[];
 }>): Promise<PluginCollectionPrefixQuotaUsage> {
     const policies = [...input.policies].sort((left, right) => (
@@ -390,7 +583,7 @@ export async function readPluginCollectionPrefixQuotaUsageInTx(input: Readonly<{
         || left.contractDigest.localeCompare(right.contractDigest)
     )).filter((policy) => (
         policy.quota?.maxRowsByIndexPrefix !== undefined
-        && usageForCollection(input.usage, policy.pluginId, policy.collectionId).rows > 0
+        && (input.usage.collections.get(collectionKey(policy.pluginId, policy.collectionId))?.rows ?? 0) > 0
     ));
     if (policies.length === 0) return Object.freeze([]);
     const states = await input.tx.pluginCollectionIndexState.findMany({
@@ -656,7 +849,7 @@ export function findPluginCollectionMutationQuotaIncompatibility(input: Readonly
 /** Activation is a new writable contract, so existing overages are never admitted. */
 export function findPluginCollectionActivationQuotaIncompatibility(input: Readonly<{
     deployment: PluginDataCollectionsCapabilities;
-    usage: PluginCollectionAccountUsage;
+    usage: PluginCollectionAccountActivationUsage;
     collections: readonly PluginCollectionQuotaPolicy[];
     prefixUsage: PluginCollectionPrefixQuotaUsage;
 }>): PluginCollectionQuotaIncompatibility | null {
@@ -673,17 +866,15 @@ export function findPluginCollectionActivationQuotaIncompatibility(input: Readon
             deployment: input.deployment,
             quota: collection.quota,
         });
-        const usage = usageForCollection(input.usage, collection.pluginId, collection.collectionId);
+        const usage = activationUsageForCollection(input.usage, collection.pluginId, collection.collectionId);
         if (usage.rows > limits.maxRows) {
             return { dimension: 'maxRows', effectiveMaximum: limits.maxRows };
         }
         if (usage.encodedBytes > limits.maxCollectionEncodedBytes) {
             return { dimension: 'maxCollectionEncodedBytes', effectiveMaximum: limits.maxCollectionEncodedBytes };
         }
-        for (const encodedBytes of usage.rowEncodedBytesByRowId.values()) {
-            if (encodedBytes > limits.maxRowEncodedBytes) {
-                return { dimension: 'maxRowEncodedBytes', effectiveMaximum: limits.maxRowEncodedBytes };
-            }
+        if (usage.maximumRowEncodedBytes > limits.maxRowEncodedBytes) {
+            return { dimension: 'maxRowEncodedBytes', effectiveMaximum: limits.maxRowEncodedBytes };
         }
     }
     const prefix = findPluginCollectionPrefixActivationQuotaIncompatibility(input.prefixUsage);

@@ -506,7 +506,10 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             cleanupGroupReferences:
                 request.query.cleanupGroupReferences === "true",
         });
-        if (result.status === "storage_mode_mismatch") {
+        if (
+            result.status === "storage_mode_mismatch"
+            || result.status === "revision_required"
+        ) {
             return reply.code(400).send({ error: "invalid-params" });
         }
         if (result.status === "not_found") {

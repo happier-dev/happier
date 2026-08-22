@@ -8,7 +8,8 @@ export type SessionOrganizationChangeScope =
     | "tags"
     | "tagAssignments"
     | "order"
-    | "labels";
+    | "labels"
+    | "attentionStandings";
 
 export function buildSessionOrganizationHint(params: Readonly<{
     scope: SessionOrganizationChangeScope;

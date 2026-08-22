@@ -159,14 +159,11 @@ describe("plugin webhook endpoint store", () => {
         expect(randomBytes.mock.calls).toEqual([[16], [16], [16], [32]]);
     });
 
-    it("retries a generated route identity collision with fresh generated identities", async () => {
+    it("does not retry an unexplained unique conflict as a generated identity collision", async () => {
         const first = transaction(null);
-        const second = transaction(null);
-        first.pluginWebhookRoute.create.mockRejectedValueOnce({ code: "P2002" });
+        first.pluginWebhookRoute.create.mockRejectedValue({ code: "P2002" });
         mocks.endpointFindFirst.mockResolvedValue(null);
-        mocks.inTx
-            .mockImplementationOnce(async (callback: (value: typeof first) => unknown) => await callback(first))
-            .mockImplementationOnce(async (callback: (value: typeof second) => unknown) => await callback(second));
+        mocks.inTx.mockImplementation(async (callback: (value: typeof first) => unknown) => await callback(first));
         let seed = 0;
         const randomBytes = vi.fn((length: number) => Uint8Array.from(
             { length },
@@ -185,18 +182,13 @@ describe("plugin webhook endpoint store", () => {
             targetMaterialization: target,
             sourceInstanceId: "source-1",
             setup: { kind: "githubAccountEndpointV1", credential: "serverGenerated" },
-            idempotencyKey: "ensure-generated-route-collision-1",
-        })).resolves.toMatchObject({
-            webhookEndpointId: expect.stringMatching(/^wh_ep_/u),
-            readiness: "providerConfirmationRequired",
-        });
+            idempotencyKey: "ensure-unexplained-unique-conflict-1",
+        })).rejects.toMatchObject({ code: "P2002" });
 
         expect(randomBytes.mock.calls).toEqual([
             [16], [16], [16], [32],
-            [16], [16], [16], [32],
         ]);
-        expect(first.pluginWebhookRoute.create.mock.calls[0]?.[0]?.data.opaqueRouteId)
-            .not.toEqual(second.pluginWebhookRoute.create.mock.calls[0]?.[0]?.data.opaqueRouteId);
+        expect(mocks.inTx).toHaveBeenCalledTimes(1);
     });
 
     it("does not let a raw shared-installation setup value create an endpoint without canonical authorization", async () => {

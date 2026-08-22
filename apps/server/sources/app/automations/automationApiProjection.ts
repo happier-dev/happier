@@ -246,6 +246,26 @@ function toAutomationV3Trigger(item: AutomationListItem) {
     };
 }
 
+/**
+ * One owner for the bounded existing-Session association. It reads the target
+ * structurally from the current strict recipe, which the Definition writer only
+ * accepts on a plaintext Account, so this discloses nothing the same reader
+ * cannot already see in the exact definition. A retained predecessor template
+ * stays undisclosed: its association is an outer identifier that only a client
+ * able to open the template may trust.
+ */
+function readAutomationDefinitionExistingSessionId(item: AutomationListItem): string | null {
+    if (item.targetType !== "existing_session") {
+        return null;
+    }
+    const parsed = parseAutomationRunExecutionRecipeV1(item.templateCiphertext);
+    if (parsed.kind !== "available" || parsed.recipe.templateVersion !== item.templateVersion) {
+        return null;
+    }
+    const target = parsed.recipe.target;
+    return target.kind === "existingSession" ? target.sessionId : null;
+}
+
 function toAutomationV3DefinitionCommon(
     item: AutomationListItem,
     eventStatusProjection?: AutomationV3EventStatusProjection,
@@ -257,6 +277,7 @@ function toAutomationV3DefinitionCommon(
         enabled: item.enabled,
         trigger: toAutomationV3Trigger(item),
         targetType: toAutomationTargetTypeV3(item.targetType),
+        existingSessionId: readAutomationDefinitionExistingSessionId(item),
         templateVersion: item.templateVersion,
         nextRunAt: item.nextRunAt?.getTime() ?? null,
         lastRunAt: item.lastRunAt?.getTime() ?? null,

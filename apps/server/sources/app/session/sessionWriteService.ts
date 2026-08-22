@@ -686,13 +686,17 @@ async function findLatestUnreadAffectingMainTranscriptMessageSeq(
                     },
                     publication,
                 }),
-                select: { id: true, content: true },
+                select: { id: true, content: true, localId: true },
             });
-            const contentById = new Map(contentRows.map((row) => [row.id, row.content]));
+            const contentById = new Map(contentRows.map((row) => [row.id, row]));
             for (const row of batch) {
-                const content = SessionStoredMessageContentSchema.safeParse(contentById.get(row.id));
+                const stored = contentById.get(row.id);
+                const content = SessionStoredMessageContentSchema.safeParse(stored?.content);
                 if (!content.success) return normalizeReadSeq(row.seq);
-                if (resolveMessageAttentionImpact({ content: content.data }).affectsUnread) {
+                if (resolveMessageAttentionImpact({
+                    content: content.data,
+                    localId: stored?.localId ?? null,
+                }).affectsUnread) {
                     return normalizeReadSeq(row.seq);
                 }
             }
@@ -1112,6 +1116,7 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
         : null;
     const attentionImpact = resolveMessageAttentionImpact({
         content: params.content,
+        localId: params.localId ?? null,
         explicitAttentionImpact:
             resolveSessionOwnedAttentionImpact(access.sessionTag)
             ?? params.trustedAttentionImpact
@@ -1422,6 +1427,7 @@ async function createSessionMessageAttempt(
                     : null;
                 attentionImpact = resolveMessageAttentionImpact({
                     content,
+                    localId: localId ?? null,
                     explicitAttentionImpact:
                         resolveSessionOwnedAttentionImpact(access.sessionTag)
                         ?? params.trustedAttentionImpact
@@ -1635,6 +1641,7 @@ async function createSessionMessageAttempt(
                         : null;
                     const attentionImpact = resolveMessageAttentionImpact({
                         content,
+                        localId: localId ?? null,
                         explicitAttentionImpact:
                             resolveSessionOwnedAttentionImpact(access.sessionTag)
                             ?? params.trustedAttentionImpact

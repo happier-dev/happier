@@ -89,12 +89,21 @@ function hasPrimarySessionFailure(
         && (row.active === true || hasUnreadSessionActivity(projection));
 }
 
+/**
+ * The canonical read cursor decides durable attention, not the ready-event cursor alone: a session
+ * whose provider kept working after its last ready event was read is unread, and hydrating the
+ * initial page from the ready-event cursor left it out of the first paint entirely. The generic
+ * arm sits with the other live-work facts because a finite publication's session sequence belongs
+ * to an operation-private state; such a row still reaches attention through the ready-event arm,
+ * which carries its own publication admission.
+ */
 function isDurableAttentionRow(row: V2SessionListRowCompat): boolean {
     const publicationProjection = readAttentionPublicationProjection(row);
     return (publicationProjection.hasLiveFacts && (
         row.pendingPermissionRequestCount > 0
         || row.pendingUserActionRequestCount > 0
         || hasPrimarySessionFailure(row, publicationProjection)
+        || hasUnreadSessionActivity(publicationProjection)
     ))
         || hasUnreadReadyEvent(publicationProjection);
 }
@@ -132,6 +141,31 @@ function createV2SessionListPublishedUnreadReadyEventWhere(): Prisma.SessionWher
 }
 
 /**
+ * Candidate arm for the generic unread-activity comparison, expressed as a column-to-column
+ * comparison so a session the reader has caught up with stops occupying a candidate slot.
+ *
+ * Superset proof against the confirmation step. The arm is conjoined with the live-facts predicate,
+ * and a live-facts row has no publication ceiling, so `applySessionTranscriptPublicationCeilingToProjection`
+ * leaves both `seq` and `lastViewedSessionSeq` at their stored values: the projected comparison
+ * `seq > (lastViewedSessionSeq ?? 0)` is exactly the stored one. The second disjunct covers the one
+ * case SQL cannot express through the column comparison: a never-viewed session, where
+ * `lastViewedSessionSeq` is NULL and the projection reads it as `0`.
+ */
+function createV2SessionListLiveUnreadSessionActivityWhere(): Prisma.SessionWhereInput {
+    return {
+        AND: [
+            createSessionTranscriptPublicationLiveFactsWhere(),
+            {
+                OR: [
+                    { seq: { gt: db.session.fields.lastViewedSessionSeq } },
+                    { lastViewedSessionSeq: null, seq: { gt: 0 } },
+                ],
+            },
+        ],
+    };
+}
+
+/**
  * Candidate predicate for the durable-attention arm. `isDurableAttentionRow` is the confirmation
  * step, so this only has to be a superset of the rows that can qualify.
  *
@@ -148,6 +182,7 @@ export function createV2SessionListAttentionRowsWhere(): Prisma.SessionWhereInpu
                     ],
                 },
                 createV2SessionListPublishedUnreadReadyEventWhere(),
+                createV2SessionListLiveUnreadSessionActivityWhere(),
                 {
                     AND: [
                         createSessionTranscriptPublicationLiveFactsWhere(),

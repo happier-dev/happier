@@ -1,4 +1,5 @@
 import {
+    type SessionAttentionStanding,
     type SessionOrganizationContentEnvelope,
     type SessionOrganizationDisplayState,
     type SessionFolderAssignment,
@@ -14,6 +15,7 @@ import {
 import type { EffectiveAccountEncryptionMode } from "@/app/encryption/accountEncryptionMode";
 import { parseSessionOrganizationDisplayEnvelope } from "./contentEnvelope";
 import type {
+    SessionAttentionStandingRecord,
     SessionOrganizationFolderRecord,
     SessionOrganizationLabelRecord,
     SessionOrganizationOrderEntryRecord,
@@ -66,6 +68,14 @@ export function mapSessionOrganizationPin(row: SessionOrganizationPinRecord): Se
         sessionId: row.sessionId,
         sortKey: row.sortKey,
         pinnedAt: row.pinnedAt.getTime(),
+    };
+}
+
+export function mapSessionAttentionStanding(row: SessionAttentionStandingRecord): SessionAttentionStanding {
+    return {
+        sessionId: row.sessionId,
+        standing: row.standing,
+        updatedAt: row.updatedAt.getTime(),
     };
 }
 
@@ -144,6 +154,7 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
     tagAssignments: SessionTagAssignment[];
     orderEntries: SessionOrganizationOrderEntry[];
     labels: SessionOrganizationLabel[];
+    attentionStandings?: SessionAttentionStanding[];
 }>): SessionOrganizationSnapshot {
     return {
         schemaVersion: 1,
@@ -155,5 +166,8 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
         tagAssignments: params.tagAssignments,
         orderEntries: params.orderEntries,
         labels: params.labels,
+        // Omitted unless the request asked for standings: an absent array means "not fetched",
+        // which every reader must be able to tell apart from "the account has none".
+        ...(params.attentionStandings ? { attentionStandings: params.attentionStandings } : {}),
     };
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import {
+    AUTOMATION_INT_COLUMN_MAX,
     AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
     AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
     AutomationTemplateEnvelopeSchema,
@@ -53,7 +54,7 @@ const AssignmentSchema = z.object({
 const ScheduleSchema = z.discriminatedUnion("kind", [
     z.object({
         kind: z.literal("interval"),
-        everyMs: z.number().int().min(1_000),
+        everyMs: z.number().int().min(1_000).max(AUTOMATION_INT_COLUMN_MAX),
         timezone: z.string().trim().min(1).optional().nullable(),
     }).strict(),
     z.object({

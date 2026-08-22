@@ -36,6 +36,8 @@ export async function inspectTailscaleReadinessStateForExecutionContext(
     return {
       installed: true,
       loggedIn: status.loggedIn,
+      running: status.running,
+      daemonReachable: status.daemonReachable,
       authUrl: status.authUrl,
       shareableHttpsUrl: null,
     };
@@ -44,6 +46,8 @@ export async function inspectTailscaleReadinessStateForExecutionContext(
       return {
         installed: false,
         loggedIn: false,
+        running: false,
+        daemonReachable: false,
         authUrl: null,
         shareableHttpsUrl: null,
       };

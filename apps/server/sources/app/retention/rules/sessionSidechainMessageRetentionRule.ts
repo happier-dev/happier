@@ -1,6 +1,7 @@
 import { readFromSimpleCache, writeToSimpleCache } from '@/storage/cache/simpleCache';
 import { createRecoverableExternalSessionHistoricalImportMessageWhere } from '@/app/session/externalSessionHistoricalImportCommand';
 import { db } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
 
 const SIDECHAIN_RETENTION_CURSOR_KEY = 'server.retention.session-sidechain-messages.cursor.v1';
 
@@ -163,23 +164,25 @@ async function deleteExpiredSidechainBatch(params: {
     cutoff: Date;
     limit: number;
 }): Promise<Readonly<{ deleted: number; protected: boolean }>> {
-    const rows = await db.sessionMessage.findMany({
-        where: params.cursor,
-        orderBy: { seq: 'asc' },
-        take: params.limit,
-        select: { id: true },
-    });
-    if (rows.length === 0) return { deleted: 0, protected: false };
-
-    return await db.$transaction(async (tx) => {
-        const latest = await tx.sessionMessage.findFirst({
+    // The eligibility rule -- prune only a sidechain whose every message is
+    // expired -- is carried by the DELETE predicate itself rather than by a
+    // preceding read, because a preceding read cannot see a live message that
+    // commits after it answers. Isolation cannot supply that: the canonical
+    // live transcript writer runs at ReadCommitted
+    // (`sessionWriteService.createSessionMessageAttempt`), so PostgreSQL SSI
+    // never reports the read/write conflict to a Serializable sweep, and a
+    // Serializable snapshot is blind to the commit by construction. At
+    // ReadCommitted the guarded delete evaluates liveness on its own statement
+    // snapshot, so a sidechain that gained a message before the delete matches
+    // nothing instead of losing its history.
+    return await inTx(async (tx) => {
+        const rows = await tx.sessionMessage.findMany({
             where: params.cursor,
-            orderBy: { seq: 'desc' },
-            select: { createdAt: true },
+            orderBy: { seq: 'asc' },
+            take: params.limit,
+            select: { id: true },
         });
-        if (!latest || latest.createdAt >= params.cutoff) {
-            return { deleted: 0, protected: false };
-        }
+        if (rows.length === 0) return { deleted: 0, protected: false };
 
         const records = await tx.sessionSystemRecord.findMany({
             where: { sessionId: params.cursor.sessionId },
@@ -204,10 +207,18 @@ async function deleteExpiredSidechainBatch(params: {
                 id: { in: rows.map((row) => row.id) },
                 ...params.cursor,
                 createdAt: { lt: params.cutoff },
+                session: {
+                    messages: {
+                        none: {
+                            sidechainId: params.cursor.sidechainId,
+                            createdAt: { gte: params.cutoff },
+                        },
+                    },
+                },
             },
         });
         return { deleted: result.count, protected: false };
-    });
+    }, { isolationLevel: 'ReadCommitted' });
 }
 
 async function sidechainStillExpired(params: {

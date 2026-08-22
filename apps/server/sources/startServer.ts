@@ -52,7 +52,7 @@ import { resolveCachedCanonicalPublicServerUrl } from '@/app/integrations/public
 import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
 import { startPluginWebhookCredentialRetirementWorker } from '@/app/plugins/webhooks/credentialRetirementWorker';
 import { startVoiceProviderIdentityBackfillWorker } from '@/app/voice/providerIdentityBackfill/worker';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { expandHomeDirPath } from '@happier-dev/cli-common/path';
 import { readPresenceRedisWorkerConfigFromEnv } from '@/config/presence';
 import { initializeServerIdentityCache } from '@/app/serverIdentity/serverIdentity';
 import { stat } from 'node:fs/promises';

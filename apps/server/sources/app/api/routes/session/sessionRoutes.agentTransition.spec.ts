@@ -14,6 +14,9 @@ import {
     emitUpdate,
     resetSessionRouteMocks,
 } from "./sessionRoutes.testkit";
+import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+import { createRouteRequest } from "../../testkit/requestFixtures";
+import { registerSessionAgentTransitionRoute } from "./registerSessionAgentTransitionRoute";
 
 const CUTOVER_PATH = "/v2/sessions/:sessionId/agent-transition/cutover";
 const STORED_PLAIN_OWNER_METADATA_ENVELOPE = JSON.stringify(
@@ -46,6 +49,7 @@ function dividerBody() {
                                 v: 1,
                                 fromAgentId: "claude",
                                 toAgentId: "codex",
+                                sourceCutoffSeqInclusive: 29_979,
                             },
                         },
                     },
@@ -252,6 +256,76 @@ describe("sessionRoutes Agent-transition cutover publication", () => {
         expect(emitUpdate).toHaveBeenCalledTimes(1);
     });
 
+    it("announces a committed current view even when the divider write is rejected", async () => {
+        // The current view IS committed at this point. Suppressing its
+        // publication would leave every other connected client showing the OLD
+        // Agent until a change-cursor catch-up, while this very response admits
+        // the write landed. The divider failure surfaces through its own arm.
+        applySessionAgentTransitionCutover.mockResolvedValue({
+            ok: false,
+            effect: "current_view_committed",
+            error: "divider-conflict",
+            currentView: {
+                currentView: { kind: "legacy_v0", metadataVersion: 2, agentStateVersion: 3 },
+                participantCursors: [{ accountId: "u1", cursor: 101 }],
+                publication: {
+                    kind: "legacy_v0",
+                    sessionOwnerId: "u1",
+                    session: {
+                        accountId: "u1",
+                        metadata: "target-view",
+                        metadataVersion: 2,
+                        metadataLayoutVersion: 0,
+                        ownerMetadata: null,
+                        agentState: null,
+                        agentStateVersion: 3,
+                    },
+                },
+            },
+        });
+
+        const route = await createSessionRouteTestBuilder("POST", CUTOVER_PATH);
+        const { response, reply } = await route.invoke({
+            params: { sessionId: "s1" },
+            body: dividerBody(),
+        });
+
+        expect(reply.statusCode).toBe(409);
+        expect(response).toEqual({
+            effect: "current_view_committed",
+            error: "divider-conflict",
+        });
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(1);
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledWith(
+            "s1",
+            101,
+            expect.any(String),
+            { value: "target-view", version: 2 },
+            { value: null, version: 3 },
+        );
+        // The divider never landed, so nothing announces one.
+        expect(buildNewMessageUpdate).not.toHaveBeenCalled();
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it("publishes nothing for a cutover that committed nothing", async () => {
+        applySessionAgentTransitionCutover.mockResolvedValue({
+            ok: false,
+            effect: "none",
+            error: "session-active",
+        });
+
+        const route = await createSessionRouteTestBuilder("POST", CUTOVER_PATH);
+        const { response, reply } = await route.invoke({
+            params: { sessionId: "s1" },
+            body: dividerBody(),
+        });
+
+        expect(reply.statusCode).toBe(409);
+        expect(response).toEqual({ effect: "none", error: "session-active" });
+        expect(emitUpdate).not.toHaveBeenCalled();
+    });
+
     it("reports a committed current view honestly when its projection cannot be built", async () => {
         applySessionAgentTransitionCutover.mockResolvedValue({
             ok: true,
@@ -292,5 +366,63 @@ describe("sessionRoutes Agent-transition cutover publication", () => {
             error: "internal",
         });
         expect(emitUpdate).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * The server-side Agent-switching gate.
+ *
+ * `sessions.agentSwitching` is server-represented and enabled by default; a
+ * server owner who turns it off must actually REFUSE the lifecycle mutation, not
+ * merely stop advertising the surface. Hiding the UI while the route still
+ * commits the cutover means one direct RPC switches the Session on a server that
+ * disabled the feature.
+ */
+describe("sessionRoutes Agent-transition cutover feature gate", () => {
+    const AGENT_SWITCHING_ENV_KEY = "HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED";
+
+    async function invokeCutover(env: NodeJS.ProcessEnv) {
+        const app = createFakeRouteApp();
+        registerSessionAgentTransitionRoute(app as never, env);
+        const handler = getRouteHandler(app, "POST", CUTOVER_PATH);
+        const reply = createReplyStub();
+        const request = createRouteRequest({
+            userId: "u1",
+            params: { sessionId: "s1" },
+            body: dividerBody(),
+        });
+        const response = await handler(request, reply);
+        return { reply, response };
+    }
+
+    beforeEach(() => {
+        resetSessionRouteMocks();
+        applySessionAgentTransitionCutover.mockResolvedValue({
+            ok: true,
+            dividerSeq: 42,
+            currentView: {
+                currentView: { kind: "legacy_v0", metadataVersion: 2, agentStateVersion: 3 },
+                participantCursors: [],
+                publication: null,
+            },
+            dividerWrite: null,
+        });
+    });
+
+    it("refuses the cutover when the server owner disabled Agent switching", async () => {
+        const { reply } = await invokeCutover({ [AGENT_SWITCHING_ENV_KEY]: "0" });
+
+        expect(reply.statusCode).toBe(404);
+        // The gate replies and short-circuits, so the harness returns nothing.
+        expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
+        // The mutation must never run — hiding the surface is not a gate.
+        expect(applySessionAgentTransitionCutover).not.toHaveBeenCalled();
+    });
+
+    it("admits the cutover on a server that never set the opt-out", async () => {
+        const { reply } = await invokeCutover({});
+
+        expect(reply.statusCode).toBe(200);
+        expect(applySessionAgentTransitionCutover).toHaveBeenCalledTimes(1);
     });
 });

@@ -12,7 +12,7 @@ import {
 } from "../sources/app/session/systemRecords/sessionSystemRecordBackfillExecution";
 import { type DbProvider } from "../sources/storage/db";
 import { resolveLightSqliteDatabaseUrl } from "../sources/flavors/light/env";
-import { expandHomeDirPath } from "../sources/utils/path/expandHomeDirPath";
+import { expandHomeDirPath } from "@happier-dev/cli-common/path";
 
 export function formatSessionSystemRecordBackfillFailure(error: unknown): Readonly<{
     outcome: "failed";

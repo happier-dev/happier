@@ -451,6 +451,47 @@ async function ensureAutomationEventCatalogStateTx(params: Readonly<{
     });
 }
 
+/**
+ * An event source status row is keyed by the exact trigger identity a reporter
+ * observed, and the V3 projection only ever reads the Automation's current
+ * identity. Changing the event, the selector, or the trigger kind therefore
+ * makes every row under the previous key permanently unreachable, so the change
+ * that superseded them removes them here. There is no age rule: exact
+ * currentness is the proof, and these rows are a projection of reporter
+ * observations rather than durable history.
+ */
+async function deleteSupersededAutomationEventSourceStatusTx(params: Readonly<{
+    tx: Tx;
+    automationId: string;
+}>): Promise<void> {
+    const current = await params.tx.automation.findUnique({
+        where: { id: params.automationId },
+        select: {
+            triggerKind: true,
+            triggerEventPluginId: true,
+            triggerEventLocalId: true,
+            triggerSourceSelectorId: true,
+        },
+    });
+    const currentKey = current !== null
+        && current.triggerKind === "pluginEvent"
+        && current.triggerEventPluginId !== null
+        && current.triggerEventLocalId !== null
+        && current.triggerSourceSelectorId !== null
+        ? {
+            eventPluginId: current.triggerEventPluginId,
+            eventLocalId: current.triggerEventLocalId,
+            sourceSelectorId: current.triggerSourceSelectorId,
+        }
+        : null;
+    await params.tx.automationEventSourceStatus.deleteMany({
+        where: {
+            automationId: params.automationId,
+            ...(currentKey === null ? {} : { NOT: currentKey }),
+        },
+    });
+}
+
 async function assertEnabledAutomationEventSourceCapacityTx(params: Readonly<{
     tx: Tx;
     accountId: string;
@@ -2735,7 +2776,7 @@ export async function createAutomation(params: {
             ? AutomationSourceSelectorIdV1Schema.parse(randomUUID())
             : null;
         const automationId = pluginEvent ? randomUUID() : null;
-        const triggerDefinitionEnvelope = pluginEvent && sourceSelectorId && automationId
+        const triggerDefinitionEnvelope = automationId !== null && pluginEvent && sourceSelectorId
             ? sealPlainAutomationPluginEventDefinition({
                 automationId,
                 templateVersion: 1,
@@ -3120,6 +3161,12 @@ export async function updateAutomation(params: {
                 projectionChanged: eventProjectionChanged,
             });
         }
+        if (existing.triggerKind === "pluginEvent" || pluginEvent !== null) {
+            await deleteSupersededAutomationEventSourceStatusTx({
+                tx,
+                automationId: existing.id,
+            });
+        }
 
         // Disabling stops queued automatic work, while an explicit manual Run
         // and incumbent claimed/running lease-retirement handling remain intact.
@@ -3375,6 +3422,43 @@ export async function deleteAutomation(params: {
 
         return true;
     });
+}
+
+/**
+ * The second phase of `deleteAutomation`. The first phase soft-deletes the
+ * definition, cancels its queued Runs and drops its assignments, but it cannot
+ * remove the row: `AutomationRun` restricts its parent, so the definition must
+ * outlive every retained Run. Retention removes those Runs, and finishes the
+ * deletion here — otherwise a deleted Automation stays in the table forever.
+ *
+ * There is no separate age rule. A soft-deleted definition with no retained Run
+ * is already unreachable by every product path, so the relation emptiness is
+ * the exact currentness proof. The relation filter is repeated on the delete so
+ * a Run created between the scan and the delete simply excludes that row rather
+ * than raising the restrict error.
+ */
+export async function finalizeDeletedAutomationsWithoutRetainedRunsTx(params: Readonly<{
+    tx: Tx;
+    limit: number;
+}>): Promise<number> {
+    const candidates = await params.tx.automation.findMany({
+        where: {
+            deletedAt: { not: null },
+            runs: { none: {} },
+        },
+        orderBy: { deletedAt: "asc" },
+        take: params.limit,
+        select: { id: true },
+    });
+    if (candidates.length === 0) return 0;
+    const deleted = await params.tx.automation.deleteMany({
+        where: {
+            id: { in: candidates.map((candidate) => candidate.id) },
+            deletedAt: { not: null },
+            runs: { none: {} },
+        },
+    });
+    return deleted.count;
 }
 
 export async function setAutomationEnabled(params: {

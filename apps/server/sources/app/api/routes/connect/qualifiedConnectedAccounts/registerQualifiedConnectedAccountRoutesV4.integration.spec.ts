@@ -265,6 +265,119 @@ describe("qualified Connected Account V4 route family (integration)", () => {
         })).resolves.toBe(1);
     });
 
+    it("refuses a legacy unfenced credential delete instead of reporting success", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST:
+                "none",
+        });
+        const account = await db.account.create({
+            data: {
+                publicKey: null,
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const headers = { "x-test-user-id": account.id };
+
+        await withAuthenticatedTestApp(
+            registerQualifiedConnectedAccountCredentialRoutesV4,
+            async (app) => {
+                const createdCredential = await app.inject({
+                    method: "POST",
+                    url: "/v4/connect/qualified/credential",
+                    headers,
+                    payload: {
+                        ref,
+                        authenticationModeId: "api-key",
+                        expectedCredentialRevision: null,
+                        content: {
+                            t: "plain",
+                            v: { token: "credential-secret" },
+                        },
+                        metadata: { scopes: [] },
+                    },
+                });
+                expect(
+                    createdCredential.statusCode,
+                    createdCredential.body,
+                ).toBe(200);
+                const createdCredentialRevision =
+                    createdCredential.json().credentialRevision as string;
+
+                const createdGroup = await app.inject({
+                    method: "POST",
+                    url: "/v4/connect/qualified/groups",
+                    headers,
+                    payload: {
+                        service,
+                        group: { groupId: groupRef.groupId },
+                    },
+                });
+                expect(createdGroup.statusCode, createdGroup.body).toBe(200);
+                const group =
+                    createdGroup.json()
+                        .group as QualifiedConnectedAccountGroupV4;
+                const addedMember = await app.inject({
+                    method: "POST",
+                    url: "/v4/connect/qualified/group/members",
+                    headers,
+                    payload: {
+                        group: groupRef,
+                        connectedAccountId: ref.accountId,
+                        priority: 10,
+                        expectedIncarnation: group.incarnation,
+                        expectedRuntimeStateRevision:
+                            group.runtimeStateRevision,
+                    },
+                });
+                expect(addedMember.statusCode, addedMember.body).toBe(200);
+
+                // Retained legacy-unfenced storage: the credential carries no
+                // revision, so the delete owner refuses before touching any row.
+                await db.serviceAccountToken.updateMany({
+                    where: { accountId: account.id },
+                    data: {
+                        metadata: {
+                            v: 3,
+                            storage: "plain_json_v1",
+                            kind: "oauth",
+                        },
+                    },
+                });
+
+                const encodedRef =
+                    encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                        QualifiedConnectedAccountRefSchema,
+                        ref,
+                    );
+                const deleteResponse = await app.inject({
+                    method: "DELETE",
+                    url:
+                        "/v4/connect/qualified/credential?ref="
+                        + encodeURIComponent(encodedRef)
+                        + "&expectedCredentialRevision="
+                        + encodeURIComponent(createdCredentialRevision)
+                        + "&cleanupGroupReferences=true",
+                    headers,
+                });
+                expect(deleteResponse.statusCode, deleteResponse.body)
+                    .toBe(400);
+                expect(deleteResponse.json()).toEqual({
+                    error: "invalid-params",
+                });
+            },
+        );
+
+        await expect(db.serviceAccountToken.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(1);
+        await expect(db.connectedServiceAuthGroupMember.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(1);
+    });
+
     it("rejects a pre-incarnation delete after the group id is recreated at the same counters", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",

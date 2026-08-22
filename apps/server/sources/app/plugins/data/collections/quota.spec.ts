@@ -209,7 +209,7 @@ describe('Plugin Collection quota policy', () => {
                 {
                     rows: 2,
                     encodedBytes: 200,
-                    rowEncodedBytesByRowId: new Map([['open-1', 100], ['open-2', 100]]),
+                    maximumRowEncodedBytes: 100,
                 },
             ]]),
             contracts: new Map(),
@@ -235,6 +235,33 @@ describe('Plugin Collection quota policy', () => {
                 rows: 2,
             }],
         })).toEqual({ dimension: 'maxRows', effectiveMaximum: 1 });
+    });
+
+    it('enforces activation row bytes through the compact collection maximum', () => {
+        const usage = {
+            rows: 1,
+            encodedBytes: 600,
+            collections: new Map([[
+                'example.tasks\u0000tasks',
+                {
+                    rows: 1,
+                    encodedBytes: 600,
+                    maximumRowEncodedBytes: 600,
+                },
+            ]]),
+            contracts: new Map(),
+        };
+
+        expect(findPluginCollectionActivationQuotaIncompatibility({
+            deployment,
+            usage,
+            collections: [{
+                pluginId: 'example.tasks',
+                collectionId: 'tasks',
+                quota: { maxRowEncodedBytes: 512 },
+            }],
+            prefixUsage: [],
+        })).toEqual({ dimension: 'maxRowEncodedBytes', effectiveMaximum: 512 });
     });
 
     it('allows only a strict indexed-prefix reduction after a deployment or declaration is lowered', () => {

@@ -389,7 +389,9 @@ describe("sessionRoutes initial durable-attention hydration (integration)", () =
             latestReadyEventAt: new Date(4_000),
             meaningfulActivityAt: new Date(4_000),
         });
-        await createAttentionSession({
+        // A zero ready sequence is not an unread ready event, but the row has never been viewed
+        // and still carries session activity, so it is durable through the generic unread arm.
+        const readyZeroNeverViewed = await createAttentionSession({
             tag: "ready-zero-never-viewed",
             seq: 1,
             lastViewedSessionSeq: null,
@@ -426,8 +428,64 @@ describe("sessionRoutes initial durable-attention hydration (integration)", () =
         expect(page.rows.map((row) => row.id)).toEqual([
             readyAfterViewed.id,
             readyNeverViewed.id,
+            readyZeroNeverViewed.id,
             pendingPermission.id,
             pendingUserAction.id,
+        ]);
+    });
+
+    it("KEYSTONE hydrates unread session activity whose ready event is already behind the read cursor", async () => {
+        const owner = await db.account.create({
+            data: {
+                publicKey: "pk-session-attention-unread-activity-owner",
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const createAttentionSession = async (
+            data: Omit<Prisma.SessionUncheckedCreateInput, "accountId" | "encryptionMode" | "metadata">,
+        ) => await db.session.create({
+            data: {
+                accountId: owner.id,
+                encryptionMode: "plain",
+                metadata: JSON.stringify({ path: "/repo/unread-activity", host: "test-host" }),
+                agentState: JSON.stringify({}),
+                ...data,
+            },
+            select: { id: true },
+        });
+
+        // Provider activity landed after the reader caught up with the last ready event, so the
+        // ready-event cursor alone cannot see it.
+        const unreadAfterReadReadyEvent = await createAttentionSession({
+            tag: "unread-after-read-ready-event",
+            seq: 7,
+            lastViewedSessionSeq: 3,
+            latestReadyEventSeq: 2,
+            latestReadyEventAt: new Date(1_000),
+            meaningfulActivityAt: new Date(6_000),
+        });
+        const unreadNeverViewed = await createAttentionSession({
+            tag: "unread-never-viewed-without-ready-event",
+            seq: 1,
+            lastViewedSessionSeq: null,
+            meaningfulActivityAt: new Date(5_000),
+        });
+        await createAttentionSession({
+            tag: "read-and-quiet",
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            meaningfulActivityAt: new Date(4_000),
+        });
+
+        const page = await createV2SessionAttentionPage({
+            userId: owner.id,
+            candidateLimit: 50,
+        });
+
+        expect(page.rows.map((row) => row.id)).toEqual([
+            unreadAfterReadReadyEvent.id,
+            unreadNeverViewed.id,
         ]);
     });
 

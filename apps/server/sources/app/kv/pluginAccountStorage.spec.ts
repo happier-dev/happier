@@ -18,6 +18,14 @@ function encodeEnvelope(value: unknown): Uint8Array {
     return new TextEncoder().encode(JSON.stringify(value));
 }
 
+function encodeEnvelopeWithMalformedUtf8(): Uint8Array {
+    const prefix = new TextEncoder().encode(
+        '{"t":"plain","v":{"v":1,"values":{"selected-project":{"version":0,"value":"',
+    );
+    const suffix = new TextEncoder().encode('"}}}}');
+    return Uint8Array.from([...prefix, 0xff, ...suffix]);
+}
+
 function createE2eeAccount() {
     const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
     const content = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(23));
@@ -169,6 +177,23 @@ describe("plugin Account KV storage", () => {
             revision: 5,
             envelope: plainEnvelopeWithRetainedLogicalTombstone,
         });
+    });
+
+    it("rejects malformed UTF-8 bytes instead of coercing them into a valid Account-KV envelope", async () => {
+        const { buildPluginAccountStoragePhysicalKey } = await import("./accountScopedKv");
+        const { readPluginAccountStorageInTx } = await import("./pluginAccountStorage");
+        const { tx } = createTx({
+            row: {
+                key: buildPluginAccountStoragePhysicalKey("example.tasks"),
+                value: encodeEnvelopeWithMalformedUtf8(),
+                version: 5,
+            },
+        });
+
+        await expect(readPluginAccountStorageInTx(tx as never, {
+            accountId: "account-1",
+            pluginId: "example.tasks",
+        })).resolves.toEqual({ status: "invalid-stored-content" });
     });
 
     it("rejects a mode-mismatched row before a stale client can overwrite it", async () => {

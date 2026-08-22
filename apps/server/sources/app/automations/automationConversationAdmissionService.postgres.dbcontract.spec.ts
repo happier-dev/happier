@@ -75,7 +75,11 @@ function triggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     bindingId: string;
 }>): string {
-    const definition: PluginJsonValueV2 = { v: 1, bindingId: params.bindingId };
+    const definition: PluginJsonValueV2 = {
+        v: 1,
+        bindingId: params.bindingId,
+        owner: { pluginId: PLUGIN_ID, localId: CONTRIBUTION_LOCAL_ID },
+    };
     return JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
         mode: "plain",
         binding: {

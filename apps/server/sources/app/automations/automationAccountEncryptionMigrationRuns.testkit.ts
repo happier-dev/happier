@@ -37,6 +37,11 @@ const runContentSelect = {
     summaryCiphertext: true,
 } as const;
 
+const conversationOwnerRef = {
+    pluginId: "happier.channels",
+    localId: "provider/observation-ingest-v1",
+} as const;
+
 function triggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     templateVersion: number;
@@ -71,7 +76,7 @@ function triggerDefinitionEnvelope(params: Readonly<{
             filter: null,
             maximumObservationAgeMs: null,
         }
-        : { v: 1, bindingId: "migration-conversation" };
+        : { v: 1, bindingId: "migration-conversation", owner: conversationOwnerRef };
     return JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
         mode: "plain",
         binding,
@@ -569,7 +574,11 @@ function buildDirective(seeded: Awaited<ReturnType<typeof seedAllOriginRuns>>) {
                             eventRef: null,
                             sourceSelectorId: null,
                         },
-                        definition: { v: 1, bindingId: "migration-conversation" },
+                        definition: {
+                            v: 1,
+                            bindingId: "migration-conversation",
+                            owner: conversationOwnerRef,
+                        },
                         material: triggerDefinitionMaterial,
                         randomBytes: (length) => new Uint8Array(length).fill(6),
                     }),

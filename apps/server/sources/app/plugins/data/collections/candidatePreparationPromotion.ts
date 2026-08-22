@@ -8,11 +8,11 @@ import type {
 import {
     buildPluginCollectionIndexEntries,
     buildPluginCollectionIndexValues,
+    finalizePluginCollectionDerivedStateForPromotionInTx,
     materializePluginCollectionRelationReplacementInTx,
     type PluginCollectionIndexValue,
     type PluginCollectionPreparedRelationReplacement,
     type ResolvedWritableCollection,
-    updateIndexReadinessInTx,
 } from "./mutation";
 
 type CandidatePromotionContract = Readonly<{
@@ -419,7 +419,7 @@ export async function materializeCandidatePromotionSetwiseInTx(
             await input.tx.pluginCollectionIndexEntry.createMany({ data: batch });
         }
     }
-    await updateIndexReadinessInTx({
+    await finalizePluginCollectionDerivedStateForPromotionInTx({
         tx: input.tx,
         accountId: input.accountId,
         resolved: input.resolved,

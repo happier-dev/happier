@@ -21,6 +21,7 @@ import {
 } from "@/app/encryption/accountContentKeyAdmission";
 
 import {
+    ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY,
     activateAccountEncryptionTransitionCoordinatorInTx,
     authorizeAccountEncryptionTransitionCoordinatorInTx,
     cancelAccountEncryptionTransitionCoordinatorInTx,
@@ -146,9 +147,10 @@ describe("Account encryption transition coordinator Collection participant", () 
             reservedCapacityBytes: bigint;
         }>,
     ) {
-        // This is an isolated test fixture, not a product aggregate policy.
-        // Production V5 remains fail-closed until provider measurements write
-        // its transition capacity through the Account owner.
+        // This is an isolated test fixture, not a product aggregate policy. It
+        // OVERWRITES the measured capacity `prepare` stamps, shrinking it so a
+        // small fixture can reach the fence. Tests that must observe the real
+        // stamped capacity therefore must not call this.
         await db.accountEncryptionTransition.update({
             where: { id: transitionId },
             data: {
@@ -624,6 +626,137 @@ describe("Account encryption transition coordinator Collection participant", () 
         expect(staged).toHaveLength(1);
         expect(Number(staged[0]?.count)).toBe(0);
     });
+
+    it("pins the measured PEP1 Run ceiling on the capacity the coordinator itself writes", async () => {
+        const binding = createSignedAccountContentBinding();
+        const automationId = "automation-transition-measured-ceiling";
+        await db.account.create({
+            data: { id: ACCOUNT_ID, ...binding, encryptionMode: "e2ee" },
+        });
+        await db.automation.create({
+            data: {
+                id: automationId,
+                accountId: ACCOUNT_ID,
+                name: "Account transition measured ceiling",
+                enabled: false,
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                targetType: "new_session",
+                templateCiphertext: encryptedAutomationTemplate(
+                    "measured-ceiling-source-template",
+                ),
+                templateVersion: 1,
+            },
+        });
+        const legacySummary = "measured-ceiling-source-summary";
+        await db.automationRun.createMany({
+            data: Array.from({ length: 10_001 }, (_, index) => ({
+                id: `automation-transition-measured-ceiling-${index}`,
+                accountId: ACCOUNT_ID,
+                automationId,
+                state: "queued" as const,
+                originKind: "scheduled" as const,
+                resultEnvelope: JSON.stringify({
+                    t: "legacySummaryCiphertext",
+                    c: legacySummary,
+                }),
+                summaryCiphertext: legacySummary,
+                scheduledAt: new Date(1_700_000_000_000 + index),
+                dueAt: new Date(1_700_000_000_000 + index),
+            })),
+        });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints({
+            publicKey: binding.publicKey,
+            contentPublicKey: binding.contentPublicKey,
+        });
+        const prepareTransition = async () => {
+            const prepared = await inTx(async (tx) => (
+                await prepareAccountEncryptionTransitionCoordinatorInTx({
+                    tx,
+                    accountId: ACCOUNT_ID,
+                    request: {
+                        toMode: "plain",
+                        expectedAccountVersion: 0,
+                        expectedSigningKeyFingerprint:
+                            fingerprints.signingKeyFingerprint,
+                        expectedContentKeyFingerprint:
+                            fingerprints.contentKeyFingerprint,
+                    },
+                })
+            ));
+            if (prepared.status !== "prepared") {
+                throw new Error(`Expected prepared transition, got ${prepared.status}`);
+            }
+            return prepared.transition.transitionId;
+        };
+        const authorize = async (transitionId: string) => await inTx(async (tx) => (
+            await authorizeAccountEncryptionTransitionCoordinatorInTx({
+                tx,
+                accountId: ACCOUNT_ID,
+                transitionId,
+                authorization: { kind: "present_user_confirmation" },
+            })
+        ));
+
+        // No isolated fixture capacity anywhere in this test: the only measured
+        // bounds in play are the ones prepare stamps on the transition.
+        const refusedTransitionId = await prepareTransition();
+        await expect(db.accountEncryptionTransition.findUniqueOrThrow({
+            where: { id: refusedTransitionId },
+            select: {
+                measuredParticipantLimit: true,
+                measuredEncodedByteLimit: true,
+                reservedCapacityBytes: true,
+            },
+        })).resolves.toEqual({
+            measuredParticipantLimit:
+                ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY.participantLimit,
+            measuredEncodedByteLimit:
+                ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY.encodedByteLimit,
+            reservedCapacityBytes:
+                ACCOUNT_ENCRYPTION_TRANSITION_MEASURED_CAPACITY.reservedCapacityBytes,
+        });
+        await expect(authorize(refusedTransitionId))
+            .resolves.toEqual({ status: "migration_too_large" });
+        const prisma = getActivePrismaRuntime();
+        const stagedAfterRefusal = await db.$queryRaw<
+            readonly { count: bigint | number }[]
+        >(prisma.sql`
+            SELECT COUNT(*) AS "count"
+            FROM "AccountEncryptionTransitionAutomationStage"
+            WHERE "transitionId" = ${refusedTransitionId}
+        `);
+        expect(Number(stagedAfterRefusal[0]?.count)).toBe(0);
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: ACCOUNT_ID },
+            select: { encryptionMode: true },
+        })).resolves.toEqual({ encryptionMode: "e2ee" });
+
+        // Exactly one Run below the approved ceiling, same content shape, same
+        // written capacity: the census is now authorized and retained.
+        await db.automationRun.delete({
+            where: { id: "automation-transition-measured-ceiling-10000" },
+        });
+        const authorizedTransitionId = await prepareTransition();
+        await expect(authorize(authorizedTransitionId))
+            .resolves.toEqual({ status: "authorized" });
+        await expect(db.accountEncryptionTransition.findUniqueOrThrow({
+            where: { id: authorizedTransitionId },
+            select: { status: true, censusParticipantCount: true },
+        })).resolves.toEqual({
+            status: "authorized",
+            censusParticipantCount: 10_001,
+        });
+        const stagedAfterAuthorization = await db.$queryRaw<
+            readonly { count: bigint | number }[]
+        >(prisma.sql`
+            SELECT COUNT(*) AS "count"
+            FROM "AccountEncryptionTransitionAutomationStage"
+            WHERE "transitionId" = ${authorizedTransitionId}
+        `);
+        expect(Number(stagedAfterAuthorization[0]?.count)).toBe(10_001);
+    }, 300_000);
 
     it("allows a content-free historical Collection tombstone without changing its identity, revision, or deletion time", async () => {
         await db.account.create({

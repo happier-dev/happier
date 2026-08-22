@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseBooleanEnv } from '@/config/env';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { expandHomeDirPath } from '@happier-dev/cli-common/path';
 import {
   isLegacyTransactionWrapperStatement,
   isSafeMissingMigrationReconciliationStatement,

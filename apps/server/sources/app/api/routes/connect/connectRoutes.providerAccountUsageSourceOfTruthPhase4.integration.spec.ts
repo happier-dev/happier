@@ -1544,6 +1544,81 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         })).toEqual({ id: expect.any(String) });
     });
 
+    it("keeps the server-v0.2.1 V2 sealed quota view readable after a newer V2 sealed quota write", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const user = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        await createConnectedServiceProfileBinding(user.id, {
+            providerAccountId: "acct_released_preview_v2_sequential",
+            legacyUnfenced: true,
+        });
+        // Two distinct account-scoped kind-4 boundary vectors; the V2 sealed
+        // quota route never carries a material fingerprint, so the second write
+        // exercises the no-fingerprint newer-data branch of the write policy.
+        const firstCiphertext = "oQQhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5fEl9K9e0gbQcLrSkvsMc0Wbde5VEgjODqJnwlP50/98/oh/sEPqZQamcCTwpYsU=";
+        const secondCiphertext = "oQQhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5fEl9K9e0gbQcLrSkvsMc0Wbde5VEgjODqJnwlP50/98/oh/sEPqZQamcCTwpYjo=";
+        expect(readAccountScopedCiphertextKindByte(firstCiphertext)).toBe(4);
+        expect(readAccountScopedCiphertextKindByte(secondCiphertext)).toBe(4);
+
+        const app = createProviderAccountUsageTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const firstWrite = await app.inject({
+            method: "POST",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                sealed: { format: "account_scoped_v1", ciphertext: firstCiphertext },
+                metadata: {
+                    fetchedAt: 1_234,
+                    staleAfterMs: 300_000,
+                    status: "ok",
+                },
+            },
+        });
+        expect(firstWrite.statusCode, firstWrite.body).toBe(200);
+
+        const secondWrite = await app.inject({
+            method: "POST",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                sealed: { format: "account_scoped_v1", ciphertext: secondCiphertext },
+                metadata: {
+                    fetchedAt: 5_678,
+                    staleAfterMs: 300_000,
+                    status: "estimated",
+                },
+            },
+        });
+        expect(secondWrite.statusCode, secondWrite.body).toBe(200);
+
+        const read = await app.inject({
+            method: "GET",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(read.statusCode, read.body).toBe(200);
+        expect(read.json()).toEqual({
+            sealed: { format: "account_scoped_v1", ciphertext: secondCiphertext },
+            metadata: {
+                fetchedAt: 5_678,
+                staleAfterMs: 300_000,
+                status: "estimated",
+            },
+        });
+    });
+
     it("fails closed for the server-v0.2.1 V2 sealed quota write when E2EE lacks a signed content binding", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",

@@ -12,6 +12,7 @@ import {
     retirePluginCollectionCandidatePreparation,
     stagePluginCollectionCandidatePreparation,
 } from "./candidatePreparation";
+import { readPluginCollectionAccountActivationUsageInTx } from "./quota";
 import { mutatePluginCollection } from "./mutation";
 import { createPluginAvailabilityOperations } from "@/app/plugins/availability/operations";
 import { readPluginsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
@@ -594,7 +595,10 @@ describe("plugin Collection candidate preparation", () => {
         await expect(db.pluginCollectionCandidatePreparationStage.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(1);
     });
 
-    it("adopts a digest-only target with no live rows without requiring a row migration callback", async () => {
+    it.each([
+        ["tombstone-only", true],
+        ["never-populated", false],
+    ] as const)("adopts a digest-only target for a %s source without requiring a row migration callback", async (_sourceState, seedTombstone) => {
         const [source] = await materialize(SOURCE_MANIFEST);
         const [target] = await materialize(TARGET_MANIFEST_WITHOUT_ROW_MIGRATION);
         if (!source || !target) throw new Error("Expected source and target contracts.");
@@ -607,15 +611,17 @@ describe("plugin Collection candidate preparation", () => {
             manifest: TARGET_MANIFEST_WITHOUT_ROW_MIGRATION,
             contracts: [target],
         });
-        const tombstone = await seedLiveSourceRow({
-            accountId: ACCOUNT_ID,
-            contract: { ...sourceContract, ...source },
-            rowId: "retained-tombstone",
-        });
-        await db.pluginCollectionRow.update({
-            where: { id: tombstone.id },
-            data: { deletedAt: new Date() },
-        });
+        if (seedTombstone) {
+            const tombstone = await seedLiveSourceRow({
+                accountId: ACCOUNT_ID,
+                contract: { ...sourceContract, ...source },
+                rowId: "retained-tombstone",
+            });
+            await db.pluginCollectionRow.update({
+                where: { id: tombstone.id },
+                data: { deletedAt: new Date() },
+            });
+        }
         const binding = {
             source,
             target,
@@ -693,6 +699,70 @@ describe("plugin Collection candidate preparation", () => {
             effectiveMaximum: 1,
         });
         await expect(db.pluginCollectionCandidatePreparationStage.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
+    });
+
+    it("scans every live quota row through bounded compact activation pages", async () => {
+        const [source] = await materialize(SOURCE_MANIFEST);
+        if (!source) throw new Error("Expected source contract.");
+        await db.account.create({ data: { id: ACCOUNT_ID, publicKey: null, encryptionMode: "plain" } });
+        const sourceContract = await seedCurrentSource({ accountId: ACCOUNT_ID, source, enabled: true });
+        // More live rows than one page sized from the deployment row-byte
+        // ceiling, so a census that stopped paging would be visible here.
+        const seededRowIds = Array.from({ length: 40 }, (_, index) => `task-${String(index).padStart(3, "0")}`);
+        for (const rowId of seededRowIds) {
+            await seedLiveSourceRow({ accountId: ACCOUNT_ID, contract: { ...sourceContract, ...source }, rowId });
+        }
+
+        await expect(inTx(async (tx) => {
+            const requestedPageSizes: unknown[] = [];
+            const rows = new Proxy(tx.pluginCollectionRow, {
+                get(target, property, receiver) {
+                    if (property !== "findMany") return Reflect.get(target, property, receiver);
+                    const findMany = Reflect.get(target, property, target);
+                    if (typeof findMany !== "function") {
+                        throw new Error("Expected the Collection row delegate to expose findMany.");
+                    }
+                    return async (...args: unknown[]) => {
+                        const request = args[0];
+                        requestedPageSizes.push(
+                            request && typeof request === "object" && "take" in request
+                                ? (request as Readonly<{ take?: unknown }>).take
+                                : undefined,
+                        );
+                        return await Reflect.apply(findMany, target, args);
+                    };
+                },
+            });
+            const boundedTx = new Proxy(tx, {
+                get(target, property, receiver) {
+                    if (property === "pluginCollectionRow") return rows;
+                    return Reflect.get(target, property, receiver);
+                },
+            });
+            const usage = await readPluginCollectionAccountActivationUsageInTx({
+                tx: boundedTx,
+                accountId: ACCOUNT_ID,
+                deployment: readPluginsFeatureEnv(process.env).collectionLimits,
+            });
+            const collection = usage.collections.get(`${PLUGIN_ID}\u0000${COLLECTION_ID}`);
+            return {
+                rows: usage.rows,
+                collectionRows: collection?.rows,
+                retainsRowSizeMap: collection !== undefined && "rowEncodedBytesByRowId" in collection,
+                // The first page is sized from the 512 KiB row ceiling, so 40
+                // rows cannot arrive in one unbounded read.
+                pages: requestedPageSizes.length,
+                firstPageBounded: typeof requestedPageSizes[0] === "number" && requestedPageSizes[0] <= 64,
+                everyPageBounded: requestedPageSizes.every((take) => typeof take === "number" && take >= 1),
+            };
+        })).resolves.toEqual({
+            rows: 40,
+            collectionRows: 40,
+            retainsRowSizeMap: false,
+            pages: 2,
+            firstPageBounded: true,
+            everyPageBounded: true,
+        });
     });
 
     it("rejects an over-limit candidate stage batch before inserting any target", async () => {
@@ -896,6 +966,126 @@ describe("plugin Collection candidate preparation", () => {
                 entityId: buildPluginDomainAccountChangeEntityId(hint),
             },
         })).resolves.toBe(1);
+    });
+
+    it("keeps a target index building until every promoted row has an index entry", async () => {
+        const { target, service } = await prepareAvailabilityPromotionFixture();
+
+        await db.$executeRawUnsafe(`
+            CREATE TRIGGER candidate_promotion_target_index_requires_building
+            BEFORE INSERT ON "PluginCollectionIndexEntry"
+            WHEN COALESCE((
+                SELECT "buildState"
+                FROM "PluginCollectionIndexState"
+                WHERE "id" = NEW."indexStateId"
+            ), '') <> 'building'
+            BEGIN
+                SELECT RAISE(ABORT, 'target index entry requires a building state');
+            END
+        `);
+        await db.$executeRawUnsafe(`
+            CREATE TRIGGER candidate_promotion_target_index_requires_complete_entries
+            BEFORE UPDATE OF "buildState" ON "PluginCollectionIndexState"
+            WHEN OLD."buildState" = 'building'
+                AND NEW."buildState" = 'ready'
+                AND (
+                    SELECT COUNT(*)
+                    FROM "PluginCollectionIndexEntry"
+                    WHERE "indexStateId" = NEW."id"
+                ) <> (
+                    SELECT COUNT(*)
+                    FROM "PluginCollectionRow"
+                    WHERE "accountId" = NEW."accountId"
+                        AND "pluginId" = NEW."pluginId"
+                        AND "collectionId" = NEW."collectionId"
+                        AND "contractId" = NEW."contractId"
+                        AND "contractDigest" = NEW."contractDigest"
+                        AND "deletedAt" IS NULL
+                )
+            BEGIN
+                SELECT RAISE(ABORT, 'target index became ready before all entries existed');
+            END
+        `);
+        try {
+            await expect(service.setIntent({
+                accountId: ACCOUNT_ID,
+                input: {
+                    pluginId: PLUGIN_ID,
+                    desiredVersion: TARGET_VERSION,
+                    enabled: true,
+                    offlineUiHosting: "disabled",
+                    writableCollections: [target],
+                    expectedRevision: "0",
+                },
+            })).resolves.toMatchObject({ intent: { desiredVersion: TARGET_VERSION, revision: "1" } });
+        } finally {
+            await db.$executeRawUnsafe(
+                "DROP TRIGGER IF EXISTS candidate_promotion_target_index_requires_building",
+            );
+            await db.$executeRawUnsafe(
+                "DROP TRIGGER IF EXISTS candidate_promotion_target_index_requires_complete_entries",
+            );
+        }
+
+        await expect(db.pluginCollectionIndexState.findFirstOrThrow({
+            where: {
+                accountId: ACCOUNT_ID,
+                pluginId: PLUGIN_ID,
+                collectionId: COLLECTION_ID,
+                indexId: "by-status",
+                contractDigest: target.contractDigest,
+            },
+            select: { buildState: true, indexedThroughRevision: true },
+        })).resolves.toEqual({ buildState: "ready", indexedThroughRevision: 2 });
+    });
+
+    it("rolls back promotion when the target index is missing a live row entry", async () => {
+        const { source, target, service } = await prepareAvailabilityPromotionFixture();
+
+        await db.$executeRawUnsafe(`
+            CREATE TRIGGER candidate_promotion_missing_target_index_entry
+            BEFORE INSERT ON "PluginCollectionIndexEntry"
+            WHEN NEW."rowId" = 'task-b'
+            BEGIN
+                SELECT RAISE(IGNORE);
+            END
+        `);
+        try {
+            await expect(service.setIntent({
+                accountId: ACCOUNT_ID,
+                input: {
+                    pluginId: PLUGIN_ID,
+                    desiredVersion: TARGET_VERSION,
+                    enabled: true,
+                    offlineUiHosting: "disabled",
+                    writableCollections: [target],
+                    expectedRevision: "0",
+                },
+            })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
+        } finally {
+            await db.$executeRawUnsafe(
+                "DROP TRIGGER IF EXISTS candidate_promotion_missing_target_index_entry",
+            );
+        }
+
+        await expect(db.pluginCollectionRow.findMany({
+            where: { accountId: ACCOUNT_ID },
+            orderBy: { rowId: "asc" },
+            select: { schemaVersion: true, revision: true, contractDigest: true },
+        })).resolves.toEqual([
+            { schemaVersion: source.schemaVersion, revision: 1, contractDigest: source.contractDigest },
+            { schemaVersion: source.schemaVersion, revision: 1, contractDigest: source.contractDigest },
+        ]);
+        await expect(db.pluginCollectionIndexState.count({
+            where: { accountId: ACCOUNT_ID, contractDigest: target.contractDigest },
+        })).resolves.toBe(0);
+        await expect(db.pluginCollectionCandidatePreparationStage.count({
+            where: { accountId: ACCOUNT_ID },
+        })).resolves.toBe(2);
+        await expect(db.accountPluginIntent.findUniqueOrThrow({
+            where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } },
+            select: { desiredVersion: true, revision: true },
+        })).resolves.toEqual({ desiredVersion: SOURCE_VERSION, revision: BigInt(0) });
     });
 
     it("refuses an ordinary target release that omits a current Collection without mutating promotion state", async () => {

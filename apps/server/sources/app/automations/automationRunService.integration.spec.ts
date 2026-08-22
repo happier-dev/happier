@@ -11,7 +11,15 @@ import { db } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-import { cancelAutomationRun, failAutomationRun, startAutomationRun, succeedAutomationRun } from "./automationRunService";
+import { inTx } from "@/storage/inTx";
+
+import {
+    cancelAutomationRun,
+    failAutomationRun,
+    startAutomationRun,
+    succeedAutomationRun,
+    terminalizeRetiredAutomationRunAfterLeaseExpiryTx,
+} from "./automationRunService";
 import * as automationRunServiceModule from "./automationRunService";
 import {
     claimNextAutomationReplyHandoff,
@@ -1000,6 +1008,133 @@ describe("automationRunService (integration)", () => {
         });
     });
 
+    it("keeps a permitted dispatch uncertain when generic cancellation races the worker and still retains the learned native identity", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-cancel-race",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+
+        // The user cancels while `execution.run.start` is already in flight.
+        // Nothing durably establishes that the external execution stopped, so
+        // the Run may not be reported as cleanly cancelled.
+        const cancelled = await cancelAutomationRun({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+        });
+        expect(cancelled).toEqual(expect.objectContaining({
+            state: "outcome_uncertain",
+            executionDispatchState: "outcomeUnknown",
+        }));
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: {
+                state: true,
+                executionDispatchState: true,
+                executionDispatchDueAt: true,
+                executionNativeRunId: true,
+                finishedAt: true,
+                claimedByMachineId: true,
+                leaseExpiresAt: true,
+                errorCode: true,
+            },
+        })).resolves.toEqual({
+            state: "outcome_uncertain",
+            executionDispatchState: "outcomeUnknown",
+            executionDispatchDueAt: null,
+            executionNativeRunId: null,
+            finishedAt: expect.any(Date),
+            // Cancellation keeps the claiming machine's authority on the row
+            // exactly as it already does for a plain cancelled Run, so the
+            // worker that owns the dispatch can still report what it learned.
+            claimedByMachineId: seeded.machine.id,
+            leaseExpiresAt: expect.any(Date),
+            errorCode: "execution_run_cancelled_outcome_unknown",
+        });
+
+        // The worker's start had already returned a native identity. The
+        // dispatch settlement owner remains the only writer of dispatch truth:
+        // it retains that identity so the uncertainty stays resolvable, and it
+        // does not rewrite the terminality cancellation already published.
+        const settle = readExecutionDispatchSettlementOwner();
+        const settled = await settle({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+            machineId: seeded.machine.id,
+            attempt: 1,
+            accountCurrentness: await readAutomationAccountCurrentness(seeded.account.id),
+            outcome: {
+                kind: "started",
+                runId: "native-run-cancel-race",
+                callId: "native-call-cancel-race",
+                sidechainId: "native-sidechain-cancel-race",
+                wait: { ok: false, code: "timeout" },
+            },
+        });
+        expect(settled).not.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: {
+                state: true,
+                executionDispatchState: true,
+                executionAttempt: true,
+                executionNativeRunId: true,
+                executionNativeCallId: true,
+                executionNativeSidechainId: true,
+                errorCode: true,
+            },
+        })).resolves.toEqual({
+            state: "outcome_uncertain",
+            executionDispatchState: "outcomeUnknown",
+            executionAttempt: 1,
+            executionNativeRunId: "native-run-cancel-race",
+            executionNativeCallId: "native-call-cancel-race",
+            executionNativeSidechainId: "native-sidechain-cancel-race",
+            errorCode: "execution_run_cancelled_outcome_unknown",
+        });
+    });
+
+    it("refuses a generic success or failure claim over a permitted dispatch", async () => {
+        const succeedSeed = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-generic-succeed",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+        await expect(succeedAutomationRun({
+            accountId: succeedSeed.account.id,
+            runId: succeedSeed.run.id,
+            machineId: succeedSeed.machine.id,
+            attempt: 1,
+            accountCurrentness: await readAutomationAccountCurrentness(succeedSeed.account.id),
+        })).resolves.toBeNull();
+
+        const failSeed = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-generic-fail",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+        await expect(failAutomationRun({
+            accountId: failSeed.account.id,
+            runId: failSeed.run.id,
+            machineId: failSeed.machine.id,
+            attempt: 1,
+            accountCurrentness: await readAutomationAccountCurrentness(failSeed.account.id),
+            errorCode: "worker_said_so",
+        })).resolves.toBeNull();
+
+        await expect(db.automationRun.findMany({
+            where: { id: { in: [succeedSeed.run.id, failSeed.run.id] } },
+            orderBy: { id: "asc" },
+            select: { state: true, executionDispatchState: true },
+        })).resolves.toEqual([
+            { state: "running", executionDispatchState: "dispatchPermitted" },
+            { state: "running", executionDispatchState: "dispatchPermitted" },
+        ]);
+    });
+
     it("projects a committed Run state transition only to Account machine observers", async () => {
         const seeded = await createAccountMachineAutomation({
             publicKey: "pk-automation-run-state-observer",
@@ -1412,6 +1547,48 @@ describe("automationRunService (integration)", () => {
             await expect(claimNextAutomationReplyHandoff({ now: new Date() })).resolves.toBeNull();
         },
     );
+
+    it("blocks an awaiting Conversation handoff when a retired Automation terminalizes its expired lease", async () => {
+        const seeded = await seedConversationRunForResultValidation();
+        // The retirement terminalizer only fires for an already-expired lease
+        // whose Definition or claimant assignment is gone.
+        await db.automationRun.update({
+            where: { id: seeded.run.id },
+            data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+        });
+        await db.automation.update({
+            where: { id: seeded.automation.id },
+            data: { enabled: false },
+        });
+        const current = await db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: { revision: true, executionInputEnvelope: true, executionDispatchState: true },
+        });
+
+        const terminalized = await inTx(async (tx) => await terminalizeRetiredAutomationRunAfterLeaseExpiryTx({
+            tx,
+            accountId: seeded.account.id,
+            automationId: seeded.automation.id,
+            runId: seeded.run.id,
+            state: "running",
+            runRevision: current.revision,
+            machineId: seeded.machine.id,
+            executionInputEnvelope: current.executionInputEnvelope,
+            originKind: "conversation",
+            executionDispatchState: current.executionDispatchState,
+            accountCurrentness: await readAutomationAccountCurrentness(seeded.account.id),
+            now: new Date(),
+        }));
+
+        expect(terminalized).toEqual(expect.objectContaining({
+            state: "outcome_uncertain",
+            replyHandoffState: "blocked",
+            replyHandoffDueAt: null,
+            replyHandoffReceiptEnvelope: null,
+        }));
+        await expect(findNextAutomationReplyHandoffDueAt({ now: new Date() })).resolves.toBeNull();
+        await expect(claimNextAutomationReplyHandoff({ now: new Date() })).resolves.toBeNull();
+    });
 
     it("records failed runs and still schedules the next interval run", async () => {
         const seeded = await createAccountMachineAutomation({

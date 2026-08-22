@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS } from "@happier-dev/protocol";
 import { z } from "zod";
 
 import {
@@ -52,28 +53,38 @@ const StageAutomationRevisionSchema = z
     .int()
     .min(0)
     .max(Number.MAX_SAFE_INTEGER);
-const StageAutomationStoredStringSchema = z.string().min(1).max(400_000);
+// A stage row re-parses the same retained Automation private-content fields the
+// migrate wire carries, so it binds to that one Protocol declaration. A local
+// ceiling here would silently make a validly persisted envelope unmigratable.
 const StageAutomationDefinitionContentSchema = z.object({
-    templateCiphertext: z.string().min(1).max(220_000),
-    triggerDefinitionEnvelope: StageAutomationStoredStringSchema.nullable(),
+    templateCiphertext: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
+    triggerDefinitionEnvelope:
+        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerDefinitionEnvelope.nullable(),
 }).strict();
+const StageAutomationRunTargetContentShape = {
+    triggerEvidenceEnvelope:
+        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerEvidenceEnvelope.nullable(),
+    occurrenceEvidenceEqualityTag:
+        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.occurrenceEvidenceEqualityTag.nullable(),
+    executionInputEnvelope:
+        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.executionInputEnvelope.nullable(),
+    resultEnvelope:
+        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope.nullable(),
+    replyContextEnvelope:
+        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyContextEnvelope.nullable(),
+    replyHandoffReceiptEnvelope:
+        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyHandoffReceiptEnvelope.nullable(),
+} as const;
 const StageAutomationRunSourceContentSchema = z.object({
-    triggerEvidenceEnvelope: z.string().min(1).max(220_000).nullable(),
-    occurrenceEvidenceEqualityTag: z.string().min(1).max(256).nullable(),
-    executionInputEnvelope: z.string().min(1).max(220_512).nullable(),
-    resultEnvelope: StageAutomationStoredStringSchema.nullable(),
-    replyContextEnvelope: StageAutomationStoredStringSchema.nullable(),
-    replyHandoffReceiptEnvelope: StageAutomationStoredStringSchema.nullable(),
-    summaryCiphertext: z.string().min(1).max(220_000).nullable(),
+    ...StageAutomationRunTargetContentShape,
+    // Retained only on the source side: the released summary column is not
+    // rewritten by a transition target.
+    summaryCiphertext:
+        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.summaryCiphertext.nullable(),
 }).strict();
-const StageAutomationRunTargetContentSchema = z.object({
-    triggerEvidenceEnvelope: z.string().min(1).max(220_000).nullable(),
-    occurrenceEvidenceEqualityTag: z.string().min(1).max(256).nullable(),
-    executionInputEnvelope: z.string().min(1).max(220_512).nullable(),
-    resultEnvelope: StageAutomationStoredStringSchema.nullable(),
-    replyContextEnvelope: StageAutomationStoredStringSchema.nullable(),
-    replyHandoffReceiptEnvelope: StageAutomationStoredStringSchema.nullable(),
-}).strict();
+const StageAutomationRunTargetContentSchema = z
+    .object(StageAutomationRunTargetContentShape)
+    .strict();
 const StageAutomationInventoryItemSchema = z.discriminatedUnion("kind", [
     z.object({
         kind: z.literal("definition"),

@@ -174,6 +174,53 @@ model AutomationEventSourceCatalogStatus {
         expect(mysql).toContain("reporterMaterializationId String @db.VarChar(256)");
     });
 
+    it("matches every Account-transition Automation staging column to the width its migration already created", () => {
+        const migration = readFileSync(
+            join(
+                import.meta.dirname,
+                "../prisma/mysql/migrations/20260815110000_add_account_encryption_transition_automation_staging/migration.sql",
+            ),
+            "utf8",
+        );
+        const generated = readFileSync(
+            join(import.meta.dirname, "../prisma/mysql/schema.prisma"),
+            "utf8",
+        );
+
+        // The migration is the authority: the generated model must not leave a
+        // staging column on MySQL's VARCHAR(191) String default, which would
+        // both misdescribe the live table and truncate a staged envelope if a
+        // later migration were generated from the model.
+        const migrationColumnTypes: readonly (readonly [string, string])[] = [
+            ["transitionId", "VARCHAR(36)"],
+            ["id", "VARCHAR(36)"],
+            ["participantKind", "VARCHAR(16)"],
+            ["participantId", "VARCHAR(256)"],
+            ["automationId", "VARCHAR(256)"],
+            ["sourceContent", "LONGTEXT"],
+            ["targetContent", "LONGTEXT"],
+        ];
+        for (const [column, sqlType] of migrationColumnTypes) {
+            expect(migration).toContain(`\`${column}\` ${sqlType}`);
+        }
+
+        const stageStateModel = /^model\s+AccountEncryptionTransitionAutomationStageState\s+\{[\s\S]*?^\}\s*$/m
+            .exec(generated)?.[0];
+        const stageModel = /^model\s+AccountEncryptionTransitionAutomationStage\s+\{[\s\S]*?^\}\s*$/m
+            .exec(generated)?.[0];
+        expect(stageStateModel).toBeDefined();
+        expect(stageModel).toBeDefined();
+        expect(stageStateModel).toContain("transitionId              String @db.VarChar(36)");
+        expect(stageModel).toContain("id                 String @db.VarChar(36)");
+        expect(stageModel).toContain("transitionId       String @db.VarChar(36)");
+        expect(stageModel).toContain("participantKind    String @db.VarChar(16)");
+        expect(stageModel).toContain("participantId      String @db.VarChar(256)");
+        expect(stageModel).toContain("automationId       String @db.VarChar(256)");
+        expect(stageModel).toContain("sourceContent      String @db.LongText");
+        expect(stageModel).toContain("targetContent      String? @db.LongText");
+        expect(stageModel).not.toMatch(/^\s*(?:sourceContent|targetContent)\s+String\??\s*$/m);
+    });
+
     it("strips SQLite relation maps while preserving index maps", () => {
         const master = `
 generator client {

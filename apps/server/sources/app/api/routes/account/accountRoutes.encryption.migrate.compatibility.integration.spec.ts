@@ -138,6 +138,65 @@ async function createLiveCollectionBlocker(accountId: string) {
     return row;
 }
 
+const IDENTITY_BLOCKER_PLUGIN_ID = "compat.identity-live-collection";
+
+const IDENTITY_BLOCKER_MANIFEST = {
+    ...COLLECTION_BLOCKER_MANIFEST,
+    id: IDENTITY_BLOCKER_PLUGIN_ID,
+    contributes: {
+        accountCollections: [{
+            ...COLLECTION_BLOCKER_MANIFEST.contributes.accountCollections[0],
+            // A mode-derived row address the platform cannot recompute. It
+            // reaches the terminal identity refusal instead of the zero-limit
+            // one, so it proves both arms name the same blocking domain.
+            identityFields: ["id"],
+        }],
+    },
+} as const;
+
+async function createLiveIdentityCollectionBlocker(accountId: string) {
+    const [ref] = await inTx(async (tx) => (
+        await materializePluginCollectionContractsFromManifestTx({
+            tx,
+            manifest: IDENTITY_BLOCKER_MANIFEST,
+        })
+    ));
+    if (!ref) throw new Error("Expected a fixture Collection contract.");
+    const contract = await db.pluginCollectionContract.findFirstOrThrow({
+        where: {
+            pluginId: ref.pluginId,
+            collectionId: ref.collectionId,
+            schemaVersion: ref.schemaVersion,
+            contractDigest: ref.contractDigest,
+        },
+        select: { id: true, contractDigest: true },
+    });
+    return await db.pluginCollectionRow.create({
+        data: {
+            accountId,
+            pluginId: IDENTITY_BLOCKER_PLUGIN_ID,
+            collectionId: COLLECTION_BLOCKER_COLLECTION_ID,
+            rowId: "identity-row",
+            schemaVersion: 1,
+            revision: 3,
+            contractId: contract.id,
+            contractDigest: contract.contractDigest,
+            contentEnvelope: {
+                t: "encrypted",
+                c: sealPluginCollectionPrivatePayloadV1({
+                    material: {
+                        type: "legacy",
+                        secret: new Uint8Array(32).fill(37),
+                    },
+                    payload: { privateNote: "identity collection" },
+                    randomBytes: (length) =>
+                        new Uint8Array(length).fill(41),
+                }),
+            },
+        },
+    });
+}
+
 async function createResidualCollectionTombstoneBlocker(accountId: string) {
     const contract = await db.pluginCollectionContract.findFirstOrThrow({
         where: {
@@ -778,7 +837,7 @@ describe("Account encryption migration predecessor compatibility", () => {
         }
     });
 
-    it("retains migration_too_large for a current request with a live Collection", async () => {
+    it("names the blocking plugin Collections for a current request with a live Collection", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY:
                 "optional",
@@ -851,7 +910,7 @@ describe("Account encryption migration predecessor compatibility", () => {
             expect(response.statusCode, response.body)
                 .toBe(400);
             expect(response.json()).toEqual({
-                error: "migration_too_large",
+                error: "plugin_collections_not_empty",
             });
             await expect(db.account.findUniqueOrThrow({
                 where: { id: account.id },
@@ -860,6 +919,98 @@ describe("Account encryption migration predecessor compatibility", () => {
                 where: {
                     accountId: account.id,
                     pluginId: COLLECTION_BLOCKER_PLUGIN_ID,
+                },
+            })).resolves.toEqual(before.collection);
+            await expect(db.accountChange.count({
+                where: { accountId: account.id },
+            })).resolves.toBe(0);
+        } finally {
+            await app.close();
+        }
+    });
+
+    it("names the blocking plugin Collections for a live identity-bearing Collection", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY:
+                "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT:
+                "1",
+        });
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+                settings: null,
+                settingsVersion: 0,
+            },
+            select: {
+                id: true,
+                seq: true,
+                publicKey: true,
+                contentPublicKey: true,
+            },
+        });
+        await createLiveIdentityCollectionBlocker(account.id);
+        const before = {
+            account: await db.account.findUniqueOrThrow({
+                where: { id: account.id },
+            }),
+            collection: await db.pluginCollectionRow.findFirstOrThrow({
+                where: {
+                    accountId: account.id,
+                    pluginId: IDENTITY_BLOCKER_PLUGIN_ID,
+                },
+            }),
+        };
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(
+            account,
+        );
+        const app = createTestApp();
+        await app.ready();
+
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/account/encryption/migrate",
+                headers: {
+                    [ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER]:
+                        String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
+                    "content-type": "application/json",
+                    "x-test-user-id": account.id,
+                },
+                payload: {
+                    toMode: "plain",
+                    expectedAccountVersion: account.seq,
+                    expectedSigningKeyFingerprint:
+                        fingerprints.signingKeyFingerprint,
+                    expectedContentKeyFingerprint:
+                        fingerprints.contentKeyFingerprint,
+                    expectedSettingsVersion: 0,
+                    settingsContent: null,
+                    connectedServices: { action: "assert_empty" },
+                    automations: { action: "assert_empty" },
+                    machines: { action: "assert_empty" },
+                    todos: { action: "assert_empty" },
+                    artifacts: { action: "assert_empty" },
+                    sessions: { action: "assert_empty" },
+                    reviewComments: { action: "assert_empty" },
+                    sessionOrganization: { action: "assert_empty" },
+                    pets: { action: "assert_empty" },
+                },
+            });
+
+            expect(response.statusCode, response.body)
+                .toBe(400);
+            expect(response.json()).toEqual({
+                error: "plugin_collections_not_empty",
+            });
+            await expect(db.account.findUniqueOrThrow({
+                where: { id: account.id },
+            })).resolves.toEqual(before.account);
+            await expect(db.pluginCollectionRow.findFirstOrThrow({
+                where: {
+                    accountId: account.id,
+                    pluginId: IDENTITY_BLOCKER_PLUGIN_ID,
                 },
             })).resolves.toEqual(before.collection);
             await expect(db.accountChange.count({

@@ -41,16 +41,20 @@ const caller = {
     materializationId: "materialization-1",
 } as const;
 
-const conversationAutomation: AutomationListItem = {
+function listedRow(params: Readonly<{ id: string; name: string; templateVersion: number }>) {
+    return { id: params.id, name: params.name, templateVersion: params.templateVersion };
+}
+
+const scheduleAutomation: AutomationListItem = {
     id: "automation-1",
     accountId: "account-1",
-    name: "Conversation target",
+    name: "Daily digest",
     description: null,
     enabled: true,
-    triggerKind: "conversation",
-    scheduleKind: null,
+    triggerKind: "schedule",
+    scheduleKind: "interval",
     scheduleExpr: null,
-    everyMs: null,
+    everyMs: 60_000,
     timezone: null,
     targetType: "execution_run",
     templateCiphertext: "strict-definition",
@@ -66,7 +70,7 @@ const conversationAutomation: AutomationListItem = {
     watcherMachineInstallationId: null,
     watcherPluginId: null,
     watcherMaterializationId: null,
-    triggerDefinitionEnvelope: "conversation-definition",
+    triggerDefinitionEnvelope: null,
     nextRunAt: null,
     lastRunAt: null,
     createdAt: new Date("2026-08-12T00:00:00.000Z"),
@@ -78,11 +82,13 @@ describe("Automation conversation target verification", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.assertCurrentCaller.mockResolvedValue({ version: "1.0.0" });
-        mocks.loadAutomation.mockResolvedValue(conversationAutomation);
+        mocks.loadAutomation.mockResolvedValue(scheduleAutomation);
         mocks.listAutomations.mockResolvedValue([]);
     });
 
-    it("returns only the exact verified version from the Account-scoped Automation read owner", async () => {
+    it("reads the target through the Account-scoped Automation owner without pinning a trigger kind", async () => {
+        // A conversation binding adds an invocation source; it never replaces
+        // the Automation's schedule, so the read must not filter on one.
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller,
@@ -107,31 +113,15 @@ describe("Automation conversation target verification", () => {
         },
     );
 
-    it("returns notConversation without definition content", async () => {
-        mocks.loadAutomation.mockResolvedValue({
-            ...conversationAutomation,
-            triggerKind: "schedule",
-            triggerDefinitionEnvelope: null,
-        });
-        await expect(verifyAutomationConversationTargetV1({
-            accountId: "account-1",
-            caller,
-            input: { automationId: "automation-1", expectedTemplateVersion: 3 },
-        })).resolves.toEqual({ kind: "notVerified", reason: "notConversation" });
-    });
-
     it("returns templateVersionMismatch without the current version or content", async () => {
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller,
             input: { automationId: "automation-1", expectedTemplateVersion: 2 },
-        })).resolves.toEqual({
-            kind: "notVerified",
-            reason: "templateVersionMismatch",
-        });
+        })).resolves.toEqual({ kind: "notVerified", reason: "templateVersionMismatch" });
     });
 
-    it("rejects final-result delivery for an exact execution-run Conversation target", async () => {
+    it("rejects final-result delivery for an execution-run target", async () => {
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller,
@@ -140,14 +130,11 @@ describe("Automation conversation target verification", () => {
                 expectedTemplateVersion: 3,
                 resultDelivery: "finalResult",
             },
-        })).resolves.toEqual({
-            kind: "notVerified",
-            reason: "resultDeliveryUnsupported",
-        });
+        })).resolves.toEqual({ kind: "notVerified", reason: "resultDeliveryUnsupported" });
     });
 
-    it("keeps a disabled Conversation Automation eligible to the final verifier", async () => {
-        mocks.loadAutomation.mockResolvedValue({ ...conversationAutomation, enabled: false });
+    it("keeps a disabled Automation eligible to the final verifier", async () => {
+        mocks.loadAutomation.mockResolvedValue({ ...scheduleAutomation, enabled: false });
 
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
@@ -156,13 +143,15 @@ describe("Automation conversation target verification", () => {
         })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
     });
 
-    it("fails closed for a wrong plugin or stale exact materialization before reading Automation state", async () => {
+    it("verifies for any current plugin caller and fails closed on stale materialization", async () => {
+        // No plugin id is privileged: an out-of-tree caller reaches the same
+        // Account targets a bundled one does.
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller: { ...caller, pluginId: "com.acme.other" },
             input: { automationId: "automation-1", expectedTemplateVersion: 3 },
-        })).rejects.toBeInstanceOf(AutomationConversationTargetVerificationCallerError);
-        expect(mocks.loadAutomation).not.toHaveBeenCalled();
+        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+        mocks.loadAutomation.mockClear();
 
         mocks.assertCurrentCaller.mockRejectedValueOnce(
             new AutomationEventCurrentnessError("caller_materialization_not_current"),
@@ -175,11 +164,11 @@ describe("Automation conversation target verification", () => {
         expect(mocks.loadAutomation).not.toHaveBeenCalled();
     });
 
-    it("lists only a bounded ID-keyset projection through the current caller and never selects target content", async () => {
+    it("lists a bounded ID keyset of every Account Automation without selecting target content", async () => {
         mocks.listAutomations.mockResolvedValue([
-            { id: "automation-1", name: "Current target", templateVersion: 0 },
-            { id: "automation-2", name: "x".repeat(129), templateVersion: 2 },
-            { id: "automation-3", name: "Later target", templateVersion: 3 },
+            listedRow({ id: "automation-1", name: "Current target", templateVersion: 0 }),
+            listedRow({ id: "automation-2", name: "x".repeat(129), templateVersion: 2 }),
+            listedRow({ id: "automation-3", name: "Lookahead only", templateVersion: 4 }),
         ]);
 
         await expect(listAutomationConversationTargetsV1({
@@ -198,7 +187,6 @@ describe("Automation conversation target verification", () => {
             where: {
                 accountId: "account-1",
                 deletedAt: null,
-                triggerKind: "conversation",
                 id: { gt: "automation-0" },
             },
             orderBy: { id: "asc" },
@@ -209,7 +197,7 @@ describe("Automation conversation target verification", () => {
 
     it("uses the server default and falls back to the ID for a noncanonical stored name", async () => {
         mocks.listAutomations.mockResolvedValue([
-            { id: "automation-1", name: "   ", templateVersion: 3 },
+            listedRow({ id: "automation-1", name: "   ", templateVersion: 3 }),
         ]);
 
         await expect(listAutomationConversationTargetsV1({
@@ -220,36 +208,29 @@ describe("Automation conversation target verification", () => {
             items: [{ automationId: "automation-1", templateVersion: 3, label: "automation-1" }],
             nextCursor: null,
         });
-        expect(mocks.listAutomations).toHaveBeenCalledWith(expect.objectContaining({
-            take: 101,
-        }));
+        expect(mocks.listAutomations).toHaveBeenCalledWith(expect.objectContaining({ take: 101 }));
     });
 
-    it("returns an empty page without cursor state when no current target is available", async () => {
+    it("returns an empty page without cursor state when the Account owns no Automation", async () => {
         await expect(listAutomationConversationTargetsV1({
             accountId: "account-1",
             caller,
             input: { cursor: null },
         })).resolves.toEqual({ items: [], nextCursor: null });
-        expect(mocks.listAutomations).toHaveBeenCalledWith({
-            where: {
-                accountId: "account-1",
-                deletedAt: null,
-                triggerKind: "conversation",
-            },
-            orderBy: { id: "asc" },
+        expect(mocks.listAutomations).toHaveBeenCalledWith(expect.objectContaining({
+            where: { accountId: "account-1", deletedAt: null },
             take: 101,
-            select: { id: true, name: true, templateVersion: true },
-        });
+        }));
     });
 
-    it("refuses wrong or stale caller materialization before querying target rows", async () => {
+    it("lists for any current plugin caller and refuses only stale caller materialization", async () => {
         await expect(listAutomationConversationTargetsV1({
             accountId: "account-1",
             caller: { ...caller, pluginId: "com.acme.other" },
             input: {},
-        })).rejects.toBeInstanceOf(AutomationConversationTargetVerificationCallerError);
-        expect(mocks.listAutomations).not.toHaveBeenCalled();
+        })).resolves.toEqual({ items: [], nextCursor: null });
+        expect(mocks.listAutomations).toHaveBeenCalledTimes(1);
+        mocks.listAutomations.mockClear();
 
         mocks.assertCurrentCaller.mockRejectedValueOnce(
             new AutomationEventCurrentnessError("caller_materialization_not_current"),

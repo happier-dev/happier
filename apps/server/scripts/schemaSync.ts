@@ -299,6 +299,23 @@ function annotateMySqlAccountEncryptionTransitionFields(schemaBody: string): str
                 .replace(/^(\s*transitionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(36)")
                 .replace(/^(\s*(?:pluginId|collectionId|rowId)\s+String)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(256)")
                 .replace(/^(\s*contractDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(43)"),
+        )
+        .replace(
+            /^model\s+AccountEncryptionTransitionAutomationStageState\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*transitionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(36)"),
+        )
+        .replace(
+            /^model\s+AccountEncryptionTransitionAutomationStage\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(36)")
+                .replace(/^(\s*transitionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(36)")
+                .replace(/^(\s*participantKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(16)")
+                .replace(/^(\s*(?:participantId|automationId)\s+String)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(256)")
+                // Staged Automation facts hold whole retained private-content
+                // envelopes, far past MySQL's VARCHAR(191) default for String.
+                .replace(/^(\s*sourceContent\s+String)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+                .replace(/^(\s*targetContent\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
         );
 }
 

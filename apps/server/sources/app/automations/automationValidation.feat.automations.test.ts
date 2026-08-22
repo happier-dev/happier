@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { AUTOMATION_INT_COLUMN_MAX } from "@happier-dev/protocol";
+
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
+    AutomationValidationError,
     parseAutomationPatchInput,
+    parseAutomationScheduleInput,
     parseAutomationUpsertInput,
 } from "./automationValidation";
 
@@ -61,6 +65,24 @@ describe("parseAutomationUpsertInput", () => {
                 templateCiphertext: TEST_TEMPLATE_ENVELOPE,
             }),
         ).toThrow(/everyMs/);
+    });
+
+    it("rejects an interval cadence the Automation.everyMs INTEGER column cannot hold", () => {
+        expect(() =>
+            parseAutomationUpsertInput({
+                name: "Too wide",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: AUTOMATION_INT_COLUMN_MAX + 1 },
+                targetType: "new_session",
+                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+            }),
+        ).toThrow(AutomationValidationError);
+
+        const widest = parseAutomationScheduleInput({
+            kind: "interval",
+            everyMs: AUTOMATION_INT_COLUMN_MAX,
+        });
+        expect(widest.everyMs).toBe(AUTOMATION_INT_COLUMN_MAX);
     });
 
     it("accepts cron schedules with scheduleExpr", () => {

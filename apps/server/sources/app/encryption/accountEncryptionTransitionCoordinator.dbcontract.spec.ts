@@ -145,8 +145,9 @@ async function declareIsolatedFixtureCapacity(
         reservedCapacityBytes: bigint;
     }>,
 ): Promise<void> {
-    // Native-provider contract fixture only. Production V5 is unavailable
-    // until its complete Account owner records provider measurements.
+    // Native-provider contract fixture only. It OVERWRITES the measured
+    // capacity `prepare` stamps, shrinking it so a small fixture can reach the
+    // fence; it is not the production aggregate policy.
     await db.accountEncryptionTransition.update({
         where: { id: transitionId },
         data: {

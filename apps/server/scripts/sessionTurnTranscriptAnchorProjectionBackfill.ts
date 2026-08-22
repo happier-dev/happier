@@ -22,7 +22,7 @@ import {
     type DbProvider,
 } from "../sources/storage/db";
 import { resolveLightSqliteDatabaseUrl } from "../sources/flavors/light/env";
-import { expandHomeDirPath } from "../sources/utils/path/expandHomeDirPath";
+import { expandHomeDirPath } from "@happier-dev/cli-common/path";
 
 const SESSION_TURN_TRANSCRIPT_ANCHOR_PROJECTION_CONTRACT_APPROVAL_ENV =
     "HAPPIER_SESSION_TURN_TRANSCRIPT_ANCHOR_PROJECTION_CONTRACT_APPROVAL";

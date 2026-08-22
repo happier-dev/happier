@@ -1466,6 +1466,20 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         revision: true,
                     },
                 });
+                // Reject stale callers before asking Data to inspect or
+                // promote candidate work. The final revision-fenced update
+                // remains the concurrent CAS authority below.
+                if (
+                    (current === null && expectedRevision !== null)
+                    || (
+                        current !== null
+                        && (expectedRevision === null || current.revision !== expectedRevision)
+                    )
+                ) {
+                    throw new PluginAvailabilityOperationError(
+                        "plugin_intent_revision_conflict",
+                    );
+                }
                 // Availability remains the release/currentness and final CAS
                 // owner. Data can only consume this current source plus the
                 // selected target inside this existing transaction, then
@@ -1494,11 +1508,6 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     pluginId: input.pluginId,
                 });
                 if (!current) {
-                    if (expectedRevision !== null) {
-                        throw new PluginAvailabilityOperationError(
-                            "plugin_intent_revision_conflict",
-                        );
-                    }
                     const created = await tx.accountPluginIntent.create({
                         data: {
                             accountId: params.accountId,
@@ -1525,19 +1534,11 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     );
                     return { intent: intentFromRow(created) };
                 }
-                if (
-                    expectedRevision === null
-                    || current.revision !== expectedRevision
-                ) {
-                    throw new PluginAvailabilityOperationError(
-                        "plugin_intent_revision_conflict",
-                    );
-                }
                 const updated = await tx.accountPluginIntent.updateMany({
                     where: {
                         accountId: params.accountId,
                         pluginId: input.pluginId,
-                        revision: expectedRevision,
+                        revision: current.revision,
                     },
                     data: {
                         desiredVersion: input.desiredVersion,
