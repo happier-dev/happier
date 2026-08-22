@@ -28,7 +28,8 @@ import {
 import { resolveTriageEffectiveView } from '../../settings/effectiveView.js';
 import type { CorpusSavedViewV1, CorpusSavedViewsReadV1 } from '../../settings/savedViews.js';
 import { projectTriageCurrentUiContextV1 } from '../currentContext.js';
-import { TriageDetailRegion } from '../detail/region.js';
+import { projectTriageDetailHeaderV1 } from '../detail/header.js';
+import { TriageDetailHeaderView, TriageDetailRegion } from '../detail/region.js';
 import { TriageFilterRail } from '../filters/rail.js';
 import { planTriageFilterFacetsV1 } from '../filters/plan.js';
 import {
@@ -67,6 +68,7 @@ import {
 } from '../state/surface.js';
 import { useTriageListWindow } from '../window/useTriageListWindow.js';
 import { readTriageListEmptyState, readTriageListEmptyStateKeys } from './emptyState.js';
+import { retainTriageLastKnownRowV1, type TriageLastKnownRowV1 } from './lastKnownRow.js';
 import { readTriageWindowLensV1 } from './lens.js';
 import {
   readTriageListFailureNotice,
@@ -573,6 +575,42 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     return summary?.displayLabel ?? null;
   }, [surface.selection, window.snapshot.configuredSources]);
 
+  /**
+   * The last row this window published for the selection the reader is holding
+   * (`ui/shell/lastKnownRow.ts`).
+   *
+   * It is adjusted during render rather than in an effect because the render
+   * that loses the row is the one that has to draw the header: settling it a
+   * commit later would blank the entry for a frame and then bring it back,
+   * which reads as the surface losing the entry and finding it again.
+   */
+  const [heldRow, setHeldRow] = React.useState<TriageLastKnownRowV1 | null>(null);
+  const lastKnown = retainTriageLastKnownRowV1(heldRow, surface.selection, selectedRow);
+  if (lastKnown !== heldRow) setHeldRow(lastKnown);
+  /**
+   * §2.2's header for a selection the window has stopped listing.
+   *
+   * The source's own detail is deliberately not read from a retained row: the
+   * observation it carries is the one this page last saw, and handing a stale
+   * observation to `entries/read-detail-v1` would present it to the source as
+   * current. So the two members that only that read can supply — the source's
+   * own name for itself and for this kind, and the entry's Session links —
+   * arrive as "not known here", which is what the projection's nulls already
+   * mean. The lane health is the CURRENT one: it is a fact about the connection
+   * rather than about the entry, and it has not gone stale.
+   */
+  const lastKnownHeader = React.useMemo(() => (
+    selectedRow !== null || lastKnown === null
+      ? null
+      : projectTriageDetailHeaderV1({
+          row: lastKnown.row,
+          lanes: state.kind === 'window' ? state.window.lanes : [],
+          connectionLabel: selectedConnectionLabel,
+          sourceDescriptor: null,
+          linkedSessions: [],
+        })
+  ), [lastKnown, selectedConnectionLabel, selectedRow, state]);
+
   const visibleOrder = React.useMemo(
     () => [...rowsByKey.values()].map((hit) => ({
       sectionId: hit.sectionId,
@@ -679,13 +717,43 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * the window dropped and FALSE for one the reader's own filter excludes —
    * there, clearing the filter is what brings it back, and refreshing forever
    * would not.
+   *
+   * It decides only the third branch below — the one reached when this page has
+   * never held a row for the selection at all. A selection this page DID list
+   * once is answered from the row it retained, where the cause is settled: the
+   * entry left a window that had it.
    */
   const neverListedHere = surface.selection !== null && surface.selection.sectionId === null;
 
   if (surface.selection !== null) {
     return (
       <Screen safeArea>
-        {selectedRow === null ? (
+        {selectedRow !== null ? (
+          <TriageDetailRegion
+            row={selectedRow}
+            lanes={listWindow?.window.lanes ?? []}
+            connectionLabel={selectedConnectionLabel}
+            onClose={dismissDetail}
+          />
+        ) : lastKnownHeader !== null ? (
+          /*
+           * The selection outlived its row. The reader keeps the entry they
+           * opened — its title, why it was asking for them, its state, scope and
+           * observing connection — stated as the last thing this page knew, and
+           * the cause underneath it. Replacing all of it with the cause alone
+           * left them holding a sentence with no subject: they could not say
+           * WHICH entry had gone, which is the one thing they were reading.
+           */
+          <Stack gap="small">
+            <TriageDetailHeaderView header={lastKnownHeader} onClose={dismissDetail} lastKnown />
+            <EmptyState
+              titleKey="plugins.triage.surface.entryGone.heading"
+              title="This entry is no longer in the list"
+              descriptionKey="plugins.triage.surface.entryGone.description"
+              description="The current window no longer holds this entry, so there is nothing to open it with. It may return on the next refresh."
+            />
+          </Stack>
+        ) : (
           /*
            * `core/SURFACE.md` §3.1 and §3.2: a selection the current window
            * does not hold still renders, and says so. Two states reach here and
@@ -716,13 +784,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 : 'The current window no longer holds this entry, so there is nothing to open it with. It may return on the next refresh.'}
             />
           </Stack>
-        ) : (
-          <TriageDetailRegion
-            row={selectedRow}
-            lanes={listWindow?.window.lanes ?? []}
-            connectionLabel={selectedConnectionLabel}
-            onClose={dismissDetail}
-          />
         )}
       </Screen>
     );

@@ -59,7 +59,10 @@ function listResult(listsTheEntry: boolean): TriageListEntriesResultV1 {
             kind: 'present',
             locator: testkitLocator(),
             snapshot: testkitSnapshot({ title: ENTRY_TITLE }),
-            viewer: testkitViewer(),
+            // The attention the aggregate derives for itself; the row member
+            // below is what the Action emitted from the same fact, and this
+            // mount re-folds the observation rather than reading it back.
+            viewer: testkitViewer({ involvement: ['reviewRequested'] }),
         },
     };
     return TriageListEntriesResultV1Schema.parse({
@@ -81,7 +84,7 @@ function listResult(listsTheEntry: boolean): TriageListEntriesResultV1 {
                 attention: {
                     level: 'required',
                     fromSourceInstanceId: INSTANCE,
-                    reasonId: 'review-requested',
+                    reasonId: 'involvement/review-requested',
                     reasonLabel: 'Your review was requested',
                 },
                 selected: { kind: 'selected', sourceInstanceId: INSTANCE, reason: 'onlyPresent' },

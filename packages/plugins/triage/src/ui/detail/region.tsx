@@ -116,6 +116,89 @@ function LinkedSessions(props: Readonly<{
   );
 }
 
+export type TriageDetailHeaderViewProps = Readonly<{
+  header: TriageDetailHeaderV1;
+  /** Clears the selection; the stacked composition returns to the list. */
+  onClose: () => void;
+  /**
+   * These facts are the last ones the aggregate held for this entry, not
+   * current ones.
+   *
+   * It is set exactly when the window no longer lists the selected entry
+   * (`ui/shell/lastKnownRow.ts`). Every fact below is then still the entry's
+   * own — which is the whole point, because the alternative was a cause with no
+   * subject — but none of it has been re-read, so it is stated as past rather
+   * than presented as present. Nothing is invented to fill the gap: the source's
+   * own detail is not read at all from a retained row, and the facts an
+   * admitted contribution would have named are simply absent.
+   */
+  lastKnown?: boolean;
+}>;
+
+/**
+ * §2.2's common header, rendered once for both the states it has.
+ *
+ * The mounted detail and a selection the window has stopped listing show the
+ * same facts about the same entry and differ only in whether they are current,
+ * so they are one renderer with one marker rather than two blocks that drift.
+ */
+export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): React.ReactElement {
+  const text = usePluginTranslation();
+  const header = props.header;
+  const entries = headerEntries(header, text);
+  const presenceCopy = header.presence === 'present'
+    ? null
+    : header.presence === 'absent'
+      ? text('plugins.triage.surface.detail.entryAbsent', PRESENCE_COPY.absent ?? '')
+      : text('plugins.triage.surface.detail.entryUnresolved', PRESENCE_COPY.unresolved ?? '');
+
+  return (
+    <>
+      <Row justify="space-between" align="center">
+        <Heading level={2} value={header.title} />
+        <Button titleKey="plugins.triage.surface.close" title="Close" variant="secondary" onPress={props.onClose} />
+      </Row>
+
+      {props.lastKnown === true ? (
+        <Status
+          tone="muted"
+          labelKey="plugins.triage.surface.detail.lastKnown"
+          label="These are the last facts this page held for this entry, and they may be out of date."
+        />
+      ) : null}
+
+      {header.attention === null ? null : (
+        <Badge
+          tone={header.attention.level === 'required' ? 'warning' : 'info'}
+          value={header.attention.reasonLabel}
+        />
+      )}
+
+      {entries.length === 0 ? null : <Metadata entries={entries} />}
+
+      {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
+
+      {header.sourceReadFailed ? (
+        <Status
+          tone="muted"
+          labelKey="plugins.triage.surface.detail.connectionUnhealthy"
+          label="This connection could not be read in the last pass."
+        />
+      ) : null}
+
+      {header.webUrl === null ? null : (
+        <Link
+          titleKey="plugins.triage.surface.detail.openAtSource"
+          title="Open at the source"
+          url={header.webUrl}
+        />
+      )}
+
+      <LinkedSessions sessions={header.linkedSessions} />
+    </>
+  );
+}
+
 export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactElement {
   const context = useSurfaceContext();
   const text = usePluginTranslation();
@@ -158,48 +241,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     linkedSessions,
   }), [linkedSessions, props.connectionLabel, props.lanes, props.row, sourceDescriptor]);
 
-  const entries = headerEntries(header, text);
-  const presenceCopy = header.presence === 'present'
-    ? null
-    : header.presence === 'absent'
-      ? text('plugins.triage.surface.detail.entryAbsent', PRESENCE_COPY.absent ?? '')
-      : text('plugins.triage.surface.detail.entryUnresolved', PRESENCE_COPY.unresolved ?? '');
-
   return (
     <Stack gap="small">
-      <Row justify="space-between" align="center">
-        <Heading level={2} value={header.title} />
-        <Button titleKey="plugins.triage.surface.close" title="Close" variant="secondary" onPress={props.onClose} />
-      </Row>
-
-      {header.attention === null ? null : (
-        <Badge
-          tone={header.attention.level === 'required' ? 'warning' : 'info'}
-          value={header.attention.reasonLabel}
-        />
-      )}
-
-      {entries.length === 0 ? null : <Metadata entries={entries} />}
-
-      {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
-
-      {header.sourceReadFailed ? (
-        <Status
-          tone="muted"
-          labelKey="plugins.triage.surface.detail.connectionUnhealthy"
-          label="This connection could not be read in the last pass."
-        />
-      ) : null}
-
-      {header.webUrl === null ? null : (
-        <Link
-          titleKey="plugins.triage.surface.detail.openAtSource"
-          title="Open at the source"
-          url={header.webUrl}
-        />
-      )}
-
-      <LinkedSessions sessions={header.linkedSessions} />
+      <TriageDetailHeaderView header={header} onClose={props.onClose} />
 
       {detail === null ? (
         <EmptyState
