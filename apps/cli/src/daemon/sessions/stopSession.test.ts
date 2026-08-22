@@ -11,9 +11,13 @@ vi.mock('../pidSafety', () => ({
 }));
 
 const spawnSyncMock = vi.fn();
-vi.mock('node:child_process', () => ({
-  spawnSync: spawnSyncMock,
-}));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawnSync: spawnSyncMock,
+  };
+});
 
 const tmuxKillWindow = vi.fn(async (_sessionIdentifier: string) => true);
 type TmuxExecuteArgs = [cmd: string[], session?: string, window?: string, pane?: string, socketPath?: string];
@@ -984,19 +988,25 @@ describe('createStopSession', () => {
     expect(dispose).toHaveBeenCalledWith(attachment.handle);
   });
 
-  it('preserves an exact host when the tracked runner does not exit before the bound', async () => {
+  it('force-terminates a verified runner that ignores SIGTERM before destroying its exact host', async () => {
     const { createStopSession } = await import('./stopSession');
     const attachmentId = 'attachment-timeout' as NonNullable<import('@happier-dev/agents').TerminalHostHandle['attachmentId']>;
     const dispose = vi.fn(async () => undefined);
-    vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const waitForTrackedRunnersExit = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
     const stop = createStopSession({
       pidToTrackedSession: new Map([[551, {
         startedBy: 'terminal',
         pid: 551,
         happySessionId: 'sess-timeout',
+        processStartTimeMs: 1_000,
+        processCommandHash: 'runner-command',
         spawnOptions: { terminal: { mode: 'zellij' } },
       } as any]]),
       terminalHostAdapters: { zellij: { kind: 'zellij', dispose } as any },
+      removeHostAttachmentInfo: vi.fn(async () => true),
       readHostAttachmentInfo: vi.fn(async () => ({
         version: 2,
         attachmentId,
@@ -1010,14 +1020,74 @@ describe('createStopSession', () => {
         },
         updatedAt: 1,
       } satisfies TerminalHostAttachmentInfo)),
-      waitForTrackedRunnersExit: vi.fn(async () => false),
+      waitForTrackedRunnersExit,
     });
 
-    await expect(stop('sess-timeout')).resolves.toEqual({
+    await expect(stop('sess-timeout')).resolves.toEqual({ status: 'stopped' });
+    expect(killSpy).toHaveBeenCalledWith(551, 'SIGTERM');
+    expect(killSpy).toHaveBeenCalledWith(551, 'SIGKILL');
+    expect(isPidSafeHappySessionProcess).toHaveBeenCalledTimes(2);
+    expect(waitForTrackedRunnersExit).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not force-signal a replacement runner after the graceful wait', async () => {
+    const { createStopSession } = await import('./stopSession');
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const original: import('../types').TrackedSession = {
+      startedBy: 'terminal',
+      pid: 553,
+      happySessionId: 'sess-timeout-replaced',
+      processStartTimeMs: 2_000,
+      processCommandHash: 'original-command',
+    };
+    const replacement: import('../types').TrackedSession = {
+      ...original,
+      processStartTimeMs: 3_000,
+      processCommandHash: 'replacement-command',
+    };
+    const pidToTrackedSession = new Map([[553, original]]);
+    const waitForTrackedRunnersExit = vi.fn(async () => {
+      pidToTrackedSession.set(553, replacement);
+      return false;
+    });
+    const stop = createStopSession({
+      pidToTrackedSession,
+      waitForTrackedRunnersExit,
+    });
+
+    await expect(stop('sess-timeout-replaced')).resolves.toEqual({
       status: 'incomplete',
       reason: 'runner_exit_timeout',
     });
-    expect(dispose).not.toHaveBeenCalled();
+    expect(killSpy).toHaveBeenCalledWith(553, 'SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith(553, 'SIGKILL');
+    expect(waitForTrackedRunnersExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts positive runner death observed between the graceful timeout and force escalation', async () => {
+    const { createStopSession } = await import('./stopSession');
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const areTrackedRunnersExited = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const waitForTrackedRunnersExit = vi.fn(async () => false);
+    const stop = createStopSession({
+      pidToTrackedSession: new Map([[554, {
+        startedBy: 'terminal',
+        pid: 554,
+        happySessionId: 'sess-exited-before-force',
+        processStartTimeMs: 4_000,
+        processCommandHash: 'runner-command',
+      } as any]]),
+      areTrackedRunnersExited,
+      waitForTrackedRunnersExit,
+    });
+
+    await expect(stop('sess-exited-before-force')).resolves.toEqual({ status: 'stopped' });
+    expect(killSpy).toHaveBeenCalledWith(554, 'SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith(554, 'SIGKILL');
+    expect(waitForTrackedRunnersExit).toHaveBeenCalledTimes(1);
   });
 
   it('does not destroy a replacement attachment installed after runner exit', async () => {

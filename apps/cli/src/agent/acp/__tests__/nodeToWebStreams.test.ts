@@ -23,6 +23,23 @@ class FakeStdin extends EventEmitter {
 }
 
 describe('nodeToWebStreams', () => {
+    it('settles when stdin completes a successful write synchronously', async () => {
+        const stdin = new FakeStdin((_chunk, cb) => {
+            cb(null);
+            return true;
+        });
+        const stdout = new Readable({ read() { } });
+
+        const { writable } = nodeToWebStreams(stdin as any, stdout);
+        const writer = writable.getWriter();
+
+        await expect(Promise.race([
+            writer.write(new Uint8Array([1, 2, 3])),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('synchronous write did not settle')), 50)),
+        ])).resolves.toBeUndefined();
+        writer.releaseLock();
+    });
+
     it('rejects when stdin write callback reports an error even if write() returned true', async () => {
         const stdin = new FakeStdin((_chunk, cb) => {
             queueMicrotask(() => cb(new Error('boom')));

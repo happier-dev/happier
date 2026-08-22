@@ -21,6 +21,7 @@ import {
 import { buildLegacyTerminalAttachmentHostHandle } from '@/terminal/attachment/legacyTerminalAttachmentHandle';
 import type { TerminalMode } from '@/terminal/runtime/terminalConfig';
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
 import { isPidSafeHappySessionProcess } from '../pidSafety';
 import type { TrackedSession } from '../types';
@@ -149,6 +150,46 @@ async function taskkillWindowsDaemonChild(params: Readonly<{
   return true;
 }
 
+async function forceKillTrackedRunner(params: Readonly<{
+  pid: number;
+  expectedSession: TrackedSession;
+  normalizedSessionId: string;
+  claimSignalAuthority(): boolean;
+  logPidReuseRefusal: (message: string) => void;
+}>): Promise<boolean> {
+  const safe = await isPidSafeHappySessionProcess({
+    pid: params.pid,
+    expectedProcessCommandHash: params.expectedSession.processCommandHash,
+    expectedProcessStartTimeMs: params.expectedSession.processStartTimeMs,
+  });
+  if (!safe) {
+    params.logPidReuseRefusal(
+      `[DAEMON RUN] Refusing to SIGKILL PID ${params.pid} for session ${params.normalizedSessionId} (PID reuse safety)`,
+    );
+    return false;
+  }
+  if (!params.claimSignalAuthority()) return false;
+
+  try {
+    if (params.expectedSession.startedBy === 'daemon' && params.expectedSession.childProcess) {
+      if (!isTrackedChildStillLiveForPid(params.expectedSession, params.pid)) return false;
+      await killProcessTree(params.expectedSession.childProcess, { graceMs: 1 });
+    } else {
+      await killProcessTree({ pid: params.pid }, { graceMs: 1 });
+    }
+    logger.debug(
+      `[DAEMON RUN] Forced session runner termination for ${params.normalizedSessionId} (pid=${params.pid})`,
+    );
+    return true;
+  } catch (error) {
+    logger.debug(
+      `[DAEMON RUN] Failed to force-terminate session ${params.normalizedSessionId} (pid=${params.pid}):`,
+      error,
+    );
+    return false;
+  }
+}
+
 export function createStopSession(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   logPidReuseRefusal?: (message: string) => void;
@@ -211,6 +252,7 @@ export function createStopSession(params: Readonly<{
     const fallbackPid = isPidFallback ? Number.parseInt(normalizedSessionId.replace('PID-', ''), 10) : NaN;
 
     const pidsToStop: number[] = [];
+    const expectedTrackedSessionsByPid = new Map<number, TrackedSession>();
     for (const [pid, session] of pidToTrackedSession.entries()) {
       const happySessionId = typeof session.happySessionId === 'string' ? session.happySessionId : '';
       const existingSessionId =
@@ -228,7 +270,10 @@ export function createStopSession(params: Readonly<{
           session,
           options?.expectedTrackedRunner,
         )
-      ) pidsToStop.push(pid);
+      ) {
+        pidsToStop.push(pid);
+        expectedTrackedSessionsByPid.set(pid, session);
+      }
     }
 
     const readHostAttachmentInfo = params.readHostAttachmentInfo ?? readTerminalHostAttachmentInfo;
@@ -630,14 +675,68 @@ export function createStopSession(params: Readonly<{
       logWarning(`[DAEMON RUN] Stop cannot prove runner exit for session ${normalizedSessionId}`);
       return incompleteStopSession('runner_exit_observer_unavailable');
     }
-    const runnersExited = confirmedExitedPids.length === pidsToStop.length
+    let runnersExited = confirmedExitedPids.length === pidsToStop.length
       || await params.waitForTrackedRunnersExit({
         sessionId: normalizedSessionId,
         trackedPids: pidsToStop,
       });
     if (!runnersExited) {
-      logWarning(`[DAEMON RUN] Timed out waiting for tracked runner exit; preserving terminal host for session ${normalizedSessionId}`);
-      return incompleteStopSession('runner_exit_timeout');
+      logWarning(
+        `[DAEMON RUN] Timed out waiting for tracked runner exit; escalating to forced termination for session ${normalizedSessionId}`,
+      );
+      let forceSignaledAny = false;
+      const exitedBeforeForcePids = new Set<number>();
+      for (const pid of pidsToStop) {
+        if (
+          params.areTrackedRunnersExited
+          && await params.areTrackedRunnersExited({
+            sessionId: normalizedSessionId,
+            trackedPids: [pid],
+          }).catch(() => false)
+        ) {
+          exitedBeforeForcePids.add(pid);
+          continue;
+        }
+        const expectedSession = expectedTrackedSessionsByPid.get(pid);
+        if (!expectedSession) continue;
+        const claimForceSignalAuthority = (): boolean => {
+          const current = pidToTrackedSession.get(pid);
+          if (current !== expectedSession || !isExactTrackedRunner(
+            pid,
+            current,
+            options?.expectedTrackedRunner,
+          )) return false;
+          options?.beforeSignalExactTrackedRunner?.(current);
+          const afterClaim = pidToTrackedSession.get(pid);
+          return afterClaim === expectedSession && isExactTrackedRunner(
+            pid,
+            afterClaim,
+            options?.expectedTrackedRunner,
+          );
+        };
+        forceSignaledAny = await forceKillTrackedRunner({
+          pid,
+          expectedSession,
+          normalizedSessionId,
+          claimSignalAuthority: claimForceSignalAuthority,
+          logPidReuseRefusal,
+        }) || forceSignaledAny;
+      }
+
+      if (exitedBeforeForcePids.size === pidsToStop.length) {
+        runnersExited = true;
+      } else if (forceSignaledAny) {
+        runnersExited = await params.waitForTrackedRunnersExit({
+          sessionId: normalizedSessionId,
+          trackedPids: pidsToStop,
+        });
+      }
+      if (!runnersExited) {
+        logWarning(
+          `[DAEMON RUN] Forced termination did not prove tracked runner exit; preserving terminal host for session ${normalizedSessionId}`,
+        );
+        return incompleteStopSession('runner_exit_timeout');
+      }
     }
 
     if (legacyRecoveryEvidence) {

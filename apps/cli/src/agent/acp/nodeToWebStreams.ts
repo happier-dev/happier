@@ -119,7 +119,8 @@ export function nodeToWebStreams(
                 // from custom Writable implementations (or odd edge cases).
                 stdin.once('drain', onDrain);
 
-                const ok = stdin.write(chunk, (err) => {
+                let ok = false;
+                ok = stdin.write(chunk, (err) => {
                     wrote = true;
                     if (err) {
                         onWriteError(err);
@@ -148,6 +149,11 @@ export function nodeToWebStreams(
                 if (ok) {
                     // No drain will be emitted for this write; remove the listener immediately.
                     stdin.off('drain', onDrain);
+                    if (wrote && !settled) {
+                        settled = true;
+                        clearActiveWriteErrorHandler();
+                        resolve();
+                    }
                 }
             });
         };

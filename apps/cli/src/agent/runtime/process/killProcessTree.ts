@@ -1,4 +1,3 @@
-import type { ChildProcess } from 'node:child_process';
 import { execFile } from 'node:child_process';
 
 import psList from 'ps-list';
@@ -8,6 +7,8 @@ import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWin
 const DESCENDANT_DISCOVERY_TIMEOUT_MS = 150;
 const DESCENDANT_DISCOVERY_INTERVAL_MS = 25;
 const DIRECT_CHILD_COMMAND_TIMEOUT_MS = 500;
+
+type ProcessTreeRoot = Readonly<{ pid?: number }>;
 
 function isAlive(pid: number): boolean {
   try {
@@ -142,7 +143,7 @@ async function waitForAllGone(pids: number[], timeoutMs: number): Promise<void> 
 }
 
 export async function killProcessTree(
-  proc: ChildProcess,
+  proc: ProcessTreeRoot,
   opts?: {
     graceMs?: number;
     terminateWindowsTree?: typeof taskkillWindowsProcessTree;
