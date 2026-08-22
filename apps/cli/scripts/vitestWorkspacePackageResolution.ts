@@ -29,6 +29,7 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
     sourceFileAliases: {
       cliDistBuildManifest: resolve('../../packages/cli-common/cliDistBuildManifest.cjs'),
       processInstance: resolve('../../packages/cli-common/processInstance.mjs'),
+      runtimeImportProbePolicy: resolve('../../packages/cli-common/runtimeImportProbePolicy.mjs'),
     },
   },
   { packageName: '@happier-dev/connection-supervisor', packageSourceRoot: resolve('../../packages/connection-supervisor/src') },

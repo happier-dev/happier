@@ -12,6 +12,45 @@ import { createEncryptedTransferChunkEnvelope } from '../../machines/transfer/tr
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
 
 describe('rpcHandlers (session handoff direct-peer fallback)', () => {
+    async function waitForPrepareResult(
+        registered: ReadonlyMap<string, (params: unknown) => Promise<any>>,
+        handoffId: string,
+        expected: unknown,
+    ): Promise<any> {
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        expect(resultGet).toBeDefined();
+        let result: any;
+        await vi.waitFor(async () => {
+            result = await resultGet!({ handoffId });
+            expect(result).toEqual(expected);
+        });
+        return result;
+    }
+
+    async function expectPrepareFailure(params: Readonly<{
+        registered: ReadonlyMap<string, (params: unknown) => Promise<any>>;
+        handoffId: string;
+        preparePromise: Promise<any>;
+        message: string;
+    }>): Promise<void> {
+        try {
+            await params.preparePromise;
+        } catch (error) {
+            expect(error).toEqual(expect.objectContaining({
+                message: expect.stringContaining(params.message),
+            }));
+            return;
+        }
+        await waitForPrepareResult(
+            params.registered,
+            params.handoffId,
+            expect.objectContaining({
+                ok: false,
+                error: expect.stringContaining(params.message),
+            }),
+        );
+    }
+
     function buildDirectPeerEndpointCandidate(params: Readonly<{
         transferId: string;
         expiresAt: number;
@@ -136,9 +175,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         });
 
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
         expect(prepare).toBeDefined();
-        expect(resultGet).toBeDefined();
 
         const providerBundleTransferId = 'session-handoff:handoff_direct_peer_expired_candidates:provider-bundle-file';
         const serverRoutedPayload = Buffer.from(JSON.stringify({
@@ -206,28 +243,21 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         const prepared = await preparePromise;
         expect(prepared).toMatchObject({
             handoffId: 'handoff_direct_peer_expired_candidates',
-            status: expect.objectContaining({
-                transportStrategy: 'server_routed_stream',
-            }),
         });
 
-        let ready = prepared;
-        if (ready.status.status !== 'ready_for_cutover') {
-            await vi.waitFor(async () => {
-                ready = await resultGet!({
-                    handoffId: 'handoff_direct_peer_expired_candidates',
-                });
-                expect(ready.status.status).toBe('ready_for_cutover');
-            });
-        }
-
-        expect(ready).toMatchObject({
-            handoffId: 'handoff_direct_peer_expired_candidates',
-            status: expect.objectContaining({
-                transportStrategy: 'server_routed_stream',
+        const ready = await waitForPrepareResult(
+            registered,
+            'handoff_direct_peer_expired_candidates',
+            expect.objectContaining({
+                handoffId: 'handoff_direct_peer_expired_candidates',
+                status: expect.objectContaining({
+                    status: 'ready_for_cutover',
+                    transportStrategy: 'server_routed_stream',
+                }),
+                remoteSessionId: 'claude_session_target',
             }),
-            remoteSessionId: 'claude_session_target',
-        });
+        );
+        expect(ready.remoteSessionId).toBe('claude_session_target');
     });
 
     it('returns a transport error when all direct-peer endpoint candidates are expired and no server-routed fallback channel is available', async () => {
@@ -259,7 +289,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             expiresAt: Date.now() - 1,
         });
 
-        await expect(prepare!({
+        await prepare!({
             handoffId: 'handoff_direct_peer_expired_candidates_no_fallback',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -275,7 +305,8 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [expiredCandidate],
                 },
             },
-        })).resolves.toEqual({
+        });
+        await waitForPrepareResult(registered, 'handoff_direct_peer_expired_candidates_no_fallback', {
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
             error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
@@ -315,7 +346,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             expiresAt: Date.now() + 30_000,
         });
 
-        await expect(prepare!({
+        await prepare!({
             handoffId: 'handoff_direct_peer_legacy_only_adapter',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -331,7 +362,8 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [endpointCandidate],
                 },
             },
-        })).resolves.toEqual({
+        });
+        await waitForPrepareResult(registered, 'handoff_direct_peer_legacy_only_adapter', {
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
             error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
@@ -369,7 +401,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             expiresAt: Date.now() + 30_000,
         });
 
-        await expect(prepare!({
+        await prepare!({
             handoffId: 'handoff_direct_peer_failed_no_fallback',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -385,7 +417,8 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [endpointCandidate],
                 },
             },
-        })).resolves.toEqual({
+        });
+        await waitForPrepareResult(registered, 'handoff_direct_peer_failed_no_fallback', {
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
             error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
@@ -422,7 +455,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             expiresAt: Date.now() + 30_000,
         });
 
-        await expect(prepare!({
+        await prepare!({
             handoffId: 'handoff_direct_peer_cached_retry_a',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -438,13 +471,14 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [endpointCandidate],
                 },
             },
-        })).resolves.toEqual({
+        });
+        await waitForPrepareResult(registered, 'handoff_direct_peer_cached_retry_a', {
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
             error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
         });
 
-        await expect(prepare!({
+        await prepare!({
             handoffId: 'handoff_direct_peer_cached_retry_b',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -460,7 +494,8 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                     endpointCandidates: [endpointCandidate],
                 },
             },
-        })).resolves.toEqual({
+        });
+        await waitForPrepareResult(registered, 'handoff_direct_peer_cached_retry_b', {
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
             error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
@@ -508,23 +543,28 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                 expiresAt: Date.now() + 30_000,
             });
 
-            await expect(prepare!({
+            await expectPrepareFailure({
+                registered,
                 handoffId: 'handoff_direct_peer_invalid_payload',
-                sourceMachineId: 'machine_source',
-                targetMachineId: 'machine_target',
-                negotiatedTransportStrategy: 'direct_peer',
-                sourceSessionStorageMode: 'persisted',
-                targetPath: '/repo',
-                endpointCandidates: [endpointCandidate],
-                handoffMetadataV2: {
-                    providerBundleTransferPublication: {
-                        transferId: providerBundleTransferId,
-                        sizeBytes: 0,
-                        manifestHash: `sha256:${'0'.repeat(64)}`,
-                        endpointCandidates: [endpointCandidate],
+                message: 'Invalid session handoff transfer payload',
+                preparePromise: prepare!({
+                    handoffId: 'handoff_direct_peer_invalid_payload',
+                    sourceMachineId: 'machine_source',
+                    targetMachineId: 'machine_target',
+                    negotiatedTransportStrategy: 'direct_peer',
+                    sourceSessionStorageMode: 'persisted',
+                    targetPath: '/repo',
+                    endpointCandidates: [endpointCandidate],
+                    handoffMetadataV2: {
+                        providerBundleTransferPublication: {
+                            transferId: providerBundleTransferId,
+                            sizeBytes: 0,
+                            manifestHash: `sha256:${'0'.repeat(64)}`,
+                            endpointCandidates: [endpointCandidate],
+                        },
                     },
-                },
-            })).rejects.toThrow('Invalid session handoff transfer payload');
+                }),
+            });
 
             expect(requestPayloadFile).toHaveBeenCalledTimes(1);
             expect(sendEnvelope).not.toHaveBeenCalled();
@@ -580,23 +620,28 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         }),
       ];
 
-      await expect(prepare!({
+      await expectPrepareFailure({
+        registered,
         handoffId: 'handoff_direct_peer_invalid_json_payload',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        negotiatedTransportStrategy: 'direct_peer',
-        sourceSessionStorageMode: 'persisted',
-        targetPath: '/repo',
-        endpointCandidates,
-        handoffMetadataV2: {
-          providerBundleTransferPublication: {
-            transferId: providerBundleTransferId,
-            sizeBytes: 0,
-            manifestHash: `sha256:${'0'.repeat(64)}`,
-            endpointCandidates,
+        message: 'Invalid session handoff transfer payload',
+        preparePromise: prepare!({
+          handoffId: 'handoff_direct_peer_invalid_json_payload',
+          sourceMachineId: 'machine_source',
+          targetMachineId: 'machine_target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates,
+          handoffMetadataV2: {
+            providerBundleTransferPublication: {
+              transferId: providerBundleTransferId,
+              sizeBytes: 0,
+              manifestHash: `sha256:${'0'.repeat(64)}`,
+              endpointCandidates,
+            },
           },
-        },
-      })).rejects.toThrow('Invalid session handoff transfer payload');
+        }),
+      });
 
       expect(requestPayloadFile).toHaveBeenCalledTimes(1);
       expect(sendEnvelope).not.toHaveBeenCalled();

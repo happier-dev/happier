@@ -6,6 +6,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+async function removeTestDirectory(path: string): Promise<void> {
+  await rm(path, {
+    recursive: true,
+    force: true,
+    maxRetries: 20,
+    retryDelay: 25,
+  });
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (error?: unknown) => void;
@@ -205,8 +214,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       });
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true });
-      await rm(targetPath, { recursive: true, force: true });
+      await removeTestDirectory(activeServerDir);
+      await removeTestDirectory(targetPath);
     }
   });
 
@@ -397,7 +406,9 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         },
       });
 
-      expect(importSessionBundle).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(importSessionBundle).toHaveBeenCalledTimes(1);
+      });
 
       const persisted = await prepareJobStore.read(jobId);
       expect(persisted?.status.status).toBe('pending');
@@ -418,8 +429,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       });
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true });
-      await rm(targetPath, { recursive: true, force: true });
+      await removeTestDirectory(activeServerDir);
+      await removeTestDirectory(targetPath);
     }
   });
 
@@ -568,8 +579,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       });
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true });
-      await rm(targetPath, { recursive: true, force: true });
+      await removeTestDirectory(activeServerDir);
+      await removeTestDirectory(targetPath);
     }
   });
 
@@ -668,7 +679,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       });
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true });
+      await removeTestDirectory(activeServerDir);
     }
   });
 
@@ -830,7 +841,9 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           },
         },
       });
-      expect(importSessionBundle).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(importSessionBundle).toHaveBeenCalledTimes(1);
+      });
       continueImportSession.resolve();
 
       await vi.waitFor(async () => {
@@ -846,8 +859,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       });
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true });
-      await rm(targetPath, { recursive: true, force: true });
+      await removeTestDirectory(activeServerDir);
+      await removeTestDirectory(targetPath);
     }
   });
 
@@ -935,7 +948,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       });
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true });
+      await removeTestDirectory(activeServerDir);
     }
   });
 
@@ -1024,7 +1037,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       });
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true });
+      await removeTestDirectory(activeServerDir);
     }
   });
 
@@ -1157,7 +1170,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       expect(importSessionBundle).toHaveBeenCalledTimes(1);
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true });
+      await removeTestDirectory(activeServerDir);
     }
   });
 
@@ -1286,8 +1299,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       await expect(resultGet!({ handoffId })).resolves.toMatchObject({ ok: false, errorCode: 'aborted' });
     } finally {
       vi.resetModules();
-      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
-      await rm(targetRoot, { recursive: true, force: true }).catch(() => undefined);
+      await removeTestDirectory(activeServerDir).catch(() => undefined);
+      await removeTestDirectory(targetRoot).catch(() => undefined);
     }
   });
 });

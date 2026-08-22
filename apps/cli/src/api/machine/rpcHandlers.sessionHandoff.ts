@@ -310,6 +310,16 @@ function isMachineTransferTimeoutErrorMessage(message: string): boolean {
   return message.startsWith('Timed out waiting for machine transfer ');
 }
 
+function resolvePrepareTargetFailureCode(message: string): string | undefined {
+  if (message === directPeerTransferUnavailable().error) {
+    return directPeerTransferUnavailable().errorCode;
+  }
+  if (message === missingHandoffMetadataV2().error) {
+    return missingHandoffMetadataV2().errorCode;
+  }
+  return undefined;
+}
+
 function buildPrepareJobId(handoffId: string): string {
   // Prepare-target jobs should be stable per handoff so concurrent daemons contend on the same
   // lease key (avoid double-import when no durable job record exists yet).
@@ -3010,6 +3020,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         } catch (error) {
           const failedAtMs = Date.now();
           const currentJob = await prepareJobStore.read(jobId);
+          const lastErrorMessage = error instanceof Error ? error.message : 'Failed to prepare handoff target';
+          const lastErrorCode = resolvePrepareTargetFailureCode(lastErrorMessage);
           const failedStatus: SessionHandoffStatus = {
             ...(currentJob?.status ?? pendingStatus),
             status: currentJob?.cancelRequestedAtMs ? 'aborted' : 'awaiting_recovery',
@@ -3020,7 +3032,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             createdAtMs,
             updatedAtMs: failedAtMs,
             ...(currentJob?.cancelRequestedAtMs ? { cancelRequestedAtMs: currentJob.cancelRequestedAtMs, abortedAtMs: failedAtMs } : { failedAtMs }),
-            lastErrorMessage: error instanceof Error ? error.message : 'Failed to prepare handoff target',
+            ...(lastErrorCode ? { lastErrorCode } : {}),
+            lastErrorMessage,
             status: failedStatus,
           }));
         }

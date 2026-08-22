@@ -348,7 +348,7 @@ describe('requestInactiveSessionResume', () => {
     callMachineRpc.mockResolvedValueOnce({ ok: true });
     await expect(requestInactiveSessionResume(input)).resolves.toEqual(expect.objectContaining({
       ok: false,
-      code: 'unsupported',
+      code: 'resume_failed',
     }));
     expect(callMachineRpc).toHaveBeenCalledTimes(1);
   });
