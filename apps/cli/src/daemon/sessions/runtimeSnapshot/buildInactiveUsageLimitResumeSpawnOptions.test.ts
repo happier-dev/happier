@@ -37,8 +37,8 @@ describe('buildInactiveUsageLimitResumeSpawnOptions', () => {
         machineId: 'raw-machine',
       }),
       metadata: {
-        agentId: 'claude',
-        path: '/repo/from-metadata',
+        flavor: 'claude',
+        path: '/repo/from-raw',
         connectedServices,
         connectedServiceMaterializationIdentityV1: materializationIdentity,
         connectedServicesUpdatedAt: 1000,
