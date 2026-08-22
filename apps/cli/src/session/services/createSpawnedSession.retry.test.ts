@@ -75,7 +75,15 @@ describe('createSpawnedSession retry custody', () => {
     expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
       spawnNonce: stableAttempt.spawnNonce,
     }));
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenNthCalledWith(1, stableAttempt.spawnNonce);
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenNthCalledWith(2, stableAttempt.spawnNonce);
+    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenNthCalledWith(
+      1,
+      stableAttempt.spawnNonce,
+      expect.any(Number),
+    );
+    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenNthCalledWith(
+      2,
+      stableAttempt.spawnNonce,
+      expect.any(Number),
+    );
   });
 });
