@@ -233,9 +233,19 @@ jobs:
           set -euo pipefail
           bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
 
+      # The build is unconditional now: deploy_cloudflare publishes exactly these
+      # bytes, so skipping it would leave nothing to publish. `run_build` is
+      # retained as an input for compatibility with callers that still pass it.
       - name: Build docs
-        if: inputs.run_build
         run: yarn workspace docs build
+
+      - name: Upload the exact built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-out-${{ github.sha }}
+          path: apps/docs/out
+          retention-days: 7
+          if-no-files-found: error
 
   promote:
     needs: [release_actor_guard, resolve_source, validate_candidate]
@@ -303,32 +313,73 @@ jobs:
           sha="$(gh api "repos/${GH_REPO}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
-      - name: Trigger deploy webhook(s) (force_deploy, no branch change)
-        if: inputs.force_deploy && steps.deploy_before.outputs.sha == steps.deploy_after.outputs.sha
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
-          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
-          DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
-          HAPPIER_DOCS_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS || secrets.HAPPIER_DOCS_DEPLOY_WEBHOOKS }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/deploy/trigger-webhooks.mjs \
-            --environment "$DEPLOY_ENVIRONMENT" \
-            --component "docs" \
-            --repository "$REPOSITORY" \
-            --ref-name "deploy/${DEPLOY_ENVIRONMENT}/docs" \
-            --sha "$DEPLOY_SHA"
-
       - name: Deploy note
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
         run: |
           set -euo pipefail
-          echo "Deployment is triggered automatically by pushes to deploy/${DEPLOY_ENVIRONMENT}/docs." >> "$GITHUB_STEP_SUMMARY"
+          echo "deploy/${DEPLOY_ENVIRONMENT}/docs records what is live; Cloudflare is published by the deploy_cloudflare job." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- deploy_branch_sha: \`${DEPLOY_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishes the exact bytes the build job produced. Kept out of `promote`
+  # because that job owns release-shared (GitHub App) secrets and a job may only
+  # bind one environment; Cloudflare credentials live in docs-deploy.
+  #
+  # This replaced a Cloudflare PAGES deploy hook, which rebuilt the app inside
+  # Cloudflare's build container on every push to deploy/<env>/docs — bypassing
+  # release_actor_guard and every content check this workflow runs. Do not
+  # reconnect Cloudflare's Git integration: two publishers for one Worker race,
+  # and CI is the one that ran the checks.
+  deploy_cloudflare:
+    needs: [promote]
+    runs-on: ubuntu-latest
+    environment: docs-deploy
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted deploy control
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Download the exact built site
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-out-${{ github.sha }}
+          path: apps/docs/out
+      # A green build that produced a partial export publishes a dead site just
+      # as successfully as a good one. These are the files whose absence is
+      # silent in production: the 160 redirects the export cannot emit itself,
+      # the search index, and the 404 the Worker serves by name.
+      - name: Verify the artifact is a real static export
+        run: |
+          set -euo pipefail
+          test -f apps/docs/out/index.html
+          test -f apps/docs/out/404.html
+          test -f apps/docs/out/_redirects
+          test -s apps/docs/out/api/search
+          test -s apps/docs/out/llms.txt
+      - name: Publish to Cloudflare
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+        working-directory: apps/docs
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" = production ]; then
+            npx --yes wrangler@4 deploy --message "promote ${{ github.sha }}"
+          else
+            npx --yes wrangler@4 versions upload --preview-alias preview --message "promote ${{ github.sha }}"
+          fi
+      - name: Cloudflare note
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          echo "Published apps/docs/out to the happier-docs Worker ($DEPLOY_ENVIRONMENT) from ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
