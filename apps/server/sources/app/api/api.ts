@@ -70,7 +70,7 @@ export function resolveApiCorsMaxAgeSeconds(env: Record<string, string | undefin
 
 export function enableContentTypeParsers(app: Pick<FastifyInstance, 'addContentTypeParser'>) {
     const parseUnsupportedBody: FastifyBodyParser<string> = (_request, body, done) => {
-        if (body.trim() === '') {
+        if (body.length === 0) {
             return done(null, undefined);
         }
         return done(new errorCodes.FST_ERR_CTP_INVALID_MEDIA_TYPE(), undefined);
