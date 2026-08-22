@@ -594,7 +594,7 @@ describe('ApiSessionClient message commit queue', () => {
       },
       capabilities: {
         session: {
-          runtimeActivity: { protocolVersion: 2 },
+          runtimeActivity: { protocolVersion: 1 },
           pendingInput: { protocolVersion: 1 },
         },
       },
@@ -834,7 +834,7 @@ describe('ApiSessionClient message commit queue', () => {
       },
       capabilities: {
         session: {
-          runtimeActivity: { protocolVersion: 2 },
+          runtimeActivity: { protocolVersion: 1 },
           pendingInput: { protocolVersion: 1 },
         },
       },
