@@ -80,7 +80,7 @@ import {
 import { withRetry } from './withRetry';
 import { nodeToWebStreams } from './nodeToWebStreams';
 import { buildAcpSpawnSpec } from './acpSpawn';
-import { killProcessTree } from './killProcessTree';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import {
   pickPermissionOutcome,
 } from './permissions/permissionMapping';
