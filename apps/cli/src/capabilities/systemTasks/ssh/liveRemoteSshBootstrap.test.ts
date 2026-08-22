@@ -18,9 +18,13 @@ const {
   createRelayHostEngineMock: vi.fn(),
 }));
 
-vi.mock('node:child_process', () => ({
-  spawnSync,
-}));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawnSync,
+  };
+});
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
