@@ -210,7 +210,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         applyPhase({ type: 'unknown', route, checking: true, lastCheck: phase.lastCheck });
         try {
             try {
-                await sync.refreshSessions({ awaitSessionListHydration: true });
+                await sync.refreshSessions();
             } catch {
                 // A failed refresh only means the local view is still stale; the
                 // lookup below simply will not find anything yet.

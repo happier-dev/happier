@@ -177,7 +177,7 @@ describe('useSessionForkStrategyFlow', () => {
 
         await act(async () => { await harness.getCurrent().checkForFork(); });
 
-        expect(refreshSessionsMock).toHaveBeenCalledWith({ awaitSessionListHydration: true });
+        expect(refreshSessionsMock).toHaveBeenCalledWith();
         expect(forkSessionMock).toHaveBeenCalledTimes(1);
         expect(completeSessionForkNavigationMock).toHaveBeenCalledWith(
             expect.objectContaining({ childSessionId: 'child_late', serverId: 'server_1' }),

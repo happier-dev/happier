@@ -53,6 +53,7 @@ export type ModeSwitchMessage = {
     realID?: string | null;
     seq?: number;
     transcriptBlockIndex?: number;
+    localId?: string | null;
     createdAt: number;
     event: AgentEvent;
     meta?: MessageMeta;

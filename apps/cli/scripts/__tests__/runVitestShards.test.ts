@@ -4,7 +4,7 @@ import { resolveVitestConfigPath, resolveVitestShardCount } from '../runVitestSh
 
 describe('runVitestShards', () => {
   it('uses a smaller per-process unit slice while retaining the integration default', () => {
-    expect(resolveVitestShardCount({}, 'vitest.config.ts')).toBe(32);
+    expect(resolveVitestShardCount({}, 'vitest.config.ts')).toBe(64);
     expect(resolveVitestShardCount({}, 'vitest.integration.config.ts')).toBe(8);
   });
 
@@ -13,8 +13,8 @@ describe('runVitestShards', () => {
   });
 
   it('ignores invalid shard overrides', () => {
-    expect(resolveVitestShardCount({ HAPPIER_CLI_VITEST_SHARDS: '0' }, 'vitest.config.ts')).toBe(32);
-    expect(resolveVitestShardCount({ HAPPIER_CLI_VITEST_SHARDS: 'nope' }, 'vitest.config.ts')).toBe(32);
+    expect(resolveVitestShardCount({ HAPPIER_CLI_VITEST_SHARDS: '0' }, 'vitest.config.ts')).toBe(64);
+    expect(resolveVitestShardCount({ HAPPIER_CLI_VITEST_SHARDS: 'nope' }, 'vitest.config.ts')).toBe(64);
   });
 
   it('parses --config path from argv', () => {

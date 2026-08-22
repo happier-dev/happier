@@ -178,14 +178,14 @@ describe('forkCodexAppServerConversationNative', () => {
     });
 
     it('waits for an ambiguous fork response to settle before disposing the client', async () => {
-        let resolveRequest: ((value: unknown) => void) | null = null;
+        const requestControl: { resolve: ((value: unknown) => void) | null } = { resolve: null };
         let markRequestStarted: (() => void) | null = null;
         const requestStarted = new Promise<void>((resolve) => {
             markRequestStarted = resolve;
         });
         const request = vi.fn<DisposableCodexAppServerClient['request']>()
             .mockImplementationOnce(() => new Promise<unknown>((resolve) => {
-                resolveRequest = resolve;
+                requestControl.resolve = resolve;
                 markRequestStarted?.();
             }));
         const client = createClientDouble(request);
@@ -200,7 +200,7 @@ describe('forkCodexAppServerConversationNative', () => {
         await requestStarted;
         expect(client.dispose).not.toHaveBeenCalled();
 
-        const settle = resolveRequest;
+        const settle = requestControl.resolve;
         if (!settle) throw new Error('Native fork request did not start');
         settle({ threadId: '' });
 

@@ -36,7 +36,7 @@ function assertInstallerVerboseMode(script, name) {
   // In verbose mode, do not suppress tar warnings (useful for diagnostics).
   assert.match(
     script,
-    /tar_extract_gz\(\)[\s\S]*if \[\[ "\$\{VERBOSE_MODE\}" == "1" \]\]; then\s+tar -xzf /,
+    /tar_extract_gz\(\)[\s\S]*if \[\[ "\$\{VERBOSE_MODE\}" == "1" \]\]; then\s+tar (?:--no-same-owner )?-xzf /,
     `${name} tar_extract_gz should not filter in verbose mode`,
   );
 

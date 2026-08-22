@@ -137,18 +137,26 @@ echo "$hash  $file"
     tarStubPath,
     `#!/usr/bin/env bash
 set -euo pipefail
+if [[ "\${1:-}" == "--version" ]]; then
+  echo "tar (GNU tar) 1.34"
+  exit 0
+fi
 is_extract=0
+forwarded=()
 for arg in "$@"; do
+  if [[ "$arg" == "--no-same-owner" ]]; then
+    continue
+  fi
+  forwarded+=("$arg")
   if [[ "$arg" == -*x* ]] && [[ "$arg" != -*c* ]]; then
     is_extract=1
-    break
   fi
 done
 if [[ "$is_extract" == "1" ]]; then
   echo "tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'" >&2
   echo "tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'" >&2
 fi
-exec ${JSON.stringify(realTar)} "$@"
+exec ${JSON.stringify(realTar)} "\${forwarded[@]}"
 `,
     'utf8',
   );

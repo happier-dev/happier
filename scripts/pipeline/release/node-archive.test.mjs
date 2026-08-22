@@ -87,7 +87,7 @@ test('node archive extraction accepts first-party release payloads beyond generi
   }
 });
 
-test('node archive extraction rejects links before materializing hostile payloads', async () => {
+test('node archive creation omits links before extraction', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'happier-node-archive-link-'));
   try {
     const source = path.join(root, 'source');
@@ -98,10 +98,10 @@ test('node archive extraction rejects links before materializing hostile payload
     await symlink('../../outside', path.join(payload, 'escape'));
     await createNodeArchive({ sourcePath: source, sourceName: 'payload', artifactPath: archive });
 
-    await assert.rejects(
-      extractNodeArchive({ archivePath: archive, extractDir: path.join(root, 'extracted') }),
-      /archive entry type.*SymbolicLink/i,
-    );
+    const extracted = path.join(root, 'extracted');
+    await extractNodeArchive({ archivePath: archive, extractDir: extracted });
+    assert.equal(await readFile(path.join(extracted, 'payload', 'binary'), 'utf8'), 'payload-bytes');
+    await assert.rejects(readFile(path.join(extracted, 'payload', 'escape')), /ENOENT/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

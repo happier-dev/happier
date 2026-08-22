@@ -23,5 +23,26 @@ describe('reducer (message seq propagation)', () => {
     expect(first.kind).toBe('user-text');
     expect(first.seq).toBe(2);
   });
+
+  it('preserves localId on materialized agent events', () => {
+    const state = createReducer();
+    const messages: NormalizedMessage[] = [
+      {
+        id: 'event-1',
+        seq: 3,
+        localId: 'agent-transition-divider:local-1',
+        createdAt: 124,
+        role: 'event',
+        content: { type: 'message', message: 'Agent changed' },
+        isSidechain: false,
+      },
+    ];
+
+    const res = reducer(state, messages, null);
+    expect(res.messages[0]).toMatchObject({
+      kind: 'agent-event',
+      localId: 'agent-transition-divider:local-1',
+    });
+  });
 });
 

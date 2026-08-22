@@ -17,7 +17,7 @@ vi.mock('@/startServer', () => ({
 }));
 
 it('starts the light server when the executable entrypoint is evaluated', async () => {
-  await import('./main.light?entrypoint-test');
+  await import('./main.light');
 
   await vi.waitFor(() => {
     expect(mocks.startServer).toHaveBeenCalledWith('light');

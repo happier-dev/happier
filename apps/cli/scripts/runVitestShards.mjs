@@ -13,7 +13,7 @@ function parsePositiveInt(raw) {
 export function resolveVitestShardCount(env, configPath = null) {
   const override = parsePositiveInt(env?.HAPPIER_CLI_VITEST_SHARDS);
   if (override !== null) return override;
-  return typeof configPath === 'string' && basename(configPath) === 'vitest.config.ts' ? 32 : 8;
+  return typeof configPath === 'string' && basename(configPath) === 'vitest.config.ts' ? 64 : 8;
 }
 
 export function resolveVitestConfigPath(argv) {
