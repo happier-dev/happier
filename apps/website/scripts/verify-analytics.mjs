@@ -63,8 +63,11 @@ const response = await fetch(`${origin}/ingest/e/`, {
 
 if (response.status === 404) {
     fail(
-        `${origin}/ingest/e/ returned 404. The Cloudflare Pages Function is not deployed — ` +
-            'set the Pages project root directory to apps/website so functions/ is found.',
+        `${origin}/ingest/e/ returned 404. The Worker script is not answering this ` +
+            'prefix, so the request fell through to the static assets and missed. ' +
+            'Check that wrangler.toml still names "/ingest/*" in ' +
+            '`assets.run_worker_first` and still sets `main = "worker/index.ts"` — ' +
+            'losing either one produces exactly this 404. (See trap 1 above.)',
     );
 } else if (!response.ok) {
     fail(`${origin}/ingest/e/ returned HTTP ${response.status}.`);

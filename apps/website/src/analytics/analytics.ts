@@ -196,7 +196,10 @@ export function initAnalytics(): void {
         // produce this artifact (assertAnalyticsKey in vite.config.ts).
         console.error(
             '[analytics] VITE_POSTHOG_KEY is not set — happier.dev is shipping blind. ' +
-                'Set it in the Cloudflare Pages environment and redeploy.',
+                'Set the VITE_POSTHOG_KEY repository variable and re-run ' +
+                'PROMOTE — Website; there is no Cloudflare-side environment to ' +
+                'set it in, because the bundle is built in CI and only the ' +
+                'finished dist/ crosses to Cloudflare (see wrangler.toml).',
         );
         return;
     }
