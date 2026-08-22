@@ -1,0 +1,21 @@
+{
+  "name": "@happier-dev/desktop",
+  "description": "Electron desktop target for Happier — evaluated in parallel with the Tauri target.",
+  "private": true,
+  "version": "0.2.10",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "prestart": "yarn -s build",
+    "start": "electron .",
+    "typecheck": "../stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "test": "../stack/bin/hstack-exec --script=test:local",
+    "test:local": "yarn -s build && node --test 'dist/**/*.test.js'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "electron": "43.4.0"
+  }
+}
