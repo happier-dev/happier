@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -7,7 +7,7 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { fetchJson } from '../../src/testkit/http';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -73,8 +73,7 @@ describe('core e2e: cli profiles list', () => {
 
     const cliHome = resolve(join(testDir, 'cli-home'));
     await mkdir(cliHome, { recursive: true });
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const cliEnvelope = await runCliJson({
       testDir,

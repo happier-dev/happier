@@ -1,10 +1,10 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import {
     readDaemonState,
     replaceTestDaemonWithoutStoppingSessions,
@@ -65,17 +65,27 @@ async function runCliServerTestFromSnapshot(params: {
 describe('core e2e: CLI update continuity reattaches the existing fake Claude session without provider restart', () => {
     let server: StartedServer | null = null;
     let daemon: StartedDaemon | null = null;
+    let retiredDaemon: StartedDaemon | null = null;
     let daemonHomeDir: string | null = null;
 
     afterEach(async () => {
+        const cleanupErrors: Error[] = [];
+        await daemon?.stop().catch((error: unknown) => {
+            cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+        });
+        daemon = null;
+        await retiredDaemon?.proc.stop().catch((error: unknown) => {
+            cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+        });
+        retiredDaemon = null;
         if (daemonHomeDir) {
             await stopDaemonFromHomeDir(daemonHomeDir).catch(() => {});
             daemonHomeDir = null;
         }
-        await daemon?.stop().catch(() => {});
-        daemon = null;
         await server?.stop().catch(() => {});
         server = null;
+        if (cleanupErrors.length === 1) throw cleanupErrors[0];
+        if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'CLI update continuity teardown failed');
     });
 
     afterAll(async () => {
@@ -83,6 +93,7 @@ describe('core e2e: CLI update continuity reattaches the existing fake Claude se
             await stopDaemonFromHomeDir(daemonHomeDir).catch(() => {});
         }
         await daemon?.stop().catch(() => {});
+        await retiredDaemon?.proc.stop().catch(() => {});
         await server?.stop().catch(() => {});
     });
 
@@ -96,8 +107,8 @@ describe('core e2e: CLI update continuity reattaches the existing fake Claude se
         await mkdir(daemonHomeDir, { recursive: true });
         await mkdir(workspaceDir, { recursive: true });
 
-        const secret = Uint8Array.from(randomBytes(32));
-        await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+        const secret = auth.accountSigningSeed;
+        await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
         const fakeClaudePath = fakeClaudeFixturePath();
         const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
@@ -211,10 +222,12 @@ describe('core e2e: CLI update continuity reattaches the existing fake Claude se
             stdoutPath: resolve(testDir, 'daemon.cli-update.stdout.log'),
             stderrPath: resolve(testDir, 'daemon.cli-update.stderr.log'),
         });
-        expect(updatedDaemonState.pid).not.toBe(originalDaemonPid);
+        retiredDaemon = daemon;
+        daemon = updatedDaemonState;
+        expect(updatedDaemonState.state.pid).not.toBe(originalDaemonPid);
         expect(await readDaemonState(daemonHomeDir)).toEqual(expect.objectContaining({
-            pid: updatedDaemonState.pid,
-            httpPort: updatedDaemonState.httpPort,
+            pid: updatedDaemonState.state.pid,
+            httpPort: updatedDaemonState.state.httpPort,
         }));
 
         await runCliServerTestFromSnapshot({
@@ -226,9 +239,9 @@ describe('core e2e: CLI update continuity reattaches the existing fake Claude se
 
         await waitFor(async () => {
             const listed = await daemonControlPostJson({
-                port: updatedDaemonState.httpPort,
+                port: updatedDaemonState.state.httpPort,
                 path: '/list',
-                controlToken: updatedDaemonState.controlToken,
+                controlToken: updatedDaemonState.state.controlToken,
             });
             expect(listed.status).toBe(200);
             expect(Array.isArray(listed.data.children)).toBe(true);

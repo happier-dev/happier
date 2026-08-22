@@ -78,6 +78,8 @@ describe('startFullComposeStressTarget', () => {
       stop: vi.fn(async () => {}),
       stopContainer: vi.fn(async () => {}),
       killContainer: vi.fn(async () => {}),
+      disconnectContainerFromNetwork: vi.fn(async () => {}),
+      connectContainerToNetwork: vi.fn(async () => {}),
       ps: vi.fn(async () => 'ps output'),
       logs: vi.fn(async () => 'compose logs'),
       execCapture: vi.fn(async () => 'worker metrics'),
@@ -283,6 +285,7 @@ describe('startFullComposeStressTarget', () => {
       imageExists: vi.fn(async () => false),
       inspectImage: vi.fn(async () => null),
       buildServerImage: vi.fn(async () => {}),
+      attestServicesUseImage: vi.fn(async () => {}),
       listOwnedProjects: vi.fn(async () => []),
       projectHasRunningContainers: vi.fn(async () => false),
       removeProjectResources: vi.fn(async () => {}),
@@ -344,6 +347,9 @@ describe('startFullComposeStressTarget', () => {
       attempts: 1,
       baseUrl: 'http://127.0.0.1:43081',
     });
+    expect(runtime.attestServicesUseImage).toHaveBeenCalledWith(expect.objectContaining({
+      services: ['api', 'api-direct', 'worker'],
+    }));
     expect(JSON.parse(readFileSync(join(testDir, 'topology', 'env.generated.json'), 'utf8'))).toMatchObject({
       publicBaseUrl: 'http://127.0.0.1:43081',
       compose: {
@@ -405,6 +411,8 @@ describe('startFullComposeStressTarget', () => {
       stopContainer: vi.fn(async () => {}),
       killContainer: vi.fn(async () => {}),
       startContainer: vi.fn(async () => {}),
+      disconnectContainerFromNetwork: vi.fn(async () => {}),
+      connectContainerToNetwork: vi.fn(async () => {}),
       ps: vi.fn(async () => 'ps output'),
       logs: vi.fn(async () => 'compose logs'),
       execCapture: vi.fn(async () => 'worker metrics'),
@@ -415,7 +423,7 @@ describe('startFullComposeStressTarget', () => {
           State: { Status: 'running', Health: { Status: 'healthy' } },
           NetworkSettings: {
             Networks: {
-              happier: { IPAddress: '10.10.0.11' },
+              happier: { Aliases: ['api', 'container-1'], IPAddress: '10.10.0.11' },
             },
           },
         },
@@ -425,7 +433,7 @@ describe('startFullComposeStressTarget', () => {
           State: { Status: 'running', Health: { Status: 'healthy' } },
           NetworkSettings: {
             Networks: {
-              happier: { IPAddress: '10.10.0.12' },
+              happier: { Aliases: ['api', 'container-2'], IPAddress: '10.10.0.12' },
             },
           },
         },
@@ -476,6 +484,12 @@ describe('startFullComposeStressTarget', () => {
         state: 'running',
         health: 'healthy',
         ipv4Addresses: ['10.10.0.11'],
+        networkAttachments: {
+          happier: {
+            aliases: ['api', 'container-1'],
+            ipv4Address: '10.10.0.11',
+          },
+        },
       },
       {
         id: 'container-2',
@@ -484,6 +498,12 @@ describe('startFullComposeStressTarget', () => {
         state: 'running',
         health: 'healthy',
         ipv4Addresses: ['10.10.0.12'],
+        networkAttachments: {
+          happier: {
+            aliases: ['api', 'container-2'],
+            ipv4Address: '10.10.0.12',
+          },
+        },
       },
     ]);
 
@@ -492,6 +512,11 @@ describe('startFullComposeStressTarget', () => {
     await result.admin?.stopContainer('container-1');
     await result.admin?.killContainer('container-2');
     await result.admin?.startContainer?.('container-2');
+    await result.admin?.disconnectContainerFromNetwork?.('container-1', 'happier');
+    await result.admin?.connectContainerToNetwork?.('container-1', 'happier', {
+      aliases: ['api'],
+      ipv4Address: '10.10.0.11',
+    });
     await result.admin?.execInService('redis', ['redis-cli', 'ping']);
 
     expect(runtime.stop).toHaveBeenCalledWith('worker');
@@ -499,6 +524,11 @@ describe('startFullComposeStressTarget', () => {
     expect(runtime.stopContainer).toHaveBeenCalledWith('container-1');
     expect(runtime.killContainer).toHaveBeenCalledWith('container-2');
     expect(runtime.startContainer).toHaveBeenCalledWith('container-2');
+    expect(runtime.disconnectContainerFromNetwork).toHaveBeenCalledWith('container-1', 'happier');
+    expect(runtime.connectContainerToNetwork).toHaveBeenCalledWith('container-1', 'happier', {
+      aliases: ['api'],
+      ipv4Address: '10.10.0.11',
+    });
     expect(runtime.execCapture).toHaveBeenCalledWith('redis', ['redis-cli', 'ping']);
   });
 
@@ -909,8 +939,10 @@ describe('startFullComposeStressTarget', () => {
     await result.stop();
   });
 
-  it('reuses an existing canonical image when the image build strategy is never even if the repo fingerprint drifted', async () => {
+  it('uses the explicitly pinned frozen image when the current build-input fingerprint has drifted', async () => {
     const testDir = mkdtempSync(join(tmpdir(), 'happier-stress-compose-'));
+    const pinnedImageFingerprint = '1111111111111111111111111111111111111111';
+    const currentImageFingerprint = '2222222222222222222222222222222222222222';
     const runtime = {
       imageExists: vi.fn(async () => true),
       inspectImage: vi.fn(async () => ({
@@ -918,10 +950,11 @@ describe('startFullComposeStressTarget', () => {
         labels: {
           'happier.stress.owner': 'stress-harness',
           'happier.stress.repo-root': 'repo-fingerprint',
-          'happier.stress.image-fingerprint': 'stale-fingerprint',
+          'happier.stress.image-fingerprint': pinnedImageFingerprint,
         },
       })),
       buildServerImage: vi.fn(async () => {}),
+      attestServicesUseImage: vi.fn(async () => {}),
       listOwnedProjects: vi.fn(async () => []),
       projectHasRunningContainers: vi.fn(async () => false),
       removeProjectResources: vi.fn(async () => {}),
@@ -946,6 +979,7 @@ describe('startFullComposeStressTarget', () => {
           compose: {
             ...config.compose,
             imageBuildStrategy: 'never',
+            imageFingerprint: pinnedImageFingerprint,
           },
         },
         testDir,
@@ -953,7 +987,7 @@ describe('startFullComposeStressTarget', () => {
       {
         repoRootDir: () => '/repo/root',
         createRepoRootFingerprint: () => 'repo-fingerprint',
-        computeComposeServerImageFingerprint: () => 'current-fingerprint',
+        computeComposeServerImageFingerprint: () => currentImageFingerprint,
         randomSecret: () => 'secret-token',
         pickAvailablePort: vi
           .fn()
@@ -976,9 +1010,173 @@ describe('startFullComposeStressTarget', () => {
       },
     );
 
+    const pinnedImageName = `happier-stress-compose-server-repo-fingerprint-${pinnedImageFingerprint}`;
+    expect(runtime.imageExists).toHaveBeenCalledWith(pinnedImageName);
+    expect(runtime.inspectImage).toHaveBeenCalledWith(pinnedImageName);
     expect(runtime.buildServerImage).not.toHaveBeenCalled();
     expect(runtime.up).toHaveBeenCalledTimes(1);
+    expect(runtime.attestServicesUseImage).toHaveBeenCalledWith({
+      services: ['api', 'worker'],
+      imageName: pinnedImageName,
+      expectedLabels: {
+        'happier.stress.owner': 'stress-harness',
+        'happier.stress.repo-root': 'repo-fingerprint',
+        'happier.stress.image-fingerprint': pinnedImageFingerprint,
+      },
+    });
+    expect(JSON.parse(readFileSync(join(testDir, 'topology', 'env.generated.json'), 'utf8'))).toMatchObject({
+      image: {
+        name: pinnedImageName,
+        freshnessFingerprint: pinnedImageFingerprint,
+        repoRootFingerprint: 'repo-fingerprint',
+      },
+    });
     await result.stop();
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['malformed', 'not-a-sha1-fingerprint'],
+  ])('fails closed when frozen-image mode receives a %s image fingerprint', async (_case, imageFingerprint) => {
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-stress-compose-'));
+    const createComposeRuntime = vi.fn();
+
+    await expect(startFullComposeStressTarget(
+      {
+        config: {
+          ...config,
+          compose: {
+            ...config.compose,
+            imageBuildStrategy: 'never',
+            imageFingerprint,
+          },
+        },
+        testDir,
+      },
+      {
+        repoRootDir: () => '/repo/root',
+        createRepoRootFingerprint: () => 'repo-fingerprint',
+        computeComposeServerImageFingerprint: () => '2222222222222222222222222222222222222222',
+        randomSecret: () => 'secret-token',
+        pickAvailablePort: vi.fn(async () => 43080),
+        createComposeRuntime,
+        waitForComposeTopology: vi.fn(async () => {}),
+        waitForComposeRpcGatewayReadiness: vi.fn(async () => {}),
+        inspectComposeTopology: vi.fn(),
+      },
+    )).rejects.toThrow('HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT');
+
+    expect(createComposeRuntime).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the pinned frozen image labels do not match its owner and repo root', async () => {
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-stress-compose-'));
+    const pinnedImageFingerprint = '1111111111111111111111111111111111111111';
+    const runtime = {
+      imageExists: vi.fn(async () => true),
+      inspectImage: vi.fn(async () => ({
+        labels: {
+          'happier.stress.owner': 'another-owner',
+          'happier.stress.repo-root': 'another-repo',
+          'happier.stress.image-fingerprint': pinnedImageFingerprint,
+        },
+      })),
+      buildServerImage: vi.fn(async () => {}),
+      listOwnedProjects: vi.fn(async () => []),
+      projectHasRunningContainers: vi.fn(async () => false),
+      removeProjectResources: vi.fn(async () => {}),
+      up: vi.fn(async () => {}),
+      down: vi.fn(async () => {}),
+      restart: vi.fn(async () => {}),
+      ps: vi.fn(async () => 'ps output'),
+      logs: vi.fn(async () => 'compose logs'),
+      execCapture: vi.fn(async () => 'worker metrics'),
+      inspectContainers: vi.fn(async () => []),
+      serviceContainerIds: vi.fn(async () => []),
+    };
+
+    await expect(startFullComposeStressTarget(
+      {
+        config: {
+          ...config,
+          compose: {
+            ...config.compose,
+            imageBuildStrategy: 'never',
+            imageFingerprint: pinnedImageFingerprint,
+          },
+        },
+        testDir,
+      },
+      {
+        repoRootDir: () => '/repo/root',
+        createRepoRootFingerprint: () => 'repo-fingerprint',
+        computeComposeServerImageFingerprint: () => '2222222222222222222222222222222222222222',
+        randomSecret: () => 'secret-token',
+        pickAvailablePort: vi.fn(async () => 43080),
+        createComposeRuntime: vi.fn(() => runtime),
+        waitForComposeTopology: vi.fn(async () => {}),
+        waitForComposeRpcGatewayReadiness: vi.fn(async () => {}),
+        inspectComposeTopology: vi.fn(),
+      },
+    )).rejects.toThrow('does not match the pinned frozen-image identity');
+
+    expect(runtime.buildServerImage).not.toHaveBeenCalled();
+    expect(runtime.up).not.toHaveBeenCalled();
+    expect(runtime.removeProjectResources).not.toHaveBeenCalled();
+    expect(runtime.listOwnedProjects).not.toHaveBeenCalled();
+    expect(runtime.down).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without cleaning compose projects when the pinned frozen image is unavailable', async () => {
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-stress-compose-'));
+    const pinnedImageFingerprint = '1111111111111111111111111111111111111111';
+    const runtime = {
+      imageExists: vi.fn(async () => false),
+      inspectImage: vi.fn(async () => null),
+      buildServerImage: vi.fn(async () => {}),
+      listOwnedProjects: vi.fn(async () => []),
+      projectHasRunningContainers: vi.fn(async () => false),
+      removeProjectResources: vi.fn(async () => {}),
+      up: vi.fn(async () => {}),
+      down: vi.fn(async () => {}),
+      restart: vi.fn(async () => {}),
+      ps: vi.fn(async () => 'ps output'),
+      logs: vi.fn(async () => 'compose logs'),
+      execCapture: vi.fn(async () => 'worker metrics'),
+      inspectContainers: vi.fn(async () => []),
+      serviceContainerIds: vi.fn(async () => []),
+    };
+
+    await expect(startFullComposeStressTarget(
+      {
+        config: {
+          ...config,
+          compose: {
+            ...config.compose,
+            imageBuildStrategy: 'never',
+            imageFingerprint: pinnedImageFingerprint,
+          },
+        },
+        testDir,
+      },
+      {
+        repoRootDir: () => '/repo/root',
+        createRepoRootFingerprint: () => 'repo-fingerprint',
+        computeComposeServerImageFingerprint: () => '2222222222222222222222222222222222222222',
+        randomSecret: () => 'secret-token',
+        pickAvailablePort: vi.fn(async () => 43080),
+        createComposeRuntime: vi.fn(() => runtime),
+        waitForComposeTopology: vi.fn(async () => {}),
+        waitForComposeRpcGatewayReadiness: vi.fn(async () => {}),
+        inspectComposeTopology: vi.fn(),
+      },
+    )).rejects.toThrow('is missing');
+
+    expect(runtime.inspectImage).not.toHaveBeenCalled();
+    expect(runtime.removeProjectResources).not.toHaveBeenCalled();
+    expect(runtime.listOwnedProjects).not.toHaveBeenCalled();
+    expect(runtime.up).not.toHaveBeenCalled();
+    expect(runtime.down).not.toHaveBeenCalled();
   });
 
   it('tears down a partially started topology when readiness fails', async () => {

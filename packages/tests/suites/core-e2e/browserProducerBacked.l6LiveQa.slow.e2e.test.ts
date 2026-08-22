@@ -123,7 +123,7 @@ function createRuntimeActionSocket(params: Readonly<{
     sessionId: SESSION_ID,
     cwd: '/workspace',
     parentProvider: 'codex',
-    sendAcp: () => undefined,
+    sendAcp: async () => undefined,
     policy,
     actionExecutor,
   });

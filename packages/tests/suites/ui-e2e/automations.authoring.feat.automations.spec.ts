@@ -6,7 +6,6 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { buildAutomationTemplateEnvelope } from '../../src/testkit/automations';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { createSessionFromNewSessionComposer, openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
@@ -103,19 +102,15 @@ async function readMachineIdFromCliAuthLoginStdout(stdoutPath: string): Promise<
     throw new Error(`Failed to read machine id from CLI auth login stdout: ${stdoutPath}`);
 }
 
-async function postJson<T>(params: Readonly<{
+async function getJson<T>(params: Readonly<{
     baseUrl: string;
     token: string;
     path: string;
-    body: unknown;
 }>): Promise<T> {
     const response = await fetch(`${params.baseUrl}${params.path}`, {
-        method: 'POST',
         headers: {
             Authorization: `Bearer ${params.token}`,
-            'Content-Type': 'application/json',
         },
-        body: JSON.stringify(params.body),
     });
 
     const payload = await response.json().catch(() => null);
@@ -123,6 +118,52 @@ async function postJson<T>(params: Readonly<{
         throw new Error(`Request failed (${response.status}) ${params.path}: ${JSON.stringify(payload)}`);
     }
     return payload as T;
+}
+
+async function expectPersistedAutomation(params: Readonly<{
+    baseUrl: string;
+    token: string;
+    name: string;
+    targetType: 'new_session' | 'existing_session';
+}>) {
+    await expect.poll(async () => {
+        const automations = await getJson<ReadonlyArray<Readonly<{
+            name: string;
+            targetType: string;
+        }>>>({
+            baseUrl: params.baseUrl,
+            token: params.token,
+            path: '/v2/automations',
+        });
+        return automations.find((automation) => automation.name === params.name) ?? null;
+    }, { timeout: 60_000 }).toMatchObject({
+        name: params.name,
+        targetType: params.targetType,
+    });
+}
+
+async function submitAutomationViaComposer(params: Readonly<{
+    page: Page;
+    testId: 'new-session-composer-send' | 'session-composer-send';
+    expectedPathname: string;
+}>) {
+    const submit = params.page.getByTestId(params.testId);
+    await expect(submit).toBeEnabled({ timeout: 60_000 });
+
+    const [response] = await Promise.all([
+        params.page.waitForResponse((candidate) => {
+            try {
+                return candidate.request().method() === 'POST'
+                    && new URL(candidate.url()).pathname === '/v2/automations';
+            } catch {
+                return false;
+            }
+        }, { timeout: 60_000 }),
+        params.page.waitForURL((url) => url.pathname === params.expectedPathname, { timeout: 60_000 }),
+        submit.click(),
+    ]);
+
+    expect(response.ok()).toBe(true);
 }
 
 test.describe('ui e2e: automations authoring', () => {
@@ -235,18 +276,16 @@ test.describe('ui e2e: automations authoring', () => {
         await expect(page.getByRole('switch')).toBeChecked({ timeout: 60_000 });
         await page.getByTestId('automation-sentence-name-input').first().fill(inlineAutomationName);
         await page.getByTestId('new-session-composer-input').fill(`inline automation prompt ${run.runId}`);
-        await postJson<{ id: string }>({
+        await submitAutomationViaComposer({
+            page,
+            testId: 'new-session-composer-send',
+            expectedPathname: '/automations',
+        });
+        await expectPersistedAutomation({
             baseUrl: server.baseUrl,
             token: authToken,
-            path: '/v2/automations',
-            body: {
-                name: inlineAutomationName,
-                enabled: true,
-                schedule: { kind: 'interval', everyMs: 60_000 },
-                targetType: 'new_session',
-                templateCiphertext: buildAutomationTemplateEnvelope(),
-                assignments: [{ machineId, enabled: true, priority: 1 }],
-            },
+            name: inlineAutomationName,
+            targetType: 'new_session',
         });
 
         const sessionId = await createSessionFromNewSessionComposer({
@@ -260,20 +299,20 @@ test.describe('ui e2e: automations authoring', () => {
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}/automations/new?happier_hmr=0`, 180_000);
         await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('automation-sentence-name-input')).toHaveCount(0, { timeout: 60_000 });
+        await page.getByTestId('new-session-automation-chip').click();
+        await expect(page.getByTestId('automation-sentence-name-input')).toHaveCount(1, { timeout: 60_000 });
+        await page.getByTestId('automation-sentence-name-input').fill(existingSessionAutomationName);
         await getVisibleSessionComposer(page).fill(`existing-session automation prompt ${run.runId}`);
-
-        await postJson<{ id: string }>({
+        await submitAutomationViaComposer({
+            page,
+            testId: 'session-composer-send',
+            expectedPathname: `/session/${sessionId}/automations`,
+        });
+        await expectPersistedAutomation({
             baseUrl: server.baseUrl,
             token: authToken,
-            path: '/v2/automations',
-            body: {
-                name: existingSessionAutomationName,
-                enabled: true,
-                schedule: { kind: 'interval', everyMs: 60_000 },
-                targetType: 'existing_session',
-                templateCiphertext: buildAutomationTemplateEnvelope({ existingSessionId: sessionId }),
-                assignments: [{ machineId, enabled: true, priority: 1 }],
-            },
+            name: existingSessionAutomationName,
+            targetType: 'existing_session',
         });
     });
 });

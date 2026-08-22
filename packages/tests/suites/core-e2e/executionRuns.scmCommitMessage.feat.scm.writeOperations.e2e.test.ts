@@ -14,7 +14,7 @@ import { createUserScopedSocketCollector } from '../../src/testkit/socketClient'
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { waitFor } from '../../src/testkit/timing';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
 
@@ -69,7 +69,7 @@ describe('core e2e: execution run scm_commit_message.v1', () => {
     await writeFile(join(workspaceDir, 'README.md'), '# commit message e2e\n\npending line\n', 'utf8');
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeClaudeLog = resolve(join(testDir, 'fake-claude.jsonl'));

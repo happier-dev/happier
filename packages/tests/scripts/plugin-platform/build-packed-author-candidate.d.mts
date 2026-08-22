@@ -11,8 +11,8 @@ export type PackedAuthorCandidateBuilderInputs = Readonly<{
   monorepoRoot: string;
   outputRoot: string;
   runId: string;
-  nativeTarget?: 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'windows-x64' | null;
-  nativeArtifactsDir?: string | null;
+  nativeTarget: 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'windows-x64';
+  nativeArtifactsDir: string;
 }>;
 
 export type PackedAuthorCandidateBuilderCliInputs = Readonly<{
@@ -26,15 +26,6 @@ export function parsePackedAuthorCandidateBuilderArgs(
   argv: readonly string[],
   options?: Readonly<{ cwd?: string }>,
 ): PackedAuthorCandidateBuilderCliInputs;
-
-export function captureCandidateBuildBasis(params: Readonly<{
-  monorepoRoot: string;
-  basisPaths?: readonly string[];
-}>): Promise<string>;
-
-export function resolveCandidateBuildBasisPaths(params: Readonly<{
-  monorepoRoot: string;
-}>): Promise<readonly string[]>;
 
 export function buildPackedAuthorCandidate(
   params: PackedAuthorCandidateBuilderInputs,

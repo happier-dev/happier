@@ -137,7 +137,9 @@ describe('core e2e: account settings sync safety', () => {
       content: sealSettings(staleFirstWriterRaw, 3),
     });
     expect(staleWrite.success).toBe(false);
-    if (staleWrite.success) throw new Error('Expected version mismatch');
+    if (staleWrite.success || staleWrite.error !== 'version-mismatch') {
+      throw new Error('Expected version mismatch');
+    }
     expect(staleWrite.error).toBe('version-mismatch');
     expect(staleWrite.currentVersion).toBe(firstWriterBaseline.version + 1);
 

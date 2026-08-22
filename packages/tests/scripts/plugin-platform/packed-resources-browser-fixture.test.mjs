@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import {
@@ -7,7 +8,7 @@ import {
   packedResourcesBrowserPayloads,
 } from './packed-resources-browser-fixture.mjs';
 
-test('resource/browser fixture declares the exact consumed contribution set', () => {
+test('resource fixture declares only the retained consumed contribution set', () => {
   const manifest = buildPackedResourcesBrowserManifest({
     manifest: {
       id: 'acme.resources-browser',
@@ -23,33 +24,17 @@ test('resource/browser fixture declares the exact consumed contribution set', ()
   assert.deepEqual(Object.keys(manifest.contributes), [
     'actions',
     'resources',
-    'browserTargets',
-    'browserActions',
   ]);
   assert.deepEqual(
     manifest.contributes.resources.map((resource) => resource.kind),
     ['prompt', 'skill', 'template', 'asset', 'config'],
   );
   assert.equal(manifest.contributes.actions.length, 1);
-  assert.deepEqual(
-    manifest.contributes.browserActions.map((action) => action.placement),
-    ['toolbar', 'detailsPanel', 'contextMenu'],
-  );
-  assert.ok(
-    manifest.contributes.browserActions.every(
-      (action) => action.action === 'roundtrip' && action.target === 'preview',
-    ),
-  );
-  assert.deepEqual(manifest.contributes.browserTargets, [{
-    id: 'preview',
-    title: 'Packed resources preview',
-    url: 'https://preview.example.test/',
-    launch: 'currentView',
-    profile: 'user',
-  }]);
+  assert.equal(manifest.contributes.browserTargets, undefined);
+  assert.equal(manifest.contributes.browserActions, undefined);
 });
 
-test('resource/browser runtime reads all five resources without a source fallback', () => {
+test('resource runtime reads all five resources without a source fallback', () => {
   const source = buildPackedResourcesBrowserRuntimeSource({
     pluginId: 'acme.resources-browser',
     version: '1.0.0',
@@ -65,7 +50,7 @@ test('resource/browser runtime reads all five resources without a source fallbac
   assert.match(source, /api\.actions\.register\('roundtrip', roundtrip\)/u);
 });
 
-test('resource/browser payloads are exact and version-bound', () => {
+test('resource payloads are exact and version-bound', () => {
   assert.deepEqual(packedResourcesBrowserPayloads('1.0.0'), {
     prompt: '# Packed prompt 1.0.0\n',
     skill: '# Packed skill 1.0.0\n',
@@ -73,4 +58,15 @@ test('resource/browser payloads are exact and version-bound', () => {
     asset: '{"kind":"asset","version":"1.0.0"}\n',
     config: '{"kind":"config","version":"1.0.0"}\n',
   });
+});
+
+test('resource candidate fixture does not retain browser contribution authoring or projection assertions', () => {
+  const candidateSource = readFileSync(
+    new URL('../../suites/ui-e2e/plugins.resourcesBrowser.candidate.spec.ts', import.meta.url),
+    'utf8',
+  );
+
+  assert.doesNotMatch(candidateSource, /browserTarget:|browserAction:|browserTargets|browserActions/u);
+  assert.doesNotMatch(candidateSource, /session-header-browser-button|browser-view-details-surface/u);
+  assert.match(candidateSource, /families\.pluginBrowser\)\.toBeUndefined\(\)/u);
 });

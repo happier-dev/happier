@@ -97,8 +97,8 @@ test.describe('ui e2e: OAuth provisioning choice (optional → plain) (GitHub)',
     await oauthStop?.().catch(() => {});
   });
 
-  test('shows provisioning choice and provisions a keyless plaintext account', async ({ page }) => {
-    test.setTimeout(300_000);
+  test('provisions a keyless plaintext account and re-enables E2EE through fresh OAuth proof', async ({ page }) => {
+    test.setTimeout(480_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
     if (!oauthBaseUrl) throw new Error('missing oauth base url');
@@ -127,5 +127,35 @@ test.describe('ui e2e: OAuth provisioning choice (optional → plain) (GitHub)',
       "select count(1) as n from Account where publicKey is null and encryptionMode = 'plain';",
     ) as Array<{ n?: unknown }>;
     expect(keylessRows?.[0]?.n === 1 || keylessRows?.[0]?.n === '1').toBe(true);
+
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/account`);
+    await expect(page.getByTestId('settings-account-encryption-mode-switch')).toHaveCount(1, {
+      timeout: 120_000,
+    });
+    const migrationSucceeded = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/v1/account/encryption/migrate')
+        && response.request().method() === 'POST'
+        && response.status() === 200,
+      { timeout: 180_000 },
+    );
+    await page.getByTestId('settings-account-encryption-mode-switch').click();
+    const migrationResponse = await migrationSucceeded;
+    const migrationJson = (await migrationResponse.json()) as unknown;
+    expect(migrationJson).toMatchObject({
+      success: true,
+      mode: 'e2ee',
+    });
+
+    await expect.poll(
+      () => {
+        const rows = querySqliteJson(
+          dbPath,
+          "select count(1) as n from Account where publicKey is not null and contentPublicKey is not null and encryptionMode = 'e2ee';",
+        ) as Array<{ n?: unknown }>;
+        return Number(rows?.[0]?.n ?? 0);
+      },
+      { timeout: 30_000 },
+    ).toBe(1);
   });
 });

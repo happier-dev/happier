@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -14,7 +14,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -403,22 +403,17 @@ test.describe('ui e2e: daemon STT batch transcription', () => {
             },
         });
         const auth = await createTestAuth(server.baseUrl);
-        const machineKey = Uint8Array.from(randomBytes(32));
-        const seeded = await seedCliDataKeyAuthForServer({
+        const machineKey = auth.accountMachineKey;
+        const seeded = await seedCliAuthForTestAccount({
             cliHome: daemonHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey,
+            auth,
+            mode: 'dataKey',
         });
         authBootstrapSnapshot = buildAuthBootstrapStorageSnapshot({
             serverUrl: server.baseUrl,
-            credentials: {
-                token: auth.token,
-                encryption: {
-                    publicKey: Buffer.from(seeded.publicKey).toString('base64'),
-                    machineKey: Buffer.from(machineKey).toString('base64'),
-                },
-            },
+            auth,
+            mode: 'dataKey',
             storageScope,
         });
         seededMachineId = seeded.machineId;

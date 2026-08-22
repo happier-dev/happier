@@ -52,23 +52,37 @@ Out of scope for this package:
 
 Root aliases may exist (e.g. `yarn test:e2e`), but the workspace commands above are the source of truth.
 
-### Plugin Platform exact-candidate native QA
+### Plugin Platform native QA
 
-This opt-in lane consumes the daemon-selected packed SDK/CLI candidate, rechecks
-both tarball SRIs and package identities, materializes that exact CLI, and uses
-the exact SDK tarball to build two iOS/Android Re.Pack generations of a native
-lifecycle fixture. It then drives install-and-trust, enable/disable, Inspector
-reload, update/cache replacement, offline read-only state, reconnect, rollback,
-and uninstall through the connected-machine product path.
+This opt-in lane admits one exact package-artifact basis at a time. Candidate
+release QA consumes the daemon-selected packed SDK/Plugin UI/CLI candidate;
+row-local UCX QA instead consumes an exact SDK, Plugin UI, and CLI tarball trio.
+The runner rechecks package identities, materializes the exact CLI, builds the
+native fixture from that exact SDK, and records the fixture archives alongside
+the package identities for its one native row. Do not combine candidate and
+row-local inputs.
 
-Do not run either platform lane until the candidate producer has handed off
-`candidate.json` and issued the literal authorization
-`G5_GENERATED_INPUTS_GREEN`. Both values are mandatory and the harness fails
-closed:
+Candidate mode retains its release-QA prerequisites: the producer must hand off
+`candidate.json`, issue the literal authorization `G5_GENERATED_INPUTS_GREEN`,
+and provide the existing matching packed-novel and schema-v2 Triage/GitHub/Voice
+handoffs. It fails closed when any candidate prerequisite is absent:
 
 ```bash
 export HAPPIER_E2E_PLUGIN_PLATFORM_CANDIDATE=/absolute/path/to/candidate.json
 export HAPPIER_E2E_PLUGIN_PLATFORM_G5_AUTHORIZATION=G5_GENERATED_INPUTS_GREEN
+yarn workspace @happier-dev/tests test:mobile:e2e:ios:plugin-platform-candidate
+yarn workspace @happier-dev/tests test:mobile:e2e:android:plugin-platform-candidate
+```
+
+For a row-local UCX native row, provide the exact matching trio and secure
+schema-v2 Triage/GitHub/Voice handoff instead. Candidate, G5, and packed-novel
+inputs are not part of this mode:
+
+```bash
+export HAPPIER_E2E_UCX_NATIVE_SDK_TARBALL=/absolute/path/plugin-sdk.tgz
+export HAPPIER_E2E_UCX_NATIVE_PLUGIN_UI_TARBALL=/absolute/path/plugin-ui.tgz
+export HAPPIER_E2E_UCX_NATIVE_CLI_TARBALL=/absolute/path/cli.tgz
+export HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_HANDOFF_MANIFEST=/absolute/path/triage-github-voice-qa.json
 yarn workspace @happier-dev/tests test:mobile:e2e:ios:plugin-platform-candidate
 yarn workspace @happier-dev/tests test:mobile:e2e:android:plugin-platform-candidate
 ```
@@ -78,9 +92,47 @@ selected platform: installed native dev client, Maestro, simulator/emulator,
 managed Metro support, and the repository-managed CLI author toolchain. The
 combined command runs iOS and Android sequentially.
 
-Candidate identity/materialization and both fixture generations can be checked
+Artifact identity/materialization and both fixture generations can be checked
 without launching Metro, Maestro, or a device by adding
 `HAPPIER_E2E_PLUGIN_PLATFORM_PREPARE_ONLY=1` to either platform command.
+
+After Maestro, the runner writes an observed row-local native attestation only
+when it has the selected installed app/APK identity and the selected device
+reports an immutable JavaScript/bundle digest that matches the row's asserted
+served-bundle digest. Managed Metro no-dev full reload, the host-served bundle
+URL/revision, and the app-owned module probe are supporting facts only. A URL,
+host-side warm-up, or “Bundled” log alone remains insufficient. The incumbent
+runner has no selected-device digest-report seam, so it records a typed block
+until that report exists and matches the asserted row.
+
+### Triage/GitHub/Voice browser handoff
+
+The credential-bearing normal-product browser handoff is an opt-in development
+QA input. Its producer accepts exactly one package-identity source: either a
+complete `candidate.json`, or the exact row-local SDK, Plugin UI, and CLI
+tarballs. Do not combine the two forms. The GitHub token is read only from
+`HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN`, never from a command-line
+flag.
+
+```bash
+export HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN="$GITHUB_TOKEN"
+yarn workspace @happier-dev/tests prepare:plugin-platform:triage-github-voice-handoff create \
+  --sdk-tarball /absolute/path/plugin-sdk.tgz \
+  --plugin-ui-tarball /absolute/path/plugin-ui.tgz \
+  --cli-tarball /absolute/path/cli.tgz \
+  --scope-title owner/repository \
+  --issue-a-title "Stable QA issue A" \
+  --issue-b-title "Stable QA issue B" \
+  --microphone-fixture /absolute/path/microphone.wav
+```
+
+Replace the three tarball flags with `--candidate /absolute/path/candidate.json`
+for a complete candidate. Supplying `--output-root` requires a new absolute
+directory outside the repository; otherwise the producer creates a private OS
+temporary root. Pass its reported `triage-github-voice-qa.json` path to the
+browser QA command with the matching package identity. When the aggregate
+candidate-QA flow consumes that handoff, its finalizer owns marker-authorized
+removal after every product consumer reaches a terminal result.
 
 ## Shared platform homes
 
@@ -166,6 +218,7 @@ Canonical stress env/config surface:
 - `HAPPIER_STRESS_COMPOSE_API_REPLICAS`, `HAPPIER_STRESS_COMPOSE_WORKER_REPLICAS`
 - `HAPPIER_STRESS_COMPOSE_FRONT_DOOR=gateway|api-direct`
 - `HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=if-missing|always|never`
+- `HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT=<40-character fingerprint>` pins the existing image consumed by `never`
 - `HAPPIER_STRESS_COMPOSE_REUSE_RUNNING=1` to attach to the latest running full-compose topology instead of starting a fresh one
 - `HAPPIER_STRESS_COMPOSE_GATEWAY_PORT`, `HAPPIER_STRESS_COMPOSE_PG_PORT`, `HAPPIER_STRESS_COMPOSE_REDIS_PORT`
 - `HAPPIER_STRESS_COMPOSE_MINIO_PORT`, `HAPPIER_STRESS_COMPOSE_MINIO_CONSOLE_PORT`
@@ -215,7 +268,6 @@ yarn workspace @happier-dev/tests stress:compose:up
 ```bash
 HAPPIER_STRESS_TARGET_MODE=full-compose \
 HAPPIER_STRESS_COMPOSE_REUSE_RUNNING=1 \
-HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=never \
 yarn workspace @happier-dev/tests test:stress:sticky-affinity
 ```
 
@@ -223,7 +275,17 @@ yarn workspace @happier-dev/tests test:stress:sticky-affinity
 
 - `always`: rebuild the canonical image before launch
 - `if-missing`: reuse the canonical image only when it exists **and** matches the current runtime-input fingerprint; otherwise rebuild
-- `never`: true frozen-image mode; require the canonical image to exist and reuse it even if unrelated repo churn has changed the current fingerprint
+- `never`: true frozen-image mode; require `HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT`, select that existing canonical image even if current build inputs have drifted, and fail closed unless its owner, repository-root, and fingerprint labels match. Use the `image.freshnessFingerprint` recorded in the build run's `topology/env.generated.json`.
+
+To launch a new topology from that exact frozen image after the original topology has stopped:
+
+```bash
+HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=never \
+HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT="$FROZEN_IMAGE_FINGERPRINT" \
+yarn workspace @happier-dev/tests stress:compose:up
+```
+
+Set `FROZEN_IMAGE_FINGERPRINT` to the exact `image.freshnessFingerprint` recorded by the build run before invoking this command.
 
 3. Inspect the running topology metadata at any point:
 

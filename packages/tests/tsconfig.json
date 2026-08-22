@@ -10,7 +10,14 @@
     "allowImportingTsExtensions": true,
     "jsx": "react",
     "paths": {
-      "@/*": ["./../../apps/cli/src/*"]
+      "@/*": ["./../../apps/cli/src/*"],
+      // This program reaches CLI source through `@/*`; resolve its public SDK imports
+      // through the same current source owner as direct test imports.
+      "@happier-dev/plugin-sdk": ["./../plugin-sdk/src/index.public.ts"],
+      "@happier-dev/plugin-sdk/*": [
+        "./../plugin-sdk/src/*/index.public.ts",
+        "./../plugin-sdk/src/*.ts"
+      ]
     },
     "types": ["node"]
   },

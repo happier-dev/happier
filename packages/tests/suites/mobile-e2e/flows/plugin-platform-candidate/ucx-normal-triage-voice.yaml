@@ -1,0 +1,237 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# Shared iOS/Android normal-product setup using only the schema-v2 handoff
+# values that the canonical browser runner has already validated against this
+# exact candidate. The GitHub scope and Triage row names are public
+# accessibility contracts, not opaque implementation identifiers.
+- launchApp:
+    clearState: false
+    clearKeychain: false
+
+- runFlow:
+    file: ../_shared/connectDevClientIfNeeded.yaml
+
+# Connect the built-in GitHub source with the handoff token, then add exactly
+# the handoff-derived scope through its accessible button name.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/connected-services/account?pluginId=happier.scm.forge.github&localId=github-account
+- extendedWaitUntil:
+    visible:
+      id: connected-account-mode:manual
+    timeout: 180000
+- tapOn:
+    id: connected-account-mode:manual
+- extendedWaitUntil:
+    visible:
+      id: connected-account-manual:token
+    timeout: 180000
+- tapOn:
+    id: connected-account-manual:token
+- inputText: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN}
+- hideKeyboard
+- tapOn:
+    id: connected-account-manual:submit
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/plugins/happier.scm.forge.github/triage-sources
+- extendedWaitUntil:
+    visible: "Add ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_SCOPE_TITLE} to Happier"
+    timeout: 180000
+- tapOn: "Add ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_SCOPE_TITLE} to Happier"
+- extendedWaitUntil:
+    visible: "Added to Happier."
+    timeout: 180000
+
+# The native privacy picker is the canonical owner of each current-UI mode.
+# Each mode is selected through that owner before the Triage surface below.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/voice/privacy
+- extendedWaitUntil:
+    visible:
+      id: settings.voice.privacy.currentUiContextMode
+    timeout: 120000
+- tapOn:
+    id: settings.voice.privacy.currentUiContextMode
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-off
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-off
+
+# The exact labels select the published Triage list options and prove their
+# screen-reader names. A real native Back returns from each selected detail to
+# its list; no coordinate tapping or generated row key is involved.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/happier.triage/triage
+- extendedWaitUntil:
+    visible:
+      id: voice-surface:sidebar
+    timeout: 180000
+- assertVisible:
+    id: voice-surface-toggle:sidebar
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+    timeout: 180000
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+    timeout: 180000
+- tapOn: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+- assertVisible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+- back
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+    timeout: 120000
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/voice/privacy
+- tapOn:
+    id: settings.voice.privacy.currentUiContextMode
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-on_demand
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-on_demand
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/happier.triage/triage
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+    timeout: 180000
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+    timeout: 180000
+- tapOn: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+- assertVisible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+- back
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+    timeout: 120000
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/voice/privacy
+- tapOn:
+    id: settings.voice.privacy.currentUiContextMode
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-automatic
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-automatic
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/voice
+- extendedWaitUntil:
+    visible:
+      id: settings.voice.provider.${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_VOICE_ADAPTER_ID}.local
+    timeout: 180000
+- tapOn:
+    id: settings.voice.provider.${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_VOICE_ADAPTER_ID}.local
+- extendedWaitUntil:
+    visible: Conversation mode
+    timeout: 120000
+- tapOn: Conversation mode
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_VOICE_CONVERSATION_MODE}
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_VOICE_CONVERSATION_MODE}
+- extendedWaitUntil:
+    visible: Voice agent source
+    timeout: 120000
+- tapOn: Voice agent source
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-agent
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-agent
+- extendedWaitUntil:
+    visible: Voice agent backend
+    timeout: 120000
+- tapOn: Voice agent backend
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_VOICE_AGENT_ID}
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_VOICE_AGENT_ID}
+
+# Keep the exact Voice transcript on the real surface. The schema-v2 STT
+# provider and microphone fixture remain forwarded by the candidate runner,
+# but this row deliberately submits deterministic user text through the
+# incumbent AppShell QA bridge. It is not native microphone/STT certification
+# and does not close the broader acoustic/device Voice QA gates.
+- extendedWaitUntil:
+    visible:
+      id: settings.voice.ui.activityFeedEnabled
+    timeout: 120000
+- tapOn:
+    id: settings.voice.ui.activityFeedEnabled
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/happier.triage/triage
+- extendedWaitUntil:
+    visible:
+      id: voice-surface:sidebar
+    timeout: 180000
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-toggle:sidebar
+    timeout: 180000
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+    timeout: 180000
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+    timeout: 180000
+- tapOn: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+- extendedWaitUntil:
+    visible: Close
+    timeout: 120000
+- tapOn:
+    id: voice-surface-toggle:sidebar
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-status:sidebar:connected
+    timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-activity-toggle:sidebar
+    timeout: 120000
+- tapOn:
+    id: voice-surface-activity-toggle:sidebar
+
+# This sends through the existing active local Voice binding. It neither seeds
+# a binding nor owns the current UI context, Action, navigation, or lifecycle.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/happier.triage/triage?happier_voice_e2e_text_turn=UCX_VOICE_READ_A
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+    timeout: 180000
+- extendedWaitUntil:
+    visible: Close
+    timeout: 120000
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/happier.triage/triage?happier_voice_e2e_text_turn=UCX_VOICE_OPEN_B
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+    timeout: 180000
+- extendedWaitUntil:
+    visible: Close
+    timeout: 120000
+
+# The command's ordinary navigation preserves the Triage history, so Back
+# returns to A. Stage its A command while that context is current, then leave
+# it normally through B before asking the same long-lived Agent to invoke it.
+- back
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE}
+    timeout: 120000
+- extendedWaitUntil:
+    visible: Close
+    timeout: 120000
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/happier.triage/triage?happier_voice_e2e_text_turn=UCX_VOICE_STAGE_STALE_A
+- extendedWaitUntil:
+    visible: "UCX Voice staged ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_A_TITLE} → Open issue B for stale check."
+    timeout: 180000
+- tapOn: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+- extendedWaitUntil:
+    visible: Close
+    timeout: 120000
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/happier.triage/triage?happier_voice_e2e_text_turn=UCX_VOICE_INVOKE_STALE_A
+- extendedWaitUntil:
+    visible: "UCX Voice refused stale current UI command: stale_surface."
+    timeout: 180000
+- assertVisible: ${HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_ISSUE_B_TITLE}
+- assertVisible: Close

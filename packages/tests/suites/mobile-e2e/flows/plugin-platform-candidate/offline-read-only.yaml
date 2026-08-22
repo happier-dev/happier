@@ -17,4 +17,29 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     visible:
       id: ${HAPPIER_E2E_PLUGIN_SENTINEL_V2}
     timeout: 120000
+
+# This phase runs after the lifecycle owner has stopped the daemon. The Action
+# can only resolve through the exact loaded client artifact and must not use a
+# daemon or another-client fallback.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/examples.packed-targeted-projection-contributor/packed-provider-page
+- extendedWaitUntil:
+    visible:
+      id: packed-targeted-provider-title
+    timeout: 120000
+- assertVisible:
+    id: packed-targeted-context-action
+- assertVisible:
+    id: packed-targeted-context-result
+- assertVisible:
+    id: packed-targeted-web-only-context-action
+- tapOn:
+    id: packed-targeted-web-only-context-action
+- extendedWaitUntil:
+    visible: "platform-unavailable"
+    timeout: 120000
+- tapOn:
+    id: packed-targeted-context-action
+- extendedWaitUntil:
+    visible: "page:ui"
+    timeout: 120000
 - takeScreenshot: plugin-platform-offline-read-only-${HAPPIER_E2E_MOBILE_PLATFORM}

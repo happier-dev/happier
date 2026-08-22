@@ -212,7 +212,8 @@ test.describe('ui e2e: settings analytics', () => {
       page,
       buildAuthBootstrapStorageSnapshot({
         serverUrl: server.baseUrl,
-        credentials: { token: auth.token, secret: auth.token },
+        auth,
+        mode: 'legacy',
         storageScope: ANALYTICS_STORAGE_SCOPE,
       }),
     );

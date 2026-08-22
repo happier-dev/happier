@@ -35,5 +35,14 @@ describe('providers harness: daemon startup policy', () => {
       }),
     ).toBe(false);
   });
-});
 
+  it('starts daemon for an explicit daemon-runner continuity scenario regardless of provider protocol', () => {
+    expect(
+      shouldStartProviderDaemon({
+        providerProtocol: 'claude',
+        hasPostSatisfyRunHook: false,
+        requiresDaemonRunnerContinuity: true,
+      }),
+    ).toBe(true);
+  });
+});

@@ -38,12 +38,49 @@ async function waitForNoSockets(sockets: ReadonlySet<Socket>, label: string): Pr
 }
 
 describe('startHttpRequestRecordingProxy', () => {
+  it('does not retain request bodies unless capture is explicitly enabled', async () => {
+    const target = createServer((req, res) => {
+      req.resume();
+      req.once('end', () => res.end('ok'));
+    });
+    await listen(target);
+    const targetAddress = target.address();
+    if (!targetAddress || typeof targetAddress !== 'object') throw new Error('target server did not bind');
+    const proxy = await startHttpRequestRecordingProxy({
+      targetBaseUrl: `http://127.0.0.1:${targetAddress.port}`,
+    });
+
+    try {
+      await fetch(`${proxy.baseUrl}/private`, {
+        method: 'POST',
+        body: 'must-not-be-retained',
+      });
+      expect(proxy.entries()).toEqual([
+        expect.objectContaining({
+          method: 'POST',
+          path: '/private',
+          body: null,
+        }),
+      ]);
+    } finally {
+      await proxy.stop().catch(() => {});
+      await closeServer(target);
+    }
+  });
+
   it('can withhold a committed upstream response until the caller releases it', async () => {
     let upstreamCommitCount = 0;
-    const target = createServer((_req, res) => {
-      upstreamCommitCount += 1;
-      res.statusCode = 200;
-      res.end('committed');
+    let upstreamBody = '';
+    const target = createServer((req, res) => {
+      req.setEncoding('utf8');
+      req.on('data', (chunk: string) => {
+        upstreamBody += chunk;
+      });
+      req.once('end', () => {
+        upstreamCommitCount += 1;
+        res.statusCode = 200;
+        res.end('committed');
+      });
     });
     await listen(target);
     const targetAddress = target.address();
@@ -59,11 +96,20 @@ describe('startHttpRequestRecordingProxy', () => {
     });
     const proxy = await startHttpRequestRecordingProxy({
       targetBaseUrl: `http://127.0.0.1:${targetAddress.port}`,
+      delayRequestMs: () => 25,
+      captureRequestBody: (request) =>
+        request.method === 'POST' && request.path === '/commit',
       beforeForwardResponse: async (request) => {
         expect(request).toMatchObject({
           method: 'POST',
           path: '/commit',
           statusCode: 200,
+          body: {
+            text: 'payload',
+            byteLength: 7,
+            truncated: false,
+            complete: true,
+          },
         });
         observeCommittedResponse();
         await responseRelease;
@@ -88,6 +134,7 @@ describe('startHttpRequestRecordingProxy', () => {
         label: 'committed upstream response to reach proxy latch',
       });
       expect(upstreamCommitCount).toBe(1);
+      expect(upstreamBody).toBe('payload');
       expect(fetchSettled).toBe(false);
 
       releaseResponse();

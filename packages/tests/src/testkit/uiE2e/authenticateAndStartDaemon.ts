@@ -18,6 +18,9 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   serverUrl: string;
   uiBaseUrl: string;
   createAccount?: boolean;
+  accountReadyTimeoutMs?: number;
+  allowStoredCredentialsWithoutReady?: boolean;
+  beforeTerminalConnect?: (page: Page) => Promise<void>;
   initialUiGotoTimeoutMs?: number;
   initialUiReadyTimeoutMs?: number;
   terminalConnectUrlTimeoutMs?: number;
@@ -32,10 +35,35 @@ export async function authenticateAndStartDaemon(params: Readonly<{
     timeoutMs: params.initialUiReadyTimeoutMs,
     reloadOnFailure: false,
   });
-  if (params.createAccount === false) {
+  if (params.allowStoredCredentialsWithoutReady === true) {
+    try {
+      await ensureAccountReadyForConnect({
+        page: params.page,
+        timeoutMs: params.accountReadyTimeoutMs ?? 120_000,
+        clickCreateAccount: params.createAccount !== false,
+      });
+    } catch (error) {
+      const hasStoredCredentials = await params.page.evaluate(() => {
+        for (let index = 0; index < localStorage.length; index += 1) {
+          const key = localStorage.key(index);
+          if (!key?.startsWith('auth_credentials')) continue;
+          const raw = localStorage.getItem(key);
+          if (!raw) continue;
+          try {
+            const parsed = JSON.parse(raw) as { token?: unknown };
+            if (typeof parsed.token === 'string' && parsed.token.trim()) return true;
+          } catch {
+            // Keep scanning; a malformed unrelated server scope is not enough.
+          }
+        }
+        return false;
+      });
+      if (!hasStoredCredentials) throw error;
+    }
+  } else if (params.createAccount === false) {
     await ensureAccountReadyForConnect({
       page: params.page,
-      timeoutMs: 120_000,
+      timeoutMs: params.accountReadyTimeoutMs ?? 120_000,
       clickCreateAccount: false,
     });
   } else {
@@ -44,6 +72,8 @@ export async function authenticateAndStartDaemon(params: Readonly<{
       requirePersistedAuthCredentials: false,
     });
   }
+
+  await params.beforeTerminalConnect?.(params.page);
 
   const cliLogin = await startCliAuthLoginForTerminalConnect({
     testDir: params.testDir,

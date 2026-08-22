@@ -1,5 +1,4 @@
 import { expect, type Page } from '@playwright/test';
-import { randomBytes } from 'node:crypto';
 
 import { createTestAuth } from '../auth';
 import { buildAuthBootstrapStorageSnapshot } from './buildAuthBootstrapStorageSnapshot';
@@ -102,8 +101,8 @@ export async function primeVoiceSurfaceFixtureSettings(
                         ? existingVoice.providers as Record<string, unknown>
                         : {};
                 const existingRealtimeEnvelope =
-                    typeof existingProviders.realtime_elevenlabs === 'object' && existingProviders.realtime_elevenlabs
-                        ? existingProviders.realtime_elevenlabs as Record<string, unknown>
+                    typeof existingProviders['happier.voice.elevenlabs/realtime-elevenlabs'] === 'object' && existingProviders['happier.voice.elevenlabs/realtime-elevenlabs']
+                        ? existingProviders['happier.voice.elevenlabs/realtime-elevenlabs'] as Record<string, unknown>
                         : {};
                 const existingRealtimeConfig =
                     typeof existingRealtimeEnvelope.config === 'object' && existingRealtimeEnvelope.config
@@ -153,10 +152,10 @@ export async function primeVoiceSurfaceFixtureSettings(
                     // projection/binding seams.
                     return {
                         ...existingVoice,
-                        providerId: 'realtime_elevenlabs',
+                        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                         providers: {
                             ...existingProviders,
-                            realtime_elevenlabs: { schemaVersion: 2, config: {
+                            'happier.voice.elevenlabs/realtime-elevenlabs': { schemaVersion: 2, config: {
                                 ...existingRealtimeConfig,
                                 billingMode: 'byo',
                             } },
@@ -168,10 +167,10 @@ export async function primeVoiceSurfaceFixtureSettings(
                 default:
                     return {
                         ...existingVoice,
-                        providerId: 'realtime_elevenlabs',
+                        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                         providers: {
                             ...existingProviders,
-                            realtime_elevenlabs: { schemaVersion: 2, config: {
+                            'happier.voice.elevenlabs/realtime-elevenlabs': { schemaVersion: 2, config: {
                                 ...existingRealtimeConfig,
                                 billingMode: 'byo',
                             } },
@@ -274,13 +273,8 @@ export async function reachSidebarVoiceSurfaceFixtureHome(params: Readonly<{
         params.page,
         buildAuthBootstrapStorageSnapshot({
             serverUrl: params.serverBaseUrl,
-            credentials: {
-                token: auth.token,
-                encryption: {
-                    publicKey: auth.publicKeyBase64,
-                    machineKey: Buffer.from(randomBytes(32)).toString('base64'),
-                },
-            },
+            auth,
+            mode: 'dataKey',
             storageScope,
         }),
     );

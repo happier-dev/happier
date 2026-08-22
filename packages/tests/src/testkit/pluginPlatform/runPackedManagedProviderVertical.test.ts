@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,15 +7,64 @@ import { basename, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  PackedChannelProviderLifecycleEvidence,
+  PackedManagedProviderPreparedInput,
+  PackedManagedProviderRunInput,
   PackedManagedProviderScenarioDependencies,
 } from '../../../scripts/plugin-platform/run-packed-managed-provider.mjs';
 import {
+  assertPackedAuthorCandidateManifestArtifacts,
+  parseCandidateManifest,
+} from '../../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
+import {
   main,
+  prepareCandidateBoundCliLaunchSpec,
+  runPackedChannelProviderEntrypoint,
   runPackedManagedProviderEntrypoint,
   type PackedManagedProviderArtifactOwners,
 } from '../../plugin-platform/runPackedManagedProviderVertical';
+import * as packedManagedProviderContinuity from '../../plugin-platform/runPackedManagedProviderContinuity';
 
 const roots: string[] = [];
+
+const TEST_MINISIGN_KEY_ID = Buffer.from('0102030405060708', 'hex');
+const TEST_MINISIGN_KEY_PAIR = generateKeyPairSync('ed25519');
+const TEST_MINISIGN_RAW_PUBLIC_KEY = Buffer.from(
+  TEST_MINISIGN_KEY_PAIR.publicKey.export({ format: 'der', type: 'spki' }),
+).subarray(-32);
+const TEST_MINISIGN_PUBLIC_KEY = [
+  'untrusted comment: packed managed candidate fixture minisign public key',
+  Buffer.concat([
+    Buffer.from('Ed'),
+    TEST_MINISIGN_KEY_ID,
+    TEST_MINISIGN_RAW_PUBLIC_KEY,
+  ]).toString('base64'),
+  '',
+].join('\n');
+const TEST_CANDIDATE_ARTIFACT_VERIFICATION = Object.freeze({
+  trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
+});
+
+function signTestMinisign(message: Buffer): Buffer {
+  const signature = sign(null, message, TEST_MINISIGN_KEY_PAIR.privateKey);
+  const trustedSuffix = Buffer.from('timestamp:0', 'utf8');
+  const globalSignature = sign(
+    null,
+    Buffer.concat([signature, trustedSuffix]),
+    TEST_MINISIGN_KEY_PAIR.privateKey,
+  );
+  return Buffer.from([
+    'untrusted comment: packed managed candidate fixture signature',
+    Buffer.concat([
+      Buffer.from('Ed'),
+      TEST_MINISIGN_KEY_ID,
+      signature,
+    ]).toString('base64'),
+    `trusted comment: ${trustedSuffix.toString('utf8')}`,
+    globalSignature.toString('base64'),
+    '',
+  ].join('\n'), 'utf8');
+}
 
 async function fixtureRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'packed-managed-entrypoint-test-'));
@@ -31,49 +80,33 @@ function managedSequenceEvidence() {
   return {
     freshSession: true,
     agentId: 'opencode',
-    canonicalSessionIdBeforeWebhook: null,
     canonicalSessionId: 'session-canonical-a',
+    publicActivationReason: 'sessionDemand',
+    connectionRevision: 3,
     purposes: [
       'happier.agent.opencode/opencode:openai-codex-model-request',
       'happier.provider.cliproxyapi/cliproxyapi:openai-upstream',
     ],
-    capabilityScopeDigests: [
-      'a'.repeat(64),
-      'b'.repeat(64),
-    ],
     timeline: {
       freshSpawnStartedAtMs: 1,
       canonicalSessionRegisteredAtMs: 2,
-      capabilitiesActivatedAtMs: 2,
-      canonicalWebhookAcknowledgedAtMs: 3,
       spawnAcknowledgedAtMs: 4,
-      agentRequestAuthLookupAtMs: 5,
-      agentRequestAuthLookupCompletedAtMs: 6,
-      managedRequestAuthLookupAtMs: 7,
-      managedRequestAuthLookupCompletedAtMs: 8,
       providerAttemptAtMs: 9,
     },
     observedPorts: {
       server: 41001,
       serverProxy: 41002,
       daemon: 41003,
-      brokerProxy: 41004,
       upstreamProxy: 41005,
-      wrapper: 41006,
     },
     stockPortRequestCount: 0,
     stockPortOsConnectionAttemptCount: 0,
     stockListenerIdentityBefore: `sha256:${'e'.repeat(64)}`,
     stockListenerIdentityAfter: `sha256:${'e'.repeat(64)}`,
-    preActivationCredentialReleased: false,
-    preActivationUpstreamAttempted: false,
-    preActivationAgentCapabilityPresent: false,
-    managedLeaseCredentialRevision: 'revision-current',
-    managedLeaseAccessTokenFingerprint: `sha256:${'c'.repeat(64)}`,
+    preSessionDemandCredentialReleased: false,
+    preSessionDemandUpstreamAttempted: false,
     upstreamAuthorizationFingerprint: `sha256:${'c'.repeat(64)}`,
     managedRequestAuthOrigin: 'https://chatgpt.com',
-    managedConnectionSecurityFingerprint:
-      `connection-security:v1:${'d'.repeat(43)}`,
     upstreamConnectTarget: 'chatgpt.com:443',
     promptSentinelObserved: true,
     upstreamRequestPath: '/backend-api/codex/responses',
@@ -82,24 +115,70 @@ function managedSequenceEvidence() {
   } as const;
 }
 
+function packedChannelProviderLifecycleEvidence(): PackedChannelProviderLifecycleEvidence {
+  return {
+    archive: {
+      hostRuntime: 'daemonArchive',
+      reviewedInstall: true,
+      publicOnlyArtifact: true,
+      publicDependencyClosure: true,
+    },
+    discovery: {
+      corePluginId: 'happier.channels',
+      providerPluginId: 'acme.channels.out-of-tree-socket',
+      actionLocalId: 'fixture/setup',
+      targetSurface: 'plugin',
+      coldCatalogBeforeProviderActivation: true,
+      demandedActivation: true,
+      caller: { kind: 'plugin', pluginId: 'happier.channels' },
+      strictInputRejectedBeforeHandler: true,
+      strictResultRejectedBeforeCore: true,
+    },
+    resource: {
+      localId: 'status-v1',
+      readObserved: true,
+      watchSubscribed: true,
+      invalidationDropped: true,
+      rereadConverged: true,
+    },
+    background: {
+      startedAfterAdoption: true,
+      normalizedNetworkClientObserved: true,
+      socketConnectCountBeforeAdoption: 0,
+      observationIngressCustodied: true,
+      outboundDeliveryCustodied: true,
+      historyGapReported: true,
+      confirmedStopReported: true,
+    },
+    lifecycle: {
+      disableAbortedGeneration: true,
+      reenableSocketCount: 1,
+      daemonRestartSocketCount: 1,
+      failedReplacementRetainedLkg: true,
+      retiredGenerationReportInert: true,
+      uninstalledCleanly: true,
+    },
+  };
+}
+
 function scenarioDependencies(
   overrides: Partial<PackedManagedProviderScenarioDependencies> = {},
 ): PackedManagedProviderScenarioDependencies {
   return {
     runPackagedWrapperConformance: vi.fn(async () => ({
-      tokenFreeReadiness: true,
-      preActivationLookupRefused: true,
-      preActivationCredentialReleased: false,
-      preActivationUpstreamAttempted: false,
+      publicExplicitStart: true,
+      publicCatalogProbe: true,
+      catalogOwnerReleased: true,
+      publicCredentialLeakObserved: false,
+      providerAttemptedBeforeSessionDemand: false,
     })),
     runFreshManagedSequence: vi.fn(async () => managedSequenceEvidence()),
     runActivationFailureCleanupProbe: vi.fn(async () => ({
       activationFailedBeforeAck: true,
       firstInputDispatched: false,
       providerAttempted: false,
-      wrapperStopped: true,
-      capabilityRetired: true,
-      materializationRemoved: true,
+      publicSessionCleanupComplete: true,
+      sessionProviderExited: true,
     })),
     cleanup: vi.fn(async () => undefined),
     ...overrides,
@@ -112,8 +191,12 @@ async function writeInputFixture(params: Readonly<{
   const root = await fixtureRoot();
   const version = params.version ?? '0.2.10';
   const sdkBytes = Buffer.from('exact sdk archive');
+  const pluginUiBytes = Buffer.from('exact plugin ui archive');
+  const channelsProtocolBytes = Buffer.from('exact channels protocol archive');
   const cliBytes = Buffer.from('exact cli archive');
   const sdkPath = join(root, 'sdk.tgz');
+  const pluginUiPath = join(root, 'plugin-ui.tgz');
+  const channelsProtocolPath = join(root, 'channels-protocol.tgz');
   const cliPath = join(root, 'cli.tgz');
   const nativeTargets = [
     ['linux', 'x64'],
@@ -142,13 +225,25 @@ async function writeInputFixture(params: Readonly<{
   if (!selectedArchive) throw new Error('test host target is outside the release matrix');
   const standalonePath = selectedArchive.archivePath;
   const standaloneSha256 = selectedArchive.sha256;
+  const notarization = [
+    ['darwin-x64', Buffer.from('darwin x64 notarization evidence')],
+    ['darwin-arm64', Buffer.from('darwin arm64 notarization evidence')],
+  ] as const;
   const checksumsPath = join(root, `checksums-happier-v${version}.txt`);
   const checksumsBytes = Buffer.from(
-    nativeArchives
-      .map((artifact) => `${artifact.sha256}  ${basename(artifact.archivePath)}`)
+    [
+      ...nativeArchives.map((artifact) => (
+        `${artifact.sha256}  ${basename(artifact.archivePath)}`
+      )),
+      ...notarization.map(([target, bytes]) => (
+        `${createHash('sha256').update(bytes).digest('hex')}  ${target}.cli.json`
+      )),
+    ]
       .join('\n')
       .concat('\n'),
   );
+  const signaturePath = `${checksumsPath}.minisig`;
+  const signatureBytes = signTestMinisign(checksumsBytes);
   const installerDefinitions = [
     ['shell', 'shell', 'install-dev.sh', Buffer.from('shell installer')],
     ['powershell', 'powershell', 'install-dev.ps1', Buffer.from('powershell installer')],
@@ -157,9 +252,15 @@ async function writeInputFixture(params: Readonly<{
   const manifestPath = join(root, 'candidate.json');
   await Promise.all([
     writeFile(sdkPath, sdkBytes),
+    writeFile(pluginUiPath, pluginUiBytes),
+    writeFile(channelsProtocolPath, channelsProtocolBytes),
     writeFile(cliPath, cliBytes),
     ...nativeArchives.map((artifact) => writeFile(artifact.archivePath, artifact.bytes)),
     writeFile(checksumsPath, checksumsBytes),
+    writeFile(signaturePath, signatureBytes),
+    ...notarization.map(([target, bytes]) => (
+      writeFile(join(root, `${target}.cli.json`), bytes)
+    )),
     ...installerDefinitions.map(([, , fileName, bytes]) => (
       writeFile(join(root, fileName), bytes)
     )),
@@ -181,16 +282,25 @@ async function writeInputFixture(params: Readonly<{
   await writeFile(manifestPath, JSON.stringify({
     schemaVersion: 1,
     runId: 'r445-exact-candidate',
-    sourceBasis: {
-      algorithm: 'sha256',
-      digest: 'a'.repeat(64),
-    },
     installers,
     sdk: {
       packageName: '@happier-dev/plugin-sdk',
       version: '0.0.0',
       integrity: sha512Sri(sdkBytes),
       tarballPath: sdkPath,
+    },
+    pluginUi: {
+      packageName: '@happier-dev/plugin-ui',
+      version: '0.0.0',
+      pluginSdkVersion: '0.0.0',
+      integrity: sha512Sri(pluginUiBytes),
+      tarballPath: pluginUiPath,
+    },
+    channelsProtocol: {
+      packageName: '@happier-dev/channels-protocol',
+      version: '0.0.0',
+      integrity: sha512Sri(channelsProtocolBytes),
+      tarballPath: channelsProtocolPath,
     },
     cli: {
       packageName: '@happier-dev/cli',
@@ -214,31 +324,79 @@ async function writeInputFixture(params: Readonly<{
         sha256: createHash('sha256').update(checksumsBytes).digest('hex'),
         filePath: checksumsPath,
       },
-      signature: null,
+      signature: {
+        kind: 'minisign-signature',
+        fileName: basename(signaturePath),
+        sizeBytes: signatureBytes.length,
+        sha256: createHash('sha256').update(signatureBytes).digest('hex'),
+        filePath: signaturePath,
+      },
+      notarization: notarization.map(([target, bytes]) => ({
+        target,
+        evidence: {
+          kind: 'apple-notarization-evidence',
+          fileName: `${target}.cli.json`,
+          sizeBytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          filePath: join(root, `${target}.cli.json`),
+        },
+      })),
     },
   }));
   return {
     root,
     manifestPath,
     standalonePath,
+    channelsProtocolPath,
   };
 }
 
 function artifactOwners(events: string[]): PackedManagedProviderArtifactOwners {
   return {
-    assertCandidateArchivesSafe: vi.fn(async ({ sdkTarballPath, cliTarballPath }) => {
-      events.push(`candidate-census:${basename(sdkTarballPath)}:${basename(cliTarballPath)}`);
-      return { sdk: { entryCount: 2 }, cli: { entryCount: 2 } };
+    assertCandidateArchivesSafe: vi.fn(async ({
+      sdkTarballPath,
+      pluginUiTarballPath,
+      channelsProtocolTarballPath,
+      cliTarballPath,
+    }) => {
+      events.push([
+        'candidate-census',
+        basename(sdkTarballPath),
+        basename(pluginUiTarballPath),
+        ...(channelsProtocolTarballPath
+          ? [basename(channelsProtocolTarballPath)]
+          : []),
+        basename(cliTarballPath),
+      ].join(':'));
+      return {
+        sdk: { entryCount: 2 },
+        pluginUi: { entryCount: 2 },
+        ...(channelsProtocolTarballPath
+          ? { channelsProtocol: { entryCount: 2 } }
+          : {}),
+        cli: { entryCount: 2 },
+      };
     }),
     readPackedPackageManifest: vi.fn(async (archivePath) => {
       events.push(`package-manifest:${basename(archivePath)}`);
-      return basename(archivePath).startsWith('sdk')
-        ? { name: '@happier-dev/plugin-sdk', version: '0.0.0' }
-        : {
-            name: '@happier-dev/cli',
-            version: '0.2.10',
-            bin: { happier: './bin/happier.mjs' },
-          };
+      if (basename(archivePath).startsWith('sdk')) {
+        return { name: '@happier-dev/plugin-sdk', version: '0.0.0' };
+      }
+      if (basename(archivePath).startsWith('plugin-ui')) {
+        return {
+          name: '@happier-dev/plugin-ui',
+          version: '0.0.0',
+          dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+        };
+      }
+      if (basename(archivePath).startsWith('channels-protocol')) {
+        return { name: '@happier-dev/channels-protocol', version: '0.0.0' };
+      }
+      return {
+        name: '@happier-dev/cli',
+        version: '0.2.10',
+        bin: { happier: './bin/happier.mjs' },
+      };
     }),
     inspectTarArchiveEntries: vi.fn(async ({ archivePath }) => {
       events.push(`standalone-census:${basename(archivePath)}`);
@@ -301,6 +459,24 @@ function artifactOwners(events: string[]): PackedManagedProviderArtifactOwners {
   };
 }
 
+type PackedChannelProviderContinuityProbe = (
+  input: PackedManagedProviderRunInput,
+  deps: Readonly<{
+    composed: Readonly<{
+      probePackedChannelProviderLifecycle(
+        input: PackedManagedProviderPreparedInput,
+      ): Promise<PackedChannelProviderLifecycleEvidence>;
+    }>;
+    artifactOwners?: PackedManagedProviderArtifactOwners;
+    candidateArtifactVerification?: Readonly<{
+      trustedMinisignPublicKey: string;
+    }>;
+    reserveAvailablePort?: () => Promise<number>;
+    platform?: NodeJS.Platform;
+    arch?: string;
+  }>,
+) => Promise<Readonly<{ status: 'passed' }>>;
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(async (root) => {
     await rm(root, { recursive: true, force: true });
@@ -308,6 +484,144 @@ afterEach(async () => {
 });
 
 describe('packed managed Provider executable entrypoint', () => {
+  it('keeps the production candidate trust anchor fail-closed for the ephemeral fixture key', async () => {
+    const fixture = await writeInputFixture();
+    const candidate = parseCandidateManifest(
+      await readFile(fixture.manifestPath, 'utf8'),
+      fixture.manifestPath,
+    );
+
+    await expect(assertPackedAuthorCandidateManifestArtifacts(candidate, {
+      manifestPath: fixture.manifestPath,
+    })).rejects.toThrow('Candidate standalone CLI checksum signature is invalid');
+    await expect(assertPackedAuthorCandidateManifestArtifacts(candidate, {
+      manifestPath: fixture.manifestPath,
+      trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
+    })).resolves.toBeUndefined();
+  });
+
+  it('reuses exact candidate verification and freezes one standalone CLI launch spec', async () => {
+    const fixture = await writeInputFixture();
+    const workRoot = join(fixture.root, 'candidate-bound-codex');
+    const events: string[] = [];
+    const prepared = await prepareCandidateBoundCliLaunchSpec({
+      candidateManifestPath: fixture.manifestPath,
+      workRoot,
+      artifactOwners: artifactOwners(events),
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
+      reserveAvailablePort: vi.fn()
+        .mockResolvedValueOnce(8317)
+        .mockResolvedValueOnce(45101)
+        .mockResolvedValueOnce(45102),
+    });
+
+    expect(prepared.evidence).toMatchObject({
+      candidateFrozen: true,
+      standaloneCliFrozen: true,
+      candidateArchiveCensus: {
+        sdk: { entryCount: 2 },
+        pluginUi: { entryCount: 2 },
+        channelsProtocol: { entryCount: 2 },
+        cli: { entryCount: 2 },
+      },
+    });
+    expect(prepared.cliLaunchSpec.command)
+      .toContain(`${join('standalone', 'happier-v0.2.10-')}`);
+    expect(Object.isFrozen(prepared.cliLaunchSpec)).toBe(true);
+    expect(Object.isFrozen(prepared.cliLaunchSpec.args)).toBe(true);
+    expect(Object.isFrozen(prepared.cliLaunchSpec.env)).toBe(true);
+    expect(events).toEqual([
+      'candidate-census:sdk-attested.tgz:plugin-ui-attested.tgz:channels-protocol-attested.tgz:cli-attested.tgz',
+      'package-manifest:sdk-attested.tgz',
+      'package-manifest:plugin-ui-attested.tgz',
+      'package-manifest:channels-protocol-attested.tgz',
+      'package-manifest:cli-attested.tgz',
+      `standalone-census:${basename(fixture.standalonePath)}`,
+      'standalone-extract',
+    ]);
+
+    await prepared.dispose();
+    expect(existsSync(workRoot)).toBe(false);
+  });
+
+  it('routes the frozen Channels candidate through the canonical lifecycle validator exactly once', async () => {
+    const fixture = await writeInputFixture();
+    const workRoot = join(fixture.root, 'channel-lifecycle');
+    const lifecycle = vi.fn(async ({ prepared }) => {
+      expect(prepared.candidate.channelsProtocol).toMatchObject({
+        packageName: '@happier-dev/channels-protocol',
+        version: '0.0.0',
+      });
+      expect(prepared.candidate.channelsProtocol?.tarballPath)
+        .toContain(join('archives', 'channels-protocol-attested.tgz'));
+      expect(Object.isFrozen(prepared.cliLaunchSpec)).toBe(true);
+      return packedChannelProviderLifecycleEvidence();
+    });
+
+    const result = await runPackedChannelProviderEntrypoint({
+      candidateManifestPath: fixture.manifestPath,
+      workRoot,
+      enableOpenCodeLive: false,
+    }, {
+      runPackedChannelProviderLifecycle: lifecycle,
+      artifactOwners: artifactOwners([]),
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
+      reserveAvailablePort: vi.fn()
+        .mockResolvedValueOnce(45131)
+        .mockResolvedValueOnce(45132),
+    });
+
+    expect(result.kind).toBe('packed_channel_provider_vertical');
+    expect(result.status).toBe('passed');
+    expect(result.candidate.channelsProtocol).toMatchObject({
+      packageName: '@happier-dev/channels-protocol',
+    });
+    expect(lifecycle).toHaveBeenCalledTimes(1);
+    expect(existsSync(workRoot)).toBe(false);
+  });
+
+  it('routes the frozen Channels candidate through the continuity composed callback', async () => {
+    const runPackedChannelProviderContinuityProbe = (
+      packedManagedProviderContinuity as {
+        runPackedChannelProviderContinuityProbe?: PackedChannelProviderContinuityProbe;
+      }
+    ).runPackedChannelProviderContinuityProbe;
+    expect(runPackedChannelProviderContinuityProbe).toBeTypeOf('function');
+    if (!runPackedChannelProviderContinuityProbe) return;
+
+    const fixture = await writeInputFixture();
+    const workRoot = join(fixture.root, 'channel-continuity-lifecycle');
+    const lifecycle = vi.fn(async ({ prepared }: PackedManagedProviderPreparedInput) => {
+      expect(prepared.candidate.channelsProtocol).toMatchObject({
+        packageName: '@happier-dev/channels-protocol',
+        version: '0.0.0',
+      });
+      expect(prepared.candidate.channelsProtocol?.tarballPath)
+        .toContain(join('archives', 'channels-protocol-attested.tgz'));
+      expect(Object.isFrozen(prepared.cliLaunchSpec)).toBe(true);
+      return packedChannelProviderLifecycleEvidence();
+    });
+
+    const result = await runPackedChannelProviderContinuityProbe({
+      candidateManifestPath: fixture.manifestPath,
+      workRoot,
+      enableOpenCodeLive: false,
+    }, {
+      composed: {
+        probePackedChannelProviderLifecycle: lifecycle,
+      },
+      artifactOwners: artifactOwners([]),
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
+      reserveAvailablePort: vi.fn()
+        .mockResolvedValueOnce(45133)
+        .mockResolvedValueOnce(45134),
+    });
+
+    expect(result.status).toBe('passed');
+    expect(lifecycle).toHaveBeenCalledTimes(1);
+    expect(existsSync(workRoot)).toBe(false);
+  });
+
   it('freezes, verifies, safely extracts, and binds the host-native artifact before the managed runner', async () => {
     const fixture = await writeInputFixture();
     const workRoot = join(fixture.root, 'private-run');
@@ -325,10 +639,11 @@ describe('packed managed Provider executable entrypoint', () => {
           .toBe(prepared.standaloneCliArtifact.executablePath);
         expect(prepared.cliLaunchSpec.args).toEqual([]);
         return {
-          tokenFreeReadiness: true,
-          preActivationLookupRefused: true,
-          preActivationCredentialReleased: false,
-          preActivationUpstreamAttempted: false,
+          publicExplicitStart: true,
+          publicCatalogProbe: true,
+          catalogOwnerReleased: true,
+          publicCredentialLeakObserved: false,
+          providerAttemptedBeforeSessionDemand: false,
         };
       }),
     });
@@ -340,6 +655,7 @@ describe('packed managed Provider executable entrypoint', () => {
     }, {
       scenario,
       artifactOwners: artifactOwners(events),
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
       reserveAvailablePort: vi.fn()
         .mockResolvedValueOnce(8317)
         .mockResolvedValueOnce(45101)
@@ -361,7 +677,7 @@ describe('packed managed Provider executable entrypoint', () => {
         ports: {
           server: 41001,
           daemon: 41003,
-          wrapper: 41006,
+          upstreamProxy: 41005,
         },
       },
       cleanup: { disposition: 'removed' },
@@ -371,8 +687,10 @@ describe('packed managed Provider executable entrypoint', () => {
     if (!isolatedPorts) throw new Error('expected isolated ports');
     expect(new Set(Object.values(isolatedPorts)).size).toBe(3);
     expect(events).toEqual([
-      'candidate-census:sdk-attested.tgz:cli-attested.tgz',
+      'candidate-census:sdk-attested.tgz:plugin-ui-attested.tgz:channels-protocol-attested.tgz:cli-attested.tgz',
       'package-manifest:sdk-attested.tgz',
+      'package-manifest:plugin-ui-attested.tgz',
+      'package-manifest:channels-protocol-attested.tgz',
       'package-manifest:cli-attested.tgz',
       `standalone-census:${basename(fixture.standalonePath)}`,
       'standalone-extract',
@@ -396,6 +714,7 @@ describe('packed managed Provider executable entrypoint', () => {
     }, {
       scenario,
       artifactOwners: owners,
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
       reserveAvailablePort: vi.fn(),
     })).rejects.toMatchObject({
       code: 'packed_managed_provider_execution_failed',
@@ -459,6 +778,7 @@ describe('packed managed Provider executable entrypoint', () => {
     }, {
       scenario,
       artifactOwners: artifactOwners([]),
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
       reserveAvailablePort: vi.fn()
         .mockResolvedValueOnce(45111)
         .mockResolvedValueOnce(45112)
@@ -485,6 +805,7 @@ describe('packed managed Provider executable entrypoint', () => {
     }, {
       scenario: scenarioDependencies(),
       artifactOwners: artifactOwners([]),
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
       reserveAvailablePort: vi.fn(),
     })).rejects.toMatchObject({
       code: 'packed_managed_provider_cancelled',
@@ -506,6 +827,7 @@ describe('packed managed Provider executable entrypoint', () => {
     }, {
       scenario: scenarioDependencies(),
       artifactOwners: artifactOwners([]),
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
       reserveAvailablePort: vi.fn()
         .mockResolvedValueOnce(45121)
         .mockResolvedValueOnce(45122)
@@ -540,6 +862,7 @@ describe('packed managed Provider executable entrypoint', () => {
       workRoot,
     ], {
       artifactOwners: owners,
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
       writeStdout: vi.fn(),
       writeStderr: (line) => stderr.push(line),
       setExitCode: (code) => exitCodes.push(code),

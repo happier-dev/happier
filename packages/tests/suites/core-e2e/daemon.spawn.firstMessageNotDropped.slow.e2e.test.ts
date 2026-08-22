@@ -8,7 +8,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createTestAuth } from '../../src/testkit/auth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation, type FakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { waitFor } from '../../src/testkit/timing';
@@ -45,7 +45,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
@@ -135,7 +135,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));

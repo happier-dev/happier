@@ -7,6 +7,147 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MobileMaestroDeps } from './mobileMaestroRunner';
 
 describe('mobileMaestroRunner', () => {
+  it('keeps a host Metro digest plus a passing module probe blocked until the selected device reports a matching digest', async () => {
+    const { runMobileMaestro } = await import('./mobileMaestroRunner');
+    const events: string[] = [];
+    const startDevClientMetro = vi.fn(async () => ({
+      baseUrl: 'http://127.0.0.1:8085',
+      port: 8085,
+      stop: vi.fn(async () => {}),
+    }));
+    const runMaestro = vi.fn(async (params: { args: string[] }) => {
+      const flowIndex = params.args.findIndex((arg) => arg === 'test') + 1;
+      events.push(params.args[flowIndex] ?? 'missing-flow');
+      return { exitCode: 0 };
+    });
+    const captureMetroBundleIdentity = vi.fn(async () => ({
+      url: 'http://127.0.0.1:8085/apps/ui/index.ts.bundle?platform=ios&dev=false',
+      revision: 'sha256:row-local-metro-bundle',
+    }));
+
+    const result = await runMobileMaestro(
+      {
+        argv: [
+          'node',
+          'script',
+          '--platform',
+          'ios',
+          '--flows',
+          'suites/mobile-e2e/flows/plugin-platform-candidate/online-install-and-inspector.yaml',
+          '--appId',
+          'dev.happier.app.publicdev.devclient',
+          '--serverUrl',
+          'http://127.0.0.1:26050',
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HAPPIER_E2E_IOS_SIMULATOR_LOG_CAPTURE: '0',
+          HAPPIER_E2E_MOBILE_MANAGE_METRO: '1',
+          HAPPIER_E2E_MOBILE_WARM_DEV_CLIENT_BUNDLE: '0',
+          HAPPIER_E2E_UCX_NATIVE_LOADED_IDENTITY: '1',
+        },
+      },
+      {
+        startDevClientMetro,
+        runMaestro,
+        isAppInstalled: vi.fn(async () => true),
+        adbReversePorts: vi.fn(() => ({ enabled: false, reversedPorts: [] })),
+        captureMetroBundleIdentity,
+      },
+    );
+
+    expect(startDevClientMetro).toHaveBeenCalledWith(expect.objectContaining({
+      extraEnv: expect.objectContaining({
+        HAPPIER_E2E_EXPO_NO_DEV: '1',
+      }),
+    }));
+    expect(events).toEqual([
+      'suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml',
+      'suites/mobile-e2e/flows/plugin-platform-candidate/online-install-and-inspector.yaml',
+    ]);
+    expect(captureMetroBundleIdentity).toHaveBeenCalledWith({
+      platform: 'ios',
+      hostMetroUrl: 'http://127.0.0.1:8085',
+      deviceMetroUrl: 'http://127.0.0.1:8085',
+    });
+    expect(result.ucxLoadedNativeRuntime).toMatchObject({
+      kind: 'blocked',
+      code: 'device_loaded_bundle_identity_unavailable',
+      support: {
+        servedBundle: {
+          url: 'http://127.0.0.1:8085/apps/ui/index.ts.bundle?platform=ios&dev=false',
+          revision: 'sha256:row-local-metro-bundle',
+        },
+        moduleProbe: {
+          flow: 'suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml',
+          status: 'passed',
+        },
+      },
+    });
+    expect(result.ucxLoadedNativeRuntime?.kind).not.toBe('observed');
+  });
+
+  it('uses the Stack-selected dev-client identity for each platform before install preflight', async () => {
+    const { runMobileMaestro } = await import('./mobileMaestroRunner');
+
+    const cases = [
+      {
+        platform: 'ios' as const,
+        profile: 'internaldev',
+        expectedAppId: 'dev.happier.app.dev.internal.devclient',
+      },
+      {
+        platform: 'android' as const,
+        profile: 'publicdev',
+        expectedAppId: 'dev.happier.app.publicdev.devclient',
+      },
+    ];
+
+    for (const testCase of cases) {
+      const isAppInstalled = vi.fn(async () => true);
+      const runMaestro = vi.fn(async () => ({ exitCode: 0 }));
+
+      await runMobileMaestro(
+        {
+          argv: [
+            'node',
+            'script',
+            '--platform',
+            testCase.platform,
+            '--flows',
+            'suites/mobile-e2e/flows/F1.bootAndCreateAccount.yaml',
+            '--serverUrl',
+            'http://127.0.0.1:26050',
+          ],
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            HAPPIER_STACK_DEV_CLIENT_PROFILE: testCase.profile,
+            HAPPIER_E2E_MOBILE_MANAGE_METRO: '0',
+            HAPPIER_E2E_IOS_SIMULATOR_LOG_CAPTURE: '0',
+          },
+        },
+        {
+          runMaestro,
+          isAppInstalled,
+          adbReversePorts: vi.fn(() => ({ enabled: false, reversedPorts: [] })),
+          primeAppLaunch: vi.fn(async () => {}),
+        },
+      );
+
+      expect(isAppInstalled).toHaveBeenCalledWith(expect.objectContaining({
+        platform: testCase.platform,
+        appId: testCase.expectedAppId,
+      }));
+      expect(runMaestro).toHaveBeenCalledWith(expect.objectContaining({
+        args: expect.arrayContaining([
+          `HAPPIER_E2E_MOBILE_APP_ID=${testCase.expectedAppId}`,
+        ]),
+      }));
+    }
+  });
+
   it('targets and records the configured iOS simulator identity', async () => {
     const { runMobileMaestro } = await import('./mobileMaestroRunner');
     const runMaestro = vi.fn(async () => ({ exitCode: 0 }));
@@ -419,6 +560,28 @@ describe('mobileMaestroRunner', () => {
     expect(loggedArgs.join(' ')).not.toContain(accountSecret);
     expect(loggedArgs.join(' ')).toContain(
       'HAPPIER_E2E_PACKED_NOVEL_ACCOUNT_SECRET=[redacted:HAPPIER_E2E_PACKED_NOVEL_ACCOUNT_SECRET]',
+    );
+  });
+
+  it('redacts schema-v2 Triage GitHub credentials from logged Maestro arguments', async () => {
+    const { redactSensitiveMaestroCommandArgsForLog } = await import('./mobileMaestroRunner');
+    const githubToken = 'schema-v2-github-token-that-must-not-be-logged';
+
+    const loggedArgs = redactSensitiveMaestroCommandArgsForLog(
+      [
+        'test',
+        'ucx-normal-triage-voice.yaml',
+        '-e',
+        `HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN=${githubToken}`,
+      ],
+      {
+        HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN: githubToken,
+      },
+    );
+
+    expect(loggedArgs.join(' ')).not.toContain(githubToken);
+    expect(loggedArgs.join(' ')).toContain(
+      'HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN=[redacted:HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN]',
     );
   });
 

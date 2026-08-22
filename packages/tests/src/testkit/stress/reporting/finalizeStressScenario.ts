@@ -24,7 +24,7 @@ function classifyFailure(error: unknown): 'none' | 'flaky' | 'deterministic' | '
   if (error instanceof Error && /^FLAKY:/u.test(error.message)) {
     return 'flaky';
   }
-  if (error instanceof Error && error.message.trim().length > 0) {
+  if (error instanceof Error && /^DETERMINISTIC:/u.test(error.message)) {
     return 'deterministic';
   }
   return 'unknown';
@@ -77,8 +77,11 @@ export async function finalizeStressScenario(params: {
     summaryOutputPath: params.config.artifacts.summaryOutputPath,
   });
 
-  if (params.status === 'failed') {
+  if (params.status === 'failed' || params.config.artifacts.saveArtifactsOnSuccess) {
     await params.target.collectDiagnostics();
+  }
+
+  if (params.status === 'failed') {
     if (shouldPreserveTopologyOnFailure(params.config)) {
       params.target.preserveForInspection();
     }

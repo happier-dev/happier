@@ -32,7 +32,7 @@ import {
 
 import { upsertEncryptedAccountSettingsV2 } from './accountSettings';
 import { createTestAuth, type TestAuth } from './auth';
-import { seedCliAuthForServer } from './cliAuth';
+import { seedCliAuthForTestAccount } from './cliAuth';
 import { daemonControlPostJson } from './daemon/controlServerClient';
 import { fetchJson } from './http';
 import { writeTestManifestForServer } from './manifestForServer';
@@ -552,12 +552,12 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
   await mkdir(daemonHomeDir, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
 
-  const secret = Uint8Array.from(randomBytes(32));
-  const { serverId } = await seedCliAuthForServer({
+  const secret = auth.accountSigningSeed;
+  const { serverId } = await seedCliAuthForTestAccount({
     cliHome: daemonHomeDir,
     serverUrl: server.baseUrl,
-    token: auth.token,
-    secret,
+    auth,
+    mode: 'legacy',
   });
 
   await upsertEncryptedAccountSettingsV2({

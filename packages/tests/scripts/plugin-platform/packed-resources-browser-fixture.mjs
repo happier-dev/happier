@@ -24,7 +24,8 @@ export function buildPackedResourcesBrowserManifest({
         title: 'Read packed resources',
         scopes: ['global'],
         surfaces: ['ui'],
-        placement: 'commandPalette',
+        execution: { target: 'daemon' },
+        placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
       }],
       resources: [{
@@ -53,35 +54,6 @@ export function buildPackedResourcesBrowserManifest({
         path: 'resources/config.json',
         contentType: 'application/json',
       }],
-      browserTargets: [{
-        id: 'preview',
-        title: 'Packed resources preview',
-        url: 'https://preview.example.test/',
-        launch: 'currentView',
-        profile: 'user',
-      }],
-      browserActions: [{
-        id: 'preview-toolbar',
-        title: 'Read packed resources',
-        action: 'roundtrip',
-        target: 'preview',
-        placement: 'toolbar',
-        icon: 'play-outline',
-      }, {
-        id: 'preview-details',
-        title: 'Inspect packed resources',
-        action: 'roundtrip',
-        target: 'preview',
-        placement: 'detailsPanel',
-        icon: 'search-outline',
-      }, {
-        id: 'preview-context',
-        title: 'Use packed resources',
-        action: 'roundtrip',
-        target: 'preview',
-        placement: 'contextMenu',
-        icon: 'copy-outline',
-      }],
     },
   };
 }
@@ -103,7 +75,7 @@ export function buildPackedResourcesBrowserRuntimeSource({
   return [
     "import { appendFileSync } from 'node:fs';",
     "import type { PluginApi } from '@happier-dev/plugin-sdk';",
-    "import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';",
+    "import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';",
     '',
     `const pluginId = ${JSON.stringify(pluginId)};`,
     `const pluginVersion = ${JSON.stringify(version)};`,

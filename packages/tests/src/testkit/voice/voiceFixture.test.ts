@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
     matchesVoiceFixtureTranscript,
+    measureVoiceWavDurationMs,
     normalizeVoiceFixtureTranscript,
     parseVoiceFixturePcm16Wav,
     parseVoiceFixtureManifest,
@@ -60,7 +61,10 @@ function createPcmWav(overrides: Readonly<{
     const blockAlign = overrides.blockAlign ?? channels * bitsPerSample / 8;
     const pcmBytes = overrides.pcmBytes ?? Buffer.alloc(32);
     const dataChunks = overrides.duplicateData ? [pcmBytes, pcmBytes] : [pcmBytes];
-    const totalBytes = 12 + 24 + dataChunks.reduce((sum, bytes) => sum + 8 + bytes.byteLength, 0);
+    const totalBytes = 12 + 24 + dataChunks.reduce(
+        (sum, bytes) => sum + 8 + bytes.byteLength + (bytes.byteLength % 2),
+        0,
+    );
     const wav = Buffer.alloc(totalBytes);
     let offset = 0;
     wav.write(overrides.riffId ?? 'RIFF', offset, 'ascii');
@@ -80,7 +84,7 @@ function createPcmWav(overrides: Readonly<{
         wav.write('data', offset, 'ascii');
         wav.writeUInt32LE(bytes.byteLength, offset + 4);
         bytes.copy(wav, offset + 8);
-        offset += 8 + bytes.byteLength;
+        offset += 8 + bytes.byteLength + (bytes.byteLength % 2);
     }
     return wav;
 }
@@ -144,6 +148,30 @@ describe('voice fixture testkit', () => {
         expect(fixture.pcm16Bytes.byteLength).toBeGreaterThan(100_000);
         expect(fixture.pcm16Bytes.byteLength % 2).toBe(0);
         expect(Buffer.from(fixture.pcm16Bytes.subarray(0, 4)).toString('ascii')).not.toBe('RIFF');
+    });
+
+    it('measures a custom WAV duration from its container metadata without requiring a fixture manifest entry', () => {
+        expect(measureVoiceWavDurationMs(createPcmWav({
+            sampleRate: 8_000,
+            pcmBytes: Buffer.alloc(16_000),
+        }))).toBe(1_000);
+    });
+
+    it('rejects non-canonical custom WAV duration inputs instead of trusting byteRate', () => {
+        const malformedWavs = [
+            createPcmWav({ audioFormat: 3 }),
+            createPcmWav({ channels: 2 }),
+            createPcmWav({ bitsPerSample: 8 }),
+            createPcmWav({ blockAlign: 4 }),
+            createPcmWav({ byteRate: 1 }),
+            createPcmWav({ pcmBytes: Buffer.alloc(31) }),
+            createPcmWav({ pcmBytes: Buffer.alloc(0) }),
+            createPcmWav({ duplicateData: true }),
+        ];
+
+        for (const wav of malformedWavs) {
+            expect(() => measureVoiceWavDurationMs(wav)).toThrow(/voice fixture/);
+        }
     });
 
     it('rejects non-canonical, inconsistent, duplicate, and truncated PCM WAV containers', () => {

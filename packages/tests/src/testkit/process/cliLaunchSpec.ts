@@ -11,6 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 import {
@@ -20,6 +21,7 @@ import {
 
 import { repoRootDir } from '../paths';
 import {
+  ensureCliBundledPluginProjectionsCurrent,
   ensureCliDistSnapshotEntrypoint,
   ensureCliSharedDepsBuilt,
   ensureCliSourceDevSharedDepsCurrent,
@@ -37,6 +39,7 @@ export type CliTestLaunchSpec = Readonly<{
   args: string[];
   cwd?: string;
   env?: Readonly<Record<string, string | undefined>>;
+  cleanup?: () => void | Promise<void>;
 }>;
 
 export async function resolveCliTestLaunchSpecOrOverride(
@@ -64,7 +67,9 @@ function resolveCliTsconfigPath(snapshotDir: string): string {
 }
 
 function resolvePreparedDistSnapshotEntrypoint(snapshotDir: string): string {
-  const entrypoint = resolve(snapshotDir, 'dist', 'index.mjs');
+  const packageEntrypoint = resolve(snapshotDir, 'dist', 'index.mjs');
+  const releaseEntrypoint = resolve(snapshotDir, 'package-dist', 'index.mjs');
+  const entrypoint = existsSync(packageEntrypoint) ? packageEntrypoint : releaseEntrypoint;
   const readyMarker = resolve(snapshotDir, '.cli-dist-snapshot.ready.json');
   const nodeModulesDir = resolve(snapshotDir, 'node_modules');
   if (!existsSync(readyMarker) || !existsSync(entrypoint) || !existsSync(nodeModulesDir)) {
@@ -374,13 +379,20 @@ function publishCliSourceSnapshotAdmission(snapshotDir: string, rootDir: string)
   );
 }
 
-function publishCliSourceCopySnapshot(snapshotDir: string, rootDir: string): string {
+function publishCliSourceCopySnapshot(
+  snapshotDir: string,
+  rootDir: string,
+): Readonly<{ snapshotDir: string; cleanup: () => Promise<void> }> {
   sourceSnapshotGeneration += 1;
   const generationSuffix = `${process.pid}-${Date.now()}-${sourceSnapshotGeneration}`;
-  const publishedSnapshotDir = `${snapshotDir}-source-${generationSuffix}`;
+  const snapshotParentDir = dirname(snapshotDir);
+  const publishedSnapshotDir = resolve(
+    snapshotParentDir,
+    `cli-source-snapshot-source-${generationSuffix}`,
+  );
   const stagingSnapshotDir = `${publishedSnapshotDir}.source-snapshot-tmp.${generationSuffix}`;
 
-  mkdirSync(dirname(snapshotDir), { recursive: true });
+  mkdirSync(snapshotParentDir, { recursive: true });
   rmSync(stagingSnapshotDir, { recursive: true, force: true });
   try {
     materializeCliSourceSnapshot(stagingSnapshotDir, rootDir, 'copy');
@@ -391,7 +403,10 @@ function publishCliSourceCopySnapshot(snapshotDir: string, rootDir: string): str
     }
     publishCliSourceSnapshotAdmission(stagingSnapshotDir, rootDir);
     renameSync(stagingSnapshotDir, publishedSnapshotDir);
-    return publishedSnapshotDir;
+    return {
+      snapshotDir: publishedSnapshotDir,
+      cleanup: async () => await rm(publishedSnapshotDir, { recursive: true, force: true }),
+    };
   } catch (error) {
     rmSync(stagingSnapshotDir, { recursive: true, force: true });
     throw error;
@@ -421,8 +436,9 @@ async function resolveCliSourceLaunchSpec(
   };
 
   let snapshotDir: string;
+  let cleanup: (() => Promise<void>) | undefined;
   if (snapshotNodeModulesMode === 'copy') {
-    snapshotDir = await withWorkspaceBundleLock(
+    const publishedSnapshot = await withWorkspaceBundleLock(
       async ({ heldLockValue }) => {
         const lockedEnv = {
           ...params.env,
@@ -439,40 +455,68 @@ async function resolveCliSourceLaunchSpec(
             },
           );
         }
+        await ensureCliBundledPluginProjectionsCurrent(
+          { ...params, env: lockedEnv },
+          {
+            repoRoot: rootDir,
+            runCommand: options.runCommand,
+            buildTimeoutMs: options.buildTimeoutMs,
+          },
+        );
         return publishCliSourceCopySnapshot(options.snapshotDir, rootDir);
       },
       {
         lockPath: resolveWorkspaceBundleLockPath(rootDir),
+        heldLockValue: params.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
         timeoutMs: options.timeoutMs,
         pollIntervalMs: options.pollIntervalMs,
         staleAfterMs: options.staleAfterMs,
         errorLabel: 'CLI source snapshot dependency-closure lock',
       },
     );
+    snapshotDir = publishedSnapshot.snapshotDir;
+    cleanup = publishedSnapshot.cleanup;
   } else {
     await ensureSharedDeps(params.env);
     snapshotDir = options.snapshotDir;
     materializeCliSourceSnapshot(snapshotDir, rootDir, snapshotNodeModulesMode);
   }
 
-  const sourceEntrypoint = resolveCliSnapshotSourceEntrypoint(snapshotDir);
-  if (!existsSync(sourceEntrypoint)) {
-    throw new Error(`CLI source entrypoint missing for test launch: ${sourceEntrypoint}`);
-  }
+  try {
+    const sourceEntrypoint = resolveCliSnapshotSourceEntrypoint(snapshotDir);
+    if (!existsSync(sourceEntrypoint)) {
+      throw new Error(`CLI source entrypoint missing for test launch: ${sourceEntrypoint}`);
+    }
 
-  const tsxHookSpecifier = resolveTsxImportHookSpecifier();
-  if (!tsxHookSpecifier) {
-    throw new Error('tsx import hook is required for CLI source entrypoint mode but could not be resolved');
-  }
+    const tsxHookSpecifier = resolveTsxImportHookSpecifier();
+    if (!tsxHookSpecifier) {
+      throw new Error('tsx import hook is required for CLI source entrypoint mode but could not be resolved');
+    }
 
-  return {
-    command: process.execPath,
-    args: ['--preserve-symlinks', '--preserve-symlinks-main', '--import', tsxHookSpecifier, sourceEntrypoint],
-    cwd: snapshotDir,
-    env: {
-      TSX_TSCONFIG_PATH: resolveCliTsconfigPath(snapshotDir),
-    },
-  };
+    return {
+      command: process.execPath,
+      args: ['--preserve-symlinks', '--preserve-symlinks-main', '--import', tsxHookSpecifier, sourceEntrypoint],
+      cwd: snapshotDir,
+      env: {
+        TSX_TSCONFIG_PATH: resolveCliTsconfigPath(snapshotDir),
+      },
+      ...(cleanup ? { cleanup } : {}),
+    };
+  } catch (error) {
+    try {
+      await cleanup?.();
+    } catch (cleanupError) {
+      const primary = error instanceof Error ? error : new Error(String(error));
+      const cleanupFailure = cleanupError instanceof Error
+        ? cleanupError
+        : new Error(String(cleanupError));
+      throw new AggregateError(
+        [primary, cleanupFailure],
+        'CLI source launch-spec publication and cleanup failed',
+      );
+    }
+    throw error;
+  }
 }
 
 export function shouldUseCliSourceEntrypoint(env: NodeJS.ProcessEnv): boolean {

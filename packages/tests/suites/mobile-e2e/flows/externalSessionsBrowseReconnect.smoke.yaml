@@ -1,0 +1,120 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# External Sessions mobile smoke.
+#
+# This flow deliberately preserves the authenticated app state. The later
+# controlled-stack run must provide one reachable machine and one external
+# candidate; the flow discovers the first available Agent/source/candidate at
+# runtime and never embeds account, machine, Session, or remote-session IDs.
+#
+# This is a structural/runtime smoke, not a screen-reader certification. The
+# Maestro harness can verify testIDs and visible state, but it cannot prove the
+# platform announcement semantics of an accessibility tree.
+- launchApp:
+    clearState: false
+    clearKeychain: false
+
+- runFlow:
+    file: _shared/connectUsingLaunchUrl.yaml
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/dismissAndroidSystemNotRespondingDialogMaybe.yaml
+- runFlow:
+    file: _shared/dismissDeveloperMenuMaybe.yaml
+- runFlow:
+    file: _shared/dismissExpoDevMenuOverlayMaybe.yaml
+
+# Enter the canonical Browse route without depending on a translated label or
+# on the session-list storage mode currently selected by the account.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///external/browse
+- runFlow:
+    file: _shared/acceptIosOpenInPromptMaybe.yaml
+- runFlow:
+    file: _shared/acceptAndroidOpenWithPromptMaybe.yaml
+
+- extendedWaitUntil:
+    visible:
+      id: direct-sessions-browse-modal
+    timeout: 240000
+
+# Select the first projected Agent and source currently available to this
+# controlled stack. Dropdown option IDs are generated from runtime IDs, so the
+# regex keeps this flow independent of Agent and connected-service identities.
+- tapOn:
+    id: direct-session-provider-picker-trigger
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+- extendedWaitUntil:
+    visible:
+      id: "dropdown-option-.*"
+    timeout: 120000
+- tapOn:
+    id: "dropdown-option-.*"
+    index: 0
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+- tapOn:
+    id: direct-session-source-picker-trigger
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+- extendedWaitUntil:
+    visible:
+      id: "dropdown-option-.*"
+    timeout: 120000
+- tapOn:
+    id: "dropdown-option-.*"
+    index: 0
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+# The first candidate is intentionally dynamic. A candidate row proves that
+# Browse reached the projected source; its Agent sub-row preserves source
+# identity evidence before linking it.
+- extendedWaitUntil:
+    visible:
+      id: direct-session-candidates
+    timeout: 240000
+- extendedWaitUntil:
+    visible:
+      id: "external-session-candidate-agent:.*"
+    timeout: 240000
+- tapOn:
+    id: "direct-session-candidate:.*"
+    index: 0
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+# A linked external Session may either render at least one transcript row or
+# honestly expose the typed unavailable/discontinuity banner. The controlled
+# fixture must therefore contain a non-empty transcript; an unresolved read
+# must not fall through to an authoritative empty-state surface.
+- extendedWaitUntil:
+    visible:
+      id: '(transcript-item-.*|session\.externalTranscript\.loadIssue)'
+    timeout: 240000
+- assertNotVisible:
+    id: session-empty-messages
+
+# Background/foreground is the smallest mobile lifecycle discriminator that
+# does not require a hard-coded linked Session route. Relaunch must restore the
+# same external Session and preserve either transcript or typed failure state.
+- pressKey: HOME
+- launchApp:
+    clearState: false
+    clearKeychain: false
+- runFlow:
+    file: _shared/dismissAndroidSystemNotRespondingDialogMaybe.yaml
+- runFlow:
+    file: _shared/dismissDeveloperMenuMaybe.yaml
+- runFlow:
+    file: _shared/dismissExpoDevMenuOverlayMaybe.yaml
+- extendedWaitUntil:
+    visible:
+      id: '(transcript-item-.*|session\.externalTranscript\.loadIssue)'
+    timeout: 240000
+- assertNotVisible:
+    id: session-empty-messages

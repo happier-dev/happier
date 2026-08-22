@@ -69,6 +69,17 @@ const isSdkStreamJson = isStreamJson && inputFormat === 'stream-json';
 const hasPrint = argv.includes('--print');
 const mode = isSdkStreamJson ? 'sdk' : 'local';
 const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
+const runtimeContinuityReleaseFile =
+  process.env.HAPPIER_E2E_FAKE_CLAUDE_RUNTIME_CONTINUITY_RELEASE_FILE || '';
+
+async function waitForRuntimeContinuityReleaseFile() {
+  if (!runtimeContinuityReleaseFile) {
+    throw new Error('HAPPIER_E2E_FAKE_CLAUDE_RUNTIME_CONTINUITY_RELEASE_FILE is required');
+  }
+  while (!fs.existsSync(runtimeContinuityReleaseFile)) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+}
 
 function resolveClaudeConfigDir() {
   const explicit = String(process.env.CLAUDE_CONFIG_DIR || '').trim();
@@ -168,6 +179,8 @@ async function runSdkStreamUntilEof() {
   const rl = readline.createInterface({ input: process.stdin });
   let initialized = false;
   let turn = 0;
+  let triageCurrentUiPhase = null;
+  let stagedTriageCurrentUiCommand = null;
 
   function emitSdk(obj) {
     process.stdout.write(`${JSON.stringify(obj)}\n`);
@@ -323,6 +336,60 @@ async function runSdkStreamUntilEof() {
       uuid: randomUUID(),
       session_id: sessionId,
     };
+  }
+
+  function extractVoiceToolResults(promptText) {
+    const marker = 'VOICE_TOOL_RESULTS_JSON:';
+    const markerIndex = String(promptText).indexOf(marker);
+    if (markerIndex < 0) return null;
+
+    const raw = String(promptText).slice(markerIndex + marker.length).trim();
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed?.toolResults) ? parsed.toolResults : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function resolveCurrentUiReadEvidence(toolResults) {
+    if (!Array.isArray(toolResults)) return null;
+    const readResult = toolResults.find((toolResult) => toolResult?.t === 'readCurrentUiContext')?.result;
+    const commands = Array.isArray(readResult?.commands) ? readResult.commands : [];
+    const openIssueB = commands.find((command) => command?.title === 'Open issue B');
+    const command = openIssueB || commands.find((candidate) => typeof candidate?.id === 'string');
+    const commandId = typeof command?.id === 'string' ? command.id : null;
+    if (!commandId) return null;
+    const commandTitle = typeof command?.title === 'string' ? command.title : commandId;
+    const entity = readResult?.entity;
+    const entityTitle = typeof entity?.label === 'string'
+      ? entity.label
+      : typeof entity?.title === 'string'
+        ? entity.title
+        : null;
+    return { commandId, commandTitle, entityTitle };
+  }
+
+  function resolveCurrentUiInvocationErrorCode(toolResults) {
+    if (!Array.isArray(toolResults)) return null;
+    const result = toolResults.find((toolResult) => toolResult?.t === 'invokeCurrentUiCommand')?.result;
+    return typeof result?.errorCode === 'string' ? result.errorCode : null;
+  }
+
+  function emitVoiceActions(text, actions) {
+    emitSdk(createAssistantMessage([
+      {
+        type: 'text',
+        text: [
+          text,
+          '',
+          '<voice_actions>',
+          JSON.stringify({ actions }),
+          '</voice_actions>',
+        ].join('\n'),
+      },
+    ]));
+    emitSdk(createResultSuccess());
   }
 
   for await (const line of rl) {
@@ -834,6 +901,263 @@ async function runSdkStreamUntilEof() {
       emitSdk(assistant);
       emitSdk(createResultSuccess());
       continue;
+    }
+
+    if (scenario === 'voice-current-ui-triage') {
+      if (promptText.includes('CURRENT UI CONTEXT')) {
+        safeAppendJsonl(logPath, {
+          type: 'triage_current_ui_automatic_update_received',
+          invocationId,
+          sessionId,
+          turn,
+          ts: Date.now(),
+        });
+        emitSdk(createAssistantMessage([
+          { type: 'text', text: 'UCX Voice automatic navigation context received.' },
+        ]));
+        emitSdk(createResultSuccess());
+        continue;
+      }
+
+      const toolResults = extractVoiceToolResults(promptText);
+      if (toolResults) {
+        if (triageCurrentUiPhase?.kind === 'await_stale_command_stage') {
+          const evidence = resolveCurrentUiReadEvidence(toolResults);
+          triageCurrentUiPhase = null;
+          if (!evidence) {
+            emitSdk(createAssistantMessage([
+              { type: 'text', text: 'UCX Voice could not stage a current UI command.' },
+            ]));
+            emitSdk(createResultSuccess());
+            continue;
+          }
+          stagedTriageCurrentUiCommand = evidence;
+          safeAppendJsonl(logPath, {
+            type: 'triage_current_ui_stale_command_staged',
+            invocationId,
+            sessionId,
+            turn,
+            ts: Date.now(),
+            commandId: evidence.commandId,
+            commandTitle: evidence.commandTitle,
+            entityTitle: evidence.entityTitle,
+          });
+          emitSdk(createAssistantMessage([
+            {
+              type: 'text',
+              text: `UCX Voice staged ${evidence.entityTitle ?? 'current UI'} → ${evidence.commandTitle} for stale check.`,
+            },
+          ]));
+          emitSdk(createResultSuccess());
+          continue;
+        }
+
+        if (triageCurrentUiPhase?.kind === 'await_stale_command_result') {
+          const command = triageCurrentUiPhase.command;
+          const errorCode = resolveCurrentUiInvocationErrorCode(toolResults);
+          triageCurrentUiPhase = null;
+          stagedTriageCurrentUiCommand = null;
+          if (errorCode === 'stale_surface') {
+            safeAppendJsonl(logPath, {
+              type: 'triage_current_ui_stale_command_refused',
+              invocationId,
+              sessionId,
+              turn,
+              ts: Date.now(),
+              commandId: command.commandId,
+              commandTitle: command.commandTitle,
+              entityTitle: command.entityTitle,
+              errorCode,
+            });
+            emitSdk(createAssistantMessage([
+              { type: 'text', text: 'UCX Voice refused stale current UI command: stale_surface.' },
+            ]));
+            emitSdk(createResultSuccess());
+            continue;
+          }
+          safeAppendJsonl(logPath, {
+            type: 'triage_current_ui_stale_command_result_received',
+            invocationId,
+            sessionId,
+            turn,
+            ts: Date.now(),
+            commandId: command.commandId,
+            errorCode,
+          });
+          emitSdk(createAssistantMessage([
+            { type: 'text', text: 'UCX Voice received an unexpected stale current UI command result.' },
+          ]));
+          emitSdk(createResultSuccess());
+          continue;
+        }
+
+        if (triageCurrentUiPhase?.kind === 'await_read_result') {
+          const evidence = resolveCurrentUiReadEvidence(toolResults);
+          const commandId = evidence?.commandId;
+          if (!commandId || !evidence) {
+            triageCurrentUiPhase = null;
+            emitSdk(createAssistantMessage([
+              { type: 'text', text: 'UCX Voice could not resolve a current UI command.' },
+            ]));
+            emitSdk(createResultSuccess());
+            continue;
+          }
+
+          if (!triageCurrentUiPhase.shouldInvoke) {
+            triageCurrentUiPhase = null;
+            emitSdk(createAssistantMessage([
+              { type: 'text', text: 'UCX Voice read the current UI context.' },
+            ]));
+            emitSdk(createResultSuccess());
+            continue;
+          }
+
+          if (triageCurrentUiPhase.delayed) {
+            safeAppendJsonl(logPath, {
+              type: 'triage_current_ui_delayed_command_ready',
+              invocationId,
+              sessionId,
+              turn,
+              ts: Date.now(),
+              commandId,
+              commandTitle: evidence.commandTitle,
+              entityTitle: evidence.entityTitle,
+            });
+            await waitForRuntimeContinuityReleaseFile();
+          }
+          safeAppendJsonl(logPath, {
+            type: 'triage_current_ui_command_requested',
+            invocationId,
+            sessionId,
+            turn,
+            ts: Date.now(),
+            commandId,
+            commandTitle: evidence.commandTitle,
+            entityTitle: evidence.entityTitle,
+          });
+          triageCurrentUiPhase = { kind: 'await_command_result' };
+          emitVoiceActions('UCX Voice is invoking the current UI command.', [
+            { t: 'invokeCurrentUiCommand', args: { commandId } },
+          ]);
+          continue;
+        }
+
+        if (triageCurrentUiPhase?.kind === 'await_command_result') {
+          safeAppendJsonl(logPath, {
+            type: 'triage_current_ui_command_result_received',
+            invocationId,
+            sessionId,
+            turn,
+            ts: Date.now(),
+          });
+          triageCurrentUiPhase = null;
+          emitSdk(createAssistantMessage([
+            { type: 'text', text: 'UCX Voice current UI command completed.' },
+          ]));
+          emitSdk(createResultSuccess());
+          continue;
+        }
+
+        emitSdk(createAssistantMessage([
+          { type: 'text', text: 'UCX Voice received an unexpected current UI tool result.' },
+        ]));
+        emitSdk(createResultSuccess());
+        continue;
+      }
+
+      if (promptText.includes('UCX_VOICE_OFF')) {
+        safeAppendJsonl(logPath, {
+          type: 'triage_current_ui_off_received',
+          invocationId,
+          sessionId,
+          turn,
+          ts: Date.now(),
+        });
+        emitSdk(createAssistantMessage([
+          { type: 'text', text: 'UCX Voice privacy is off.' },
+        ]));
+        emitSdk(createResultSuccess());
+        continue;
+      }
+
+      if (promptText.includes('UCX_VOICE_STAGE_STALE_A')) {
+        triageCurrentUiPhase = { kind: 'await_stale_command_stage' };
+        safeAppendJsonl(logPath, {
+          type: 'triage_current_ui_stale_command_stage_read_requested',
+          invocationId,
+          sessionId,
+          turn,
+          ts: Date.now(),
+        });
+        emitVoiceActions('UCX Voice is reading the current UI context to stage a command.', [
+          { t: 'readCurrentUiContext', args: {} },
+        ]);
+        continue;
+      }
+
+      if (promptText.includes('UCX_VOICE_INVOKE_STALE_A')) {
+        const command = stagedTriageCurrentUiCommand;
+        if (!command) {
+          emitSdk(createAssistantMessage([
+            { type: 'text', text: 'UCX Voice has no staged current UI command.' },
+          ]));
+          emitSdk(createResultSuccess());
+          continue;
+        }
+        safeAppendJsonl(logPath, {
+          type: 'triage_current_ui_stale_command_requested',
+          invocationId,
+          sessionId,
+          turn,
+          ts: Date.now(),
+          commandId: command.commandId,
+          commandTitle: command.commandTitle,
+          entityTitle: command.entityTitle,
+        });
+        triageCurrentUiPhase = { kind: 'await_stale_command_result', command };
+        emitVoiceActions('UCX Voice is invoking the staged current UI command.', [
+          { t: 'invokeCurrentUiCommand', args: { commandId: command.commandId } },
+        ]);
+        continue;
+      }
+
+      const delayed = promptText.includes('UCX_VOICE_DELAYED_STALE_A');
+      const shouldInvoke = delayed || promptText.includes('UCX_VOICE_OPEN_B');
+      if (
+        delayed
+        || promptText.includes('UCX_VOICE_READ_A')
+        || promptText.includes('UCX_VOICE_OPEN_B')
+      ) {
+        triageCurrentUiPhase = { kind: 'await_read_result', delayed, shouldInvoke };
+        safeAppendJsonl(logPath, {
+          type: 'triage_current_ui_read_requested',
+          invocationId,
+          sessionId,
+          turn,
+          ts: Date.now(),
+          delayed,
+        });
+        emitVoiceActions('UCX Voice is reading the current UI context.', [
+          { t: 'readCurrentUiContext', args: {} },
+        ]);
+        continue;
+      }
+    }
+
+    if (
+      scenario === 'daemon-runtime-continuity'
+      && promptText.includes('DAEMON_RUNTIME_CONTINUITY_HOLD_')
+    ) {
+      safeAppendJsonl(logPath, {
+        type: 'runtime_continuity_provider_effect_entered',
+        invocationId,
+        pid: process.pid,
+        sessionId,
+        turn,
+        ts: Date.now(),
+        userTextPreview: promptText.slice(0, 800),
+      });
+      await waitForRuntimeContinuityReleaseFile();
     }
 
     const assistant = createAssistantMessage([{ type: 'text', text: `FAKE_CLAUDE_OK_${turn}` }]);

@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
@@ -102,7 +102,7 @@ describe('core e2e: Gemini ACP incident contracts', () => {
     await mkdir(fakeBinDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

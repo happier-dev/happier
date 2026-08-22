@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   assertPackedPackageIdentity,
+  assertPackedPluginUiSdkDependency,
   loadPackedAuthorCandidateManifest,
   materializePackedCli,
   readPackedPackageManifest,
@@ -15,6 +16,10 @@ import {
   startCandidateRegistry,
   type PackedAuthorCandidate,
 } from '../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
+import {
+  computePluginUiArtifactFileSetSha256DigestV1,
+  PluginUiArtifactsManifestV1Schema,
+} from '@happier-dev/protocol/plugins/ui';
 import {
   parsePluginsDevChangeLine,
   type PluginsDevChangeEnvelope,
@@ -41,6 +46,11 @@ export const ISOLATED_DAEMON_RESTART_ARGS = Object.freeze([
 const COMMAND_TIMEOUT_MS = 120_000;
 const DEV_STOP_TIMEOUT_MS = 10_000;
 const PLUGIN_ID = 'acme.plugins-dev-live';
+export const PACKED_PLUGINS_DEV_UI_MODES = Object.freeze([
+  'reactNative',
+  'hostedWeb',
+] as const);
+type PackedPluginsDevUiMode = (typeof PACKED_PLUGINS_DEV_UI_MODES)[number];
 
 type CommandResult = Readonly<{
   code: number | null;
@@ -88,6 +98,89 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function loadCandidate(argv: readonly string[]): Promise<PackedAuthorCandidate> {
   return await loadPackedAuthorCandidateManifest(argv);
+}
+
+type PackedPluginsDevCandidateArtifactDeps = Readonly<{
+  readPackedPackageManifest: typeof readPackedPackageManifest;
+  assertPackedPackageIdentity: typeof assertPackedPackageIdentity;
+  assertPackedPluginUiSdkDependency: typeof assertPackedPluginUiSdkDependency;
+  startCandidateRegistry: typeof startCandidateRegistry;
+  materializePackedCli: typeof materializePackedCli;
+}>;
+
+export async function preparePackedPluginsDevCandidateArtifacts(
+  candidate: PackedAuthorCandidate,
+  consumerRoot: string,
+  deps: PackedPluginsDevCandidateArtifactDeps = {
+    readPackedPackageManifest,
+    assertPackedPackageIdentity,
+    assertPackedPluginUiSdkDependency,
+    startCandidateRegistry,
+    materializePackedCli,
+  },
+  onIntegrityVerified: () => void = () => undefined,
+): Promise<Readonly<{
+  candidate: PackedAuthorCandidate;
+  registry: Awaited<ReturnType<typeof startCandidateRegistry>>;
+  cliEntrypoint: string;
+}>> {
+  const [sdkBytes, pluginUiBytes, cliBytes] = await Promise.all([
+    readFile(candidate.sdk.tarballPath),
+    readFile(candidate.pluginUi.tarballPath),
+    readFile(candidate.cli.tarballPath),
+  ]);
+  if (sha512Sri(sdkBytes) !== candidate.sdk.integrity) fail('Packed SDK integrity mismatch');
+  if (sha512Sri(pluginUiBytes) !== candidate.pluginUi.integrity) fail('Packed Plugin UI integrity mismatch');
+  if (sha512Sri(cliBytes) !== candidate.cli.integrity) fail('Packed CLI integrity mismatch');
+  onIntegrityVerified();
+
+  const verifiedSdkTarballPath = join(consumerRoot, 'verified-sdk.tgz');
+  const verifiedPluginUiTarballPath = join(consumerRoot, 'verified-plugin-ui.tgz');
+  const verifiedCliTarballPath = join(consumerRoot, 'verified-cli.tgz');
+  await Promise.all([
+    writeFile(verifiedSdkTarballPath, sdkBytes, { flag: 'wx', mode: 0o600 }),
+    writeFile(verifiedPluginUiTarballPath, pluginUiBytes, { flag: 'wx', mode: 0o600 }),
+    writeFile(verifiedCliTarballPath, cliBytes, { flag: 'wx', mode: 0o600 }),
+  ]);
+  const verifiedCandidate: PackedAuthorCandidate = Object.freeze({
+    ...candidate,
+    sdk: Object.freeze({ ...candidate.sdk, tarballPath: verifiedSdkTarballPath }),
+    pluginUi: Object.freeze({ ...candidate.pluginUi, tarballPath: verifiedPluginUiTarballPath }),
+    cli: Object.freeze({ ...candidate.cli, tarballPath: verifiedCliTarballPath }),
+  });
+  const [sdkManifest, pluginUiManifest] = await Promise.all([
+    deps.readPackedPackageManifest(
+      verifiedCandidate.sdk.tarballPath,
+      join(consumerRoot, 'sdk-artifact'),
+    ),
+    deps.readPackedPackageManifest(
+      verifiedCandidate.pluginUi.tarballPath,
+      join(consumerRoot, 'plugin-ui-artifact'),
+    ),
+  ]);
+  deps.assertPackedPackageIdentity(sdkManifest, verifiedCandidate.sdk, 'Packed SDK');
+  deps.assertPackedPackageIdentity(pluginUiManifest, verifiedCandidate.pluginUi, 'Packed Plugin UI');
+  deps.assertPackedPluginUiSdkDependency(pluginUiManifest, verifiedCandidate.sdk);
+  const registry = await deps.startCandidateRegistry({
+    packages: [
+      { ...verifiedCandidate.sdk, bytes: sdkBytes, packageManifest: sdkManifest },
+      { ...verifiedCandidate.pluginUi, bytes: pluginUiBytes, packageManifest: pluginUiManifest },
+    ],
+  });
+  try {
+    const cliEntrypoint = await deps.materializePackedCli({
+      cliArtifact: verifiedCandidate.cli,
+      installRoot: join(consumerRoot, 'cli-install'),
+    });
+    return Object.freeze({
+      candidate: verifiedCandidate,
+      registry,
+      cliEntrypoint,
+    });
+  } catch (error) {
+    await registry.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 async function runCommand(
@@ -519,7 +612,7 @@ function renderEntrySource(state: PluginState): string {
     "import { randomUUID } from 'node:crypto';",
     "import { appendFileSync } from 'node:fs';",
     "import type { PluginApi } from '@happier-dev/plugin-sdk';",
-    "import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';",
+    "import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';",
     "import { readMessageState } from './lib/message';",
     '',
     `const revisionTag = ${JSON.stringify(state.revisionTag)};`,
@@ -575,7 +668,8 @@ async function configurePlugin(pluginRoot: string, sdkVersion: string, state: Pl
           title: 'Plugin development live probe',
           scopes: ['global'],
           surfaces: ['cli'],
-          placement: 'commandPalette',
+          execution: { target: 'daemon' },
+          placementBindings: ['commandPalette'],
           dangerLevel: 'safe',
         }],
         commands: [{
@@ -860,6 +954,369 @@ async function waitForRejectedChange(params: Readonly<{
   fail('Timed out waiting for the broken development edit to be rejected');
 }
 
+type PackedPluginsDevGeneration = Readonly<{
+  desired: string;
+  applied: string;
+}>;
+
+type PackedPluginsDevUiArtifactEvidence = Readonly<{
+  generation: string;
+  mode: PackedPluginsDevUiMode;
+  contributionId: string;
+  artifacts: readonly Readonly<{
+    platform: 'android' | 'ios' | 'web';
+    digest: string;
+    fileCount: number;
+  }>[];
+}>;
+
+function isPackedPluginsDevUiArtifactPlatform(
+  value: unknown,
+): value is 'android' | 'ios' | 'web' {
+  return value === 'android' || value === 'ios' || value === 'web';
+}
+
+function readRequiredGeneration(value: unknown, label: string): PackedPluginsDevGeneration {
+  if (!isRecord(value) || typeof value.desiredGeneration !== 'string' || typeof value.appliedGeneration !== 'string') {
+    fail(`${label} did not project one desired/applied generation: ${JSON.stringify(value)}`);
+  }
+  if (value.desiredGeneration !== value.appliedGeneration) {
+    fail(`${label} retained a pending generation instead of one applied generation: ${JSON.stringify(value)}`);
+  }
+  return Object.freeze({ desired: value.desiredGeneration, applied: value.appliedGeneration });
+}
+
+async function readPackedPluginsDevCurrentGeneration(params: Readonly<{
+  cliEntrypoint: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  pluginId: string;
+  label: string;
+}>): Promise<PackedPluginsDevGeneration> {
+  const envelope = await runPackedCliJson({
+    cliEntrypoint: params.cliEntrypoint,
+    cwd: params.cwd,
+    env: params.env,
+    args: ['plugins', 'show', params.pluginId, '--json'],
+    expectedKind: 'plugins_show',
+  });
+  const data = isRecord(envelope.data) ? envelope.data : null;
+  return readRequiredGeneration(data?.plugin, params.label);
+}
+
+export async function readPackedPluginsDevUiArtifactEvidence(params: Readonly<{
+  happyHomeDir: string;
+  generation: string;
+  mode: PackedPluginsDevUiMode;
+}>): Promise<PackedPluginsDevUiArtifactEvidence> {
+  if (!/^[0-9A-Za-z._-]+$/u.test(params.generation)) {
+    fail(`Development UI artifact generation is not a safe immutable identifier: ${params.generation}`);
+  }
+  const artifactRoot = join(
+    params.happyHomeDir,
+    'plugins',
+    'plugins',
+    'generations',
+    params.generation,
+    'dist',
+    'happier-plugin-ui',
+  );
+  const graph = PluginUiArtifactsManifestV1Schema.parse(JSON.parse(await readFile(
+    join(artifactRoot, 'ui-artifacts.json'),
+    'utf8',
+  )) as unknown);
+  const tier = params.mode === 'reactNative' ? 'reactNative' : 'hostedWeb';
+  const entries = graph.entries.filter((entry) => entry.tier === tier);
+  const expectedPlatforms = params.mode === 'reactNative'
+    ? ['android', 'ios', 'web']
+    : ['web'];
+  const actualPlatforms = entries.map((entry) => entry.platform).sort();
+  if (JSON.stringify(actualPlatforms) !== JSON.stringify(expectedPlatforms)) {
+    fail(`Development ${params.mode} artifact platforms differ from the generated contract: ${JSON.stringify(actualPlatforms)}`);
+  }
+  const contributionIds = [...new Set(entries.map((entry) => entry.contributionId))];
+  if (contributionIds.length !== 1 || !contributionIds[0]) {
+    fail(`Development ${params.mode} artifacts do not describe one generated surface: ${JSON.stringify(contributionIds)}`);
+  }
+  const artifacts = await Promise.all(entries.map(async (entry) => {
+    const platform = entry.platform;
+    if (!isPackedPluginsDevUiArtifactPlatform(platform)) {
+      fail(`Development ${params.mode} artifact platform is outside the generated contract: ${String(platform)}`);
+    }
+    const files = await Promise.all(entry.files.map(async (file) => Object.freeze({
+      relativePath: file.relativePath,
+      bytes: await readFile(join(artifactRoot, ...file.relativePath.split('/'))),
+    })));
+    const digest = computePluginUiArtifactFileSetSha256DigestV1(files);
+    if (digest !== entry.digest) {
+      fail(`Development ${params.mode} artifact digest did not match emitted bytes for ${entry.platform}`);
+    }
+    return Object.freeze({
+      platform,
+      digest: entry.digest,
+      fileCount: entry.files.length,
+    });
+  }));
+  return Object.freeze({
+    generation: params.generation,
+    mode: params.mode,
+    contributionId: contributionIds[0],
+    artifacts: Object.freeze(artifacts.sort((left, right) => left.platform.localeCompare(right.platform))),
+  });
+}
+
+async function waitForPackedPluginsDevUiProjection(params: Readonly<{
+  stream: DevChangeStream;
+  cliEntrypoint: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  happyHomeDir: string;
+  pluginId: string;
+  mode: PackedPluginsDevUiMode;
+  previousGeneration?: string;
+  label: string;
+}>): Promise<Readonly<{
+  envelope: PluginsDevChangeEnvelope;
+  generation: PackedPluginsDevGeneration;
+  artifact: PackedPluginsDevUiArtifactEvidence;
+}>> {
+  const deadline = Date.now() + PLUGINS_DEV_CHANGE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const envelope = await params.stream.next(Math.max(1, deadline - Date.now()));
+    if (!envelope.ok) {
+      fail(`${params.label} was rejected: ${JSON.stringify(envelope.error)}`);
+    }
+    const generation = await readPackedPluginsDevCurrentGeneration({
+      cliEntrypoint: params.cliEntrypoint,
+      cwd: params.cwd,
+      env: params.env,
+      pluginId: params.pluginId,
+      label: params.label,
+    });
+    if (generation.applied === params.previousGeneration) continue;
+    const artifact = await readPackedPluginsDevUiArtifactEvidence({
+      happyHomeDir: params.happyHomeDir,
+      generation: generation.applied,
+      mode: params.mode,
+    });
+    return Object.freeze({ envelope, generation, artifact });
+  }
+  fail(`Timed out waiting for ${params.label} to project a new ${params.mode} artifact generation`);
+}
+
+async function waitForPackedPluginsDevUiBuildRejection(params: Readonly<{
+  stream: DevChangeStream;
+  cliEntrypoint: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  happyHomeDir: string;
+  pluginId: string;
+  mode: PackedPluginsDevUiMode;
+  preservedGeneration: string;
+  preservedArtifact: PackedPluginsDevUiArtifactEvidence;
+}>): Promise<Readonly<{
+  envelope: Extract<PluginsDevChangeEnvelope, { ok: false }>;
+  generation: PackedPluginsDevGeneration;
+  artifact: PackedPluginsDevUiArtifactEvidence;
+}>> {
+  const deadline = Date.now() + PLUGINS_DEV_CHANGE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const envelope = await params.stream.next(Math.max(1, deadline - Date.now()));
+    if (envelope.ok) {
+      fail(`Invalid ${params.mode} edit was accepted: ${JSON.stringify(envelope.data)}`);
+    }
+    if (envelope.error.code !== 'plugin_dev_ui_build_failed') {
+      fail(`Invalid ${params.mode} edit failed at the wrong stage: ${JSON.stringify(envelope.error)}`);
+    }
+    if (envelope.error.retainedGeneration !== params.preservedGeneration) {
+      fail(`Invalid ${params.mode} edit did not retain the adopted UI generation: ${JSON.stringify(envelope.error)}`);
+    }
+    const generation = await readPackedPluginsDevCurrentGeneration({
+      cliEntrypoint: params.cliEntrypoint,
+      cwd: params.cwd,
+      env: params.env,
+      pluginId: params.pluginId,
+      label: `${params.mode} UI build failure retention`,
+    });
+    if (generation.applied !== params.preservedGeneration) {
+      fail(`Invalid ${params.mode} edit replaced the applied UI generation`);
+    }
+    const artifact = await readPackedPluginsDevUiArtifactEvidence({
+      happyHomeDir: params.happyHomeDir,
+      generation: generation.applied,
+      mode: params.mode,
+    });
+    if (JSON.stringify(artifact) !== JSON.stringify(params.preservedArtifact)) {
+      fail(`Invalid ${params.mode} edit replaced the retained UI artifact graph`);
+    }
+    return Object.freeze({ envelope, generation, artifact });
+  }
+  fail(`Timed out waiting for invalid ${params.mode} UI build rejection`);
+}
+
+function generatedUiSourcePath(pluginRoot: string, mode: PackedPluginsDevUiMode): string {
+  return mode === 'reactNative'
+    ? join(pluginRoot, 'src', 'ui', 'renderSurface.tsx')
+    : join(pluginRoot, 'src', 'ui', 'index.ts');
+}
+
+function editGeneratedUiSource(source: string, mode: PackedPluginsDevUiMode): string {
+  const next = source.replace('Save note', `Save note ${mode} revision two`);
+  if (next === source) {
+    fail(`Generated ${mode} UI source did not contain the expected editable action label`);
+  }
+  return next;
+}
+
+async function assertPackedPluginsDevInstalledUiPair(params: Readonly<{
+  pluginRoot: string;
+  candidate: PackedAuthorCandidate;
+}>): Promise<Readonly<{
+  packageName: string;
+  version: string;
+  pluginSdkVersion: string;
+}>> {
+  const packageRoot = join(
+    params.pluginRoot,
+    'node_modules',
+    ...params.candidate.pluginUi.packageName.split('/'),
+  );
+  const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')) as unknown;
+  if (!isRecord(manifest)) {
+    fail('Generated UI project installed an invalid Plugin UI package manifest');
+  }
+  if (
+    manifest.name !== params.candidate.pluginUi.packageName
+    || manifest.version !== params.candidate.pluginUi.version
+  ) {
+    fail(`Generated UI project did not install the exact Plugin UI candidate: ${JSON.stringify(manifest)}`);
+  }
+  assertPackedPluginUiSdkDependency(manifest, params.candidate.sdk);
+  return Object.freeze({
+    packageName: params.candidate.pluginUi.packageName,
+    version: params.candidate.pluginUi.version,
+    pluginSdkVersion: params.candidate.sdk.version,
+  });
+}
+
+async function runPackedPluginsDevUiScenario(params: Readonly<{
+  candidate: PackedAuthorCandidate;
+  cliEntrypoint: string;
+  externalRoot: string;
+  sdkRegistryOrigin: string;
+  env: NodeJS.ProcessEnv;
+  happyHomeDir: string;
+  mode: PackedPluginsDevUiMode;
+}>): Promise<Readonly<Record<string, unknown>>> {
+  const suffix = params.mode === 'reactNative' ? 'react-native' : 'hosted-web';
+  const pluginId = `acme.plugins-dev-${suffix}`;
+  const pluginRoot = join(params.externalRoot, `ui-${suffix}`);
+  await runPackedCliJson({
+    cliEntrypoint: params.cliEntrypoint,
+    cwd: params.externalRoot,
+    env: params.env,
+    args: ['plugins', 'create', pluginRoot, '--id', pluginId, '--ui', params.mode, '--json'],
+    expectedKind: 'plugins_create',
+  });
+  const uiSourcePath = generatedUiSourcePath(pluginRoot, params.mode);
+  const [generatedPluginSource, generatedUiSource] = await Promise.all([
+    readFile(join(pluginRoot, 'src', 'index.ts'), 'utf8'),
+    readFile(uiSourcePath, 'utf8'),
+  ]);
+  if (!generatedPluginSource.includes('definePlugin') || !generatedUiSource.includes('Save note')) {
+    fail(`Packed plugins dev did not begin from the untouched generated ${params.mode} scaffold`);
+  }
+  await runPackedCliJson({
+    cliEntrypoint: params.cliEntrypoint,
+    cwd: params.externalRoot,
+    env: params.env,
+    args: [
+      'plugins',
+      'author',
+      'install',
+      pluginRoot,
+      '--sdk-registry',
+      params.sdkRegistryOrigin,
+      '--json',
+    ],
+    expectedKind: 'plugins_author_install',
+  });
+  const installedPair = await assertPackedPluginsDevInstalledUiPair({
+    pluginRoot,
+    candidate: params.candidate,
+  });
+  const install = await approveInitialPluginInstallInTerminal({
+    cliEntrypoint: params.cliEntrypoint,
+    pluginRoot,
+    sdkRegistryOrigin: params.sdkRegistryOrigin,
+    cwd: params.externalRoot,
+    env: params.env,
+  });
+  let dev: ReturnType<typeof startPluginsDev> | null = null;
+  let foregroundStop: string = 'not-started';
+  let result: Readonly<Record<string, unknown>> | null = null;
+  try {
+    dev = startPluginsDev({
+      cliEntrypoint: params.cliEntrypoint,
+      pluginRoot,
+      sdkRegistryOrigin: params.sdkRegistryOrigin,
+      env: params.env,
+    });
+    const initial = await waitForPackedPluginsDevUiProjection({
+      stream: dev.changes,
+      cliEntrypoint: params.cliEntrypoint,
+      cwd: params.externalRoot,
+      env: params.env,
+      happyHomeDir: params.happyHomeDir,
+      pluginId,
+      mode: params.mode,
+      label: `${params.mode} generated UI initial projection`,
+    });
+    await writeFile(uiSourcePath, editGeneratedUiSource(generatedUiSource, params.mode), 'utf8');
+    const valid = await waitForPackedPluginsDevUiProjection({
+      stream: dev.changes,
+      cliEntrypoint: params.cliEntrypoint,
+      cwd: params.externalRoot,
+      env: params.env,
+      happyHomeDir: params.happyHomeDir,
+      pluginId,
+      mode: params.mode,
+      previousGeneration: initial.generation.applied,
+      label: `${params.mode} generated UI valid edit`,
+    });
+    if (JSON.stringify(valid.artifact.artifacts) === JSON.stringify(initial.artifact.artifacts)) {
+      fail(`Valid ${params.mode} UI edit did not emit a replacement artifact graph`);
+    }
+    await writeFile(uiSourcePath, 'export const brokenUiSyntax = ;\n', 'utf8');
+    const rejected = await waitForPackedPluginsDevUiBuildRejection({
+      stream: dev.changes,
+      cliEntrypoint: params.cliEntrypoint,
+      cwd: params.externalRoot,
+      env: params.env,
+      happyHomeDir: params.happyHomeDir,
+      pluginId,
+      mode: params.mode,
+      preservedGeneration: valid.generation.applied,
+      preservedArtifact: valid.artifact,
+    });
+    result = Object.freeze({
+      mode: params.mode,
+      pluginId,
+      installedPair,
+      install,
+      initial,
+      valid,
+      rejected,
+    });
+  } finally {
+    if (dev) {
+      foregroundStop = await stopForegroundProcess(dev);
+    }
+  }
+  if (!result) fail(`Packed ${params.mode} UI scenario completed without result evidence`);
+  return Object.freeze({ ...result, foregroundStop });
+}
+
 export async function runPackedPluginsDev(candidate: PackedAuthorCandidate): Promise<Record<string, unknown>> {
   const platform = resolvePluginsDevPlatform(process.platform);
   const run = createRunDirs({ runLabel: `${platform.runLabel}-${candidate.runId}` });
@@ -877,24 +1334,14 @@ export async function runPackedPluginsDev(candidate: PackedAuthorCandidate): Pro
   const preserveFailureArtifacts = process.env.HAPPIER_PLUGINS_DEV_PRESERVE_FAILURE === '1';
 
   try {
-    const [sdkBytes, cliBytes] = await Promise.all([
-      readFile(candidate.sdk.tarballPath),
-      readFile(candidate.cli.tarballPath),
-    ]);
-    if (sha512Sri(sdkBytes) !== candidate.sdk.integrity) fail('Packed SDK integrity mismatch');
-    if (sha512Sri(cliBytes) !== candidate.cli.integrity) fail('Packed CLI integrity mismatch');
-    stages.push({ id: 'candidate-integrity', ok: true });
-
-    const sdkManifest = await readPackedPackageManifest(
-      candidate.sdk.tarballPath,
-      join(tempRoot, 'sdk-artifact'),
+    const preparedCandidate = await preparePackedPluginsDevCandidateArtifacts(
+      candidate,
+      tempRoot,
+      undefined,
+      () => stages.push({ id: 'candidate-integrity', ok: true }),
     );
-    assertPackedPackageIdentity(sdkManifest, candidate.sdk, 'Packed SDK');
-    registry = await startCandidateRegistry({ sdk: candidate.sdk, sdkBytes, packageManifest: sdkManifest });
-    cliEntrypoint = await materializePackedCli({
-      cliArtifact: candidate.cli,
-      installRoot: join(tempRoot, 'cli-install'),
-    });
+    registry = preparedCandidate.registry;
+    cliEntrypoint = preparedCandidate.cliEntrypoint;
     stages.push({
       id: 'packed-cli-materialized',
       ok: true,
@@ -935,11 +1382,28 @@ export async function runPackedPluginsDev(candidate: PackedAuthorCandidate): Pro
     const externalRoot = join(tempRoot, 'external-author');
     const pluginRoot = join(externalRoot, 'plugin');
     await mkdir(externalRoot, { recursive: true });
+    const uiScenarios: Readonly<Record<string, unknown>>[] = [];
+    for (const mode of PACKED_PLUGINS_DEV_UI_MODES) {
+      uiScenarios.push(await runPackedPluginsDevUiScenario({
+        candidate: preparedCandidate.candidate,
+        cliEntrypoint,
+        externalRoot,
+        sdkRegistryOrigin: registry.origin,
+        env: childEnv,
+        happyHomeDir,
+        mode,
+      }));
+    }
+    stages.push({
+      id: 'generated-ui-dev-adoption-and-lkg',
+      ok: true,
+      scenarios: uiScenarios,
+    });
     await runPackedCliJson({
       cliEntrypoint,
       cwd: externalRoot,
       env: childEnv,
-      args: ['plugins', 'create', pluginRoot, '--id', PLUGIN_ID, '--sdk-version', candidate.sdk.version, '--json'],
+      args: ['plugins', 'create', pluginRoot, '--id', PLUGIN_ID, '--json'],
       expectedKind: 'plugins_create',
     });
     const initialState: PluginState = {

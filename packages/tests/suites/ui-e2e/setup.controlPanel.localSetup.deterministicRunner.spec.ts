@@ -73,7 +73,7 @@ test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
         await waitForInitialAppUi({ page, timeoutMs: 180_000 });
         // Avoid making the app "desktop" at initial load, which can activate desktop-only runtimes.
         // Instead, load the web app normally first, then switch setup routes into desktop mode
-        // by toggling isTauriDesktop() for subsequent renders without a full-page reload.
+        // by toggling isDesktopHost() for subsequent renders without a full-page reload.
         await installFakeTauriDesktopBridge(page);
         await createAccountAndReachSetupWizardState({ page });
 

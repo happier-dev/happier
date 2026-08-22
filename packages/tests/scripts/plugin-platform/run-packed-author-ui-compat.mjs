@@ -4,13 +4,18 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createServer, request as requestHttp } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
-import { lstat, readFile, realpath, mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, readFile, realpath, mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import * as tar from 'tar';
+import { TranscriptRawRecordV1Schema } from '@happier-dev/protocol';
+import {
+  computePluginUiArtifactFileSetSha256DigestV1,
+  PluginUiArtifactsManifestV1Schema,
+} from '@happier-dev/protocol/plugins/ui';
 import { sanitizePackageArtifactEnv } from '../../../../scripts/pipeline/npm/sanitize-package-artifact-env.mjs';
 import { readPluginInstallReviewRequiredEnvelope } from '../../src/testkit/pluginPlatform/pluginInstallReviewRequiredEnvelope.mjs';
 import {
@@ -19,6 +24,7 @@ import {
 import {
   assertPackedCliEntrypoint,
   assertPackedAuthorCandidateArchivesSafe,
+  assertPackedPluginUiSdkDependency,
   assertPackedPackageIdentity,
   readPackedPackageManifest,
   sha512Sri,
@@ -26,9 +32,25 @@ import {
 import {
   parseArtifactChecksums,
 } from '../../../../scripts/pipeline/release/lib/artifact-checksums.mjs';
+import {
+  DEFAULT_MINISIGN_PUBLIC_KEY,
+  verifyMinisign,
+} from '@happier-dev/release-runtime/minisign';
+import {
+  runExternalAuthoringFixture,
+} from '../../../plugin-ui/scripts/validateExternalAuthoringFixture.mjs';
 
 const SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
+const PLUGIN_UI_PACKAGE_NAME = '@happier-dev/plugin-ui';
+const CHANNELS_PROTOCOL_PACKAGE_NAME = '@happier-dev/channels-protocol';
 const CLI_PACKAGE_NAME = '@happier-dev/cli';
+const PUBLIC_AUTHORING_PROJECT_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../plugin-sdk/examples/public-authoring',
+);
+const PUBLIC_AUTHORING_PLUGIN_ID = 'examples.public-sdk-review-assistant';
+const PUBLIC_AUTHORING_PLUGIN_VERSION = '0.1.0';
+const PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID = 'review-web';
 export const PACKED_AUTHOR_NATIVE_TARGETS = Object.freeze([
   'linux-x64',
   'linux-arm64',
@@ -37,6 +59,7 @@ export const PACKED_AUTHOR_NATIVE_TARGETS = Object.freeze([
   'windows-x64',
 ]);
 const NATIVE_TYPESCRIPT_DEPENDENCY_SPEC = 'npm:typescript@7.0.2';
+const CONFIG_LOADER_TYPESCRIPT_DEPENDENCY_SPEC = '5.9.3';
 const SYSTEM_PACKAGE_MANAGER_BASENAMES = new Set([
   'npm', 'npm.cmd', 'npx', 'npx.cmd', 'pnpm', 'pnpm.cmd',
   'yarn', 'yarn.cmd', 'yarnpkg', 'yarnpkg.cmd', 'bunx', 'bunx.exe',
@@ -74,12 +97,59 @@ const PACKED_AUTHOR_SYNTHETIC_CREDENTIAL_SENTINELS = Object.freeze([
   'token-b',
 ]);
 
+function isValidPackageSemver(value) {
+  if (typeof value !== 'string') return false;
+  const match = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-([^+]+))?(?:\+(.+))?$/u
+    .exec(value);
+  if (!match) return false;
+  const prerelease = match[1];
+  if (
+    prerelease !== undefined
+    && prerelease.split('.').some((identifier) => (
+      !/^[0-9A-Za-z-]+$/u.test(identifier)
+      || (/^\d+$/u.test(identifier) && identifier.length > 1 && identifier.startsWith('0'))
+    ))
+  ) {
+    return false;
+  }
+  const build = match[2];
+  return build === undefined
+    || build.split('.').every((identifier) => /^[0-9A-Za-z-]+$/u.test(identifier));
+}
+
 export {
   assertPackedCliEntrypoint,
+  assertPackedPluginUiSdkDependency,
   assertPackedPackageIdentity,
   readPackedPackageManifest,
   sha512Sri,
 };
+
+export function assertPackedPublicToolchainCompatibilityCandidate({
+  packet,
+  candidate,
+}) {
+  if (!packet || typeof packet !== 'object' || Array.isArray(packet)) {
+    fail('Public authoring toolchain packet must be an object');
+  }
+  if (packet.schemaVersion !== 1) {
+    fail('Public authoring toolchain packet schema is invalid');
+  }
+  const expectedCliIdentity = `${candidate?.cli?.packageName}@${candidate?.cli?.version}`;
+  if (packet.host?.buildIdentity !== expectedCliIdentity) {
+    fail('Public authoring toolchain packet does not match exact packed CLI provenance');
+  }
+  if (packet.pluginSdk?.version !== candidate?.sdk?.version) {
+    fail('Public authoring toolchain packet does not match the exact packed SDK candidate');
+  }
+  if (
+    packet.pluginUi?.version !== candidate?.pluginUi?.version
+    || packet.pluginUi?.pluginSdkVersion !== candidate?.sdk?.version
+  ) {
+    fail('Public authoring toolchain packet does not match the exact packed Plugin UI candidate');
+  }
+  return packet;
+}
 
 export function sanitizePackedAuthorArtifactEnv(env) {
   return sanitizePackageArtifactEnv(env);
@@ -88,6 +158,7 @@ export function sanitizePackedAuthorArtifactEnv(env) {
 export const VERTICAL_A_REQUIRED_STAGE_IDS = Object.freeze([
   'artifact-integrity',
   'sdk-identity',
+  'plugin-ui-identity',
   'candidate-registry',
   'cli-identity',
   'daemon-agent-carrier-fail-closed',
@@ -97,6 +168,10 @@ export const VERTICAL_A_REQUIRED_STAGE_IDS = Object.freeze([
   'author-typecheck',
   'author-build',
   'author-test',
+  'external-plugin-ui-pair',
+  'public-authoring-external-pair',
+  'public-authoring-hosted-web-artifact',
+  'public-authoring-account-artifact',
   'plugin-pack',
   'public-registry-profile-lifecycle',
   'marketplace-exact-daemon-lifecycle',
@@ -118,16 +193,12 @@ export const VERTICAL_A_REQUIRED_STAGE_IDS = Object.freeze([
   'restart-applied-generation',
   'packed-connected-account-restart-durability',
   'packed-connected-account-established-operations',
-  'failed-update-preservation',
   'successful-update-replacement',
   'post-restart-peer-isolation',
   'packed-connected-account-generation-lifecycle',
   'explicit-rollback',
-  'continuous-health-role-transition',
-  'automatic-lkg-recovery',
-  'quarantined-explicit-rollback',
-  'no-eligible-lkg-disable',
-  'try-once-reinstall-quarantine',
+  'bootstrap-adopt-lkg-restart',
+  'hard-revocation-disable-restart',
   'cleanup-failure-later-mutation',
   'uninstall-action-currentness-absence',
   'packed-scm-uninstall-stale-absence',
@@ -141,19 +212,16 @@ export const VERTICAL_A_EVIDENCE_LAYER_STAGE_IDS = Object.freeze({
     'response-loss-currentness-query',
     'trusted-development-response-loss-currentness',
     'takeover-stale-incarnation-fenced',
-    'failed-update-preservation',
     'post-restart-peer-isolation',
-    'continuous-health-role-transition',
-    'automatic-lkg-recovery',
-    'quarantined-explicit-rollback',
-    'no-eligible-lkg-disable',
-    'try-once-reinstall-quarantine',
+    'bootstrap-adopt-lkg-restart',
+    'hard-revocation-disable-restart',
     'cleanup-failure-later-mutation',
     'canonical-current-owner',
   ]),
   packedExternalBlackBox: Object.freeze([
     'artifact-integrity',
     'sdk-identity',
+    'plugin-ui-identity',
     'candidate-registry',
     'cli-identity',
     'create',
@@ -162,6 +230,10 @@ export const VERTICAL_A_EVIDENCE_LAYER_STAGE_IDS = Object.freeze({
     'author-typecheck',
     'author-build',
     'author-test',
+    'external-plugin-ui-pair',
+    'public-authoring-external-pair',
+    'public-authoring-hosted-web-artifact',
+    'public-authoring-account-artifact',
     'plugin-pack',
     'public-registry-profile-lifecycle',
     'marketplace-exact-daemon-lifecycle',
@@ -214,39 +286,6 @@ export function assertDiscardedDisableCurrentness({
       expectedGeneration,
     })}`);
   }
-}
-
-export function assertExplicitHealthHistoryClear({
-  pluginId,
-  fingerprint,
-  afterDefaultUninstall,
-  clearEnvelope,
-  afterExplicitClear,
-}) {
-  const preserved = afterDefaultUninstall.revision.healthTombstones?.find((entry) => (
-    entry.pluginId === pluginId && entry.fingerprint === fingerprint
-  ));
-  const remaining = afterExplicitClear.revision.healthTombstones?.filter((entry) => (
-    entry.pluginId === pluginId
-  )) ?? [];
-  if (
-    preserved?.state !== 'quarantined'
-    || clearEnvelope.data?.pluginId !== pluginId
-    || clearEnvelope.data?.alreadyUninstalled !== true
-    || remaining.length !== 0
-  ) {
-    fail(`Explicit health-history clear did not preserve then irreversibly forget plugin health: ${JSON.stringify({
-      pluginId,
-      fingerprint,
-      preserved,
-      clearData: clearEnvelope.data,
-      remaining,
-    })}`);
-  }
-  return {
-    preservedFingerprint: fingerprint,
-    explicitClear: true,
-  };
 }
 
 function analyzeStageCoverage(
@@ -331,273 +370,51 @@ export function assertExactMarketplaceInstallationState({
     && distribution?.registryOrigin === expected.distribution.registryOrigin
     && distribution?.packageName === expected.distribution.packageName
   );
+  const hasStructuralGenerationManifest = (record) => (
+    record?.t === 'happier_plugin_generation_v1'
+    && record?.schemaVersion === 1
+    && record?.pluginId === expected.pluginId
+    && typeof record?.immutableGenerationId === 'string'
+    && record.immutableGenerationId.length > 0
+    && typeof record?.manifestRelativePath === 'string'
+    && record.manifestRelativePath.length > 0
+    && Array.isArray(record?.files)
+    && record.files.some((file) => (
+      file?.relativePath === record.manifestRelativePath
+      && Number.isInteger(file?.byteLength)
+      && file.byteLength >= 0
+    ))
+  );
+  const matchesRuntimeSource = (source) => (
+    source?.kind === 'package'
+    && source?.locator === expected.distribution.packageName
+    && source?.resolvedVersion === expected.version
+    && typeof source?.manifestPath === 'string'
+    && source.manifestPath.length > 0
+  );
   if (
     installation?.enabled !== true
-    || generation?.pluginId !== expected.pluginId
-    || generation?.manifestDigest !== expected.manifestDigest
-    || generation?.installedArtifactRecord?.digest !== expected.manifestDigest
-    || !/^sha256:[a-f0-9]{64}$/u.test(generation?.packageDigest ?? '')
+    || !hasStructuralGenerationManifest(generation)
     || installation?.trust?.pluginId !== expected.pluginId
     || installation?.trust?.state !== 'trusted'
     || !matchesDistribution(installation?.trust?.distribution)
     || !matchesDistribution(installation?.source?.distribution)
     || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(expected.marketplaceIntegrity)
-    || installation?.source?.admittedIntegrity !== generation.packageDigest
+    || installation?.source?.admittedIntegrity !== expected.marketplaceIntegrity
     || installation?.updatePolicy !== expected.updatePolicy
     || runtimeCatalog?.state?.enabled !== true
-    || runtimeCatalog?.source?.resolvedVersion !== expected.version
-    || runtimeCatalog?.source?.resolvedDigest !== expected.manifestDigest
-    || runtimeCatalog?.install?.manifestDigest !== expected.manifestDigest
+    || !matchesRuntimeSource(runtimeCatalog?.source)
+    || runtimeCatalog?.install?.mode !== 'managed_install'
+    || runtimeCatalog?.install?.manifestVersion !== expected.version
     || runtimeCatalog?.install?.updatePolicy !== expected.updatePolicy
     || !matchesDistribution(runtimeCatalog?.install?.trust?.distribution)
   ) {
-    fail(`Exact marketplace install did not persist exact artifact and durable distribution identity: ${JSON.stringify({
+    fail(`Exact marketplace install did not persist source integrity and structural generation identity: ${JSON.stringify({
       installation,
       generation,
       runtimeCatalog,
     })}`);
   }
-}
-
-export function assertNoEligibleLkgDisabled({
-  state,
-  pluginId,
-  failedGenerationId,
-  explicitRollbackGenerationId,
-  healthyPluginInvocation,
-}) {
-  const currentGeneration = state.commit.pluginGenerations?.[pluginId]?.immutableGenerationId;
-  const failedHealth = state.revision.health?.[failedGenerationId];
-  const explicitRollbackHealth = state.revision.health?.[explicitRollbackGenerationId];
-  const explicitRollback = state.revision.rollbackRetention?.find((entry) => (
-    entry.pluginId === pluginId
-    && entry.immutableGenerationId === explicitRollbackGenerationId
-  ));
-  const tombstone = state.revision.healthTombstones?.find((entry) => (
-    entry.pluginId === pluginId
-    && entry.fingerprint === failedHealth?.fingerprint
-  ));
-  const automaticRecoveryEntry = state.revision.rollbackRetention?.find((entry) => (
-    entry.pluginId === pluginId && entry.automaticRecoveryEligible === true
-  ));
-  if (automaticRecoveryEntry) {
-    fail(`No-LKG recovery left automatic recovery eligible: ${JSON.stringify(automaticRecoveryEntry)}`);
-  }
-  if (
-    currentGeneration !== failedGenerationId
-    || state.revision.plugins?.[pluginId]?.enabled !== false
-    || state.revision.runtimeCatalog?.plugins?.[pluginId]?.state?.enabled !== false
-    || failedHealth?.state !== 'quarantined'
-    || new Set(failedHealth?.consumedAttemptIds ?? []).size < 3
-    || tombstone?.state !== 'quarantined'
-    || explicitRollback?.automaticRecoveryEligible !== false
-    || explicitRollback?.byteAvailability !== 'available'
-    || !['userRollback', 'quarantined'].includes(explicitRollback?.role)
-    || (
-      explicitRollback?.role === 'quarantined'
-      && explicitRollbackHealth?.tryOnce !== 'available'
-    )
-  ) {
-    fail(`No-LKG recovery did not quarantine and disable only the current plugin while retaining explicit rollback: ${JSON.stringify({
-      currentGeneration,
-      failedHealth,
-      tombstone,
-      explicitRollback,
-      explicitRollbackHealth,
-      installation: state.revision.plugins?.[pluginId],
-      runtimeCatalog: state.revision.runtimeCatalog?.plugins?.[pluginId],
-    })}`);
-  }
-  if (
-    !healthyPluginInvocation
-    || typeof healthyPluginInvocation.pluginId !== 'string'
-    || healthyPluginInvocation.pluginId === pluginId
-    || typeof healthyPluginInvocation.version !== 'string'
-    || !Number.isInteger(healthyPluginInvocation.pid)
-    || typeof healthyPluginInvocation.activationInstanceId !== 'string'
-  ) {
-    fail(`No-LKG recovery did not prove a healthy control plugin remained callable: ${JSON.stringify({
-      pluginId,
-      healthyPluginInvocation,
-    })}`);
-  }
-  return {
-    failedFingerprint: failedHealth.fingerprint,
-    distinctFatalAttempts: new Set(failedHealth.consumedAttemptIds).size,
-    explicitRollbackRole: explicitRollback.role,
-    healthyPluginId: healthyPluginInvocation.pluginId,
-    healthyPluginVersion: healthyPluginInvocation.version,
-  };
-}
-
-export function assertTryOnceReinstallQuarantine({
-  state,
-  pluginId,
-  originalGenerationId,
-  reinstalledGenerationId,
-  fingerprint,
-  rejectedSecondEnable,
-  registrationCountBeforeRestart,
-  registrationCountAfterReinstall,
-}) {
-  const currentGeneration = state.commit.pluginGenerations?.[pluginId]?.immutableGenerationId;
-  const originalHealth = state.revision.health?.[originalGenerationId];
-  const reinstalledHealth = state.revision.health?.[reinstalledGenerationId];
-  const tombstone = state.revision.healthTombstones?.find((entry) => (
-    entry.pluginId === pluginId && entry.fingerprint === fingerprint
-  ));
-  const rejectedMessage = [
-    rejectedSecondEnable?.error?.message,
-    rejectedSecondEnable?.error?.causeMessage,
-  ].filter((value) => typeof value === 'string').join(' ');
-  if (
-    originalGenerationId === reinstalledGenerationId
-    || currentGeneration !== reinstalledGenerationId
-    || state.revision.plugins?.[pluginId]?.enabled !== false
-    || state.revision.runtimeCatalog?.plugins?.[pluginId]?.state?.enabled !== false
-    || originalHealth?.fingerprint !== fingerprint
-    || originalHealth?.state !== 'quarantined'
-    || originalHealth?.tryOnce !== 'consumed'
-    || reinstalledHealth?.fingerprint !== fingerprint
-    || reinstalledHealth?.state !== 'quarantined'
-    || reinstalledHealth?.tryOnce !== 'consumed'
-    || tombstone?.state !== 'consumed'
-    || rejectedSecondEnable?.ok !== false
-    || rejectedSecondEnable?.kind !== 'plugins_enable'
-    || rejectedSecondEnable?.error?.code !== 'failed'
-    || !/Try once.*(?:unavailable|consumed)/iu.test(rejectedMessage)
-    || !Number.isInteger(registrationCountBeforeRestart)
-    || registrationCountBeforeRestart < 0
-    || registrationCountAfterReinstall !== registrationCountBeforeRestart
-  ) {
-    fail(`Try once or exact-byte reinstall rearmed quarantined bytes: ${JSON.stringify({
-      pluginId,
-      originalGenerationId,
-      reinstalledGenerationId,
-      currentGeneration,
-      fingerprint,
-      originalHealth,
-      reinstalledHealth,
-      tombstone,
-      rejectedSecondEnable,
-      registrationCountBeforeRestart,
-      registrationCountAfterReinstall,
-      installation: state.revision.plugins?.[pluginId],
-      runtimeCatalog: state.revision.runtimeCatalog?.plugins?.[pluginId],
-    })}`);
-  }
-  return {
-    originalGeneration: originalGenerationId,
-    reinstalledGeneration: reinstalledGenerationId,
-    fingerprint,
-    tryOnce: reinstalledHealth.tryOnce,
-    registrationCount: registrationCountAfterReinstall,
-  };
-}
-
-export function assertRejectedCandidateNotAttributedToCurrentHealth({
-  before,
-  after,
-  pluginId,
-  currentGenerationId,
-}) {
-  const beforeCurrent = before.commit.pluginGenerations?.[pluginId]?.immutableGenerationId;
-  const afterCurrent = after.commit.pluginGenerations?.[pluginId]?.immutableGenerationId;
-  const beforeAttemptIds = [
-    ...(before.revision.health?.[currentGenerationId]?.consumedAttemptIds ?? []),
-  ];
-  const afterAttemptIds = [
-    ...(after.revision.health?.[currentGenerationId]?.consumedAttemptIds ?? []),
-  ];
-  if (
-    beforeCurrent !== currentGenerationId
-    || afterCurrent !== currentGenerationId
-    || new Set(beforeAttemptIds).size !== beforeAttemptIds.length
-    || new Set(afterAttemptIds).size !== afterAttemptIds.length
-    || JSON.stringify(afterAttemptIds) !== JSON.stringify(beforeAttemptIds)
-  ) {
-    fail(`Health supervisor attributed a rejected candidate failure to the serving generation: ${JSON.stringify({
-      pluginId,
-      currentGenerationId,
-      beforeCurrent,
-      afterCurrent,
-      beforeAttemptIds,
-      afterAttemptIds,
-    })}`);
-  }
-  return {
-    currentGeneration: currentGenerationId,
-    consumedAttemptIds: afterAttemptIds,
-  };
-}
-
-export function assertContinuousHealthEvidence({
-  startedAtMs,
-  completedAtMs,
-  requiredWindowMs,
-  initialRegistration,
-  healthyInvocation,
-  candidateHealth,
-  priorRetention,
-  initialDistribution,
-  candidateDistribution,
-}) {
-  const measuredWallDurationMs = completedAtMs - startedAtMs;
-  if (
-    !Number.isInteger(measuredWallDurationMs)
-    || measuredWallDurationMs < requiredWindowMs
-  ) {
-    fail(`Measured continuous-health duration was shorter than the required window: ${JSON.stringify({
-      startedAtMs,
-      completedAtMs,
-      measuredWallDurationMs,
-      requiredWindowMs,
-    })}`);
-  }
-  if (
-    !initialRegistration
-    || initialRegistration.pid !== healthyInvocation?.pid
-    || initialRegistration.activationInstanceId !== healthyInvocation?.activationInstanceId
-  ) {
-    fail(`Continuous-health daemon activation changed before the healthy invocation: ${JSON.stringify({
-      initialRegistration,
-      healthyInvocation,
-    })}`);
-  }
-  if (candidateHealth?.state !== 'healthy') {
-    fail(`Continuous-health candidate did not become healthy: ${JSON.stringify({ candidateHealth })}`);
-  }
-  if (
-    priorRetention?.role !== 'userRollback'
-    || priorRetention?.automaticRecoveryEligible !== false
-    || priorRetention?.byteAvailability !== 'available'
-  ) {
-    fail(`Continuous-health prior generation did not become explicit rollback only: ${JSON.stringify({
-      priorRetention,
-    })}`);
-  }
-  if (
-    initialDistribution?.kind !== 'localPath'
-    || candidateDistribution?.kind !== 'localPath'
-    || typeof initialDistribution.canonicalPath !== 'string'
-    || initialDistribution.canonicalPath.length === 0
-    || candidateDistribution.canonicalPath !== initialDistribution.canonicalPath
-  ) {
-    fail(`Continuous-health transition did not preserve the same local-path distribution: ${JSON.stringify({
-      initialDistribution,
-      candidateDistribution,
-    })}`);
-  }
-  return {
-    measuredWallDurationMs,
-    daemonPid: initialRegistration.pid,
-    activationInstanceId: initialRegistration.activationInstanceId,
-    candidateHealthState: candidateHealth.state,
-    priorRole: priorRetention.role,
-    priorAutomaticRecoveryEligible: priorRetention.automaticRecoveryEligible,
-    distributionKind: initialDistribution.kind,
-    distributionIdentity: initialDistribution.canonicalPath,
-  };
 }
 
 export function assertDaemonAgentCarrierFailClosed(result) {
@@ -606,8 +423,8 @@ export function assertDaemonAgentCarrierFailClosed(result) {
     result?.code === 0
     || result?.signal !== null
     || !(
-      /DAEMON_AGENT_RUNTIME_CARRIER_MISSING/u.test(output)
-      || /Daemon-spawned native Agent backend 'auggie' is missing its runtime carrier/iu.test(output)
+      /RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING/u.test(output)
+      || /Daemon-spawned native Agent backend 'auggie' is missing its runner-local runtime source/iu.test(output)
     )
   ) {
     fail(`Daemon-started native Agent did not fail closed at the daemon carrier owner: ${JSON.stringify({
@@ -619,7 +436,7 @@ export function assertDaemonAgentCarrierFailClosed(result) {
   }
   return {
     backendId: 'auggie',
-    errorCode: 'DAEMON_AGENT_RUNTIME_CARRIER_MISSING',
+    errorCode: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING',
     processExitCode: result.code,
   };
 }
@@ -658,71 +475,6 @@ export function assertPostRestartHealthyPeerIsolation({
     daemonPid: before.pid,
     activationInstanceId: before.activationInstanceId,
     registrationCount: registrationCountBefore,
-  };
-}
-
-export function assertQuarantinedExplicitRollback({
-  pluginId,
-  healthyGenerationId,
-  quarantinedGenerationId,
-  before,
-  rollbackEnvelope,
-  after,
-  invocation,
-}) {
-  const beforeHealth = before.revision.health?.[quarantinedGenerationId];
-  const beforeTombstone = before.revision.healthTombstones?.find((entry) => (
-    entry.pluginId === pluginId && entry.fingerprint === beforeHealth?.fingerprint
-  ));
-  const afterHealth = after.revision.health?.[quarantinedGenerationId];
-  const afterTombstone = after.revision.healthTombstones?.find((entry) => (
-    entry.pluginId === pluginId && entry.fingerprint === beforeHealth?.fingerprint
-  ));
-  if (
-    before.commit.pluginGenerations?.[pluginId]?.immutableGenerationId !== healthyGenerationId
-    || before.revision.plugins?.[pluginId]?.enabled !== false
-    || beforeHealth?.state !== 'quarantined'
-    || beforeHealth?.tryOnce !== 'available'
-    || typeof beforeHealth.fingerprint !== 'string'
-    || beforeTombstone?.state !== 'quarantined'
-    || rollbackEnvelope.data?.pluginId !== pluginId
-    || rollbackEnvelope.data?.desiredGeneration !== quarantinedGenerationId
-    || rollbackEnvelope.data?.appliedGeneration !== quarantinedGenerationId
-    || !Array.isArray(rollbackEnvelope.data?.pendingSurfaces)
-    || rollbackEnvelope.data.pendingSurfaces.length !== 0
-    || after.commit.pluginGenerations?.[pluginId]?.immutableGenerationId !== quarantinedGenerationId
-    || after.revision.plugins?.[pluginId]?.enabled !== true
-    || after.revision.runtimeCatalog?.plugins?.[pluginId]?.state?.enabled !== true
-    || afterHealth?.fingerprint !== beforeHealth.fingerprint
-    || afterHealth?.state !== 'trial'
-    || afterHealth?.tryOnce !== 'consumed'
-    || afterTombstone?.state !== 'consumed'
-    || invocation?.pluginId !== pluginId
-    || invocation?.version !== '5.0.0'
-    || !Number.isInteger(invocation?.pid)
-    || typeof invocation?.activationInstanceId !== 'string'
-  ) {
-    fail(`Explicit rollback did not consume and serve the exact quarantined generation: ${JSON.stringify({
-      pluginId,
-      healthyGenerationId,
-      quarantinedGenerationId,
-      beforeCurrent: before.commit.pluginGenerations?.[pluginId],
-      beforeHealth,
-      beforeTombstone,
-      rollback: rollbackEnvelope.data,
-      afterCurrent: after.commit.pluginGenerations?.[pluginId],
-      afterHealth,
-      afterTombstone,
-      invocation,
-    })}`);
-  }
-  return {
-    fromGeneration: healthyGenerationId,
-    toGeneration: quarantinedGenerationId,
-    fingerprint: afterHealth.fingerprint,
-    tryOnce: afterHealth.tryOnce,
-    servingVersion: invocation.version,
-    activationInstanceId: invocation.activationInstanceId,
   };
 }
 
@@ -771,82 +523,6 @@ export function assertCleanupFailureDidNotBlockLaterMutation({
     laterGeneration: laterChange.desiredGeneration,
     laterServingVersion: laterInvocation.version,
   };
-}
-
-export function assertUniqueSupervisedAttemptProgress({
-  initialConsumedAttemptIds,
-  attempts,
-}) {
-  let prior = [...initialConsumedAttemptIds];
-  if (new Set(prior).size !== prior.length) {
-    fail(`Initial supervised attempt ids were not unique: ${JSON.stringify(prior)}`);
-  }
-  for (const attempt of attempts) {
-    const current = [...attempt.consumedAttemptIds];
-    const priorSet = new Set(prior);
-    const added = current.filter((attemptId) => !priorSet.has(attemptId));
-    if (
-      new Set(current).size !== current.length
-      || prior.some((attemptId) => !current.includes(attemptId))
-      || added.length !== 1
-      || current.length !== prior.length + 1
-    ) {
-      fail(`Fatal restart ${attempt.attemptNumber} did not add exactly one new supervised attempt id: ${JSON.stringify({
-        prior,
-        current,
-        added,
-      })}`);
-    }
-    prior = current;
-  }
-  return prior;
-}
-
-export async function waitForSupervisedAttemptProgress({
-  generationId,
-  priorConsumedAttemptIds,
-  readState,
-  timeoutMs,
-  pollIntervalMs = 250,
-  nowMs = Date.now,
-  sleep = async (delayMs) => await new Promise((resolveWait) => setTimeout(resolveWait, delayMs)),
-}) {
-  const prior = [...priorConsumedAttemptIds];
-  const priorSet = new Set(prior);
-  if (priorSet.size !== prior.length) {
-    fail(`Prior supervised attempt ids were not unique: ${JSON.stringify(prior)}`);
-  }
-  const startedAtMs = nowMs();
-  while (true) {
-    const state = await readState();
-    const current = [...(state.revision.health?.[generationId]?.consumedAttemptIds ?? [])];
-    const added = current.filter((attemptId) => !priorSet.has(attemptId));
-    if (
-      new Set(current).size !== current.length
-      || prior.some((attemptId) => !current.includes(attemptId))
-      || added.length > 1
-      || current.length > prior.length + 1
-    ) {
-      fail(`Supervised fatal attempt persistence diverged while waiting: ${JSON.stringify({
-        generationId,
-        prior,
-        current,
-        added,
-      })}`);
-    }
-    if (added.length === 1 && current.length === prior.length + 1) {
-      return { state, consumedAttemptIds: current };
-    }
-    if (nowMs() - startedAtMs >= timeoutMs) {
-      fail(`Timed out waiting for one supervised fatal attempt to persist: ${JSON.stringify({
-        generationId,
-        prior,
-        current,
-        timeoutMs,
-      })}`);
-    }
-    await sleep(pollIntervalMs);
-  }
 }
 
 export function assertRestartPreservedDesiredGeneration({
@@ -905,6 +581,44 @@ export function assertReviewedCandidatePreservedCurrentness({
 
 function fail(message) {
   throw new Error(message);
+}
+
+/**
+ * Every External Sessions transcript item the host returns is normalized by the UI through the
+ * canonical transcript raw-record owner (`normalizeExternalSessionTranscriptMessages` →
+ * `normalizeRawMessages`). A row whose `raw` fails that schema is not surfaced as an error: it is
+ * silently degraded to the `[Unparsed agent message]` placeholder. Asserting item ids alone cannot
+ * discriminate that failure, so the packed vertical validates the exact bytes the UI would parse.
+ */
+export function assertCanonicalTranscriptRawRecords(items, label) {
+  if (!Array.isArray(items) || items.length === 0) {
+    fail(`${label} returned no transcript items to validate`);
+  }
+  for (const item of items) {
+    const parsed = TranscriptRawRecordV1Schema.safeParse(item?.raw);
+    if (!parsed.success) {
+      fail(`${label} item ${JSON.stringify(item?.id ?? null)} raw is not a canonical transcript record and would render as an unparsed placeholder: ${JSON.stringify(parsed.error.issues)}`);
+    }
+  }
+}
+
+export function assertCandidateChecksumSignature(
+  {
+    checksumsBytes,
+    signatureBytes,
+  },
+  {
+    trustedMinisignPublicKey = DEFAULT_MINISIGN_PUBLIC_KEY,
+    verifyMinisignImpl = verifyMinisign,
+  } = {},
+) {
+  if (!verifyMinisignImpl({
+    message: Buffer.from(checksumsBytes),
+    pubkeyFile: trustedMinisignPublicKey,
+    sigFile: Buffer.from(signatureBytes).toString('utf8'),
+  })) {
+    fail('Candidate standalone CLI checksum signature is invalid');
+  }
 }
 
 export function formatPackedQualifiedConnectedAccountHttpFailure({
@@ -986,20 +700,33 @@ function readFlagValue(argv, flag) {
 export function parseRunnerArgs(argv) {
   const scenario = readFlagValue(argv, '--scenario');
   const sdkTarballPath = readFlagValue(argv, '--sdk-tarball');
+  const pluginUiTarballPath = readFlagValue(argv, '--plugin-ui-tarball');
   const cliTarballPath = readFlagValue(argv, '--cli-tarball');
+  const candidateManifestPath = readFlagValue(argv, '--candidate');
   const packedNovelQaHandoffRoot = readFlagValue(
     argv,
     '--packed-novel-qa-handoff-root',
   );
   if (scenario !== 'vertical-a') fail('Only --scenario vertical-a is currently supported');
-  if (!sdkTarballPath) fail('Missing --sdk-tarball <sdk-tarball>');
-  if (!cliTarballPath) fail('Missing --cli-tarball <cli-tarball>');
-  if (argv.includes('--candidate')) {
-    fail('Ordinary Vertical-A admission does not accept --candidate');
+  if (candidateManifestPath) {
+    if (sdkTarballPath || pluginUiTarballPath || cliTarballPath) {
+      fail('--candidate cannot be combined with direct SDK/Plugin UI/CLI tarballs');
+    }
+    return {
+      scenario,
+      candidateManifestPath,
+      ...(packedNovelQaHandoffRoot === null
+        ? {}
+        : { packedNovelQaHandoffRoot }),
+    };
   }
+  if (!sdkTarballPath) fail('Missing --sdk-tarball <sdk-tarball>');
+  if (!pluginUiTarballPath) fail('Missing --plugin-ui-tarball <plugin-ui-tarball>');
+  if (!cliTarballPath) fail('Missing --cli-tarball <cli-tarball>');
   return {
     scenario,
     sdkTarballPath,
+    pluginUiTarballPath,
     cliTarballPath,
     ...(packedNovelQaHandoffRoot === null
       ? {}
@@ -1035,9 +762,11 @@ export async function loadPackedAuthorNaturalArtifacts(
 ) {
   const {
     sdkTarballPath: sdkArgument,
+    pluginUiTarballPath: pluginUiArgument,
     cliTarballPath: cliArgument,
   } = parseRunnerArgs(argv);
   const sdkTarballPath = resolve(cwd, sdkArgument);
+  const pluginUiTarballPath = resolve(cwd, pluginUiArgument);
   const cliTarballPath = resolve(cwd, cliArgument);
   const runId = createRunId();
   if (
@@ -1050,12 +779,19 @@ export async function loadPackedAuthorNaturalArtifacts(
   const candidate = await createPackedAuthorCandidateImpl({
     runId,
     sdkTarballPath,
+    pluginUiTarballPath,
     cliTarballPath,
   });
-  const [currentSdkBytes, currentCliBytes] = await Promise.all([
+  const [currentSdkBytes, currentPluginUiBytes, currentCliBytes] = await Promise.all([
     readNaturalArtifactBytes({
       artifactPath: sdkTarballPath,
       label: 'SDK tarball',
+      readFileImpl,
+      lstatImpl,
+    }),
+    readNaturalArtifactBytes({
+      artifactPath: pluginUiTarballPath,
+      label: 'Plugin UI tarball',
       readFileImpl,
       lstatImpl,
     }),
@@ -1068,6 +804,9 @@ export async function loadPackedAuthorNaturalArtifacts(
   ]);
   if (sha512Sri(currentSdkBytes) !== candidate.sdk.integrity) {
     fail('SDK tarball changed during admission');
+  }
+  if (sha512Sri(currentPluginUiBytes) !== candidate.pluginUi.integrity) {
+    fail('Plugin UI tarball changed during admission');
   }
   if (sha512Sri(currentCliBytes) !== candidate.cli.integrity) {
     fail('CLI tarball changed during admission');
@@ -1152,14 +891,18 @@ export function parseCandidateManifest(raw, manifestPath) {
   }
   const manifestDir = dirname(manifestPath);
   const sdk = value.sdk;
+  const pluginUi = value.pluginUi;
+  const channelsProtocol = value.channelsProtocol;
   const cli = value.cli;
-  const sourceBasis = value.sourceBasis;
   const standaloneCli = value.standaloneCli;
   const installers = value.installers;
   if (!sdk || typeof sdk !== 'object' || Array.isArray(sdk)) fail('Candidate manifest is missing sdk');
+  if (!pluginUi || typeof pluginUi !== 'object' || Array.isArray(pluginUi)) {
+    fail('Candidate manifest is missing pluginUi');
+  }
   if (!cli || typeof cli !== 'object' || Array.isArray(cli)) fail('Candidate manifest is missing cli');
   if (sdk.packageName !== SDK_PACKAGE_NAME) fail(`SDK packageName must be ${SDK_PACKAGE_NAME}`);
-  if (typeof sdk.version !== 'string' || !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(sdk.version)) {
+  if (!isValidPackageSemver(sdk.version)) {
     fail('SDK version must be a valid package semver');
   }
   if (typeof sdk.integrity !== 'string' || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(sdk.integrity)) {
@@ -1169,7 +912,7 @@ export function parseCandidateManifest(raw, manifestPath) {
     fail('CLI integrity must be sha512 SRI');
   }
   if (cli.packageName !== CLI_PACKAGE_NAME) fail(`CLI packageName must be ${CLI_PACKAGE_NAME}`);
-  if (typeof cli.version !== 'string' || !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(cli.version)) {
+  if (!isValidPackageSemver(cli.version)) {
     fail('CLI version must be a valid package semver');
   }
   const cliEntrypointSegments = typeof cli.entrypoint === 'string' ? cli.entrypoint.split('/') : [];
@@ -1180,23 +923,66 @@ export function parseCandidateManifest(raw, manifestPath) {
   ) {
     fail('CLI entrypoint must be a forward-slash package-relative path contained by package/');
   }
+  assertExactCandidateRecordKeys(
+    pluginUi,
+    ['packageName', 'version', 'pluginSdkVersion', 'integrity', 'tarballPath'],
+    'pluginUi',
+  );
+  if (pluginUi.packageName !== PLUGIN_UI_PACKAGE_NAME) {
+    fail(`Plugin UI packageName must be ${PLUGIN_UI_PACKAGE_NAME}`);
+  }
+  if (!isValidPackageSemver(pluginUi.version)) {
+    fail('Plugin UI version must be a valid package semver');
+  }
+  if (pluginUi.pluginSdkVersion !== sdk.version) {
+    fail('Plugin UI SDK dependency must equal the candidate SDK version');
+  }
+  if (typeof pluginUi.integrity !== 'string' || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(pluginUi.integrity)) {
+    fail('Plugin UI integrity must be sha512 SRI');
+  }
   if (
-    standaloneCli !== undefined
+    channelsProtocol !== undefined
     && (
-      !standaloneCli
-      || typeof standaloneCli !== 'object'
-      || Array.isArray(standaloneCli)
-      || standaloneCli.product !== 'happier'
-      || standaloneCli.version !== cli.version
-      || typeof standaloneCli.os !== 'string'
-      || !/^[a-z]+$/u.test(standaloneCli.os)
-      || !['x64', 'arm64'].includes(standaloneCli.arch)
-      || typeof standaloneCli.sha256 !== 'string'
-      || !/^[a-f0-9]{64}$/u.test(standaloneCli.sha256)
-      || !Array.isArray(standaloneCli.archives)
+      !channelsProtocol
+      || typeof channelsProtocol !== 'object'
+      || Array.isArray(channelsProtocol)
     )
   ) {
-    fail('Candidate standaloneCli must be a same-version canonical happier artifact record');
+    fail('Candidate Channels protocol must be an object when supplied');
+  }
+  if (channelsProtocol !== undefined) {
+    assertExactCandidateRecordKeys(
+      channelsProtocol,
+      ['packageName', 'version', 'integrity', 'tarballPath'],
+      'channelsProtocol',
+    );
+    if (channelsProtocol.packageName !== CHANNELS_PROTOCOL_PACKAGE_NAME) {
+      fail(`Channels protocol packageName must be ${CHANNELS_PROTOCOL_PACKAGE_NAME}`);
+    }
+    if (!isValidPackageSemver(channelsProtocol.version)) {
+      fail('Channels protocol version must be a valid package semver');
+    }
+    if (
+      typeof channelsProtocol.integrity !== 'string'
+      || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(channelsProtocol.integrity)
+    ) {
+      fail('Channels protocol integrity must be sha512 SRI');
+    }
+  }
+  if (
+    !standaloneCli
+    || typeof standaloneCli !== 'object'
+    || Array.isArray(standaloneCli)
+    || standaloneCli.product !== 'happier'
+    || standaloneCli.version !== cli.version
+    || typeof standaloneCli.os !== 'string'
+    || !/^[a-z]+$/u.test(standaloneCli.os)
+    || !['x64', 'arm64'].includes(standaloneCli.arch)
+    || typeof standaloneCli.sha256 !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(standaloneCli.sha256)
+    || !Array.isArray(standaloneCli.archives)
+  ) {
+    fail('Candidate standalone CLI must bind the complete native release matrix');
   }
   if (standaloneCli) {
     assertExactCandidateRecordKeys(
@@ -1245,13 +1031,19 @@ export function parseCandidateManifest(raw, manifestPath) {
           ],
           `standaloneCli.archives[${index}]`,
         );
+        const archivePath = resolveManifestPath(manifestDir, artifact.archivePath);
+        const expectedArchiveFileName =
+          `happier-v${cli.version}-${expectedTarget}.tar.gz`;
+        if (basename(archivePath) !== expectedArchiveFileName) {
+          fail('Candidate standaloneCli archive path must use its exact canonical archive name');
+        }
         return {
           product: artifact.product,
           version: artifact.version,
           os: artifact.os,
           arch: artifact.arch,
           sha256: artifact.sha256,
-          archivePath: resolveManifestPath(manifestDir, artifact.archivePath),
+          archivePath,
         };
       })
     : null;
@@ -1278,15 +1070,13 @@ export function parseCandidateManifest(raw, manifestPath) {
           kind: 'sha256-checksums',
           fileName: `checksums-happier-v${cli.version}.txt`,
         }),
-        signature: standaloneCli.signature === null
-          ? null
-          : parseCandidateBoundFile({
-              value: standaloneCli.signature,
-              manifestDir,
-              field: 'standalone CLI signature',
-              kind: 'minisign-signature',
-              fileName: `checksums-happier-v${cli.version}.txt.minisig`,
-            }),
+        signature: parseCandidateBoundFile({
+          value: standaloneCli.signature,
+          manifestDir,
+          field: 'standalone CLI signature',
+          kind: 'minisign-signature',
+          fileName: `checksums-happier-v${cli.version}.txt.minisig`,
+        }),
         notarization: Array.isArray(standaloneCli.notarization)
           ? standaloneCli.notarization.map((record, index) => {
               const target = PACKED_AUTHOR_NATIVE_TARGETS
@@ -1340,16 +1130,6 @@ export function parseCandidateManifest(raw, manifestPath) {
     }
   }
   if (
-    !sourceBasis
-    || typeof sourceBasis !== 'object'
-    || Array.isArray(sourceBasis)
-    || sourceBasis.algorithm !== 'sha256'
-    || typeof sourceBasis.digest !== 'string'
-    || !/^[a-f0-9]{64}$/u.test(sourceBasis.digest)
-  ) {
-    fail('Candidate sourceBasis must be a canonical sha256 digest');
-  }
-  if (
     !installers
     || typeof installers !== 'object'
     || Array.isArray(installers)
@@ -1389,10 +1169,6 @@ export function parseCandidateManifest(raw, manifestPath) {
   return {
     schemaVersion: 1,
     runId: value.runId,
-    sourceBasis: {
-      algorithm: sourceBasis.algorithm,
-      digest: sourceBasis.digest,
-    },
     installers: parsedInstallers,
     sdk: {
       packageName: sdk.packageName,
@@ -1400,6 +1176,26 @@ export function parseCandidateManifest(raw, manifestPath) {
       integrity: sdk.integrity,
       tarballPath: resolveManifestPath(manifestDir, sdk.tarballPath),
     },
+    pluginUi: {
+      packageName: pluginUi.packageName,
+      version: pluginUi.version,
+      pluginSdkVersion: pluginUi.pluginSdkVersion,
+      integrity: pluginUi.integrity,
+      tarballPath: resolveManifestPath(manifestDir, pluginUi.tarballPath),
+    },
+    ...(channelsProtocol === undefined
+      ? {}
+      : {
+          channelsProtocol: {
+            packageName: channelsProtocol.packageName,
+            version: channelsProtocol.version,
+            integrity: channelsProtocol.integrity,
+            tarballPath: resolveManifestPath(
+              manifestDir,
+              channelsProtocol.tarballPath,
+            ),
+          },
+        }),
     cli: {
       packageName: cli.packageName,
       version: cli.version,
@@ -1407,11 +1203,7 @@ export function parseCandidateManifest(raw, manifestPath) {
       tarballPath: resolveManifestPath(manifestDir, cli.tarballPath),
       entrypoint: cli.entrypoint,
     },
-    ...(parsedStandaloneCli
-      ? {
-          standaloneCli: parsedStandaloneCli,
-        }
-      : {}),
+    standaloneCli: parsedStandaloneCli,
   };
 }
 
@@ -1502,6 +1294,290 @@ async function readVerifiedCandidateArtifact({
   return bytes;
 }
 
+export async function capturePackedAuthorCandidateArtifacts(
+  candidate,
+  {
+    manifestPath,
+    destinationParent,
+    selection,
+    writeManifest = false,
+    readFileImpl = readFile,
+    lstatImpl = lstat,
+    realpathImpl = realpath,
+    chmodImpl = chmod,
+    rmImpl = rm,
+  },
+) {
+  const captureAll = selection === 'all';
+  if (writeManifest && !captureAll) {
+    fail('A private candidate manifest requires capture of the complete candidate artifact set');
+  }
+  const packageSelection = new Set(captureAll
+    ? [
+        'sdk',
+        'pluginUi',
+        ...(candidate.channelsProtocol ? ['channelsProtocol'] : []),
+        'cli',
+      ]
+    : selection?.packages ?? []);
+  const installerSelection = new Set(
+    captureAll ? ['shell', 'powershell', 'publicKey'] : selection?.installers ?? [],
+  );
+  const standaloneSelection = captureAll ? 'all' : selection?.standaloneCli;
+  const archiveTargets = new Set(
+    standaloneSelection === 'all'
+      ? candidate.standaloneCli.archives.map(({ os, arch }) => `${os}-${arch}`)
+      : standaloneSelection?.archiveTargets ?? [],
+  );
+  const evidenceTargets = new Set(
+    standaloneSelection === 'all'
+      ? candidate.standaloneCli.notarization.map(({ target }) => target)
+      : standaloneSelection?.notarizationTargets ?? [],
+  );
+  const captureChecksums = standaloneSelection === 'all' || standaloneSelection?.checksums === true;
+  const captureSignature = standaloneSelection === 'all' || standaloneSelection?.signature === true;
+  const manifestDir = dirname(resolve(manifestPath));
+  await mkdir(destinationParent, { recursive: true });
+  const root = await mkdtemp(join(destinationParent, `verified-candidate-${candidate.runId}-`));
+  let cleanupPromise = null;
+  const cleanup = () => {
+    cleanupPromise ??= rmImpl(root, { recursive: true, force: true }).catch((error) => {
+      cleanupPromise = null;
+      throw error;
+    });
+    return cleanupPromise;
+  };
+  try {
+    // Node's numeric modes are authoritative on POSIX. Windows privacy remains a loaded-platform
+    // candidate gate because chmod does not establish a restrictive DACL there.
+    if (process.platform !== 'win32') await chmodImpl(root, 0o700);
+    const directories = {
+      packages: join(root, 'packages'),
+      installers: join(root, 'installers'),
+      native: join(root, 'native'),
+    };
+    const descriptors = [];
+    const addDescriptor = (descriptor) => {
+      if (descriptors.some(({ sourcePath }) => sourcePath === descriptor.sourcePath)) {
+        return;
+      }
+      descriptors.push(descriptor);
+    };
+    if (packageSelection.has('sdk')) {
+      addDescriptor({
+        sourcePath: candidate.sdk.tarballPath,
+        destinationPath: join(directories.packages, 'sdk.tgz'),
+        label: 'SDK tarball',
+        expectedSha512Sri: candidate.sdk.integrity,
+      });
+    }
+    if (packageSelection.has('pluginUi')) {
+      addDescriptor({
+        sourcePath: candidate.pluginUi.tarballPath,
+        destinationPath: join(directories.packages, 'plugin-ui.tgz'),
+        label: 'Plugin UI tarball',
+        expectedSha512Sri: candidate.pluginUi.integrity,
+      });
+    }
+    if (packageSelection.has('channelsProtocol')) {
+      if (!candidate.channelsProtocol) {
+        fail('Candidate does not contain a Channels protocol tarball');
+      }
+      addDescriptor({
+        sourcePath: candidate.channelsProtocol.tarballPath,
+        destinationPath: join(directories.packages, 'channels-protocol.tgz'),
+        label: 'Channels protocol tarball',
+        expectedSha512Sri: candidate.channelsProtocol.integrity,
+      });
+    }
+    if (packageSelection.has('cli')) {
+      addDescriptor({
+        sourcePath: candidate.cli.tarballPath,
+        destinationPath: join(directories.packages, 'cli.tgz'),
+        label: 'CLI tarball',
+        expectedSha512Sri: candidate.cli.integrity,
+      });
+    }
+    for (const field of installerSelection) {
+      const artifact = candidate.installers[field];
+      if (!artifact) fail(`Unknown candidate installer artifact selection: ${field}`);
+      addDescriptor({
+        sourcePath: artifact.filePath,
+        destinationPath: join(directories.installers, artifact.fileName),
+        label: `installer ${field}`,
+        expectedSizeBytes: artifact.sizeBytes,
+        expectedSha256: artifact.sha256,
+      });
+    }
+    for (const artifact of candidate.standaloneCli.archives) {
+      if (!archiveTargets.has(`${artifact.os}-${artifact.arch}`)) continue;
+      addDescriptor({
+        sourcePath: artifact.archivePath,
+        destinationPath: join(directories.native, basename(artifact.archivePath)),
+        label: `standalone CLI archive ${artifact.os}-${artifact.arch}`,
+        expectedSha256: artifact.sha256,
+      });
+    }
+    if (captureChecksums) {
+      const artifact = candidate.standaloneCli.checksums;
+      addDescriptor({
+        sourcePath: artifact.filePath,
+        destinationPath: join(directories.native, artifact.fileName),
+        label: 'standalone CLI checksums',
+        expectedSizeBytes: artifact.sizeBytes,
+        expectedSha256: artifact.sha256,
+      });
+    }
+    if (captureSignature) {
+      const artifact = candidate.standaloneCli.signature;
+      addDescriptor({
+        sourcePath: artifact.filePath,
+        destinationPath: join(directories.native, artifact.fileName),
+        label: 'standalone CLI signature',
+        expectedSizeBytes: artifact.sizeBytes,
+        expectedSha256: artifact.sha256,
+      });
+    }
+    for (const record of candidate.standaloneCli.notarization) {
+      if (!evidenceTargets.has(record.target)) continue;
+      const artifact = record.evidence;
+      addDescriptor({
+        sourcePath: artifact.filePath,
+        destinationPath: join(directories.native, artifact.fileName),
+        label: `${record.target} notarization evidence`,
+        expectedSizeBytes: artifact.sizeBytes,
+        expectedSha256: artifact.sha256,
+      });
+    }
+    if (descriptors.length === 0) {
+      fail('Candidate artifact capture selection must include at least one consumed artifact');
+    }
+    const selectedDirectories = new Set(descriptors.map(({ destinationPath }) => dirname(destinationPath)));
+    await Promise.all([...selectedDirectories].map(async (directory) => {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      if (process.platform !== 'win32') await chmodImpl(directory, 0o700);
+    }));
+    const verified = await Promise.all(descriptors.map(async (descriptor) => ({
+      ...descriptor,
+      bytes: await readVerifiedCandidateArtifact({
+        artifactPath: descriptor.sourcePath,
+        manifestDir,
+        label: descriptor.label,
+        expectedSizeBytes: descriptor.expectedSizeBytes ?? null,
+        expectedSha256: descriptor.expectedSha256 ?? null,
+        expectedSha512Sri: descriptor.expectedSha512Sri ?? null,
+        readFileImpl,
+        lstatImpl,
+        realpathImpl,
+      }),
+    })));
+    await Promise.all(verified.map(({ destinationPath, bytes }) => (
+      writeFile(destinationPath, bytes, { flag: 'wx', mode: 0o600 })
+    )));
+    const capturedPathBySource = new Map(
+      verified.map(({ sourcePath, destinationPath }) => [sourcePath, destinationPath]),
+    );
+    const rewritePath = (sourcePath) => capturedPathBySource.get(sourcePath) ?? sourcePath;
+    const capturedCandidate = Object.freeze({
+      ...candidate,
+      installers: Object.freeze({
+        ...candidate.installers,
+        shell: Object.freeze({
+          ...candidate.installers.shell,
+          filePath: rewritePath(candidate.installers.shell.filePath),
+        }),
+        powershell: Object.freeze({
+          ...candidate.installers.powershell,
+          filePath: rewritePath(candidate.installers.powershell.filePath),
+        }),
+        publicKey: Object.freeze({
+          ...candidate.installers.publicKey,
+          filePath: rewritePath(candidate.installers.publicKey.filePath),
+        }),
+      }),
+      sdk: Object.freeze({
+        ...candidate.sdk,
+        tarballPath: rewritePath(candidate.sdk.tarballPath),
+      }),
+      pluginUi: Object.freeze({
+        ...candidate.pluginUi,
+        tarballPath: rewritePath(candidate.pluginUi.tarballPath),
+      }),
+      ...(candidate.channelsProtocol
+        ? {
+            channelsProtocol: Object.freeze({
+              ...candidate.channelsProtocol,
+              tarballPath: rewritePath(
+                candidate.channelsProtocol.tarballPath,
+              ),
+            }),
+          }
+        : {}),
+      cli: Object.freeze({
+        ...candidate.cli,
+        tarballPath: rewritePath(candidate.cli.tarballPath),
+      }),
+      standaloneCli: Object.freeze({
+        ...candidate.standaloneCli,
+        archivePath: rewritePath(candidate.standaloneCli.archivePath),
+        archives: Object.freeze(candidate.standaloneCli.archives.map((artifact) => Object.freeze({
+          ...artifact,
+          archivePath: rewritePath(artifact.archivePath),
+        }))),
+        checksums: Object.freeze({
+          ...candidate.standaloneCli.checksums,
+          filePath: rewritePath(candidate.standaloneCli.checksums.filePath),
+        }),
+        signature: Object.freeze({
+          ...candidate.standaloneCli.signature,
+          filePath: rewritePath(candidate.standaloneCli.signature.filePath),
+        }),
+        notarization: Object.freeze(candidate.standaloneCli.notarization.map((record) => Object.freeze({
+          ...record,
+          evidence: Object.freeze({
+            ...record.evidence,
+            filePath: rewritePath(record.evidence.filePath),
+          }),
+        }))),
+      }),
+    });
+    const capturedManifestPath = writeManifest ? join(root, 'candidate.json') : null;
+    if (capturedManifestPath) {
+      await writeFile(
+        capturedManifestPath,
+        `${JSON.stringify(capturedCandidate, null, 2)}\n`,
+        { flag: 'wx', mode: 0o600 },
+      );
+    }
+    return Object.freeze({
+      candidate: capturedCandidate,
+      cleanup,
+      manifestPath: capturedManifestPath,
+      root,
+    });
+  } catch (error) {
+    let cleanupFailed = false;
+    let firstCleanupError = null;
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      cleanupFailed = true;
+      firstCleanupError = cleanupError;
+    }
+    if (cleanupFailed) {
+      try {
+        await cleanup();
+      } catch (secondCleanupError) {
+        throw new AggregateError(
+          [error, firstCleanupError, secondCleanupError],
+          'Candidate artifact capture setup and private root cleanup failed twice',
+        );
+      }
+    }
+    throw error;
+  }
+}
+
 export async function assertPackedAuthorCandidateManifestArtifacts(
   candidate,
   {
@@ -1509,6 +1585,8 @@ export async function assertPackedAuthorCandidateManifestArtifacts(
     readFileImpl = readFile,
     lstatImpl = lstat,
     realpathImpl = realpath,
+    trustedMinisignPublicKey = DEFAULT_MINISIGN_PUBLIC_KEY,
+    verifyMinisignImpl = verifyMinisign,
   } = {},
 ) {
   const manifestDir = dirname(resolve(manifestPath));
@@ -1527,6 +1605,20 @@ export async function assertPackedAuthorCandidateManifestArtifacts(
     }),
     readVerifiedCandidateArtifact({
       ...common,
+      artifactPath: candidate.pluginUi.tarballPath,
+      label: 'Plugin UI tarball',
+      expectedSha512Sri: candidate.pluginUi.integrity,
+    }),
+    ...(candidate.channelsProtocol
+      ? [readVerifiedCandidateArtifact({
+          ...common,
+          artifactPath: candidate.channelsProtocol.tarballPath,
+          label: 'Channels protocol tarball',
+          expectedSha512Sri: candidate.channelsProtocol.integrity,
+        })]
+      : []),
+    readVerifiedCandidateArtifact({
+      ...common,
       artifactPath: candidate.cli.tarballPath,
       label: 'CLI tarball',
       expectedSha512Sri: candidate.cli.integrity,
@@ -1538,9 +1630,25 @@ export async function assertPackedAuthorCandidateManifestArtifacts(
       realpathImpl,
     }),
   ]);
-  if (!candidate.standaloneCli) return;
+  const canonicalArchiveFileNames = candidate.standaloneCli.archives.map((artifact) => (
+    `happier-v${candidate.standaloneCli.version}-${artifact.os}-${artifact.arch}.tar.gz`
+  ));
+  const canonicalEvidenceFileNames = candidate.standaloneCli.notarization.map((record) => (
+    `${record.target}.cli.json`
+  ));
+  if (
+    candidate.standaloneCli.archives.some((artifact, index) => (
+      basename(artifact.archivePath) !== canonicalArchiveFileNames[index]
+    ))
+    || candidate.standaloneCli.notarization.some((record, index) => (
+      record.evidence.fileName !== canonicalEvidenceFileNames[index]
+      || basename(record.evidence.filePath) !== canonicalEvidenceFileNames[index]
+    ))
+  ) {
+    fail('Candidate standalone CLI envelope contains a non-canonical artifact name');
+  }
 
-  const [archiveResults, checksumsBytes] = await Promise.all([
+  const [archiveResults, checksumsBytes, notarizationResults] = await Promise.all([
     Promise.all(candidate.standaloneCli.archives.map((artifact) => (
       readVerifiedCandidateArtifact({
         ...common,
@@ -1556,38 +1664,53 @@ export async function assertPackedAuthorCandidateManifestArtifacts(
       expectedSizeBytes: candidate.standaloneCli.checksums.sizeBytes,
       expectedSha256: candidate.standaloneCli.checksums.sha256,
     }),
+    Promise.all(candidate.standaloneCli.notarization.map((record) => (
+      readVerifiedCandidateArtifact({
+        ...common,
+        artifactPath: record.evidence.filePath,
+        label: `${record.target} notarization evidence`,
+        expectedSizeBytes: record.evidence.sizeBytes,
+        expectedSha256: record.evidence.sha256,
+      })
+    ))),
   ]);
   const checksumEntries = parseArtifactChecksums(checksumsBytes.toString('utf8'));
   const checksumEntriesByName = new Map(
     checksumEntries.map((entry) => [entry.name, entry.sha256]),
   );
+  const checksumBoundArtifacts = [
+    ...candidate.standaloneCli.archives.map((artifact, index) => ({
+      fileName: canonicalArchiveFileNames[index],
+      sha256: createHash('sha256').update(archiveResults[index]).digest('hex'),
+    })),
+    ...candidate.standaloneCli.notarization.map((record, index) => ({
+      fileName: canonicalEvidenceFileNames[index],
+      sha256: createHash('sha256').update(notarizationResults[index]).digest('hex'),
+    })),
+  ];
   if (
-    checksumEntries.length !== candidate.standaloneCli.archives.length
-    || candidate.standaloneCli.archives.some((artifact, index) => (
-      checksumEntriesByName.get(basename(artifact.archivePath))
-        !== createHash('sha256').update(archiveResults[index]).digest('hex')
+    checksumEntries.length !== checksumBoundArtifacts.length
+    || checksumEntriesByName.size !== checksumEntries.length
+    || checksumBoundArtifacts.some((artifact) => (
+      checksumEntriesByName.get(artifact.fileName) !== artifact.sha256
     ))
   ) {
-    fail('Candidate standalone CLI checksums do not bind the exact five-archive matrix');
+    fail('Candidate standalone CLI checksums do not bind the exact seven-artifact release envelope');
   }
-  if (candidate.standaloneCli.signature) {
-    await readVerifiedCandidateArtifact({
-      ...common,
-      artifactPath: candidate.standaloneCli.signature.filePath,
-      label: 'standalone CLI signature',
-      expectedSizeBytes: candidate.standaloneCli.signature.sizeBytes,
-      expectedSha256: candidate.standaloneCli.signature.sha256,
-    });
-  }
-  await Promise.all(candidate.standaloneCli.notarization.map((record) => (
-    readVerifiedCandidateArtifact({
-      ...common,
-      artifactPath: record.evidence.filePath,
-      label: `${record.target} notarization evidence`,
-      expectedSizeBytes: record.evidence.sizeBytes,
-      expectedSha256: record.evidence.sha256,
-    })
-  )));
+  const signatureBytes = await readVerifiedCandidateArtifact({
+    ...common,
+    artifactPath: candidate.standaloneCli.signature.filePath,
+    label: 'standalone CLI signature',
+    expectedSizeBytes: candidate.standaloneCli.signature.sizeBytes,
+    expectedSha256: candidate.standaloneCli.signature.sha256,
+  });
+  assertCandidateChecksumSignature({
+    checksumsBytes,
+    signatureBytes,
+  }, {
+    trustedMinisignPublicKey,
+    verifyMinisignImpl,
+  });
 }
 
 export async function loadPackedAuthorCandidateManifest(
@@ -1597,6 +1720,8 @@ export async function loadPackedAuthorCandidateManifest(
     readFileImpl = async (manifestPath) => await readFile(manifestPath, 'utf8'),
     parseCandidateManifestImpl = parseCandidateManifest,
     assertCandidateArtifactsImpl = assertPackedAuthorCandidateManifestArtifacts,
+    trustedMinisignPublicKey = DEFAULT_MINISIGN_PUBLIC_KEY,
+    verifyMinisignImpl = verifyMinisign,
   } = {},
 ) {
   const candidateArgument = readFlagValue(argv, '--candidate');
@@ -1607,14 +1732,255 @@ export async function loadPackedAuthorCandidateManifest(
     typeof raw === 'string' ? raw : raw.toString('utf8'),
     manifestPath,
   );
-  await assertCandidateArtifactsImpl(candidate, { manifestPath });
+  await assertCandidateArtifactsImpl(candidate, {
+    manifestPath,
+    trustedMinisignPublicKey,
+    verifyMinisignImpl,
+  });
   return candidate;
+}
+
+function createPackedAuthorArtifactAdmission(candidate, kind) {
+  return Object.freeze({
+    kind,
+    runId: candidate.runId,
+    sdk: Object.freeze({
+      packageName: candidate.sdk.packageName,
+      version: candidate.sdk.version,
+      integrity: candidate.sdk.integrity,
+    }),
+    pluginUi: Object.freeze({
+      packageName: candidate.pluginUi.packageName,
+      version: candidate.pluginUi.version,
+      pluginSdkVersion: candidate.pluginUi.pluginSdkVersion,
+      integrity: candidate.pluginUi.integrity,
+    }),
+    cli: Object.freeze({
+      packageName: candidate.cli.packageName,
+      version: candidate.cli.version,
+      integrity: candidate.cli.integrity,
+    }),
+  });
+}
+
+export async function loadPackedAuthorVerticalAArtifacts(
+  argv,
+  {
+    loadCandidateManifestImpl = loadPackedAuthorCandidateManifest,
+    loadNaturalArtifactsImpl = loadPackedAuthorNaturalArtifacts,
+  } = {},
+) {
+  const runnerArgs = parseRunnerArgs(argv);
+  const candidate = runnerArgs.candidateManifestPath
+    ? await loadCandidateManifestImpl(argv)
+    : await loadNaturalArtifactsImpl(argv);
+  return Object.freeze({
+    candidate,
+    admission: createPackedAuthorArtifactAdmission(
+      candidate,
+      runnerArgs.candidateManifestPath
+        ? 'canonical-candidate'
+        : 'direct-artifacts-smoke',
+    ),
+    runnerArgs,
+  });
 }
 
 function isPathInsideRoot(root, target) {
   const relativePath = relative(root, target);
   return relativePath === ''
     || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
+}
+
+export async function attestPackedPublicAuthoringHostedWebGraph({
+  artifactRoot,
+  readFileImpl = readFile,
+  lstatImpl = lstat,
+  realpathImpl = realpath,
+}) {
+  const resolvedArtifactRoot = resolve(artifactRoot);
+  const physicalArtifactRoot = await realpathImpl(resolvedArtifactRoot);
+  const rawManifest = await readFileImpl(join(
+    resolvedArtifactRoot,
+    'ui-artifacts.json',
+  ));
+  const graph = PluginUiArtifactsManifestV1Schema.parse(JSON.parse(
+    Buffer.from(rawManifest).toString('utf8'),
+  ));
+  const entries = graph.entries.filter((entry) => (
+    entry.contributionId === PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID
+    && entry.tier === 'hostedWeb'
+    && entry.platform === 'web'
+  ));
+  if (entries.length !== 1) {
+    fail('public authoring hostedWeb graph must contain exactly one review-web/web entry');
+  }
+  const entry = entries[0];
+  const verifiedFiles = [];
+  for (const file of entry.files) {
+    const filePath = resolve(resolvedArtifactRoot, file.relativePath);
+    if (!isPathInsideRoot(resolvedArtifactRoot, filePath)) {
+      fail(`public authoring hostedWeb file escaped the artifact root: ${file.relativePath}`);
+    }
+    const fileStats = await lstatImpl(filePath);
+    if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
+      fail(`public authoring hostedWeb file is not an exact regular file: ${file.relativePath}`);
+    }
+    const physicalFilePath = await realpathImpl(filePath);
+    if (!isPathInsideRoot(physicalArtifactRoot, physicalFilePath)) {
+      fail(`public authoring hostedWeb file escaped the physical artifact root: ${file.relativePath}`);
+    }
+    const bytes = Buffer.from(await readFileImpl(filePath));
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    if (digest !== file.digest) {
+      fail(`public authoring hostedWeb file digest mismatch: ${file.relativePath}`);
+    }
+    if (bytes.byteLength !== file.byteSize) {
+      fail(`public authoring hostedWeb file size mismatch: ${file.relativePath}`);
+    }
+    verifiedFiles.push({ relativePath: file.relativePath, bytes });
+  }
+  if (computePluginUiArtifactFileSetSha256DigestV1(verifiedFiles) !== entry.digest) {
+    fail('public authoring hostedWeb graph digest mismatch');
+  }
+  return Object.freeze({
+    contributionId: entry.contributionId,
+    entry: entry.entry,
+    digest: entry.digest,
+    files: Object.freeze(entry.files.map((file) => Object.freeze({
+      relativePath: file.relativePath,
+      digest: file.digest,
+      byteSize: file.byteSize,
+    }))),
+  });
+}
+
+const PACKED_SCAFFOLD_UI_CONTRIBUTION_ID = 'main-renderer';
+const PACKED_SCAFFOLD_UI_EXPECTED_ARTIFACT_ENTRIES = Object.freeze({
+  reactNative: Object.freeze([
+    Object.freeze({
+      contributionId: PACKED_SCAFFOLD_UI_CONTRIBUTION_ID,
+      tier: 'reactNative',
+      platform: 'web',
+    }),
+    Object.freeze({
+      contributionId: PACKED_SCAFFOLD_UI_CONTRIBUTION_ID,
+      tier: 'reactNative',
+      platform: 'ios',
+    }),
+    Object.freeze({
+      contributionId: PACKED_SCAFFOLD_UI_CONTRIBUTION_ID,
+      tier: 'reactNative',
+      platform: 'android',
+    }),
+  ]),
+  hostedWeb: Object.freeze([
+    Object.freeze({
+      contributionId: PACKED_SCAFFOLD_UI_CONTRIBUTION_ID,
+      tier: 'hostedWeb',
+      platform: 'web',
+    }),
+  ]),
+});
+
+/**
+ * The generated scaffold has a deliberately fixed single view/renderer. Its
+ * source contract names `main-renderer`; the packed author vertical verifies
+ * that every generated target reached the emitted, digested artifact graph
+ * before the untouched root is packed. This does not inspect a bundler's
+ * incidental filenames, only the complete graph it actually emitted.
+ */
+export async function attestPackedScaffoldUiArtifactGraph({
+  artifactRoot,
+  ui,
+  readFileImpl = readFile,
+  lstatImpl = lstat,
+  realpathImpl = realpath,
+}) {
+  if (ui === undefined) {
+    try {
+      await lstatImpl(join(resolve(artifactRoot), 'ui-artifacts.json'));
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        return Object.freeze({ mode: 'no-ui', entries: Object.freeze([]) });
+      }
+      throw error;
+    }
+    fail('Packed no-UI scaffold unexpectedly emitted a Plugin UI artifact graph');
+  }
+  const expectedEntries = PACKED_SCAFFOLD_UI_EXPECTED_ARTIFACT_ENTRIES[ui];
+  if (!expectedEntries) {
+    fail(`Packed scaffold UI mode is unsupported for artifact attestation: ${String(ui)}`);
+  }
+  const label = ui === 'reactNative'
+    ? 'packed React Native scaffold'
+    : 'packed hostedWeb scaffold';
+  const resolvedArtifactRoot = resolve(artifactRoot);
+  const physicalArtifactRoot = await realpathImpl(resolvedArtifactRoot);
+  const rawManifest = await readFileImpl(join(
+    resolvedArtifactRoot,
+    'ui-artifacts.json',
+  ));
+  const graph = PluginUiArtifactsManifestV1Schema.parse(JSON.parse(
+    Buffer.from(rawManifest).toString('utf8'),
+  ));
+  if (graph.entries.length !== expectedEntries.length) {
+    fail(`${label} graph has an unexpected number of emitted targets`);
+  }
+  const entries = [];
+  for (const expected of expectedEntries) {
+    const matchingEntries = graph.entries.filter((entry) => (
+      entry.contributionId === expected.contributionId
+      && entry.tier === expected.tier
+      && entry.platform === expected.platform
+    ));
+    if (matchingEntries.length !== 1) {
+      fail(`${label} graph must contain exactly one ${expected.tier}/${expected.platform} main-renderer entry`);
+    }
+    const entry = matchingEntries[0];
+    if (!entry.files.some((file) => file.relativePath === entry.entry)) {
+      fail(`${label} graph entry is absent from its emitted file set: ${entry.entry}`);
+    }
+    const verifiedFiles = [];
+    for (const file of entry.files) {
+      const filePath = resolve(resolvedArtifactRoot, file.relativePath);
+      if (!isPathInsideRoot(resolvedArtifactRoot, filePath)) {
+        fail(`${label} file escaped the artifact root: ${file.relativePath}`);
+      }
+      const fileStats = await lstatImpl(filePath);
+      if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
+        fail(`${label} file is not an exact regular file: ${file.relativePath}`);
+      }
+      const physicalFilePath = await realpathImpl(filePath);
+      if (!isPathInsideRoot(physicalArtifactRoot, physicalFilePath)) {
+        fail(`${label} file escaped the physical artifact root: ${file.relativePath}`);
+      }
+      const bytes = Buffer.from(await readFileImpl(filePath));
+      const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+      if (digest !== file.digest) {
+        fail(`${label} file digest mismatch: ${file.relativePath}`);
+      }
+      if (bytes.byteLength !== file.byteSize) {
+        fail(`${label} file size mismatch: ${file.relativePath}`);
+      }
+      verifiedFiles.push({ relativePath: file.relativePath, bytes });
+    }
+    if (computePluginUiArtifactFileSetSha256DigestV1(verifiedFiles) !== entry.digest) {
+      fail(`${label} graph digest mismatch: ${expected.tier}/${expected.platform}`);
+    }
+    entries.push(Object.freeze({
+      contributionId: entry.contributionId,
+      tier: entry.tier,
+      platform: entry.platform,
+      entry: entry.entry,
+      digest: entry.digest,
+      fileCount: entry.files.length,
+    }));
+  }
+  return Object.freeze({
+    mode: ui,
+    entries: Object.freeze(entries),
+  });
 }
 
 function assertExactPackedNovelQaKeys(value, expectedKeys, label) {
@@ -1649,7 +2015,7 @@ function resolvePackedNovelQaContainedPath(root, pathLike, label) {
 function parsePackedNovelQaCandidateIdentity(value) {
   assertExactPackedNovelQaKeys(
     value,
-    ['sdk', 'cli'],
+    ['sdk', 'pluginUi', 'cli'],
     'candidate identity',
   );
   const parseArtifact = (artifact, packageName, label) => {
@@ -1669,9 +2035,130 @@ function parsePackedNovelQaCandidateIdentity(value) {
     }
     return Object.freeze({ ...artifact });
   };
+  const pluginUi = value.pluginUi;
+  assertExactPackedNovelQaKeys(
+    pluginUi,
+    ['packageName', 'version', 'pluginSdkVersion', 'integrity'],
+    'Plugin UI candidate identity',
+  );
+  if (
+    pluginUi.packageName !== PLUGIN_UI_PACKAGE_NAME
+    || typeof pluginUi.version !== 'string'
+    || pluginUi.version.length === 0
+    || pluginUi.pluginSdkVersion !== value.sdk?.version
+    || typeof pluginUi.integrity !== 'string'
+    || pluginUi.integrity.length === 0
+  ) {
+    fail('Packed novel QA Plugin UI candidate identity is invalid');
+  }
   return Object.freeze({
     sdk: parseArtifact(value.sdk, SDK_PACKAGE_NAME, 'SDK'),
+    pluginUi: Object.freeze({ ...pluginUi }),
     cli: parseArtifact(value.cli, CLI_PACKAGE_NAME, 'CLI'),
+  });
+}
+
+function parsePackedNovelQaPublicAuthoringHostedWeb(value) {
+  assertExactPackedNovelQaKeys(
+    value,
+    ['contributionId', 'entry', 'digest', 'files'],
+    'public authoring hostedWeb graph',
+  );
+  const isRelativeArtifactPath = (pathLike) => (
+    typeof pathLike === 'string'
+    && pathLike.length > 0
+    && !isAbsolute(pathLike)
+    && !pathLike.includes('\\')
+    && pathLike.split('/').every((segment) => (
+      segment.length > 0 && segment !== '.' && segment !== '..'
+    ))
+  );
+  if (
+    value.contributionId !== PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID
+    || !isRelativeArtifactPath(value.entry)
+    || typeof value.digest !== 'string'
+    || !/^sha256:[a-f0-9]{64}$/u.test(value.digest)
+    || !Array.isArray(value.files)
+    || value.files.length === 0
+  ) {
+    fail('Packed novel QA public authoring hostedWeb graph is invalid');
+  }
+  const filePaths = new Set();
+  const files = value.files.map((file, index) => {
+    assertExactPackedNovelQaKeys(
+      file,
+      ['relativePath', 'digest', 'byteSize'],
+      `public authoring hostedWeb file ${index}`,
+    );
+    if (
+      !isRelativeArtifactPath(file.relativePath)
+      || typeof file.digest !== 'string'
+      || !/^sha256:[a-f0-9]{64}$/u.test(file.digest)
+      || !Number.isSafeInteger(file.byteSize)
+      || file.byteSize <= 0
+      || filePaths.has(file.relativePath)
+    ) {
+      fail('Packed novel QA public authoring hostedWeb file is invalid');
+    }
+    filePaths.add(file.relativePath);
+    return Object.freeze({
+      relativePath: file.relativePath,
+      digest: file.digest,
+      byteSize: file.byteSize,
+    });
+  });
+  if (!filePaths.has(value.entry)) {
+    fail('Packed novel QA public authoring hostedWeb entry is not an artifact file');
+  }
+  return Object.freeze({
+    contributionId: PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID,
+    entry: value.entry,
+    digest: value.digest,
+    files: Object.freeze(files),
+  });
+}
+
+function parsePackedNovelQaPublicAuthoring(value, root) {
+  assertExactPackedNovelQaKeys(
+    value,
+    ['pluginId', 'version', 'archive', 'hostedWeb'],
+    'public authoring',
+  );
+  if (
+    value.pluginId !== PUBLIC_AUTHORING_PLUGIN_ID
+    || value.version !== PUBLIC_AUTHORING_PLUGIN_VERSION
+  ) {
+    fail('Packed novel QA public authoring fixture is invalid');
+  }
+  assertExactPackedNovelQaKeys(
+    value.archive,
+    ['path', 'integrity', 'sha256', 'sizeBytes'],
+    'public authoring archive',
+  );
+  if (
+    typeof value.archive.integrity !== 'string'
+    || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(value.archive.integrity)
+    || typeof value.archive.sha256 !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.archive.sha256)
+    || !Number.isSafeInteger(value.archive.sizeBytes)
+    || value.archive.sizeBytes <= 0
+  ) {
+    fail('Packed novel QA public authoring archive provenance is invalid');
+  }
+  const archivePath = resolvePackedNovelQaContainedPath(
+    root,
+    value.archive.path,
+    'public authoring archive path',
+  );
+  return Object.freeze({
+    pluginId: PUBLIC_AUTHORING_PLUGIN_ID,
+    version: PUBLIC_AUTHORING_PLUGIN_VERSION,
+    archive: Object.freeze({
+      ...value.archive,
+      archivePath,
+    }),
+    archivePath,
+    hostedWeb: parsePackedNovelQaPublicAuthoringHostedWeb(value.hostedWeb),
   });
 }
 
@@ -1719,6 +2206,7 @@ export function parsePackedNovelConnectedAccountQaHandoff(
       'rootId',
       'candidate',
       'plugin',
+      'publicAuthoring',
       'lifecycle',
       'consumers',
       'oauth',
@@ -1791,6 +2279,10 @@ export function parsePackedNovelConnectedAccountQaHandoff(
     root,
     value.plugin.archive.path,
     'archive path',
+  );
+  const publicAuthoring = parsePackedNovelQaPublicAuthoring(
+    value.publicAuthoring,
+    root,
   );
   assertExactPackedNovelQaKeys(
     value.lifecycle,
@@ -1878,6 +2370,7 @@ export function parsePackedNovelConnectedAccountQaHandoff(
       }),
       archivePath,
     }),
+    publicAuthoring,
     lifecycle: Object.freeze({
       scenario: 'vertical-a',
       completedStageIds:
@@ -1984,6 +2477,24 @@ export async function loadPackedNovelConnectedAccountQaHandoff({
   ) {
     fail('Packed novel QA archive integrity mismatch or archive size mismatch');
   }
+  await assertPackedNovelQaRegularContainedFile({
+    path: handoff.publicAuthoring.archivePath,
+    physicalRoot,
+    label: 'public authoring archive',
+  });
+  const publicAuthoringArchiveBytes = await readFile(
+    handoff.publicAuthoring.archivePath,
+  );
+  if (
+    publicAuthoringArchiveBytes.byteLength
+      !== handoff.publicAuthoring.archive.sizeBytes
+    || sha512Sri(publicAuthoringArchiveBytes)
+      !== handoff.publicAuthoring.archive.integrity
+    || createHash('sha256').update(publicAuthoringArchiveBytes).digest('hex')
+      !== handoff.publicAuthoring.archive.sha256
+  ) {
+    fail('Packed novel QA public authoring archive integrity mismatch or archive size mismatch');
+  }
   for (const [consumerId, consumer] of Object.entries(handoff.consumers)) {
     await Promise.all([
       assertPackedNovelQaContainedDirectory({
@@ -2033,6 +2544,7 @@ export async function createPackedNovelConnectedAccountQaHandoff({
   outputRoot,
   candidate,
   archiveBytes,
+  publicAuthoringArtifact,
   pluginArtifact,
   stages,
 }) {
@@ -2052,6 +2564,18 @@ export async function createPackedNovelConnectedAccountQaHandoff({
   ) {
     fail('Packed novel QA handoff requires the exact initial pack-owner bytes');
   }
+  const publicAuthoringArchiveBytes = publicAuthoringArtifact?.archiveBytes;
+  if (
+    publicAuthoringArtifact?.pluginId !== PUBLIC_AUTHORING_PLUGIN_ID
+    || publicAuthoringArtifact?.version !== PUBLIC_AUTHORING_PLUGIN_VERSION
+    || !(publicAuthoringArchiveBytes instanceof Uint8Array)
+    || publicAuthoringArchiveBytes.byteLength === 0
+  ) {
+    fail('Packed novel QA handoff requires the exact public authoring archive bytes');
+  }
+  const publicAuthoringHostedWeb = parsePackedNovelQaPublicAuthoringHostedWeb(
+    publicAuthoringArtifact.hostedWeb,
+  );
   const completedStageIds = stages.map(({ id, ok }) => ok === true ? id : null);
   if (
     completedStageIds.includes(null)
@@ -2065,6 +2589,10 @@ export async function createPackedNovelConnectedAccountQaHandoff({
   const archiveRelativePath = join(
     'plugin',
     `${PACKED_NOVEL_QA_PLUGIN_ID}.happier-plugin.tgz`,
+  );
+  const publicAuthoringArchiveRelativePath = join(
+    'public-authoring',
+    `${PUBLIC_AUTHORING_PLUGIN_ID}.happier-plugin.tgz`,
   );
   const markerRelativePath = PACKED_NOVEL_QA_HANDOFF_MARKER_FILE;
   const rootId = randomUUID();
@@ -2085,6 +2613,12 @@ export async function createPackedNovelConnectedAccountQaHandoff({
         version: candidate.sdk.version,
         integrity: candidate.sdk.integrity,
       },
+      pluginUi: {
+        packageName: candidate.pluginUi.packageName,
+        version: candidate.pluginUi.version,
+        pluginSdkVersion: candidate.pluginUi.pluginSdkVersion,
+        integrity: candidate.pluginUi.integrity,
+      },
       cli: {
         packageName: candidate.cli.packageName,
         version: candidate.cli.version,
@@ -2104,6 +2638,19 @@ export async function createPackedNovelConnectedAccountQaHandoff({
         sha256: createHash('sha256').update(archiveBytes).digest('hex'),
         sizeBytes: archiveBytes.byteLength,
       },
+    },
+    publicAuthoring: {
+      pluginId: PUBLIC_AUTHORING_PLUGIN_ID,
+      version: PUBLIC_AUTHORING_PLUGIN_VERSION,
+      archive: {
+        path: publicAuthoringArchiveRelativePath,
+        integrity: sha512Sri(publicAuthoringArchiveBytes),
+        sha256: createHash('sha256')
+          .update(publicAuthoringArchiveBytes)
+          .digest('hex'),
+        sizeBytes: publicAuthoringArchiveBytes.byteLength,
+      },
+      hostedWeb: publicAuthoringHostedWeb,
     },
     lifecycle: {
       scenario: 'vertical-a',
@@ -2126,6 +2673,12 @@ export async function createPackedNovelConnectedAccountQaHandoff({
       mkdir(dirname(join(resolvedOutputRoot, archiveRelativePath)), {
         recursive: true,
       }),
+      mkdir(dirname(join(
+        resolvedOutputRoot,
+        publicAuthoringArchiveRelativePath,
+      )), {
+        recursive: true,
+      }),
       ...[browser, device].flatMap((consumer) => [
         mkdir(join(resolvedOutputRoot, consumer.happyHomeDir), {
           recursive: true,
@@ -2139,6 +2692,11 @@ export async function createPackedNovelConnectedAccountQaHandoff({
       writeFile(
         join(resolvedOutputRoot, archiveRelativePath),
         archiveBytes,
+        { flag: 'wx' },
+      ),
+      writeFile(
+        join(resolvedOutputRoot, publicAuthoringArchiveRelativePath),
+        publicAuthoringArchiveBytes,
         { flag: 'wx' },
       ),
       writeFile(
@@ -2190,6 +2748,12 @@ export function assertPackedNovelConnectedAccountQaCandidate({
       version: candidate.sdk.version,
       integrity: candidate.sdk.integrity,
     },
+    pluginUi: {
+      packageName: candidate.pluginUi.packageName,
+      version: candidate.pluginUi.version,
+      pluginSdkVersion: candidate.pluginUi.pluginSdkVersion,
+      integrity: candidate.pluginUi.integrity,
+    },
     cli: {
       packageName: candidate.cli.packageName,
       version: candidate.cli.version,
@@ -2197,7 +2761,7 @@ export function assertPackedNovelConnectedAccountQaCandidate({
     },
   };
   if (JSON.stringify(candidateIdentity) !== JSON.stringify(handoff.candidate)) {
-    fail('Packed novel QA handoff does not belong to the exact SDK/CLI candidate');
+    fail('Packed novel QA handoff does not belong to the exact SDK/Plugin UI/CLI candidate');
   }
   return handoff;
 }
@@ -2462,7 +3026,28 @@ export async function materializePackedCli({
   return resolvedEntrypoint;
 }
 
+function assertPackedAuthorArtifactIntegrityInput(artifact, label) {
+  if (
+    !artifact
+    || typeof artifact !== 'object'
+    || Array.isArray(artifact)
+    || typeof artifact.tarballPath !== 'string'
+    || artifact.tarballPath.trim().length === 0
+    || typeof artifact.integrity !== 'string'
+    || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(artifact.integrity)
+  ) {
+    fail(`${label} must provide a non-empty tarballPath and sha512 SRI integrity`);
+  }
+}
+
+function assertPackedAuthorCandidateArchiveInputs(candidate) {
+  assertPackedAuthorArtifactIntegrityInput(candidate?.sdk, 'SDK tarball');
+  assertPackedAuthorArtifactIntegrityInput(candidate?.pluginUi, 'Plugin UI tarball');
+  assertPackedAuthorArtifactIntegrityInput(candidate?.cli, 'CLI tarball');
+}
+
 async function verifyArtifactIntegrity(artifact, label) {
+  assertPackedAuthorArtifactIntegrityInput(artifact, label);
   const bytes = await readFile(artifact.tarballPath);
   const actual = sha512Sri(bytes);
   if (actual !== artifact.integrity) {
@@ -2476,37 +3061,78 @@ async function extractTarball(tarballPath, outputDir) {
   await tar.x({ file: tarballPath, cwd: outputDir, strict: true });
 }
 
-export async function startCandidateRegistry({ sdk, sdkBytes, packageManifest = {} }) {
+/**
+ * Serve one or more exact packed `@happier-dev` author artifacts over a loopback
+ * npm registry so an external-author workspace outside the monorepo can resolve
+ * them with `--sdk-registry`, without workspace resolution and without the
+ * artifacts ever being published.
+ *
+ * The candidate is a *set* of packages (`@happier-dev/plugin-sdk`,
+ * `@happier-dev/plugin-ui`, …) because the CLI author toolchain redirects the
+ * whole `@happier-dev` scope, not one package name.
+ */
+export async function startCandidateRegistry({ packages }) {
+  if (!Array.isArray(packages) || packages.length === 0) {
+    fail('Candidate registry requires at least one exact packed package');
+  }
+  const routes = packages.map((entry) => {
+    const packageName = String(entry?.packageName ?? '').trim();
+    const version = String(entry?.version ?? '').trim();
+    const integrity = String(entry?.integrity ?? '').trim();
+    const bytes = entry?.bytes;
+    if (!packageName || !version || !integrity || !bytes) {
+      fail('Candidate registry package requires an exact name, version, integrity and bytes');
+    }
+    if (sha512Sri(bytes) !== integrity) {
+      fail(`Candidate registry package ${packageName} bytes do not match its attested integrity`);
+    }
+    const slug = packageName.split('/').at(-1);
+    return Object.freeze({
+      packageName,
+      version,
+      integrity,
+      bytes,
+      packageManifest: entry.packageManifest ?? {},
+      metadataPathname: `/${packageName}`.toLowerCase(),
+      tarballPathname: `/${packageName}/-/${slug}-${version}.tgz`,
+    });
+  });
+  const uniqueNames = new Set(routes.map((route) => route.metadataPathname));
+  if (uniqueNames.size !== routes.length) {
+    fail('Candidate registry package names must be unique');
+  }
   let registryOrigin = null;
   let closed = false;
-  const tarballPathname = `/@happier-dev/plugin-sdk/-/plugin-sdk-${sdk.version}.tgz`;
   const server = createServer((request, response) => {
     const requestUrl = new URL(request.url ?? '/', registryOrigin ?? 'http://127.0.0.1');
     const decodedPathname = decodeURIComponent(requestUrl.pathname).toLowerCase();
-    if (requestUrl.pathname === tarballPathname) {
+    const tarballRoute = routes.find((route) => requestUrl.pathname === route.tarballPathname);
+    if (tarballRoute) {
       response.writeHead(200, {
         'content-type': 'application/octet-stream',
-        'content-length': String(sdkBytes.byteLength),
-        etag: `"${sdk.integrity}"`,
+        'content-length': String(tarballRoute.bytes.byteLength),
+        etag: `"${tarballRoute.integrity}"`,
       });
-      response.end(sdkBytes);
+      response.end(tarballRoute.bytes);
       return;
     }
-    if (decodedPathname === `/${SDK_PACKAGE_NAME}`) {
+    const metadataRoute = routes.find((route) => decodedPathname === route.metadataPathname);
+    if (metadataRoute) {
+      const { packageManifest } = metadataRoute;
       const metadata = {
-        name: SDK_PACKAGE_NAME,
-        'dist-tags': { latest: sdk.version },
+        name: metadataRoute.packageName,
+        'dist-tags': { latest: metadataRoute.version },
         versions: {
-          [sdk.version]: {
-            name: SDK_PACKAGE_NAME,
-            version: sdk.version,
+          [metadataRoute.version]: {
+            name: metadataRoute.packageName,
+            version: metadataRoute.version,
             ...(packageManifest.dependencies ? { dependencies: packageManifest.dependencies } : {}),
             ...(packageManifest.optionalDependencies ? { optionalDependencies: packageManifest.optionalDependencies } : {}),
             ...(packageManifest.peerDependencies ? { peerDependencies: packageManifest.peerDependencies } : {}),
             ...(packageManifest.bundledDependencies ? { bundledDependencies: packageManifest.bundledDependencies } : {}),
             dist: {
-              tarball: `${registryOrigin}${tarballPathname}`,
-              integrity: sdk.integrity,
+              tarball: `${registryOrigin}${metadataRoute.tarballPathname}`,
+              integrity: metadataRoute.integrity,
             },
           },
         },
@@ -2531,6 +3157,11 @@ export async function startCandidateRegistry({ sdk, sdkBytes, packageManifest = 
   registryOrigin = `http://127.0.0.1:${address.port}`;
   return {
     origin: registryOrigin,
+    packages: Object.freeze(routes.map((route) => Object.freeze({
+      packageName: route.packageName,
+      version: route.version,
+      integrity: route.integrity,
+    }))),
     async close() {
       if (closed) return;
       closed = true;
@@ -3183,6 +3814,19 @@ function isProcessAlive(pid) {
   }
 }
 
+function findProjectedHostedWebRenderer(manifest) {
+  const renderers = manifest?.contributes?.ui?.renderers;
+  if (!Array.isArray(renderers)) return null;
+  const matches = renderers.filter((renderer) => (
+    renderer?.kind === 'hostedWeb'
+    && typeof renderer?.id === 'string'
+    && renderer.id.length > 0
+    && renderer?.source?.kind === 'artifact'
+    && renderer.source.artifact === renderer.id
+  ));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 export function configureVerticalAManifest({
   manifest,
   version,
@@ -3229,16 +3873,12 @@ export function configureVerticalAManifest({
   }
   const scaffoldUi = manifest?.contributes?.ui;
   const scaffoldHostedWebRenderer = ownsRetainedCapabilities
-    ? scaffoldUi?.renderers?.find((renderer) => (
-        renderer?.id === 'main-web'
-        && renderer?.kind === 'hostedWeb'
-        && renderer?.source?.kind === 'artifact'
-        && renderer?.source?.artifact === 'main-web'
-      ))
+    ? findProjectedHostedWebRenderer(manifest)
     : null;
   if (ownsRetainedCapabilities && !scaffoldHostedWebRenderer) {
     fail('Generated Vertical-A retained-capability scaffold is missing its hostedWeb artifact renderer');
   }
+  const scaffoldHostedWebRendererId = scaffoldHostedWebRenderer?.id ?? null;
   const retainedCapabilityUi = ownsRetainedCapabilities
     ? {
         ...scaffoldUi,
@@ -3246,7 +3886,7 @@ export function configureVerticalAManifest({
           ...scaffoldUi.renderers
             .filter((renderer) => renderer.id !== 'roundtrip-card')
             .map((renderer) => (
-              renderer.id === 'main-web'
+              renderer.id === scaffoldHostedWebRendererId
                 ? {
                     ...renderer,
                     requiredHostMethods: [
@@ -3264,7 +3904,6 @@ export function configureVerticalAManifest({
               label: 'Run Vertical A roundtrip',
               input: { operation: 'structured-message-action' },
             },
-            requiredHostMethods: ['executeAction'],
           },
         ],
       }
@@ -3279,12 +3918,7 @@ export function configureVerticalAManifest({
     },
     activation: { events: [{ kind: 'startup' }] },
     hostAccess: {
-      required: [{
-        id: 'packed-notification-token',
-        capability: 'secrets',
-        reason: 'Authenticate the packed notification channel',
-        scope: { secretIds: ['webhook.token'], access: ['read'] },
-      }, ...(ownsRetainedCapabilities ? [{
+      required: [...(ownsRetainedCapabilities ? [{
         id: 'packed-fetch',
         capability: 'network',
         reason: 'Exercise the packed external fetch and Connected Account producer service',
@@ -3293,17 +3927,6 @@ export function configureVerticalAManifest({
             { kind: 'connectedAccountOrigin', service: 'novel-cloud' },
           ],
           methods: ['GET', 'POST'],
-          privateNetwork: true,
-        },
-      }, {
-        id: 'packed-interceptor-fetch-target',
-        capability: 'network',
-        reason: 'Fetch the packed interceptor target through the host service',
-        scope: {
-          targets: [
-            { kind: 'fixedOrigin', origin: canonicalFetchOrigin },
-          ],
-          methods: ['GET'],
           privateNetwork: true,
         },
       }, {
@@ -3327,27 +3950,37 @@ export function configureVerticalAManifest({
           operations: ['use'],
           materializationKinds: ['environment'],
         },
-      }, {
-        id: 'packed-fetch-interceptor',
-        capability: 'network.intercept',
-        reason: 'Exercise the packed external request interceptor',
-        scope: { origins: [canonicalFetchOrigin] },
       }] : [])],
       optional: [],
     },
     contributes: {
+      settings: [{
+        id: 'notification-configuration',
+        title: 'Packed notification configuration',
+        target: { kind: 'plugin' },
+        scope: 'account',
+        fields: [{
+          id: 'webhook.endpoint',
+          title: 'Endpoint',
+          schema: { type: 'string', minLength: 1 },
+        }, {
+          id: 'webhook.token',
+          title: 'Token',
+          schema: { type: 'string', minLength: 8 },
+          secret: true,
+        }],
+      }],
       actions: [{
         id: 'roundtrip',
         title: 'Vertical A roundtrip',
         scopes: ['global'],
         surfaces: ['agent', 'mcp', 'cli', 'ui'],
-        placement: 'commandPalette',
+        execution: { target: 'daemon' },
+        placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
         ...(ownsRetainedCapabilities ? {
           hostAccess: [
-            'packed-notification-token',
             'packed-fetch',
-            'packed-interceptor-fetch-target',
             'packed-novel-account',
             'packed-claude-account',
           ],
@@ -3384,24 +4017,10 @@ export function configureVerticalAManifest({
           promptGuidelines: ['Invoke the declared action through this presentation.'],
           action: 'roundtrip',
         }],
-        structuredMessages: [{
-          id: 'roundtrip-result',
-          title: 'Vertical A roundtrip result',
-          kind: 'acme.vertical-a/roundtrip-result.v1',
-          payloadSchema: {
-            type: 'object',
-            properties: { message: { type: 'string' } },
-            required: ['message'],
-            additionalProperties: false,
-          },
-          renderer: 'roundtrip-card',
-          actions: ['roundtrip'],
-          fallback: { kind: 'summary', template: 'Vertical A: {message}' },
-        }],
         sessionHeaderActions: [{
           id: 'roundtrip-header',
           title: 'Run Vertical A roundtrip',
-          action: 'roundtrip',
+          action: { kind: 'executeAction', action: 'roundtrip' },
           order: 10,
         }],
         ui: retainedCapabilityUi,
@@ -3419,13 +4038,11 @@ export function configureVerticalAManifest({
       }, {
         id: 'observe-notification-ready',
         kind: 'subscription',
-        event: 'notification-ready',
+        target: {
+          kind: 'plugin',
+          event: { pluginId, localId: 'notification-ready' },
+        },
       }],
-      ...(ownsRetainedCapabilities ? { requestInterceptors: [{
-        id: 'observe-api',
-        origins: [canonicalFetchOrigin],
-        methods: ['GET'],
-      }] } : {}),
       notifications: [{
         id: 'packed-ready',
         kind: 'activity',
@@ -3439,16 +4056,6 @@ export function configureVerticalAManifest({
         title: 'Packed webhook',
         configurable: true,
         defaultEnabled: true,
-        settings: [{
-          id: 'endpoint',
-          title: 'Endpoint',
-          schema: { type: 'string', minLength: 1 },
-        }, {
-          id: 'token',
-          title: 'Token',
-          schema: { type: 'string', minLength: 8 },
-          secret: true,
-        }],
       }],
       commands: [{
         id: 'roundtrip-shared-command',
@@ -3619,36 +4226,43 @@ export function configureVerticalAManifest({
         path: 'resources/config.json',
         contentType: 'application/json',
       }],
-      browserTargets: [{
-        id: 'preview',
-        title: 'Packed preview',
-        url: 'https://preview.example.test/',
-        launch: 'currentView',
-        profile: 'user',
-      }],
-      browserActions: [{
-        id: 'preview-roundtrip',
-        title: 'Run packed roundtrip',
-        action: 'roundtrip',
-        target: 'preview',
-        placement: 'toolbar',
-        icon: 'play-outline',
-      }, {
-        id: 'preview-details',
-        title: 'Inspect packed preview',
-        action: 'roundtrip',
-        target: 'preview',
-        placement: 'detailsPanel',
-        icon: 'search-outline',
-      }, {
-        id: 'preview-context',
-        title: 'Copy packed preview URL',
-        action: 'roundtrip',
-        target: 'preview',
-        placement: 'contextMenu',
-        icon: 'copy-outline',
-      }],
       ...(ownsRetainedCapabilities ? {
+        providers: [{
+          v: 1,
+          id: 'packed-managed-provider',
+          name: 'Packed managed Provider',
+          kind: 'aggregator',
+          endpointTemplates: [{
+            id: 'responses',
+            protocol: 'openai-responses',
+            baseUrl: `${canonicalFetchOrigin}/v1`,
+            capabilities: {
+              streaming: 'supported',
+              toolRoundTrips: 'supported',
+              statefulResponses: 'unknown',
+              reasoningControls: 'supported',
+            },
+          }],
+          catalog: {
+            source: 'probe',
+            manualModelPolicy: 'allowed',
+            probes: [{
+              endpointTemplateId: 'responses',
+              path: '/v1/models',
+              parser: 'openai-models',
+            }],
+          },
+          managedRuntime: {
+            kind: 'managed',
+            connectedAccounts: [{
+              purpose: 'upstream',
+              service: 'novel-cloud',
+              required: true,
+              materializationKinds: ['environment'],
+            }],
+            endpointTemplateIds: ['responses'],
+          },
+        }],
         agents: [{
           id: 'packed-external-agent',
           title: 'Packed external sessions Agent',
@@ -3678,7 +4292,6 @@ export function configureVerticalAManifest({
               sources: [{
                 sourceKind: 'packedExternal',
                 schema: {
-                  passthrough: false,
                   fields: [
                     { name: 'kind', kind: 'literal', value: 'packedExternal' },
                     { name: 'scope', kind: 'literal', value: 'default' },
@@ -3727,7 +4340,8 @@ export function configureDescriptorOnlyManifest({ manifest, version }) {
       ui: {
         views: [{
           id: 'settings',
-          placement: 'app.settingsPage',
+          container: 'settingsPage',
+          target: { kind: 'app' },
           renderer: 'settings-form',
           title: 'Descriptor-only settings',
         }],
@@ -3746,11 +4360,126 @@ export function configureDescriptorOnlyManifest({ manifest, version }) {
   };
 }
 
+// Code-defined plugins have no checked-in `.happier-plugin/plugin.json`: the
+// generated scaffold authors its manifest inside `definePlugin(...)` in
+// `src/index.ts` and `happier plugins pack` projects the canonical manifest from
+// that evaluated module. The vertical's fixtures therefore read the scaffold's
+// authored declaration instead of a manifest file.
+const SCAFFOLD_DEFINE_PLUGIN_PREFIX = 'export const { manifest, activate } = definePlugin(';
+
+// Configuring a fixture replaces the generated entry with the fixture's own
+// manual-authoring module, so a plugin root is scaffold-shaped only until it is
+// first configured. The update, rollback, and registry lifecycles reconfigure the
+// same root for each successive version, so the scaffold's authored source is
+// captured on its first successful read and replayed afterwards. Re-parsing the
+// overwritten entry would instead fail the prefix guard below. The source rather
+// than the parsed declaration is retained so every caller still evaluates its own
+// object and no caller can mutate another's projected manifest.
+const scaffoldDefinePluginSourceByRoot = new Map();
+const scaffoldSdkProjectionByRoot = new Map();
+
+async function readScaffoldedDefinePluginManifest({ pluginRoot, sdkPackageRoot }) {
+  const capturedSource = scaffoldDefinePluginSourceByRoot.get(pluginRoot);
+  const source = capturedSource ?? await readFile(join(pluginRoot, 'src', 'index.ts'), 'utf8');
+  if (!source.includes(SCAFFOLD_DEFINE_PLUGIN_PREFIX)) {
+    fail('Generated scaffold must author its manifest through definePlugin in src/index.ts');
+  }
+  if (typeof sdkPackageRoot !== 'string' || sdkPackageRoot.trim().length === 0) {
+    fail('Generated scaffold projection requires the installed SDK package root');
+  }
+  // The scaffolded entry is plain JavaScript apart from its SDK imports. Evaluate
+  // the authored declaration with the exact packed SDK's real definePlugin and
+  // protocol helpers so its canonical manifest projection (including
+  // derived UI renderer/artifact identities) remains the authority.
+  const body = source
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*import\s/u.test(line))
+    .map((line) => line.replace(/^\s*export\s+/u, ''))
+    .join('\n')
+    .replace('const { manifest, activate } = definePlugin(', 'return definePlugin(');
+  const projectionRoot = resolve(sdkPackageRoot);
+  let projection = scaffoldSdkProjectionByRoot.get(projectionRoot);
+  if (!projection) {
+    projection = (async () => {
+      const sdkModule = await import(
+        pathToFileURL(join(projectionRoot, 'dist', 'index.js')).href,
+      );
+      const protocolModule = await import(
+        pathToFileURL(join(projectionRoot, 'dist', 'protocol', 'index.js')).href,
+      );
+      if (
+        typeof sdkModule.definePlugin !== 'function'
+        || typeof sdkModule.defineUiSurfaceDefinition !== 'function'
+        || typeof protocolModule.defineProtocolObject !== 'function'
+        || typeof protocolModule.defineProtocolString !== 'function'
+      ) {
+        fail('Installed SDK projection is missing the generated scaffold authoring helpers');
+      }
+      return Object.freeze({
+        definePlugin: sdkModule.definePlugin,
+        defineUiSurfaceDefinition: sdkModule.defineUiSurfaceDefinition,
+        defineProtocolObject: protocolModule.defineProtocolObject,
+        defineProtocolString: protocolModule.defineProtocolString,
+      });
+    })();
+    scaffoldSdkProjectionByRoot.set(projectionRoot, projection);
+  }
+  let definedPlugin;
+  try {
+    const {
+      definePlugin,
+      defineUiSurfaceDefinition,
+      defineProtocolObject,
+      defineProtocolString,
+    } = await projection;
+    definedPlugin = new Function(
+      'definePlugin',
+      'defineUiSurfaceDefinition',
+      'defineProtocolObject',
+      'defineProtocolString',
+      body,
+    )(
+      definePlugin,
+      defineUiSurfaceDefinition,
+      defineProtocolObject,
+      defineProtocolString,
+    );
+  } catch (error) {
+    fail(`Generated scaffold definePlugin declaration could not be read: ${error?.message ?? error}`);
+  }
+  const manifest = definedPlugin?.manifest;
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    fail('Generated scaffold definePlugin projection did not return a manifest');
+  }
+  // Captured only after the entry has fully validated, so a genuinely wrong
+  // scaffold keeps failing loudly on every read instead of once.
+  if (capturedSource === undefined) scaffoldDefinePluginSourceByRoot.set(pluginRoot, source);
+  return manifest;
+}
+
+function projectCodeDefinedPackageFiles(files, additions) {
+  return [...new Set([
+    // `.happier-plugin` never exists in a code-defined source tree; pack fails
+    // on a `files` selector that selects nothing and stages the projected
+    // manifest itself.
+    ...(Array.isArray(files) ? files.filter((entry) => entry !== '.happier-plugin') : []),
+    ...additions,
+  ])];
+}
+
 async function configureDescriptorOnlyPlugin(params) {
+  // The descriptor-only fixture owns no entrypoints and no activation, so it is
+  // authored as a canonical manifest package rather than a code-defined module:
+  // code-defined packing requires `entrypoints.daemon`, and this fixture must
+  // stay provably free of executable ownership.
   const manifestPath = join(params.pluginRoot, '.happier-plugin', 'plugin.json');
   const packagePath = join(params.pluginRoot, 'package.json');
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const manifest = await readScaffoldedDefinePluginManifest({
+    pluginRoot: params.pluginRoot,
+    sdkPackageRoot: params.sdkPackageRoot,
+  });
   const packageJson = JSON.parse(await readFile(packagePath, 'utf8'));
+  await mkdir(dirname(manifestPath), { recursive: true });
   await writeFile(manifestPath, `${JSON.stringify(configureDescriptorOnlyManifest({
     manifest,
     version: params.version,
@@ -3758,9 +4487,12 @@ async function configureDescriptorOnlyPlugin(params) {
   await writeFile(packagePath, `${JSON.stringify({
     ...packageJson,
     version: params.version,
-    files: Array.isArray(packageJson.files)
-      ? packageJson.files.filter((entry) => entry !== 'dist')
-      : packageJson.files,
+    files: [...new Set([
+      ...(Array.isArray(packageJson.files)
+        ? packageJson.files.filter((entry) => entry !== 'dist')
+        : []),
+      '.happier-plugin',
+    ])],
   }, null, 2)}\n`, 'utf8');
 }
 
@@ -3809,6 +4541,9 @@ export function assertPackedConnectedAccountWatchRematerialization({
   const observations = Array.isArray(watch?.observations)
     ? watch.observations
     : [];
+  const movedTargetResyncs = Array.isArray(watch?.movedTargetResyncs)
+    ? watch.movedTargetResyncs
+    : [];
   const observationsAreBoundedRematerializations = observations.every(
     (observation) => (
       observation?.purpose === 'packed-novel-account'
@@ -3818,6 +4553,26 @@ export function assertPackedConnectedAccountWatchRematerialization({
         || observation?.accountId === 'account-b'
       )
       && observation?.materializationKind === 'environment'
+    ),
+  );
+  // The host fails an in-flight materialization closed when a level-triggered resync observes the
+  // selected target mid-move, so that exact typed rejection is admissible — but only as a
+  // transition. Each tolerated rejection carries the number of observations that had settled when
+  // it happened, and is admissible only when it is directly followed by a settled observation:
+  // its ordinal must be unique (no second rejection before the next observation) and strictly
+  // below the final observation count (an observation settled after it). That bounds the tolerance
+  // at one rejection per settled rematerialization and fails an unbounded or never-settling
+  // rejection sequence, which would otherwise mask a host that rejects most resyncs.
+  const toleratedRejectionsSettle = movedTargetResyncs.every(
+    (rejection, index) => (
+      rejection?.code === 'plugin_host_access_resource_not_selected'
+      && Number.isInteger(rejection?.settledObservations)
+      && rejection.settledObservations < observations.length
+      && movedTargetResyncs.findIndex(
+        (candidate) => (
+          candidate?.settledObservations === rejection.settledObservations
+        ),
+      ) === index
     ),
   );
   if (
@@ -3835,11 +4590,16 @@ export function assertPackedConnectedAccountWatchRematerialization({
     || !observationsAreBoundedRematerializations
     || observations[0]?.accountId !== 'account-b'
     || observations.at(-1)?.accountId !== 'account-a'
+    || !toleratedRejectionsSettle
     || mutation?.group?.ref?.groupId !== 'packed-fallback'
     || mutation.group.activeConnectedAccountId !== 'account-a'
   ) {
     fail(`Packed public Connected Account watch did not prove level-triggered rematerialization: ${JSON.stringify({
       resyncCount: watch?.resyncCount ?? null,
+      movedTargetResyncs: movedTargetResyncs.map((rejection) => ({
+        code: rejection?.code ?? null,
+        settledObservations: rejection?.settledObservations ?? null,
+      })),
       observations: observations.map((observation) => ({
         purpose: observation?.purpose ?? null,
         targetKind: observation?.targetKind ?? null,
@@ -3856,6 +4616,7 @@ export function assertPackedConnectedAccountWatchRematerialization({
   return Object.freeze({
     selection: selection.code,
     resyncCount: watch.resyncCount,
+    movedTargetResyncs: movedTargetResyncs.length,
     rematerializedAccountIds: Object.freeze(
       observations.map(({ accountId }) => accountId),
     ),
@@ -3924,18 +4685,27 @@ export function assertPackedConnectedAccountDormancy({
 }
 
 export async function configureVerticalAPlugin(params) {
-  const manifestPath = join(params.pluginRoot, '.happier-plugin', 'plugin.json');
   const packagePath = join(params.pluginRoot, 'package.json');
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const manifest = await readScaffoldedDefinePluginManifest({
+    pluginRoot: params.pluginRoot,
+    sdkPackageRoot: params.sdkPackageRoot,
+  });
   const packageJson = JSON.parse(await readFile(packagePath, 'utf8'));
   const unknownScmRepositoryAuth = resolvePackedScmRepositoryAuth(undefined);
-  await writeFile(manifestPath, `${JSON.stringify(configureVerticalAManifest({
+  const configuredManifest = configureVerticalAManifest({
     manifest,
     version: params.version,
     pluginId: params.pluginId,
     fetchOrigin: params.fetchOrigin,
     connectedAccountOrigin: params.connectedAccountOrigin,
-  }), null, 2)}\n`, 'utf8');
+  });
+  const hostedWebRenderer = params.pluginId === 'acme.vertical-a'
+    ? findProjectedHostedWebRenderer(configuredManifest)
+    : null;
+  if (params.pluginId === 'acme.vertical-a' && hostedWebRenderer === null) {
+    fail('Configured Vertical-A manifest is missing its projected hostedWeb artifact renderer');
+  }
+  const hostedWebRendererId = hostedWebRenderer?.id ?? null;
   await writeFile(packagePath, `${JSON.stringify({
     ...packageJson,
     ...(params.packageName ? { name: params.packageName } : {}),
@@ -3954,10 +4724,7 @@ export async function configureVerticalAPlugin(params) {
         vite: '^7.0.0',
       },
     } : {}),
-    files: [...new Set([
-      ...(Array.isArray(packageJson.files) ? packageJson.files : []),
-      'resources',
-    ])],
+    files: projectCodeDefinedPackageFiles(packageJson.files, ['resources']),
   }, null, 2)}\n`, 'utf8');
   const resourceRoot = join(params.pluginRoot, 'resources');
   const resourcePayloads = verticalAResourcePayloads(params.version);
@@ -3974,14 +4741,13 @@ export async function configureVerticalAPlugin(params) {
     await mkdir(uiRoot, { recursive: true });
     await Promise.all([
       writeFile(join(params.pluginRoot, 'pluginUiBuild.mjs'), [
-        "import { definePluginUiBuildConfig } from '@happier-dev/plugin-sdk/ui/build';",
+        "import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';",
         '',
-        'export default definePluginUiBuildConfig({',
+        'export default defineBuildConfig({',
         '  targets: [{',
-        "    rendererId: 'main-web',",
-        "    entry: 'src/ui/index.html',",
+        `    rendererId: ${JSON.stringify(hostedWebRendererId)},`,
+        "    entry: 'src/ui/index.ts',",
         "    kind: 'hostedWeb',",
-        "    platforms: ['web'],",
         '  }],',
         '});',
         '',
@@ -3994,24 +4760,20 @@ export async function configureVerticalAPlugin(params) {
         "  root: 'src/ui',",
         "  base: './',",
         '  build: {',
-        "    outDir: resolve(process.cwd(), 'dist/ui/hosted-web/main-web'),",
+        `    outDir: resolve(process.cwd(), 'dist/ui/hosted-web/${hostedWebRendererId}'),`,
         '    emptyOutDir: true,',
         '    sourcemap: false,',
         '  },',
         '});',
         '',
       ].join('\n'), 'utf8'),
-      writeFile(join(uiRoot, 'index.html'), [
-        '<!doctype html>',
-        '<html lang="en">',
-        '  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>',
-        '  <body>',
-        '    <main>',
-        '      <h1>Vertical A packed hosted web surface</h1>',
-        '      <p data-testid="packed-hosted-web-status">Installed artifact mounted.</p>',
-        '    </main>',
-        '  </body>',
-        '</html>',
+      writeFile(join(uiRoot, 'index.ts'), [
+        'document.body.innerHTML = `',
+        '  <main>',
+        '    <h1>Vertical A packed hosted web surface</h1>',
+        '    <p data-testid="packed-hosted-web-status">Installed artifact mounted.</p>',
+        '  </main>',
+        '`;',
         '',
       ].join('\n'), 'utf8'),
     ]);
@@ -4020,11 +4782,20 @@ export async function configureVerticalAPlugin(params) {
     "import { randomUUID } from 'node:crypto';",
     "import { appendFileSync, readFileSync } from 'node:fs';",
     "import { join } from 'node:path';",
-    "import { readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';",
-    "import type { ScmHostingProviderRuntimeAdapter } from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';",
+    "import { readCurrentHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';",
+    "import type { HostingProviderRuntimeAdapter } from '@happier-dev/plugin-sdk/scm/hosting';",
     "import type { JsonValue, PluginApi } from '@happier-dev/plugin-sdk';",
-    "import type { ActionHandler, PluginConnectedAccountAuthenticationContext, PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/runtime';",
-    "import type { AgentExternalSessionHooksContribution, AgentExternalSessionObservationContribution, AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/experimental/sessions';",
+    "import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';",
+    "import type { ConnectedAccountAuthenticationContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';",
+    ...(params.pluginId === 'acme.vertical-a' ? [
+      "import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';",
+      "import type { ManagedProviderRuntime } from '@happier-dev/plugin-sdk/providers';",
+    ] : []),
+    "import type { AgentExternalSessionHooksContribution, AgentExternalSessionObservationContribution, AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/sessions/external';",
+    '',
+    '// Manual named authoring ABI: the module exposes its canonical manifest and',
+    '// activation directly instead of a checked-in `.happier-plugin/plugin.json`.',
+    `export const manifest = ${JSON.stringify(configuredManifest, null, 2)};`,
     '',
     `const pluginVersion = ${JSON.stringify(params.version)};`,
     ...(params.pluginId === 'acme.vertical-a' ? [
@@ -4057,23 +4828,47 @@ export async function configureVerticalAPlugin(params) {
     '};',
     "appendMarker('module');",
     '',
+    ...(params.pluginId === 'acme.vertical-a' ? [
+      'const packedManagedServiceSpec = {',
+      "  id: 'packed-managed-provider-service',",
+      `  mode: { kind: 'attach', baseUrl: ${JSON.stringify(params.fetchOrigin)} },`,
+      "  healthCheck: { kind: 'none' },",
+      '} satisfies ManagedServiceSpec;',
+      '',
+      'const packedManagedProviderRuntime = {',
+      '  start: async (request, context) => {',
+      "    if (request.endpointTemplateIds.length !== 1 || request.endpointTemplateIds[0] !== 'responses') {",
+      "      throw new Error('Packed managed Provider endpoint-template request does not match its declaration');",
+      '    }',
+      '    const service = await context.managedServices.supervise(',
+      '      packedManagedServiceSpec,',
+      '      { signal: context.signal },',
+      '    );',
+      '    try {',
+      '      const snapshot = await service.waitUntilHealthy({ signal: context.signal });',
+      "      if (snapshot.state !== 'healthy' || snapshot.baseUrl === null) {",
+      "        throw new Error('Packed managed Provider service did not publish a healthy endpoint');",
+      '      }',
+      '    } catch (error) {',
+      '      try {',
+      '        await service.dispose();',
+      '      } catch (cleanupError) {',
+      "        throw new AggregateError([error, cleanupError], 'Packed managed Provider readiness and cleanup failed');",
+      '      }',
+      '      throw error;',
+      '    }',
+      '    appendMarker(`managed-provider-${request.reason}`);',
+      '    return {',
+      '      service,',
+      "      endpoints: [{ endpointTemplateId: 'responses', endpoint: { kind: 'servicePath', path: '/v1' } }],",
+      '    };',
+      '  },',
+      '} satisfies ManagedProviderRuntime;',
+      '',
+    ] : []),
     'const roundtrip: ActionHandler = async (input, context): Promise<JsonValue> => {',
     "  const operation = typeof input === 'object' && input !== null && 'operation' in input ? input.operation : undefined;",
     ...(params.pluginId === 'acme.vertical-a' ? [
-      "  if (operation === 'interceptor-fetch') {",
-      '    const response = await context.services.fetch.request({',
-      "      url: `${fetchOrigin}/@happier-dev%2fplugin-sdk`,",
-      "      method: 'GET',",
-      "      redirect: 'error',",
-      '    });',
-      '    return {',
-      '      fetch: {',
-      '        status: response.status,',
-      '        finalUrl: response.finalUrl,',
-      '        body: new TextDecoder().decode(response.body),',
-      '      },',
-      '    };',
-      '  }',
       "  if (operation === 'connected-account-materialize') {",
       "    const binding = await context.services.connectedAccounts.getBinding('packed-novel-account');",
       "    const materialization = await context.services.connectedAccounts.materialize('packed-novel-account', {",
@@ -4105,6 +4900,7 @@ export async function configureVerticalAPlugin(params) {
       '  }',
       "  if (operation === 'connected-account-watch-rematerialize') {",
       "    const observations: Array<{ purpose: string; targetKind: 'account' | 'group'; accountId: string | null; materializationKind: string }> = [];",
+      '    const movedTargetResyncs: Array<{ code: string; settledObservations: number }> = [];',
       '    let resolveSecondResync!: () => void;',
       '    let rejectSecondResync!: (error: unknown) => void;',
       '    const secondResync = new Promise<void>((resolve, reject) => {',
@@ -4141,7 +4937,19 @@ export async function configureVerticalAPlugin(params) {
       "          appendMarker('connected-account-watch-ready');",
       '        }',
       "        if (observations.length >= 2 && accountId === 'account-a') resolveSecondResync();",
-      '      }).catch(rejectSecondResync);',
+      '      }).catch((error) => {',
+      "        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'",
+      '          ? error.code',
+      "          : 'unknown';",
+      // A level-triggered resync may observe the selected target mid-move: the host fails the
+      // in-flight materialization closed rather than returning a stale account, and the next
+      // resync carries the settled target. Only that exact typed outcome is non-fatal here.
+      "        if (code !== 'plugin_host_access_resource_not_selected') {",
+      '          rejectSecondResync(error);',
+      '          return;',
+      '        }',
+      '        movedTargetResyncs.push({ code, settledObservations: observations.length });',
+      '      });',
       '    });',
       '    const timeout = setTimeout(() => {',
       "      rejectSecondResync(new Error('Timed out waiting for packed Connected Account rematerialization'));",
@@ -4153,7 +4961,7 @@ export async function configureVerticalAPlugin(params) {
       '      clearTimeout(timeout);',
       '      subscription.dispose();',
       '    }',
-      '    return { resyncCount: observations.length, observations };',
+      '    return { resyncCount: observations.length, observations, movedTargetResyncs };',
       '  }',
       "  if (operation === 'connected-account-dormancy-materialize') {",
       "    const binding = await context.services.connectedAccounts.getBinding('packed-novel-account');",
@@ -4191,20 +4999,100 @@ export async function configureVerticalAPlugin(params) {
     "  if (operation === 'notification-preferences') {",
     "    return { notification: await context.services.notifications.preferences('packed-ready') };",
     '  }',
-    "  if (operation === 'notification-send') {",
+      "  if (operation === 'notification-send') {",
     "    const clientRequestId = typeof input === 'object' && input !== null && 'clientRequestId' in input ? input.clientRequestId : undefined;",
     "    if (typeof clientRequestId !== 'string') throw new Error('Packed notification request id is required');",
-    "    await context.services.events.emit('notification-ready', { clientRequestId });",
+    "    await context.services.events.plugin.emit('notification-ready', { clientRequestId });",
     '    return {',
     '      notification: await context.services.notifications.send({',
     '        clientRequestId,',
     "        categoryId: 'packed-ready',",
     "        title: 'Packed notification ready',",
     '      }),',
-    '    };',
-    '  }',
-    "  const value = typeof input === 'object' && input !== null && 'value' in input ? input.value : undefined;",
-    "  if (typeof value === 'string') await context.services.storage.local.set('verticalAValue', value);",
+      '    };',
+      '  }',
+      "  if (operation === 'external-sessions-public') {",
+      '    const capabilities = await context.services.sessions.external.capabilities();',
+      '    const listed = await context.services.sessions.external.list({',
+      "      agentId: 'packed-external-agent',",
+      '      limit: 1,',
+      '    });',
+      '    const candidate = listed.items[0];',
+      "    if (!candidate) throw new Error('Packed public External Sessions list returned no candidate');",
+      '    const attached = await context.services.sessions.external.attach(candidate.ref);',
+      '    const transcript = await context.services.sessions.external.readTranscript(candidate.ref, {',
+      "      mode: 'page',",
+      "      direction: 'older',",
+      '      limit: 1,',
+      '    });',
+      "    if (transcript.mode !== 'page') throw new Error('Packed public External Sessions transcript returned the wrong mode');",
+      '    const acknowledgedFollowEvents: string[] = [];',
+      '    const followed = await context.services.sessions.external.followTranscript(',
+      '      candidate.ref,',
+      "      { ...(transcript.tailCursor ? { cursor: transcript.tailCursor } : {}) },",
+      '      async (event) => {',
+      '        acknowledgedFollowEvents.push(event.kind);',
+      "        if (event.kind === 'terminated') appendMarker(`external-public-follow-${event.reason}`);",
+      '      },',
+      '    );',
+      '    // The capability sampled at the top of this branch is three awaited round-trips stale by',
+      '    // the time follow runs, so it cannot witness the state follow actually failed in. Re-read',
+      '    // it AT the failure instant: a follow that fails while the host still advertises',
+      "    // `available` is the real defect and must fail the stage; a follow that fails while the",
+      '    // host honestly reports it unavailable is an environment limit, reported as a skip rather',
+      '    // than silently passing or falsely failing.',
+      "    let followSkippedCode: string | null = null;",
+      "    let followStartingCursor: string | null = null;",
+      "    if (followed.status !== 'following') {",
+      '      const followCapabilityAtFailure = (await context.services.sessions.external.capabilities()).follow;',
+      "      if (followCapabilityAtFailure.status === 'available') {",
+      '        throw new Error(',
+      "          `Packed public External Sessions follow failed as ${followed.code} while the host still advertised capabilities.follow=${JSON.stringify(followCapabilityAtFailure)} at the failure instant`,",
+      '        );',
+      '      }',
+      '      followSkippedCode = followed.code;',
+      "      appendMarker(`external-public-follow-skipped-${followed.code}`);",
+      '    } else {',
+      '      followStartingCursor = followed.startingCursor;',
+      '      await followed.subscription.dispose();',
+      "      if (!acknowledgedFollowEvents.includes('terminated')) throw new Error('Packed public External Sessions dispose was not acknowledged');",
+      '    }',
+      '    const takeover = await context.services.sessions.external.takeover(candidate.ref, {',
+      "      targetStorageMode: 'persisted',",
+      "      idempotencyKey: `packed-public-takeover:${pluginVersion}:${activationInstanceId}`,",
+      '    });',
+      "    const status = await context.services.actions.execute('sessions.external.operation.status.get', takeover);",
+      '    const recoveryInput = status.ok ? status.operation : takeover;',
+      "    const recovery = await context.services.actions.execute('sessions.external.operation.resume', recoveryInput);",
+      '    return {',
+      '      capabilities: {',
+      '        list: capabilities.list.status,',
+      '        attach: capabilities.attach.status,',
+      '        transcript: capabilities.transcript.status,',
+      '        follow: capabilities.follow.status,',
+      '        takeover: capabilities.takeover.status,',
+      '      },',
+      '      followSkippedCode,',
+      '      candidate: candidate.ref,',
+      '      attachedSessionId: attached.sessionId,',
+      '      transcript: {',
+      "        firstItemId: transcript.items[0]?.id ?? null,",
+      // The public plugin service carries the canonical transcript raw record as
+      // `data`; only the External Sessions contribution facet names it `raw`.
+      "        firstItemRaw: transcript.items[0]?.data ?? null,",
+      '        tailCursor: transcript.tailCursor ?? null,',
+      '      },',
+      '      follow: {',
+      '        startingCursor: followStartingCursor,',
+      '        acknowledgedEvents: acknowledgedFollowEvents,',
+      '      },',
+      '      takeover,',
+      '      status,',
+      '      recovery,',
+      '    };',
+      '  }',
+      "  const value = typeof input === 'object' && input !== null && 'value' in input ? input.value : undefined;",
+    "  if (typeof value === 'string') await context.services.storage.daemon.set('verticalAValue', value);",
     '  const decoder = new TextDecoder();',
     '  const resources = {',
     "    prompt: decoder.decode((await context.services.resources.read('prompt')).bytes),",
@@ -4214,7 +5102,7 @@ export async function configureVerticalAPlugin(params) {
     "    config: decoder.decode((await context.services.resources.read('config')).bytes),",
     '  };',
     "  appendMarker('invoke');",
-    "  return { pluginId: " + JSON.stringify(params.pluginId) + ", version: " + JSON.stringify(params.version) + ", value: await context.services.storage.local.get('verticalAValue'), resources, activationInstanceId, pid: process.pid, runtime: { execPath: process.execPath, argv: process.argv.slice(0, 3) } };",
+    "  return { pluginId: " + JSON.stringify(params.pluginId) + ", version: " + JSON.stringify(params.version) + ", value: await context.services.storage.daemon.get('verticalAValue'), resources, activationInstanceId, pid: process.pid, runtime: { execPath: process.execPath, argv: process.argv.slice(0, 3) } };",
     '};',
     '',
     'const packedForgeConnectedAccountRuntime = {',
@@ -4247,12 +5135,12 @@ export async function configureVerticalAPlugin(params) {
     "    if (request.kind === 'environment') return { kind: 'environment' as const, env: {} };",
     "    return { kind: 'files' as const, files: {} };",
     '  },',
-    '} satisfies PluginConnectedAccountRuntime;',
+    '} satisfies ConnectedAccountRuntime;',
     '',
-    'const novelAccountId = (context: PluginConnectedAccountAuthenticationContext, fallback: string): string => context.attempt.kind === \'reconnect\'',
+    'const novelAccountId = (context: ConnectedAccountAuthenticationContext, fallback: string): string => context.attempt.kind === \'reconnect\'',
     '  ? context.attempt.account.accountId',
     '  : fallback;',
-    'const readNovelConfiguration = async (context: PluginConnectedAccountAuthenticationContext, secretFieldId: string) => {',
+    'const readNovelConfiguration = async (context: ConnectedAccountAuthenticationContext, secretFieldId: string) => {',
     '  const secret = await context.configuration.getSecret(secretFieldId);',
     '  if (!secret) {',
     "    return { ok: false as const, diagnostic: { code: 'novel_configuration_secret_missing', severity: 'error' as const, message: 'Novel Cloud configuration secret is required.' } };",
@@ -4260,10 +5148,10 @@ export async function configureVerticalAPlugin(params) {
     "  appendMarker('connected-account-configuration');",
     '  return { ok: true as const, secret };',
     '};',
-    'const fetchNovelProvider = async (context: PluginConnectedAccountAuthenticationContext): Promise<void> => {',
+    'const fetchNovelProvider = async (context: ConnectedAccountAuthenticationContext): Promise<void> => {',
     "  const configuredOrigin = context.configuration.values['api-origin'];",
     "  if (typeof configuredOrigin !== 'string') throw new Error('Novel Cloud configured origin is unavailable');",
-    '  const response = await context.services.fetch.request({',
+    '  const response = await context.services.http.request({',
     '    url: `${configuredOrigin}/@happier-dev%2fplugin-sdk`,',
     "    method: 'GET',",
     "    redirect: 'error',",
@@ -4392,15 +5280,34 @@ export async function configureVerticalAPlugin(params) {
     "    appendMarker('connected-account-materialize');",
     "    const token = await context.credentials.get('token');",
     "    if (!token) throw new Error('Novel Cloud credentials are unavailable');",
-    "    if (request.kind === 'httpHeaders') return { kind: 'httpHeaders' as const, headers: { Authorization: `Bearer ${token}`, 'X-Novel-Account': context.account.accountId } };",
-    "    if (request.kind === 'environment') return { kind: 'environment' as const, env: { NOVEL_CLOUD_TOKEN: token } };",
-    "    return { kind: 'files' as const, files: { 'novel-token.txt': new TextEncoder().encode(token) } };",
+    "    if (request.kind === 'httpHeaders') {",
+    "      const requestedHeaderNames = new Set(request.headerNames.map((name) => name.toLowerCase()));",
+    '      // Built through a typed record rather than conditional spreads: spreading',
+    '      // `cond ? { K: v } : {}` infers `K?: string | undefined`, which does not satisfy',
+    "      // the SDK's `Readonly<Record<string, string>>`. The gating semantics are identical —",
+    '      // only requested keys are ever returned, because the host fail-closes on any key it',
+    '      // did not request (`snapshotStringMaterializationRecord` nulls unrequested keys).',
+    '      const headers: Record<string, string> = {};',
+    "      if (requestedHeaderNames.has('authorization')) headers.Authorization = `Bearer ${token}`;",
+    "      if (requestedHeaderNames.has('x-novel-account')) headers['X-Novel-Account'] = context.account.accountId;",
+    "      return { kind: 'httpHeaders' as const, headers };",
+    '    }',
+    "    if (request.kind === 'environment') {",
+    '      const env: Record<string, string> = {};',
+    "      if (request.keys.includes('NOVEL_CLOUD_TOKEN')) env.NOVEL_CLOUD_TOKEN = token;",
+    "      return { kind: 'environment' as const, env };",
+    '    }',
+    '    const files: Record<string, Uint8Array> = {};',
+    "    if (request.fileIds.includes('novel-token.txt')) {",
+    "      files['novel-token.txt'] = new TextEncoder().encode(token);",
+    '    }',
+    "    return { kind: 'files' as const, files };",
     '  },',
-    '} satisfies PluginConnectedAccountRuntime;',
+    '} satisfies ConnectedAccountRuntime;',
     '',
     "const packedNotificationSender: Parameters<PluginApi['notifications']['registerChannel']>[1] = async (request, context) => {",
     "  appendMarker('notification-send');",
-    "  const endpoint = await context.services.settings.get('webhook.endpoint');",
+    "  const endpoint = await context.services.settings.forScope({ kind: 'account' }).get('webhook.endpoint');",
     '  try {',
     "    const token = await context.services.secrets.get('webhook.token', { reason: 'Authenticate packed notification delivery' });",
     "    if (endpoint !== 'https://notifications.example.test/deliver') {",
@@ -4461,7 +5368,7 @@ export async function configureVerticalAPlugin(params) {
     '      }],',
     '    };',
     '  },',
-    '} satisfies ScmHostingProviderRuntimeAdapter;',
+    '} satisfies HostingProviderRuntimeAdapter;',
     '',
     'const packedExternalSessions = {',
     '  resolveSource: async (request) => {',
@@ -4494,7 +5401,7 @@ export async function configureVerticalAPlugin(params) {
     '    return {',
     '      ok: true as const,',
     '      value: {',
-    "        items: [{ id: `packed-page-${pluginVersion}`, createdAtMs: 1, messageRole: 'agent' as const, raw: { role: 'agent', text: `packed-page-${pluginVersion}` } }],",
+    "        items: [{ id: `packed-page-${pluginVersion}`, createdAtMs: 1, messageRole: 'agent' as const, raw: { role: 'agent', content: { type: 'acp', agentId: 'packed-external-agent', data: { type: 'text', text: `packed-page-${pluginVersion}` } } } }],",
     '        nextCursor: null,',
     "        tailCursor: `packed-tail-${pluginVersion}`,",
     '        hasMore: false,',
@@ -4507,7 +5414,7 @@ export async function configureVerticalAPlugin(params) {
     '      ok: true as const,',
     '      value: {',
     "        outcome: 'advanced' as const,",
-    "        items: [{ id: `packed-read-after-${pluginVersion}`, createdAtMs: 2, messageRole: 'agent' as const, raw: { role: 'agent', text: `packed-read-after-${pluginVersion}` } }],",
+    "        items: [{ id: `packed-read-after-${pluginVersion}`, createdAtMs: 2, messageRole: 'agent' as const, raw: { role: 'agent', content: { type: 'acp', agentId: 'packed-external-agent', data: { type: 'text', text: `packed-read-after-${pluginVersion}` } } } }],",
     "        nextCursor: `packed-tail-next-${pluginVersion}`,",
     "        boundary: `packed-tail-next-${pluginVersion}`,",
     '      },',
@@ -4608,16 +5515,7 @@ export async function configureVerticalAPlugin(params) {
     "    appendMarker('event-subscription');",
     '  });',
     ...(params.pluginId === 'acme.vertical-a' ? [
-      "  api.interceptors.register('observe-api', (request) => {",
-      "    appendMarker('request-interceptor');",
-      '    return {',
-      "      decision: 'continue',",
-      '      request: {',
-      '        ...request,',
-      "        headers: { ...request.headers, 'x-packed-interceptor': 'acme.vertical-a/observe-api' },",
-      '      },',
-      '    };',
-      '  });',
+      "  api.providers.register('packed-managed-provider', packedManagedProviderRuntime);",
     ] : []),
     "  api.notifications.registerChannel('webhook', packedNotificationSender);",
     "  api.connectedAccounts.register('github', packedForgeConnectedAccountRuntime);",
@@ -4663,7 +5561,7 @@ export async function configureVerticalAPlugin(params) {
     '      hosting: {',
     '        repositoryDescribePublishTargets: async () => {',
     "          appendMarker('scm-repository');",
-    '          const services = readCurrentScmHostingProviderRuntimeServices();',
+    '          const services = readCurrentHostingProviderRuntimeServices();',
     '          const registry = await services?.resolveScmHostingProviderRegistry?.();',
     `          const adapter = registry?.getAdapter(${JSON.stringify(`${params.pluginId}/forge`)});`,
     '          const result = await adapter?.describePublishTargets?.({',
@@ -4710,13 +5608,12 @@ export async function configureVerticalAPlugin(params) {
   ].join('\n'), 'utf8');
   await writeFile(join(params.pluginRoot, 'test', 'index.test.mjs'), [
     "import assert from 'node:assert/strict';",
-    "import { readFile } from 'node:fs/promises';",
     "import test from 'node:test';",
     '',
     "import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';",
     '',
-    "const manifest = JSON.parse(await readFile(new URL('../.happier-plugin/plugin.json', import.meta.url), 'utf8'));",
     "const module = await import('../dist/index.js');",
+    'const { manifest } = module;',
     '',
     "test('roundtrip action is registered by the configured vertical-a fixture', async (t) => {",
     '  const plugin = await createPluginTestkit({ manifest, module });',
@@ -4725,14 +5622,66 @@ export async function configureVerticalAPlugin(params) {
     "  const registration = plugin.registrations().find(({ family, localId }) => family === 'actions' && localId === 'roundtrip');",
     "  assert.ok(registration, 'configured fixture must register its declared roundtrip action');",
     ...(params.pluginId === 'acme.vertical-a' ? [
-      "  const interceptor = plugin.registrations().find(({ family, localId }) => family === 'requestInterceptors' && localId === 'observe-api');",
-      "  assert.ok(interceptor, 'configured fixture must register its declared request interceptor');",
       "  const externalSessions = plugin.registrations().find(({ family, localId }) => family === 'agents' && localId === 'packed-external-agent');",
       "  assert.ok(externalSessions, 'configured fixture must register its declared External Sessions auxiliary');",
       "  const connectedAccount = plugin.registrations().find(({ family, localId }) => family === 'connectedAccountDescriptors' && localId === 'novel-cloud');",
       "  assert.ok(connectedAccount, 'configured fixture must register its declared novel Connected Account runtime');",
+      "  const managedProvider = plugin.registration('providers', 'packed-managed-provider');",
+      "  assert.ok(managedProvider, 'configured fixture must register its declared managed Provider runtime');",
+      "  const signal = new AbortController().signal;",
+      `  const healthySnapshot = { id: 'packed-managed-provider-service', state: 'healthy', mode: 'attach', baseUrl: ${JSON.stringify(params.fetchOrigin)}, startedAtMs: 1, lastHealthyAtMs: 1, diagnostics: [], diagnosticsTruncated: false };`,
+      "  assert.equal(Object.hasOwn(healthySnapshot, 'host'), false);",
+      "  assert.equal(Object.hasOwn(healthySnapshot, 'port'), false);",
+      "  const service = { snapshot: () => healthySnapshot, observe: () => ({ dispose() {} }), waitUntilHealthy: async () => healthySnapshot, stop: async () => ({ status: 'detached' }), dispose: async () => {} };",
+      '  const supervised = [];',
+      '  const context = {',
+      '    connectedAccounts: {},',
+      '    managedServices: {',
+      '      dependencies: {},',
+      '      supervise: async (spec, options) => {',
+      '        supervised.push({ spec, options });',
+      '        return service;',
+      '      },',
+      '    },',
+      '    signal,',
+      '  };',
+      '  for (const request of [',
+      "    { reason: 'explicitStartLocal', endpointTemplateIds: ['responses'] },",
+      "    { reason: 'catalogProbe', connectionId: 'pc_packed_catalog', connectionRevision: 3, endpointTemplateIds: ['responses'] },",
+      "    { reason: 'sessionDemand', connectionId: 'pc_packed_session', connectionRevision: 5, endpointTemplateIds: ['responses'] },",
+      '  ]) {',
+      '    const result = await managedProvider.start(request, context);',
+      '    assert.equal(result.service, service);',
+      "    assert.deepEqual(result.endpoints, [{ endpointTemplateId: 'responses', endpoint: { kind: 'servicePath', path: '/v1' } }]);",
+      '  }',
+      '  assert.equal(supervised.length, 3);',
+      `  assert.ok(supervised.every(({ spec, options }) => spec.id === 'packed-managed-provider-service' && spec.mode.kind === 'attach' && spec.mode.baseUrl === ${JSON.stringify(params.fetchOrigin)} && options.signal === signal));`,
+      '  await assert.rejects(',
+      "    managedProvider.start({ reason: 'explicitStartLocal', endpointTemplateIds: ['mismatched'] }, context),",
+      '    /does not match its declaration/u,',
+      '  );',
+      '  assert.equal(supervised.length, 3);',
     ] : []),
     '});',
+    ...(params.pluginId === 'acme.vertical-a' ? [
+      '',
+      "test('managed Provider declaration and registration identity fail closed', async () => {",
+      '  const mismatchedManifest = {',
+      '    ...manifest,',
+      '    contributes: {',
+      '      ...manifest.contributes,',
+      '      providers: manifest.contributes.providers.map((provider) => ({',
+      '        ...provider,',
+      "        id: provider.id === 'packed-managed-provider' ? 'mismatched-provider' : provider.id,",
+      '      })),',
+      '    },',
+      '  };',
+      '  await assert.rejects(',
+      '    createPluginTestkit({ manifest: mismatchedManifest, module }),',
+      "    /undeclared contribution 'providers\\/packed-managed-provider'/iu,",
+      '  );',
+      '});',
+    ] : []),
     '',
   ].join('\n'), 'utf8');
 }
@@ -4749,7 +5698,7 @@ export async function readVerticalAMarkerEvents(markerPath) {
       unexpected.length > 0
       || ![
         'module', 'activate', 'registered', 'invoke', 'cleanup', 'cleanup-failure',
-        'notification-send', 'event-subscription', 'request-interceptor',
+        'notification-send', 'event-subscription',
         'scm-detect', 'scm-status', 'scm-repository', 'scm-provider-detect',
         'scm-auth', 'scm-auth-account-b', 'scm-auth-wrong-account',
         'connected-account-configuration', 'connected-account-final-fetch',
@@ -4763,6 +5712,8 @@ export async function readVerticalAMarkerEvents(markerPath) {
         'external-resolve-source', 'external-list', 'external-link',
         'external-resolve-linked', 'external-page', 'external-read-after',
         'external-hook-resolve', 'external-hook-map',
+        'managed-provider-explicitStartLocal', 'managed-provider-catalogProbe',
+        'managed-provider-sessionDemand',
       ].includes(kind)
       || !version
       || !/^[0-9a-f-]{36}$/u.test(activationInstanceId ?? '')
@@ -4828,6 +5779,81 @@ function assertRoundtrip(envelope, expected) {
   }
 }
 
+function assertPackedExternalMcpToolInvocation({ probe, toolName, pluginId, version, value, phase }) {
+  const invocation = probe?.invocation;
+  if (
+    !Array.isArray(probe?.toolNames)
+    || !probe.toolNames.includes(toolName)
+    || invocation?.isError !== false
+    || invocation.pluginId !== pluginId
+    || invocation.version !== version
+    || invocation.value !== value
+  ) {
+    fail(`Packed external MCP Tool ${phase} did not invoke the current declared Action: ${JSON.stringify(probe)}`);
+  }
+  return {
+    toolName,
+    version: invocation.version,
+  };
+}
+
+function assertPackedExternalMcpToolRetirement({ probe, toolName, phase }) {
+  if (
+    probe?.retiredInvocation?.isError !== true
+    || !Array.isArray(probe?.freshToolNames)
+    || probe.freshToolNames.includes(toolName)
+  ) {
+    fail(`Packed external MCP Tool ${phase} retained a callable or listed retired contribution: ${JSON.stringify(probe)}`);
+  }
+  return {
+    errorCode: probe.retiredInvocation.errorCode,
+    catalog: 'absent',
+  };
+}
+
+export function assertPackedExternalPluginCommandInvocation({
+  envelope,
+  commandId,
+  actionId,
+  pluginId,
+  version,
+  value,
+  phase,
+}) {
+  const invocation = envelope?.data;
+  const result = invocation?.result;
+  if (
+    envelope?.ok !== true
+    || envelope.kind !== 'plugin_command'
+    || invocation?.commandId !== commandId
+    || invocation?.actionId !== actionId
+    || result?.pluginId !== pluginId
+    || result?.version !== version
+    || result?.value !== value
+  ) {
+    fail(`Packed external Command ${phase} did not invoke the exact declared Action: ${JSON.stringify(envelope)}`);
+  }
+  return Object.freeze({ commandId, actionId, version });
+}
+
+export function assertPackedExternalPluginCommandRetirement({
+  invocation,
+  commandPath,
+  phase,
+}) {
+  const exitCode = invocation?.code;
+  const signal = invocation?.signal;
+  const rejectedByExit = typeof exitCode === 'number' && exitCode !== 0;
+  const rejectedBySignal = typeof signal === 'string' && signal.length > 0;
+  if (!rejectedByExit && !rejectedBySignal) {
+    fail(`Packed external Command ${phase} remained callable: ${JSON.stringify(invocation)}`);
+  }
+  return Object.freeze({
+    commandPath: commandPath.join(' '),
+    rejection: rejectedByExit ? `exit-${exitCode}` : `signal-${signal}`,
+  });
+}
+
 function readPackedNotificationResult(envelope, label) {
   const notification = envelope?.data?.result?.notification;
   if (!notification || typeof notification !== 'object' || Array.isArray(notification)) {
@@ -4867,10 +5893,11 @@ export function assertVerticalANotificationLifecycleEvidence({
     fail('Packed notification evidence exposed credential material');
   }
   if (
-    configuration?.storageScope !== 'synced'
+    configuration?.scope?.kind !== 'account'
     || configuration?.values?.['webhook.endpoint'] !== 'https://notifications.example.test/deliver'
     || configuration?.values?.['webhook.token'] !== undefined
     || JSON.stringify(configuration?.redactedKeys) !== JSON.stringify(['webhook.token'])
+    || configuration?.secrets?.['webhook.token']?.state !== 'configured'
   ) {
     fail(`Packed notification configuration did not route through canonical settings/secrets owners: ${JSON.stringify(configuration)}`);
   }
@@ -4980,17 +6007,7 @@ export function assertVerticalAScmInstalledProbe({ probe, backendId, hostingProv
   const projection = readVerticalAProjectionV2(probe, 'installed');
   const backend = projection.familiesById.scmBackends?.entriesById?.[backendId];
   const provider = projection.familiesById.scmHostingProviders?.entriesById?.[hostingProviderId];
-  const browserTargetId = 'browserTarget:acme.vertical-a:preview';
-  const browserActionIds = [
-    'browserAction:acme.vertical-a:preview-roundtrip',
-    'browserAction:acme.vertical-a:preview-details',
-    'browserAction:acme.vertical-a:preview-context',
-  ];
-  const expectedBrowserActionPlacements = ['toolbar', 'detailsPanel', 'contextMenu'];
-  const browserTarget = projection.familiesById.pluginBrowser?.entriesById?.[browserTargetId];
-  const browserActions = browserActionIds.map(
-    (browserActionId) => projection.familiesById.pluginBrowser?.entriesById?.[browserActionId],
-  );
+  const browserFamily = projection.familiesById.pluginBrowser;
   if (
     backend?.id !== backendId
     || backend?.localId !== 'stacked'
@@ -5003,20 +6020,8 @@ export function assertVerticalAScmInstalledProbe({ probe, backendId, hostingProv
   ) {
     fail(`Packed SCM daemon projection did not expose qualified backend/provider/auth identities: ${JSON.stringify({ backend, provider })}`);
   }
-  if (
-    browserTarget?.pluginId !== 'acme.vertical-a'
-    || browserTarget?.contributionKind !== 'browserTarget'
-    || browserTarget?.currentUrl !== 'https://preview.example.test/'
-    || browserTarget?.launchMode !== 'currentView'
-    || browserActions.some((browserAction, index) => (
-      browserAction?.pluginId !== 'acme.vertical-a'
-      || browserAction?.contributionKind !== 'browserAction'
-      || browserAction?.qualifiedActionId !== 'acme.vertical-a/roundtrip'
-      || browserAction?.targetId !== browserTargetId
-      || browserAction?.placement !== expectedBrowserActionPlacements[index]
-    ))
-  ) {
-    fail(`Packed browser projection did not expose a safe target and all qualified F03 action placements: ${JSON.stringify({ browserTarget, browserActions })}`);
+  if (browserFamily !== undefined) {
+    fail(`Packed SCM daemon projection unexpectedly exposed deferred browser declarations: ${JSON.stringify({ browserFamily })}`);
   }
   if (
     probe?.status?.success !== false
@@ -5045,8 +6050,6 @@ export function assertVerticalAScmInstalledProbe({ probe, backendId, hostingProv
     clientPreference: { kind: 'prefer', backendId },
     statusErrorCode: probe.status.errorCode,
     repositoryAuth: probe.repository.auth,
-    browserTargetId,
-    browserActionIds,
   };
 }
 
@@ -5058,12 +6061,11 @@ export function assertVerticalAScmUninstalledProbe({ probe, backendId, hostingPr
   if (
     !backendFamily
     || !providerFamily
-    || !browserFamily
     || backendFamily.entriesById?.[backendId] !== undefined
     || providerFamily.entriesById?.[hostingProviderId] !== undefined
-    || Object.values(browserFamily.entriesById ?? {}).some((entry) => entry?.pluginId === 'acme.vertical-a')
+    || browserFamily !== undefined
   ) {
-    fail(`Packed uninstall left a stale SCM/browser projection: ${JSON.stringify({ backendFamily, providerFamily, browserFamily })}`);
+    fail(`Packed uninstall left a stale SCM projection or deferred browser declarations: ${JSON.stringify({ backendFamily, providerFamily, browserFamily })}`);
   }
   return {
     generation: projection.generation,
@@ -5075,18 +6077,27 @@ export function assertVerticalAScmUninstalledProbe({ probe, backendId, hostingPr
   };
 }
 
-async function runPackedPluginRoundtrip({ cliEntrypoint, cwd, env, pluginId, input }) {
-  return await runPackedCliJson({
+function packedPluginCommandPath(pluginId) {
+  return ['vertical-a', pluginId.split('.').at(-1)];
+}
+
+async function runPackedPluginCommand({ cliEntrypoint, cwd, env, pluginId, input }) {
+  return await runPackedCli({
     cliEntrypoint,
     cwd,
     env,
     args: [
-      'vertical-a',
-      pluginId.split('.').at(-1),
+      ...packedPluginCommandPath(pluginId),
       ...(input === undefined ? [] : ['--input', JSON.stringify(input)]),
       '--json',
     ],
-  }, 'plugin_command');
+  });
+}
+
+async function runPackedPluginRoundtrip(params) {
+  const result = await runPackedPluginCommand(params);
+  assertCommandSucceeded(result, 'plugin_command');
+  return parseSuccessfulCommandEnvelope(result.stdout, 'plugin_command');
 }
 
 async function pathExists(path) {
@@ -5140,6 +6151,12 @@ export function buildVerticalAResult({
     candidate: {
       runId: candidate.runId,
       sdk: { packageName: candidate.sdk.packageName, version: candidate.sdk.version, integrity: candidate.sdk.integrity },
+      pluginUi: {
+        packageName: candidate.pluginUi.packageName,
+        version: candidate.pluginUi.version,
+        pluginSdkVersion: candidate.pluginUi.pluginSdkVersion,
+        integrity: candidate.pluginUi.integrity,
+      },
       cli: { packageName: candidate.cli.packageName, version: candidate.cli.version, integrity: candidate.cli.integrity },
     },
     stages,
@@ -5316,6 +6333,67 @@ export async function installVerticalAHealthyControlFixture({
   };
 }
 
+export function createPackedAuthorScaffoldSpecs(fixtureRoot) {
+  return Object.freeze([
+    Object.freeze({
+      mode: 'configured',
+      pluginId: 'acme.vertical-a',
+      name: 'vertical-a-plugin',
+      root: join(fixtureRoot, 'vertical-a-plugin'),
+      value: 'packed-v1',
+      displayName: 'Vertical A',
+      ui: 'hostedWeb',
+    }),
+    Object.freeze({
+      mode: 'configured',
+      pluginId: 'acme.private-registry',
+      packageName: '@acme/private-registry-plugin',
+      name: 'private-registry-plugin',
+      root: join(fixtureRoot, 'private-registry-plugin'),
+      value: 'private-registry',
+    }),
+    Object.freeze({
+      mode: 'configured',
+      pluginId: 'acme.public-registry',
+      packageName: 'acme-public-registry-plugin',
+      name: 'public-registry-plugin',
+      root: join(fixtureRoot, 'public-registry-plugin'),
+      value: 'public-registry',
+    }),
+    Object.freeze({
+      mode: 'configured',
+      pluginId: 'acme.descriptor-only',
+      name: 'descriptor-only-plugin',
+      root: join(fixtureRoot, 'descriptor-only-plugin'),
+      descriptorOnly: true,
+    }),
+    Object.freeze({
+      mode: 'untouched',
+      pluginId: 'acme.scaffold.no-ui',
+      name: 'untouched-no-ui-plugin',
+      root: join(fixtureRoot, 'untouched-no-ui-plugin'),
+    }),
+    Object.freeze({
+      mode: 'untouched',
+      pluginId: 'acme.scaffold.react-native',
+      name: 'untouched-react-native-plugin',
+      root: join(fixtureRoot, 'untouched-react-native-plugin'),
+      ui: 'reactNative',
+    }),
+    Object.freeze({
+      mode: 'untouched',
+      pluginId: 'acme.scaffold.hosted-web',
+      name: 'untouched-hosted-web-plugin',
+      root: join(fixtureRoot, 'untouched-hosted-web-plugin'),
+      ui: 'hostedWeb',
+    }),
+  ]);
+}
+
+export function configuredPackedAuthorScaffoldSpecs(specs) {
+  return specs.filter((spec) => spec.mode === 'configured');
+}
+
 async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
   if (typeof options.prepareHome !== 'function') {
     fail('Vertical-A requires authenticated isolated-home preparation; run the test:plugin-platform:packed-author package script');
@@ -5329,6 +6407,9 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
   if (typeof options.probeExternalSessions !== 'function') {
     fail('Vertical-A requires the composed External Sessions machine-RPC probe; run the test:plugin-platform:packed-author package script');
   }
+  if (typeof options.probeExternalTool !== 'function') {
+    fail('Vertical-A requires the composed external MCP Tool probe; run the test:plugin-platform:packed-author package script');
+  }
   if (typeof options.probeRetainedCapabilities !== 'function') {
     fail('Vertical-A requires the composed retained-capability machine-RPC probe; run the test:plugin-platform:packed-author package script');
   }
@@ -5338,6 +6419,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
   if (typeof options.decideInstallReview !== 'function') {
     fail('Vertical-A requires the authenticated private plugin review decision boundary');
   }
+  assertPackedAuthorCandidateArchiveInputs(candidate);
   const packedArtifactBaseEnv = sanitizePackedAuthorArtifactEnv(options.baseEnv ?? process.env);
   const tempRoot = await mkdtemp(join(tmpdir(), `happier-packed-author-${candidate.runId}-`));
   const stages = [];
@@ -5350,37 +6432,61 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
   let daemonStopped = false;
   let succeeded = false;
   let observedDaemonRuntimeIdentity = null;
+  let publicAuthoringHandoffArtifact = null;
+  let retainedHostedWebRendererId = null;
   try {
-    const [sdkBytes, cliBytes] = await Promise.all([
+    const [sdkBytes, pluginUiBytes, cliBytes] = await Promise.all([
       verifyArtifactIntegrity(candidate.sdk, 'SDK tarball'),
+      verifyArtifactIntegrity(candidate.pluginUi, 'Plugin UI tarball'),
       verifyArtifactIntegrity(candidate.cli, 'CLI tarball'),
     ]);
     const verifiedSdkTarballPath = join(tempRoot, 'verified-sdk.tgz');
+    const verifiedPluginUiTarballPath = join(tempRoot, 'verified-plugin-ui.tgz');
     const verifiedCliTarballPath = join(tempRoot, 'verified-cli.tgz');
     await Promise.all([
       writeFile(verifiedSdkTarballPath, sdkBytes, { flag: 'wx' }),
+      writeFile(verifiedPluginUiTarballPath, pluginUiBytes, { flag: 'wx' }),
       writeFile(verifiedCliTarballPath, cliBytes, { flag: 'wx' }),
     ]);
     const archiveCensus = await assertPackedAuthorCandidateArchivesSafe({
       sdkTarballPath: verifiedSdkTarballPath,
+      pluginUiTarballPath: verifiedPluginUiTarballPath,
       cliTarballPath: verifiedCliTarballPath,
     });
     stages.push({
       id: 'artifact-integrity',
       ok: true,
       sdkEntries: archiveCensus.sdk.entryCount,
+      pluginUiEntries: archiveCensus.pluginUi.entryCount,
       cliEntries: archiveCensus.cli.entryCount,
     });
 
     const sdkExtractRoot = join(tempRoot, 'sdk-artifact');
-    const sdkPackageJson = await readPackedPackageManifest(verifiedSdkTarballPath, sdkExtractRoot);
+    const pluginUiExtractRoot = join(tempRoot, 'plugin-ui-artifact');
+    const [sdkPackageJson, pluginUiPackageJson] = await Promise.all([
+      readPackedPackageManifest(verifiedSdkTarballPath, sdkExtractRoot),
+      readPackedPackageManifest(verifiedPluginUiTarballPath, pluginUiExtractRoot),
+    ]);
+    const sdkProjectionExtractRoot = join(tempRoot, 'sdk-projection');
+    await extractTarball(verifiedSdkTarballPath, sdkProjectionExtractRoot);
+    const sdkProjectionPackageRoot = join(sdkProjectionExtractRoot, 'package');
     assertPackedPackageIdentity(sdkPackageJson, candidate.sdk, 'Packed SDK');
+    assertPackedPackageIdentity(pluginUiPackageJson, candidate.pluginUi, 'Packed Plugin UI');
+    assertPackedPluginUiSdkDependency(pluginUiPackageJson, candidate.sdk);
     stages.push({ id: 'sdk-identity', ok: true, packageName: sdkPackageJson.name, version: sdkPackageJson.version });
+    stages.push({
+      id: 'plugin-ui-identity',
+      ok: true,
+      packageName: pluginUiPackageJson.name,
+      version: pluginUiPackageJson.version,
+      pluginSdkVersion: candidate.pluginUi.pluginSdkVersion,
+    });
 
     registry = await startCandidateRegistry({
-      sdk: candidate.sdk,
-      sdkBytes,
-      packageManifest: sdkPackageJson,
+      packages: [
+        { ...candidate.sdk, bytes: sdkBytes, packageManifest: sdkPackageJson },
+        { ...candidate.pluginUi, bytes: pluginUiBytes, packageManifest: pluginUiPackageJson },
+      ],
     });
     stages.push({ id: 'candidate-registry', ok: true, origin: registry.origin });
 
@@ -5403,29 +6509,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       ...candidate.cli.packageName.split('/'),
     ));
     const fixtureRoot = join(tempRoot, 'external-author');
-    const pluginSpecs = [
-      { pluginId: 'acme.vertical-a', name: 'vertical-a-plugin', root: join(fixtureRoot, 'vertical-a-plugin'), value: 'packed-v1' },
-      {
-        pluginId: 'acme.private-registry',
-        packageName: '@acme/private-registry-plugin',
-        name: 'private-registry-plugin',
-        root: join(fixtureRoot, 'private-registry-plugin'),
-        value: 'private-registry',
-      },
-      {
-        pluginId: 'acme.public-registry',
-        packageName: 'acme-public-registry-plugin',
-        name: 'public-registry-plugin',
-        root: join(fixtureRoot, 'public-registry-plugin'),
-        value: 'public-registry',
-      },
-      {
-        pluginId: 'acme.descriptor-only',
-        name: 'descriptor-only-plugin',
-        root: join(fixtureRoot, 'descriptor-only-plugin'),
-        descriptorOnly: true,
-      },
-    ];
+    const pluginSpecs = createPackedAuthorScaffoldSpecs(fixtureRoot);
     await mkdir(fixtureRoot, { recursive: true });
     const childEnv = await prepareVerticalAChildEnvironment({
       happyHomeDir: join(tempRoot, 'happier-home'),
@@ -5454,7 +6538,6 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     delete authorEnv.HAPPIER_VERTICAL_A_MARKER;
     daemonCleanup = { cliEntrypoint, cwd: fixtureRoot, env: childEnv };
     const carrierFailClosedEnv = { ...childEnv };
-    delete carrierFailClosedEnv.HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE;
     const carrierFailClosed = await runPackedCli({
       cliEntrypoint,
       cwd: fixtureRoot,
@@ -5483,20 +6566,17 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       return shown.data?.plugin ?? null;
     };
     for (const plugin of pluginSpecs) {
-      const isRetainedCapabilityFixture = plugin.pluginId === 'acme.vertical-a';
+      const args = [
+        'plugins', 'create', plugin.root,
+        '--id', plugin.pluginId,
+        ...(plugin.displayName === undefined ? [] : ['--name', plugin.displayName]),
+        ...(plugin.ui === undefined ? [] : ['--ui', plugin.ui]),
+        '--json',
+      ];
       await runPackedCliJson({
         cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: isRetainedCapabilityFixture
-          ? [
-              'plugins', 'scaffold', plugin.root,
-              '--id', plugin.pluginId,
-              '--name', 'Vertical A',
-              '--sdk-version', candidate.sdk.version,
-              '--ui', 'hostedWeb',
-              '--json',
-            ]
-          : ['plugins', 'create', plugin.root, '--id', plugin.pluginId, '--sdk-version', candidate.sdk.version, '--json'],
-      }, isRetainedCapabilityFixture ? 'plugins_scaffold' : 'plugins_create');
+        args,
+      }, 'plugins_create');
     }
     stages.push({ id: 'create', ok: true, pluginIds: pluginSpecs.map((plugin) => plugin.pluginId) });
 
@@ -5508,14 +6588,18 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       if (/from\s+['"]@\/|packages\/plugin-sdk|node_modules\/@happier-dev\/plugin-sdk/u.test(source)) {
         fail('generated source contains a monorepo alias or repository path');
       }
+    }
+    for (const plugin of configuredPackedAuthorScaffoldSpecs(pluginSpecs)) {
       if (plugin.descriptorOnly) {
         await configureDescriptorOnlyPlugin({
           pluginRoot: plugin.root,
+          sdkPackageRoot: sdkProjectionPackageRoot,
           version: '1.0.0',
         });
       } else {
         await configureVerticalAPlugin({
           pluginRoot: plugin.root,
+          sdkPackageRoot: sdkProjectionPackageRoot,
           pluginId: plugin.pluginId,
           version: '1.0.0',
           fetchOrigin: registry.origin,
@@ -5526,7 +6610,13 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
         });
       }
     }
-    stages.push({ id: 'create-contract', ok: true });
+    stages.push({
+      id: 'create-contract',
+      ok: true,
+      untouchedPluginIds: pluginSpecs
+        .filter((plugin) => plugin.mode === 'untouched')
+        .map((plugin) => plugin.pluginId),
+    });
 
     for (const plugin of pluginSpecs) {
       const envelope = await runPackedCliJson({
@@ -5552,6 +6642,32 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       }
       stages.push({ id: `author-${operation}`, ok: true });
     }
+    const untouchedScaffoldArchiveAttestations = [];
+    for (const plugin of pluginSpecs.filter((candidatePlugin) => candidatePlugin.mode === 'untouched')) {
+      const artifactRoot = join(plugin.root, 'dist', 'happier-plugin-ui');
+      const uiArtifacts = await attestPackedScaffoldUiArtifactGraph({
+        artifactRoot,
+        ui: plugin.ui,
+      });
+      const archivePath = join(tempRoot, `${plugin.name}.happier-plugin.tgz`);
+      await runPackedCliJson({
+        cliEntrypoint,
+        cwd: fixtureRoot,
+        env: authorEnv,
+        args: ['plugins', 'pack', plugin.root, '--out', archivePath, '--json'],
+      }, 'plugins_pack');
+      const bytes = await readFile(archivePath);
+      if (bytes.byteLength === 0) {
+        fail(`Packed untouched scaffold archive is empty: ${plugin.pluginId}`);
+      }
+      untouchedScaffoldArchiveAttestations.push(Object.freeze({
+        pluginId: plugin.pluginId,
+        mode: plugin.ui ?? 'no-ui',
+        integrity: sha512Sri(bytes),
+        size: bytes.byteLength,
+        uiArtifacts,
+      }));
+    }
     const installedSdkRoot = join(
       pluginSpecs[0].root,
       'node_modules',
@@ -5562,6 +6678,297 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       join(installedSdkPhysicalRoot, 'package.json'),
       'utf8',
     ));
+    await runExternalAuthoringFixture({
+      sdkTarballPath: verifiedSdkTarballPath,
+      pluginUiTarballPath: verifiedPluginUiTarballPath,
+    });
+    stages.push({
+      id: 'external-plugin-ui-pair',
+      ok: true,
+      packageName: pluginUiPackageJson.name,
+      version: pluginUiPackageJson.version,
+      pluginSdkVersion: candidate.pluginUi.pluginSdkVersion,
+    });
+
+    const publicAuthoringRoot = join(tempRoot, 'external-public-authoring');
+    await cp(PUBLIC_AUTHORING_PROJECT_ROOT, publicAuthoringRoot, {
+      recursive: true,
+      force: false,
+    });
+    const publicAuthoringPackagePath = join(publicAuthoringRoot, 'package.json');
+    const publicAuthoringPackage = JSON.parse(await readFile(
+      publicAuthoringPackagePath,
+      'utf8',
+    ));
+    if (
+      publicAuthoringPackage?.name !== '@example/happier-public-authoring'
+      || publicAuthoringPackage?.version !== PUBLIC_AUTHORING_PLUGIN_VERSION
+      || typeof publicAuthoringPackage?.dependencies?.[SDK_PACKAGE_NAME] !== 'string'
+      || typeof publicAuthoringPackage?.dependencies?.[PLUGIN_UI_PACKAGE_NAME] !== 'string'
+    ) {
+      fail('Public authoring fixture did not declare its canonical SDK/Plugin UI consumer contract');
+    }
+    const publicAuthoringDependencies = {
+      ...publicAuthoringPackage.dependencies,
+      [SDK_PACKAGE_NAME]: candidate.sdk.version,
+      [PLUGIN_UI_PACKAGE_NAME]: candidate.pluginUi.version,
+    };
+    await writeFile(publicAuthoringPackagePath, `${JSON.stringify({
+      ...publicAuthoringPackage,
+      dependencies: publicAuthoringDependencies,
+      devDependencies: {
+        ...publicAuthoringPackage.devDependencies,
+        typescript: CONFIG_LOADER_TYPESCRIPT_DEPENDENCY_SPEC,
+      },
+    }, null, 2)}\n`);
+    await rm(join(publicAuthoringRoot, 'dist'), { recursive: true, force: true });
+    const publicAuthoringInstall = await runPackedCliJson({
+      cliEntrypoint,
+      cwd: fixtureRoot,
+      env: authorEnv,
+      args: [
+        'plugins', 'author', 'install', publicAuthoringRoot,
+        '--sdk-registry', registry.origin,
+        '--json',
+      ],
+    }, 'plugins_author_install');
+    if (
+      publicAuthoringInstall.data?.operation !== 'install'
+      || publicAuthoringInstall.data?.projectRoot !== publicAuthoringRoot
+    ) {
+      fail('Packed CLI author install did not admit the public authoring project');
+    }
+    for (const operation of ['typecheck', 'build', 'test']) {
+      const envelope = await runPackedCliJson({
+        cliEntrypoint,
+        cwd: fixtureRoot,
+        env: authorEnv,
+        args: ['plugins', 'author', operation, publicAuthoringRoot, '--json'],
+      }, `plugins_author_${operation}`);
+      if (
+        envelope.data?.operation !== operation
+        || envelope.data?.projectRoot !== publicAuthoringRoot
+      ) {
+        fail(`Packed CLI author ${operation} did not complete for the public authoring project`);
+      }
+    }
+    const publicAuthoringSdkRoot = join(
+      publicAuthoringRoot,
+      'node_modules',
+      ...SDK_PACKAGE_NAME.split('/'),
+    );
+    const publicAuthoringPluginUiRoot = join(
+      publicAuthoringRoot,
+      'node_modules',
+      ...PLUGIN_UI_PACKAGE_NAME.split('/'),
+    );
+    const [
+      publicAuthoringSdkPhysicalRoot,
+      publicAuthoringPluginUiPhysicalRoot,
+    ] = await Promise.all([
+      realpath(publicAuthoringSdkRoot),
+      realpath(publicAuthoringPluginUiRoot),
+    ]);
+    if (
+      !isPathInsideRoot(publicAuthoringRoot, publicAuthoringSdkPhysicalRoot)
+      || !isPathInsideRoot(publicAuthoringRoot, publicAuthoringPluginUiPhysicalRoot)
+      || isPathInsideRoot(PUBLIC_AUTHORING_PROJECT_ROOT, publicAuthoringSdkPhysicalRoot)
+      || isPathInsideRoot(PUBLIC_AUTHORING_PROJECT_ROOT, publicAuthoringPluginUiPhysicalRoot)
+    ) {
+      fail('Public authoring fixture resolved the SDK/Plugin UI pair through workspace source');
+    }
+    const [
+      publicAuthoringSdkManifest,
+      publicAuthoringPluginUiManifest,
+    ] = await Promise.all([
+      readFile(join(publicAuthoringSdkPhysicalRoot, 'package.json'), 'utf8').then(JSON.parse),
+      readFile(join(publicAuthoringPluginUiPhysicalRoot, 'package.json'), 'utf8').then(JSON.parse),
+    ]);
+    assertPackedPackageIdentity(
+      publicAuthoringSdkManifest,
+      candidate.sdk,
+      'Public authoring packed SDK',
+    );
+    assertPackedPackageIdentity(
+      publicAuthoringPluginUiManifest,
+      candidate.pluginUi,
+      'Public authoring packed Plugin UI',
+    );
+    assertPackedPluginUiSdkDependency(publicAuthoringPluginUiManifest, candidate.sdk);
+    const publicAuthoringToolchainModulePath = await realpath(join(
+      publicAuthoringSdkPhysicalRoot,
+      'dist',
+      'browser',
+      'index.js',
+    ));
+    if (!isPathInsideRoot(
+      publicAuthoringSdkPhysicalRoot,
+      publicAuthoringToolchainModulePath,
+    )) {
+      fail('Public authoring toolchain packet escaped the installed SDK package');
+    }
+    const publicAuthoringToolchainModule = await import(
+      pathToFileURL(publicAuthoringToolchainModulePath).href,
+    );
+    const publicAuthoringToolchainPacket =
+      assertPackedPublicToolchainCompatibilityCandidate({
+        packet: publicAuthoringToolchainModule.PUBLIC_TOOLCHAIN_COMPATIBILITY_V1,
+        candidate,
+      });
+    stages.push({
+      id: 'public-authoring-external-pair',
+      ok: true,
+      packageName: publicAuthoringPackage.name,
+      packageVersion: publicAuthoringPackage.version,
+      sdk: `${candidate.sdk.packageName}@${candidate.sdk.version}`,
+      pluginUi: `${candidate.pluginUi.packageName}@${candidate.pluginUi.version}`,
+      toolchain: {
+        hostBuildIdentity: publicAuthoringToolchainPacket.host.buildIdentity,
+        pluginSdkVersion: publicAuthoringToolchainPacket.pluginSdk.version,
+        pluginUiVersion: publicAuthoringToolchainPacket.pluginUi.version,
+      },
+    });
+    const publicAuthoringUiBuildRelativePath =
+      publicAuthoringSdkManifest.bin?.['happier-plugin-build-ui'];
+    if (
+      typeof publicAuthoringUiBuildRelativePath !== 'string'
+      || isAbsolute(publicAuthoringUiBuildRelativePath)
+    ) {
+      fail('Public authoring packed SDK did not expose a relative happier-plugin-build-ui entrypoint');
+    }
+    const publicAuthoringUiBuildBin = await realpath(resolve(
+      publicAuthoringSdkPhysicalRoot,
+      publicAuthoringUiBuildRelativePath,
+    ));
+    const publicAuthoringUiBuildRelativeContainedPath = relative(
+      publicAuthoringSdkPhysicalRoot,
+      publicAuthoringUiBuildBin,
+    );
+    if (
+      publicAuthoringUiBuildRelativeContainedPath === '..'
+      || publicAuthoringUiBuildRelativeContainedPath.startsWith(`..${sep}`)
+      || isAbsolute(publicAuthoringUiBuildRelativeContainedPath)
+    ) {
+      fail('Public authoring happier-plugin-build-ui entrypoint escaped the installed SDK package');
+    }
+    const publicAuthoringUiBuild = await run(process.execPath, [
+      publicAuthoringUiBuildBin,
+      '--project-root',
+      publicAuthoringRoot,
+    ], {
+      cwd: publicAuthoringRoot,
+      env: authorEnv,
+    });
+    assertCommandSucceeded(
+      publicAuthoringUiBuild,
+      'packed public authoring hostedWeb UI build',
+    );
+    const publicAuthoringHostedWebGraph = await attestPackedPublicAuthoringHostedWebGraph({
+      artifactRoot: join(publicAuthoringRoot, 'dist', 'happier-plugin-ui'),
+    });
+    stages.push({
+      id: 'public-authoring-hosted-web-artifact',
+      ok: true,
+      contributionId: publicAuthoringHostedWebGraph.contributionId,
+      entry: publicAuthoringHostedWebGraph.entry,
+      digest: publicAuthoringHostedWebGraph.digest,
+      fileCount: publicAuthoringHostedWebGraph.files.length,
+    });
+    const publicAuthoringArchivePath = join(
+      tempRoot,
+      'public-authoring.happier-plugin.tgz',
+    );
+    await runPackedCliJson({
+      cliEntrypoint,
+      cwd: fixtureRoot,
+      env: authorEnv,
+      args: [
+        'plugins', 'pack', publicAuthoringRoot,
+        '--out', publicAuthoringArchivePath,
+        '--json',
+      ],
+    }, 'plugins_pack');
+    const publicAuthoringArchiveBytes = await readFile(publicAuthoringArchivePath);
+    if (publicAuthoringArchiveBytes.byteLength === 0) {
+      fail('Public authoring pack produced an empty archive');
+    }
+    const publicAuthoringPluginId = PUBLIC_AUTHORING_PLUGIN_ID;
+    const publicAuthoringInstallDecision = await runReviewedInstall([
+      'plugins', 'install', publicAuthoringArchivePath, '--json',
+    ]);
+    const publicAuthoringGeneration = publicAuthoringInstallDecision.change?.desiredGeneration;
+    const publicAuthoringInstalled = publicAuthoringInstallDecision.change?.kind === 'committed'
+      ? await readInstalledPlugin(publicAuthoringPluginId)
+      : null;
+    if (
+      publicAuthoringInstallDecision.change?.kind !== 'committed'
+      || publicAuthoringInstallDecision.change.pluginId !== publicAuthoringPluginId
+      || typeof publicAuthoringGeneration !== 'string'
+      || publicAuthoringInstallDecision.change.appliedGeneration !== publicAuthoringGeneration
+      || publicAuthoringInstalled?.install?.trust?.state !== 'trusted'
+    ) {
+      fail(`Public authoring archive was not adopted through the canonical Account/artifact owner: ${JSON.stringify(publicAuthoringInstallDecision)}`);
+    }
+    const publicAuthoringProbe = await options.probeRetainedCapabilities({
+      phase: 'publicAuthoringInstalled',
+      happyHomeDir: childEnv.HAPPIER_HOME_DIR,
+      pluginId: publicAuthoringPluginId,
+      actionId: null,
+    });
+    const publicAuthoringHostedWebProjection = publicAuthoringProbe?.projection?.projection
+      ?.familiesById?.pluginUi?.entriesById?.[
+        `hostedWeb:${publicAuthoringPluginId}:${PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID}`
+      ];
+    if (
+      publicAuthoringHostedWebProjection?.runtime?.state !== 'available'
+      || publicAuthoringHostedWebProjection?.runtimeMode?.kind !== 'installedStaticAssets'
+      || publicAuthoringHostedWebProjection?.artifactGraph?.tier !== 'hostedWeb'
+      || publicAuthoringHostedWebProjection?.artifactGraph?.digest
+        !== publicAuthoringHostedWebGraph.digest
+    ) {
+      fail(`Public authoring hostedWeb graph did not reach the canonical Account/artifact projection: ${JSON.stringify(publicAuthoringProbe)}`);
+    }
+    const publicAuthoringUninstall = await runPackedCliJson({
+      cliEntrypoint,
+      cwd: fixtureRoot,
+      env: childEnv,
+      args: ['plugins', 'uninstall', publicAuthoringPluginId, '--json'],
+    }, 'plugins_uninstall');
+    if (
+      publicAuthoringUninstall.data?.desiredGeneration !== null
+      || publicAuthoringUninstall.data?.appliedGeneration !== null
+    ) {
+      fail('Public authoring archive uninstall did not clear the canonical Account/artifact generation');
+    }
+    const publicAuthoringRetiredProbe = await options.probeRetainedCapabilities({
+      phase: 'publicAuthoringUninstalled',
+      happyHomeDir: childEnv.HAPPIER_HOME_DIR,
+      pluginId: publicAuthoringPluginId,
+      actionId: null,
+    });
+    if (
+      publicAuthoringRetiredProbe?.projection?.projection?.familiesById?.pluginUi
+        ?.entriesById?.[
+          `hostedWeb:${publicAuthoringPluginId}:${PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID}`
+        ] !== undefined
+    ) {
+      fail('Public authoring hostedWeb graph remained reachable after canonical Account/artifact uninstall');
+    }
+    stages.push({
+      id: 'public-authoring-account-artifact',
+      ok: true,
+      pluginId: publicAuthoringPluginId,
+      archiveIntegrity: sha512Sri(publicAuthoringArchiveBytes),
+      generation: publicAuthoringGeneration,
+      hostedWebDigest: publicAuthoringHostedWebGraph.digest,
+      uninstall: { desiredGeneration: null, appliedGeneration: null },
+    });
+    publicAuthoringHandoffArtifact = Object.freeze({
+      pluginId: publicAuthoringPluginId,
+      version: publicAuthoringPackage.version,
+      archiveBytes: publicAuthoringArchiveBytes,
+      hostedWeb: publicAuthoringHostedWebGraph,
+    });
     const retainedUiBuildRelativePath =
       installedSdkManifest.bin?.['happier-plugin-build-ui'];
     if (
@@ -5598,18 +7005,25 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       join(pluginSpecs[0].root, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'),
       'utf8',
     ));
-    const retainedHostedWebArtifact = retainedUiArtifacts.entries?.find((entry) => (
-      entry.contributionId === 'main-web'
-      && entry.tier === 'hostedWeb'
-      && entry.platform === 'web'
-    ));
+    const retainedHostedWebArtifacts = Array.isArray(retainedUiArtifacts.entries)
+      ? retainedUiArtifacts.entries.filter((entry) => (
+          entry.tier === 'hostedWeb'
+          && entry.platform === 'web'
+        ))
+      : [];
+    const retainedHostedWebArtifact = retainedHostedWebArtifacts.length === 1
+      ? retainedHostedWebArtifacts[0]
+      : null;
     if (
       !retainedHostedWebArtifact
+      || typeof retainedHostedWebArtifact.contributionId !== 'string'
+      || retainedHostedWebArtifact.contributionId.length === 0
       || typeof retainedHostedWebArtifact.digest !== 'string'
       || !retainedHostedWebArtifact.files?.some((file) => file.relativePath === retainedHostedWebArtifact.entry)
     ) {
       fail(`Packed retained-capability UI build did not emit its hostedWeb artifact graph: ${JSON.stringify(retainedUiArtifacts)}`);
     }
+    retainedHostedWebRendererId = retainedHostedWebArtifact.contributionId;
 
     const plugin = pluginSpecs[0];
     const archivePath = join(tempRoot, `${plugin.pluginId}.happier-plugin.tgz`);
@@ -5653,15 +7067,6 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       );
       return { commit, revision: JSON.parse(await readFile(revisionPath, 'utf8')) };
     };
-    const waitForGenerationHealth = async ({ generationId, state, timeoutMs }) => {
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < timeoutMs) {
-        const current = await readCurrentInstallationState();
-        if (current.revision.health?.[generationId]?.state === state) return current;
-        await new Promise((resolveWait) => setTimeout(resolveWait, 250));
-      }
-      fail(`Timed out waiting for generation ${generationId} to become ${state}`);
-    };
     const initialArtifact = await packCurrentPlugin('initial-v1');
     const initialPackedNovelArchiveBytes = await readFile(archivePath);
     if (
@@ -5670,7 +7075,11 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     ) {
       fail('Initial packed novel archive changed before handoff custody');
     }
-    stages.push({ id: 'plugin-pack', ok: true, plugins: [initialArtifact] });
+    stages.push({
+      id: 'plugin-pack',
+      ok: true,
+      plugins: [initialArtifact, ...untouchedScaffoldArchiveAttestations],
+    });
 
     const descriptorPlugin = pluginSpecs.find((candidatePlugin) => candidatePlugin.descriptorOnly === true);
     if (!descriptorPlugin) fail('Vertical-A descriptor-only fixture was not created');
@@ -6090,7 +7499,6 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
         pluginId: publicPlugin.pluginId,
         version: '1.0.0',
         marketplaceIntegrity: publicArtifactIntegrity,
-        manifestDigest: publicManifestDigest,
         distribution: {
           kind: 'npm',
           registryOrigin: publicRegistry.origin,
@@ -6139,7 +7547,6 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       exactArtifact: {
         version: '1.0.0',
         integrity: publicArtifactIntegrity,
-        manifestDigest: publicManifestDigest,
       },
       durableDistributionIdentity: {
         registryOrigin: publicRegistry.origin,
@@ -6178,6 +7585,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     for (const version of ['10.0.0', '11.0.0']) {
       await configureVerticalAPlugin({
         pluginRoot: privatePlugin.root,
+        sdkPackageRoot: sdkProjectionPackageRoot,
         pluginId: privatePlugin.pluginId,
         packageName: privatePlugin.packageName,
         version,
@@ -6516,7 +7924,15 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
 
     const initialMarkerEvents = await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER);
     const expectedActivationEvents = ['module', 'activate', 'registered'];
-    const activationEvents = initialMarkerEvents.map((event) => event.kind);
+    // The configured External Sessions composition re-materializes on every account-settings
+    // revision, and each build re-validates the fixture's one declared configured source through
+    // the host's validateSource -> plugin resolveSource seam. Those host-driven resolutions are not
+    // activation events; committing the install revises settings, so they are expected here. Every
+    // other marker kind still has to be absent, so an eagerly invoked plugin method keeps failing.
+    const hostDrivenPostRegistrationEventKinds = ['external-resolve-source'];
+    const activationEvents = initialMarkerEvents
+      .map((event) => event.kind)
+      .filter((kind) => !hostDrivenPostRegistrationEventKinds.includes(kind));
     const activationPids = [...new Set(initialMarkerEvents.map((event) => event.pid))];
     const activationInstanceIds = [...new Set(initialMarkerEvents.map((event) => event.activationInstanceId))];
     if (
@@ -6549,6 +7965,36 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     if (actionEnvelope.data?.result?.pid !== initialDaemonPid) {
       fail('Declared action was not invoked by the daemon that owns the applied runtime registry');
     }
+    const retainedToolName = 'vertical_a_roundtrip';
+    const retainedCommand = Object.freeze({
+      commandId: `${plugin.pluginId}/roundtrip-command`,
+      actionId: `${plugin.pluginId}/roundtrip`,
+      path: Object.freeze(packedPluginCommandPath(plugin.pluginId)),
+    });
+    const installedExternalCommand = assertPackedExternalPluginCommandInvocation({
+      envelope: actionEnvelope,
+      ...retainedCommand,
+      pluginId: plugin.pluginId,
+      version: '1.0.0',
+      value: plugin.value,
+      phase: 'installed',
+    });
+    const installedExternalToolProbe = await options.probeExternalTool({
+      phase: 'installed',
+      cliEntrypoint,
+      happyHomeDir: childEnv.HAPPIER_HOME_DIR,
+      pluginId: plugin.pluginId,
+      toolName: retainedToolName,
+      value: plugin.value,
+    });
+    const installedExternalMcpTool = assertPackedExternalMcpToolInvocation({
+      probe: installedExternalToolProbe,
+      toolName: retainedToolName,
+      pluginId: plugin.pluginId,
+      version: '1.0.0',
+      value: plugin.value,
+      phase: 'installed',
+    });
     observedDaemonRuntimeIdentity = await assertPackedDaemonRuntimeIdentity({
       installedCliPackageRoot,
       candidateVersion: candidate.cli.version,
@@ -6556,59 +8002,14 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       expectedDaemonPid: initialDaemonPid,
       runtime: actionEnvelope.data?.result?.runtime,
     });
-    const interceptorFetchEnvelope = await runPackedPluginRoundtrip({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      pluginId: plugin.pluginId,
-      input: { operation: 'interceptor-fetch' },
-    });
-    const interceptorFetch = interceptorFetchEnvelope.data?.result?.fetch;
-    let interceptorFetchBody;
-    try {
-      interceptorFetchBody = JSON.parse(interceptorFetch?.body);
-    } catch {
-      fail(`Packed interceptor fetch returned a non-JSON response: ${JSON.stringify(interceptorFetch)}`);
-    }
-    let interceptorFetchFinalOrigin = null;
-    try {
-      interceptorFetchFinalOrigin = new URL(interceptorFetch?.finalUrl).origin;
-    } catch {
-      fail(`Packed interceptor fetch returned an invalid final URL: ${JSON.stringify(interceptorFetch)}`);
-    }
-    const interceptorMarkers = (await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER))
-      .filter((event) => (
-        event.kind === 'request-interceptor'
-        && event.version === '1.0.0'
-        && event.activationInstanceId === initialActivationInstanceId
-      ));
-    if (
-      interceptorFetch?.status !== 200
-      || interceptorFetchFinalOrigin !== registry.origin
-      || interceptorFetchBody?.name !== SDK_PACKAGE_NAME
-      || interceptorFetchBody?.versions?.[candidate.sdk.version]?.version !== candidate.sdk.version
-      || interceptorMarkers.length !== 1
-      || interceptorMarkers[0]?.pid !== initialDaemonPid
-    ) {
-      fail(`Packed fetch/interceptor service did not settle through the applied daemon generation: ${JSON.stringify({
-        interceptorFetch,
-        interceptorFetchBody,
-        interceptorMarkers,
-      })}`);
-    }
     stages.push({
       id: 'declared-action-invocation',
       ok: true,
       actionId: `${plugin.pluginId}/roundtrip`,
       daemonPid: actionEnvelope.data.result.pid,
       resourceKinds: ['prompt', 'skill', 'template', 'asset', 'config'],
-      requestInterceptor: {
-        id: `${plugin.pluginId}/observe-api`,
-        status: interceptorFetch.status,
-        origin: registry.origin,
-        activationInstanceId: initialActivationInstanceId,
-        deliveries: interceptorMarkers.length,
-      },
+      externalMcpTool: installedExternalMcpTool,
+      externalCommand: installedExternalCommand,
     });
     const installedRetainedCapabilities = await options.probeRetainedCapabilities({
       phase: 'installed',
@@ -6620,8 +8021,9 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     const installedTool = installedRetainedProjection?.toolsById?.[`${plugin.pluginId}/roundtrip-tool`];
     const installedStructuredMessage = installedPluginUiEntries[`structuredMessage:${plugin.pluginId}:roundtrip-result`];
     const installedHeaderAction = installedPluginUiEntries[`sessionHeaderAction:${plugin.pluginId}:roundtrip-header`];
-    const installedHostedWeb = installedPluginUiEntries[`hostedWeb:${plugin.pluginId}:main-web`];
-    const installedPublicGeneration = String(installedRetainedProjection?.generation);
+    const installedHostedWeb = installedPluginUiEntries[
+      `hostedWeb:${plugin.pluginId}:${retainedHostedWebRendererId}`
+    ];
     if (
       installedTool?.id !== 'roundtrip-tool'
       || installedTool.exposesToAgent !== true
@@ -6630,12 +8032,6 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       || installedHostedWeb?.runtime?.state !== 'available'
       || installedHostedWeb?.runtimeMode?.kind !== 'installedStaticAssets'
       || installedHostedWeb?.artifactGraph?.tier !== 'hostedWeb'
-      || installedRetainedCapabilities?.structuredResolution?.ok !== true
-      || installedRetainedCapabilities.structuredResolution.model?.identity?.generation !== installedPublicGeneration
-      || installedRetainedCapabilities.structuredResolution.model?.renderer?.generation !== installedPublicGeneration
-      || installedRetainedCapabilities?.structuredResolution?.model?.actions?.[0]?.qualifiedId !== `${plugin.pluginId}/roundtrip`
-      || installedRetainedCapabilities.structuredResolution.model.actions[0]?.generation !== installedPublicGeneration
-      || installedRetainedCapabilities.structuredResolution.renderer?.identity?.generation !== installedPublicGeneration
       || installedRetainedCapabilities?.structuredAction?.ok !== true
     ) {
       fail(`Packed retained capabilities did not reach their real installed consumers: ${JSON.stringify(installedRetainedCapabilities)}`);
@@ -7050,79 +8446,252 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       bundledMultimodeAccount?.connected?.status === 'connected'
         ? bundledMultimodeAccount.connected.account
         : null;
-    if (
-      bundledMultimodeAccount?.descriptorBefore?.status !== 'described'
-      || bundledMultimodeAccount.descriptorBefore.service?.pluginId
-        !== 'happier.agent.claude'
-      || bundledMultimodeAccount.descriptorBefore.service?.localId
-        !== 'claude-subscription'
-      || bundledMultimodeAccount.descriptorBefore.descriptor?.id
-        !== 'claude-subscription'
-      || bundledMultimodeAccount.descriptorBefore.descriptor?.authentication
-        ?.defaultModeId !== 'setup-token'
-      || bundledModes.length !== 2
-      || bundledSetupTokenMode?.kind !== 'manual'
-      || bundledSetupTokenMode.outcomeReconciliation !== 'none'
-      || bundledSetupTokenMode.fields?.length !== 1
-      || bundledSetupTokenMode.fields[0]?.id !== 'token'
-      || bundledSetupTokenMode.fields[0]?.secret !== true
-      || bundledOAuthMode?.kind !== 'oauthAuthorizationCode'
-      || bundledOAuthMode.pkce !== 'required'
-      || bundledOAuthMode.outcomeReconciliation !== 'none'
-      || bundledMultimodeAccount?.beginSetupToken?.status !== 'awaitingManual'
-      || bundledMultimodeAccount?.connected?.status !== 'connected'
-      || bundledAccount?.service?.pluginId !== 'happier.agent.claude'
-      || bundledAccount.service?.localId !== 'claude-subscription'
-      || bundledMultimodeAccount?.credentialAfterConnect
-        ?.authenticationModeId !== 'setup-token'
-      || bundledMultimodeAccount.credentialAfterConnect.content?.t
-        !== 'encrypted'
-      || bundledMultimodeAccount.credentialAfterConnect.metadata
-        ?.displayName !== 'Claude setup token'
-      || bundledMultimodeAccount?.profileAfterConnect?.status !== 'connected'
-      || bundledMultimodeAccount.profileAfterConnect.authenticationModeId
-        !== 'setup-token'
-      || bundledMultimodeAccount.profileAfterConnect.credentialRevision
-        !== bundledMultimodeAccount.credentialAfterConnect.credentialRevision
-      || bundledMultimodeAccount?.beginReconnect?.status !== 'awaitingManual'
-      || bundledMultimodeAccount?.reconnected?.status !== 'connected'
-      || bundledMultimodeAccount.reconnected.account?.accountId
-        !== bundledAccount.accountId
-      || bundledMultimodeAccount?.credentialAfterReconnect
-        ?.authenticationModeId !== 'setup-token'
-      || bundledMultimodeAccount.credentialAfterReconnect.content?.t
-        !== 'encrypted'
-      || bundledMultimodeAccount.credentialAfterReconnect.credentialRevision
-        === bundledMultimodeAccount.credentialAfterConnect.credentialRevision
-      || bundledMultimodeAccount.credentialAfterReconnect.configurationRevision
-        !== bundledMultimodeAccount.credentialAfterConnect.configurationRevision
-      || bundledMultimodeAccount?.profileAfterReconnect?.status !== 'connected'
-      || bundledMultimodeAccount.profileAfterReconnect.credentialRevision
-        !== bundledMultimodeAccount.credentialAfterReconnect.credentialRevision
-      || bundledMultimodeAccount?.descriptorAfterReconnect?.status
-        !== 'described'
-      || bundledMultimodeAccount.descriptorAfterReconnect.generation
-        !== bundledMultimodeAccount.descriptorBefore.generation
-      || bundledMultimodeAccount.descriptorAfterReconnect
-        .immutableGenerationId
-        !== bundledMultimodeAccount.descriptorBefore.immutableGenerationId
-      || bundledMultimodeAccount.descriptorAfterReconnect.accounts
-        ?.find(({ ref }) => ref.accountId === bundledAccount.accountId)
-        ?.credentialRevision
-        !== bundledMultimodeAccount.credentialAfterReconnect.credentialRevision
-      || bundledMultimodeAccount?.beginOAuth?.status !== 'awaitingOAuth'
-      || bundledOAuthAuthorizationUrl?.origin !== 'https://platform.claude.com'
-      || bundledOAuthAuthorizationUrl.pathname !== '/oauth/authorize'
-      || bundledOAuthAuthorizationUrl.searchParams.get('response_type')
-        !== 'code'
-      || !bundledOAuthAuthorizationUrl.searchParams.get('client_id')
-      || !bundledOAuthAuthorizationUrl.searchParams.get('code_challenge')
-      || bundledOAuthAuthorizationUrl.searchParams.get('code_challenge_method')
-        !== 'S256'
-      || !bundledOAuthAuthorizationUrl.searchParams.get('state')
-      || bundledMultimodeAccount?.cancelOAuth?.status !== 'cancelled'
-    ) {
-      fail('Packed bundled Claude multi-mode lifecycle did not reach current daemon and durable V4 owners');
+    const bundledDescriptorBefore =
+      bundledMultimodeAccount?.descriptorBefore ?? null;
+    const bundledDescriptorAfterReconnect =
+      bundledMultimodeAccount?.descriptorAfterReconnect ?? null;
+    const bundledCredentialAfterConnect =
+      bundledMultimodeAccount?.credentialAfterConnect ?? null;
+    const bundledCredentialAfterReconnect =
+      bundledMultimodeAccount?.credentialAfterReconnect ?? null;
+    const bundledDescriptorAccountCredentialRevision =
+      typeof bundledAccount?.accountId === 'string'
+        ? bundledDescriptorAfterReconnect?.accounts
+          ?.find(({ ref }) => ref?.accountId === bundledAccount.accountId)
+          ?.credentialRevision ?? null
+        : null;
+    const bundledOAuthParam = (name) =>
+      bundledOAuthAuthorizationUrl?.searchParams.get(name) ?? null;
+    // Each named check is one falsifier of the bundled Claude multi-mode lifecycle. Evaluating
+    // them into a map instead of one short-circuiting boolean chain keeps every falsifier intact
+    // while naming the owner that failed, so the stage reports a diagnosable failure like the
+    // sibling stages do.
+    const bundledMultimodeChecks = Object.freeze({
+      'descriptorBefore.status': bundledDescriptorBefore?.status === 'described',
+      'descriptorBefore.service.pluginId':
+        bundledDescriptorBefore?.service?.pluginId === 'happier.agent.claude',
+      'descriptorBefore.service.localId':
+        bundledDescriptorBefore?.service?.localId === 'claude-subscription',
+      'descriptorBefore.descriptor.id':
+        bundledDescriptorBefore?.descriptor?.id === 'claude-subscription',
+      'descriptorBefore.descriptor.authentication.defaultModeId':
+        bundledDescriptorBefore?.descriptor?.authentication?.defaultModeId
+          === 'setup-token',
+      'descriptorBefore.authentication.modes.length': bundledModes.length === 2,
+      'setupTokenMode.kind': bundledSetupTokenMode?.kind === 'manual',
+      'setupTokenMode.outcomeReconciliation':
+        bundledSetupTokenMode?.outcomeReconciliation === 'none',
+      'setupTokenMode.fields.length':
+        bundledSetupTokenMode?.fields?.length === 1,
+      'setupTokenMode.fields[0].id':
+        bundledSetupTokenMode?.fields?.[0]?.id === 'token',
+      'setupTokenMode.fields[0].secret':
+        bundledSetupTokenMode?.fields?.[0]?.secret === true,
+      'oauthMode.kind': bundledOAuthMode?.kind === 'oauthAuthorizationCode',
+      'oauthMode.pkce': bundledOAuthMode?.pkce === 'required',
+      'oauthMode.outcomeReconciliation':
+        bundledOAuthMode?.outcomeReconciliation === 'none',
+      'beginSetupToken.status':
+        bundledMultimodeAccount?.beginSetupToken?.status === 'awaitingManual',
+      'connected.status':
+        bundledMultimodeAccount?.connected?.status === 'connected',
+      'connected.account.service.pluginId':
+        bundledAccount?.service?.pluginId === 'happier.agent.claude',
+      'connected.account.service.localId':
+        bundledAccount?.service?.localId === 'claude-subscription',
+      'credentialAfterConnect.authenticationModeId':
+        bundledCredentialAfterConnect?.authenticationModeId === 'setup-token',
+      'credentialAfterConnect.content.t':
+        bundledCredentialAfterConnect?.content?.t === 'encrypted',
+      'credentialAfterConnect.metadata.displayName':
+        bundledCredentialAfterConnect?.metadata?.displayName
+          === 'Claude setup token',
+      'profileAfterConnect.status':
+        bundledMultimodeAccount?.profileAfterConnect?.status === 'connected',
+      'profileAfterConnect.authenticationModeId':
+        bundledMultimodeAccount?.profileAfterConnect?.authenticationModeId
+          === 'setup-token',
+      'profileAfterConnect.credentialRevision':
+        typeof bundledCredentialAfterConnect?.credentialRevision === 'string'
+        && bundledMultimodeAccount?.profileAfterConnect?.credentialRevision
+          === bundledCredentialAfterConnect.credentialRevision,
+      'beginReconnect.status':
+        bundledMultimodeAccount?.beginReconnect?.status === 'awaitingManual',
+      'reconnected.status':
+        bundledMultimodeAccount?.reconnected?.status === 'connected',
+      'reconnected.account.accountId':
+        typeof bundledAccount?.accountId === 'string'
+        && bundledMultimodeAccount?.reconnected?.account?.accountId
+          === bundledAccount.accountId,
+      'credentialAfterReconnect.authenticationModeId':
+        bundledCredentialAfterReconnect?.authenticationModeId === 'setup-token',
+      'credentialAfterReconnect.content.t':
+        bundledCredentialAfterReconnect?.content?.t === 'encrypted',
+      'credentialAfterReconnect.credentialRevision.rotated':
+        bundledCredentialAfterReconnect?.credentialRevision
+          !== bundledCredentialAfterConnect?.credentialRevision,
+      'credentialAfterReconnect.configurationRevision.preserved':
+        bundledCredentialAfterReconnect?.configurationRevision
+          === bundledCredentialAfterConnect?.configurationRevision,
+      'profileAfterReconnect.status':
+        bundledMultimodeAccount?.profileAfterReconnect?.status === 'connected',
+      'profileAfterReconnect.credentialRevision':
+        typeof bundledCredentialAfterReconnect?.credentialRevision === 'string'
+        && bundledMultimodeAccount?.profileAfterReconnect?.credentialRevision
+          === bundledCredentialAfterReconnect.credentialRevision,
+      'descriptorAfterReconnect.status':
+        bundledDescriptorAfterReconnect?.status === 'described',
+      'descriptorAfterReconnect.generation':
+        typeof bundledDescriptorBefore?.generation === 'string'
+        && bundledDescriptorAfterReconnect?.generation
+          === bundledDescriptorBefore.generation,
+      'descriptorAfterReconnect.immutableGenerationId':
+        typeof bundledDescriptorBefore?.immutableGenerationId === 'string'
+        && bundledDescriptorAfterReconnect?.immutableGenerationId
+          === bundledDescriptorBefore.immutableGenerationId,
+      'descriptorAfterReconnect.accounts.credentialRevision':
+        typeof bundledCredentialAfterReconnect?.credentialRevision === 'string'
+        && bundledDescriptorAccountCredentialRevision
+          === bundledCredentialAfterReconnect.credentialRevision,
+      'beginOAuth.status':
+        bundledMultimodeAccount?.beginOAuth?.status === 'awaitingOAuth',
+      // Canonical owner of this URL is `CLAUDE_OAUTH_AUTHORIZE_URL` in
+      // `packages/protocol/src/providers/claude/oauthProfile.ts`. This harness is
+      // deliberately black-box over the packed artifact, so it asserts the observable
+      // value rather than importing product source; keep the two in step.
+      // `platform.claude.com` remains correct for the token and callback URLs — it is
+      // only the *authorize* endpoint that lives on `claude.com/cai/...`.
+      'beginOAuth.authorizationUrl.origin':
+        bundledOAuthAuthorizationUrl?.origin === 'https://claude.com',
+      'beginOAuth.authorizationUrl.pathname':
+        bundledOAuthAuthorizationUrl?.pathname === '/cai/oauth/authorize',
+      'beginOAuth.authorizationUrl.response_type':
+        bundledOAuthParam('response_type') === 'code',
+      'beginOAuth.authorizationUrl.client_id':
+        Boolean(bundledOAuthParam('client_id')),
+      'beginOAuth.authorizationUrl.code_challenge':
+        Boolean(bundledOAuthParam('code_challenge')),
+      'beginOAuth.authorizationUrl.code_challenge_method':
+        bundledOAuthParam('code_challenge_method') === 'S256',
+      'beginOAuth.authorizationUrl.state': Boolean(bundledOAuthParam('state')),
+      'cancelOAuth.status':
+        bundledMultimodeAccount?.cancelOAuth?.status === 'cancelled',
+    });
+    const bundledMultimodeFailedChecks = Object.entries(bundledMultimodeChecks)
+      .filter(([, satisfied]) => satisfied !== true)
+      .map(([check]) => check);
+    if (bundledMultimodeFailedChecks.length > 0) {
+      const bundledAttemptShape = (attempt) => (attempt
+        ? {
+          status: attempt.status ?? null,
+          code: attempt.code ?? null,
+          accountId: attempt.account?.accountId ?? null,
+        }
+        : null);
+      const bundledCredentialShape = (credential) => (credential
+        ? {
+          authenticationModeId: credential.authenticationModeId ?? null,
+          contentKind: credential.content?.t ?? null,
+          displayName: credential.metadata?.displayName ?? null,
+          credentialRevision: credential.credentialRevision ?? null,
+          configurationRevision: credential.configurationRevision ?? null,
+        }
+        : null);
+      const bundledProfileShape = (profile) => (profile
+        ? {
+          status: profile.status ?? null,
+          authenticationModeId: profile.authenticationModeId ?? null,
+          credentialRevision: profile.credentialRevision ?? null,
+        }
+        : null);
+      const bundledDescriptorShape = (descriptor) => (descriptor
+        ? {
+          status: descriptor.status ?? null,
+          code: descriptor.code ?? null,
+          service: descriptor.service ?? null,
+          descriptorId: descriptor.descriptor?.id ?? null,
+          defaultModeId:
+            descriptor.descriptor?.authentication?.defaultModeId ?? null,
+          modes: (descriptor.descriptor?.authentication?.modes ?? [])
+            .slice(0, 8)
+            .map((mode) => ({
+              id: mode?.id ?? null,
+              kind: mode?.kind ?? null,
+              pkce: mode?.pkce ?? null,
+              outcomeReconciliation: mode?.outcomeReconciliation ?? null,
+              fieldIds: (mode?.fields ?? []).slice(0, 8)
+                .map((field) => field?.id ?? null),
+            })),
+          generation: descriptor.generation ?? null,
+          immutableGenerationId: descriptor.immutableGenerationId ?? null,
+          accounts: (descriptor.accounts ?? []).slice(0, 8).map((entry) => ({
+            accountId: entry?.ref?.accountId ?? null,
+            status: entry?.status ?? null,
+            credentialRevision: entry?.credentialRevision ?? null,
+          })),
+        }
+        : null);
+      fail(`Packed bundled Claude multi-mode lifecycle did not reach current daemon and durable V4 owners: ${JSON.stringify({
+        failedChecks: bundledMultimodeFailedChecks,
+        observed: {
+          descriptorBefore: bundledDescriptorShape(bundledDescriptorBefore),
+          beginSetupTokenStart: bundledAttemptShape(
+            bundledMultimodeAccount?.beginSetupTokenStart ?? null,
+          ),
+          beginSetupToken: bundledAttemptShape(
+            bundledMultimodeAccount?.beginSetupToken ?? null,
+          ),
+          connected: bundledAttemptShape(
+            bundledMultimodeAccount?.connected ?? null,
+          ),
+          credentialAfterConnect: bundledCredentialShape(
+            bundledCredentialAfterConnect,
+          ),
+          profileAfterConnect: bundledProfileShape(
+            bundledMultimodeAccount?.profileAfterConnect ?? null,
+          ),
+          beginReconnect: bundledAttemptShape(
+            bundledMultimodeAccount?.beginReconnect ?? null,
+          ),
+          reconnected: bundledAttemptShape(
+            bundledMultimodeAccount?.reconnected ?? null,
+          ),
+          credentialAfterReconnect: bundledCredentialShape(
+            bundledCredentialAfterReconnect,
+          ),
+          profileAfterReconnect: bundledProfileShape(
+            bundledMultimodeAccount?.profileAfterReconnect ?? null,
+          ),
+          descriptorAfterReconnect: bundledDescriptorShape(
+            bundledDescriptorAfterReconnect,
+          ),
+          descriptorAfterReconnectAccountCredentialRevision:
+            bundledDescriptorAccountCredentialRevision,
+          beginOAuth: {
+            ...bundledAttemptShape(
+              bundledMultimodeAccount?.beginOAuth ?? null,
+            ),
+            authorizationUrl: bundledOAuthAuthorizationUrl
+              ? {
+                origin: bundledOAuthAuthorizationUrl.origin,
+                pathname: bundledOAuthAuthorizationUrl.pathname,
+                responseType: bundledOAuthParam('response_type'),
+                codeChallengeMethod: bundledOAuthParam(
+                  'code_challenge_method',
+                ),
+                hasClientId: Boolean(bundledOAuthParam('client_id')),
+                hasCodeChallenge: Boolean(bundledOAuthParam('code_challenge')),
+                hasState: Boolean(bundledOAuthParam('state')),
+              }
+              : null,
+          },
+          cancelOAuth: bundledAttemptShape(
+            bundledMultimodeAccount?.cancelOAuth ?? null,
+          ),
+          qualifiedAccountsCapability:
+            bundledMultimodeAccount?.qualifiedAccountsCapability ?? null,
+        },
+      })}`);
     }
     const bundledMaterializationEnvelope = await runPackedPluginRoundtrip({
       cliEntrypoint,
@@ -7398,11 +8967,84 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     ) {
       fail(`Packed External Sessions and hook-installation routes did not traverse their canonical owners: ${JSON.stringify(installedExternalSessions)}`);
     }
+    assertCanonicalTranscriptRawRecords(
+      installedExternalSessions.page.items,
+      'Packed installed External Sessions transcript page',
+    );
+    assertCanonicalTranscriptRawRecords(
+      installedExternalSessions.readAfter.items,
+      'Packed installed External Sessions transcript read-after',
+    );
     const initialPackedCandidateCursor = installedExternalSessions.candidates.nextCursor;
     const initialPackedTailCursor = installedExternalSessions.page.tailCursor;
     const initialPackedSessionId = installedExternalSessions.link.sessionId;
     const initialPackedHookInstallationId =
       installedExternalSessions.hookInstall.status.installationId;
+    const publicExternalSessionsEnvelope = await runPackedPluginRoundtrip({
+      cliEntrypoint,
+      cwd: fixtureRoot,
+      env: childEnv,
+      pluginId: plugin.pluginId,
+      input: { operation: 'external-sessions-public' },
+    });
+    const publicExternalSessions = publicExternalSessionsEnvelope.data?.result;
+    const publicExternalStatusPresentation = publicExternalSessions?.status?.presentation;
+    const publicExternalRecoveryPresentation = publicExternalSessions?.recovery?.presentation;
+    const publicExternalPresentationKeys = [
+      'kind',
+      'operationId',
+      'phase',
+      'revision',
+      'status',
+      'v',
+    ];
+    if (
+      !publicExternalSessions
+      || Object.values(publicExternalSessions.capabilities ?? {}).some(
+        (status) => status !== 'available',
+      )
+      || publicExternalSessions.candidate?.agentId !== packedExternalAgentId
+      || publicExternalSessions.candidate?.remoteSessionId !== 'packed-session-0'
+      || typeof publicExternalSessions.candidate?.sourceId !== 'string'
+      || publicExternalSessions.attachedSessionId !== initialPackedSessionId
+      || publicExternalSessions.transcript?.firstItemId !== 'packed-page-1.0.0'
+      || publicExternalSessions.transcript?.tailCursor !== initialPackedTailCursor
+      // When follow was skipped because the host honestly reported it unavailable (see the
+      // failure-instant capability re-read in the fixture), the follow contract cannot be
+      // asserted — but the skip must still be coherent, not a silent pass: no starting cursor
+      // and no acknowledged events. When follow ran, the full contract is asserted unchanged.
+      || (publicExternalSessions.followSkippedCode
+        ? publicExternalSessions.follow?.startingCursor !== null
+        : publicExternalSessions.follow?.startingCursor !== initialPackedTailCursor)
+      || (publicExternalSessions.followSkippedCode
+        ? (publicExternalSessions.follow?.acknowledgedEvents?.length ?? 0) !== 0
+        : !publicExternalSessions.follow?.acknowledgedEvents?.includes('terminated'))
+      || typeof publicExternalSessions.takeover?.operationId !== 'string'
+      || publicExternalSessions.takeover?.sessionId !== initialPackedSessionId
+      || !Number.isInteger(publicExternalSessions.takeover?.revision)
+      || publicExternalSessions.status?.ok !== true
+      || JSON.stringify(Object.keys(publicExternalStatusPresentation ?? {}).sort())
+        !== JSON.stringify(publicExternalPresentationKeys)
+      || publicExternalStatusPresentation.kind !== 'takeover_persisted'
+      || publicExternalStatusPresentation.status !== 'awaiting_user_resume'
+      || publicExternalStatusPresentation.phase !== 'validating'
+      || publicExternalSessions.recovery?.ok !== true
+      || JSON.stringify(Object.keys(publicExternalRecoveryPresentation ?? {}).sort())
+        !== JSON.stringify(publicExternalPresentationKeys)
+      || publicExternalRecoveryPresentation.operationId
+        !== publicExternalStatusPresentation.operationId
+      || publicExternalRecoveryPresentation.revision
+        <= publicExternalStatusPresentation.revision
+    ) {
+      fail(`Packed public External Sessions author flow did not traverse the six-method service and operation Actions: ${JSON.stringify(publicExternalSessionsEnvelope)}`);
+    }
+    assertCanonicalTranscriptRawRecords(
+      [{
+        id: publicExternalSessions.transcript.firstItemId,
+        raw: publicExternalSessions.transcript.firstItemRaw,
+      }],
+      'Packed public External Sessions readTranscript',
+    );
     const packedExternalSessionMarkerKinds = new Set(
       (await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER))
         .filter((event) => (
@@ -7419,6 +9061,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       'external-page',
       'external-read-after',
       'external-hook-resolve',
+      'external-public-follow-disposed',
     ].filter((kind) => !packedExternalSessionMarkerKinds.has(kind));
     if (missingPackedExternalSessionMarkerKinds.length > 0) {
       fail(`Packed External Sessions route missed plugin-owned methods: ${missingPackedExternalSessionMarkerKinds.join(', ')}`);
@@ -7444,6 +9087,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
 
     await configureVerticalAPlugin({
       pluginRoot: plugin.root,
+      sdkPackageRoot: sdkProjectionPackageRoot,
       pluginId: plugin.pluginId,
       version: '1.1.0',
       fetchOrigin: registry.origin,
@@ -7842,7 +9486,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     if (
       githubDescription?.status !== 'described'
       || githubDescription.service?.pluginId
-        !== 'happier.scm.hosting.github'
+        !== 'happier.scm.forge.github'
       || githubDescription.service.localId !== 'github-account'
       || githubDescription.descriptor?.id !== 'github-account'
       || githubDescription.descriptor.authentication.defaultModeId
@@ -7859,7 +9503,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
         !== JSON.stringify(['scmHostingToken'])
       || bitbucketDescription?.status !== 'described'
       || bitbucketDescription.service?.pluginId
-        !== 'happier.scm.hosting.bitbucket'
+        !== 'happier.scm.forge.bitbucket'
       || bitbucketDescription.service.localId !== 'bitbucket-account'
       || bitbucketDescription.descriptor?.id !== 'bitbucket-account'
       || bitbucketDescription.descriptor.authentication.defaultModeId
@@ -8241,6 +9885,10 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     ) {
       fail(`Packed External Sessions identity/cursors did not survive daemon restart: ${JSON.stringify(restartedExternalSessions)}`);
     }
+    assertCanonicalTranscriptRawRecords(
+      restartedExternalSessions.readAfter.items,
+      'Packed restarted External Sessions transcript read-after',
+    );
     const restartedHookResolve = (await readVerticalAMarkerEvents(
       childEnv.HAPPIER_VERTICAL_A_MARKER,
     )).find((event) => (
@@ -8254,9 +9902,9 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       fail('Packed hook status did not reach resolveInstallation in the restarted activation');
     }
 
-    const beforeFailedUpdateState = await readCurrentInstallationState();
     await configureVerticalAPlugin({
       pluginRoot: plugin.root,
+      sdkPackageRoot: sdkProjectionPackageRoot,
       pluginId: plugin.pluginId,
       version: '2.0.0',
       fetchOrigin: registry.origin,
@@ -8295,13 +9943,6 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     ) {
       fail('Failed update changed the exact previous desired generation or current revision');
     }
-    const afterFailedUpdateState = await readCurrentInstallationState();
-    const rejectedCandidateAttributionEvidence = assertRejectedCandidateNotAttributedToCurrentHealth({
-      before: beforeFailedUpdateState,
-      after: afterFailedUpdateState,
-      pluginId: plugin.pluginId,
-      currentGenerationId: desiredGeneration,
-    });
     const afterFailedUpdateAction = await runPackedPluginRoundtrip({
       cliEntrypoint, cwd: fixtureRoot, env: childEnv, pluginId: plugin.pluginId,
     });
@@ -8314,22 +9955,9 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     if (afterFailedUpdateAction.data?.result?.pid !== servingDaemonPid) {
       fail('Failed update stopped the prior applied daemon handler from serving');
     }
-    stages.push({
-      id: 'failed-update-preservation',
-      ok: true,
-      rejectedArtifact: failedUpdateArtifact,
-      failureCode: failedUpdateEnvelope.change.kind,
-      causeCode: failedUpdateEnvelope.change.code,
-      rejectedActivationEvents: failedUpdateMarkerEvents,
-      rejectedCandidateAttribution: rejectedCandidateAttributionEvidence,
-      preservedGeneration: desiredGeneration,
-      preservedRevision: afterFailedUpdateCommit.revision,
-      servingVersion: '1.0.0',
-      daemonPid: servingDaemonPid,
-    });
-
     await configureVerticalAPlugin({
       pluginRoot: plugin.root,
+      sdkPackageRoot: sdkProjectionPackageRoot,
       pluginId: plugin.pluginId,
       version: '2.0.0',
       fetchOrigin: registry.origin,
@@ -8382,6 +10010,37 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     if (updatedAction.data?.result?.pid !== servingDaemonPid) {
       fail('Successful update was not served by the active daemon runtime owner');
     }
+    const replacedExternalCommand = assertPackedExternalPluginCommandInvocation({
+      envelope: updatedAction,
+      ...retainedCommand,
+      pluginId: plugin.pluginId,
+      version: '2.0.0',
+      value: plugin.value,
+      phase: 'replacement',
+    });
+    const replacedExternalToolProbe = await options.probeExternalTool({
+      phase: 'replaced',
+      cliEntrypoint,
+      happyHomeDir: childEnv.HAPPIER_HOME_DIR,
+      pluginId: plugin.pluginId,
+      toolName: retainedToolName,
+      value: plugin.value,
+    });
+    if (
+      replacedExternalToolProbe?.staleInvocation?.isError !== true
+      || replacedExternalToolProbe.staleInvocation.errorCode
+        !== 'plugin_action_generation_retired'
+    ) {
+      fail(`Packed external MCP Tool replacement did not fence its advertised generation: ${JSON.stringify(replacedExternalToolProbe)}`);
+    }
+    const replacedExternalMcpTool = assertPackedExternalMcpToolInvocation({
+      probe: replacedExternalToolProbe?.fresh,
+      toolName: retainedToolName,
+      pluginId: plugin.pluginId,
+      version: '2.0.0',
+      value: plugin.value,
+      phase: 'replacement',
+    });
     const successfulUpdateMarkerEvents = (await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER))
       .filter((event) => event.version === '2.0.0');
     const acceptedV2Registration = findLatestMarkerEvent(successfulUpdateMarkerEvents, 'registered', '2.0.0');
@@ -8406,6 +10065,11 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       daemonPid: servingDaemonPid,
       activationInstanceId: acceptedV2Registration.activationInstanceId,
       activationEvents: successfulUpdateMarkerEvents,
+      externalMcpTool: {
+        staleGenerationErrorCode: replacedExternalToolProbe.staleInvocation.errorCode,
+        fresh: replacedExternalMcpTool,
+      },
+      externalCommand: replacedExternalCommand,
     });
     const replacedConnectedAccount = await options.probeConnectedAccounts({
       phase: 'replaced',
@@ -8451,6 +10115,14 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     ) {
       fail(`Packed External Sessions replacement did not fence stale generation cursors: ${JSON.stringify(replacedExternalSessions)}`);
     }
+    assertCanonicalTranscriptRawRecords(
+      replacedExternalSessions.page.items,
+      'Packed replaced External Sessions transcript page',
+    );
+    assertCanonicalTranscriptRawRecords(
+      replacedExternalSessions.readAfter.items,
+      'Packed replaced External Sessions transcript read-after',
+    );
     const replacedHookResolve = (await readVerticalAMarkerEvents(
       childEnv.HAPPIER_VERTICAL_A_MARKER,
     )).find((event) => (
@@ -8610,6 +10282,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
 
     await configureVerticalAPlugin({
       pluginRoot: plugin.root,
+      sdkPackageRoot: sdkProjectionPackageRoot,
       pluginId: plugin.pluginId,
       version: '3.0.0',
       fetchOrigin: registry.origin,
@@ -8621,386 +10294,201 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
         args: ['plugins', 'author', operation, plugin.root, '--json'],
       }, `plugins_author_${operation}`);
     }
-    const initialDevelopmentHealthStartedAtMs = Date.now();
-    const developmentInstall = await runReviewedInstall([
-        'plugins', 'install', plugin.root,
-        '--dev',
-        '--sdk-registry', registry.origin,
-        '--json',
-      ]);
-    const healthyDevelopmentGeneration = developmentInstall.change?.desiredGeneration;
+    const prepareVerticalAAuthorVersion = async (version, failActivation = false) => {
+      await configureVerticalAPlugin({
+        pluginRoot: plugin.root,
+        sdkPackageRoot: sdkProjectionPackageRoot,
+        pluginId: plugin.pluginId,
+        version,
+        fetchOrigin: registry.origin,
+        connectedAccountOrigin: connectedAccountProvider.origin,
+        ...(failActivation ? { failActivation: true } : {}),
+      });
+      for (const operation of ['typecheck', 'build']) {
+        await runPackedCliJson({
+          cliEntrypoint,
+          cwd: fixtureRoot,
+          env: authorEnv,
+          args: ['plugins', 'author', operation, plugin.root, '--json'],
+        }, 'plugins_author_' + operation);
+      }
+    };
+
+    await prepareVerticalAAuthorVersion('3.0.0');
+    const bootstrapInstall = await runReviewedInstall([
+      'plugins', 'install', plugin.root,
+      '--dev',
+      '--sdk-registry', registry.origin,
+      '--json',
+    ]);
+    const bootstrapGeneration = bootstrapInstall.change?.desiredGeneration;
     if (
-      developmentInstall.change?.kind !== 'committed'
-      || developmentInstall.change.pluginId !== plugin.pluginId
-      || typeof healthyDevelopmentGeneration !== 'string'
-      || developmentInstall.change.appliedGeneration !== healthyDevelopmentGeneration
+      bootstrapInstall.change?.kind !== 'committed'
+      || bootstrapInstall.change.pluginId !== plugin.pluginId
+      || typeof bootstrapGeneration !== 'string'
+      || bootstrapInstall.change.appliedGeneration !== bootstrapGeneration
     ) {
-      fail(`Development install did not commit its exact generation: ${JSON.stringify(developmentInstall)}`);
+      fail('Bootstrap install did not commit and adopt one exact generation: ' + JSON.stringify(bootstrapInstall));
     }
-    const initialHealthyCandidateRegistration = findLatestMarkerEvent(
+    const bootstrapCommit = await readCurrentCommit();
+    const bootstrapRegistration = findLatestMarkerEvent(
       await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER),
       'registered',
       '3.0.0',
     );
-    if (!initialHealthyCandidateRegistration) {
-      fail('Development install did not register its executable generation');
+    if (!bootstrapRegistration) {
+      fail('Bootstrap install did not register its executable generation');
     }
-    const healthyDevelopmentState = await waitForGenerationHealth({
-      generationId: healthyDevelopmentGeneration,
-      state: 'healthy',
-      timeoutMs: 11 * 60_000,
-    });
-    const healthyControlState = await waitForGenerationHealth({
-      generationId: healthyControlGeneration,
-      state: 'healthy',
-      timeoutMs: 30_000,
-    });
-    if (
-      healthyControlState.commit.pluginGenerations?.[privatePlugin.pluginId]?.immutableGenerationId !== healthyControlGeneration
-      || healthyControlState.revision.plugins?.[privatePlugin.pluginId]?.enabled !== true
-    ) {
-      fail('Control plugin did not remain enabled on its exact healthy generation');
-    }
-    const initialDevelopmentHealthCompletedAtMs = Date.now();
-    const healthyDevelopmentAction = await runPackedPluginRoundtrip({
+    const bootstrapAction = await runPackedPluginRoundtrip({
       cliEntrypoint, cwd: fixtureRoot, env: childEnv, pluginId: plugin.pluginId,
     });
-    assertRoundtrip(healthyDevelopmentAction, {
+    assertRoundtrip(bootstrapAction, {
       pluginId: plugin.pluginId,
       version: '3.0.0',
       value: plugin.value,
-      activationInstanceId: initialHealthyCandidateRegistration.activationInstanceId,
+      activationInstanceId: bootstrapRegistration.activationInstanceId,
     });
     if (
-      initialDevelopmentHealthCompletedAtMs - initialDevelopmentHealthStartedAtMs < 10 * 60_000
-      || healthyDevelopmentAction.data?.result?.pid !== initialHealthyCandidateRegistration.pid
-      || healthyDevelopmentAction.data?.result?.activationInstanceId !== initialHealthyCandidateRegistration.activationInstanceId
+      bootstrapAction.data?.result?.pid !== bootstrapRegistration.pid
+      || bootstrapCommit.pluginGenerations?.[plugin.pluginId]?.immutableGenerationId !== bootstrapGeneration
     ) {
-      fail('Initial development generation did not establish a continuous healthy same-channel predecessor');
+      fail('Bootstrap action was not served by its committed adopted generation');
     }
 
-    await configureVerticalAPlugin({
-      pluginRoot: plugin.root,
-      pluginId: plugin.pluginId,
-      version: '4.0.0',
-      fetchOrigin: registry.origin,
-      connectedAccountOrigin: connectedAccountProvider.origin,
-    });
-    for (const operation of ['typecheck', 'build']) {
-      await runPackedCliJson({
-        cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: ['plugins', 'author', operation, plugin.root, '--json'],
-      }, `plugins_author_${operation}`);
+    await prepareVerticalAAuthorVersion('4.0.0', true);
+    const rejectedBootstrapUpdate = await runReviewedInstall([
+      'install', 'plugin', 'update', plugin.pluginId, '--json',
+    ]);
+    if (
+      rejectedBootstrapUpdate.change?.kind !== 'failed'
+      || rejectedBootstrapUpdate.change.code !== 'plugin_install_failed'
+    ) {
+      fail('Rejected bootstrap successor did not report activation failure: ' + JSON.stringify(rejectedBootstrapUpdate));
     }
-    const candidateHealthStartedAtMs = Date.now();
-    const developmentReload = await runPackedCliJson({
+    const lkgState = await readCurrentInstallationState();
+    const lkgCommit = await readCurrentCommit();
+    if (
+      lkgCommit.revision !== bootstrapCommit.revision
+      || lkgCommit.pluginGenerations?.[plugin.pluginId]?.immutableGenerationId !== bootstrapGeneration
+      || lkgState.revision.plugins?.[plugin.pluginId]?.enabled !== true
+      || lkgState.revision.runtimeCatalog?.plugins?.[plugin.pluginId]?.state?.enabled !== true
+    ) {
+      fail('Rejected candidate did not preserve the serving LKG: ' + JSON.stringify({
+        bootstrapCommit,
+        lkgCommit,
+        installation: lkgState.revision.plugins?.[plugin.pluginId],
+        runtimeCatalog: lkgState.revision.runtimeCatalog?.plugins?.[plugin.pluginId],
+      }));
+    }
+
+    const daemonBeforeBootstrapRestart = await readPackedDaemonState(childEnv.HAPPIER_HOME_DIR);
+    const bootstrapRestart = await runPackedCli({
       cliEntrypoint, cwd: fixtureRoot, env: childEnv,
-      args: ['plugins', 'reload', plugin.pluginId, '--json'],
-    }, 'plugins_reload');
-    const pendingDevelopmentGeneration = developmentReload.data?.desiredGeneration;
-    if (
-      developmentReload.data?.pluginId !== plugin.pluginId
-      || typeof pendingDevelopmentGeneration !== 'string'
-      || pendingDevelopmentGeneration === healthyDevelopmentGeneration
-      || developmentReload.data?.appliedGeneration !== pendingDevelopmentGeneration
-    ) {
-      fail(`Development reload did not commit a distinct exact generation: ${JSON.stringify(developmentReload.data)}`);
-    }
-    const pendingDevelopmentState = await readCurrentInstallationState();
-    const retainedLkg = pendingDevelopmentState.revision.rollbackRetention?.find((entry) => (
-      entry.pluginId === plugin.pluginId
-      && entry.immutableGenerationId === healthyDevelopmentGeneration
-    ));
-    if (
-      pendingDevelopmentState.revision.health?.[pendingDevelopmentGeneration]?.state !== 'pending'
-      || retainedLkg?.role !== 'lastKnownGood'
-      || retainedLkg?.automaticRecoveryEligible !== true
-      || retainedLkg?.byteAvailability !== 'available'
-    ) {
-      fail(`Healthy same-channel predecessor did not transition to automatic LKG: ${JSON.stringify({
-        health: pendingDevelopmentState.revision.health?.[pendingDevelopmentGeneration],
-        retainedLkg,
-      })}`);
-    }
-    const pendingCandidateRegistration = findLatestMarkerEvent(
-      await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER),
-      'registered',
-      '4.0.0',
-    );
-    if (!pendingCandidateRegistration) {
-      fail('Same-channel candidate did not register in the active daemon');
-    }
-    const healthyCandidateState = await waitForGenerationHealth({
-      generationId: pendingDevelopmentGeneration,
-      state: 'healthy',
-      timeoutMs: 11 * 60_000,
+      args: buildVerticalADaemonRestartArgs(),
     });
-    const candidateHealthCompletedAtMs = Date.now();
-    const healthyCandidateAction = await runPackedPluginRoundtrip({
+    assertCommandSucceeded(bootstrapRestart, 'Packed bootstrap/adopt LKG restart');
+    const daemonAfterBootstrapRestart = await readPackedDaemonState(childEnv.HAPPIER_HOME_DIR);
+    if (daemonAfterBootstrapRestart.pid === daemonBeforeBootstrapRestart.pid) {
+      fail('Bootstrap/adopt LKG restart did not replace the daemon process');
+    }
+    const bootstrapRestartState = await readCurrentInstallationState();
+    assertRestartPreservedDesiredGeneration({
+      initialCommit: lkgCommit,
+      restartCommit: bootstrapRestartState.commit,
+      pluginId: plugin.pluginId,
+      desiredGeneration: bootstrapGeneration,
+    });
+    const bootstrapRestartAction = await runPackedPluginRoundtrip({
       cliEntrypoint, cwd: fixtureRoot, env: childEnv, pluginId: plugin.pluginId,
     });
-    assertRoundtrip(healthyCandidateAction, {
+    assertRoundtrip(bootstrapRestartAction, {
       pluginId: plugin.pluginId,
-      version: '4.0.0',
+      version: '3.0.0',
       value: plugin.value,
-      activationInstanceId: pendingCandidateRegistration.activationInstanceId,
     });
-    const priorAfterCandidateHealth = healthyCandidateState.revision.rollbackRetention?.find((entry) => (
-      entry.pluginId === plugin.pluginId
-      && entry.immutableGenerationId === healthyDevelopmentGeneration
-    ));
-    const continuousHealthEvidence = assertContinuousHealthEvidence({
-      startedAtMs: candidateHealthStartedAtMs,
-      completedAtMs: candidateHealthCompletedAtMs,
-      requiredWindowMs: 10 * 60_000,
-      initialRegistration: pendingCandidateRegistration,
-      healthyInvocation: healthyCandidateAction.data?.result,
-      candidateHealth: healthyCandidateState.revision.health?.[pendingDevelopmentGeneration],
-      priorRetention: priorAfterCandidateHealth,
-      initialDistribution: healthyDevelopmentState.revision.plugins?.[plugin.pluginId]?.install?.trust?.distribution,
-      candidateDistribution: healthyCandidateState.revision.plugins?.[plugin.pluginId]?.install?.trust?.distribution,
+    const beforeDisableExternalCommand = assertPackedExternalPluginCommandInvocation({
+      envelope: bootstrapRestartAction,
+      ...retainedCommand,
+      pluginId: plugin.pluginId,
+      version: '3.0.0',
+      value: plugin.value,
+      phase: 'before disable',
+    });
+    const beforeDisableExternalToolProbe = await options.probeExternalTool({
+      phase: 'beforeDisable',
+      cliEntrypoint,
+      happyHomeDir: childEnv.HAPPIER_HOME_DIR,
+      pluginId: plugin.pluginId,
+      toolName: retainedToolName,
+      value: plugin.value,
+    });
+    const beforeDisableExternalMcpTool = assertPackedExternalMcpToolInvocation({
+      probe: beforeDisableExternalToolProbe,
+      toolName: retainedToolName,
+      pluginId: plugin.pluginId,
+      version: '3.0.0',
+      value: plugin.value,
+      phase: 'before disable',
     });
     stages.push({
-      id: 'continuous-health-role-transition',
+      id: 'bootstrap-adopt-lkg-restart',
       ok: true,
-      initialHealthyGeneration: healthyDevelopmentGeneration,
-      initialHealthyRevision: healthyDevelopmentState.commit.revision,
-      candidateGeneration: pendingDevelopmentGeneration,
-      pendingCandidateRevision: pendingDevelopmentState.commit.revision,
-      healthyCandidateRevision: healthyCandidateState.commit.revision,
-      continuousHealthStartedAtMs: candidateHealthStartedAtMs,
-      continuousHealthCompletedAtMs: candidateHealthCompletedAtMs,
-      ...continuousHealthEvidence,
-      pendingPredecessorRole: retainedLkg.role,
-      pendingAutomaticRecoveryEligible: retainedLkg.automaticRecoveryEligible,
+      bootstrapGeneration,
+      rejectedCandidateVersion: '4.0.0',
+      bootstrapRevision: bootstrapCommit.revision,
+      lkgRevision: lkgCommit.revision,
+      restartRevision: bootstrapRestartState.commit.revision,
+      restartFromPid: daemonBeforeBootstrapRestart.pid,
+      restartToPid: daemonAfterBootstrapRestart.pid,
+      servingVersion: '3.0.0',
     });
 
-    await configureVerticalAPlugin({
-      pluginRoot: plugin.root,
-      pluginId: plugin.pluginId,
-      version: '5.0.0',
-      fetchOrigin: registry.origin,
-      connectedAccountOrigin: connectedAccountProvider.origin,
-    });
-    for (const operation of ['typecheck', 'build']) {
-      await runPackedCliJson({
-        cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: ['plugins', 'author', operation, plugin.root, '--json'],
-      }, `plugins_author_${operation}`);
-    }
-    const failingDevelopmentReload = await runPackedCliJson({
+    const hardRevocationDisable = await runPackedCliJson({
       cliEntrypoint, cwd: fixtureRoot, env: childEnv,
-      args: ['plugins', 'reload', plugin.pluginId, '--json'],
-    }, 'plugins_reload');
-    const failingDevelopmentGeneration = failingDevelopmentReload.data?.desiredGeneration;
+      args: ['plugins', 'disable', plugin.pluginId, '--json'],
+    }, 'plugins_disable');
+    const hardRevocationState = await readCurrentInstallationState();
+    const hardRevocationRevision =
+      hardRevocationState.revision.hardRevocationRevisions?.[plugin.pluginId];
     if (
-      failingDevelopmentReload.data?.pluginId !== plugin.pluginId
-      || typeof failingDevelopmentGeneration !== 'string'
-      || failingDevelopmentGeneration === pendingDevelopmentGeneration
-      || failingDevelopmentReload.data?.appliedGeneration !== failingDevelopmentGeneration
+      hardRevocationDisable.data?.pluginId !== plugin.pluginId
+      || hardRevocationDisable.data?.enabled !== false
+      || hardRevocationDisable.data?.desiredGeneration !== bootstrapGeneration
+      || hardRevocationDisable.data?.appliedGeneration !== null
+      || hardRevocationState.revision.plugins?.[plugin.pluginId]?.enabled !== false
+      || hardRevocationState.revision.runtimeCatalog?.plugins?.[plugin.pluginId]?.state?.enabled !== false
+      || hardRevocationRevision !== hardRevocationState.commit.revision
     ) {
-      fail(`Fatal-attempt candidate did not commit a distinct exact generation: ${JSON.stringify(failingDevelopmentReload.data)}`);
+      fail('Disable did not durably advance hard-revocation currentness: ' + JSON.stringify({
+        disable: hardRevocationDisable.data,
+        hardRevocationRevision,
+        commit: hardRevocationState.commit,
+      }));
     }
-    const failingDevelopmentState = await readCurrentInstallationState();
-    const recoveryLkg = failingDevelopmentState.revision.rollbackRetention?.find((entry) => (
-      entry.pluginId === plugin.pluginId
-      && entry.immutableGenerationId === pendingDevelopmentGeneration
-    ));
-    if (
-      failingDevelopmentState.revision.health?.[failingDevelopmentGeneration]?.state !== 'pending'
-      || recoveryLkg?.role !== 'lastKnownGood'
-      || recoveryLkg?.automaticRecoveryEligible !== true
-      || recoveryLkg?.byteAvailability !== 'available'
-    ) {
-      fail(`Healthy same-channel candidate was not retained for automatic recovery: ${JSON.stringify({
-        health: failingDevelopmentState.revision.health?.[failingDevelopmentGeneration],
-        recoveryLkg,
-      })}`);
-    }
-
-    const fatalMarkerPath = `${childEnv.HAPPIER_VERTICAL_A_MARKER}.fatal`;
-    await writeFile(fatalMarkerPath, '5.0.0\n', 'utf8');
-    const fatalAttemptEvidence = [];
-    const healthyControlInvocations = [];
-    const initialFatalAttemptIds = [
-      ...(failingDevelopmentState.revision.health?.[failingDevelopmentGeneration]?.consumedAttemptIds ?? []),
-    ];
-    let priorFatalAttemptIds = initialFatalAttemptIds;
-    for (let attemptNumber = 1; attemptNumber <= 3; attemptNumber += 1) {
-      const restart = await runPackedCli({
-        cliEntrypoint,
-        cwd: fixtureRoot,
-        env: childEnv,
-        args: buildVerticalADaemonRestartArgs(),
-      });
-      assertCommandSucceeded(restart, `Packed daemon restart for fatal attempt ${attemptNumber}`);
-      const restartEnvelope = parseJsonEnvelope(restart.stdout, 'daemon_restart');
-      if (restartEnvelope?.ok !== true || restartEnvelope?.status !== 'restarted') {
-        fail(`Fatal-attempt restart did not report a stable replacement: ${JSON.stringify(restartEnvelope)}`);
-      }
-      const progress = await waitForSupervisedAttemptProgress({
-        generationId: failingDevelopmentGeneration,
-        priorConsumedAttemptIds: priorFatalAttemptIds,
-        readState: readCurrentInstallationState,
-        timeoutMs: 15_000,
-      });
-      const state = progress.state;
-      fatalAttemptEvidence.push({
-        attemptNumber,
-        revision: state.commit.revision,
-        consumedAttemptIds: progress.consumedAttemptIds,
-      });
-      const healthyControl = await runPackedPluginRoundtrip({
-        cliEntrypoint,
-        cwd: fixtureRoot,
-        env: childEnv,
-        pluginId: privatePlugin.pluginId,
-      });
-      assertRoundtrip(healthyControl, {
-        pluginId: privatePlugin.pluginId,
-        version: '11.0.0',
-        value: privatePlugin.value,
-      });
-      healthyControlInvocations.push({
-        attemptNumber,
-        ...healthyControl.data.result,
-      });
-      priorFatalAttemptIds = progress.consumedAttemptIds;
-    }
-    const fatalAttemptIds = assertUniqueSupervisedAttemptProgress({
-      initialConsumedAttemptIds: initialFatalAttemptIds,
-      attempts: fatalAttemptEvidence,
-    });
-    const recoveredState = await waitForGenerationHealth({
-      generationId: failingDevelopmentGeneration,
-      state: 'quarantined',
-      timeoutMs: 15_000,
-    });
-    await rm(fatalMarkerPath, { force: true });
-    const failedGenerationHealth = recoveredState.revision.health?.[failingDevelopmentGeneration];
-    const quarantinedRetention = recoveredState.revision.rollbackRetention?.find((entry) => (
-      entry.pluginId === plugin.pluginId
-      && entry.immutableGenerationId === failingDevelopmentGeneration
-    ));
-    const quarantinedTombstone = recoveredState.revision.healthTombstones?.find((entry) => (
-      entry.pluginId === plugin.pluginId
-      && entry.fingerprint === failedGenerationHealth?.fingerprint
-    ));
-    if (
-      recoveredState.commit.pluginGenerations?.[plugin.pluginId]?.immutableGenerationId !== pendingDevelopmentGeneration
-      || new Set(failedGenerationHealth?.consumedAttemptIds ?? []).size < 3
-      || quarantinedRetention?.role !== 'quarantined'
-      || quarantinedRetention?.automaticRecoveryEligible !== false
-      || quarantinedTombstone?.state !== 'quarantined'
-    ) {
-      fail(`Three distinct post-commit fatal attempts did not recover the exact LKG: ${JSON.stringify({
-        current: recoveredState.commit.pluginGenerations?.[plugin.pluginId],
-        failedGenerationHealth,
-        quarantinedRetention,
-        quarantinedTombstone,
-      })}`);
-    }
-    const recoveredAction = await runPackedPluginRoundtrip({
-      cliEntrypoint, cwd: fixtureRoot, env: childEnv, pluginId: plugin.pluginId,
-    });
-    assertRoundtrip(recoveredAction, {
+    const disabledExternalToolProbe = await options.probeExternalTool({
+      phase: 'disabled',
+      cliEntrypoint,
+      happyHomeDir: childEnv.HAPPIER_HOME_DIR,
       pluginId: plugin.pluginId,
-      version: '4.0.0',
+      toolName: retainedToolName,
       value: plugin.value,
     });
-    const recoveryRegistration = findLatestMarkerEvent(
-      await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER),
-      'registered',
-      '4.0.0',
-    );
-    if (
-      !recoveryRegistration
-      || recoveredAction.data?.result?.pid !== recoveryRegistration.pid
-      || recoveredAction.data?.result?.activationInstanceId !== recoveryRegistration.activationInstanceId
-    ) {
-      fail('Automatic LKG recovery did not reactivate the retained development generation');
-    }
-    stages.push({
-      id: 'automatic-lkg-recovery',
-      ok: true,
-      failedGeneration: failingDevelopmentGeneration,
-      recoveredGeneration: pendingDevelopmentGeneration,
-      revision: recoveredState.commit.revision,
-      distinctFatalAttempts: fatalAttemptIds.length - initialFatalAttemptIds.length,
-      supervisedAttemptIds: fatalAttemptIds,
-      fatalAttemptEvidence,
-      healthyControlInvocations,
-      failedFingerprint: failedGenerationHealth.fingerprint,
-      retainedRole: quarantinedRetention.role,
-      tombstoneState: quarantinedTombstone.state,
-      servingVersion: '4.0.0',
-      daemonPid: recoveryRegistration.pid,
-      activationInstanceId: recoveryRegistration.activationInstanceId,
+    const disabledExternalMcpTool = assertPackedExternalMcpToolRetirement({
+      probe: disabledExternalToolProbe,
+      toolName: retainedToolName,
+      phase: 'disable',
     });
-
-    await writeFile(fatalMarkerPath, '4.0.0\n', 'utf8');
-    const noLkgFatalAttemptEvidence = [];
-    const initialNoLkgFatalAttemptIds = [
-      ...(recoveredState.revision.health?.[pendingDevelopmentGeneration]?.consumedAttemptIds ?? []),
-    ];
-    let priorNoLkgFatalAttemptIds = initialNoLkgFatalAttemptIds;
-    for (let attemptNumber = 1; attemptNumber <= 3; attemptNumber += 1) {
-      const restart = await runPackedCli({
-        cliEntrypoint,
-        cwd: fixtureRoot,
-        env: childEnv,
-        args: buildVerticalADaemonRestartArgs(),
-      });
-      assertCommandSucceeded(restart, `Packed daemon restart for no-LKG fatal attempt ${attemptNumber}`);
-      const restartEnvelope = parseJsonEnvelope(restart.stdout, 'daemon_restart');
-      if (restartEnvelope?.ok !== true || restartEnvelope?.status !== 'restarted') {
-        fail(`No-LKG fatal-attempt restart did not report a stable replacement: ${JSON.stringify(restartEnvelope)}`);
-      }
-      const progress = await waitForSupervisedAttemptProgress({
-        generationId: pendingDevelopmentGeneration,
-        priorConsumedAttemptIds: priorNoLkgFatalAttemptIds,
-        readState: readCurrentInstallationState,
-        timeoutMs: 15_000,
-      });
-      const state = progress.state;
-      noLkgFatalAttemptEvidence.push({
-        attemptNumber,
-        revision: state.commit.revision,
-        consumedAttemptIds: progress.consumedAttemptIds,
-      });
-      const healthyControl = await runPackedPluginRoundtrip({
-        cliEntrypoint,
-        cwd: fixtureRoot,
-        env: childEnv,
-        pluginId: privatePlugin.pluginId,
-      });
-      assertRoundtrip(healthyControl, {
-        pluginId: privatePlugin.pluginId,
-        version: '11.0.0',
-        value: privatePlugin.value,
-      });
-      healthyControlInvocations.push({
-        attemptNumber: `no-lkg-${attemptNumber}`,
-        ...healthyControl.data.result,
-      });
-      priorNoLkgFatalAttemptIds = progress.consumedAttemptIds;
-    }
-    const noLkgFatalAttemptIds = assertUniqueSupervisedAttemptProgress({
-      initialConsumedAttemptIds: initialNoLkgFatalAttemptIds,
-      attempts: noLkgFatalAttemptEvidence,
-    });
-    const disabledState = await waitForGenerationHealth({
-      generationId: pendingDevelopmentGeneration,
-      state: 'quarantined',
-      timeoutMs: 15_000,
-    });
-    await rm(fatalMarkerPath, { force: true });
-    const noLkgEvidence = assertNoEligibleLkgDisabled({
-      state: disabledState,
+    const disabledExternalCommandInvocation = await runPackedPluginCommand({
+      cliEntrypoint,
+      cwd: fixtureRoot,
+      env: childEnv,
       pluginId: plugin.pluginId,
-      failedGenerationId: pendingDevelopmentGeneration,
-      explicitRollbackGenerationId: failingDevelopmentGeneration,
-      healthyPluginInvocation: healthyControlInvocations.at(-1),
+      input: { value: plugin.value },
+    });
+    const disabledExternalCommand = assertPackedExternalPluginCommandRetirement({
+      invocation: disabledExternalCommandInvocation,
+      commandPath: retainedCommand.path,
+      phase: 'disable',
     });
     const rootHelpAfterDisable = await runPackedCli({
       cliEntrypoint,
@@ -9008,320 +10496,99 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       env: childEnv,
       args: ['--help'],
     });
-    assertCommandSucceeded(rootHelpAfterDisable, 'Root help after no-LKG disable');
+    assertCommandSucceeded(rootHelpAfterDisable, 'Root help after plugin disable');
     assertPluginCommandAbsentFromRootHelp({
       stdout: rootHelpAfterDisable.stdout,
-      commandRoot: 'vertical-a',
+      commandRoot: retainedCommand.path[0],
     });
-    const disabledCleanup = await waitForActivationCleanup({
-      markerPath: childEnv.HAPPIER_VERTICAL_A_MARKER,
-      version: '4.0.0',
-      activationInstanceId: recoveryRegistration.activationInstanceId,
+    const daemonBeforeHardRevocationRestart = await readPackedDaemonState(childEnv.HAPPIER_HOME_DIR);
+    const hardRevocationRestart = await runPackedCli({
+      cliEntrypoint, cwd: fixtureRoot, env: childEnv,
+      args: buildVerticalADaemonRestartArgs(),
     });
-    const connectedAccountDormant =
-      await options.probeConnectedAccounts({
-        phase: 'dormant',
-        happyHomeDir: childEnv.HAPPIER_HOME_DIR,
-        pluginId: plugin.pluginId,
-        service: Object.freeze({
-          pluginId: plugin.pluginId,
-          localId: 'novel-cloud',
-        }),
-        configuredOrigin: connectedAccountProvider.origin,
-        staleConfiguredOrigin: staleConnectedAccountProvider.origin,
-      });
-    const dormantConnectedAccountConsumer = await runPackedCli({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      args: [
-        'vertical-a',
-        plugin.pluginId.split('.').at(-1),
-        '--input',
-        JSON.stringify({
-          operation: 'connected-account-dormancy-materialize',
-        }),
-        '--json',
-      ],
-    });
-    if (
-      connectedAccountDormant?.runtime?.status !== 'unavailable'
-      || connectedAccountDormant.runtime.code
-        !== 'connected_account_daemon_runtime_unavailable'
-      || (
-        dormantConnectedAccountConsumer.code === 0
-        && dormantConnectedAccountConsumer.signal === null
-      )
-    ) {
-      fail('Packed Connected Account runtime or consumer remained callable while its generation was disabled');
+    assertCommandSucceeded(hardRevocationRestart, 'Packed hard-revocation restart');
+    const daemonAfterHardRevocationRestart = await readPackedDaemonState(childEnv.HAPPIER_HOME_DIR);
+    if (daemonAfterHardRevocationRestart.pid === daemonBeforeHardRevocationRestart.pid) {
+      fail('Hard-revocation restart did not replace the daemon process');
     }
-    stages.push({
-      id: 'no-eligible-lkg-disable',
-      ok: true,
-      failedGeneration: pendingDevelopmentGeneration,
-      retainedExplicitRollbackGeneration: failingDevelopmentGeneration,
-      revision: disabledState.commit.revision,
-      ...noLkgEvidence,
-      supervisedAttemptIds: noLkgFatalAttemptIds,
-      fatalAttemptEvidence: noLkgFatalAttemptEvidence,
-      commandProjection: 'absent-from-root-help',
-      connectedAccountDormancy: {
-        runtime: connectedAccountDormant.runtime.code,
-        consumer: 'unavailable',
-        preservedAccountId: connectedAccountDormant.account?.accountId,
-        preservedGroupId: connectedAccountDormant.group?.ref?.groupId,
-      },
-      cleanup: disabledCleanup,
-    });
-
-    const tryOnceInitialAttemptIds = [
-      ...(disabledState.revision.health?.[pendingDevelopmentGeneration]?.consumedAttemptIds ?? []),
-    ];
-    await writeFile(fatalMarkerPath, '4.0.0\n', 'utf8');
-    const tryOnceEnableEnvelope = await runPackedCliJson({
+    const hardRevocationRestartState = await readCurrentInstallationState();
+    if (
+      hardRevocationRestartState.revision.plugins?.[plugin.pluginId]?.enabled !== false
+      || hardRevocationRestartState.revision.hardRevocationRevisions?.[plugin.pluginId]
+        !== hardRevocationRevision
+      || hardRevocationRestartState.commit.pluginGenerations?.[plugin.pluginId]?.immutableGenerationId
+        !== bootstrapGeneration
+    ) {
+      fail('Restart changed disabled hard-revocation currentness: ' + JSON.stringify({
+        before: hardRevocationState,
+        after: hardRevocationRestartState,
+      }));
+    }
+    const hardRevocationEnable = await runPackedCliJson({
       cliEntrypoint, cwd: fixtureRoot, env: childEnv,
       args: ['plugins', 'enable', plugin.pluginId, '--json'],
     }, 'plugins_enable');
     if (
-      tryOnceEnableEnvelope.data?.pluginId !== plugin.pluginId
-      || tryOnceEnableEnvelope.data?.enabled !== true
-      || tryOnceEnableEnvelope.data?.desiredGeneration !== pendingDevelopmentGeneration
-      || tryOnceEnableEnvelope.data?.appliedGeneration !== pendingDevelopmentGeneration
+      hardRevocationEnable.data?.pluginId !== plugin.pluginId
+      || hardRevocationEnable.data?.enabled !== true
+      || hardRevocationEnable.data?.desiredGeneration !== bootstrapGeneration
+      || hardRevocationEnable.data?.appliedGeneration !== bootstrapGeneration
     ) {
-      fail(`Try-once enable did not target the exact quarantined generation: ${JSON.stringify(tryOnceEnableEnvelope.data)}`);
+      fail('Explicit recovery did not re-adopt the disabled generation: ' + JSON.stringify(hardRevocationEnable.data));
     }
-    const tryOnceFailureProgress = await waitForSupervisedAttemptProgress({
-      generationId: pendingDevelopmentGeneration,
-      priorConsumedAttemptIds: tryOnceInitialAttemptIds,
-      readState: readCurrentInstallationState,
-      timeoutMs: 15_000,
-    });
-    await rm(fatalMarkerPath, { force: true });
-    const tryOnceFailedState = tryOnceFailureProgress.state;
-    if (
-      tryOnceFailedState.revision.health?.[pendingDevelopmentGeneration]?.state !== 'quarantined'
-      || tryOnceFailedState.revision.health?.[pendingDevelopmentGeneration]?.tryOnce !== 'consumed'
-      || tryOnceFailedState.revision.plugins?.[plugin.pluginId]?.enabled !== false
-      || tryOnceFailedState.revision.runtimeCatalog?.plugins?.[plugin.pluginId]?.state?.enabled !== false
-    ) {
-      fail(`Try-once fatal activation did not consume the one execution and disable the plugin: ${JSON.stringify({
-        health: tryOnceFailedState.revision.health?.[pendingDevelopmentGeneration],
-        installation: tryOnceFailedState.revision.plugins?.[plugin.pluginId],
-        runtimeCatalog: tryOnceFailedState.revision.runtimeCatalog?.plugins?.[plugin.pluginId],
-      })}`);
-    }
-    const rejectedSecondEnable = await runPackedCli({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      args: ['plugins', 'enable', plugin.pluginId, '--json'],
-    });
-    if (rejectedSecondEnable.code === 0 && rejectedSecondEnable.signal === null) {
-      fail('Consumed Try once unexpectedly permitted a second enable');
-    }
-    const rejectedSecondEnableEnvelope = parseJsonEnvelope(
-      rejectedSecondEnable.stdout,
-      'plugins_enable_after_consumed_try_once',
-    );
-    const registrationCountBeforeRestart = (
-      await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER)
-    ).filter((event) => event.kind === 'registered' && event.version === '4.0.0').length;
-    const daemonBeforeQuarantineRestart = await readPackedDaemonState(childEnv.HAPPIER_HOME_DIR);
-    const quarantineRestart = await runPackedCli({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      args: buildVerticalADaemonRestartArgs(),
-    });
-    assertCommandSucceeded(quarantineRestart, 'Packed daemon restart with consumed quarantine');
-    const quarantineRestartEnvelope = parseJsonEnvelope(quarantineRestart.stdout, 'daemon_restart');
-    if (quarantineRestartEnvelope?.ok !== true || quarantineRestartEnvelope?.status !== 'restarted') {
-      fail(`Consumed-quarantine restart did not report a stable replacement: ${JSON.stringify(quarantineRestartEnvelope)}`);
-    }
-    const daemonAfterQuarantineRestart = await readPackedDaemonState(childEnv.HAPPIER_HOME_DIR);
-    if (daemonAfterQuarantineRestart.pid === daemonBeforeQuarantineRestart.pid) {
-      fail('Consumed-quarantine restart did not replace the daemon process');
-    }
-    const afterQuarantineRestartState = await readCurrentInstallationState();
-    assertRestartPreservedDesiredGeneration({
-      initialCommit: tryOnceFailedState.commit,
-      restartCommit: afterQuarantineRestartState.commit,
-      pluginId: plugin.pluginId,
-      desiredGeneration: pendingDevelopmentGeneration,
-    });
-
-    await configureVerticalAPlugin({
-      pluginRoot: plugin.root,
-      pluginId: plugin.pluginId,
-      version: '4.0.0',
-      fetchOrigin: registry.origin,
-      connectedAccountOrigin: connectedAccountProvider.origin,
-    });
-    for (const operation of ['typecheck', 'build']) {
-      await runPackedCliJson({
-        cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: ['plugins', 'author', operation, plugin.root, '--json'],
-      }, `plugins_author_${operation}`);
-    }
-    const quarantinedReinstall = await runPackedCliJson({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      args: ['plugins', 'reload', plugin.pluginId, '--json'],
-    }, 'plugins_reload');
-    const reinstalledGeneration = quarantinedReinstall.data?.desiredGeneration;
-    if (
-      quarantinedReinstall.data?.pluginId !== plugin.pluginId
-      || typeof reinstalledGeneration !== 'string'
-      || reinstalledGeneration === pendingDevelopmentGeneration
-      || quarantinedReinstall.data?.appliedGeneration !== reinstalledGeneration
-    ) {
-      fail(`Exact-byte quarantine reinstall did not commit a distinct generation: ${JSON.stringify(quarantinedReinstall.data)}`);
-    }
-    const reinstalledState = await readCurrentInstallationState();
-    const registrationCountAfterReinstall = (
-      await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER)
-    ).filter((event) => event.kind === 'registered' && event.version === '4.0.0').length;
-    const tryOnceReinstallEvidence = assertTryOnceReinstallQuarantine({
-      state: reinstalledState,
-      pluginId: plugin.pluginId,
-      originalGenerationId: pendingDevelopmentGeneration,
-      reinstalledGenerationId: reinstalledGeneration,
-      fingerprint: noLkgEvidence.failedFingerprint,
-      rejectedSecondEnable: rejectedSecondEnableEnvelope,
-      registrationCountBeforeRestart,
-      registrationCountAfterReinstall,
-    });
-    const rootHelpAfterQuarantinedReinstall = await runPackedCli({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      args: ['--help'],
-    });
-    assertCommandSucceeded(rootHelpAfterQuarantinedReinstall, 'Root help after exact-byte quarantine reinstall');
-    assertPluginCommandAbsentFromRootHelp({
-      stdout: rootHelpAfterQuarantinedReinstall.stdout,
-      commandRoot: 'vertical-a',
-    });
-    stages.push({
-      id: 'try-once-reinstall-quarantine',
-      ok: true,
-      revision: reinstalledState.commit.revision,
-      tryOnceAttemptId: tryOnceFailureProgress.consumedAttemptIds.at(-1),
-      restartFromPid: daemonBeforeQuarantineRestart.pid,
-      restartToPid: daemonAfterQuarantineRestart.pid,
-      commandProjection: 'absent-from-root-help',
-      ...tryOnceReinstallEvidence,
-    });
-
-    const quarantinedRollbackEnvelope = await runPackedCliJson({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      args: ['plugins', 'rollback', plugin.pluginId, '--json'],
-    }, 'plugins_rollback');
-    const afterQuarantinedRollback = await readCurrentInstallationState();
-    const quarantinedRollbackAction = await runPackedPluginRoundtrip({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      pluginId: plugin.pluginId,
-    });
-    assertRoundtrip(quarantinedRollbackAction, {
-      pluginId: plugin.pluginId,
-      version: '5.0.0',
-      value: plugin.value,
-    });
-    const quarantinedRollbackRegistration = findLatestMarkerEvent(
+    const recoveryRegistration = findLatestMarkerEvent(
       await readVerticalAMarkerEvents(childEnv.HAPPIER_VERTICAL_A_MARKER),
       'registered',
-      '5.0.0',
+      '3.0.0',
     );
-    if (
-      !quarantinedRollbackRegistration
-      || quarantinedRollbackAction.data?.result?.pid !== quarantinedRollbackRegistration.pid
-      || quarantinedRollbackAction.data?.result?.activationInstanceId
-        !== quarantinedRollbackRegistration.activationInstanceId
-    ) {
-      fail('Explicit quarantined rollback did not serve from its adopted activation');
+    if (!recoveryRegistration) {
+      fail('Explicit recovery did not register the re-adopted generation');
     }
-    const connectedAccountReenabled =
-      await options.probeConnectedAccounts({
-        phase: 'reEnabled',
-        happyHomeDir: childEnv.HAPPIER_HOME_DIR,
-        pluginId: plugin.pluginId,
-        service: Object.freeze({
-          pluginId: plugin.pluginId,
-          localId: 'novel-cloud',
-        }),
-        configuredOrigin: connectedAccountProvider.origin,
-        staleConfiguredOrigin: staleConnectedAccountProvider.origin,
-      });
-    const reenabledConnectedAccountConsumer =
-      await runPackedPluginRoundtrip({
-        cliEntrypoint,
-        cwd: fixtureRoot,
-        env: childEnv,
-        pluginId: plugin.pluginId,
-        input: {
-          operation: 'connected-account-dormancy-materialize',
-        },
-      });
-    const connectedAccountDormancy =
-      assertPackedConnectedAccountDormancy({
-        baseline: connectedAccountDormancyBaseline,
-        dormant: connectedAccountDormant,
-        reenabled: connectedAccountReenabled,
-        materializationEnvelope: reenabledConnectedAccountConsumer,
-      });
-    const quarantinedRollbackEvidence = assertQuarantinedExplicitRollback({
+    const recoveryAction = await runPackedPluginRoundtrip({
+      cliEntrypoint, cwd: fixtureRoot, env: childEnv, pluginId: plugin.pluginId,
+    });
+    assertRoundtrip(recoveryAction, {
       pluginId: plugin.pluginId,
-      healthyGenerationId: reinstalledGeneration,
-      quarantinedGenerationId: failingDevelopmentGeneration,
-      before: reinstalledState,
-      rollbackEnvelope: quarantinedRollbackEnvelope,
-      after: afterQuarantinedRollback,
-      invocation: quarantinedRollbackAction.data?.result,
+      version: '3.0.0',
+      value: plugin.value,
+      activationInstanceId: recoveryRegistration.activationInstanceId,
     });
     stages.push({
-      id: 'quarantined-explicit-rollback',
+      id: 'hard-revocation-disable-restart',
       ok: true,
-      revision: afterQuarantinedRollback.commit.revision,
-      ...quarantinedRollbackEvidence,
-      connectedAccountDormancy,
-      daemonPid: quarantinedRollbackRegistration.pid,
+      generation: bootstrapGeneration,
+      hardRevocationRevision,
+      disableRevision: hardRevocationState.commit.revision,
+      restartRevision: hardRevocationRestartState.commit.revision,
+      restartFromPid: daemonBeforeHardRevocationRestart.pid,
+      restartToPid: daemonAfterHardRevocationRestart.pid,
+      recoveryGeneration: hardRevocationEnable.data.desiredGeneration,
+      recoveryActivationInstanceId: recoveryRegistration.activationInstanceId,
+      externalMcpTool: {
+        beforeDisable: beforeDisableExternalMcpTool,
+        disabled: disabledExternalMcpTool,
+      },
+      externalCommand: {
+        beforeDisable: beforeDisableExternalCommand,
+        disabled: disabledExternalCommand,
+        catalog: 'absent-from-root-help',
+      },
     });
 
-    const cleanupFailureMarkerPath = `${childEnv.HAPPIER_VERTICAL_A_MARKER}.cleanup-fatal`;
-    await writeFile(cleanupFailureMarkerPath, '5.0.0\n', 'utf8');
+    const cleanupFailureMarkerPath = childEnv.HAPPIER_VERTICAL_A_MARKER + '.cleanup-fatal';
+    await writeFile(cleanupFailureMarkerPath, '3.0.0\n', 'utf8');
     const cleanupFailureUninstall = await runPackedCliJson({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
+      cliEntrypoint, cwd: fixtureRoot, env: childEnv,
       args: ['plugins', 'uninstall', plugin.pluginId, '--json'],
     }, 'plugins_uninstall');
     const cleanupFailure = await waitForActivationCleanupFailure({
       markerPath: childEnv.HAPPIER_VERTICAL_A_MARKER,
-      version: '5.0.0',
-      activationInstanceId: quarantinedRollbackRegistration.activationInstanceId,
+      version: '3.0.0',
+      activationInstanceId: recoveryRegistration.activationInstanceId,
     });
     await rm(cleanupFailureMarkerPath, { force: true });
 
-    await configureVerticalAPlugin({
-      pluginRoot: plugin.root,
-      pluginId: plugin.pluginId,
-      version: '6.0.0',
-      fetchOrigin: registry.origin,
-      connectedAccountOrigin: connectedAccountProvider.origin,
-    });
-    for (const operation of ['typecheck', 'build']) {
-      await runPackedCliJson({
-        cliEntrypoint,
-        cwd: fixtureRoot,
-        env: authorEnv,
-        args: ['plugins', 'author', operation, plugin.root, '--json'],
-      }, `plugins_author_${operation}`);
-    }
+    await prepareVerticalAAuthorVersion('6.0.0');
     const laterMutationEnvelope = await runReviewedInstall([
       'plugins', 'install', plugin.root,
       '--dev',
@@ -9335,13 +10602,10 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       || typeof laterMutationGeneration !== 'string'
       || laterMutationEnvelope.change.appliedGeneration !== laterMutationGeneration
     ) {
-      fail(`Later same-plugin mutation did not commit after cleanup failure: ${JSON.stringify(laterMutationEnvelope)}`);
+      fail('Later same-plugin mutation did not commit after cleanup failure: ' + JSON.stringify(laterMutationEnvelope));
     }
     const laterMutationAction = await runPackedPluginRoundtrip({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      pluginId: plugin.pluginId,
+      cliEntrypoint, cwd: fixtureRoot, env: childEnv, pluginId: plugin.pluginId,
     });
     assertRoundtrip(laterMutationAction, {
       pluginId: plugin.pluginId,
@@ -9360,6 +10624,30 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     ) {
       fail('Later same-plugin mutation was not served by its adopted activation');
     }
+    const beforeUninstallExternalCommand = assertPackedExternalPluginCommandInvocation({
+      envelope: laterMutationAction,
+      ...retainedCommand,
+      pluginId: plugin.pluginId,
+      version: '6.0.0',
+      value: plugin.value,
+      phase: 'before uninstall',
+    });
+    const beforeUninstallExternalToolProbe = await options.probeExternalTool({
+      phase: 'beforeUninstall',
+      cliEntrypoint,
+      happyHomeDir: childEnv.HAPPIER_HOME_DIR,
+      pluginId: plugin.pluginId,
+      toolName: retainedToolName,
+      value: plugin.value,
+    });
+    const beforeUninstallExternalMcpTool = assertPackedExternalMcpToolInvocation({
+      probe: beforeUninstallExternalToolProbe,
+      toolName: retainedToolName,
+      pluginId: plugin.pluginId,
+      version: '6.0.0',
+      value: plugin.value,
+      phase: 'before uninstall',
+    });
     const laterMutationState = await readCurrentInstallationState();
     stages.push({
       id: 'cleanup-failure-later-mutation',
@@ -9367,7 +10655,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       revision: laterMutationState.commit.revision,
       ...assertCleanupFailureDidNotBlockLaterMutation({
         pluginId: plugin.pluginId,
-        retiredGenerationId: failingDevelopmentGeneration,
+        retiredGenerationId: bootstrapGeneration,
         cleanupFailure,
         uninstallEnvelope: cleanupFailureUninstall,
         laterMutationEnvelope,
@@ -9385,35 +10673,46 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       uninstallEnvelope.data?.pluginId !== plugin.pluginId
       || uninstallEnvelope.data?.desiredGeneration !== null
       || uninstallEnvelope.data?.appliedGeneration !== null
-      || !Array.isArray(uninstallEnvelope.data?.pendingSurfaces)
-      || uninstallEnvelope.data.pendingSurfaces.length !== 0
     ) {
-      fail(`Uninstall did not remove desired/applied currentness: ${JSON.stringify(uninstallEnvelope.data)}`);
+      fail('Uninstall did not remove desired/applied currentness: ' + JSON.stringify(uninstallEnvelope.data));
     }
     const uninstallCommit = await readCurrentCommit();
     if (
-      uninstallCommit.revision <= recoveredState.commit.revision
+      uninstallCommit.revision <= laterMutationState.commit.revision
       || uninstallCommit.pluginGenerations?.[plugin.pluginId] !== undefined
     ) {
       fail('Uninstall left the plugin in canonical desired currentness');
     }
-    const afterDefaultUninstall = await readCurrentInstallationState();
+    const uninstalledExternalToolProbe = await options.probeExternalTool({
+      phase: 'uninstalled',
+      cliEntrypoint,
+      happyHomeDir: childEnv.HAPPIER_HOME_DIR,
+      pluginId: plugin.pluginId,
+      toolName: retainedToolName,
+      value: plugin.value,
+    });
+    const uninstalledExternalMcpTool = assertPackedExternalMcpToolRetirement({
+      probe: uninstalledExternalToolProbe,
+      toolName: retainedToolName,
+      phase: 'uninstall',
+    });
     const explicitClearEnvelope = await runPackedCliJson({
       cliEntrypoint, cwd: fixtureRoot, env: childEnv,
       args: ['plugins', 'uninstall', plugin.pluginId, '--delete-data', '--yes', '--json'],
     }, 'plugins_uninstall');
     const afterExplicitClear = await readCurrentInstallationState();
-    const healthHistoryClearEvidence = assertExplicitHealthHistoryClear({
-      pluginId: plugin.pluginId,
-      fingerprint: noLkgEvidence.failedFingerprint,
-      afterDefaultUninstall,
-      clearEnvelope: explicitClearEnvelope,
-      afterExplicitClear,
-    });
+    if (
+      explicitClearEnvelope.data?.pluginId !== plugin.pluginId
+      || explicitClearEnvelope.data?.alreadyUninstalled !== true
+      || afterExplicitClear.commit.pluginGenerations?.[plugin.pluginId] !== undefined
+    ) {
+      fail('Explicit local-data clear changed retired plugin currentness: ' + JSON.stringify({
+        clear: explicitClearEnvelope.data,
+        state: afterExplicitClear,
+      }));
+    }
     const actionsAfterUninstall = await runPackedCli({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
+      cliEntrypoint, cwd: fixtureRoot, env: childEnv,
       args: ['plugins', 'actions', plugin.pluginId, '--json'],
     });
     if (actionsAfterUninstall.code === 0 && actionsAfterUninstall.signal === null) {
@@ -9425,33 +10724,37 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       || actionsAfterUninstallEnvelope?.kind !== 'plugins_actions'
       || actionsAfterUninstallEnvelope?.error?.code !== 'plugin_not_found'
     ) {
-      fail(`Uninstalled action catalog did not report exact absence: ${JSON.stringify(actionsAfterUninstallEnvelope)}`);
+      fail('Uninstalled action catalog did not report exact absence: ' + JSON.stringify(actionsAfterUninstallEnvelope));
     }
     const rootHelpAfterUninstall = await runPackedCli({
-      cliEntrypoint,
-      cwd: fixtureRoot,
-      env: childEnv,
-      args: ['--help'],
+      cliEntrypoint, cwd: fixtureRoot, env: childEnv, args: ['--help'],
     });
     assertCommandSucceeded(rootHelpAfterUninstall, 'Root help after plugin uninstall');
     assertPluginCommandAbsentFromRootHelp({
       stdout: rootHelpAfterUninstall.stdout,
-      commandRoot: 'vertical-a',
+      commandRoot: retainedCommand.path[0],
     });
-    const notificationAfterUninstall = await runPackedCli({
+    const uninstalledExternalCommandInvocation = await runPackedPluginCommand({
       cliEntrypoint,
       cwd: fixtureRoot,
       env: childEnv,
-      args: [
-        'vertical-a',
-        plugin.pluginId.split('.').at(-1),
-        '--input',
-        JSON.stringify({
-          operation: 'notification-send',
-          clientRequestId: 'packed-notification-retired',
-        }),
-        '--json',
-      ],
+      pluginId: plugin.pluginId,
+      input: { value: plugin.value },
+    });
+    const uninstalledExternalCommand = assertPackedExternalPluginCommandRetirement({
+      invocation: uninstalledExternalCommandInvocation,
+      commandPath: retainedCommand.path,
+      phase: 'uninstall',
+    });
+    const notificationAfterUninstall = await runPackedPluginCommand({
+      cliEntrypoint,
+      cwd: fixtureRoot,
+      env: childEnv,
+      pluginId: plugin.pluginId,
+      input: {
+        operation: 'notification-send',
+        clientRequestId: 'packed-notification-retired',
+      },
     });
     stages.push({
       id: 'packed-notification-delivery-lifecycle',
@@ -9476,8 +10779,16 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       revision: afterExplicitClear.commit.revision,
       actionCatalogError: actionsAfterUninstallEnvelope.error.code,
       commandProjection: 'absent-from-root-help',
-      ...healthHistoryClearEvidence,
       cleanup: uninstallCleanup,
+      externalMcpTool: {
+        beforeUninstall: beforeUninstallExternalMcpTool,
+        uninstalled: uninstalledExternalMcpTool,
+      },
+      externalCommand: {
+        beforeUninstall: beforeUninstallExternalCommand,
+        uninstalled: uninstalledExternalCommand,
+        catalog: 'absent-from-root-help',
+      },
     });
 
     const latestHealthyControlRegistration = findLatestMarkerEvent(
@@ -9586,8 +10897,10 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       uninstalledRetainedProjection?.toolsById?.[`${plugin.pluginId}/roundtrip-tool`] !== undefined
       || uninstalledPluginUiEntries[`structuredMessage:${plugin.pluginId}:roundtrip-result`] !== undefined
       || uninstalledPluginUiEntries[`sessionHeaderAction:${plugin.pluginId}:roundtrip-header`] !== undefined
-      || uninstalledPluginUiEntries[`hostedWeb:${plugin.pluginId}:main-web`] !== undefined
-      || uninstalledRetainedCapabilities?.structuredResolution?.ok !== false
+      || uninstalledPluginUiEntries[
+        `hostedWeb:${plugin.pluginId}:${retainedHostedWebRendererId}`
+      ] !== undefined
+      || uninstalledRetainedCapabilities?.structuredAction?.ok !== false
     ) {
       fail(`Packed retained capabilities survived plugin retirement: ${JSON.stringify(uninstalledRetainedCapabilities)}`);
     }
@@ -9598,10 +10911,25 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       toolId: 'roundtrip-tool',
       structuredMessageId: 'roundtrip-result',
       sessionHeaderActionId: 'roundtrip-header',
-      hostedWebRendererId: 'main-web',
+      hostedWebRendererId: retainedHostedWebRendererId,
       hostedWebArtifactDigest: installedHostedWeb.artifactGraph.digest,
       installedGeneration: installedRetainedProjection.generation,
       uninstalledGeneration: uninstalledRetainedProjection.generation,
+      externalMcpTool: {
+        installed: installedExternalMcpTool,
+        replacement: {
+          staleGenerationErrorCode: replacedExternalToolProbe.staleInvocation.errorCode,
+          fresh: replacedExternalMcpTool,
+        },
+        disabled: disabledExternalMcpTool,
+        uninstalled: uninstalledExternalMcpTool,
+      },
+      externalCommand: {
+        installed: installedExternalCommand,
+        replacement: replacedExternalCommand,
+        disabled: disabledExternalCommand,
+        uninstalled: uninstalledExternalCommand,
+      },
     });
     stages.push({
       id: 'packed-external-sessions-lifecycle',
@@ -9619,6 +10947,16 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
         readAfter: installedExternalSessions.readAfter.items[0].id,
         hookInstallationId: initialPackedHookInstallationId,
         hookState: installedExternalSessions.hooksAfterInstall.rows[0].status.state,
+      },
+      publicAuthorService: {
+        capabilities: publicExternalSessions.capabilities,
+        candidate: publicExternalSessions.candidate,
+        attachedSessionId: publicExternalSessions.attachedSessionId,
+        transcript: publicExternalSessions.transcript,
+        follow: publicExternalSessions.follow,
+        takeover: publicExternalSessions.takeover,
+        status: publicExternalStatusPresentation,
+        recovery: publicExternalRecoveryPresentation,
       },
       restart: {
         candidate: restartedExternalSessions.candidates.candidates[0].remoteSessionId,
@@ -9651,10 +10989,14 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
         failedUpdate: afterFailedUpdateCommit.revision,
         update: updatedCommit.revision,
         rollback: rollbackCommit.revision,
-        healthEligible: pendingDevelopmentState.commit.revision,
-        healthRecovery: recoveredState.commit.revision,
+        bootstrap: bootstrapCommit.revision,
+        lkg: lkgCommit.revision,
+        bootstrapRestart: bootstrapRestartState.commit.revision,
+        hardRevocation: hardRevocationState.commit.revision,
+        hardRevocationRestart: hardRevocationRestartState.commit.revision,
+        laterMutation: laterMutationState.commit.revision,
         uninstall: uninstallCommit.revision,
-        explicitHealthClear: afterExplicitClear.commit.revision,
+        explicitClear: afterExplicitClear.commit.revision,
       },
     });
     const daemonStop = await runPackedCli({
@@ -9671,7 +11013,11 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       candidate,
       stages,
       loadedIdentities: {
-        packages: { sdk: `${candidate.sdk.packageName}@${candidate.sdk.version}`, cli: `${candidate.cli.packageName}@${candidate.cli.version}` },
+        packages: {
+          sdk: `${candidate.sdk.packageName}@${candidate.sdk.version}`,
+          pluginUi: `${candidate.pluginUi.packageName}@${candidate.pluginUi.version}`,
+          cli: `${candidate.cli.packageName}@${candidate.cli.version}`,
+        },
         plugins: archiveAttestations,
         initialArtifact,
         daemonRuntime: observedDaemonRuntimeIdentity,
@@ -9694,6 +11040,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
           outputRoot: options.packedNovelQaHandoffRoot,
           candidate,
           archiveBytes: initialPackedNovelArchiveBytes,
+          publicAuthoringArtifact: publicAuthoringHandoffArtifact,
           pluginArtifact: initialArtifact,
           stages,
         })
@@ -9791,23 +11138,41 @@ export async function runVerticalA(candidate, options = {}) {
 export async function main(argv = process.argv.slice(2)) {
   const startedAt = new Date().toISOString();
   let candidate = null;
+  let artifactAdmission = null;
   let runStarted = false;
   try {
-    const { packedNovelQaHandoffRoot } = parseRunnerArgs(argv);
-    candidate = await loadPackedAuthorNaturalArtifacts(argv);
+    const loaded = await loadPackedAuthorVerticalAArtifacts(argv);
+    candidate = loaded.candidate;
+    artifactAdmission = loaded.admission;
+    const { packedNovelQaHandoffRoot } = loaded.runnerArgs;
     runStarted = true;
     const result = await runVerticalA(candidate, {
+      artifactAdmission,
       ...(packedNovelQaHandoffRoot
         ? { packedNovelQaHandoffRoot: resolve(packedNovelQaHandoffRoot) }
         : {}),
     });
-    process.stdout.write(`${JSON.stringify({ ...result, startedAt, completedAt: new Date().toISOString(), cleanup: { disposition: 'removed' } })}\n`);
+    process.stdout.write(`${JSON.stringify({
+      ...result,
+      artifactAdmission,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      cleanup: { disposition: 'removed' },
+    })}\n`);
     if (!result.ok) process.exitCode = 1;
   } catch (error) {
     process.stdout.write(`${JSON.stringify({
       ok: false,
       scenario: 'vertical-a',
-      candidate: candidate ? { runId: candidate.runId, sdk: candidate.sdk, cli: candidate.cli } : null,
+      candidate: candidate
+        ? {
+            runId: candidate.runId,
+            sdk: candidate.sdk,
+            pluginUi: candidate.pluginUi,
+            cli: candidate.cli,
+          }
+        : null,
+      artifactAdmission,
       error: { code: 'packed_author_boundary_failed', message: error instanceof Error ? error.message : String(error) },
       cleanup: { disposition: runStarted ? 'attempted' : 'not_applicable' },
       startedAt,

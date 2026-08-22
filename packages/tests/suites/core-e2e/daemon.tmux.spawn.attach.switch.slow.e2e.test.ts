@@ -20,7 +20,7 @@ import { fakeClaudeFixturePath, type FakeClaudeInvocation, waitForFakeClaudeInvo
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 
 type TerminalAttachmentInfoV1 = {
   version: 1;
@@ -114,7 +114,7 @@ describe('core e2e: daemon tmux spawn → attach → Claude remote↔local switc
     const secret = Uint8Array.from(randomBytes(32));
 
     // Seed daemon credentials + settings to avoid interactive auth flows.
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     writeTestManifestForServer({
       testDir,

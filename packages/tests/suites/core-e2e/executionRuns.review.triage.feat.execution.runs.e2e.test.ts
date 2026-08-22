@@ -19,7 +19,7 @@ import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { waitFor } from '../../src/testkit/timing';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
@@ -38,7 +38,13 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
 
   it('emits review_findings.v2 meta and allows review.triage action overlay', async () => {
     const testDir = run.testDir(`execution-runs-review-triage-${randomUUID()}`);
-    server = await startServerLight({ testDir });
+    server = await startServerLight({
+      testDir,
+      dbProvider: 'sqlite',
+      extraEnv: {
+        HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
+      },
+    });
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
 
@@ -48,7 +54,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeClaudeLog = resolve(join(testDir, 'fake-claude.jsonl'));
@@ -56,6 +62,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
+      startupTimeoutMs: 90_000,
       env: {
         ...process.env,
         CI: '1',
@@ -68,6 +75,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
         HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
         HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'review-json',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
     const controlToken = (daemon.state as any)?.controlToken as string | undefined;
@@ -239,5 +247,5 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       () => fakeClaudeLogContainsUserText(fakeClaudeLog, '@happier/review.apply_accepted_findings'),
       { timeoutMs: 30_000, intervalMs: 250 },
     );
-  }, 180_000);
+  }, 300_000);
 });

@@ -5,6 +5,7 @@ import { repoRootDir } from './paths';
 
 export type McpToolCallResult = Readonly<{
   content?: readonly Readonly<{ text?: unknown }>[];
+  isError?: boolean;
 }>;
 
 export type ExternalMcpTransport = Readonly<{

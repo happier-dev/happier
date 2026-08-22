@@ -39,6 +39,12 @@ export type ComposeRuntime = Readonly<{
   stopContainer?: (containerId: string) => Promise<void>;
   killContainer?: (containerId: string) => Promise<void>;
   startContainer?: (containerId: string) => Promise<void>;
+  disconnectContainerFromNetwork?: (containerId: string, networkName: string) => Promise<void>;
+  connectContainerToNetwork?: (
+    containerId: string,
+    networkName: string,
+    options: Readonly<{ aliases: readonly string[]; ipv4Address?: string }>,
+  ) => Promise<void>;
   ps: () => Promise<string>;
   logs: () => Promise<string>;
   serviceContainerIds: (service: string) => Promise<string[]>;
@@ -328,6 +334,22 @@ export function createComposeRuntime(params: {
     },
     startContainer: async (containerId) => {
       await runDocker(['start', containerId], params.cwd, { captureStdout: false });
+    },
+    disconnectContainerFromNetwork: async (containerId, networkName) => {
+      await runDocker(
+        ['network', 'disconnect', '--force', networkName, containerId],
+        params.cwd,
+        { captureStdout: false },
+      );
+    },
+    connectContainerToNetwork: async (containerId, networkName, options) => {
+      const addressArgs = options.ipv4Address ? ['--ip', options.ipv4Address] : [];
+      const aliasArgs = options.aliases.flatMap((alias) => ['--alias', alias]);
+      await runDocker(
+        ['network', 'connect', ...addressArgs, ...aliasArgs, networkName, containerId],
+        params.cwd,
+        { captureStdout: false },
+      );
     },
     ps: async () => {
       return await runDocker(composeArgs('ps', '--format', 'json'), params.cwd);

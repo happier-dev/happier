@@ -7,7 +7,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 
 const run = createRunDirs({ runLabel: 'core' });
 
-describe('core e2e: account encryption mode switching keeps existing sessions readable', () => {
+describe('core e2e: legacy account encryption transition keeps existing sessions readable', () => {
   let server: StartedServer | null = null;
 
   afterEach(async () => {
@@ -15,7 +15,7 @@ describe('core e2e: account encryption mode switching keeps existing sessions re
     server = null;
   });
 
-  it('supports e2ee → plain → e2ee without mutating prior sessions and preserves read access', async () => {
+  it('supports compatible e2ee → plain, refuses proofless re-enable, and preserves prior sessions', async () => {
     const testDir = run.testDir('encryption-account-mode-switch');
     server = await startServerLight({
       testDir,
@@ -86,18 +86,18 @@ describe('core e2e: account encryption mode switching keeps existing sessions re
       return t;
     };
 
-    const patchAccountMode = async (mode: 'plain' | 'e2ee') => {
+    const patchAccountModeToPlain = async () => {
       const patch = await fetchJson<any>(`${server!.baseUrl}/v1/account/encryption`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${auth.token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode: 'plain' }),
         timeoutMs: 15_000,
       });
       expect(patch.status).toBe(200);
-      expect(patch.data?.mode).toBe(mode);
+      expect(patch.data?.mode).toBe('plain');
     };
 
     const sessionA = await createE2eeSession('e2e-switch-a');
@@ -117,7 +117,7 @@ describe('core e2e: account encryption mode switching keeps existing sessions re
     expect(writeA.data?.didWrite).toBe(true);
     expect(await readFirstMessageContentType(sessionA)).toBe('encrypted');
 
-    await patchAccountMode('plain');
+    await patchAccountModeToPlain();
     const sessionB = await createPlainSession('e2e-switch-b');
     const writeB = await fetchJson<any>(`${server.baseUrl}/v2/sessions/${sessionB}/messages`, {
       method: 'POST',
@@ -135,43 +135,20 @@ describe('core e2e: account encryption mode switching keeps existing sessions re
     expect(writeB.data?.didWrite).toBe(true);
     expect(await readFirstMessageContentType(sessionB)).toBe('plain');
 
-    await patchAccountMode('e2ee');
-    // Create a new session without explicitly setting encryptionMode, but still providing encryption materials.
-    // This asserts that the account mode influences the server's default selection, while satisfying required fields.
-    const createC = await fetchJson<any>(`${server.baseUrl}/v1/sessions`, {
-      method: 'POST',
+    const legacyProoflessReenable = await fetchJson<any>(`${server.baseUrl}/v1/account/encryption`, {
+      method: 'PATCH',
       headers: {
         Authorization: `Bearer ${auth.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        tag: 'e2e-switch-c',
-        metadata: Buffer.from('cipher-meta-c', 'utf8').toString('base64'),
-        agentState: null,
-        dataEncryptionKey: Buffer.from('data-key-c', 'utf8').toString('base64'),
-      }),
+      body: JSON.stringify({ mode: 'e2ee' }),
       timeoutMs: 15_000,
     });
-    expect(createC.status).toBe(200);
-    expect(createC.data?.session?.encryptionMode).toBe('e2ee');
-    const sessionC = String(createC.data?.session?.id);
-    expect(sessionC).toMatch(/\S+/);
-
-    const writeC = await fetchJson<any>(`${server.baseUrl}/v2/sessions/${sessionC}/messages`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        localId: 'm-c-1',
-        ciphertext: Buffer.from('cipher-c-1', 'utf8').toString('base64'),
-      }),
-      timeoutMs: 15_000,
-    });
-    expect(writeC.status).toBe(200);
-    expect(writeC.data?.didWrite).toBe(true);
-    expect(await readFirstMessageContentType(sessionC)).toBe('encrypted');
+    expect(legacyProoflessReenable.status).toBe(400);
+    expect(legacyProoflessReenable.data).toEqual({ error: 'migration-required' });
+    const sessionAfterRejectedReenable = await createPlainSession(
+      'e2e-switch-after-rejected-reenable',
+    );
 
     // Existing sessions remain accessible and preserve their encryptionMode.
     const sessionARecord = await fetchJson<any>(`${server.baseUrl}/v2/sessions/${sessionA}`, {
@@ -187,6 +164,16 @@ describe('core e2e: account encryption mode switching keeps existing sessions re
     });
     expect(sessionBRecord.status).toBe(200);
     expect(sessionBRecord.data?.session?.encryptionMode).toBe('plain');
+
+    const sessionAfterRejectedReenableRecord = await fetchJson<any>(
+      `${server.baseUrl}/v2/sessions/${sessionAfterRejectedReenable}`,
+      {
+        headers: { Authorization: `Bearer ${auth.token}` },
+        timeoutMs: 15_000,
+      },
+    );
+    expect(sessionAfterRejectedReenableRecord.status).toBe(200);
+    expect(sessionAfterRejectedReenableRecord.data?.session?.encryptionMode).toBe('plain');
 
     expect(await readFirstMessageContentType(sessionA)).toBe('encrypted');
     expect(await readFirstMessageContentType(sessionB)).toBe('plain');

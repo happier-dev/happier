@@ -57,8 +57,18 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     visible:
       id: inspector-surface
     timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: inspector-plugin-${HAPPIER_E2E_PLUGIN_ID}
+    timeout: 120000
 - tapOn:
-    id: inspector-reload-all
+    id: inspector-plugin-${HAPPIER_E2E_PLUGIN_ID}
+- extendedWaitUntil:
+    visible:
+      id: inspector-reload-selected-${HAPPIER_E2E_PLUGIN_ID}
+    timeout: 120000
+- tapOn:
+    id: inspector-reload-selected-${HAPPIER_E2E_PLUGIN_ID}
 - extendedWaitUntil:
     visible:
       id: inspector-last-reload
@@ -100,7 +110,13 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
       id: inspector-plugin-${HAPPIER_E2E_PLUGIN_ID}
     timeout: 120000
 - tapOn:
-    id: inspector-reload-${HAPPIER_E2E_PLUGIN_ID}
+    id: inspector-plugin-${HAPPIER_E2E_PLUGIN_ID}
+- extendedWaitUntil:
+    visible:
+      id: inspector-reload-selected-${HAPPIER_E2E_PLUGIN_ID}
+    timeout: 120000
+- tapOn:
+    id: inspector-reload-selected-${HAPPIER_E2E_PLUGIN_ID}
 - extendedWaitUntil:
     visible:
       id: inspector-last-reload
@@ -112,3 +128,72 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - assertVisible:
     id: settings.plugins.management.diagnostics.live
 - takeScreenshot: plugin-platform-install-enable-reload-${HAPPIER_E2E_MOBILE_PLATFORM}
+
+# This public packed contributor shares the exact candidate's client artifact
+# loader with Voice. Leave its deliberately delayed invocation active so the
+# replacement phase can prove that the retiring generation rejects it locally.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/voice
+- extendedWaitUntil:
+    visible:
+      id: settings.voice.provider.examples.packed-targeted-projection-contributor%2Fpacked-conversation.default
+    timeout: 120000
+- tapOn:
+    id: settings.voice.provider.examples.packed-targeted-projection-contributor%2Fpacked-conversation.default
+- extendedWaitUntil:
+    visible:
+      id: settings.voice.ui.activityFeedEnabled
+    timeout: 120000
+- tapOn:
+    id: settings.voice.ui.activityFeedEnabled
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/examples.packed-targeted-projection-contributor/packed-provider-page
+- extendedWaitUntil:
+    visible:
+      id: packed-targeted-provider-title
+    timeout: 120000
+- assertVisible:
+    id: packed-targeted-context-action
+- assertVisible:
+    id: packed-targeted-stale-context-action
+- assertVisible:
+    id: packed-targeted-context-result
+- assertVisible:
+    id: packed-targeted-web-only-context-action
+- tapOn:
+    id: packed-targeted-web-only-context-action
+- extendedWaitUntil:
+    visible: "platform-unavailable"
+    timeout: 120000
+- tapOn:
+    id: packed-targeted-context-action
+- extendedWaitUntil:
+    visible: "page:ui"
+    timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-toggle:sidebar
+    timeout: 120000
+- tapOn:
+    id: voice-surface-toggle:sidebar
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-status:sidebar:connected
+    timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-activity-toggle:sidebar
+    timeout: 120000
+- tapOn:
+    id: voice-surface-activity-toggle:sidebar
+- extendedWaitUntil:
+    visible: "Packed Voice action completed for packed-provider-detail."
+    timeout: 120000
+# Keep the v1 Voice leaf connected while the lifecycle owner installs v2. The
+# replacement flow must observe this exact attempt retire rather than proving
+# only the separately delayed client Action.
+- tapOn:
+    id: packed-targeted-stale-context-action
+# The daemon installs v2 between this flow and the replacement flow. Keep the
+# request pending while the app is backgrounded, then foreground it only after
+# the lifecycle owner has retired the v1 generation.
+- pressKey: HOME

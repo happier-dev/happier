@@ -15,12 +15,11 @@ This bench implements A.13.7 for the runtime-mode-switch migration. It pins the 
 - runtime switch target parsing for `local`/`remote`
 - pending-queue handoff actions and terminal pending-handoff status
 - final runtime-slice state (`runtimeMode`, local-control attachment/writability)
-- canonical `RuntimeEventV1` tail for `runtime-status-change` with `runtime-mode-change` detail
-- preservation of `providerSessionId`/`resumeId` and mode values after normalization
+- preservation of `providerSessionId` and mode values after normalization
 
 ## Normalization
 
-`_normalize.ts` masks volatile timestamps and UUIDs, sorts object keys and same-tick arrays, and removes `hostRecoveryNoise`. It does not mask `providerSessionId`, `resumeId`, `from`, `to`, or `reason`; those are the contract.
+`_normalize.ts` masks volatile timestamps and UUIDs, sorts object keys and same-tick arrays, and removes `hostRecoveryNoise`. It does not mask `providerSessionId`, `from`, `to`, or `reason`; those are the contract.
 
 ## Adding Rows
 

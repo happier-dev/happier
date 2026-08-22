@@ -42,21 +42,6 @@ function expectedCapture(params: ExpectedCaptureParams): NormalizedRuntimeModePa
         canDetach: params.to === 'terminal',
       },
     },
-    runtimeEvents: [
-      {
-        kind: 'runtime-status-change',
-        sessionId: '<uuid>',
-        emittedAtMs: 0,
-        status: 'runtime_mode_changed',
-        detail: {
-          kind: 'runtime-mode-change',
-          from: params.from,
-          to: params.to,
-          reason: params.reason,
-          resumeId: params.providerSessionId,
-        },
-      },
-    ],
   };
 }
 

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
+  GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
   PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
   PluginPermissionGrantDismissRequestActionOutputV1Schema,
   PluginPermissionGrantGrantActionOutputV1Schema,
@@ -124,6 +125,7 @@ async function requestProjectDirectWrite(params: Readonly<{
       pluginId: PLUGIN_ID,
       capability: DIRECT_WRITE_CAPABILITY,
       targetScope: { kind: 'project', projectId: params.projectId },
+      subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
       requester: {
         kind: 'plugin',
         pluginId: PLUGIN_ID,
@@ -276,14 +278,10 @@ describe('authenticated execution-run review host action', () => {
         if (!current || !generation || !(await current.isCurrent())) return null;
         return {
           immutableGenerationId: generation.immutableGenerationId,
-          packageDigest: generation.record.packageDigest,
-          manifestDigest: generation.record.manifestDigest,
         };
       };
       expect(await readCurrentPluginAuthority()).toEqual({
         immutableGenerationId: bundledArtifact?.record.immutableGenerationId,
-        packageDigest: bundledArtifact?.record.packageDigest,
-        manifestDigest: bundledArtifact?.record.manifestDigest,
       });
 
       const createMaterializer = (params: Readonly<{
@@ -373,6 +371,7 @@ describe('authenticated execution-run review host action', () => {
           body: JSON.stringify({
             capability: DIRECT_WRITE_CAPABILITY,
             targetScope: { kind: 'project', projectId: 'project-authorized' },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
           }),
         },
       );
@@ -494,6 +493,7 @@ describe('authenticated execution-run review host action', () => {
           body: JSON.stringify({
             capability: DIRECT_WRITE_CAPABILITY,
             targetScope: { kind: 'project', projectId: 'project-authorized' },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
           }),
         },
       );

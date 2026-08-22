@@ -2,16 +2,42 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { inspectTarArchiveEntries } from '@happier-dev/release-runtime/archiveExtraction';
+import {
+  DEFAULT_ARCHIVE_EXTRACTION_LIMITS,
+  inspectTarArchiveEntries,
+} from '@happier-dev/release-runtime/archiveExtraction';
 import * as tar from 'tar';
 
 const PACKED_AUTHOR_PACKAGE_ARCHIVE_LIMITS = Object.freeze({
+  ...DEFAULT_ARCHIVE_EXTRACTION_LIMITS,
   // The published CLI intentionally bundles its complete multi-Agent runtime
   // closure. Keep the generic extraction byte/ratio limits, while bounding this
   // trusted npm-package census above the measured 25k-file closure.
   maxEntries: 40_000,
   maxFiles: 32_000,
 });
+
+const PACKED_CLI_PACKAGE_ARCHIVE_LIMITS = Object.freeze({
+  ...PACKED_AUTHOR_PACKAGE_ARCHIVE_LIMITS,
+  // Exact current-byte natural artifact `ucx-eu08-sourcefree-2` measured
+  // 1,087,352,708 expanded bytes after the canonical native-map contraction.
+  // Keep this exception local to the trusted packed CLI census; generic and
+  // other packed-package extraction remains at the incumbent 1 GiB ceiling.
+  maxExpandedBytes: 1280 * 1024 * 1024,
+});
+
+export function resolvePackedAuthorPackageArchiveLimits(artifactKind) {
+  switch (artifactKind) {
+    case 'sdk':
+    case 'pluginUi':
+    case 'channelsProtocol':
+      return PACKED_AUTHOR_PACKAGE_ARCHIVE_LIMITS;
+    case 'cli':
+      return PACKED_CLI_PACKAGE_ARCHIVE_LIMITS;
+    default:
+      fail(`Unknown packed-author artifact kind: ${String(artifactKind)}`);
+  }
+}
 
 function fail(message) {
   throw new Error(message);
@@ -37,6 +63,16 @@ export function assertPackedPackageIdentity(packageManifest, artifact, label) {
   if (packageManifest?.name !== artifact.packageName || packageManifest?.version !== artifact.version) {
     fail(`${label} identity mismatch: expected ${artifact.packageName}@${artifact.version}, received ${String(packageManifest?.name)}@${String(packageManifest?.version)}`);
   }
+}
+
+export function assertPackedPluginUiSdkDependency(pluginUiManifest, sdkArtifact) {
+  const pluginUiSdkVersion = pluginUiManifest?.dependencies?.[sdkArtifact.packageName];
+  if (pluginUiSdkVersion !== sdkArtifact.version) {
+    fail(
+      `Packed Plugin UI SDK dependency mismatch: expected ${sdkArtifact.packageName}@${sdkArtifact.version}, received ${String(pluginUiSdkVersion)}`,
+    );
+  }
+  return pluginUiSdkVersion;
 }
 
 export function assertPackedCliEntrypoint(packageManifest, cliArtifact) {
@@ -105,10 +141,11 @@ function classifySensitivePackagePath(path) {
 export async function inspectPackedAuthorPackageArchive({
   archivePath,
   label,
+  artifactKind,
 }) {
   const entries = await inspectTarArchiveEntries({
     archivePath,
-    limits: PACKED_AUTHOR_PACKAGE_ARCHIVE_LIMITS,
+    limits: resolvePackedAuthorPackageArchiveLimits(artifactKind),
   });
   let hasPackageManifest = false;
   for (const entry of entries) {
@@ -134,17 +171,38 @@ export async function inspectPackedAuthorPackageArchive({
 
 export async function assertPackedAuthorCandidateArchivesSafe({
   sdkTarballPath,
+  pluginUiTarballPath,
+  channelsProtocolTarballPath,
   cliTarballPath,
 }) {
-  const [sdk, cli] = await Promise.all([
+  const [sdk, pluginUi, cli, channelsProtocol] = await Promise.all([
     inspectPackedAuthorPackageArchive({
       archivePath: sdkTarballPath,
       label: 'Packed SDK',
+      artifactKind: 'sdk',
+    }),
+    inspectPackedAuthorPackageArchive({
+      archivePath: pluginUiTarballPath,
+      label: 'Packed Plugin UI',
+      artifactKind: 'pluginUi',
     }),
     inspectPackedAuthorPackageArchive({
       archivePath: cliTarballPath,
       label: 'Packed CLI',
+      artifactKind: 'cli',
     }),
+    ...(channelsProtocolTarballPath === undefined
+      ? []
+      : [inspectPackedAuthorPackageArchive({
+        archivePath: channelsProtocolTarballPath,
+        label: 'Packed Channels protocol',
+        artifactKind: 'channelsProtocol',
+        })]),
   ]);
-  return { sdk, cli };
+  return {
+    sdk,
+    pluginUi,
+    ...(channelsProtocolTarballPath === undefined ? {} : { channelsProtocol }),
+    cli,
+  };
 }

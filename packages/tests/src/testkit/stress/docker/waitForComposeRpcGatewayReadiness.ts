@@ -1,4 +1,5 @@
 import { createTestAuth } from '../../auth';
+import { waitForOkHealth } from '../../http';
 import { createMachineBoundSessionScopedSocketCollector } from '../../sessionSocketBinding';
 import { createSession } from '../../sessions';
 import { createUserScopedSocketCollector } from '../../socketClient';
@@ -8,6 +9,7 @@ import { waitForRegisteredRpcMethod } from '../scenarios/waitForRegisteredRpcMet
 
 type RpcReadinessDeps = Readonly<{
   createTestAuth: typeof createTestAuth;
+  waitForOkHealth: typeof waitForOkHealth;
   createSession: typeof createSession;
   createUserScopedSocketCollector: typeof createUserScopedSocketCollector;
   createMachineBoundSessionScopedSocketCollector: typeof createMachineBoundSessionScopedSocketCollector;
@@ -17,6 +19,7 @@ type RpcReadinessDeps = Readonly<{
 
 const defaultDeps: RpcReadinessDeps = {
   createTestAuth,
+  waitForOkHealth,
   createSession,
   createUserScopedSocketCollector,
   createMachineBoundSessionScopedSocketCollector,
@@ -40,6 +43,10 @@ export async function waitForComposeRpcGatewayReadiness(
     let listener: Awaited<ReturnType<typeof deps.createMachineBoundSessionScopedSocketCollector>> | undefined;
 
     try {
+      await deps.waitForOkHealth(
+        params.baseUrl,
+        { timeoutMs: params.timeoutMs ?? 30_000 },
+      );
       const auth = await deps.createTestAuth(params.baseUrl);
       const { sessionId } = await deps.createSession(params.baseUrl, auth.token);
       const currentUi = deps.createUserScopedSocketCollector(params.baseUrl, auth.token, { transports: ['websocket'] });

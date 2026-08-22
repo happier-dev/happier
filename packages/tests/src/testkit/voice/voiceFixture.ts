@@ -3,6 +3,8 @@ import { lstat, readFile, realpath } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { parseVoiceWavContainer } from './voiceWavParser.mjs';
+
 export interface VoiceFixtureTimelineEntry {
     readonly kind: string;
     readonly start: number;
@@ -300,6 +302,23 @@ export async function readKnownVoiceFixtureByPath(path: string): Promise<Readonl
     return null;
 }
 
+export function measureVoiceWavDurationMs(bytes: Uint8Array): number {
+    const container = parseVoiceWavContainer(bytes, 'custom-wav');
+    const dataByteLength = container.dataBytes.byteLength;
+    if (!Number.isSafeInteger(container.format.byteRate)) {
+        throw new Error('voice fixture WAV duration unavailable');
+    }
+    const durationMs = dataByteLength / container.format.byteRate * 1_000;
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        throw new Error('voice fixture WAV duration unavailable');
+    }
+    return durationMs;
+}
+
+export async function readVoiceWavDurationMs(path: string): Promise<number> {
+    return measureVoiceWavDurationMs(await readFile(path));
+}
+
 export function parseVoiceFixturePcm16Wav<
     TMetadata extends Pick<VoiceFixtureMetadata, 'id' | 'sampleRate' | 'durationMs'>,
 >(
@@ -313,71 +332,14 @@ export function parseVoiceFixturePcm16Wav<
     pcm16Bytes: Uint8Array;
 }> {
     const id = metadata.id;
-    const wav = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (
-        wav.byteLength < 44
-        || wav.subarray(0, 4).toString('ascii') !== 'RIFF'
-        || wav.subarray(8, 12).toString('ascii') !== 'WAVE'
-        || wav.readUInt32LE(4) !== wav.byteLength - 8
-    ) {
-        throw new Error(`voice fixture is not a WAV file: ${id}`);
-    }
-
-    let format: Readonly<{
-        audioFormat: number;
-        channelCount: number;
-        sampleRateHz: number;
-        byteRate: number;
-        blockAlign: number;
-        bitsPerSample: number;
-    }> | null = null;
-    let pcm16Bytes: Uint8Array | null = null;
-    for (let offset = 12; offset < wav.byteLength;) {
-        if (offset + 8 > wav.byteLength) {
-            throw new Error(`invalid voice fixture WAV chunk: ${id}`);
-        }
-        const chunkId = wav.subarray(offset, offset + 4).toString('ascii');
-        const chunkSize = wav.readUInt32LE(offset + 4);
-        const dataStart = offset + 8;
-        const dataEnd = dataStart + chunkSize;
-        const paddedEnd = dataEnd + (chunkSize % 2);
-        if (dataEnd > wav.byteLength || paddedEnd > wav.byteLength) {
-            throw new Error(`invalid voice fixture WAV chunk: ${id}`);
-        }
-        if (chunkId === 'fmt ') {
-            if (format || chunkSize !== 16) {
-                throw new Error(`invalid voice fixture WAV format chunk: ${id}`);
-            }
-            format = {
-                audioFormat: wav.readUInt16LE(dataStart),
-                channelCount: wav.readUInt16LE(dataStart + 2),
-                sampleRateHz: wav.readUInt32LE(dataStart + 4),
-                byteRate: wav.readUInt32LE(dataStart + 8),
-                blockAlign: wav.readUInt16LE(dataStart + 12),
-                bitsPerSample: wav.readUInt16LE(dataStart + 14),
-            };
-        } else if (chunkId === 'data') {
-            if (pcm16Bytes) {
-                throw new Error(`duplicate voice fixture WAV data chunk: ${id}`);
-            }
-            pcm16Bytes = new Uint8Array(wav.subarray(dataStart, dataEnd));
-        }
-        offset = paddedEnd;
-    }
+    const container = parseVoiceWavContainer(bytes, id);
+    const pcm16Bytes = container.dataBytes;
+    const format = container.format;
 
     if (
-        !format
-        || format.audioFormat !== 1
-        || format.channelCount !== 1
-        || format.sampleRateHz !== metadata.sampleRate
-        || format.byteRate !== format.sampleRateHz * 2
-        || format.blockAlign !== 2
-        || format.bitsPerSample !== 16
-        || !pcm16Bytes
-        || pcm16Bytes.byteLength === 0
-        || pcm16Bytes.byteLength % 2 !== 0
+        format.sampleRateHz !== metadata.sampleRate
     ) {
-        throw new Error(`voice fixture is not canonical PCM16 mono WAV: ${id}`);
+        throw new Error(`voice fixture WAV sample rate mismatch: ${id}`);
     }
     const measuredDurationMs = pcm16Bytes.byteLength / format.byteRate * 1_000;
     if (Math.abs(measuredDurationMs - metadata.durationMs) > 2) {

@@ -482,6 +482,7 @@ type DaemonStartupPhase =
   | 'reserveDirectPeerBindPort'
   | 'waitForDaemonState'
   | 'waitForOriginalDaemonExit'
+  | 'afterOriginalDaemonExit'
   | 'waitForReplacementDaemonState';
 
 type DaemonStartupDiagnostics = Readonly<{
@@ -614,6 +615,9 @@ async function runDaemonStartupPhase<T>(
   phase: DaemonStartupPhase,
   promise: Promise<T>,
   params: Omit<DaemonStartupDiagnostics, 'phase'>,
+  options: Readonly<{
+    onLateResolve?: (value: T) => void | Promise<void>;
+  }> = {},
 ): Promise<T> {
   const timeoutMs = params.timeoutMs;
   return await new Promise<T>((resolvePromise, rejectPromise) => {
@@ -631,7 +635,18 @@ async function runDaemonStartupPhase<T>(
 
     promise.then(
       (value) => {
-        if (settled) return;
+        if (settled) {
+          void Promise.resolve(options.onLateResolve?.(value)).catch(() => {
+            process.emitWarning(
+              `Late daemon startup cleanup failed after timeout (phase=${phase})`,
+              {
+                code: 'HAPPIER_TEST_DAEMON_LATE_CLEANUP_FAILED',
+                type: 'HappierTestDaemonCleanupWarning',
+              },
+            );
+          });
+          return;
+        }
         settled = true;
         if (timer) clearTimeout(timer);
         resolvePromise(value);
@@ -648,6 +663,33 @@ async function runDaemonStartupPhase<T>(
       },
     );
   });
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+async function collectCleanupErrors(
+  actions: readonly (() => void | Promise<void>)[],
+): Promise<Error[]> {
+  const errors: Error[] = [];
+  for (const action of actions) {
+    try {
+      await action();
+    } catch (error) {
+      errors.push(asError(error));
+    }
+  }
+  return errors;
+}
+
+function throwWithCleanupErrors(primaryError: unknown, cleanupErrors: readonly Error[], context: string): never {
+  const primary = asError(primaryError);
+  if (cleanupErrors.length === 0) throw primary;
+  throw new AggregateError(
+    [primary, ...cleanupErrors],
+    `${context}: ${[primary, ...cleanupErrors].map((error) => error.message).join('; ')}`,
+  );
 }
 
 function hardKillContext(params: { phase: HardKillPhase; state: DaemonState }): string {
@@ -776,6 +818,31 @@ export type StartedDaemon = {
   proc: SpawnedProcess;
   stop: () => Promise<void>;
 };
+
+function createStartedDaemon(params: Readonly<{
+  happyHomeDir: string;
+  state: DaemonState;
+  proc: SpawnedProcess;
+}>): StartedDaemon {
+  return {
+    happyHomeDir: params.happyHomeDir,
+    state: params.state,
+    proc: params.proc,
+    stop: async () => {
+      const cleanupErrors = await collectCleanupErrors([
+        () => stopDaemonFromHomeDir(params.happyHomeDir),
+        () => params.proc.stop(),
+      ]);
+      if (cleanupErrors.length === 1) throw cleanupErrors[0];
+      if (cleanupErrors.length > 1) {
+        throw new AggregateError(
+          cleanupErrors,
+          `Failed to stop test daemon: ${cleanupErrors.map((error) => error.message).join('; ')}`,
+        );
+      }
+    },
+  };
+}
 
 export function resolveTestDaemonOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
   return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'test-daemon' });
@@ -934,65 +1001,72 @@ export async function startTestDaemon(params: {
       ),
     ),
     baseDiagnostics,
-  );
-
-  await runDaemonStartupPhase(
-    'stopExistingDaemon',
-    stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {}),
-    baseDiagnostics,
-  );
-
-  const directPeerBindPort = await runDaemonStartupPhase(
-    'reserveDirectPeerBindPort',
-    typeof params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT === 'string'
-    && params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim().length > 0
-      ? Promise.resolve(params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim())
-      : reserveAvailablePort().then(String),
-    baseDiagnostics,
-  );
-
-  const proc = spawnLoggedProcess({
-    command: cliLaunchSpec.command,
-    args: [...cliLaunchSpec.args, 'daemon', 'start-sync'],
-    cwd: cliLaunchSpec.cwd ?? repoRootDir(),
-    env: sanitizeDaemonEnvForSpawn({
-      ...buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir),
-      ...resolveDaemonSourceSnapshotEnv(cliLaunchSpec),
-      ...(cliLaunchSpec.env ?? {}),
-      ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
-      ...resolveDaemonChildDiagnosticsEnv({ cliLaunchSpec, env: params.env }),
-      CI: '1',
-      HAPPIER_HOME_DIR: params.happyHomeDir,
-      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: directPeerBindPort,
-    }),
-    stdoutPath,
-    stderrPath,
-    cleanupDescendantsOnExit: params.cleanupDescendantsOnExit,
-  });
-
-  await registerProcessOwnershipLease({
-    rootDir: repoRootDir(),
-    leaseKind: 'test-daemon',
-    child: proc.child,
-    ownerPid: process.pid,
-    ownerStartTime: currentOwnerInspection.ok ? currentOwnerInspection.startTime : null,
-    metadata: {
-      happyHomeDir: params.happyHomeDir,
-      testDir: params.testDir,
+    {
+      onLateResolve: async (lateLaunchSpec) => {
+        await lateLaunchSpec.cleanup?.();
+      },
     },
-  });
+  );
 
-  let state: DaemonState;
+  let proc: SpawnedProcess | null = null;
   try {
+    await runDaemonStartupPhase(
+      'stopExistingDaemon',
+      stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {}),
+      baseDiagnostics,
+    );
+
+    const directPeerBindPort = await runDaemonStartupPhase(
+      'reserveDirectPeerBindPort',
+      typeof params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT === 'string'
+      && params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim().length > 0
+        ? Promise.resolve(params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim())
+        : reserveAvailablePort().then(String),
+      baseDiagnostics,
+    );
+
+    proc = spawnLoggedProcess({
+      command: cliLaunchSpec.command,
+      args: [...cliLaunchSpec.args, 'daemon', 'start-sync'],
+      cwd: cliLaunchSpec.cwd ?? repoRootDir(),
+      env: sanitizeDaemonEnvForSpawn({
+        ...buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir),
+        ...resolveDaemonSourceSnapshotEnv(cliLaunchSpec),
+        ...(cliLaunchSpec.env ?? {}),
+        ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
+        ...resolveDaemonChildDiagnosticsEnv({ cliLaunchSpec, env: params.env }),
+        CI: '1',
+        HAPPIER_HOME_DIR: params.happyHomeDir,
+        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: directPeerBindPort,
+      }),
+      stdoutPath,
+      stderrPath,
+      cleanupDescendantsOnExit: params.cleanupDescendantsOnExit,
+      cleanup: cliLaunchSpec.cleanup,
+    });
+
+    await registerProcessOwnershipLease({
+      rootDir: repoRootDir(),
+      leaseKind: 'test-daemon',
+      child: proc.child,
+      ownerPid: process.pid,
+      ownerStartTime: currentOwnerInspection.ok ? currentOwnerInspection.startTime : null,
+      metadata: {
+        happyHomeDir: params.happyHomeDir,
+        testDir: params.testDir,
+      },
+    });
+
     const startupTimeoutMs = phaseTimeoutMs;
     const exitStateGraceTimeoutMs = Math.min(startupTimeoutMs, 10_000);
     const statePresence = createDaemonStatePresenceTracker();
-    state = await runDaemonStartupPhase(
+    const spawnedProc = proc;
+    const state = await runDaemonStartupPhase(
       'waitForDaemonState',
       Promise.race([
         waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs, statePresence }),
         new Promise<DaemonState>((resolveState, rejectState) => {
-          proc.child.once('exit', (code, signal) => {
+          spawnedProc.child.once('exit', (code, signal) => {
             void (async () => {
               try {
                 const exitedState = await waitForDaemonState(params.happyHomeDir, {
@@ -1015,26 +1089,24 @@ export async function startTestDaemon(params: {
       {
         ...baseDiagnostics,
         timeoutMs: startupTimeoutMs,
-        processPid: proc.child.pid ?? null,
+        processPid: spawnedProc.child.pid ?? null,
         statePresence,
       },
     );
-  } catch (e) {
-    // If daemon startup fails, make sure we don't leak a background process.
-    await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
-    await proc.stop().catch(() => {});
-    throw e;
+    return createStartedDaemon({ happyHomeDir: params.happyHomeDir, state, proc: spawnedProc });
+  } catch (error) {
+    const cleanupErrors = await collectCleanupErrors(
+      proc
+        ? [
+            () => stopDaemonFromHomeDir(params.happyHomeDir),
+            () => proc!.stop(),
+          ]
+        : cliLaunchSpec.cleanup
+          ? [() => cliLaunchSpec.cleanup!()]
+          : [],
+    );
+    throwWithCleanupErrors(error, cleanupErrors, 'Daemon startup and cleanup failed');
   }
-
-  return {
-    happyHomeDir: params.happyHomeDir,
-    state,
-    proc,
-    stop: async () => {
-      await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
-      await proc.stop().catch(() => {});
-    },
-  };
 }
 
 export async function replaceTestDaemonWithoutStoppingSessions(params: {
@@ -1045,7 +1117,10 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
   originalDaemon?: StartedDaemon;
   stdoutPath?: string;
   stderrPath?: string;
-}): Promise<DaemonState> {
+  afterOriginalDaemonExit?: () => void | Promise<void>;
+  cliLaunchSpec?: CliTestLaunchSpec;
+}): Promise<StartedDaemon> {
+  await mkdir(params.testDir, { recursive: true });
   const stdoutPath = params.stdoutPath ?? resolve(params.testDir, 'daemon.replace.stdout.log');
   const stderrPath = params.stderrPath ?? resolve(params.testDir, 'daemon.replace.stderr.log');
   const phaseTimeoutMs = resolveDaemonStartupPhaseTimeoutMs(params.env, undefined);
@@ -1100,53 +1175,82 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
     },
   );
 
+  await runDaemonStartupPhase(
+    'afterOriginalDaemonExit',
+    Promise.resolve().then(() => params.afterOriginalDaemonExit?.()),
+    baseDiagnostics,
+  );
+
   const cliLaunchSpec = await runDaemonStartupPhase(
     'resolveCliTestLaunchSpec',
-    resolveCliTestLaunchSpec(
-      {
-        testDir: params.testDir,
-        env: buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir),
-      },
-      {
-        snapshotDir: resolveDaemonLaunchSnapshotDir({
+    resolveCliTestLaunchSpecOrOverride(
+      params.cliLaunchSpec,
+      () => resolveCliTestLaunchSpec(
+        {
           testDir: params.testDir,
-          env: params.env,
-          snapshotDir: params.snapshotDir,
-        }),
-        skipDistIntegrityCheck: true,
-        skipSourceFreshnessCheck: true,
-      },
+          env: buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir),
+        },
+        {
+          snapshotDir: resolveDaemonLaunchSnapshotDir({
+            testDir: params.testDir,
+            env: params.env,
+            snapshotDir: params.snapshotDir,
+          }),
+          skipDistIntegrityCheck: true,
+          skipSourceFreshnessCheck: true,
+        },
+      ),
     ),
     baseDiagnostics,
+    {
+      onLateResolve: async (lateLaunchSpec) => {
+        await lateLaunchSpec.cleanup?.();
+      },
+    },
   );
 
-  const directPeerBindPort = await runDaemonStartupPhase(
-    'reserveDirectPeerBindPort',
-    typeof params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT === 'string'
-    && params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim().length > 0
-      ? Promise.resolve(params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim())
-      : reserveAvailablePort().then(String),
-    baseDiagnostics,
-  );
-
-  const proc = spawnLoggedProcess({
-    command: cliLaunchSpec.command,
-    args: [...cliLaunchSpec.args, 'daemon', 'start-sync', '--takeover'],
-    cwd: cliLaunchSpec.cwd ?? repoRootDir(),
-    env: sanitizeDaemonEnvForSpawn({
-      ...buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir),
-      ...(cliLaunchSpec.env ?? {}),
-      ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
-      CI: '1',
-      HAPPIER_HOME_DIR: params.happyHomeDir,
-      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: directPeerBindPort,
-    }),
-    stdoutPath,
-    stderrPath,
-  });
-
+  let proc: SpawnedProcess | null = null;
   try {
-    return await runDaemonStartupPhase(
+    const directPeerBindPort = await runDaemonStartupPhase(
+      'reserveDirectPeerBindPort',
+      typeof params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT === 'string'
+      && params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim().length > 0
+        ? Promise.resolve(params.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT.trim())
+        : reserveAvailablePort().then(String),
+      baseDiagnostics,
+    );
+
+    proc = spawnLoggedProcess({
+      command: cliLaunchSpec.command,
+      args: [...cliLaunchSpec.args, 'daemon', 'start-sync', '--takeover'],
+      cwd: cliLaunchSpec.cwd ?? repoRootDir(),
+      env: sanitizeDaemonEnvForSpawn({
+        ...buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir),
+        ...(cliLaunchSpec.env ?? {}),
+        ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
+        CI: '1',
+        HAPPIER_HOME_DIR: params.happyHomeDir,
+        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: directPeerBindPort,
+      }),
+      stdoutPath,
+      stderrPath,
+      cleanup: cliLaunchSpec.cleanup,
+    });
+
+    const currentOwnerInspection = inspectOwnedProcess(process.pid);
+    await registerProcessOwnershipLease({
+      rootDir: repoRootDir(),
+      leaseKind: 'test-daemon',
+      child: proc.child,
+      ownerPid: process.pid,
+      ownerStartTime: currentOwnerInspection.ok ? currentOwnerInspection.startTime : null,
+      metadata: {
+        happyHomeDir: params.happyHomeDir,
+        testDir: params.testDir,
+      },
+    });
+
+    const state = await runDaemonStartupPhase(
       'waitForReplacementDaemonState',
       waitForReplacementDaemonState(params.happyHomeDir, originalState.pid, { timeoutMs: phaseTimeoutMs }),
       {
@@ -1154,10 +1258,19 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
         processPid: proc.child.pid ?? null,
       },
     );
+    return createStartedDaemon({ happyHomeDir: params.happyHomeDir, state, proc });
   } catch (error) {
-    await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
-    await proc.stop().catch(() => {});
-    throw error;
+    const cleanupErrors = await collectCleanupErrors(
+      proc
+        ? [
+            () => stopDaemonFromHomeDir(params.happyHomeDir),
+            () => proc!.stop(),
+          ]
+        : cliLaunchSpec.cleanup
+          ? [() => cliLaunchSpec.cleanup!()]
+          : [],
+    );
+    throwWithCleanupErrors(error, cleanupErrors, 'Replacement daemon startup and cleanup failed');
   }
 }
 

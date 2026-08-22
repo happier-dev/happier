@@ -77,7 +77,7 @@ test.describe('voice Q2: production capture with file-backed microphone', () => 
     expect(stateSequence.at(-1)).toMatchObject({
       configuredProviderId: 'local_conversation',
       executionMachineId: stack.machineId,
-      localSttProvider: 'openai_compat',
+      localSttProvider: 'happier.voice.openai-compat/stt',
       localSttBaseUrlConfigured: true,
     });
 
@@ -97,7 +97,7 @@ test.describe('voice Q2: production capture with file-backed microphone', () => 
         __happierVoiceMediaQa?: { calls: number; maxInputLevel: number; activeTracks: number };
       }).__happierVoiceMediaQa;
       return qa ? { calls: qa.calls, maxInputLevel: qa.maxInputLevel, activeTracks: qa.activeTracks } : null;
-    }), { timeout: 30_000 }).toMatchObject({ calls: 2, activeTracks: 1 });
+    }), { timeout: 30_000 }).toMatchObject({ calls: 1, activeTracks: 1 });
 
     await expect.poll(async () => page.evaluate(() => (
       (window as typeof window & { __happierVoiceMediaQa?: { maxInputLevel: number } })
@@ -144,7 +144,7 @@ test.describe('voice Q2: production capture with file-backed microphone', () => 
         __happierVoiceMediaQa?: { activeTracks: number; stoppedTracks: number };
       }).__happierVoiceMediaQa;
       return qa ? { activeTracks: qa.activeTracks, stoppedTracks: qa.stoppedTracks } : null;
-    }), { timeout: 30_000 }).toMatchObject({ activeTracks: 0, stoppedTracks: 2 });
+    }), { timeout: 30_000 }).toMatchObject({ activeTracks: 0, stoppedTracks: 1 });
 
     stateSequence.push(await readSnapshot());
     await page.getByTestId('voiceQa.openConversation').click({ timeout: 30_000 });

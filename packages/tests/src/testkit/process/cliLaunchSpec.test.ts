@@ -11,9 +11,14 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+
+import {
+  resolveWorkspaceBundleLockPath,
+  withWorkspaceBundleLock,
+} from '@happier-dev/cli-common/workspaceBundleLock';
 
 const sharedDepsBuildMock = vi.hoisted(() => ({
   ensureCliSharedDepsBuilt: vi.fn(async ({ testDir, env }: { testDir: string; env: NodeJS.ProcessEnv }) => {
@@ -28,6 +33,31 @@ const sharedDepsBuildMock = vi.hoisted(() => ({
     ) => resolve(_options.snapshotDir, 'dist', 'index.mjs'),
   ),
 }));
+
+const fsPromisesMock = vi.hoisted(() => ({
+  rm: vi.fn(),
+}));
+
+const runLoggedCommandMock = vi.hoisted(() => ({
+  runLoggedCommand: vi.fn(async () => undefined),
+}));
+
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  fsPromisesMock.rm.mockImplementation(actual.rm);
+  return {
+    ...actual,
+    rm: fsPromisesMock.rm,
+  };
+});
+
+vi.mock('./spawnProcess', async () => {
+  const actual = await vi.importActual<typeof import('./spawnProcess')>('./spawnProcess');
+  return {
+    ...actual,
+    runLoggedCommand: runLoggedCommandMock.runLoggedCommand,
+  };
+});
 
 vi.mock('./cliDist', async () => {
   const actual = await vi.importActual<typeof import('./cliDist')>('./cliDist');
@@ -45,6 +75,16 @@ function resolveSourceSnapshotDir(spec: Readonly<{ args: readonly string[] }>): 
   const sourceEntrypoint = spec.args.at(-1);
   if (!sourceEntrypoint) throw new Error('source launch spec has no entrypoint');
   return resolve(sourceEntrypoint, '..', '..');
+}
+
+function expectCanonicalPublishedSourceSnapshotDir(
+  publishedSnapshotDir: string,
+  requestedSnapshotDir: string,
+): void {
+  expect(dirname(publishedSnapshotDir)).toBe(dirname(requestedSnapshotDir));
+  expect(basename(publishedSnapshotDir)).toMatch(
+    /^cli-source-snapshot-source-\d+-\d+-\d+$/u,
+  );
 }
 
 describe('resolveCliTestLaunchSpec', () => {
@@ -88,9 +128,31 @@ describe('resolveCliTestLaunchSpec', () => {
     }
   });
 
+  it('launches an already-verified binary release payload through its packaged Node entrypoint', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-release-'));
+    const snapshotDir = resolve(repoRoot, 'release-snapshot');
+
+    try {
+      mkdirSync(resolve(snapshotDir, 'package-dist'), { recursive: true });
+      mkdirSync(resolve(snapshotDir, 'node_modules'), { recursive: true });
+      writeFileSync(resolve(snapshotDir, '.cli-dist-snapshot.ready.json'), '{"v":1}\n', 'utf8');
+      writeFileSync(resolve(snapshotDir, 'package-dist', 'index.mjs'), 'export {};\n', 'utf8');
+
+      await expect(resolveCliTestLaunchSpec(
+        { testDir: resolve(repoRoot, '.project'), env: process.env },
+        { repoRoot, snapshotDir, preparedDistSnapshotOnly: true },
+      )).resolves.toEqual({
+        command: process.execPath,
+        args: ['--preserve-symlinks', resolve(snapshotDir, 'package-dist', 'index.mjs')],
+      });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it('ensures source-entrypoint launches refresh shared deps before snapshotting bundled node_modules', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-'));
-    const snapshotDir = resolve(repoRoot, 'snapshot');
+    const snapshotDir = resolve(repoRoot, 'caller-selected-launch-snapshot');
 
     try {
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'src'), { recursive: true });
@@ -151,22 +213,33 @@ describe('resolveCliTestLaunchSpec', () => {
         );
       });
 
-      const spec = await resolveCliTestLaunchSpec(
-        {
-          testDir: resolve(repoRoot, '.project'),
-          env: {
-            ...process.env,
-            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-            HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
+      const spec = await withWorkspaceBundleLock(
+        async ({ heldLockValue }) => await resolveCliTestLaunchSpec(
+          {
+            testDir: resolve(repoRoot, '.project'),
+            env: {
+              ...process.env,
+              HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+              HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
+              HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
+            },
           },
-        },
+          {
+            repoRoot,
+            snapshotDir,
+            timeoutMs: 100,
+            pollIntervalMs: 5,
+          },
+        ),
         {
-          repoRoot,
-          snapshotDir,
+          lockPath: resolveWorkspaceBundleLockPath(repoRoot),
+          timeoutMs: 100,
+          pollIntervalMs: 5,
         },
       );
 
       const publishedSnapshotDir = resolveSourceSnapshotDir(spec);
+      expectCanonicalPublishedSourceSnapshotDir(publishedSnapshotDir, snapshotDir);
       expect(sharedDepsBuildMock.ensureCliSharedDepsBuilt).toHaveBeenCalledTimes(1);
       expect(sharedDepsBuildMock.ensureCliSourceDevSharedDepsCurrent).not.toHaveBeenCalled();
       expect(spec.command).toBe(process.execPath);
@@ -191,6 +264,61 @@ describe('resolveCliTestLaunchSpec', () => {
       const nodeModulesEntry = lstatSync(resolve(publishedSnapshotDir, 'node_modules'));
       expect(nodeModulesEntry.isSymbolicLink() || nodeModulesEntry.isDirectory()).toBe(true);
       expect(spec.env?.TSX_TSCONFIG_PATH).toBe(resolve(publishedSnapshotDir, 'tsconfig.json'));
+
+      const unrelatedSnapshotDir = `${publishedSnapshotDir}-unrelated`;
+      mkdirSync(unrelatedSnapshotDir, { recursive: true });
+      const cleanup = spec.cleanup;
+      expect(cleanup).toBeTypeOf('function');
+      expect(existsSync(publishedSnapshotDir)).toBe(true);
+
+      await cleanup?.();
+      expect(existsSync(publishedSnapshotDir)).toBe(false);
+      expect(existsSync(unrelatedSnapshotDir)).toBe(true);
+
+      await cleanup?.();
+      expect(existsSync(unrelatedSnapshotDir)).toBe(true);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves post-publication launch and snapshot-cleanup failures together', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-post-publication-cleanup-failure-'));
+    const snapshotDir = resolve(repoRoot, 'snapshot');
+
+    try {
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'src'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev'), { recursive: true });
+      writeFileSync(resolve(repoRoot, 'package.json'), '{"private":true}\n', 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'package.json'), '{"name":"@happier-dev/cli"}\n', 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'tsconfig.json'), '{}\n', 'utf8');
+      fsPromisesMock.rm.mockRejectedValueOnce(new Error('synthetic published snapshot cleanup failure'));
+
+      let error: unknown;
+      try {
+        await resolveCliTestLaunchSpec(
+          {
+            testDir: resolve(repoRoot, '.project'),
+            env: {
+              ...process.env,
+              HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+              HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
+            },
+          },
+          {
+            repoRoot,
+            snapshotDir,
+          },
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors.map(String)).toEqual(expect.arrayContaining([
+        expect.stringContaining('CLI source entrypoint missing'),
+        expect.stringContaining('synthetic published snapshot cleanup failure'),
+      ]));
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -198,7 +326,7 @@ describe('resolveCliTestLaunchSpec', () => {
 
   it('publishes copy-mode source snapshots with an isolated first-party dependency closure', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-copy-closure-'));
-    const snapshotDir = resolve(repoRoot, 'snapshot');
+    const snapshotDir = resolve(repoRoot, 'caller-selected-admission-snapshot');
     const livePackageDir = resolve(
       repoRoot,
       'apps',
@@ -214,18 +342,23 @@ describe('resolveCliTestLaunchSpec', () => {
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'tools'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'bin'), { recursive: true });
       mkdirSync(resolve(livePackageDir, 'dist'), { recursive: true });
+      mkdirSync(resolve(livePackageDir, '.happier-plugin'), { recursive: true });
       mkdirSync(
         resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'dist'),
         { recursive: true },
       );
       mkdirSync(resolve(repoRoot, 'packages', 'release-runtime', 'dist'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'packages', 'protocol', 'dist'), { recursive: true });
+      mkdirSync(resolve(repoRoot, 'node_modules', 'ps-list'), { recursive: true });
       mkdirSync(resolve(snapshotDir, 'node_modules', '@happier-dev'), { recursive: true });
 
       writeFileSync(resolve(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }), 'utf8');
       writeFileSync(
         resolve(repoRoot, 'apps', 'cli', 'package.json'),
-        JSON.stringify({ name: '@happier-dev/cli' }),
+        JSON.stringify({
+          name: '@happier-dev/cli',
+          dependencies: { 'ps-list': '8.1.1' },
+        }),
         'utf8',
       );
       writeFileSync(resolve(repoRoot, 'apps', 'cli', 'tsconfig.json'), '{}', 'utf8');
@@ -247,6 +380,11 @@ describe('resolveCliTestLaunchSpec', () => {
         'utf8',
       );
       writeFileSync(resolve(livePackageDir, 'dist', 'index.js'), 'export const value = "before";\n', 'utf8');
+      writeFileSync(
+        resolve(livePackageDir, '.happier-plugin', 'plugin.json'),
+        '{"id":"happier.fixture"}\n',
+        'utf8',
+      );
       writeFileSync(
         resolve(repoRoot, 'packages', 'release-runtime', 'package.json'),
         JSON.stringify({
@@ -296,6 +434,16 @@ describe('resolveCliTestLaunchSpec', () => {
         'export const protocol = true;\n',
         'utf8',
       );
+      writeFileSync(
+        resolve(repoRoot, 'node_modules', 'ps-list', 'package.json'),
+        JSON.stringify({ name: 'ps-list', version: '8.1.1', main: 'index.js' }),
+        'utf8',
+      );
+      writeFileSync(
+        resolve(repoRoot, 'node_modules', 'ps-list', 'index.js'),
+        'export default async function psList() { return []; }\n',
+        'utf8',
+      );
       symlinkSync(
         livePackageDir,
         resolve(snapshotDir, 'node_modules', '@happier-dev', 'release-runtime'),
@@ -318,6 +466,7 @@ describe('resolveCliTestLaunchSpec', () => {
       );
 
       const publishedSnapshotDir = resolveSourceSnapshotDir(spec);
+      expectCanonicalPublishedSourceSnapshotDir(publishedSnapshotDir, snapshotDir);
       const publishedPackageDir = resolve(
         publishedSnapshotDir,
         'node_modules',
@@ -328,6 +477,15 @@ describe('resolveCliTestLaunchSpec', () => {
       expect(lstatSync(resolve(publishedSnapshotDir, 'src')).isSymbolicLink()).toBe(false);
       expect(lstatSync(resolve(publishedSnapshotDir, 'scripts')).isSymbolicLink()).toBe(false);
       expect(lstatSync(resolve(publishedSnapshotDir, 'tsconfig.json')).isSymbolicLink()).toBe(false);
+      expect(
+        lstatSync(resolve(publishedSnapshotDir, 'node_modules', 'ps-list')).isSymbolicLink(),
+      ).toBe(false);
+      expect(
+        readFileSync(resolve(publishedSnapshotDir, 'node_modules', 'ps-list', 'index.js'), 'utf8'),
+      ).toContain('psList');
+      expect(
+        readFileSync(resolve(publishedPackageDir, '.happier-plugin', 'plugin.json'), 'utf8'),
+      ).toContain('happier.fixture');
       expect(readFileSync(resolve(publishedPackageDir, 'dist', 'index.js'), 'utf8')).toContain('"before"');
 
       writeFileSync(resolve(livePackageDir, 'dist', 'index.js'), 'export const value = "after";\n', 'utf8');
@@ -365,6 +523,158 @@ describe('resolveCliTestLaunchSpec', () => {
       expect(
         readdirSync(dirname(publishedSnapshotDir)).filter((name) => name.includes('.source-snapshot-tmp.')),
       ).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses copy publication when the canonical bundled projection check rejects changed package bytes', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-stale-bundled-projection-'));
+    const snapshotDir = resolve(repoRoot, 'snapshot');
+    const workspacePackageDir = resolve(repoRoot, 'packages', 'plugins', 'pi');
+    const bundledPackageDir = resolve(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'plugins-pi',
+    );
+    const generatedInventoryPath = resolve(
+      repoRoot,
+      'apps',
+      'cli',
+      'src',
+      'plugins',
+      'projection',
+      'registry',
+      'sources',
+      'generatedBundledPluginArtifacts.ts',
+    );
+    const relativeArtifactPath = 'dist/index.js';
+    const changedArtifactBytes = 'export const artifactByte = "b";\n';
+
+    try {
+      mkdirSync(resolve(repoRoot, 'apps', 'cli', 'scripts'), { recursive: true });
+      mkdirSync(resolve(workspacePackageDir, 'dist'), { recursive: true });
+      mkdirSync(resolve(bundledPackageDir, 'dist'), { recursive: true });
+      mkdirSync(dirname(generatedInventoryPath), { recursive: true });
+      writeFileSync(resolve(repoRoot, 'package.json'), '{"private":true}\n', 'utf8');
+      writeFileSync(
+        resolve(repoRoot, 'apps', 'cli', 'package.json'),
+        JSON.stringify({
+          name: '@happier-dev/cli',
+          dependencies: { '@happier-dev/plugins-pi': '0.0.0' },
+        }),
+        'utf8',
+      );
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'tsconfig.json'), '{}\n', 'utf8');
+      writeFileSync(resolve(repoRoot, 'apps', 'cli', 'src', 'index.ts'), 'export {};\n', 'utf8');
+      writeFileSync(
+        resolve(workspacePackageDir, 'package.json'),
+        JSON.stringify({
+          name: '@happier-dev/plugins-pi',
+          main: `./${relativeArtifactPath}`,
+        }),
+        'utf8',
+      );
+      writeFileSync(resolve(workspacePackageDir, relativeArtifactPath), changedArtifactBytes, 'utf8');
+      writeFileSync(
+        resolve(bundledPackageDir, 'package.json'),
+        JSON.stringify({
+          name: '@happier-dev/plugins-pi',
+          main: `./${relativeArtifactPath}`,
+        }),
+        'utf8',
+      );
+      writeFileSync(resolve(bundledPackageDir, relativeArtifactPath), changedArtifactBytes, 'utf8');
+      writeFileSync(
+        generatedInventoryPath,
+        [
+          'export const generatedBundledPluginArtifacts = [',
+          '  {',
+          '    "packageName": "@happier-dev/plugins-pi",',
+          '    "record": {',
+          '      "files": [',
+          `        { "relativePath": "${relativeArtifactPath}", "byteLength": ${changedArtifactBytes.length}, "digest": "sha256:stale" }`,
+          '      ]',
+          '    }',
+          '  }',
+          '] as const;',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const runCommand = vi.fn(async (input: Readonly<{
+        command: string;
+        args: string[];
+        cwd: string;
+        env?: NodeJS.ProcessEnv;
+      }>) => {
+        expect(input).toMatchObject({
+          command: process.execPath,
+          args: [
+            '--experimental-strip-types',
+            resolve(repoRoot, 'scripts', 'migrations', 'extensions', 'generateBundledPluginEntries.ts'),
+            '--root',
+            repoRoot,
+            '--mode',
+            'check',
+          ],
+          cwd: repoRoot,
+          env: expect.objectContaining({
+            HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: expect.any(String),
+          }),
+        });
+        expect(readdirSync(resolve(workspacePackageDir, 'dist'))).toEqual(['index.js']);
+        expect(readdirSync(resolve(bundledPackageDir, 'dist'))).toEqual(['index.js']);
+        expect(readFileSync(resolve(workspacePackageDir, relativeArtifactPath), 'utf8')).toBe(
+          changedArtifactBytes,
+        );
+        expect(readFileSync(resolve(bundledPackageDir, relativeArtifactPath), 'utf8')).toBe(
+          changedArtifactBytes,
+        );
+        expect(readFileSync(generatedInventoryPath, 'utf8')).toContain(
+          `"relativePath": "${relativeArtifactPath}"`,
+        );
+        throw new Error(`Generated output differs: ${generatedInventoryPath}`);
+      });
+
+      let launchSpec: Awaited<ReturnType<typeof resolveCliTestLaunchSpec>> | undefined;
+      let error: unknown;
+      try {
+        launchSpec = await resolveCliTestLaunchSpec(
+          {
+            testDir: resolve(repoRoot, '.project'),
+            env: {
+              ...process.env,
+              HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+              HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
+            },
+          },
+          {
+            repoRoot,
+            snapshotDir,
+            runCommand,
+          },
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect({
+        error: error instanceof Error ? error.message : null,
+        launchSpecReturned: launchSpec !== undefined,
+        publishedSnapshotDirs: readdirSync(repoRoot).filter((name) =>
+          name.startsWith('cli-source-snapshot-source-')),
+        canonicalCheckCalls: runCommand.mock.calls.length,
+      }).toEqual({
+        error: expect.stringContaining('Generated output differs'),
+        launchSpecReturned: false,
+        publishedSnapshotDirs: [],
+        canonicalCheckCalls: 1,
+      });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -438,7 +748,7 @@ describe('resolveCliTestLaunchSpec', () => {
       expect(sharedDepsBuildMock.ensureCliSharedDepsBuilt).toHaveBeenCalledTimes(1);
       expect(sharedDepsBuildMock.ensureCliSourceDevSharedDepsCurrent).toHaveBeenCalledTimes(1);
       expect(
-        readdirSync(repoRoot).filter((name) => name.startsWith('snapshot-source-')),
+        readdirSync(repoRoot).filter((name) => name.startsWith('cli-source-snapshot-source-')),
       ).toEqual([]);
     } finally {
       sharedDepsBuildMock.ensureCliSourceDevSharedDepsCurrent.mockReset();
@@ -501,7 +811,7 @@ describe('resolveCliTestLaunchSpec', () => {
       expect(sharedDepsBuildMock.ensureCliSharedDepsBuilt).toHaveBeenCalledTimes(1);
       expect(sharedDepsBuildMock.ensureCliSourceDevSharedDepsCurrent).toHaveBeenCalledTimes(1);
       expect(
-        readdirSync(repoRoot).filter((name) => name.startsWith('snapshot-source-')),
+        readdirSync(repoRoot).filter((name) => name.startsWith('cli-source-snapshot-source-')),
       ).toEqual([]);
     } finally {
       sharedDepsBuildMock.ensureCliSourceDevSharedDepsCurrent.mockReset();
@@ -512,7 +822,7 @@ describe('resolveCliTestLaunchSpec', () => {
 
   it('waits for an active workspace writer before publishing a skip-build copy snapshot', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-skip-'));
-    const snapshotDir = resolve(repoRoot, 'snapshot');
+    const snapshotDir = resolve(repoRoot, 'caller-selected-currentness-snapshot');
     const buildLockPath = resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
     const buildLockContents = JSON.stringify({
       pid: process.pid,
@@ -586,13 +896,14 @@ describe('resolveCliTestLaunchSpec', () => {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 30));
       expect(settled).toBe(false);
       expect(
-        readdirSync(dirname(snapshotDir)).filter((name) => name.startsWith('snapshot-source-')),
+        readdirSync(dirname(snapshotDir)).filter((name) => name.startsWith('cli-source-snapshot-source-')),
       ).toEqual([]);
 
       rmSync(buildLockPath, { force: true });
       const spec = await specPromise;
 
       const publishedSnapshotDir = resolveSourceSnapshotDir(spec);
+      expectCanonicalPublishedSourceSnapshotDir(publishedSnapshotDir, snapshotDir);
       expect(sharedDepsBuildMock.ensureCliSharedDepsBuilt).toHaveBeenCalledTimes(1);
       expect(sharedDepsBuildMock.ensureCliSharedDepsBuilt).toHaveBeenCalledWith(
         expect.objectContaining({

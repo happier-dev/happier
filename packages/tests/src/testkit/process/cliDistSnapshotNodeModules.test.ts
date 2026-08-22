@@ -1,10 +1,14 @@
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ensureCliDistSnapshotNodeModules, ensureCliPackSnapshotRuntimeDependencies } from './cliDistSnapshotNodeModules';
+import {
+  ensureCliDistSnapshotNodeModules,
+  ensureCliPackSnapshotRuntimeDependencies,
+  hasCliDistSnapshotFirstPartyCopyClosure,
+} from './cliDistSnapshotNodeModules';
 
 const createdDirs: string[] = [];
 
@@ -50,6 +54,129 @@ describe('ensureCliDistSnapshotNodeModules', () => {
     );
 
     expect(readFileSync(snapshotFile, 'utf8')).toContain('initial');
+  });
+
+  it('copies and verifies generated nested bundled runtime chunks', () => {
+    const rootDir = createRepoRoot();
+    const sourceChunk = join(
+      rootDir,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'plugins-codex',
+      'dist',
+      '.happier-chunks',
+      'runtime.js',
+    );
+    const chunkBytes = 'export const generatedChunk = true;\n';
+    const sourceRuntimeMetadata = join(
+      rootDir,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'plugins-codex',
+      'dist',
+      '.runtime-metadata',
+      'manifest.json',
+    );
+    const runtimeMetadataBytes = '{"generated":true}\n';
+    mkdirSync(resolve(sourceChunk, '..'), { recursive: true });
+    mkdirSync(resolve(sourceRuntimeMetadata, '..'), { recursive: true });
+    mkdirSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '.pnpm', 'metadata'),
+      { recursive: true },
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-codex', 'package.json'),
+      '{"name":"@happier-dev/plugins-codex"}',
+      'utf8',
+    );
+    writeFileSync(sourceChunk, chunkBytes, 'utf8');
+    writeFileSync(sourceRuntimeMetadata, runtimeMetadataBytes, 'utf8');
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '.pnpm', 'metadata', 'state.json'),
+      '{}',
+      'utf8',
+    );
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-generated-chunks-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    const snapshotChunk = join(
+      snapshotDir,
+      'node_modules',
+      '@happier-dev',
+      'plugins-codex',
+      'dist',
+      '.happier-chunks',
+      'runtime.js',
+    );
+    expect(readFileSync(snapshotChunk, 'utf8')).toBe(chunkBytes);
+    expect(readFileSync(join(
+      snapshotDir,
+      'node_modules',
+      '@happier-dev',
+      'plugins-codex',
+      'dist',
+      '.runtime-metadata',
+      'manifest.json',
+    ), 'utf8')).toBe(runtimeMetadataBytes);
+    expect(existsSync(join(snapshotDir, 'node_modules', '.pnpm'))).toBe(false);
+    expect(hasCliDistSnapshotFirstPartyCopyClosure({ snapshotDir, rootDir })).toBe(true);
+
+    unlinkSync(snapshotChunk);
+    expect(hasCliDistSnapshotFirstPartyCopyClosure({ snapshotDir, rootDir })).toBe(false);
+  });
+
+  it('copies only declared CLI runtime dependencies into bundled-only snapshots', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-runtime-only-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev'), { recursive: true });
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', 'runtime-only'), { recursive: true });
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', 'development-only'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { 'runtime-only': '1.0.0' },
+        devDependencies: { 'development-only': '1.0.0' },
+      }),
+      'utf8',
+    );
+    for (const packageName of ['runtime-only', 'development-only']) {
+      writeFileSync(
+        join(rootDir, 'apps', 'cli', 'node_modules', packageName, 'package.json'),
+        JSON.stringify({ name: packageName, version: '1.0.0', main: 'index.js' }),
+        'utf8',
+      );
+      writeFileSync(
+        join(rootDir, 'apps', 'cli', 'node_modules', packageName, 'index.js'),
+        `export const packageName = ${JSON.stringify(packageName)};\n`,
+        'utf8',
+      );
+    }
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-runtime-only-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({
+      snapshotDir,
+      snapshotDistDir,
+      rootDir,
+      firstPartyClosureMode: 'bundled-only',
+    });
+
+    expect(existsSync(join(snapshotDir, 'node_modules', 'runtime-only', 'index.js'))).toBe(true);
+    expect(existsSync(join(snapshotDir, 'node_modules', 'development-only'))).toBe(false);
   });
 
   it('preserves the canonical bundled package manifest instead of replacing it with workspace authoring metadata', () => {

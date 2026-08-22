@@ -3,55 +3,31 @@ import type {
   PackedManagedProviderScenarioDependencies,
 } from '../../scripts/plugin-platform/run-packed-managed-provider.mjs';
 
-type CleanupObservation = Readonly<{
-  agentCapabilityAbsent: boolean;
-  managedCapabilityAbsent: boolean;
-  providerMaterializationAbsent: boolean;
-  sessionMarkerAbsent: boolean;
-  wrapperStopped: boolean;
-  wrapperPidExited: boolean;
-}>;
-
 export type PackedManagedProviderWrapperObservation = Readonly<{
-  buildVersion: string;
-  contractVersion: string;
-  sdkVersion: string;
-  materializationId: string;
-  protocolCount: number;
-  purposeCount: number;
-  modelListEnabled: boolean;
-  readinessIdentityMatched: boolean;
-  healthStatus: number;
-  modelStatus: number;
-  managementStatus: number;
-  preactivationStatus: number;
-  capabilityFileCreated: boolean;
-  requestAuthRequests: number;
-  upstreamRequests: number;
+  publicActivationReasons: readonly ('explicitStartLocal' | 'catalogProbe')[];
+  explicitStartContributionKey: string;
+  explicitStartPhase: 'detecting' | 'running';
+  catalogConnectionId: string;
+  catalogModelIds: readonly string[];
+  catalogRequestFingerprint: string;
+  catalogOwnerReleased: boolean;
+  publicObservationContainsCredential: boolean;
+  providerAttemptedBeforeSessionDemand: boolean;
   credentialSentinelObserved: boolean;
-  runtimeEntriesAfterStop: readonly string[];
-  wrapperStopped: boolean;
 }>;
 
 export type PackedManagedProviderFreshSpawnObservation = Readonly<{
+  publicActivationReason: 'sessionDemand';
   spawnRequestIncludedSessionId: boolean;
   returnedSessionId: string;
-  markerSessionId: string;
-  wrapperReadyBeforeCanonicalSession: boolean;
-  capabilityPresentBeforeCanonicalSession: boolean;
-  agentCapabilityPresentBeforeCanonicalSession: boolean;
-  requestAuthRequestsBeforeCanonicalSession: number;
+  publicSessionId: string;
   upstreamRequestsBeforeCanonicalSession: number;
   managedPurpose: string;
   agentPurpose: string;
-  managedCapabilityScopeDigest: string;
-  agentCapabilityScopeDigest: string;
+  connectionRevision: number;
   credentialRevision: string;
-  leaseCredentialRevision: string;
-  managedLeaseAccessTokenFingerprint: string;
   upstreamAuthorizationFingerprint: string;
   managedRequestAuthOrigin: string;
-  managedConnectionSecurityFingerprint: string;
   upstreamConnectTarget: string;
   currentAccessTokenFingerprint: string;
   promptSentinelObserved: boolean;
@@ -59,35 +35,29 @@ export type PackedManagedProviderFreshSpawnObservation = Readonly<{
   timeline: Readonly<{
     freshSpawnStartedAtMs: number;
     canonicalSessionRegisteredAtMs: number;
-    canonicalWebhookAcknowledgedAtMs: number;
-    capabilitiesActivatedAtMs: number;
     spawnAcknowledgedAtMs: number;
-    agentRequestAuthLookupAtMs: number;
-    agentRequestAuthLookupCompletedAtMs: number;
-    managedRequestAuthLookupAtMs: number;
-    managedRequestAuthLookupCompletedAtMs: number;
     providerAttemptAtMs: number;
   }>;
   observedPorts: Readonly<{
     server: number;
     serverProxy: number;
     daemon: number;
-    brokerProxy: number;
     upstreamProxy: number;
-    wrapper: number;
   }>;
   stockPortRequestCount: number;
   stockPortOsConnectionAttemptCount: number;
   stockListenerIdentityBefore: string;
   stockListenerIdentityAfter: string;
-  wrapperHealthStatus: number;
-  wrapperAliveAfterSpawnAcknowledgement: boolean;
-  providerMaterializationPresentAfterSpawnAcknowledgement: boolean;
-  sessionMarkerPresentAfterSpawnAcknowledgement: boolean;
-  cleanup: CleanupObservation;
+  providerProcess: Readonly<{
+    pid: number;
+    executablePath: string;
+    executableMatchedCandidate: boolean;
+  }>;
+  providerProcessCountForSessionDemand: number;
 }>;
 
 export type PackedManagedProviderActivationFailureObservation = Readonly<{
+  publicActivationReason: 'sessionDemand';
   activationRefused: boolean;
   spawnAcknowledged: boolean;
   firstInputDispatched: boolean;
@@ -95,7 +65,12 @@ export type PackedManagedProviderActivationFailureObservation = Readonly<{
   stockPortOsConnectionAttemptCount: number;
   stockListenerIdentityBefore: string;
   stockListenerIdentityAfter: string;
-  cleanup: CleanupObservation;
+  cleanup: Readonly<{
+    failedSessionAbsent: boolean;
+    activeSessionAbsent: boolean;
+    sessionProviderExited: boolean;
+    noPostStopProviderAttempt: boolean;
+  }>;
 }>;
 
 export type PackedManagedProviderLiveSystem = Readonly<{
@@ -115,21 +90,6 @@ export type PackedManagedProviderLiveSystem = Readonly<{
 
 function assert(condition: unknown, code: string): asserts condition {
   if (!condition) throw new Error(code);
-}
-
-function assertCompleteCleanup(
-  cleanup: CleanupObservation,
-  context: string,
-): void {
-  assert(cleanup.agentCapabilityAbsent, `${context}_agent_capability_retained`);
-  assert(cleanup.managedCapabilityAbsent, `${context}_managed_capability_retained`);
-  assert(
-    cleanup.providerMaterializationAbsent,
-    `${context}_provider_materialization_retained`,
-  );
-  assert(cleanup.sessionMarkerAbsent, `${context}_session_marker_retained`);
-  assert(cleanup.wrapperStopped, `${context}_wrapper_running`);
-  assert(cleanup.wrapperPidExited, `${context}_wrapper_pid_alive`);
 }
 
 function createDefaultPackedManagedProviderLiveSystem():
@@ -161,92 +121,69 @@ export function createPackedManagedProviderLiveScenario(
     runPackagedWrapperConformance: async (input) => {
       const observed = await system.probePackagedWrapper(input);
       assert(
-        observed.buildVersion === input.prepared.candidate.cli.version,
-        'packed_managed_provider_wrapper_build_version_mismatch',
+        observed.publicActivationReasons.length === 2
+          && observed.publicActivationReasons[0] === 'explicitStartLocal'
+          && observed.publicActivationReasons[1] === 'catalogProbe',
+        'packed_managed_provider_public_activation_reasons_mismatch',
       );
       assert(
-        observed.contractVersion === 'happier.cliproxyapi-managed/v1'
-          && observed.sdkVersion === 'v7.2.95'
-          && observed.materializationId === 'packed-materialization'
-          && observed.protocolCount === 1
-          && observed.purposeCount === 1
-          && observed.modelListEnabled
-          && observed.readinessIdentityMatched,
-        'packed_managed_provider_wrapper_health_identity_mismatch',
-      );
-      assert(observed.healthStatus === 200, 'packed_managed_provider_wrapper_health_failed');
-      assert(
-        observed.modelStatus === 200,
-        'packed_managed_provider_wrapper_model_catalog_failed',
+        observed.explicitStartContributionKey
+          === 'happier.provider.cliproxyapi/cliproxyapi'
+          && observed.explicitStartPhase === 'running',
+        'packed_managed_provider_public_explicit_start_mismatch',
       );
       assert(
-        observed.managementStatus === 404,
-        'packed_managed_provider_wrapper_management_surface_exposed',
+        observed.catalogConnectionId.length > 0
+          && observed.catalogModelIds.includes('gpt-5.5')
+          && observed.catalogRequestFingerprint.length > 0
+          && observed.catalogOwnerReleased,
+        'packed_managed_provider_public_catalog_probe_mismatch',
       );
       assert(
-        observed.preactivationStatus >= 400,
-        'packed_managed_provider_wrapper_preactivation_request_succeeded',
-      );
-      assert(
-        !observed.capabilityFileCreated
-          && observed.requestAuthRequests === 0
-          && observed.upstreamRequests === 0
+        !observed.publicObservationContainsCredential
+          && !observed.providerAttemptedBeforeSessionDemand
           && !observed.credentialSentinelObserved,
-        'packed_managed_provider_wrapper_released_preactivation_authority',
-      );
-      assert(
-        observed.runtimeEntriesAfterStop.length === 0 && observed.wrapperStopped,
-        'packed_managed_provider_wrapper_cleanup_incomplete',
+        'packed_managed_provider_public_preactivation_boundary_failed',
       );
       return {
-        tokenFreeReadiness: true,
-        preActivationLookupRefused: true,
-        preActivationCredentialReleased: false,
-        preActivationUpstreamAttempted: false,
+        publicExplicitStart: true,
+        publicCatalogProbe: true,
+        catalogOwnerReleased: true,
+        publicCredentialLeakObserved: false,
+        providerAttemptedBeforeSessionDemand: false,
       };
     },
     runFreshManagedSequence: async (input) => {
       const observed = await system.probeFreshManagedSpawn(input);
       assert(
-        !observed.spawnRequestIncludedSessionId,
+        observed.publicActivationReason === 'sessionDemand'
+          && !observed.spawnRequestIncludedSessionId,
         'packed_managed_provider_fresh_spawn_preallocated_session_id',
       );
       assert(
         observed.returnedSessionId.length > 0
-          && observed.returnedSessionId === observed.markerSessionId,
+          && observed.returnedSessionId === observed.publicSessionId,
         'packed_managed_provider_canonical_session_identity_mismatch',
       );
       assert(
-        observed.wrapperReadyBeforeCanonicalSession
-          && !observed.capabilityPresentBeforeCanonicalSession
-          && !observed.agentCapabilityPresentBeforeCanonicalSession
-          && observed.requestAuthRequestsBeforeCanonicalSession === 0
-          && observed.upstreamRequestsBeforeCanonicalSession === 0,
+        observed.upstreamRequestsBeforeCanonicalSession === 0,
         'packed_managed_provider_preactivation_boundary_failed',
       );
       assert(
         observed.managedPurpose === 'openai-upstream'
           && observed.agentPurpose === 'openai-codex-model-request'
-          && /^[a-f0-9]{64}$/u.test(observed.managedCapabilityScopeDigest)
-          && /^[a-f0-9]{64}$/u.test(observed.agentCapabilityScopeDigest)
-          && observed.managedCapabilityScopeDigest
-            !== observed.agentCapabilityScopeDigest,
+          && Number.isInteger(observed.connectionRevision)
+          && observed.connectionRevision > 0,
         'packed_managed_provider_purpose_binding_failed',
       );
       assert(
-        observed.credentialRevision === observed.leaseCredentialRevision
-          && observed.managedLeaseAccessTokenFingerprint
-            === observed.currentAccessTokenFingerprint
-          && observed.upstreamAuthorizationFingerprint
+        observed.upstreamAuthorizationFingerprint
             === observed.currentAccessTokenFingerprint,
         'packed_managed_provider_stale_credential_revision',
       );
       assert(
         observed.promptSentinelObserved
           && observed.managedRequestAuthOrigin === 'https://chatgpt.com'
-          && /^connection-security:v1:[A-Za-z0-9_-]{43}$/u.test(
-            observed.managedConnectionSecurityFingerprint,
-          )
           && observed.upstreamConnectTarget === 'chatgpt.com:443'
           && observed.upstreamRequestPath
             .startsWith('/backend-api/codex/'),
@@ -267,27 +204,23 @@ export function createPackedManagedProviderLiveScenario(
         'packed_managed_provider_stock_port_touched',
       );
       assert(
-        observed.wrapperHealthStatus === 200
-          && observed.wrapperAliveAfterSpawnAcknowledgement
-          && observed.providerMaterializationPresentAfterSpawnAcknowledgement
-          && observed.sessionMarkerPresentAfterSpawnAcknowledgement,
-        'packed_managed_provider_live_resources_missing_after_ack',
+        observed.providerProcess.executableMatchedCandidate
+          && observed.providerProcess.pid > 0
+          && observed.providerProcess.executablePath.length > 0
+          && observed.providerProcessCountForSessionDemand === 1,
+        'packed_managed_provider_public_session_owner_mismatch',
       );
-      assertCompleteCleanup(observed.cleanup, 'packed_managed_provider_success_cleanup');
 
       return {
         freshSession: true,
         agentId: 'opencode',
-        canonicalSessionIdBeforeWebhook: null,
         canonicalSessionId: observed.returnedSessionId,
         purposes: [
           `happier.agent.opencode/opencode:${observed.agentPurpose}`,
           `happier.provider.cliproxyapi/cliproxyapi:${observed.managedPurpose}`,
         ],
-        capabilityScopeDigests: [
-          observed.agentCapabilityScopeDigest,
-          observed.managedCapabilityScopeDigest,
-        ],
+        publicActivationReason: observed.publicActivationReason,
+        connectionRevision: observed.connectionRevision,
         timeline: observed.timeline,
         observedPorts: observed.observedPorts,
         stockPortRequestCount: observed.stockPortRequestCount,
@@ -295,18 +228,11 @@ export function createPackedManagedProviderLiveScenario(
           observed.stockPortOsConnectionAttemptCount,
         stockListenerIdentityBefore: observed.stockListenerIdentityBefore,
         stockListenerIdentityAfter: observed.stockListenerIdentityAfter,
-        preActivationCredentialReleased: false,
-        preActivationUpstreamAttempted: false,
-        preActivationAgentCapabilityPresent:
-          observed.agentCapabilityPresentBeforeCanonicalSession,
-        managedLeaseCredentialRevision: observed.leaseCredentialRevision,
-        managedLeaseAccessTokenFingerprint:
-          observed.managedLeaseAccessTokenFingerprint,
+        preSessionDemandCredentialReleased: false,
+        preSessionDemandUpstreamAttempted: false,
         upstreamAuthorizationFingerprint:
           observed.upstreamAuthorizationFingerprint,
         managedRequestAuthOrigin: observed.managedRequestAuthOrigin,
-        managedConnectionSecurityFingerprint:
-          observed.managedConnectionSecurityFingerprint,
         upstreamConnectTarget: observed.upstreamConnectTarget,
         promptSentinelObserved: observed.promptSentinelObserved,
         upstreamRequestPath: observed.upstreamRequestPath,
@@ -334,17 +260,19 @@ export function createPackedManagedProviderLiveScenario(
             === observed.stockListenerIdentityBefore,
         'packed_managed_provider_activation_failure_stock_port_touched',
       );
-      assertCompleteCleanup(
-        observed.cleanup,
-        'packed_managed_provider_activation_failure_cleanup',
+      assert(
+        observed.cleanup.failedSessionAbsent
+          && observed.cleanup.activeSessionAbsent
+          && observed.cleanup.sessionProviderExited
+          && observed.cleanup.noPostStopProviderAttempt,
+        'packed_managed_provider_activation_failure_cleanup_incomplete',
       );
       return {
         activationFailedBeforeAck: true,
         firstInputDispatched: false,
         providerAttempted: false,
-        wrapperStopped: true,
-        capabilityRetired: true,
-        materializationRemoved: true,
+        publicSessionCleanupComplete: true,
+        sessionProviderExited: true,
       };
     },
     cleanup: async (input) => {

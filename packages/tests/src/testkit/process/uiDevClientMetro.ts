@@ -39,6 +39,7 @@ export function resolveUiDevClientMetroLaunchSpec(params: Readonly<{
   port: number;
   host: string;
   clearCache: boolean;
+  noDev?: boolean;
 }>): Readonly<{
   command: string;
   args: string[];
@@ -57,10 +58,17 @@ export function resolveUiDevClientMetroLaunchSpec(params: Readonly<{
       params.host,
       '--port',
       String(params.port),
+      ...(params.noDev ? ['--no-dev'] : []),
       ...(params.clearCache ? ['--clear'] : []),
     ],
     cwd: params.uiWorkspaceDir,
   };
+}
+
+function isTruthyEnv(value: unknown): boolean {
+  return ['1', 'true', 'yes', 'y', 'on'].includes(
+    String(value ?? '').trim().toLowerCase(),
+  );
 }
 
 export function resolveUiDevClientMetroProbeBaseUrl(params: Readonly<{
@@ -110,6 +118,10 @@ export async function startUiDevClientMetro(params: {
 
   const clearRaw = (params.env.HAPPIER_E2E_EXPO_CLEAR ?? '').toString().trim().toLowerCase();
   const clearCache = clearRaw === '1' || clearRaw === 'true' || clearRaw === 'yes' || clearRaw === 'y';
+  // Expo's --no-dev server mode removes HMR/Fast Refresh behavior. Keep it
+  // opt-in so ordinary candidate/mobile development runs retain their current
+  // dev-client semantics.
+  const noDev = isTruthyEnv(params.env.HAPPIER_E2E_EXPO_NO_DEV);
 
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
   const tmpDir = resolvePath(params.testDir, 'ui.dev-client.metro.tmp');
@@ -127,6 +139,7 @@ export async function startUiDevClientMetro(params: {
     port: metroPort,
     host: metroHost,
     clearCache,
+    noDev,
   });
   const proc = spawnLoggedProcess({
     ...launchSpec,

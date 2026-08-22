@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -7,10 +7,18 @@ import { readLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createRunDirs } from '../../src/testkit/runDir';
-import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
+import {
+  resolveTestDbProvider,
+  startServerLight,
+  type StartedServer,
+} from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
+import {
+  replaceTestDaemonWithoutStoppingSessions,
+  startTestDaemon,
+  type StartedDaemon,
+} from '../../src/testkit/daemon/daemon';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
@@ -22,6 +30,9 @@ import {
 } from '../../src/testkit/codexAppServerRemoteHarness';
 
 const run = createRunDirs({ runLabel: 'core' });
+const suiteDbProvider = resolveTestDbProvider(process.env, {
+  fallbackProvider: 'sqlite',
+});
 
 type JsonRecord = Record<string, unknown>;
 
@@ -103,20 +114,24 @@ async function writeStoppedCodexOwnerMarker(params: Readonly<{
 describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
+  let retiredDaemon: StartedDaemon | null = null;
 
   afterEach(async () => {
     await daemon?.stop().catch(() => {});
     daemon = null;
+    await retiredDaemon?.proc.stop().catch(() => {});
+    retiredDaemon = null;
     await server?.stop().catch(() => {});
     server = null;
   });
 
   afterAll(async () => {
     await daemon?.stop().catch(() => {});
+    await retiredDaemon?.proc.stop().catch(() => {});
     await server?.stop().catch(() => {});
   });
 
-  it('durably imports a linked Codex session before explicitly resuming the same vendor thread', async () => {
+  it('stays passive through a daemon restart after persisted import, then explicitly resumes the same vendor thread', async () => {
     const testDir = run.testDir('direct-sessions-codex-app-server-takeover-persist-continue');
     const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
     const codexHomeDir = resolve(join(testDir, '.codex'));
@@ -161,7 +176,7 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
 
     server = await startServerLight({
       testDir,
-      dbProvider: 'sqlite',
+      dbProvider: suiteDbProvider,
       extraEnv: {
         HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
       },
@@ -169,31 +184,31 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
 
-    const machineKey = Uint8Array.from(randomBytes(32));
-    const seeded = await seedCliDataKeyAuthForServer({
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      machineKey,
+      auth,
+      mode: 'dataKey',
     });
 
+    const daemonEnv = {
+      ...process.env,
+      CI: '1',
+      HAPPIER_HOME_DIR: daemonHomeDir,
+      HAPPIER_SERVER_URL: serverBaseUrl,
+      HAPPIER_WEBAPP_URL: serverBaseUrl,
+      HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+      CODEX_HOME: codexHomeDir,
+      HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
+      HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+      HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+      HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
+    };
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
-      env: {
-        ...process.env,
-        CI: '1',
-        HAPPIER_HOME_DIR: daemonHomeDir,
-        HAPPIER_SERVER_URL: serverBaseUrl,
-        HAPPIER_WEBAPP_URL: serverBaseUrl,
-        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
-        CODEX_HOME: codexHomeDir,
-        HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
-        HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000',
-        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-        HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
-        HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
-      },
+      env: daemonEnv,
     });
 
     const ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
@@ -204,7 +219,7 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
     });
 
     try {
-      const machineRpc = createDataKeyRpcClient(ui, machineKey);
+      const machineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
       const route = (method: string): string => `${seeded.machineId}:${method}`;
 
       let link: Awaited<ReturnType<typeof machineRpc.call>> | null = null;
@@ -265,7 +280,7 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
         baseUrl: serverBaseUrl,
         token: auth.token,
         sessionId,
-        machineKeys: [machineKey],
+        machineKeys: [auth.accountMachineKey],
       });
       const linked = readLinkedExternalSessionV1FromMetadata(linkedMetadata);
       if (!linked?.qualifiedIdentity) {
@@ -328,7 +343,7 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
         baseUrl: serverBaseUrl,
         token: auth.token,
         sessionId,
-        machineKeys: [machineKey],
+        machineKeys: [auth.accountMachineKey],
       });
       expect(publishedBeforeResume.externalSessionOperationV1).toEqual({
         v: 1,
@@ -362,6 +377,61 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
       expect(importRevision).toBeGreaterThan(startRevision);
       expect((await readFakeCodexAppServerRequestLog(appServerRequestLogPath))
         .filter((entry) => entry.method === 'thread/resume')).toEqual([]);
+
+      // This is deliberately after the persisted-takeover import → admission
+      // transition: the operation is now durable but non-terminal, so boot must
+      // hydrate it without reading or resuming the native Codex thread.
+      const appServerRequestsBeforeRestart = await readFakeCodexAppServerRequestLog(
+        appServerRequestLogPath,
+      );
+      const originalDaemon = daemon;
+      if (!originalDaemon) throw new Error('Expected running daemon before persisted takeover restart.');
+      const originalDaemonPid = originalDaemon.state.pid;
+      const replacement = await replaceTestDaemonWithoutStoppingSessions({
+        testDir,
+        happyHomeDir: daemonHomeDir,
+        env: daemonEnv,
+        originalDaemon,
+      });
+      retiredDaemon = originalDaemon;
+      daemon = replacement;
+      expect(replacement.state.pid).not.toBe(originalDaemonPid);
+
+      let recoveredStatus: JsonRecord | null = null;
+      await waitFor(async () => {
+        try {
+          const statusAfterRestart = requireRecord(
+            unwrapDataKeyRpcResult(await machineRpc.call(
+              route(RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET),
+              { sessionId, operationId, revision: importRevision },
+            ), 'Codex takeover status after daemon restart'),
+            'Codex takeover status after daemon restart',
+          );
+          const progressAfterRestart = requireRecord(
+            statusAfterRestart.progress,
+            'Codex takeover progress after daemon restart',
+          );
+          if (
+            statusAfterRestart.ok === true
+            && progressAfterRestart.operationId === operationId
+            && progressAfterRestart.revision === importRevision
+            && progressAfterRestart.status === 'awaiting_user_resume'
+            && progressAfterRestart.phase === 'admitting'
+          ) {
+            recoveredStatus = statusAfterRestart;
+            return true;
+          }
+        } catch {
+          // The replacement daemon may not have reconnected to the machine RPC route yet.
+        }
+        return false;
+      }, {
+        timeoutMs: 60_000,
+        context: 'persisted takeover admission checkpoint hydrates after daemon restart',
+      });
+      expect(recoveredStatus).toEqual(importResumeResult);
+      expect(await readFakeCodexAppServerRequestLog(appServerRequestLogPath))
+        .toEqual(appServerRequestsBeforeRestart);
 
       const admissionResume = await machineRpc.call(
         route(RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME),
@@ -414,7 +484,7 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
         baseUrl: serverBaseUrl,
         token: auth.token,
         sessionId,
-        machineKeys: [machineKey],
+        machineKeys: [auth.accountMachineKey],
       });
       expect(hostedMetadata.externalSessionV1).toBeUndefined();
       expect(hostedMetadata.externalSessionOperationV1).toEqual({
@@ -451,5 +521,5 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
     } finally {
       ui.close();
     }
-  }, 240_000);
+  }, 300_000);
 });

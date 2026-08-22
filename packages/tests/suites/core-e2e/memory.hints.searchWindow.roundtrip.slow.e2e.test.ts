@@ -15,7 +15,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createTestAuth } from '../../src/testkit/auth';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { createSession } from '../../src/testkit/sessions';
 import {
@@ -46,7 +46,7 @@ describe('core e2e: memory hints search + window roundtrip', () => {
     await mkdir(daemonHomeDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    const seeded = await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+    const seeded = await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));

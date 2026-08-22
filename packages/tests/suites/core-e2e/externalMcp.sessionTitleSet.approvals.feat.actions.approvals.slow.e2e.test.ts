@@ -10,7 +10,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { createSessionWithCiphertexts, fetchSessionV2 } from '../../src/testkit/sessions';
 import { repoRootDir } from '../../src/testkit/paths';
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 
@@ -98,7 +98,7 @@ async function createScenario(): Promise<{
   await mkdir(workspaceDir, { recursive: true });
 
   const secret = Uint8Array.from(randomBytes(32));
-  await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
+  await seedCliAuthForTestAccount({ cliHome, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
   await upsertEncryptedAccountSettingsV2({
     baseUrl: serverBaseUrl,

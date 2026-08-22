@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
+  PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS,
   PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS,
   assertPackedManagedStandaloneCliArchiveIdentity,
+  buildPackedManagedProviderEntrypointInvocation,
   buildPackedManagedProviderRecipe,
   parsePackedManagedProviderArgs,
   resolvePackedManagedWrapperExecutable,
+  runPackedChannelProviderVertical,
   runPackedManagedProviderVertical,
 } from './run-packed-managed-provider.mjs';
 
@@ -18,6 +23,19 @@ const candidate = Object.freeze({
     version: '0.0.0',
     integrity: 'sha512-sdk',
     tarballPath: '/candidate/sdk.tgz',
+  }),
+  pluginUi: Object.freeze({
+    packageName: '@happier-dev/plugin-ui',
+    version: '0.0.0',
+    pluginSdkVersion: '0.0.0',
+    integrity: 'sha512-plugin-ui',
+    tarballPath: '/candidate/plugin-ui.tgz',
+  }),
+  channelsProtocol: Object.freeze({
+    packageName: '@happier-dev/channels-protocol',
+    version: '0.0.0',
+    integrity: 'sha512-Y2hhbm5lbHMtcHJvdG9jb2w=',
+    tarballPath: '/candidate/channels-protocol.tgz',
   }),
   cli: Object.freeze({
     packageName: '@happier-dev/cli',
@@ -57,9 +75,9 @@ const standaloneCliArtifact = Object.freeze({
   executablePath: '/isolated/standalone/happier-v0.2.10-darwin-arm64/happier',
 });
 
-function exactPreparation() {
+function exactPreparation(candidateInput = candidate) {
   return Object.freeze({
-    candidate,
+    candidate: candidateInput,
     standaloneCliArtifact,
     cliLaunchSpec: Object.freeze({
       command: standaloneCliArtifact.executablePath,
@@ -79,49 +97,33 @@ function managedSequenceEvidence(overrides = {}) {
   return Object.freeze({
     freshSession: true,
     agentId: 'opencode',
-    canonicalSessionIdBeforeWebhook: null,
     canonicalSessionId: 'session-canonical-a',
+    publicActivationReason: 'sessionDemand',
+    connectionRevision: 3,
     purposes: Object.freeze([
       'happier.agent.opencode/opencode:openai-codex-model-request',
       'happier.provider.cliproxyapi/cliproxyapi:openai-upstream',
     ]),
-    capabilityScopeDigests: Object.freeze([
-      'a'.repeat(64),
-      'b'.repeat(64),
-    ]),
     timeline: Object.freeze({
       freshSpawnStartedAtMs: 1,
       canonicalSessionRegisteredAtMs: 2,
-      capabilitiesActivatedAtMs: 2,
-      canonicalWebhookAcknowledgedAtMs: 3,
       spawnAcknowledgedAtMs: 4,
-      agentRequestAuthLookupAtMs: 5,
-      agentRequestAuthLookupCompletedAtMs: 6,
-      managedRequestAuthLookupAtMs: 7,
-      managedRequestAuthLookupCompletedAtMs: 8,
       providerAttemptAtMs: 9,
     }),
     observedPorts: Object.freeze({
       server: 41001,
       serverProxy: 41002,
       daemon: 41003,
-      brokerProxy: 41004,
       upstreamProxy: 41005,
-      wrapper: 41006,
     }),
     stockPortRequestCount: 0,
     stockPortOsConnectionAttemptCount: 0,
     stockListenerIdentityBefore: `sha256:${'e'.repeat(64)}`,
     stockListenerIdentityAfter: `sha256:${'e'.repeat(64)}`,
-    preActivationCredentialReleased: false,
-    preActivationUpstreamAttempted: false,
-    preActivationAgentCapabilityPresent: false,
-    managedLeaseCredentialRevision: 'revision-current',
-    managedLeaseAccessTokenFingerprint: `sha256:${'c'.repeat(64)}`,
+    preSessionDemandCredentialReleased: false,
+    preSessionDemandUpstreamAttempted: false,
     upstreamAuthorizationFingerprint: `sha256:${'c'.repeat(64)}`,
     managedRequestAuthOrigin: 'https://chatgpt.com',
-    managedConnectionSecurityFingerprint:
-      `connection-security:v1:${'d'.repeat(43)}`,
     upstreamConnectTarget: 'chatgpt.com:443',
     promptSentinelObserved: true,
     upstreamRequestPath: '/backend-api/codex/responses',
@@ -143,10 +145,11 @@ function dependencies(overrides = {}) {
       runPackagedWrapperConformance: async () => {
         events.push('wrapper-conformance');
         return {
-          tokenFreeReadiness: true,
-          preActivationLookupRefused: true,
-          preActivationCredentialReleased: false,
-          preActivationUpstreamAttempted: false,
+          publicExplicitStart: true,
+          publicCatalogProbe: true,
+          catalogOwnerReleased: true,
+          publicCredentialLeakObserved: false,
+          providerAttemptedBeforeSessionDemand: false,
         };
       },
       runFreshManagedSequence: async () => {
@@ -159,9 +162,8 @@ function dependencies(overrides = {}) {
           activationFailedBeforeAck: true,
           firstInputDispatched: false,
           providerAttempted: false,
-          wrapperStopped: true,
-          capabilityRetired: true,
-          materializationRemoved: true,
+          publicSessionCleanupComplete: true,
+          sessionProviderExited: true,
         };
       },
       cleanup: async () => {
@@ -187,10 +189,343 @@ test('prints a candidate-free dry-run recipe with the exact future command and i
   assert.equal(recipe.inputs.candidateManifest.includes('one run'), true);
   assert.equal(recipe.inputs.standaloneCliArtifact.includes('candidate-manifest-bound'), true);
   assert.deepEqual(recipe.requiredStageIds, PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS);
+  assert.deepEqual(
+    recipe.candidateHandoffStageIds,
+    PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
+  );
+  assert.deepEqual(recipe.candidateHandoffStageIds, [
+    'candidate-external-agent-provider-author',
+    'candidate-external-agent-provider-pack',
+    'candidate-external-agent-provider-reviewed-install',
+    'candidate-generation-handoff',
+    'candidate-exactly-once-turns',
+    'candidate-provider-hard-revoke',
+    'candidate-handoff-cleanup',
+  ]);
+  assert.match(recipe.resources.externalAuthoring, /exact candidate SDK and CLI/u);
   assert.equal(recipe.resources.stockCliProxyApiPort, 8317);
   assert.equal(recipe.resources.stockCliProxyApiPolicy, 'must-not-connect-or-mutate');
   assert.equal(recipe.resources.cliSourceFallback, false);
   assert.equal(recipe.resources.dynamicPortsOnly, true);
+  assert.deepEqual(recipe.environment.required, [
+    'HAPPIER_FEATURE_PROVIDERS__ENABLED=1',
+    'HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED=0',
+  ]);
+  assert.equal(
+    recipe.environment.required.includes(
+      'HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED=1',
+    ),
+    false,
+  );
+});
+
+test('dispatches the current-source External Sessions packed proof without candidate or native archive inputs', () => {
+  const parsed = parsePackedManagedProviderArgs(['--current-source']);
+
+  assert.deepEqual(parsed, {
+    mode: 'current-source',
+    candidateManifestPath: null,
+  });
+
+  const invocation = buildPackedManagedProviderEntrypointInvocation({
+    packageRoot: '/repo/packages/tests',
+    parsed,
+  });
+  assert.equal(invocation.command, process.execPath);
+  assert.deepEqual(invocation.args, [
+    '/repo/packages/tests/scripts/runTsxEntrypoint.mjs',
+    'src/plugin-platform/runPackedManagedProviderContinuity.ts',
+    '--current-source',
+  ]);
+  assert.equal(invocation.args.includes('--candidate'), false);
+
+  assert.throws(
+    () => parsePackedManagedProviderArgs([
+      '--current-source',
+      '--candidate',
+      '/candidate/manifest.json',
+    ]),
+    /packed_managed_provider_current_source_must_be_candidate_free/u,
+  );
+});
+
+test('explicitly disables the separate Local Services product in every packed Provider launcher', () => {
+  const harnessSources = [
+    './run-packed-managed-provider.mjs',
+    '../../src/plugin-platform/runPackedManagedProviderVertical.ts',
+    '../../src/plugin-platform/packedManagedProviderComposedRuntime.ts',
+  ];
+  const positiveInjection =
+    /HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED\s*(?:=|:)\s*['"]?(?:1|true)/iu;
+  const disabledInjection =
+    /HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED\s*(?:=|:)\s*['"]?(?:0|false)/iu;
+
+  assert.deepEqual(
+    harnessSources.flatMap((path) => (
+      positiveInjection.test(readFileSync(new URL(path, import.meta.url), 'utf8'))
+        ? [path]
+        : []
+    )),
+    [],
+  );
+  assert.deepEqual(
+    harnessSources.flatMap((path) => (
+      disabledInjection.test(readFileSync(new URL(path, import.meta.url), 'utf8'))
+        ? [path]
+        : []
+    )),
+    harnessSources,
+  );
+});
+
+test('registers a packed external-session observation contribution with an observe-resource descriptor', () => {
+  const harnessSource = readFileSync(
+    new URL('../../src/plugin-platform/packedManagedProviderComposedRuntime.ts', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    harnessSource,
+    /AgentExternalSessionObservationContribution/u,
+  );
+  assert.match(
+    harnessSource,
+    /export const externalSessionObservation = \{/u,
+  );
+  assert.match(
+    harnessSource,
+    /if \(request\.purpose === 'resource_descriptors'\) \{[\s\S]{0,4000}?kind: 'described' as const,[\s\S]{0,1000}?changeObservation: 'observe_resource' as const,/u,
+  );
+  assert.match(
+    harnessSource,
+    /request\.requestTranscriptRefresh\(packedExternalSessionObservationLinkKeyForResource\(request\.resourceKey\)\);/u,
+  );
+  assert.match(
+    harnessSource,
+    /import \{ createPackedAgentRuntime, externalSessions, externalSessionObservation, packedAgentGeneration \} from '\.\/agentRuntime\.js';/u,
+  );
+  const externalSessionsRegistration = harnessSource.indexOf(
+    "'      externalSessions,'",
+  );
+  const observationRegistration = harnessSource.indexOf(
+    "'      externalSessionObservation,'",
+  );
+  const providerBindingRegistration = harnessSource.indexOf(
+    "'      providerBinding,'",
+  );
+  assert.ok(externalSessionsRegistration >= 0, 'the Agent keeps its External Sessions facet');
+  assert.ok(
+    observationRegistration > externalSessionsRegistration,
+    'the observation facet is registered beside External Sessions',
+  );
+  assert.ok(
+    providerBindingRegistration > observationRegistration,
+    'the existing Provider binding remains after observation registration',
+  );
+});
+
+test('uses one packed Agent declaration for the manifest, runtime facets, and packedCandidate source', () => {
+  const harnessSource = readFileSync(
+    new URL('../../src/plugin-platform/packedManagedProviderComposedRuntime.ts', import.meta.url),
+    'utf8',
+  );
+  const declarationStart = harnessSource.indexOf(
+    'const candidateHandoffAgentDeclaration = Object.freeze({',
+  );
+  const declarationEnd = harnessSource.indexOf('\n});', declarationStart);
+
+  assert.ok(declarationStart >= 0, 'the packed Agent has one declaration owner');
+  assert.ok(declarationEnd > declarationStart, 'the packed Agent declaration is bounded');
+  const declaration = harnessSource.slice(declarationStart, declarationEnd);
+  assert.match(
+    declaration,
+    /surfaces: \['terminal', 'externalSessions'\]/u,
+  );
+  assert.match(
+    declaration,
+    /externalLinkedTakeover: \{ writerSafety: 'native_prevention' \}/u,
+  );
+  assert.equal(
+    (declaration.match(/sourceKind: 'packedCandidate'/gu) ?? []).length,
+    1,
+    'the declaration has exactly one packedCandidate source',
+  );
+  assert.match(
+    declaration,
+    /\{ kind: 'string', name: 'scope', min: 1, max: 256, nullish: true \}/u,
+  );
+  assert.match(
+    declaration,
+    /key:\s*\{\s*segments:\s*\[\s*\{ kind: 'literal', value: 'packedCandidate' \},\s*\{ kind: 'field', field: 'scope' \},\s*\],\s*\},/u,
+  );
+  assert.match(
+    harnessSource,
+    /agents: \[\{\s*id: CANDIDATE_HANDOFF_AGENT_ID,\s*\.\.\.candidateHandoffAgentDeclaration,\s*\}\]/u,
+  );
+  assert.equal(
+    harnessSource.includes(
+      '`      declaration: ${JSON.stringify(candidateHandoffAgentDeclaration)},`,',
+    ),
+    true,
+    'the generated definePlugin declaration uses the same data-only owner',
+  );
+  assert.equal(
+    harnessSource.includes("'      externalSessions,'")
+      && harnessSource.includes("'      externalSessionObservation,'"),
+    true,
+    'the public runtime facets match the declared External Sessions surface',
+  );
+});
+
+test('uses the canonical external-session background-follow Action and proves its disabled cleanup', () => {
+  const harnessSource = readFileSync(
+    new URL('../../src/plugin-platform/packedManagedProviderComposedRuntime.ts', import.meta.url),
+    'utf8',
+  );
+  const attachedMarker =
+    'const attached = await context.services.sessions.external.attach(publicRef);';
+  const enabledMarker =
+    "sessions.external.backgroundFollow.set', { sessionId: attached.sessionId, enabled: true }";
+  const disabledMarker =
+    "sessions.external.backgroundFollow.set', { sessionId: attached.sessionId, enabled: false }";
+  const takeoverMarker =
+    'const takeover = await context.services.sessions.external.takeover(publicRef,';
+  const attachedIndex = harnessSource.indexOf(attachedMarker);
+  const enabledIndex = harnessSource.indexOf(enabledMarker);
+  const disabledIndex = harnessSource.indexOf(disabledMarker);
+  const takeoverIndex = harnessSource.indexOf(takeoverMarker);
+
+  assert.ok(attachedIndex >= 0, 'the H public phase attaches the external Session');
+  assert.ok(enabledIndex > attachedIndex, 'background follow is enabled after attachment');
+  assert.ok(disabledIndex > enabledIndex, 'background follow is disabled after it is enabled');
+  assert.ok(takeoverIndex > disabledIndex, 'takeover happens after the cleanup assertion');
+  const backgroundFollowSource = harnessSource.slice(attachedIndex, takeoverIndex);
+  assert.match(
+    backgroundFollowSource,
+    /let backgroundFollowEnableFailed = false;[\s\S]*?try \{[\s\S]*?const backgroundFollowEnabledResult = await context\.services\.actions\.execute\('sessions\.external\.backgroundFollow\.set', \{ sessionId: attached\.sessionId, enabled: true \}\);[\s\S]*?backgroundFollowEnabled = backgroundFollowEnabledResult;[\s\S]*?\} catch \(error\) \{[\s\S]*?backgroundFollowEnableFailed = true;[\s\S]*?backgroundFollowPrimaryFailure = error;[\s\S]*?\} finally \{[\s\S]*?const backgroundFollowDisabledResult = await context\.services\.actions\.execute\('sessions\.external\.backgroundFollow\.set', \{ sessionId: attached\.sessionId, enabled: false \}\);[\s\S]*?backgroundFollowDisabled = backgroundFollowDisabledResult;[\s\S]*?if \(!backgroundFollowDisabledResult\.ok \|\| backgroundFollowDisabledResult\.enabled !== false \|\| backgroundFollowDisabledResult\.leaseActive !== false\) throw new Error\('packed_external_background_follow_disable_invalid'\);/u,
+  );
+  assert.match(
+    backgroundFollowSource,
+    /if \(backgroundFollowEnableFailed\) \{[\s\S]*?throw new AggregateError\(\[backgroundFollowPrimaryFailure, cleanupError\], 'packed_external_background_follow_enable_and_cleanup_failed'\);[\s\S]*?\}[\s\S]*?throw cleanupError;[\s\S]*?if \(backgroundFollowEnableFailed\) throw backgroundFollowPrimaryFailure;/u,
+  );
+  assert.equal(
+    (backgroundFollowSource.match(/sessions\.external\.backgroundFollow\.set', \{ sessionId: attached\.sessionId, enabled: false \}/gu) ?? []).length,
+    1,
+    'the existing Action has one unconditional cleanup invocation',
+  );
+  assert.match(
+    harnessSource,
+    /PLUGIN_ACTION_OUTPUT_SCHEMAS\[\s*'sessions\.external\.backgroundFollow\.set'\s*\]\.safeParse\(value\)/u,
+  );
+  assert.match(
+    harnessSource,
+    /isRecord\(parsed\.data\)\s*&&\s*parsed\.data\.ok === true\s*&&\s*parsed\.data\.enabled === expectedEnabled\s*&&\s*parsed\.data\.leaseActive === expectedEnabled/u,
+  );
+  assert.match(
+    harnessSource,
+    /backgroundFollowEnabled:\s*isPackedCandidateBackgroundFollowActionResult\(\s*externalSessionsHPhase\.backgroundFollowEnabled,\s*true,\s*\)/u,
+  );
+  assert.match(
+    harnessSource,
+    /backgroundFollowDisabled:\s*isPackedCandidateBackgroundFollowActionResult\(\s*externalSessionsHPhase\.backgroundFollowDisabled,\s*false,\s*\)/u,
+  );
+});
+
+test('drives the packed public External Sessions flow through current H with a G logical ref and one settled terminal disposal', () => {
+  const harnessSource = readFileSync(
+    new URL('../../src/plugin-platform/packedManagedProviderComposedRuntime.ts', import.meta.url),
+    'utf8',
+  );
+  const acceptanceStart = harnessSource.indexOf(
+    "'export async function runPackedExternalSessionsAcceptance(context: PluginInvocationContext) {',",
+  );
+  const acceptanceEnd = harnessSource.indexOf(
+    "'const plugin = definePlugin({',",
+    acceptanceStart,
+  );
+
+  assert.ok(acceptanceStart >= 0, 'the packed public External Sessions action exists');
+  assert.ok(acceptanceEnd > acceptanceStart, 'the packed public External Sessions action is bounded');
+  const acceptance = harnessSource.slice(acceptanceStart, acceptanceEnd);
+  const capabilitiesIndex = acceptance.indexOf(
+    'const capabilities = await context.services.sessions.external.capabilities();',
+  );
+  const listIndex = acceptance.indexOf(
+    'const listed = await context.services.sessions.external.list(',
+  );
+  const attachIndex = acceptance.indexOf(
+    'const attached = await context.services.sessions.external.attach(publicRef);',
+  );
+  const readIndex = acceptance.indexOf(
+    'const transcript = await context.services.sessions.external.readTranscript(publicRef,',
+  );
+  const followIndex = acceptance.indexOf(
+    'const followed = await context.services.sessions.external.followTranscript(publicRef,',
+  );
+  const takeoverIndex = acceptance.indexOf(
+    'const takeover = await context.services.sessions.external.takeover(publicRef,',
+  );
+
+  assert.ok(capabilitiesIndex >= 0, 'capabilities is asynchronous public-service evidence');
+  assert.ok(listIndex > capabilitiesIndex, 'list follows capabilities');
+  assert.ok(attachIndex > listIndex, 'attach follows list');
+  assert.ok(readIndex > attachIndex, 'readTranscript follows attach');
+  assert.ok(followIndex > readIndex, 'followTranscript follows readTranscript');
+  assert.ok(takeoverIndex > followIndex, 'takeover follows the settled follow lifecycle');
+  assert.match(
+    acceptance,
+    /let publicGFollowPersistence: Promise<void> = Promise\.resolve\(\);[\s\S]*?const persistPublicGFollow = \(\): Promise<void> => \{ const phase = \{ ref: candidate\.ref, listCursor: listed\.nextCursor, followCursor: publicGFollowCursor, publicGFollow \}; publicGFollowPersistence = publicGFollowPersistence\.then\(async \(\) => \{ await context\.services\.storage\.daemon\.set\('packed-external-sessions-public-phase', phase\); \}\); return publicGFollowPersistence; \};[\s\S]*?if \(packedAgentGeneration === 'G'\) \{ await publicGFollowPersistence; if \(!followListenerSettled \|\| publicGFollow\.dataEventCount < 1 \|\| publicGFollow\.terminalAcknowledgements !== 0 \|\| publicGFollow\.postTerminalEventCount !== 0\) throw new Error\('packed_external_public_g_follow_invalid'\);/u,
+  );
+  assert.match(
+    acceptance,
+    /const previousRefRecord = previous && typeof previous\.ref === 'object'[\s\S]*?const previousRef = previousRefRecord[\s\S]*?const publicRef = previousRef \?\? candidate\.ref;/u,
+  );
+  assert.match(
+    acceptance,
+    /if \(!previousRef\) throw new Error\('packed_external_public_g_ref_missing'\);/u,
+  );
+  assert.match(
+    acceptance,
+    /await Promise\.resolve\(\);[\s\S]*?followListenerSettled = true;[\s\S]*?acknowledgeFollowData\?\.\(\);/u,
+  );
+  assert.match(
+    acceptance,
+    /await followed\.subscription\.dispose\(\);[\s\S]*?await followed\.subscription\.dispose\(\);[\s\S]*?disposedTerminalAcknowledgements !== 1/u,
+  );
+  assert.match(
+    harnessSource,
+    /assertPackedCandidatePublicExternalSessionsPrivacy\(result\);/u,
+  );
+});
+
+test('keeps one canonical package command wired to the daemon continuity entrypoint', () => {
+  const packageManifest = JSON.parse(readFileSync(
+    new URL('../../package.json', import.meta.url),
+    'utf8',
+  ));
+  assert.equal(
+    packageManifest.scripts['test:plugin-platform:packed-managed-provider'],
+    'node scripts/plugin-platform/run-packed-managed-provider.mjs',
+  );
+
+  const invocation = buildPackedManagedProviderEntrypointInvocation({
+    packageRoot: '/repo/packages/tests',
+    parsed: {
+      mode: 'run',
+      candidateManifestPath: '/candidate/candidate-manifest.json',
+      enableOpenCodeLive: false,
+      workRoot: '/isolated/run',
+    },
+  });
+  assert.deepEqual(invocation.args, [
+    '/repo/packages/tests/scripts/runTsxEntrypoint.mjs',
+    'src/plugin-platform/runPackedManagedProviderContinuity.ts',
+    '--candidate',
+    '/candidate/candidate-manifest.json',
+    '--work-root',
+    '/isolated/run',
+  ]);
+  assert.equal(invocation.cwd, '/repo/packages/tests');
 });
 
 test('selects the exact host-native standalone CLI artifact only from the candidate manifest', () => {
@@ -333,7 +668,7 @@ test('accepts only exact candidate identity and the canonical fresh managed acti
   assert.equal(result.standaloneCliArtifact.sha256, standaloneCliArtifact.sha256);
   assert.deepEqual(result.stages.map((stage) => stage.id), PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS);
   assert.deepEqual(
-    result.stages.find((stage) => stage.id === 'fresh-managed-spawn')?.evidence,
+    result.stages.find((stage) => stage.id === 'public-provider-session-demand')?.evidence,
     { agentId: 'opencode' },
   );
   assert.deepEqual(result.blockers, []);
@@ -410,20 +745,14 @@ test('rejects npm-candidate or source-tree launch specs for the managed vertical
   );
 });
 
-test('rejects first input or a provider attempt before canonical webhook acknowledgement', async () => {
+test('rejects a provider attempt before canonical session registration', async () => {
   const { deps } = dependencies({
     runFreshManagedSequence: async () => managedSequenceEvidence({
       timeline: Object.freeze({
         freshSpawnStartedAtMs: 1,
-        canonicalSessionRegisteredAtMs: 2,
-        capabilitiesActivatedAtMs: 2,
-        canonicalWebhookAcknowledgedAtMs: 5,
+        canonicalSessionRegisteredAtMs: 5,
         spawnAcknowledgedAtMs: 6,
-        agentRequestAuthLookupAtMs: 3,
-        managedRequestAuthLookupAtMs: 4,
-        agentRequestAuthLookupCompletedAtMs: 4,
-        managedRequestAuthLookupCompletedAtMs: 5,
-        providerAttemptAtMs: 7,
+        providerAttemptAtMs: 4,
       }),
     }),
   });
@@ -438,19 +767,13 @@ test('rejects first input or a provider attempt before canonical webhook acknowl
   );
 });
 
-test('does not treat server session registration as the daemon webhook acknowledgement', async () => {
+test('rejects a spawn acknowledgement timestamp before the public request starts', async () => {
   const { deps } = dependencies({
     runFreshManagedSequence: async () => managedSequenceEvidence({
       timeline: Object.freeze({
-        freshSpawnStartedAtMs: 1,
+        freshSpawnStartedAtMs: 4,
         canonicalSessionRegisteredAtMs: 2,
-        capabilitiesActivatedAtMs: 3,
-        agentRequestAuthLookupAtMs: 4,
-        agentRequestAuthLookupCompletedAtMs: 5,
-        managedRequestAuthLookupAtMs: 4,
-        managedRequestAuthLookupCompletedAtMs: 5,
-        canonicalWebhookAcknowledgedAtMs: 6,
-        spawnAcknowledgedAtMs: 7,
+        spawnAcknowledgedAtMs: 3,
         providerAttemptAtMs: 8,
       }),
     }),
@@ -466,21 +789,10 @@ test('does not treat server session registration as the daemon webhook acknowled
   );
 });
 
-test('requires capability activation before the exact daemon webhook acknowledgement', async () => {
+test('requires a positive public connection revision', async () => {
   const { deps } = dependencies({
     runFreshManagedSequence: async () => managedSequenceEvidence({
-      timeline: Object.freeze({
-        freshSpawnStartedAtMs: 1,
-        canonicalSessionRegisteredAtMs: 2,
-        canonicalWebhookAcknowledgedAtMs: 3,
-        capabilitiesActivatedAtMs: 4,
-        spawnAcknowledgedAtMs: 5,
-        agentRequestAuthLookupAtMs: 6,
-        agentRequestAuthLookupCompletedAtMs: 7,
-        managedRequestAuthLookupAtMs: 6,
-        managedRequestAuthLookupCompletedAtMs: 7,
-        providerAttemptAtMs: 8,
-      }),
+      connectionRevision: 0,
     }),
   });
 
@@ -490,14 +802,16 @@ test('requires capability activation before the exact daemon webhook acknowledge
       workRoot: '/isolated/run',
       enableOpenCodeLive: false,
     }, deps),
-    /packed_managed_provider_sequence_mismatch/,
+    /packed_managed_provider_connection_revision_missing/,
   );
 });
 
-test('requires both exact Agent and managed purpose authorities before acknowledgement', async () => {
+test('requires both public Agent and managed purpose bindings', async () => {
   const { deps } = dependencies({
     runFreshManagedSequence: async () => managedSequenceEvidence({
-      capabilityScopeDigests: Object.freeze(['b'.repeat(64)]),
+      purposes: Object.freeze([
+        'happier.provider.cliproxyapi/cliproxyapi:openai-upstream',
+      ]),
     }),
   });
 
@@ -507,11 +821,11 @@ test('requires both exact Agent and managed purpose authorities before acknowled
       workRoot: '/isolated/run',
       enableOpenCodeLive: false,
     }, deps),
-    /packed_managed_provider_missing_agent_request_auth/,
+    /packed_managed_provider_purpose_binding_mismatch/,
   );
 });
 
-test('requires the exact first prompt and broker lease token at the decrypted upstream boundary', async () => {
+test('requires the exact first prompt and current token at the decrypted upstream boundary', async () => {
   const { deps } = dependencies({
     runFreshManagedSequence: async () => managedSequenceEvidence({
       upstreamAuthorizationFingerprint: `sha256:${'d'.repeat(64)}`,
@@ -546,10 +860,10 @@ test('rejects drift between the managed request-auth origin and observed final t
   );
 });
 
-test('requires the canonical managed connection-security fingerprint', async () => {
+test('requires the public sessionDemand activation reason', async () => {
   const { deps } = dependencies({
     runFreshManagedSequence: async () => managedSequenceEvidence({
-      managedConnectionSecurityFingerprint: `sha256:${'d'.repeat(64)}`,
+      publicActivationReason: 'catalogProbe',
     }),
   });
 
@@ -559,7 +873,7 @@ test('requires the canonical managed connection-security fingerprint', async () 
       workRoot: '/isolated/run',
       enableOpenCodeLive: false,
     }, deps),
-    /packed_managed_provider_managed_origin_mismatch/,
+    /packed_managed_provider_fresh_session_mismatch/,
   );
 });
 
@@ -604,9 +918,8 @@ test('requires exact cleanup and no first input or provider attempt after activa
       activationFailedBeforeAck: true,
       firstInputDispatched: true,
       providerAttempted: false,
-      wrapperStopped: true,
-      capabilityRetired: true,
-      materializationRemoved: true,
+      publicSessionCleanupComplete: true,
+      sessionProviderExited: true,
     }),
   });
 
@@ -616,6 +929,145 @@ test('requires exact cleanup and no first input or provider attempt after activa
       workRoot: '/isolated/run',
       enableOpenCodeLive: false,
     }, deps),
-    /packed_managed_provider_activation_failure_cleanup_mismatch/,
+    /packed_managed_provider_public_session_cleanup_mismatch/,
+  );
+});
+
+function packedChannelProviderLifecycleEvidence(overrides = {}) {
+  const evidence = {
+    archive: {
+      hostRuntime: 'daemonArchive',
+      reviewedInstall: true,
+      publicOnlyArtifact: true,
+      publicDependencyClosure: true,
+    },
+    discovery: {
+      corePluginId: 'happier.channels',
+      providerPluginId: 'acme.channels.out-of-tree-socket',
+      actionLocalId: 'fixture/setup',
+      targetSurface: 'plugin',
+      coldCatalogBeforeProviderActivation: true,
+      demandedActivation: true,
+      caller: { kind: 'plugin', pluginId: 'happier.channels' },
+      strictInputRejectedBeforeHandler: true,
+      strictResultRejectedBeforeCore: true,
+    },
+    resource: {
+      localId: 'status-v1',
+      readObserved: true,
+      watchSubscribed: true,
+      invalidationDropped: true,
+      rereadConverged: true,
+    },
+    background: {
+      startedAfterAdoption: true,
+      normalizedNetworkClientObserved: true,
+      socketConnectCountBeforeAdoption: 0,
+      observationIngressCustodied: true,
+      outboundDeliveryCustodied: true,
+      historyGapReported: true,
+      confirmedStopReported: true,
+    },
+    lifecycle: {
+      disableAbortedGeneration: true,
+      reenableSocketCount: 1,
+      daemonRestartSocketCount: 1,
+      failedReplacementRetainedLkg: true,
+      retiredGenerationReportInert: true,
+      uninstalledCleanly: true,
+    },
+  };
+  return {
+    ...evidence,
+    ...overrides,
+    archive: { ...evidence.archive, ...overrides.archive },
+    discovery: { ...evidence.discovery, ...overrides.discovery },
+    resource: { ...evidence.resource, ...overrides.resource },
+    background: { ...evidence.background, ...overrides.background },
+    lifecycle: { ...evidence.lifecycle, ...overrides.lifecycle },
+  };
+}
+
+test('requires daemon-owned archive lifecycle evidence for the packed external channel provider', async () => {
+  const events = [];
+  const result = await runPackedChannelProviderVertical({
+    candidateManifestPath: '/candidate/candidate-manifest.json',
+    workRoot: '/isolated/channels',
+    enableOpenCodeLive: false,
+  }, {
+    prepareCandidate: async () => {
+      events.push('prepare-candidate');
+      return exactPreparation();
+    },
+    runPackedChannelProviderLifecycle: async () => {
+      events.push('daemon-archive-lifecycle');
+      return packedChannelProviderLifecycleEvidence();
+    },
+    cleanup: async () => {
+      events.push('cleanup');
+    },
+  });
+
+  assert.equal(result.status, 'passed');
+  assert.deepEqual(
+    result.stages.map((stage) => stage.id),
+    PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS,
+  );
+  assert.deepEqual(events, [
+    'prepare-candidate',
+    'daemon-archive-lifecycle',
+    'cleanup',
+  ]);
+});
+
+test('rejects a Channel lifecycle candidate without the exact Channels protocol tarball', async () => {
+  const { channelsProtocol: _channelsProtocol, ...candidateWithoutChannelsProtocol } = candidate;
+
+  await assert.rejects(
+    runPackedChannelProviderVertical({
+      candidateManifestPath: '/candidate/candidate-manifest.json',
+      enableOpenCodeLive: false,
+    }, {
+      prepareCandidate: async () => exactPreparation(candidateWithoutChannelsProtocol),
+      runPackedChannelProviderLifecycle: async () => packedChannelProviderLifecycleEvidence(),
+      cleanup: async () => undefined,
+    }),
+    /packed_channel_provider_channels_protocol_candidate_mismatch/u,
+  );
+});
+
+test('rejects a dropped Resource invalidation that does not converge by reread', async () => {
+  const lifecycle = packedChannelProviderLifecycleEvidence({
+    resource: { rereadConverged: false },
+  });
+
+  await assert.rejects(
+    runPackedChannelProviderVertical({
+      candidateManifestPath: '/candidate/candidate-manifest.json',
+      enableOpenCodeLive: false,
+    }, {
+      prepareCandidate: async () => exactPreparation(),
+      runPackedChannelProviderLifecycle: async () => lifecycle,
+      cleanup: async () => undefined,
+    }),
+    /packed_channel_provider_resource_reread_mismatch/,
+  );
+});
+
+test('rejects an archive that did not retain its clean public dependency closure', async () => {
+  await assert.rejects(
+    runPackedChannelProviderVertical({
+      candidateManifestPath: '/candidate/candidate-manifest.json',
+      enableOpenCodeLive: false,
+    }, {
+      prepareCandidate: async () => exactPreparation(),
+      runPackedChannelProviderLifecycle: async () => (
+        packedChannelProviderLifecycleEvidence({
+          archive: { publicDependencyClosure: false },
+        })
+      ),
+      cleanup: async () => undefined,
+    }),
+    /packed_channel_provider_archive_lifecycle_mismatch/,
   );
 });

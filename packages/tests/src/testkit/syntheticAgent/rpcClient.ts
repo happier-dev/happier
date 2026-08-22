@@ -2,9 +2,11 @@ import type { SocketCollector } from '../socketClient';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../rpcCrypto';
 import { unwrapSerializedJsonValue } from '../unwrapSerializedJsonValue';
 
-export type DataKeyRpcResult =
+export type MachineRpcResult =
   | { ok: true; result: unknown | null }
   | { ok: false; error?: string; errorCode?: string };
+
+export type DataKeyRpcResult = MachineRpcResult;
 
 export function unwrapDataKeyRpcResult(result: DataKeyRpcResult, context = 'data key rpc'): unknown | null {
   if (result.ok !== true) {
@@ -15,8 +17,12 @@ export function unwrapDataKeyRpcResult(result: DataKeyRpcResult, context = 'data
 }
 
 type RpcSocket = {
-  rpcCall: <T = unknown>(method: string, params: string, timeoutMs?: number) => Promise<T>;
+  rpcCall: <T = unknown>(method: string, params: unknown, timeoutMs?: number) => Promise<T>;
 };
+
+export type MachineRpcTransport =
+  | Readonly<{ mode: 'plain' }>
+  | Readonly<{ mode: 'dataKey'; dataKey: Uint8Array }>;
 
 type RpcResponseEnvelope = {
   ok?: unknown;
@@ -24,6 +30,36 @@ type RpcResponseEnvelope = {
   error?: unknown;
   errorCode?: unknown;
 };
+
+export function createMachineRpcClient(
+  socket: RpcSocket,
+  transport: MachineRpcTransport,
+): {
+  call: (method: string, payload: unknown, timeoutMs?: number) => Promise<MachineRpcResult>;
+} {
+  if (transport.mode === 'dataKey') {
+    return createDataKeyRpcClient(socket, transport.dataKey);
+  }
+  return {
+    call: async (method, payload, timeoutMs) => {
+      const res = await socket.rpcCall<RpcResponseEnvelope>(method, payload, timeoutMs);
+      if (!res || typeof res !== 'object') {
+        return { ok: false, error: 'invalid-rpc-response' };
+      }
+      if (res.ok === true) {
+        if (!Object.prototype.hasOwnProperty.call(res, 'result')) {
+          return { ok: false, error: 'invalid-rpc-result', errorCode: undefined };
+        }
+        return { ok: true, result: res.result ?? null };
+      }
+      return {
+        ok: false,
+        error: typeof res.error === 'string' ? res.error : 'rpc-failed',
+        errorCode: typeof res.errorCode === 'string' ? res.errorCode : undefined,
+      };
+    },
+  };
+}
 
 export function createDataKeyRpcClient(socket: RpcSocket, dataKey: Uint8Array): {
   call: (method: string, payload: unknown, timeoutMs?: number) => Promise<DataKeyRpcResult>;

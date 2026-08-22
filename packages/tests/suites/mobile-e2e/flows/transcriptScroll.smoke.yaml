@@ -10,8 +10,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # Requires the connected-machine harness (same as connectedMachine.smoke.yaml):
 #   HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE=cli-terminal-daemon \
 #     node scripts/run-maestro-with-heartbeat.mjs --platform ios \
-#     --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml \
-#     --appId dev.happier.app.dev.internal
+#     --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml
 - launchApp:
     clearState: false
 

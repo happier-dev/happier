@@ -19,7 +19,7 @@ import { fakeClaudeFixturePath, type FakeClaudeInvocation, waitForFakeClaudeInvo
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -75,7 +75,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       { path: workspaceDir, host: 'e2e', name: 'claude-switch-args', createdAt: Date.now() },
@@ -238,7 +238,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       { path: workspaceDir, host: 'e2e', name: 'claude-switch-perms', createdAt: Date.now() },
@@ -391,7 +391,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

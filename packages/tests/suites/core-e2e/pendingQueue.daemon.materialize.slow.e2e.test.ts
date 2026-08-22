@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -16,7 +16,7 @@ import { waitFor } from '../../src/testkit/timing';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -43,8 +43,8 @@ describe('core e2e: pending queue v2 daemon materializes into transcript', () =>
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     writeTestManifestForServer({
       testDir,

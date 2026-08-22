@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -20,7 +19,7 @@ import { createUserScopedSocketCollector } from '../../src/testkit/socketClient'
 import { encryptLegacyBase64, decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { waitFor } from '../../src/testkit/timing';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fetchJson } from '../../src/testkit/http';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
@@ -148,8 +147,8 @@ describe('core e2e: scm git machine RPC', () => {
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     await writeFile(join(workspaceDir, 'README.md'), '# SCM e2e\n', 'utf8');
     runGit(workspaceDir, ['init']);

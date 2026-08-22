@@ -1,12 +1,12 @@
-import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { daemonControlPostJson } from './daemon/controlServerClient';
 import { createTestAuth, type TestAuth } from './auth';
-import { seedCliDataKeyAuthForServer } from './cliAuth';
+import { seedCliAuthForTestAccount } from './cliAuth';
 import { upsertEncryptedAccountSettingsV2 } from './accountSettings';
 import { fetchSessionMetadataV2 } from './sessionHandoffMetadata';
+import { callMachineRpcWhenRegistered } from './machineRpcReadiness';
 
 import {
   accountSettingsParse,
@@ -125,7 +125,7 @@ export function buildPreAttestedExternalSessionLiveEnv(
   return {
     HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
-    HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
+    HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
     HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
     HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
     HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1',
@@ -146,11 +146,11 @@ export async function createTwoIsolatedExternalSessionLiveAccounts(
   return {
     accountA: {
       auth: authA,
-      machineKey: Uint8Array.from(randomBytes(32)),
+      machineKey: authA.accountMachineKey,
     },
     accountB: {
       auth: authB,
-      machineKey: Uint8Array.from(randomBytes(32)),
+      machineKey: authB.accountMachineKey,
     },
   };
 }
@@ -160,11 +160,11 @@ export async function seedExternalSessionLiveAccount(params: Readonly<{
   cliHome: string;
   serverUrl: string;
 }>): Promise<Readonly<{ serverId: string; machineId: string }>> {
-  return await seedCliDataKeyAuthForServer({
+  return await seedCliAuthForTestAccount({
     cliHome: params.cliHome,
     serverUrl: params.serverUrl,
-    token: params.account.auth.token,
-    machineKey: params.account.machineKey,
+    auth: params.account.auth,
+    mode: 'dataKey',
   });
 }
 
@@ -222,18 +222,21 @@ export async function ensureLinkedPassiveExternalSession(params: Readonly<{
 }>): Promise<Readonly<{ sessionId: string; created: boolean }>> {
   const route = (method: string): string => `${params.machineId}:${method}`;
   const linked = unwrapMachineRpcResult(
-    await params.call(
-      route(RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE),
-      {
-        machineId: params.machineId,
-        agentId: params.agentId,
-        providerId: params.agentId,
-        remoteSessionId: params.remoteSessionId,
-        source: params.source,
-        ...(params.titleHint ? { titleHint: params.titleHint } : {}),
-        ...(params.directoryHint ? { directoryHint: params.directoryHint } : {}),
-      },
-    ),
+    await callMachineRpcWhenRegistered({
+      call: async () => await params.call(
+        route(RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE),
+        {
+          machineId: params.machineId,
+          agentId: params.agentId,
+          providerId: params.agentId,
+          remoteSessionId: params.remoteSessionId,
+          source: params.source,
+          ...(params.titleHint ? { titleHint: params.titleHint } : {}),
+          ...(params.directoryHint ? { directoryHint: params.directoryHint } : {}),
+        },
+      ),
+      context: 'External Session link',
+    }),
     'External Session link',
   );
   if (linked.ok !== true || typeof linked.sessionId !== 'string' || !linked.sessionId) {
@@ -243,18 +246,21 @@ export async function ensureLinkedPassiveExternalSession(params: Readonly<{
   }
 
   const followed = unwrapMachineRpcResult(
-    await params.call(
-      route(RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET),
-      {
-        machineId: params.machineId,
-        sessionId: linked.sessionId,
-        agentId: params.agentId,
-        providerId: params.agentId,
-        remoteSessionId: params.remoteSessionId,
-        source: params.source,
-        enabled: true,
-      },
-    ),
+    await callMachineRpcWhenRegistered({
+      call: async () => await params.call(
+        route(RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET),
+        {
+          machineId: params.machineId,
+          sessionId: linked.sessionId,
+          agentId: params.agentId,
+          providerId: params.agentId,
+          remoteSessionId: params.remoteSessionId,
+          source: params.source,
+          enabled: true,
+        },
+      ),
+      context: 'External Session follow policy',
+    }),
     'External Session follow policy',
   );
   if (followed.ok !== true || followed.enabled !== true) {
@@ -508,6 +514,28 @@ function requireCommittedPluginChange(
   return data;
 }
 
+function requireAppliedDevelopmentGeneration(
+  response: Readonly<{ status: number; data: unknown }>,
+): Readonly<Record<string, unknown>> {
+  const data = requireCommittedPluginChange(
+    response,
+    'Local plugin development reload',
+  );
+  const desiredGeneration = data.desiredGeneration;
+  if (
+    typeof desiredGeneration !== 'string'
+    || desiredGeneration.length === 0
+    || data.appliedGeneration !== desiredGeneration
+  ) {
+    throw new Error(
+      'Local plugin development reload committed without applying its desired generation '
+      + `(desired=${String(desiredGeneration ?? 'unknown')}, `
+      + `applied=${String(data.appliedGeneration ?? 'unknown')})`,
+    );
+  }
+  return data;
+}
+
 export async function applyTrustedLocalPluginFixture(params: Readonly<{
   daemonPort: number;
   controlToken?: string | null;
@@ -575,7 +603,7 @@ export async function reloadTrustedLocalPluginFixture(params: Readonly<{
   postJson?: DaemonPluginPostJson;
 }>): Promise<Readonly<Record<string, unknown>>> {
   const postJson = params.postJson ?? daemonControlPostJson;
-  return requireCommittedPluginChange(
+  return requireAppliedDevelopmentGeneration(
     await postJson({
       port: params.daemonPort,
       path: '/plugins/change/request',
@@ -588,7 +616,6 @@ export async function reloadTrustedLocalPluginFixture(params: Readonly<{
         ...(params.changedPaths ? { changedPaths: [...params.changedPaths] } : {}),
       },
     }),
-    'Local plugin development reload',
   );
 }
 
@@ -622,7 +649,8 @@ export async function writeInstrumentedExternalSessionLivePlugin(
         title: 'Emit External Session lifecycle evidence',
         scopes: ['global'],
         surfaces: ['cli'],
-        placement: 'commandPalette',
+        execution: { target: 'daemon' },
+        placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
       }],
       agents: [{
@@ -635,7 +663,6 @@ export async function writeInstrumentedExternalSessionLivePlugin(
             sources: [{
               sourceKind: 'fixtureLive',
               schema: {
-                passthrough: false,
                 fields: [{
                   name: 'kind',
                   kind: 'literal',

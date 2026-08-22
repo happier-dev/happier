@@ -17,7 +17,7 @@ import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -42,7 +42,7 @@ describe('core e2e: Codex MCP attach strips stale ACP session state metadata', (
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

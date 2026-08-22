@@ -13,15 +13,48 @@ export const PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS = Object.freeze([
   'standalone-cli-artifact-integrity',
   'standalone-cli-artifact-identity',
   'standalone-cli-private-extract',
-  'packaged-wrapper-token-free-conformance',
+  'public-provider-explicit-start',
+  'public-provider-catalog-probe',
   'isolated-runtime',
-  'fresh-managed-spawn',
-  'pre-activation-request-auth-refusal',
+  'public-provider-session-demand',
+  'pre-session-demand-no-provider-effect',
   'canonical-session-created',
-  'exact-purpose-capabilities-activated',
-  'webhook-ack-before-first-input',
+  'public-purpose-binding-authorized',
+  'public-session-admitted-before-provider-attempt',
   'current-auth-provider-attempt',
-  'activation-failure-cleanup',
+  'public-session-failure-cleanup',
+  'cleanup',
+]);
+
+export const PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS =
+Object.freeze([
+  'candidate-external-agent-provider-author',
+  'candidate-external-agent-provider-pack',
+  'candidate-external-agent-provider-reviewed-install',
+  'candidate-generation-handoff',
+  'candidate-exactly-once-turns',
+  'candidate-provider-hard-revoke',
+  'candidate-handoff-cleanup',
+]);
+
+export const PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS = Object.freeze([
+  'candidate-artifact-integrity',
+  'candidate-package-identity',
+  'standalone-cli-artifact-integrity',
+  'standalone-cli-artifact-identity',
+  'standalone-cli-private-extract',
+  'public-channel-artifact-closure',
+  'daemon-reviewed-archive-install',
+  'cold-core-setup-discovery',
+  'plugin-demand-activation-caller-stamp',
+  'strict-channel-action-contracts',
+  'dynamic-resource-reread',
+  'post-adoption-background-network',
+  'channel-custody-and-stop',
+  'disable-reenable-restart',
+  'failed-replacement-lkg',
+  'retired-generation-inert',
+  'archive-uninstall-cleanup',
   'cleanup',
 ]);
 
@@ -142,6 +175,7 @@ function readFlagValue(argv, index, flag) {
 
 export function parsePackedManagedProviderArgs(argv) {
   let recipe = false;
+  let currentSource = false;
   let candidateManifestPath = null;
   let enableOpenCodeLive = false;
   let workRoot = null;
@@ -150,6 +184,11 @@ export function parsePackedManagedProviderArgs(argv) {
     if (argument === '--recipe') {
       if (recipe) fail('packed_managed_provider_recipe_repeated');
       recipe = true;
+      continue;
+    }
+    if (argument === '--current-source') {
+      if (currentSource) fail('packed_managed_provider_current_source_repeated');
+      currentSource = true;
       continue;
     }
     if (argument === '--candidate') {
@@ -171,6 +210,8 @@ export function parsePackedManagedProviderArgs(argv) {
   }
   if (recipe) {
     if (
+      currentSource
+      ||
       candidateManifestPath
       || workRoot
       || enableOpenCodeLive
@@ -178,6 +219,12 @@ export function parsePackedManagedProviderArgs(argv) {
       fail('packed_managed_provider_recipe_must_be_candidate_free');
     }
     return { mode: 'recipe', candidateManifestPath: null };
+  }
+  if (currentSource) {
+    if (candidateManifestPath || workRoot || enableOpenCodeLive) {
+      fail('packed_managed_provider_current_source_must_be_candidate_free');
+    }
+    return { mode: 'current-source', candidateManifestPath: null };
   }
   if (!candidateManifestPath) fail('packed_managed_provider_candidate_required');
   return {
@@ -196,6 +243,8 @@ export function buildPackedManagedProviderRecipe({ packageRoot }) {
     command:
       'yarn workspace @happier-dev/tests test:plugin-platform:packed-managed-provider --candidate <candidate-manifest.json>',
     requiredStageIds: PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS,
+    candidateHandoffStageIds:
+      PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
     inputs: Object.freeze({
       candidateManifest:
         'one exact candidate manifest from the canonical candidate creator binding the sole SDK, CLI, and five-target standalone CLI archive matrix to one run',
@@ -208,13 +257,15 @@ export function buildPackedManagedProviderRecipe({ packageRoot }) {
       candidateInstall: 'one private exact-tarball install beneath workRoot for candidate package verification only',
       standaloneCliExtract:
         'one private extraction of the separate exact host-native CLI binary artifact beneath workRoot',
+      externalAuthoring:
+        'candidate-authored public-only Agent G/H and Provider P/Q use the exact candidate SDK and CLI, then execute through the exact candidate standalone CLI and wrapper',
       server: 'one server-light SQLite process on a dynamically reserved loopback port',
       daemon: 'one exact standalone CLI artifact daemon with an isolated HAPPIER_HOME_DIR and lifecycle scope',
-      wrapper: 'one standalone-artifact-owned CLIProxyAPI managed wrapper on 127.0.0.1:45000-45999',
+      providerProcesses: 'public managed-service operations allocate loopback ports dynamically and own their process lifetime',
       agentWorkspace: 'one private empty workspace',
       opencodeState: 'one isolated XDG/config root; ambient OpenCode state is forbidden',
       externalBoundaries:
-        'a loopback request-auth forwarding recorder and TLS upstream observer; the Agent, managed Provider wrapper, and canonical activation path remain real',
+        'a TLS upstream observer only; the installed Agent, public managed Provider operations, runner, and session lifecycle remain real',
       dynamicPortsOnly: true,
       stockCliProxyApiPort: 8317,
       stockCliProxyApiPolicy: 'must-not-connect-or-mutate',
@@ -223,7 +274,7 @@ export function buildPackedManagedProviderRecipe({ packageRoot }) {
     environment: Object.freeze({
       required: Object.freeze([
         'HAPPIER_FEATURE_PROVIDERS__ENABLED=1',
-        'HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED=1',
+        'HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED=0',
       ]),
       forbidden: Object.freeze([
         'HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT',
@@ -231,6 +282,34 @@ export function buildPackedManagedProviderRecipe({ packageRoot }) {
         'HAPPIER_OPENCODE_SERVER_URL',
       ]),
     }),
+  });
+}
+
+export function buildPackedManagedProviderEntrypointInvocation({
+  packageRoot,
+  parsed,
+}) {
+  if (parsed?.mode !== 'run' && parsed?.mode !== 'current-source') {
+    fail('packed_managed_provider_continuity_requires_candidate');
+  }
+  if (parsed.mode === 'run' && !parsed.candidateManifestPath) {
+    fail('packed_managed_provider_continuity_requires_candidate');
+  }
+  const resolvedPackageRoot = resolve(packageRoot);
+  return Object.freeze({
+    command: process.execPath,
+    args: Object.freeze([
+      resolve(resolvedPackageRoot, 'scripts/runTsxEntrypoint.mjs'),
+      'src/plugin-platform/runPackedManagedProviderContinuity.ts',
+      ...(parsed.mode === 'current-source'
+        ? ['--current-source']
+        : [
+          '--candidate',
+          parsed.candidateManifestPath,
+          ...(parsed.workRoot ? ['--work-root', parsed.workRoot] : []),
+        ]),
+    ]),
+    cwd: resolvedPackageRoot,
   });
 }
 
@@ -301,12 +380,13 @@ function validateCandidatePreparation(prepared, input) {
 
 function validateWrapperConformance(evidence) {
   if (
-    evidence?.tokenFreeReadiness !== true
-    || evidence?.preActivationLookupRefused !== true
-    || evidence?.preActivationCredentialReleased !== false
-    || evidence?.preActivationUpstreamAttempted !== false
+    evidence?.publicExplicitStart !== true
+    || evidence?.publicCatalogProbe !== true
+    || evidence?.catalogOwnerReleased !== true
+    || evidence?.publicCredentialLeakObserved !== false
+    || evidence?.providerAttemptedBeforeSessionDemand !== false
   ) {
-    fail('packed_managed_provider_wrapper_conformance_mismatch');
+    fail('packed_managed_provider_public_activation_conformance_mismatch');
   }
 }
 
@@ -314,7 +394,7 @@ function validateManagedSequence(evidence) {
   if (
     evidence?.freshSession !== true
     || evidence?.agentId !== 'opencode'
-    || evidence?.canonicalSessionIdBeforeWebhook !== null
+    || evidence?.publicActivationReason !== 'sessionDemand'
     || typeof evidence?.canonicalSessionId !== 'string'
     || evidence.canonicalSessionId.trim().length === 0
   ) {
@@ -329,39 +409,22 @@ function validateManagedSequence(evidence) {
     || timeline.freshSpawnStartedAtMs
       > timeline.canonicalSessionRegisteredAtMs
     || timeline.canonicalSessionRegisteredAtMs
-      > timeline.canonicalWebhookAcknowledgedAtMs
-    || timeline.freshSpawnStartedAtMs > timeline.capabilitiesActivatedAtMs
-    || timeline.capabilitiesActivatedAtMs > timeline.canonicalWebhookAcknowledgedAtMs
-    || timeline.capabilitiesActivatedAtMs > timeline.spawnAcknowledgedAtMs
-    || timeline.canonicalWebhookAcknowledgedAtMs > timeline.spawnAcknowledgedAtMs
-    || timeline.canonicalWebhookAcknowledgedAtMs > timeline.agentRequestAuthLookupAtMs
-    || timeline.canonicalWebhookAcknowledgedAtMs > timeline.managedRequestAuthLookupAtMs
-    || timeline.agentRequestAuthLookupAtMs
-      > timeline.agentRequestAuthLookupCompletedAtMs
-    || timeline.managedRequestAuthLookupAtMs
-      > timeline.managedRequestAuthLookupCompletedAtMs
-    || timeline.agentRequestAuthLookupCompletedAtMs
       > timeline.providerAttemptAtMs
-    || timeline.managedRequestAuthLookupCompletedAtMs
-      > timeline.providerAttemptAtMs
+    || timeline.freshSpawnStartedAtMs > timeline.spawnAcknowledgedAtMs
   ) {
     fail('packed_managed_provider_sequence_mismatch');
   }
   if (
-    evidence.preActivationCredentialReleased !== false
-    || evidence.preActivationUpstreamAttempted !== false
-    || evidence.preActivationAgentCapabilityPresent !== false
+    evidence.preSessionDemandCredentialReleased !== false
+    || evidence.preSessionDemandUpstreamAttempted !== false
   ) {
     fail('packed_managed_provider_pre_activation_effect');
   }
   if (
-    !Array.isArray(evidence.capabilityScopeDigests)
-    || evidence.capabilityScopeDigests.length !== 2
-    || evidence.capabilityScopeDigests.some((value) =>
-      !/^[a-f0-9]{64}$/u.test(value))
-    || new Set(evidence.capabilityScopeDigests).size !== 2
+    !Number.isInteger(evidence.connectionRevision)
+    || evidence.connectionRevision <= 0
   ) {
-    fail('packed_managed_provider_missing_agent_request_auth');
+    fail('packed_managed_provider_connection_revision_missing');
   }
   if (
     !Array.isArray(evidence.purposes)
@@ -391,9 +454,6 @@ function validateManagedSequence(evidence) {
     evidence.managedRequestAuthOrigin !== 'https://chatgpt.com'
     || managedConnectTarget !== 'chatgpt.com:443'
     || evidence.upstreamConnectTarget !== managedConnectTarget
-    || !/^connection-security:v1:[A-Za-z0-9_-]{43}$/u.test(
-      evidence.managedConnectionSecurityFingerprint,
-    )
     || typeof evidence.upstreamRequestPath !== 'string'
     || !evidence.upstreamRequestPath.startsWith('/backend-api/codex/')
   ) {
@@ -401,14 +461,10 @@ function validateManagedSequence(evidence) {
   }
   if (
     typeof evidence.currentCredentialRevision !== 'string'
-    || evidence.managedLeaseCredentialRevision
-      !== evidence.currentCredentialRevision
     || typeof evidence.currentAccessTokenFingerprint !== 'string'
     || !/^sha256:[a-f0-9]{64}$/u.test(
       evidence.currentAccessTokenFingerprint,
     )
-    || evidence.managedLeaseAccessTokenFingerprint
-      !== evidence.currentAccessTokenFingerprint
     || evidence.upstreamAuthorizationFingerprint
       !== evidence.currentAccessTokenFingerprint
     || evidence.promptSentinelObserved !== true
@@ -433,11 +489,101 @@ function validateActivationFailureCleanup(evidence) {
     evidence?.activationFailedBeforeAck !== true
     || evidence?.firstInputDispatched !== false
     || evidence?.providerAttempted !== false
-    || evidence?.wrapperStopped !== true
-    || evidence?.capabilityRetired !== true
-    || evidence?.materializationRemoved !== true
+    || evidence?.publicSessionCleanupComplete !== true
+    || evidence?.sessionProviderExited !== true
   ) {
-    fail('packed_managed_provider_activation_failure_cleanup_mismatch');
+    fail('packed_managed_provider_public_session_cleanup_mismatch');
+  }
+}
+
+function validatePackedChannelProviderLifecycle(evidence) {
+  const archive = evidence?.archive;
+  if (
+    archive?.hostRuntime !== 'daemonArchive'
+    || archive?.reviewedInstall !== true
+    || archive?.publicOnlyArtifact !== true
+    || archive?.publicDependencyClosure !== true
+  ) {
+    fail('packed_channel_provider_archive_lifecycle_mismatch');
+  }
+
+  const discovery = evidence?.discovery;
+  if (
+    discovery?.corePluginId !== 'happier.channels'
+    || discovery?.providerPluginId !== 'acme.channels.out-of-tree-socket'
+    || discovery?.actionLocalId !== 'fixture/setup'
+    || discovery?.targetSurface !== 'plugin'
+    || discovery?.coldCatalogBeforeProviderActivation !== true
+    || discovery?.demandedActivation !== true
+    || discovery?.caller?.kind !== 'plugin'
+    || discovery.caller.pluginId !== 'happier.channels'
+  ) {
+    fail('packed_channel_provider_cold_discovery_mismatch');
+  }
+  if (
+    discovery.strictInputRejectedBeforeHandler !== true
+    || discovery.strictResultRejectedBeforeCore !== true
+  ) {
+    fail('packed_channel_provider_action_contract_mismatch');
+  }
+
+  const resource = evidence?.resource;
+  if (
+    resource?.localId !== 'status-v1'
+    || resource?.readObserved !== true
+    || resource?.watchSubscribed !== true
+    || resource?.invalidationDropped !== true
+    || resource?.rereadConverged !== true
+  ) {
+    fail('packed_channel_provider_resource_reread_mismatch');
+  }
+
+  const background = evidence?.background;
+  if (
+    background?.startedAfterAdoption !== true
+    || background?.normalizedNetworkClientObserved !== true
+    || background?.socketConnectCountBeforeAdoption !== 0
+  ) {
+    fail('packed_channel_provider_background_lifecycle_mismatch');
+  }
+  if (
+    background.observationIngressCustodied !== true
+    || background.outboundDeliveryCustodied !== true
+    || background.historyGapReported !== true
+    || background.confirmedStopReported !== true
+  ) {
+    fail('packed_channel_provider_custody_mismatch');
+  }
+
+  const lifecycle = evidence?.lifecycle;
+  if (
+    lifecycle?.disableAbortedGeneration !== true
+    || lifecycle?.reenableSocketCount !== 1
+    || lifecycle?.daemonRestartSocketCount !== 1
+  ) {
+    fail('packed_channel_provider_socket_lifecycle_mismatch');
+  }
+  if (
+    lifecycle.failedReplacementRetainedLkg !== true
+    || lifecycle.retiredGenerationReportInert !== true
+    || lifecycle.uninstalledCleanly !== true
+  ) {
+    fail('packed_channel_provider_generation_lifecycle_mismatch');
+  }
+}
+
+function validatePackedChannelProviderCandidatePreparation(prepared, input) {
+  validateCandidatePreparation(prepared, input);
+  const channelsProtocol = prepared.candidate.channelsProtocol;
+  if (
+    channelsProtocol?.packageName !== '@happier-dev/channels-protocol'
+    || typeof channelsProtocol.version !== 'string'
+    || typeof channelsProtocol.integrity !== 'string'
+    || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(channelsProtocol.integrity)
+    || typeof channelsProtocol.tarballPath !== 'string'
+    || channelsProtocol.tarballPath.length === 0
+  ) {
+    fail('packed_channel_provider_channels_protocol_candidate_mismatch');
   }
 }
 
@@ -475,7 +621,8 @@ export async function runPackedManagedProviderVertical(input, deps) {
       prepared,
     });
     validateWrapperConformance(wrapperConformance);
-    stages.push(stage('packaged-wrapper-token-free-conformance'));
+    stages.push(stage('public-provider-explicit-start'));
+    stages.push(stage('public-provider-catalog-probe'));
 
     const managed = await deps.runFreshManagedSequence({
       ...input,
@@ -483,19 +630,19 @@ export async function runPackedManagedProviderVertical(input, deps) {
     });
     validateManagedSequence(managed);
     stages.push(stage('isolated-runtime'));
-    stages.push(stage('fresh-managed-spawn', 'passed', {
+    stages.push(stage('public-provider-session-demand', 'passed', {
       agentId: managed.agentId,
     }));
-    stages.push(stage('pre-activation-request-auth-refusal'));
+    stages.push(stage('pre-session-demand-no-provider-effect'));
     stages.push(stage('canonical-session-created', 'passed', {
       sessionId: managed.canonicalSessionId,
     }));
-    stages.push(stage('exact-purpose-capabilities-activated', 'passed', {
+    stages.push(stage('public-purpose-binding-authorized', 'passed', {
       purposes: managed.purposes,
-      subjectScopeDigests: managed.capabilityScopeDigests,
+      connectionRevision: managed.connectionRevision,
       timeline: managed.timeline,
     }));
-    stages.push(stage('webhook-ack-before-first-input'));
+    stages.push(stage('public-session-admitted-before-provider-attempt'));
     stages.push(stage('current-auth-provider-attempt', 'passed', {
       credentialRevision: managed.currentCredentialRevision,
       accessTokenFingerprint: managed.upstreamAuthorizationFingerprint,
@@ -508,7 +655,7 @@ export async function runPackedManagedProviderVertical(input, deps) {
       prepared,
     });
     validateActivationFailureCleanup(cleanupProbe);
-    stages.push(stage('activation-failure-cleanup'));
+    stages.push(stage('public-session-failure-cleanup'));
 
   } catch (error) {
     runError = error;
@@ -556,6 +703,103 @@ export async function runPackedManagedProviderVertical(input, deps) {
   });
 }
 
+export async function runPackedChannelProviderVertical(input, deps) {
+  const stages = [];
+  let prepared = null;
+  let runError = null;
+  try {
+    if (input.enableOpenCodeLive) {
+      fail('packed_channel_provider_opencode_live_not_supported');
+    }
+    prepared = await deps.prepareCandidate(input);
+    validatePackedChannelProviderCandidatePreparation(prepared, input);
+    stages.push(stage('candidate-artifact-integrity', 'passed', {
+      sdkIntegrity: prepared.candidate.sdk.integrity,
+      channelsProtocolIntegrity: prepared.candidate.channelsProtocol.integrity,
+      cliIntegrity: prepared.candidate.cli.integrity,
+    }));
+    stages.push(stage('candidate-package-identity'));
+    stages.push(stage('standalone-cli-artifact-integrity', 'passed', {
+      sha256: prepared.standaloneCliArtifact.sha256,
+    }));
+    stages.push(stage('standalone-cli-artifact-identity', 'passed', {
+      product: prepared.standaloneCliArtifact.product,
+      version: prepared.standaloneCliArtifact.version,
+      os: prepared.standaloneCliArtifact.os,
+      arch: prepared.standaloneCliArtifact.arch,
+    }));
+    stages.push(stage('standalone-cli-private-extract', 'passed', {
+      entrypoint: prepared.standaloneCliArtifact.executablePath,
+    }));
+
+    const lifecycleEvidence = await deps.runPackedChannelProviderLifecycle({
+      ...input,
+      prepared,
+    });
+    validatePackedChannelProviderLifecycle(lifecycleEvidence);
+    stages.push(stage('public-channel-artifact-closure'));
+    stages.push(stage('daemon-reviewed-archive-install'));
+    stages.push(stage('cold-core-setup-discovery', 'passed', {
+      actionLocalId: lifecycleEvidence.discovery.actionLocalId,
+      providerPluginId: lifecycleEvidence.discovery.providerPluginId,
+    }));
+    stages.push(stage('plugin-demand-activation-caller-stamp', 'passed', {
+      caller: lifecycleEvidence.discovery.caller,
+    }));
+    stages.push(stage('strict-channel-action-contracts'));
+    stages.push(stage('dynamic-resource-reread'));
+    stages.push(stage('post-adoption-background-network'));
+    stages.push(stage('channel-custody-and-stop'));
+    stages.push(stage('disable-reenable-restart'));
+    stages.push(stage('failed-replacement-lkg'));
+    stages.push(stage('retired-generation-inert'));
+    stages.push(stage('archive-uninstall-cleanup'));
+  } catch (error) {
+    runError = error;
+    throw error;
+  } finally {
+    try {
+      await deps.cleanup({ ...input, prepared, runError });
+      if (!runError) stages.push(stage('cleanup'));
+    } catch (cleanupError) {
+      if (runError) {
+        runError.cleanupError = cleanupError;
+      } else {
+        throw cleanupError;
+      }
+    }
+  }
+
+  if (
+    stages.length !== PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS.length
+    || stages.some((value, index) => value.id !== PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS[index])
+  ) {
+    fail('packed_channel_provider_stage_coverage_mismatch');
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: 'packed_channel_provider_vertical',
+    status: 'passed',
+    candidate: Object.freeze({
+      runId: prepared.candidate.runId,
+      sdk: prepared.candidate.sdk,
+      channelsProtocol: prepared.candidate.channelsProtocol,
+      cli: prepared.candidate.cli,
+    }),
+    standaloneCliArtifact: Object.freeze({
+      product: prepared.standaloneCliArtifact.product,
+      version: prepared.standaloneCliArtifact.version,
+      os: prepared.standaloneCliArtifact.os,
+      arch: prepared.standaloneCliArtifact.arch,
+      archivePath: prepared.standaloneCliArtifact.archivePath,
+      sha256: prepared.standaloneCliArtifact.sha256,
+      executablePath: prepared.standaloneCliArtifact.executablePath,
+    }),
+    stages: Object.freeze(stages),
+    blockers: Object.freeze([]),
+  });
+}
+
 function runCli() {
   const parsed = parsePackedManagedProviderArgs(process.argv.slice(2));
   const packageRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -563,17 +807,15 @@ function runCli() {
     process.stdout.write(`${JSON.stringify(buildPackedManagedProviderRecipe({ packageRoot }), null, 2)}\n`);
     return;
   }
+  const invocation = buildPackedManagedProviderEntrypointInvocation({
+    packageRoot,
+    parsed,
+  });
   const result = spawnSync(
-    process.execPath,
-    [
-      resolve(packageRoot, 'scripts/runTsxEntrypoint.mjs'),
-      'src/plugin-platform/runPackedManagedProviderVertical.ts',
-      '--candidate',
-      parsed.candidateManifestPath,
-      ...(parsed.workRoot ? ['--work-root', parsed.workRoot] : []),
-    ],
+    invocation.command,
+    invocation.args,
     {
-      cwd: packageRoot,
+      cwd: invocation.cwd,
       env: sanitizePackedAuthorArtifactEnv(process.env),
       stdio: 'inherit',
     },

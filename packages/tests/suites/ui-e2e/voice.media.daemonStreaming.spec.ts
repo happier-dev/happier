@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import {
+  matchesVoiceMediaCaptureIdentity,
   observeVoiceRelaySocketTraffic,
   prepareVoiceBrowserQaPage,
   resolveVoiceBrowserQaBeforeAllTimeoutMs,
@@ -11,8 +12,15 @@ import {
   type VoiceBrowserQaStack,
 } from '../../src/testkit/uiE2e/voiceBrowserQaHarness';
 import type { VoiceBrowserQaRouteProfile } from '../../src/testkit/uiE2e/voiceBrowserQaRouteProfile';
-import { resolveVoiceBrowserTranscriptExpectation } from '../../src/testkit/uiE2e/voiceBrowserTranscriptExpectation';
-import { readKnownVoiceFixtureByPath } from '../../src/testkit/voice/voiceFixture';
+import {
+  resolveVoiceBrowserFixtureRun,
+  type VoiceBrowserTranscriptExpectation,
+} from '../../src/testkit/uiE2e/voiceBrowserTranscriptExpectation';
+import {
+  matchesVoiceFixtureTranscript,
+  readKnownVoiceFixtureByPath,
+  readVoiceWavDurationMs,
+} from '../../src/testkit/voice/voiceFixture';
 
 const ZIPFORMER_PACK_ID = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
 const ZIPFORMER_MANIFEST_URL =
@@ -29,10 +37,32 @@ for (const routeProfile of routeProfiles) {
     test.describe.configure({ mode: 'serial' });
     const suiteDir = run.testDir(`voice-daemon-streaming-${routeProfile}`);
     let stack: VoiceBrowserQaStack | null = null;
+    let fixturePath: string | null = null;
+    let knownFixture: Awaited<ReturnType<typeof readKnownVoiceFixtureByPath>> = null;
+    let transcriptExpectation: VoiceBrowserTranscriptExpectation | null = null;
+    let fixtureDurationMs: number | null = null;
+    let captureDurationMs: number | null = null;
+    let dictationStopTargetMs: number | null = null;
 
-    test.beforeAll(async ({ browser }) => {
+    test.beforeAll(async ({ browser }, testInfo) => {
       test.setTimeout(Math.max(resolveVoiceBrowserQaBeforeAllTimeoutMs(), 600_000));
       void browser;
+      const configuredFixturePath = testInfo.project.metadata.voiceQaFixturePath;
+      if (typeof configuredFixturePath !== 'string' || !isAbsolute(configuredFixturePath)) {
+        throw new Error('voice_q3_6_fixture_path_missing');
+      }
+      fixturePath = configuredFixturePath;
+      knownFixture = await readKnownVoiceFixtureByPath(fixturePath);
+      const fixtureRun = resolveVoiceBrowserFixtureRun({
+        fixturePath,
+        metadata: knownFixture?.metadata ?? null,
+        durationMs: knownFixture?.metadata.durationMs ?? await readVoiceWavDurationMs(fixturePath),
+        explicitSignal: process.env.HAPPIER_E2E_VOICE_EXPECTED_TRANSCRIPT_SIGNAL,
+      });
+      transcriptExpectation = fixtureRun.transcriptExpectation;
+      fixtureDurationMs = fixtureRun.durationMs;
+      captureDurationMs = fixtureRun.captureDurationMs;
+      dictationStopTargetMs = fixtureRun.dictationStopTargetMs;
       await mkdir(suiteDir, { recursive: true });
       stack = await startVoiceBrowserQaStack({
         suiteDir,
@@ -57,20 +87,15 @@ for (const routeProfile of routeProfiles) {
     test('streams production microphone PCM over the selected binary route and cleans up after finish', async ({ page }, testInfo) => {
       test.setTimeout(600_000);
       if (!stack) throw new Error('voice daemon streaming harness missing');
-      const configuredFixturePath = testInfo.project.metadata.voiceQaFixturePath;
-      if (typeof configuredFixturePath !== 'string' || !isAbsolute(configuredFixturePath)) {
-        throw new Error('voice_q3_6_fixture_path_missing');
+      if (
+        !fixturePath
+        || !transcriptExpectation
+        || fixtureDurationMs === null
+        || captureDurationMs === null
+      ) {
+        throw new Error('voice_q3_6_fixture_preflight_missing');
       }
-      const fixturePath = configuredFixturePath;
-      const knownFixture = await readKnownVoiceFixtureByPath(fixturePath);
-      const transcriptExpectation = resolveVoiceBrowserTranscriptExpectation({
-        fixturePath,
-        metadata: knownFixture?.metadata ?? null,
-        explicitSignal: process.env.HAPPIER_E2E_VOICE_EXPECTED_TRANSCRIPT_SIGNAL,
-      });
-      const captureDurationMs = knownFixture
-        ? knownFixture.metadata.durationMs + 1_000
-        : 8_000;
+      const transcriptOracle = transcriptExpectation;
       await page.setViewportSize({ width: 1440, height: 900 });
       const peerRequestStages: Array<Readonly<{
         method: string;
@@ -277,9 +302,9 @@ for (const routeProfile of routeProfiles) {
           .__happierVoiceMediaQa?.maxInputLevel ?? 0
       )), { timeout: 60_000 }).toBeGreaterThan(0.005);
 
-      // Let the canonical 20 ms PCM producer deliver the known fixture's full
-      // speech+silence timeline before finishing the runtime-owned Voice turn.
-      // Unknown custom fixtures retain the existing bounded eight-second window.
+      // Let the canonical 20 ms PCM producer deliver the configured WAV's full
+      // duration before finishing the runtime-owned Voice turn. Known fixtures
+      // supply this from their manifest; custom fixtures supply it from WAV metadata.
       await page.waitForTimeout(captureDurationMs);
       if (routeProfile === 'relay') {
         await expect.poll(relayTraffic.binaryAttachmentCount, { timeout: 60_000 }).toBeGreaterThan(0);
@@ -369,12 +394,266 @@ for (const routeProfile of routeProfiles) {
       await page.waitForURL((url) => url.pathname === `/session/${sessionId}`, { timeout: 120_000 });
       const transcript = page.getByTestId('transcript-chat-list');
       await expect(transcript).toHaveCount(1, { timeout: 120_000 });
-      await expect.poll(async () => transcriptExpectation.matches(
+      await expect.poll(async () => transcriptOracle.matches(
         (await transcript.textContent()) ?? '',
       ), {
-        message: `daemon transcript did not contain any configured fixture signal: ${transcriptExpectation.signals.join(', ')}`,
+        message: `daemon transcript did not contain any configured fixture signal: ${transcriptOracle.signals.join(', ')}`,
         timeout: 120_000,
       }).toBe(true);
+
+      if (routeProfile === 'direct' && knownFixture && dictationStopTargetMs !== null) {
+        const fixtureMetadata = knownFixture.metadata;
+        const knownFixtureDurationMs = fixtureDurationMs;
+        const knownDictationStopTargetMs = dictationStopTargetMs;
+        const composer = page.getByTestId('session-composer-input');
+        const composerBeforeDictation = 'before selected after';
+        const composerPrefix = 'before ';
+        const composerSuffix = ' after';
+        await expect(composer).toHaveCount(1, { timeout: 60_000 });
+        await composer.fill(composerBeforeDictation);
+        await composer.evaluate((element, selection) => {
+          if (!(element instanceof HTMLTextAreaElement)) {
+            throw new Error('voice_q3_6_dictation_composer_not_textarea');
+          }
+          element.focus();
+          element.setSelectionRange(selection.start, selection.end);
+          element.dispatchEvent(new Event('select', { bubbles: true }));
+        }, {
+          start: composerPrefix.length,
+          end: composerPrefix.length + 'selected'.length,
+        });
+        await expect.poll(async () => composer.evaluate((element) => {
+          if (!(element instanceof HTMLTextAreaElement)) {
+            throw new Error('voice_q3_6_dictation_composer_not_textarea');
+          }
+          return {
+            value: element.value,
+            selectionStart: element.selectionStart,
+            selectionEnd: element.selectionEnd,
+          };
+        }), { timeout: 30_000 }).toEqual({
+          value: composerBeforeDictation,
+          selectionStart: composerPrefix.length,
+          selectionEnd: composerPrefix.length + 'selected'.length,
+        });
+
+        const readDictationMedia = async () => await page.evaluate(() => {
+          const state = (window as typeof window & {
+            __happierVoiceMediaQa?: {
+              calls: number;
+              stoppedTracks: number;
+              maxInputLevel: number;
+              activeTracks: number;
+              lastGetUserMediaAdmissionAtMs: number | null;
+              lastCaptureFirstTrackStopAtMs: number | null;
+              recordingBlobs: Array<{ size: number; type: string }>;
+              blobFetches: Array<{ ok: boolean; size: number | null; type: string | null }>;
+              objectUrlCreates: number;
+              objectUrlRevokes: number;
+              activeObjectUrls: number;
+            };
+          }).__happierVoiceMediaQa;
+          if (!state) throw new Error('voice_q3_6_dictation_media_instrumentation_missing');
+          return {
+            calls: state.calls,
+            stoppedTracks: state.stoppedTracks,
+            maxInputLevel: state.maxInputLevel,
+            activeTracks: state.activeTracks,
+            lastGetUserMediaAdmissionAtMs: state.lastGetUserMediaAdmissionAtMs,
+            lastCaptureFirstTrackStopAtMs: state.lastCaptureFirstTrackStopAtMs,
+            recordingBlobCount: state.recordingBlobs.length,
+            blobFetches: state.blobFetches,
+            objectUrlCreates: state.objectUrlCreates,
+            objectUrlRevokes: state.objectUrlRevokes,
+            activeObjectUrls: state.activeObjectUrls,
+          };
+        });
+        const dictationMediaBefore = await readDictationMedia();
+        const transcriptBeforeDictation = (await transcript.textContent()) ?? '';
+        await page.evaluate(() => {
+          const state = (window as typeof window & {
+            __happierVoiceMediaQa?: { maxInputLevel: number };
+          }).__happierVoiceMediaQa;
+          if (!state) throw new Error('voice_q3_6_dictation_media_instrumentation_missing');
+          state.maxInputLevel = 0;
+        });
+
+        await page.getByTestId('agent-input-dictation').click();
+        await expect.poll(async () => {
+          const current = await readDictationMedia();
+          return {
+            newGetUserMediaCalls: current.calls - dictationMediaBefore.calls,
+            activeTracks: current.activeTracks,
+            captureAdmissionRecorded: typeof current.lastGetUserMediaAdmissionAtMs === 'number'
+              && current.lastGetUserMediaAdmissionAtMs !== dictationMediaBefore.lastGetUserMediaAdmissionAtMs,
+          };
+        }, { timeout: 60_000 }).toEqual({
+          newGetUserMediaCalls: 1,
+          activeTracks: 1,
+          captureAdmissionRecorded: true,
+        });
+        await expect.poll(async () => (await readDictationMedia()).maxInputLevel, {
+          timeout: 60_000,
+        }).toBeGreaterThan(0.005);
+
+        const dictationCaptureAdmissionAtMs = (await readDictationMedia()).lastGetUserMediaAdmissionAtMs;
+        if (typeof dictationCaptureAdmissionAtMs !== 'number') {
+          throw new Error('voice_q3_6_dictation_capture_admission_missing');
+        }
+        const dictationCaptureElapsedMs = await page.evaluate((admittedAtMs) => performance.now() - admittedAtMs,
+          dictationCaptureAdmissionAtMs,
+        );
+        const remainingUntilDictationStopMs = knownDictationStopTargetMs - dictationCaptureElapsedMs;
+        if (remainingUntilDictationStopMs <= 0) {
+          throw new Error(`voice_q3_6_dictation_capture_target_crossed:${JSON.stringify({
+            fixtureId: knownFixture?.metadata.id ?? null,
+            dictationStopTargetMs: knownDictationStopTargetMs,
+            dictationCaptureElapsedMs,
+          })}`);
+        }
+        await page.waitForTimeout(remainingUntilDictationStopMs);
+        await page.getByTestId('agent-input-dictation').click();
+
+        await expect.poll(async () => {
+          const current = await readDictationMedia();
+          return {
+            newStoppedTracks: current.stoppedTracks - dictationMediaBefore.stoppedTracks,
+            activeTracks: current.activeTracks,
+            newObjectUrlCreates: current.objectUrlCreates - dictationMediaBefore.objectUrlCreates,
+            newObjectUrlRevokes: current.objectUrlRevokes - dictationMediaBefore.objectUrlRevokes,
+            activeObjectUrls: current.activeObjectUrls,
+          };
+        }, { timeout: 120_000 }).toMatchObject({
+          activeTracks: 0,
+          activeObjectUrls: dictationMediaBefore.activeObjectUrls,
+        });
+        await expect.poll(async () => (
+          (await readDictationMedia()).stoppedTracks - dictationMediaBefore.stoppedTracks
+        ), { timeout: 120_000 }).toBeGreaterThan(0);
+        await expect.poll(async () => (
+          (await readDictationMedia()).objectUrlCreates - dictationMediaBefore.objectUrlCreates
+        ), { timeout: 120_000 }).toBeGreaterThan(0);
+        await expect.poll(async () => (
+          (await readDictationMedia()).objectUrlRevokes - dictationMediaBefore.objectUrlRevokes
+        ), { timeout: 120_000 }).toBeGreaterThan(0);
+        const dictationMediaAfterStop = await readDictationMedia();
+        const dictationCaptureStoppedAtMs = dictationMediaAfterStop.lastCaptureFirstTrackStopAtMs;
+        if (typeof dictationCaptureStoppedAtMs !== 'number') {
+          throw new Error('voice_q3_6_dictation_capture_stop_missing');
+        }
+        expect({
+          newGetUserMediaCalls: dictationMediaAfterStop.calls - dictationMediaBefore.calls,
+          observedAdmissionAtMs: dictationMediaAfterStop.lastGetUserMediaAdmissionAtMs,
+          captureIdentityMatched: matchesVoiceMediaCaptureIdentity({
+            callsBeforeCapture: dictationMediaBefore.calls,
+            capturedAdmissionAtMs: dictationCaptureAdmissionAtMs,
+            currentCalls: dictationMediaAfterStop.calls,
+            observedAdmissionAtMs: dictationMediaAfterStop.lastGetUserMediaAdmissionAtMs,
+          }),
+        }).toEqual({
+          newGetUserMediaCalls: 1,
+          observedAdmissionAtMs: dictationCaptureAdmissionAtMs,
+          captureIdentityMatched: true,
+        });
+        const dictationCaptureStopElapsedMs = dictationCaptureStoppedAtMs - dictationCaptureAdmissionAtMs;
+        if (dictationCaptureStopElapsedMs >= knownFixtureDurationMs) {
+          throw new Error(`voice_q3_6_dictation_capture_loop_boundary_crossed:${JSON.stringify({
+            fixtureId: knownFixture?.metadata.id ?? null,
+            fixturePath,
+            fixtureDurationMs: knownFixtureDurationMs,
+            dictationStopTargetMs: knownDictationStopTargetMs,
+            dictationCaptureStopElapsedMs,
+          })}`);
+        }
+        await expect.poll(async () => {
+          const current = await readDictationMedia();
+          return current.blobFetches
+            .slice(dictationMediaBefore.blobFetches.length)
+            .some((fetch) => fetch.ok && (fetch.size ?? 0) > 1_024);
+        }, { timeout: 120_000 }).toBe(true);
+
+        await expect.poll(async () => composer.evaluate((element, boundary) => {
+          if (!(element instanceof HTMLTextAreaElement)) {
+            throw new Error('voice_q3_6_dictation_composer_not_textarea');
+          }
+          const value = element.value;
+          const prefixRetained = value.startsWith(boundary.prefix);
+          const suffixRetained = value.endsWith(boundary.suffix);
+          const insertedMiddle = prefixRetained && suffixRetained
+            ? value.slice(boundary.prefix.length, value.length - boundary.suffix.length)
+            : '';
+          const insertionEnd = boundary.prefix.length + insertedMiddle.length;
+          return {
+            prefixRetained,
+            suffixRetained,
+            insertedMiddle,
+            focused: document.activeElement === element,
+            selectionAtInsertionEnd: element.selectionStart === insertionEnd && element.selectionEnd === insertionEnd,
+          };
+        }, {
+          prefix: composerPrefix,
+          suffix: composerSuffix,
+        }).then((state) => ({
+          ...state,
+          insertedMiddleMatchesFixture: matchesVoiceFixtureTranscript(fixtureMetadata, state.insertedMiddle),
+        })), { timeout: 120_000 }).toMatchObject({
+          prefixRetained: true,
+          suffixRetained: true,
+          insertedMiddleMatchesFixture: true,
+          focused: true,
+          selectionAtInsertionEnd: true,
+        });
+        await expect.poll(async () => (await transcript.textContent()) ?? '', {
+          timeout: 30_000,
+        }).toBe(transcriptBeforeDictation);
+
+        const settledDictationMedia = await readDictationMedia();
+        expect({
+          newGetUserMediaCalls: settledDictationMedia.calls - dictationMediaBefore.calls,
+          observedAdmissionAtMs: settledDictationMedia.lastGetUserMediaAdmissionAtMs,
+          captureIdentityMatched: matchesVoiceMediaCaptureIdentity({
+            callsBeforeCapture: dictationMediaBefore.calls,
+            capturedAdmissionAtMs: dictationCaptureAdmissionAtMs,
+            currentCalls: settledDictationMedia.calls,
+            observedAdmissionAtMs: settledDictationMedia.lastGetUserMediaAdmissionAtMs,
+          }),
+        }).toEqual({
+          newGetUserMediaCalls: 1,
+          observedAdmissionAtMs: dictationCaptureAdmissionAtMs,
+          captureIdentityMatched: true,
+        });
+        const settledDictationSnapshot = {
+          composer: await composer.evaluate((element) => {
+            if (!(element instanceof HTMLTextAreaElement)) {
+              throw new Error('voice_q3_6_dictation_composer_not_textarea');
+            }
+            return {
+              value: element.value,
+              selectionStart: element.selectionStart,
+              selectionEnd: element.selectionEnd,
+              focused: document.activeElement === element,
+            };
+          }),
+          browserMedia: settledDictationMedia,
+          transcript: (await transcript.textContent()) ?? '',
+        };
+        await page.waitForTimeout(2_000);
+        expect({
+          composer: await composer.evaluate((element) => {
+            if (!(element instanceof HTMLTextAreaElement)) {
+              throw new Error('voice_q3_6_dictation_composer_not_textarea');
+            }
+            return {
+              value: element.value,
+              selectionStart: element.selectionStart,
+              selectionEnd: element.selectionEnd,
+              focused: document.activeElement === element,
+            };
+          }),
+          browserMedia: await readDictationMedia(),
+          transcript: (await transcript.textContent()) ?? '',
+        }).toEqual(settledDictationSnapshot);
+      }
       await testInfo.attach(`voice-g3.6-${routeProfile}-transcript-and-cleanup.json`, {
         body: Buffer.from(JSON.stringify({
           routeProfile,

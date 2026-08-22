@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -9,7 +9,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createTestAuth } from '../../src/testkit/auth';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { waitFor } from '../../src/testkit/timing';
@@ -47,8 +47,7 @@ describe('core e2e: Codex fast-start', () => {
     await mkdir(workspaceDir, { recursive: true });
     await mkdir(codexSessionsDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const fakeBinDir = resolve(join(testDir, 'fake-bin'));
     await mkdir(fakeBinDir, { recursive: true });

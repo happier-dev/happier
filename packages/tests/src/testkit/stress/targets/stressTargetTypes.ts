@@ -29,6 +29,10 @@ export type StressTargetServiceContainer = Readonly<{
   state: string;
   health?: string;
   ipv4Addresses: string[];
+  networkAttachments?: Readonly<Record<string, Readonly<{
+    aliases: readonly string[];
+    ipv4Address?: string;
+  }>>>;
 }>;
 
 export type StartedStressTarget = Readonly<{
@@ -55,6 +59,12 @@ export type StartedStressTarget = Readonly<{
     stopContainer: (containerId: string) => Promise<void>;
     killContainer: (containerId: string) => Promise<void>;
     startContainer?: (containerId: string) => Promise<void>;
+    disconnectContainerFromNetwork?: (containerId: string, networkName: string) => Promise<void>;
+    connectContainerToNetwork?: (
+      containerId: string,
+      networkName: string,
+      options: Readonly<{ aliases: readonly string[]; ipv4Address?: string }>,
+    ) => Promise<void>;
     execInService: (service: string, command: readonly string[]) => Promise<string>;
     execInContainer?: (containerId: string, command: readonly string[]) => Promise<string>;
   };

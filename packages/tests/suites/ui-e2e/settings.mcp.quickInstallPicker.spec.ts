@@ -75,7 +75,8 @@ test.describe('ui e2e: MCP settings quick install and new-session picker', () =>
             page,
             buildAuthBootstrapStorageSnapshot({
                 serverUrl: server.baseUrl,
-                credentials: { token: auth.token, secret: auth.token },
+                auth,
+                mode: 'legacy',
                 storageScope: mcpStorageScope,
             }),
         );

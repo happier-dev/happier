@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { randomBytes } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -14,7 +13,7 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { waitFor } from '../../src/testkit/timing';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { callLegacyEncryptedSessionRpc } from '../../src/testkit/sessionRpc';
 import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 
@@ -40,8 +39,8 @@ describe('core e2e: voice agent daemon emits parsed voice actions from a real ba
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const daemonEnv: NodeJS.ProcessEnv = {

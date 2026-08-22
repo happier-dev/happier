@@ -1,37 +1,34 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { request as httpsRequest } from 'node:https';
 import test from 'node:test';
 
 import * as tar from 'tar';
+import {
+  computePluginUiArtifactFileSetSha256DigestV1,
+} from '@happier-dev/protocol/plugins/ui';
+import { resolveManagedChildInvocation } from '../../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { renderPackedExternalAgentExecutable } from './packed-external-agent-executable.mjs';
 import * as packedAuthorHarness from './run-packed-author-ui-compat.mjs';
 
 import {
   assertCleanupFailureDidNotBlockLaterMutation,
-  assertContinuousHealthEvidence,
   assertDaemonAgentCarrierFailClosed,
   assertDiscardedDisableCurrentness,
-  assertExplicitHealthHistoryClear,
   assertPackedBundledClaudeMaterialization,
   assertPackedAuthorCandidateInstallerArtifacts,
+  attestPackedPublicAuthoringHostedWebGraph,
   assertPackedConnectedAccountDormancy,
   assertPackedConnectedAccountWatchRematerialization,
   assertPackedAuthorCredentialSentinelsAbsent,
-  assertNoEligibleLkgDisabled,
   assertPostRestartHealthyPeerIsolation,
-  assertQuarantinedExplicitRollback,
   assertExactMarketplaceInstallationState,
-  assertRejectedCandidateNotAttributedToCurrentHealth,
   assertReviewedCandidatePreservedCurrentness,
-  assertTryOnceReinstallQuarantine,
-  assertUniqueSupervisedAttemptProgress,
-  waitForSupervisedAttemptProgress,
   assertVerticalAStageCoverage,
   assertPluginCommandAbsentFromRootHelp,
   assertRestartPreservedDesiredGeneration,
@@ -40,12 +37,15 @@ import {
   assertVerticalAScmUninstalledProbe,
   assertPackedCliEntrypoint,
   assertPackedDaemonRuntimeIdentity,
+  assertPackedExternalPluginCommandInvocation,
+  assertPackedExternalPluginCommandRetirement,
   assertPackedNovelConnectedAccountQaCandidate,
   assertPackedPackageIdentity,
   buildVerticalAEvidenceLayerResult,
   buildVerticalAResult,
   buildVerticalADaemonRestartArgs,
   classifySyntheticNpmRegistryRequest,
+  capturePackedAuthorCandidateArtifacts,
   cleanupPrivateRegistryFixture,
   cleanupPackedNovelConnectedAccountQaHandoff,
   createExtraCaBundleRefresher,
@@ -57,6 +57,7 @@ import {
   materializePackedCli,
   loadPackedAuthorCandidateManifest,
   loadPackedAuthorNaturalArtifacts,
+  loadPackedAuthorVerticalAArtifacts,
   loadPackedNovelConnectedAccountQaHandoff,
   parseSuccessfulCommandEnvelope,
   parseCandidateManifest,
@@ -71,6 +72,7 @@ import {
   startPackedNovelConnectedAccountAuthorizationServer,
   startPrivatePluginRegistry,
   summarizeBundledClaudeCleanupFailure,
+  PACKED_AUTHOR_NATIVE_TARGETS,
   VERTICAL_A_EVIDENCE_LAYER_STAGE_IDS,
   VERTICAL_A_REQUIRED_STAGE_IDS,
 } from './run-packed-author-ui-compat.mjs';
@@ -103,6 +105,91 @@ function candidateInstallerRecords(root = '/tmp/installers') {
       sizeBytes: 21,
       sha256: '3'.repeat(64),
       filePath: join(root, 'happier-release.pub'),
+    },
+  };
+}
+
+function candidateStandaloneCliRecord({
+  version = '0.2.10',
+  root = '/tmp/native',
+  selectedTarget = 'linux-x64',
+} = {}) {
+  const archives = PACKED_AUTHOR_NATIVE_TARGETS.map((target, index) => {
+    const [os, arch] = target.split('-');
+    return {
+      product: 'happier',
+      version,
+      os,
+      arch,
+      sha256: String(index + 4).repeat(64),
+      archivePath: join(root, `happier-v${version}-${target}.tar.gz`),
+    };
+  });
+  const selected = archives.find(({ os, arch }) => `${os}-${arch}` === selectedTarget);
+  assert.ok(selected);
+  return {
+    ...selected,
+    archives,
+    checksums: {
+      kind: 'sha256-checksums',
+      fileName: `checksums-happier-v${version}.txt`,
+      sizeBytes: 23,
+      sha256: '9'.repeat(64),
+      filePath: join(root, `checksums-happier-v${version}.txt`),
+    },
+    signature: {
+      kind: 'minisign-signature',
+      fileName: `checksums-happier-v${version}.txt.minisig`,
+      sizeBytes: 29,
+      sha256: 'a'.repeat(64),
+      filePath: join(root, `checksums-happier-v${version}.txt.minisig`),
+    },
+    notarization: ['darwin-x64', 'darwin-arm64'].map((target, index) => ({
+      target,
+      evidence: {
+        kind: 'apple-notarization-evidence',
+        fileName: `${target}.cli.json`,
+        sizeBytes: 31 + index,
+        sha256: String.fromCharCode('b'.charCodeAt(0) + index).repeat(64),
+        filePath: join(root, `${target}.cli.json`),
+      },
+    })),
+  };
+}
+
+function candidatePluginUiRecord({
+  version = '0.0.0',
+  pluginSdkVersion = version,
+  root = '/tmp/packages',
+} = {}) {
+  return {
+    packageName: '@happier-dev/plugin-ui',
+    version,
+    pluginSdkVersion,
+    integrity: 'sha512-YWJj',
+    tarballPath: join(root, 'plugin-ui.tgz'),
+  };
+}
+
+function packedPublicAuthoringArtifact({
+  archiveBytes = Buffer.from('exact packed public authoring archive bytes'),
+} = {}) {
+  const entry = 'hosted-web/review-web/entry.mjs';
+  const entryBytes = Buffer.from('export const reviewWeb = true;\n');
+  const files = [{ relativePath: entry, bytes: entryBytes }];
+  return {
+    pluginId: 'examples.public-sdk-review-assistant',
+    version: '0.1.0',
+    archiveBytes,
+    hostedWeb: {
+      contributionId: 'review-web',
+      entry,
+      digest: computePluginUiArtifactFileSetSha256DigestV1(files),
+      files: files.map(({ relativePath, bytes }) => ({
+        relativePath,
+        digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+        byteSize: bytes.byteLength,
+      })),
     },
   };
 }
@@ -242,6 +329,31 @@ test('packed Connected Account watch assertion requires public selection denial 
   }), {
     selection: 'plugin_ui_unavailable',
     resyncCount: 2,
+    movedTargetResyncs: 0,
+    rematerializedAccountIds: ['account-b', 'account-a'],
+  });
+  const toleratedRejection = (settledObservations) => ({
+    code: 'plugin_host_access_resource_not_selected',
+    settledObservations,
+  });
+  const withMovedTargetResyncs = (movedTargetResyncs) => ({
+    ...watchEnvelope,
+    data: {
+      result: {
+        ...watchEnvelope.data.result,
+        movedTargetResyncs,
+      },
+    },
+  });
+
+  assert.deepEqual(assertPackedConnectedAccountWatchRematerialization({
+    selectionEnvelope,
+    watchEnvelope: withMovedTargetResyncs([toleratedRejection(0)]),
+    mutation,
+  }), {
+    selection: 'plugin_ui_unavailable',
+    resyncCount: 2,
+    movedTargetResyncs: 1,
     rematerializedAccountIds: ['account-b', 'account-a'],
   });
   assert.deepEqual(assertPackedConnectedAccountWatchRematerialization({
@@ -263,6 +375,7 @@ test('packed Connected Account watch assertion requires public selection denial 
   }), {
     selection: 'plugin_ui_unavailable',
     resyncCount: 3,
+    movedTargetResyncs: 0,
     rematerializedAccountIds: ['account-b', 'account-b', 'account-a'],
   });
 
@@ -278,6 +391,35 @@ test('packed Connected Account watch assertion requires public selection denial 
         },
       },
     },
+    mutation,
+  }), /level-triggered rematerialization/u);
+
+  // A tolerated mid-move rejection that no later resync settles leaves the watch proving nothing
+  // about the rejected resync, so the trailing rejection must fail the stage.
+  assert.throws(() => assertPackedConnectedAccountWatchRematerialization({
+    selectionEnvelope,
+    watchEnvelope: withMovedTargetResyncs([toleratedRejection(2)]),
+    mutation,
+  }), /level-triggered rematerialization/u);
+  // An unbounded rejection burst between two settled observations would let a host that rejects
+  // most resyncs still pass on the two ordered successes, so more than one rejection per settled
+  // observation must fail the stage.
+  assert.throws(() => assertPackedConnectedAccountWatchRematerialization({
+    selectionEnvelope,
+    watchEnvelope: withMovedTargetResyncs([
+      toleratedRejection(0),
+      toleratedRejection(0),
+      toleratedRejection(1),
+    ]),
+    mutation,
+  }), /level-triggered rematerialization/u);
+  // Only the mid-move rejection is admissible; any other rejection code is a product failure.
+  assert.throws(() => assertPackedConnectedAccountWatchRematerialization({
+    selectionEnvelope,
+    watchEnvelope: withMovedTargetResyncs([{
+      code: 'plugin_host_access_denied',
+      settledObservations: 0,
+    }]),
     mutation,
   }), /level-triggered rematerialization/u);
 });
@@ -536,10 +678,12 @@ function packedScmProjection(entries = {}) {
           family: 'scmHostingProviders',
           entriesById: entries.providers ?? {},
         },
-        pluginBrowser: {
-          family: 'pluginBrowser',
-          entriesById: entries.browser ?? {},
-        },
+        ...(entries.browser === undefined ? {} : {
+          pluginBrowser: {
+            family: 'pluginBrowser',
+            entriesById: entries.browser,
+          },
+        }),
       },
     },
   };
@@ -561,39 +705,6 @@ test('vertical-a SCM probe requires qualified projection, preferred runtime, rep
           localId: 'forge',
           pluginId: 'acme.vertical-a',
           authService: { pluginId: 'acme.vertical-a', localId: 'novel-cloud' },
-        },
-      },
-      browser: {
-        'browserTarget:acme.vertical-a:preview': {
-          id: 'browserTarget:acme.vertical-a:preview',
-          pluginId: 'acme.vertical-a',
-          contributionKind: 'browserTarget',
-          currentUrl: 'https://preview.example.test/',
-          launchMode: 'currentView',
-        },
-        'browserAction:acme.vertical-a:preview-roundtrip': {
-          id: 'browserAction:acme.vertical-a:preview-roundtrip',
-          pluginId: 'acme.vertical-a',
-          contributionKind: 'browserAction',
-          qualifiedActionId: 'acme.vertical-a/roundtrip',
-          targetId: 'browserTarget:acme.vertical-a:preview',
-          placement: 'toolbar',
-        },
-        'browserAction:acme.vertical-a:preview-details': {
-          id: 'browserAction:acme.vertical-a:preview-details',
-          pluginId: 'acme.vertical-a',
-          contributionKind: 'browserAction',
-          qualifiedActionId: 'acme.vertical-a/roundtrip',
-          targetId: 'browserTarget:acme.vertical-a:preview',
-          placement: 'detailsPanel',
-        },
-        'browserAction:acme.vertical-a:preview-context': {
-          id: 'browserAction:acme.vertical-a:preview-context',
-          pluginId: 'acme.vertical-a',
-          contributionKind: 'browserAction',
-          qualifiedActionId: 'acme.vertical-a/roundtrip',
-          targetId: 'browserTarget:acme.vertical-a:preview',
-          placement: 'contextMenu',
         },
       },
     }),
@@ -623,12 +734,6 @@ test('vertical-a SCM probe requires qualified projection, preferred runtime, rep
     clientPreference: { kind: 'prefer', backendId: packedScmIds.backendId },
     statusErrorCode: 'COMMAND_FAILED',
     repositoryAuth: probe.repository.auth,
-    browserTargetId: 'browserTarget:acme.vertical-a:preview',
-    browserActionIds: [
-      'browserAction:acme.vertical-a:preview-roundtrip',
-      'browserAction:acme.vertical-a:preview-details',
-      'browserAction:acme.vertical-a:preview-context',
-    ],
   });
   assert.throws(
     () => assertVerticalAScmInstalledProbe({
@@ -636,6 +741,20 @@ test('vertical-a SCM probe requires qualified projection, preferred runtime, rep
       ...packedScmIds,
     }),
     /did not reach the external runtime/u,
+  );
+  assert.throws(
+    () => assertVerticalAScmInstalledProbe({
+      probe: {
+        ...probe,
+        projection: packedScmProjection({
+          backends: probe.projection.projection.familiesById.scmBackends.entriesById,
+          providers: probe.projection.projection.familiesById.scmHostingProviders.entriesById,
+          browser: {},
+        }),
+      },
+      ...packedScmIds,
+    }),
+    /unexpectedly exposed deferred browser declarations/u,
   );
 });
 
@@ -651,7 +770,7 @@ test('vertical-a SCM uninstall requires authoritative empty families without sta
       }),
     },
     ...packedScmIds,
-  }), /left a stale SCM\/browser projection/u);
+  }), /left a stale SCM projection or deferred browser declarations/u);
   assert.throws(() => assertVerticalAScmUninstalledProbe({
     probe: {
       projection: packedScmProjection({
@@ -664,7 +783,7 @@ test('vertical-a SCM uninstall requires authoritative empty families without sta
       }),
     },
     ...packedScmIds,
-  }), /left a stale SCM\/browser projection/u);
+  }), /left a stale SCM projection or deferred browser declarations/u);
 });
 
 test('vertical-a proves an uninstalled plugin command through the non-executing root-help projection', () => {
@@ -778,14 +897,15 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
         ui: {
           views: [{
             id: 'main',
-            placement: 'app.sidePanel',
-            renderer: 'main-web',
+            container: 'appPage',
+            target: { kind: 'app' },
+            renderer: 'main-renderer',
             title: 'Vertical A',
           }],
           renderers: [{
-            id: 'main-web',
+            id: 'main-renderer',
             kind: 'hostedWeb',
-            source: { kind: 'artifact', artifact: 'main-web' },
+            source: { kind: 'artifact', artifact: 'main-renderer' },
             requiredHostMethods: ['context'],
           }],
           translations: [],
@@ -805,12 +925,27 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
   assert.deepEqual(configured.runtime, { apiVersion: 1 });
   assert.deepEqual(configured.contributes.actions[0].surfaces, ['agent', 'mcp', 'cli', 'ui']);
   assert.deepEqual(configured.contributes.actions[0].hostAccess, [
-    'packed-notification-token',
     'packed-fetch',
-    'packed-interceptor-fetch-target',
     'packed-novel-account',
     'packed-claude-account',
   ]);
+  assert.deepEqual(configured.contributes.settings, [{
+    id: 'notification-configuration',
+    title: 'Packed notification configuration',
+    target: { kind: 'plugin' },
+    scope: 'account',
+    fields: [{
+      id: 'webhook.endpoint',
+      title: 'Endpoint',
+      schema: { type: 'string', minLength: 1 },
+    }, {
+      id: 'webhook.token',
+      title: 'Token',
+      schema: { type: 'string', minLength: 8 },
+      secret: true,
+    }],
+  }]);
+  assert.equal(configured.contributes.notificationChannels[0].settings, undefined);
   assert.deepEqual(configured.contributes.tools, [{
     id: 'roundtrip-tool',
     name: 'vertical_a_roundtrip',
@@ -841,36 +976,48 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
     promptGuidelines: ['Invoke the declared action through this presentation.'],
     action: 'roundtrip',
   }]);
-  assert.deepEqual(configured.contributes.structuredMessages, [{
-    id: 'roundtrip-result',
-    title: 'Vertical A roundtrip result',
-    kind: 'acme.vertical-a/roundtrip-result.v1',
-    payloadSchema: {
-      type: 'object',
-      properties: { message: { type: 'string' } },
-      required: ['message'],
-      additionalProperties: false,
-    },
-    renderer: 'roundtrip-card',
-    actions: ['roundtrip'],
-    fallback: { kind: 'summary', template: 'Vertical A: {message}' },
+  assert.deepEqual(configured.contributes.commands, [{
+    id: 'roundtrip-shared-command',
+    title: 'Vertical A shared roundtrip',
+    path: ['vertical-a', 'roundtrip'],
+    action: 'roundtrip',
+  }, {
+    id: 'roundtrip-command',
+    title: 'Vertical A roundtrip',
+    path: ['vertical-a', 'vertical-a'],
+    action: 'roundtrip',
   }]);
+  assert.equal(Object.hasOwn(configured.contributes, 'structuredMessages'), false);
   assert.deepEqual(configured.contributes.sessionHeaderActions, [{
     id: 'roundtrip-header',
     title: 'Run Vertical A roundtrip',
-    action: 'roundtrip',
+    action: { kind: 'executeAction', action: 'roundtrip' },
     order: 10,
   }]);
   assert.deepEqual(
-    configured.contributes.ui.views.map(({ id, renderer }) => ({ id, renderer })),
-    [{ id: 'main', renderer: 'main-web' }],
+    configured.contributes.ui.views.map(({ id, container, target, renderer }) => ({
+      id,
+      container,
+      target,
+      renderer,
+    })),
+    [{
+      id: 'main',
+      container: 'appPage',
+      target: { kind: 'app' },
+      renderer: 'main-renderer',
+    }],
   );
   assert.deepEqual(
     configured.contributes.ui.renderers.map(({ id, kind }) => ({ id, kind })),
     [
-      { id: 'main-web', kind: 'hostedWeb' },
+      { id: 'main-renderer', kind: 'hostedWeb' },
       { id: 'roundtrip-card', kind: 'declarative' },
     ],
+  );
+  assert.equal(
+    Object.hasOwn(configured.contributes.ui.renderers[1], 'requiredHostMethods'),
+    false,
   );
   const reconfigured = configureVerticalAManifest({
     manifest: configured,
@@ -882,9 +1029,23 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
   assert.deepEqual(
     reconfigured.contributes.ui.renderers.map(({ id, kind }) => ({ id, kind })),
     [
-      { id: 'main-web', kind: 'hostedWeb' },
+      { id: 'main-renderer', kind: 'hostedWeb' },
       { id: 'roundtrip-card', kind: 'declarative' },
     ],
+  );
+  assert.deepEqual(
+    reconfigured.contributes.ui.views.map(({ id, container, target, renderer }) => ({
+      id,
+      container,
+      target,
+      renderer,
+    })),
+    [{
+      id: 'main',
+      container: 'appPage',
+      target: { kind: 'app' },
+      renderer: 'main-renderer',
+    }],
   );
   assert.deepEqual(
     configured.contributes.ui.renderers[0].requiredHostMethods,
@@ -903,14 +1064,15 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
   }, {
     id: 'observe-notification-ready',
     kind: 'subscription',
-    event: 'notification-ready',
+    target: {
+      kind: 'plugin',
+      event: {
+        pluginId: 'acme.vertical-a',
+        localId: 'notification-ready',
+      },
+    },
   }]);
   assert.deepEqual(configured.hostAccess.required, [{
-    id: 'packed-notification-token',
-    capability: 'secrets',
-    reason: 'Authenticate the packed notification channel',
-    scope: { secretIds: ['webhook.token'], access: ['read'] },
-  }, {
     id: 'packed-fetch',
     capability: 'network',
     reason: 'Exercise the packed external fetch and Connected Account producer service',
@@ -919,17 +1081,6 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
         { kind: 'connectedAccountOrigin', service: 'novel-cloud' },
       ],
       methods: ['GET', 'POST'],
-      privateNetwork: true,
-    },
-  }, {
-    id: 'packed-interceptor-fetch-target',
-    capability: 'network',
-    reason: 'Fetch the packed interceptor target through the host service',
-    scope: {
-      targets: [
-        { kind: 'fixedOrigin', origin: 'http://127.0.0.1:43123' },
-      ],
-      methods: ['GET'],
       privateNetwork: true,
     },
   }, {
@@ -953,17 +1104,8 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
       operations: ['use'],
       materializationKinds: ['environment'],
     },
-  }, {
-    id: 'packed-fetch-interceptor',
-    capability: 'network.intercept',
-    reason: 'Exercise the packed external request interceptor',
-    scope: { origins: ['http://127.0.0.1:43123'] },
   }]);
-  assert.deepEqual(configured.contributes.requestInterceptors, [{
-    id: 'observe-api',
-    origins: ['http://127.0.0.1:43123'],
-    methods: ['GET'],
-  }]);
+  assert.equal(configured.contributes.requestInterceptors, undefined);
   assert.deepEqual(configured.contributes.agents, [{
     id: 'packed-external-agent',
     title: 'Packed external sessions Agent',
@@ -993,7 +1135,6 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
         sources: [{
           sourceKind: 'packedExternal',
           schema: {
-            passthrough: false,
             fields: [
               { name: 'kind', kind: 'literal', value: 'packedExternal' },
               { name: 'scope', kind: 'literal', value: 'default' },
@@ -1010,6 +1151,42 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
       },
     },
   }]);
+  assert.deepEqual(configured.contributes.providers, [{
+    v: 1,
+    id: 'packed-managed-provider',
+    name: 'Packed managed Provider',
+    kind: 'aggregator',
+    endpointTemplates: [{
+      id: 'responses',
+      protocol: 'openai-responses',
+      baseUrl: 'http://127.0.0.1:43123/v1',
+      capabilities: {
+        streaming: 'supported',
+        toolRoundTrips: 'supported',
+        statefulResponses: 'unknown',
+        reasoningControls: 'supported',
+      },
+    }],
+    catalog: {
+      source: 'probe',
+      manualModelPolicy: 'allowed',
+      probes: [{
+        endpointTemplateId: 'responses',
+        path: '/v1/models',
+        parser: 'openai-models',
+      }],
+    },
+    managedRuntime: {
+      kind: 'managed',
+      connectedAccounts: [{
+        purpose: 'upstream',
+        service: 'novel-cloud',
+        required: true,
+        materializationKinds: ['environment'],
+      }],
+      endpointTemplateIds: ['responses'],
+    },
+  }]);
   const siblingFixture = configureVerticalAManifest({
     manifest: {
       id: 'acme.private-registry',
@@ -1019,8 +1196,8 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
     pluginId: 'acme.private-registry',
     fetchOrigin: 'http://127.0.0.1:43123',
   });
-  assert.deepEqual(siblingFixture.hostAccess.required, [configured.hostAccess.required[0]]);
-  assert.equal(siblingFixture.contributes.requestInterceptors, undefined);
+  assert.deepEqual(siblingFixture.hostAccess.required, []);
+  assert.equal(siblingFixture.contributes.providers, undefined);
   assert.deepEqual(configured.contributes.notifications, [{
     id: 'packed-ready',
     kind: 'activity',
@@ -1028,13 +1205,7 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
     eventIds: ['notification-ready'],
     defaultChannels: ['webhook'],
   }]);
-  assert.deepEqual(
-    configured.contributes.notificationChannels[0].settings.map(({ id, secret }) => ({ id, secret: secret === true })),
-    [
-      { id: 'endpoint', secret: false },
-      { id: 'token', secret: true },
-    ],
-  );
+  assert.equal(configured.contributes.notificationChannels[0].settings, undefined);
   assert.deepEqual(configured.contributes.scmBackends, [{
     id: 'stacked',
     title: 'Packed Stacked SCM',
@@ -1113,40 +1284,111 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
       { id: 'config', kind: 'config', path: 'resources/config.json', contentType: 'application/json' },
     ],
   );
-  assert.deepEqual(configured.contributes.browserTargets, [{
-    id: 'preview',
-    title: 'Packed preview',
-    url: 'https://preview.example.test/',
-    launch: 'currentView',
-    profile: 'user',
-  }]);
-  assert.deepEqual(configured.contributes.browserActions, [{
-    id: 'preview-roundtrip',
-    title: 'Run packed roundtrip',
-    action: 'roundtrip',
-    target: 'preview',
-    placement: 'toolbar',
-    icon: 'play-outline',
-  }, {
-    id: 'preview-details',
-    title: 'Inspect packed preview',
-    action: 'roundtrip',
-    target: 'preview',
-    placement: 'detailsPanel',
-    icon: 'search-outline',
-  }, {
-    id: 'preview-context',
-    title: 'Copy packed preview URL',
-    action: 'roundtrip',
-    target: 'preview',
-    placement: 'contextMenu',
-    icon: 'copy-outline',
-  }]);
+  assert.equal(configured.contributes.browserTargets, undefined);
+  assert.equal(configured.contributes.browserActions, undefined);
   assert.throws(() => configureVerticalAManifest({
     manifest: { id: 'acme.vertical-a', entrypoints: { daemon: './dist/index.js' } },
     version: '1.0.0',
     pluginId: 'acme.vertical-a',
   }), /missing entrypoints\.development/u);
+});
+
+test('packed external Command lifecycle evidence requires the exact command/action invocation and a retired exit', () => {
+  const invocation = {
+    ok: true,
+    kind: 'plugin_command',
+    data: {
+      commandId: 'acme.vertical-a/roundtrip-command',
+      actionId: 'acme.vertical-a/roundtrip',
+      result: {
+        pluginId: 'acme.vertical-a',
+        version: '2.0.0',
+        value: 'packed-v1',
+      },
+    },
+  };
+  assert.deepEqual(
+    assertPackedExternalPluginCommandInvocation({
+      envelope: invocation,
+      commandId: 'acme.vertical-a/roundtrip-command',
+      actionId: 'acme.vertical-a/roundtrip',
+      pluginId: 'acme.vertical-a',
+      version: '2.0.0',
+      value: 'packed-v1',
+      phase: 'replacement',
+    }),
+    {
+      commandId: 'acme.vertical-a/roundtrip-command',
+      actionId: 'acme.vertical-a/roundtrip',
+      version: '2.0.0',
+    },
+  );
+  assert.throws(
+    () => assertPackedExternalPluginCommandInvocation({
+      envelope: {
+        ...invocation,
+        data: { ...invocation.data, commandId: 'acme.vertical-a/other-command' },
+      },
+      commandId: 'acme.vertical-a/roundtrip-command',
+      actionId: 'acme.vertical-a/roundtrip',
+      pluginId: 'acme.vertical-a',
+      version: '2.0.0',
+      value: 'packed-v1',
+      phase: 'replacement',
+    }),
+    /Packed external Command replacement did not invoke the exact declared Action/u,
+  );
+  assert.deepEqual(
+    assertPackedExternalPluginCommandRetirement({
+      invocation: { code: 1, signal: null },
+      commandPath: ['vertical-a', 'vertical-a'],
+      phase: 'disable',
+    }),
+    {
+      commandPath: 'vertical-a vertical-a',
+      rejection: 'exit-1',
+    },
+  );
+  assert.throws(
+    () => assertPackedExternalPluginCommandRetirement({
+      invocation: { code: 0, signal: null },
+      commandPath: ['vertical-a', 'vertical-a'],
+      phase: 'uninstall',
+    }),
+    /Packed external Command uninstall remained callable/u,
+  );
+});
+
+test('vertical-a harness consumes the packed SDK UI projection instead of a manual renderer map', async () => {
+  const harnessSource = await readFile(
+    resolve(import.meta.dirname, 'run-packed-author-ui-compat.mjs'),
+    'utf8',
+  );
+  assert.match(
+    harnessSource,
+    /pathToFileURL\(\s*join\(projectionRoot,\s*'dist',\s*'index\.js'\)\)/u,
+  );
+  assert.doesNotMatch(harnessSource, /readScaffoldedDefinePluginInput/u);
+  assert.doesNotMatch(harnessSource, /actions: Object\.fromEntries/u);
+  assert.doesNotMatch(harnessSource, /renderer\?\.id === 'main-web'/u);
+});
+
+test('vertical-a hostedWeb author stage consumes the attested Plugin UI package without requiring a plugin dependency', async () => {
+  const harnessSource = await readFile(
+    resolve(import.meta.dirname, 'run-packed-author-ui-compat.mjs'),
+    'utf8',
+  );
+  assert.doesNotMatch(harnessSource, /const installedPluginUiRoot =/u);
+  assert.match(harnessSource, /packageName: pluginUiPackageJson\.name/u);
+  assert.match(harnessSource, /pluginSdkVersion: candidate\.pluginUi\.pluginSdkVersion/u);
+});
+
+test('vertical-a public authoring copy supplies the managed TypeScript config loader dependency', async () => {
+  const harnessSource = await readFile(
+    resolve(import.meta.dirname, 'run-packed-author-ui-compat.mjs'),
+    'utf8',
+  );
+  assert.match(harnessSource, /typescript: CONFIG_LOADER_TYPESCRIPT_DEPENDENCY_SPEC/u);
 });
 
 test('descriptor-only vertical fixture removes executable ownership while retaining static contributions', () => {
@@ -1171,6 +1413,13 @@ test('descriptor-only vertical fixture removes executable ownership while retain
     configured.contributes.ui.renderers.map(({ id, kind }) => ({ id, kind })),
     [{ id: 'settings-form', kind: 'declarative' }],
   );
+  assert.deepEqual(configured.contributes.ui.views, [{
+    id: 'settings',
+    container: 'settingsPage',
+    target: { kind: 'app' },
+    renderer: 'settings-form',
+    title: 'Descriptor-only settings',
+  }]);
 });
 
 test('vertical-a notification evidence requires configuration, provider failure replay, policy suppression, and retirement', () => {
@@ -1186,9 +1435,10 @@ test('vertical-a notification evidence requires configuration, provider failure 
   const input = {
     pluginId,
     configuration: {
-      storageScope: 'synced',
+      scope: { kind: 'account' },
       values: { 'webhook.endpoint': 'https://notifications.example.test/deliver' },
       redactedKeys: ['webhook.token'],
+      secrets: { 'webhook.token': { state: 'configured' } },
     },
     success: actionResult({
       replayed: false,
@@ -1252,6 +1502,28 @@ test('vertical-a notification evidence requires configuration, provider failure 
       },
     }),
     /exposed credential material/u,
+  );
+  assert.throws(
+    () => assertVerticalANotificationLifecycleEvidence({
+      ...input,
+      configuration: {
+        storageScope: 'synced',
+        values: input.configuration.values,
+        redactedKeys: input.configuration.redactedKeys,
+        secrets: input.configuration.secrets,
+      },
+    }),
+    /canonical settings\/secrets owners/u,
+  );
+  assert.throws(
+    () => assertVerticalANotificationLifecycleEvidence({
+      ...input,
+      configuration: {
+        ...input.configuration,
+        secrets: { 'webhook.token': { state: 'missing' } },
+      },
+    }),
+    /canonical settings\/secrets owners/u,
   );
   assert.throws(
     () => assertVerticalANotificationLifecycleEvidence({
@@ -1349,10 +1621,15 @@ test('packed external Agent executable resolves its version without ambient PATH
     await writeFile(executable, fixture.contents, 'utf8');
     if (process.platform !== 'win32') await chmod(executable, 0o755);
 
-    const result = spawnSync(executable, ['--version'], {
+    // The win32 fixture is a `.cmd`, which Windows cannot start from argv. Reuse the
+    // canonical spawn shaping instead of `shell: true`, which would concatenate argv
+    // into one unescaped command line (Node DEP0190) and split the tmpdir path at any
+    // space — `C:\Users\Ada Lovelace\AppData\...` is an ordinary Windows tmpdir.
+    const invocation = resolveManagedChildInvocation({ command: executable, args: ['--version'] });
+    const result = spawnSync(invocation.command, invocation.args, {
       env: { PATH: ownedBinDir },
       encoding: 'utf8',
-      shell: process.platform === 'win32',
+      ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     });
 
     assert.equal(result.status, 0);
@@ -1587,8 +1864,6 @@ test('vertical-a reinstalls the retired private-registry fixture before using it
 
 test('vertical-a accepts exact marketplace identity from the canonical installation revision and runtime catalog', () => {
   const artifactIntegrity = `sha512-${Buffer.alloc(64, 1).toString('base64')}`;
-  const admittedPackageDigest = `sha256:${'a'.repeat(64)}`;
-  const manifestDigest = `sha256:${'b'.repeat(64)}`;
   const distribution = {
     kind: 'npm',
     registryOrigin: 'https://registry.example.test',
@@ -1597,23 +1872,34 @@ test('vertical-a accepts exact marketplace identity from the canonical installat
 
   const input = {
     generation: {
+      t: 'happier_plugin_generation_v1',
+      schemaVersion: 1,
       pluginId: 'acme.public-registry',
-      packageDigest: admittedPackageDigest,
-      manifestDigest,
-      installedArtifactRecord: { digest: manifestDigest },
+      immutableGenerationId: 'generation-acme-public-registry',
+      manifestRelativePath: '.happier-plugin/plugin.json',
+      files: [
+        { relativePath: '.happier-plugin/plugin.json', byteLength: 128 },
+        { relativePath: 'dist/plugin.mjs', byteLength: 256 },
+      ],
     },
     installation: {
       enabled: true,
       trust: { pluginId: 'acme.public-registry', distribution, state: 'trusted', approvedAtMs: 1 },
-      source: { distribution, admittedIntegrity: admittedPackageDigest },
+      source: { distribution, admittedIntegrity: artifactIntegrity },
       updatePolicy: 'automatic',
       optionalAccess: [],
     },
     runtimeCatalog: {
       state: { enabled: true },
-      source: { resolvedVersion: '1.0.0', resolvedDigest: manifestDigest },
+      source: {
+        kind: 'package',
+        locator: distribution.packageName,
+        manifestPath: '/plugins/acme-public-registry/.happier-plugin/plugin.json',
+        resolvedVersion: '1.0.0',
+      },
       install: {
-        manifestDigest,
+        mode: 'managed_install',
+        manifestVersion: '1.0.0',
         updatePolicy: 'automatic',
         trust: { distribution },
       },
@@ -1622,7 +1908,6 @@ test('vertical-a accepts exact marketplace identity from the canonical installat
       pluginId: 'acme.public-registry',
       version: '1.0.0',
       marketplaceIntegrity: artifactIntegrity,
-      manifestDigest,
       distribution,
       updatePolicy: 'automatic',
     },
@@ -1632,25 +1917,38 @@ test('vertical-a accepts exact marketplace identity from the canonical installat
   assert.throws(
     () => assertExactMarketplaceInstallationState({
       ...input,
+      installation: {
+        ...input.installation,
+        source: {
+          ...input.installation.source,
+          admittedIntegrity: `sha512-${Buffer.alloc(64, 2).toString('base64')}`,
+        },
+      },
+    }),
+    /did not persist source integrity and structural generation identity/u,
+  );
+  assert.throws(
+    () => assertExactMarketplaceInstallationState({
+      ...input,
       runtimeCatalog: {
         ...input.runtimeCatalog,
         source: {
           ...input.runtimeCatalog.source,
-          resolvedDigest: `sha256:${'c'.repeat(64)}`,
+          locator: '@acme/other-plugin',
         },
       },
     }),
-    /did not persist exact artifact and durable distribution identity/u,
+    /did not persist source integrity and structural generation identity/u,
   );
   assert.throws(
     () => assertExactMarketplaceInstallationState({
       ...input,
       generation: {
         ...input.generation,
-        packageDigest: `sha256:${'d'.repeat(64)}`,
+        manifestRelativePath: 'missing-plugin.json',
       },
     }),
-    /did not persist exact artifact and durable distribution identity/u,
+    /did not persist source integrity and structural generation identity/u,
   );
 });
 
@@ -1671,15 +1969,12 @@ test('vertical-a cannot report success without every composed lifecycle stage', 
     'packed-connected-account-established-operations',
     'descriptor-only-static-lifecycle',
     'ordinary-disable-enable',
-    'failed-update-preservation',
     'successful-update-replacement',
     'packed-connected-account-generation-lifecycle',
     'explicit-rollback',
     'uninstall-action-currentness-absence',
-    'continuous-health-role-transition',
-    'automatic-lkg-recovery',
-    'quarantined-explicit-rollback',
-    'no-eligible-lkg-disable',
+    'bootstrap-adopt-lkg-restart',
+    'hard-revocation-disable-restart',
     'cleanup-failure-later-mutation',
     'packed-scm-uninstall-stale-absence',
   ];
@@ -1732,6 +2027,12 @@ test('vertical-a cannot report success without every composed lifecycle stage', 
         packageName: '@happier-dev/plugin-sdk',
         version: '0.1.0-vertical-a.run-17',
         integrity: 'sha512-YWJj',
+      },
+      pluginUi: {
+        packageName: '@happier-dev/plugin-ui',
+        version: '0.1.0-vertical-a.run-17',
+        pluginSdkVersion: '0.1.0-vertical-a.run-17',
+        integrity: 'sha512-cGx1Zw==',
       },
       cli: {
         packageName: '@happier-dev/cli',
@@ -1820,6 +2121,9 @@ test('vertical-a reports A-11 owner/fault, packed black-box, and authenticated d
         version: '0.1.0-run-layer-owner-failure',
         integrity: 'sha512-YWJj',
       },
+      pluginUi: candidatePluginUiRecord({
+        version: '0.1.0-run-layer-owner-failure',
+      }),
       cli: {
         packageName: '@happier-dev/cli',
         version: '0.2.10-run-layer-owner-failure',
@@ -1918,15 +2222,40 @@ test('vertical-a reloads an already-running daemon after its extra CA bundle cha
   });
 });
 
+test('vertical-a uses the direct bootstrap/adopt, LKG, restart, and hard-revocation lifecycle', () => {
+  for (const stageId of [
+    'bootstrap-adopt-lkg-restart',
+    'hard-revocation-disable-restart',
+  ]) {
+    assert.ok(
+      VERTICAL_A_REQUIRED_STAGE_IDS.includes(stageId),
+      `direct lifecycle stage is missing: ${stageId}`,
+    );
+  }
+  for (const retiredStageId of [
+    'continuous-health-role-transition',
+    'automatic-lkg-recovery',
+    'quarantined-explicit-rollback',
+    'no-eligible-lkg-disable',
+    'try-once-reinstall-quarantine',
+  ]) {
+    assert.equal(
+      VERTICAL_A_REQUIRED_STAGE_IDS.includes(retiredStageId),
+      false,
+      `retired health-supervisor stage is still required: ${retiredStageId}`,
+    );
+  }
+});
+
 test('vertical-a requires daemon-started native Agents without a carrier to fail before leaf activation', () => {
   assert.deepEqual(assertDaemonAgentCarrierFailClosed({
     code: 1,
     signal: null,
     stdout: '',
-    stderr: "Daemon-spawned native Agent backend 'auggie' is missing its runtime carrier\n",
+    stderr: "Daemon-spawned native Agent backend 'auggie' is missing its runner-local runtime source\n",
   }), {
     backendId: 'auggie',
-    errorCode: 'DAEMON_AGENT_RUNTIME_CARRIER_MISSING',
+    errorCode: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING',
     processExitCode: 1,
   });
 
@@ -1982,433 +2311,6 @@ test('vertical-a keeps a healthy peer on one activation across a post-restart si
   }), /reactivated or retired/u);
 });
 
-test('vertical-a requires no-LKG recovery to quarantine and disable only the current plugin while retaining explicit rollback', () => {
-  const pluginId = 'acme.vertical-a';
-  const failedGenerationId = 'generation-v3';
-  const explicitRollbackGenerationId = 'generation-v4';
-  const evidence = assertNoEligibleLkgDisabled({
-    state: {
-      commit: {
-        pluginGenerations: {
-          [pluginId]: { immutableGenerationId: failedGenerationId },
-        },
-      },
-      revision: {
-        plugins: { [pluginId]: { enabled: false } },
-        runtimeCatalog: { plugins: { [pluginId]: { state: { enabled: false } } } },
-        health: {
-          [failedGenerationId]: {
-            state: 'quarantined',
-            fingerprint: 'fingerprint-v3',
-            consumedAttemptIds: ['fatal-a', 'fatal-b', 'fatal-c'],
-          },
-          [explicitRollbackGenerationId]: {
-            state: 'quarantined',
-            tryOnce: 'available',
-          },
-        },
-        healthTombstones: [{
-          pluginId,
-          fingerprint: 'fingerprint-v3',
-          state: 'quarantined',
-        }],
-        rollbackRetention: [{
-          pluginId,
-          immutableGenerationId: explicitRollbackGenerationId,
-          role: 'quarantined',
-          automaticRecoveryEligible: false,
-          byteAvailability: 'available',
-        }],
-      },
-    },
-    pluginId,
-    failedGenerationId,
-    explicitRollbackGenerationId,
-    healthyPluginInvocation: {
-      pluginId: 'acme.private-registry',
-      version: '11.0.0',
-      pid: 77,
-      activationInstanceId: 'healthy-control',
-    },
-  });
-  assert.deepEqual(evidence, {
-    failedFingerprint: 'fingerprint-v3',
-    distinctFatalAttempts: 3,
-    explicitRollbackRole: 'quarantined',
-    healthyPluginId: 'acme.private-registry',
-    healthyPluginVersion: '11.0.0',
-  });
-
-  assert.throws(() => assertNoEligibleLkgDisabled({
-    state: {
-      commit: { pluginGenerations: { [pluginId]: { immutableGenerationId: failedGenerationId } } },
-      revision: {
-        plugins: { [pluginId]: { enabled: false } },
-        runtimeCatalog: { plugins: { [pluginId]: { state: { enabled: false } } } },
-        health: {
-          [failedGenerationId]: {
-            state: 'quarantined',
-            fingerprint: 'fingerprint-v3',
-            consumedAttemptIds: ['fatal-a', 'fatal-b', 'fatal-c'],
-          },
-          [explicitRollbackGenerationId]: { state: 'quarantined', tryOnce: 'available' },
-        },
-        healthTombstones: [{ pluginId, fingerprint: 'fingerprint-v3', state: 'quarantined' }],
-        rollbackRetention: [{
-          pluginId,
-          immutableGenerationId: explicitRollbackGenerationId,
-          role: 'lastKnownGood',
-          automaticRecoveryEligible: true,
-          byteAvailability: 'available',
-        }],
-      },
-    },
-    pluginId,
-    failedGenerationId,
-    explicitRollbackGenerationId,
-    healthyPluginInvocation: null,
-  }), /left automatic recovery eligible/u);
-  assert.throws(() => assertNoEligibleLkgDisabled({
-    state: {
-      commit: { pluginGenerations: { [pluginId]: { immutableGenerationId: failedGenerationId } } },
-      revision: {
-        plugins: { [pluginId]: { enabled: false } },
-        runtimeCatalog: { plugins: { [pluginId]: { state: { enabled: false } } } },
-        health: {
-          [failedGenerationId]: {
-            state: 'quarantined',
-            fingerprint: 'fingerprint-v3',
-            consumedAttemptIds: ['fatal-a', 'fatal-b', 'fatal-c'],
-          },
-          [explicitRollbackGenerationId]: { state: 'quarantined', tryOnce: 'available' },
-        },
-        healthTombstones: [{ pluginId, fingerprint: 'fingerprint-v3', state: 'quarantined' }],
-        rollbackRetention: [{
-          pluginId,
-          immutableGenerationId: explicitRollbackGenerationId,
-          role: 'quarantined',
-          automaticRecoveryEligible: false,
-          byteAvailability: 'available',
-        }],
-      },
-    },
-    pluginId,
-    failedGenerationId,
-    explicitRollbackGenerationId,
-    healthyPluginInvocation: null,
-  }), /healthy control plugin.*callable/iu);
-});
-
-test('vertical-a requires Try once to remain consumed when the exact quarantined bytes are reinstalled after restart', () => {
-  const pluginId = 'acme.vertical-a';
-  const originalGenerationId = 'generation-v3';
-  const reinstalledGenerationId = 'generation-v3-reinstalled';
-  const evidence = assertTryOnceReinstallQuarantine({
-    state: {
-      commit: {
-        pluginGenerations: {
-          [pluginId]: { immutableGenerationId: reinstalledGenerationId },
-        },
-      },
-      revision: {
-        plugins: { [pluginId]: { enabled: false } },
-        runtimeCatalog: { plugins: { [pluginId]: { state: { enabled: false } } } },
-        health: {
-          [originalGenerationId]: {
-            state: 'quarantined',
-            tryOnce: 'consumed',
-            fingerprint: 'fingerprint-v3',
-          },
-          [reinstalledGenerationId]: {
-            state: 'quarantined',
-            tryOnce: 'consumed',
-            fingerprint: 'fingerprint-v3',
-          },
-        },
-        healthTombstones: [{
-          pluginId,
-          fingerprint: 'fingerprint-v3',
-          state: 'consumed',
-        }],
-      },
-    },
-    pluginId,
-    originalGenerationId,
-    reinstalledGenerationId,
-    fingerprint: 'fingerprint-v3',
-    rejectedSecondEnable: {
-      ok: false,
-      kind: 'plugins_enable',
-      error: {
-        code: 'failed',
-        causeMessage: 'Generation Try once is unavailable or already consumed',
-      },
-    },
-    registrationCountBeforeRestart: 4,
-    registrationCountAfterReinstall: 4,
-  });
-  assert.deepEqual(evidence, {
-    originalGeneration: originalGenerationId,
-    reinstalledGeneration: reinstalledGenerationId,
-    fingerprint: 'fingerprint-v3',
-    tryOnce: 'consumed',
-    registrationCount: 4,
-  });
-
-  assert.throws(() => assertTryOnceReinstallQuarantine({
-    state: {
-      commit: {
-        pluginGenerations: {
-          [pluginId]: { immutableGenerationId: reinstalledGenerationId },
-        },
-      },
-      revision: {
-        plugins: { [pluginId]: { enabled: false } },
-        runtimeCatalog: { plugins: { [pluginId]: { state: { enabled: false } } } },
-        health: {
-          [originalGenerationId]: {
-            state: 'quarantined',
-            tryOnce: 'consumed',
-            fingerprint: 'fingerprint-v3',
-          },
-          [reinstalledGenerationId]: {
-            state: 'quarantined',
-            tryOnce: 'available',
-            fingerprint: 'fingerprint-v3',
-          },
-        },
-        healthTombstones: [{
-          pluginId,
-          fingerprint: 'fingerprint-v3',
-          state: 'quarantined',
-        }],
-      },
-    },
-    pluginId,
-    originalGenerationId,
-    reinstalledGenerationId,
-    fingerprint: 'fingerprint-v3',
-    rejectedSecondEnable: {
-      ok: false,
-      kind: 'plugins_enable',
-      error: {
-        code: 'failed',
-        causeMessage: 'Generation Try once is unavailable or already consumed',
-      },
-    },
-    registrationCountBeforeRestart: 4,
-    registrationCountAfterReinstall: 4,
-  }), /rearmed quarantined bytes/u);
-});
-
-test('vertical-a does not attribute a rejected pre-commit candidate failure to current health', () => {
-  const pluginId = 'acme.vertical-a';
-  const currentGenerationId = 'generation-v1';
-  const currentHealth = {
-    state: 'pending',
-    tryOnce: 'unavailable',
-    fingerprint: 'fingerprint-v1',
-    consumedAttemptIds: ['serving-bootstrap'],
-  };
-  assert.deepEqual(assertRejectedCandidateNotAttributedToCurrentHealth({
-    before: {
-      commit: { pluginGenerations: { [pluginId]: { immutableGenerationId: currentGenerationId } } },
-      revision: { health: { [currentGenerationId]: currentHealth } },
-    },
-    after: {
-      commit: { pluginGenerations: { [pluginId]: { immutableGenerationId: currentGenerationId } } },
-      revision: { health: { [currentGenerationId]: { ...currentHealth } } },
-    },
-    pluginId,
-    currentGenerationId,
-  }), {
-    currentGeneration: currentGenerationId,
-    consumedAttemptIds: ['serving-bootstrap'],
-  });
-
-  assert.throws(() => assertRejectedCandidateNotAttributedToCurrentHealth({
-    before: {
-      commit: { pluginGenerations: { [pluginId]: { immutableGenerationId: currentGenerationId } } },
-      revision: { health: { [currentGenerationId]: currentHealth } },
-    },
-    after: {
-      commit: { pluginGenerations: { [pluginId]: { immutableGenerationId: currentGenerationId } } },
-      revision: {
-        health: {
-          [currentGenerationId]: {
-            ...currentHealth,
-            consumedAttemptIds: ['serving-bootstrap', 'rejected-candidate-failure'],
-          },
-        },
-      },
-    },
-    pluginId,
-    currentGenerationId,
-  }), /attributed a rejected candidate failure/u);
-});
-
-test('vertical-a records measured continuous-health evidence from one activation instance', () => {
-  assert.deepEqual(assertContinuousHealthEvidence({
-    startedAtMs: 1_000,
-    completedAtMs: 601_000,
-    requiredWindowMs: 600_000,
-    initialRegistration: { pid: 41, activationInstanceId: 'activation-v3' },
-    healthyInvocation: { pid: 41, activationInstanceId: 'activation-v3' },
-    candidateHealth: { state: 'healthy' },
-    priorRetention: {
-      role: 'userRollback',
-      automaticRecoveryEligible: false,
-      byteAvailability: 'available',
-    },
-    initialDistribution: {
-      kind: 'localPath',
-      canonicalPath: '/tmp/acme.vertical-a',
-    },
-    candidateDistribution: {
-      kind: 'localPath',
-      canonicalPath: '/tmp/acme.vertical-a',
-    },
-  }), {
-    measuredWallDurationMs: 600_000,
-    daemonPid: 41,
-    activationInstanceId: 'activation-v3',
-    candidateHealthState: 'healthy',
-    priorRole: 'userRollback',
-    priorAutomaticRecoveryEligible: false,
-    distributionKind: 'localPath',
-    distributionIdentity: '/tmp/acme.vertical-a',
-  });
-
-  assert.throws(() => assertContinuousHealthEvidence({
-    startedAtMs: 1_000,
-    completedAtMs: 600_999,
-    requiredWindowMs: 600_000,
-    initialRegistration: { pid: 41, activationInstanceId: 'activation-v3' },
-    healthyInvocation: { pid: 41, activationInstanceId: 'activation-v3' },
-  }), /shorter than the required window/u);
-  assert.throws(() => assertContinuousHealthEvidence({
-    startedAtMs: 1_000,
-    completedAtMs: 601_000,
-    requiredWindowMs: 600_000,
-    initialRegistration: { pid: 41, activationInstanceId: 'activation-v3' },
-    healthyInvocation: { pid: 42, activationInstanceId: 'activation-v3-restarted' },
-    candidateHealth: { state: 'healthy' },
-    priorRetention: {
-      role: 'userRollback',
-      automaticRecoveryEligible: false,
-      byteAvailability: 'available',
-    },
-  }), /daemon activation changed/u);
-  assert.throws(() => assertContinuousHealthEvidence({
-    startedAtMs: 1_000,
-    completedAtMs: 601_000,
-    requiredWindowMs: 600_000,
-    initialRegistration: { pid: 41, activationInstanceId: 'activation-v3' },
-    healthyInvocation: { pid: 41, activationInstanceId: 'activation-v3' },
-    candidateHealth: { state: 'healthy' },
-    priorRetention: {
-      role: 'lastKnownGood',
-      automaticRecoveryEligible: true,
-      byteAvailability: 'available',
-    },
-  }), /prior generation.*explicit rollback only/iu);
-  assert.throws(() => assertContinuousHealthEvidence({
-    startedAtMs: 1_000,
-    completedAtMs: 601_000,
-    requiredWindowMs: 600_000,
-    initialRegistration: { pid: 41, activationInstanceId: 'activation-v3' },
-    healthyInvocation: { pid: 41, activationInstanceId: 'activation-v3' },
-    candidateHealth: { state: 'healthy' },
-    priorRetention: {
-      role: 'userRollback',
-      automaticRecoveryEligible: false,
-      byteAvailability: 'available',
-    },
-    initialDistribution: {
-      kind: 'localPath',
-      canonicalPath: '/tmp/acme.vertical-a',
-    },
-    candidateDistribution: {
-      kind: 'localPath',
-      canonicalPath: '/tmp/acme.other',
-    },
-  }), /same local-path distribution/iu);
-});
-
-test('vertical-a consumes quarantined Try once only through explicit rollback and serves those exact bytes', () => {
-  assert.deepEqual(assertQuarantinedExplicitRollback({
-    pluginId: 'acme.vertical-a',
-    healthyGenerationId: 'generation-v4-reinstalled',
-    quarantinedGenerationId: 'generation-v5',
-    before: {
-      commit: {
-        pluginGenerations: {
-          'acme.vertical-a': { immutableGenerationId: 'generation-v4-reinstalled' },
-        },
-      },
-      revision: {
-        plugins: { 'acme.vertical-a': { enabled: false } },
-        health: {
-          'generation-v5': {
-            state: 'quarantined',
-            tryOnce: 'available',
-            fingerprint: 'fingerprint-v5',
-          },
-        },
-        healthTombstones: [{
-          pluginId: 'acme.vertical-a',
-          fingerprint: 'fingerprint-v5',
-          state: 'quarantined',
-        }],
-      },
-    },
-    rollbackEnvelope: {
-      data: {
-        pluginId: 'acme.vertical-a',
-        desiredGeneration: 'generation-v5',
-        appliedGeneration: 'generation-v5',
-        pendingSurfaces: [],
-      },
-    },
-    after: {
-      commit: {
-        pluginGenerations: {
-          'acme.vertical-a': { immutableGenerationId: 'generation-v5' },
-        },
-      },
-      revision: {
-        plugins: { 'acme.vertical-a': { enabled: true } },
-        runtimeCatalog: { plugins: { 'acme.vertical-a': { state: { enabled: true } } } },
-        health: {
-          'generation-v5': {
-            state: 'trial',
-            tryOnce: 'consumed',
-            fingerprint: 'fingerprint-v5',
-          },
-        },
-        healthTombstones: [{
-          pluginId: 'acme.vertical-a',
-          fingerprint: 'fingerprint-v5',
-          state: 'consumed',
-        }],
-      },
-    },
-    invocation: {
-      pluginId: 'acme.vertical-a',
-      version: '5.0.0',
-      pid: 77,
-      activationInstanceId: 'activation-v5',
-    },
-  }), {
-    fromGeneration: 'generation-v4-reinstalled',
-    toGeneration: 'generation-v5',
-    fingerprint: 'fingerprint-v5',
-    tryOnce: 'consumed',
-    servingVersion: '5.0.0',
-    activationInstanceId: 'activation-v5',
-  });
-});
-
 test('vertical-a proves a rejected activation cleanup cannot strand later same-plugin mutation', () => {
   assert.deepEqual(assertCleanupFailureDidNotBlockLaterMutation({
     pluginId: 'acme.vertical-a',
@@ -2451,103 +2353,22 @@ test('vertical-a proves a rejected activation cleanup cannot strand later same-p
   });
 });
 
-test('vertical-a requires each fatal restart to add exactly one unique supervised attempt id', () => {
-  assert.deepEqual(assertUniqueSupervisedAttemptProgress({
-    initialConsumedAttemptIds: [],
-    attempts: [
-      { attemptNumber: 1, consumedAttemptIds: ['attempt-a'] },
-      { attemptNumber: 2, consumedAttemptIds: ['attempt-a', 'attempt-b'] },
-      { attemptNumber: 3, consumedAttemptIds: ['attempt-a', 'attempt-b', 'attempt-c'] },
-    ],
-  }), ['attempt-a', 'attempt-b', 'attempt-c']);
-
-  assert.throws(() => assertUniqueSupervisedAttemptProgress({
-    initialConsumedAttemptIds: [],
-    attempts: [
-      { attemptNumber: 1, consumedAttemptIds: ['attempt-a'] },
-      { attemptNumber: 2, consumedAttemptIds: ['attempt-a'] },
-      { attemptNumber: 3, consumedAttemptIds: ['attempt-a', 'attempt-c'] },
-    ],
-  }), /exactly one new supervised attempt/u);
-});
-
-test('vertical-a waits for each supervised fatal attempt to reach durable health state', async () => {
-  const observedAttemptIds = [
-    [],
-    [],
-    ['attempt-a'],
-  ];
-  let readCount = 0;
-  let clockMs = 0;
-  const progress = await waitForSupervisedAttemptProgress({
-    generationId: 'generation-v4',
-    priorConsumedAttemptIds: [],
-    timeoutMs: 1_000,
-    pollIntervalMs: 25,
-    readState: async () => ({
-      revision: {
-        health: {
-          'generation-v4': {
-            consumedAttemptIds: observedAttemptIds[Math.min(readCount++, observedAttemptIds.length - 1)],
-          },
-        },
-      },
-    }),
-    nowMs: () => clockMs,
-    sleep: async (delayMs) => { clockMs += delayMs; },
-  });
-
-  assert.equal(readCount, 3);
-  assert.deepEqual(progress.consumedAttemptIds, ['attempt-a']);
-  assert.doesNotThrow(() => assertUniqueSupervisedAttemptProgress({
-    initialConsumedAttemptIds: [],
-    attempts: [{ attemptNumber: 1, consumedAttemptIds: progress.consumedAttemptIds }],
-  }));
-});
-
-test('vertical-a requires ordinary uninstall to preserve health history until explicit destructive clear', () => {
-  assert.deepEqual(assertExplicitHealthHistoryClear({
-    pluginId: 'acme.vertical-a',
-    fingerprint: 'fingerprint-v3',
-    afterDefaultUninstall: {
-      revision: {
-        healthTombstones: [{
-          pluginId: 'acme.vertical-a',
-          fingerprint: 'fingerprint-v3',
-          state: 'quarantined',
-        }],
-      },
-    },
-    clearEnvelope: {
-      data: {
-        pluginId: 'acme.vertical-a',
-        alreadyUninstalled: true,
-      },
-    },
-    afterExplicitClear: {
-      revision: {
-        healthTombstones: [],
-      },
-    },
-  }), {
-    preservedFingerprint: 'fingerprint-v3',
-    explicitClear: true,
-  });
-});
-
-test('runner requires the canonical vertical-a scenario and direct natural artifacts', () => {
+test('runner accepts either the canonical candidate or direct non-acceptance smoke artifacts', () => {
   assert.deepEqual(
     parseRunnerArgs([
       '--scenario',
       'vertical-a',
       '--sdk-tarball',
       '/tmp/sdk.tgz',
+      '--plugin-ui-tarball',
+      '/tmp/plugin-ui.tgz',
       '--cli-tarball',
       '/tmp/cli.tgz',
     ]),
     {
       scenario: 'vertical-a',
       sdkTarballPath: '/tmp/sdk.tgz',
+      pluginUiTarballPath: '/tmp/plugin-ui.tgz',
       cliTarballPath: '/tmp/cli.tgz',
     },
   );
@@ -2557,6 +2378,8 @@ test('runner requires the canonical vertical-a scenario and direct natural artif
       'vertical-a',
       '--sdk-tarball',
       '/tmp/sdk.tgz',
+      '--plugin-ui-tarball',
+      '/tmp/plugin-ui.tgz',
       '--cli-tarball',
       '/tmp/cli.tgz',
       '--packed-novel-qa-handoff-root',
@@ -2565,6 +2388,7 @@ test('runner requires the canonical vertical-a scenario and direct natural artif
     {
       scenario: 'vertical-a',
       sdkTarballPath: '/tmp/sdk.tgz',
+      pluginUiTarballPath: '/tmp/plugin-ui.tgz',
       cliTarballPath: '/tmp/cli.tgz',
       packedNovelQaHandoffRoot: '/tmp/packed-novel-handoff',
     },
@@ -2575,19 +2399,24 @@ test('runner requires the canonical vertical-a scenario and direct natural artif
       'vertical-b',
       '--sdk-tarball',
       '/tmp/sdk.tgz',
+      '--plugin-ui-tarball',
+      '/tmp/plugin-ui.tgz',
       '--cli-tarball',
       '/tmp/cli.tgz',
     ]),
     /vertical-a/u,
   );
-  assert.throws(
-    () => parseRunnerArgs([
+  assert.deepEqual(
+    parseRunnerArgs([
       '--scenario',
       'vertical-a',
       '--candidate',
       '/tmp/candidate.json',
     ]),
-    /--sdk-tarball/u,
+    {
+      scenario: 'vertical-a',
+      candidateManifestPath: '/tmp/candidate.json',
+    },
   );
   assert.throws(
     () => parseRunnerArgs([
@@ -2595,24 +2424,227 @@ test('runner requires the canonical vertical-a scenario and direct natural artif
       'vertical-a',
       '--sdk-tarball',
       '/tmp/sdk.tgz',
+      '--plugin-ui-tarball',
+      '/tmp/plugin-ui.tgz',
       '--cli-tarball',
       '/tmp/cli.tgz',
       '--candidate',
       '/tmp/candidate.json',
     ]),
-    /does not accept --candidate/u,
+    /cannot be combined/u,
   );
+});
+
+test('vertical-a candidate admission delegates to the canonical loader and binds evidence identity', async () => {
+  const candidate = {
+    schemaVersion: 1,
+    runId: 'canonical-run-17',
+    installers: candidateInstallerRecords('/candidate/installers'),
+    sdk: {
+      packageName: '@happier-dev/plugin-sdk',
+      version: '0.1.0',
+      integrity: 'sha512-canonical-sdk',
+      tarballPath: '/candidate/sdk.tgz',
+    },
+    pluginUi: candidatePluginUiRecord({
+      version: '0.1.0',
+      root: '/candidate',
+    }),
+    cli: {
+      packageName: '@happier-dev/cli',
+      version: '0.2.10',
+      integrity: 'sha512-canonical-cli',
+      tarballPath: '/candidate/cli.tgz',
+      entrypoint: 'package/bin/happier.mjs',
+    },
+    standaloneCli: candidateStandaloneCliRecord({ root: '/candidate/native' }),
+  };
+  const argv = [
+    '--scenario',
+    'vertical-a',
+    '--candidate',
+    '/candidate/candidate.json',
+  ];
+  let candidateLoaderCalls = 0;
+  let naturalLoaderCalls = 0;
+  const loaded = await loadPackedAuthorVerticalAArtifacts(argv, {
+    loadCandidateManifestImpl: async (receivedArgv) => {
+      candidateLoaderCalls += 1;
+      assert.deepEqual(receivedArgv, argv);
+      return candidate;
+    },
+    loadNaturalArtifactsImpl: async () => {
+      naturalLoaderCalls += 1;
+      throw new Error('natural loader must not admit a canonical candidate');
+    },
+  });
+
+  assert.equal(candidateLoaderCalls, 1);
+  assert.equal(naturalLoaderCalls, 0);
+  assert.equal(loaded.candidate, candidate);
+  assert.deepEqual(loaded.admission, {
+    kind: 'canonical-candidate',
+    runId: candidate.runId,
+    sdk: {
+      packageName: candidate.sdk.packageName,
+      version: candidate.sdk.version,
+      integrity: candidate.sdk.integrity,
+    },
+    pluginUi: {
+      packageName: candidate.pluginUi.packageName,
+      version: candidate.pluginUi.version,
+      pluginSdkVersion: candidate.pluginUi.pluginSdkVersion,
+      integrity: candidate.pluginUi.integrity,
+    },
+    cli: {
+      packageName: candidate.cli.packageName,
+      version: candidate.cli.version,
+      integrity: candidate.cli.integrity,
+    },
+  });
+});
+
+test('packed author runner passes its verified tarball pair directly into external author proof', async () => {
+  const runnerSource = await readFile(
+    new URL('./run-packed-author-ui-compat.mjs', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    runnerSource,
+    /runExternalAuthoringFixture\(\{\s*sdkTarballPath:\s*verifiedSdkTarballPath,\s*pluginUiTarballPath:\s*verifiedPluginUiTarballPath,\s*\}\)/su,
+  );
+  assert.doesNotMatch(runnerSource, /createPackedAuthorExternalAuthoringSource/u);
+  assert.doesNotMatch(runnerSource, /externalAuthoringArtifactSource/u);
+});
+
+test('vertical-a candidate admission fails closed on canonical mismatch or tamper rejection', async () => {
+  for (const expectedFailure of [
+    'Candidate artifact integrity mismatch',
+    'Candidate SDK tarball changed during admission',
+  ]) {
+    let naturalLoaderCalled = false;
+    await assert.rejects(
+      loadPackedAuthorVerticalAArtifacts([
+        '--scenario',
+        'vertical-a',
+        '--candidate',
+        '/candidate/candidate.json',
+      ], {
+        loadCandidateManifestImpl: async () => {
+          throw new Error(expectedFailure);
+        },
+        loadNaturalArtifactsImpl: async () => {
+          naturalLoaderCalled = true;
+          throw new Error('candidate rejection must not fall back to direct smoke artifacts');
+        },
+      }),
+      new RegExp(expectedFailure, 'u'),
+    );
+    assert.equal(naturalLoaderCalled, false);
+  }
+});
+
+test('candidate admission rejects an incomplete native matrix before artifact verification', async () => {
+  const completeStandaloneCli = candidateStandaloneCliRecord({
+    root: '/candidate/native',
+  });
+  const baseManifest = {
+    schemaVersion: 1,
+    runId: 'incomplete-candidate',
+    installers: candidateInstallerRecords('/candidate/installers'),
+    sdk: {
+      packageName: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      integrity: 'sha512-YWJj',
+      tarballPath: './sdk.tgz',
+    },
+    pluginUi: candidatePluginUiRecord(),
+    cli: {
+      packageName: '@happier-dev/cli',
+      version: '0.2.10',
+      integrity: 'sha512-ZGVm',
+      tarballPath: './cli.tgz',
+      entrypoint: 'package/bin/happier.mjs',
+    },
+    standaloneCli: completeStandaloneCli,
+  };
+  const invalidManifests = [
+    {
+      label: 'missing standalone CLI',
+      manifest: { ...baseManifest, standaloneCli: undefined },
+      expected: /standalone CLI.*complete native release matrix/u,
+    },
+    {
+      label: 'four archives',
+      manifest: {
+        ...baseManifest,
+        standaloneCli: {
+          ...completeStandaloneCli,
+          archives: completeStandaloneCli.archives.slice(0, -1),
+        },
+      },
+      expected: /exact five-target release matrix/u,
+    },
+    {
+      label: 'one Darwin evidence record',
+      manifest: {
+        ...baseManifest,
+        standaloneCli: {
+          ...completeStandaloneCli,
+          notarization: completeStandaloneCli.notarization.slice(0, -1),
+        },
+      },
+      expected: /both Darwin targets/u,
+    },
+    {
+      label: 'missing checksum binding',
+      manifest: {
+        ...baseManifest,
+        standaloneCli: { ...completeStandaloneCli, checksums: null },
+      },
+      expected: /exact bound checksums-happier/u,
+    },
+    {
+      label: 'missing minisign binding',
+      manifest: {
+        ...baseManifest,
+        standaloneCli: { ...completeStandaloneCli, signature: null },
+      },
+      expected: /exact bound checksums-happier.*minisig/u,
+    },
+  ];
+  for (const { label, manifest, expected } of invalidManifests) {
+    let artifactVerificationCalled = false;
+    await assert.rejects(
+      loadPackedAuthorCandidateManifest([
+        '--candidate',
+        '/candidate/candidate.json',
+      ], {
+        readFileImpl: async () => JSON.stringify(manifest),
+        assertCandidateArtifactsImpl: async () => {
+          artifactVerificationCalled = true;
+        },
+      }),
+      expected,
+      label,
+    );
+    assert.equal(artifactVerificationCalled, false, label);
+  }
 });
 
 test('ordinary packed admission accepts direct natural artifacts without candidate custody', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-natural-packed-admission-'));
   try {
     const sdkSourceRoot = join(root, 'sdk-source');
+    const pluginUiSourceRoot = join(root, 'plugin-ui-source');
     const cliSourceRoot = join(root, 'cli-source');
     const sdkTarballPath = join(root, 'sdk.tgz');
+    const pluginUiTarballPath = join(root, 'plugin-ui.tgz');
     const cliTarballPath = join(root, 'cli.tgz');
     await Promise.all([
       mkdir(join(sdkSourceRoot, 'package'), { recursive: true }),
+      mkdir(join(pluginUiSourceRoot, 'package'), { recursive: true }),
       mkdir(join(cliSourceRoot, 'package', 'bin'), { recursive: true }),
     ]);
     await Promise.all([
@@ -2621,6 +2653,15 @@ test('ordinary packed admission accepts direct natural artifacts without candida
         `${JSON.stringify({
           name: '@happier-dev/plugin-sdk',
           version: '0.0.0',
+        })}\n`,
+        'utf8',
+      ),
+      writeFile(
+        join(pluginUiSourceRoot, 'package', 'package.json'),
+        `${JSON.stringify({
+          name: '@happier-dev/plugin-ui',
+          version: '0.0.0',
+          dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
         })}\n`,
         'utf8',
       ),
@@ -2641,6 +2682,7 @@ test('ordinary packed admission accepts direct natural artifacts without candida
     ]);
     await Promise.all([
       tar.c({ cwd: sdkSourceRoot, file: sdkTarballPath, gzip: true }, ['package']),
+      tar.c({ cwd: pluginUiSourceRoot, file: pluginUiTarballPath, gzip: true }, ['package']),
       tar.c({ cwd: cliSourceRoot, file: cliTarballPath, gzip: true }, ['package']),
     ]);
 
@@ -2649,6 +2691,8 @@ test('ordinary packed admission accepts direct natural artifacts without candida
       'vertical-a',
       '--sdk-tarball',
       sdkTarballPath,
+      '--plugin-ui-tarball',
+      pluginUiTarballPath,
       '--cli-tarball',
       cliTarballPath,
     ];
@@ -2659,25 +2703,40 @@ test('ordinary packed admission accepts direct natural artifacts without candida
     assert.equal(candidate.runId, 'natural-run-1');
     assert.equal(candidate.sdk.packageName, '@happier-dev/plugin-sdk');
     assert.equal(candidate.sdk.version, '0.0.0');
+    assert.equal(candidate.pluginUi.packageName, '@happier-dev/plugin-ui');
+    assert.equal(candidate.pluginUi.version, '0.0.0');
+    assert.equal(candidate.pluginUi.pluginSdkVersion, '0.0.0');
     assert.equal(candidate.cli.packageName, '@happier-dev/cli');
     assert.equal(candidate.cli.version, '0.2.10');
     assert.equal(candidate.cli.entrypoint, 'package/bin/happier.mjs');
     assert.equal(candidate.sdk.tarballPath, sdkTarballPath);
+    assert.equal(candidate.pluginUi.tarballPath, pluginUiTarballPath);
     assert.equal(candidate.cli.tarballPath, cliTarballPath);
     assert.equal(
       candidate.sdk.integrity,
       sha512Sri(await readFile(sdkTarballPath)),
     );
     assert.equal(
+      candidate.pluginUi.integrity,
+      sha512Sri(await readFile(pluginUiTarballPath)),
+    );
+    assert.equal(
       candidate.cli.integrity,
       sha512Sri(await readFile(cliTarballPath)),
     );
-    assert.equal(candidate.sourceBasis, undefined);
     assert.equal(candidate.installers, undefined);
     await assert.rejects(
       readFile(join(root, 'candidate.json'), 'utf8'),
       /ENOENT/u,
     );
+    const smokeAdmission = await loadPackedAuthorVerticalAArtifacts(argv, {
+      loadCandidateManifestImpl: async () => {
+        throw new Error('direct smoke mode must not claim canonical candidate admission');
+      },
+      loadNaturalArtifactsImpl: async () => candidate,
+    });
+    assert.equal(smokeAdmission.admission.kind, 'direct-artifacts-smoke');
+    assert.equal(smokeAdmission.admission.runId, candidate.runId);
 
     const directRunner = spawnSync(
       process.execPath,
@@ -2698,6 +2757,7 @@ test('ordinary packed admission accepts direct natural artifacts without candida
     assert.equal(directRunner.status, 1);
     const directRunnerEnvelope = JSON.parse(directRunner.stdout.trim());
     assert.equal(directRunnerEnvelope.candidate.sdk.tarballPath, sdkTarballPath);
+    assert.equal(directRunnerEnvelope.candidate.pluginUi.tarballPath, pluginUiTarballPath);
     assert.equal(directRunnerEnvelope.candidate.cli.tarballPath, cliTarballPath);
     assert.match(
       directRunnerEnvelope.error.message,
@@ -2710,6 +2770,8 @@ test('ordinary packed admission accepts direct natural artifacts without candida
         'vertical-a',
         '--sdk-tarball',
         cliTarballPath,
+        '--plugin-ui-tarball',
+        pluginUiTarballPath,
         '--cli-tarball',
         sdkTarballPath,
       ], {
@@ -2766,10 +2828,6 @@ test('candidate manifest accepts exact packed package semvers without manufactur
   const parsed = parseCandidateManifest(JSON.stringify({
     schemaVersion: 1,
     runId: 'run-17',
-    sourceBasis: {
-      algorithm: 'sha256',
-      digest: 'a'.repeat(64),
-    },
     installers: candidateInstallerRecords(),
     sdk: {
       packageName: '@happier-dev/plugin-sdk',
@@ -2777,6 +2835,7 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord(),
     cli: {
       packageName: '@happier-dev/cli',
       version: '0.2.10',
@@ -2784,14 +2843,11 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       tarballPath: './cli.tgz',
       entrypoint: 'package/bin/happier.mjs',
     },
+    standaloneCli: candidateStandaloneCliRecord(),
   }), '/tmp/candidate.json');
   assert.equal(parsed.sdk.version, '0.0.0');
   assert.equal(parsed.cli.version, '0.2.10');
   assert.equal(parsed.sdk.tarballPath, '/tmp/sdk.tgz');
-  assert.deepEqual(parsed.sourceBasis, {
-    algorithm: 'sha256',
-    digest: 'a'.repeat(64),
-  });
   assert.deepEqual(parsed.installers, candidateInstallerRecords());
   assert.throws(() => parseCandidateManifest(JSON.stringify({
     schemaVersion: 1,
@@ -2802,6 +2858,7 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord(),
     cli: {
       integrity: 'sha512-ZGVm',
       tarballPath: './cli.tgz',
@@ -2817,6 +2874,9 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord({
+      version: '0.1.0-vertical-a.run-17',
+    }),
     cli: {
       packageName: '@scope/lookalike-cli',
       version: '0.2.10-vertical-a.run-17',
@@ -2834,6 +2894,9 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord({
+      version: '0.1.0-vertical-a.run-17',
+    }),
     cli: {
       packageName: '@happier-dev/cli',
       version: '0.2.10-vertical-a.run-17',
@@ -2845,10 +2908,6 @@ test('candidate manifest accepts exact packed package semvers without manufactur
   assert.doesNotThrow(() => parseCandidateManifest(JSON.stringify({
     schemaVersion: 1,
     runId: 'run-17',
-    sourceBasis: {
-      algorithm: 'sha256',
-      digest: 'b'.repeat(64),
-    },
     installers: candidateInstallerRecords(),
     sdk: {
       packageName: '@happier-dev/plugin-sdk',
@@ -2856,6 +2915,9 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord({
+      version: '0.1.0-vertical-a.extra.run-17',
+    }),
     cli: {
       packageName: '@happier-dev/cli',
       version: '0.2.10-vertical-a.run-17',
@@ -2863,14 +2925,13 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       tarballPath: './cli.tgz',
       entrypoint: 'package/bin/happier.mjs',
     },
+    standaloneCli: candidateStandaloneCliRecord({
+      version: '0.2.10-vertical-a.run-17',
+    }),
   }), '/tmp/candidate.json'));
   assert.doesNotThrow(() => parseCandidateManifest(JSON.stringify({
     schemaVersion: 1,
     runId: 'run-17',
-    sourceBasis: {
-      algorithm: 'sha256',
-      digest: 'c'.repeat(64),
-    },
     installers: candidateInstallerRecords(),
     sdk: {
       packageName: '@happier-dev/plugin-sdk',
@@ -2878,6 +2939,9 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord({
+      version: '0.1.0-vertical-a.run-17',
+    }),
     cli: {
       packageName: '@happier-dev/cli',
       version: '0.2.10-vertical-a.run-16',
@@ -2885,6 +2949,9 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       tarballPath: './cli.tgz',
       entrypoint: 'package/bin/happier.mjs',
     },
+    standaloneCli: candidateStandaloneCliRecord({
+      version: '0.2.10-vertical-a.run-16',
+    }),
   }), '/tmp/candidate.json'));
   assert.throws(() => parseCandidateManifest(JSON.stringify({
     schemaVersion: 1,
@@ -2895,6 +2962,9 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord({
+      version: '0.1.0-vertical-a.run-17',
+    }),
     cli: {
       packageName: '@happier-dev/cli',
       version: 'release-vertical-a.run-17',
@@ -2903,50 +2973,78 @@ test('candidate manifest accepts exact packed package semvers without manufactur
       entrypoint: 'package/bin/happier.mjs',
     },
   }), '/tmp/candidate.json'), /valid package semver/u);
-});
-
-test('candidate manifest admission rejects missing or malformed source-basis identity', () => {
-  const candidate = {
+  const strictSemverCandidate = {
     schemaVersion: 1,
-    runId: 'run-source-basis',
+    runId: 'run-17',
+    installers: candidateInstallerRecords(),
     sdk: {
       packageName: '@happier-dev/plugin-sdk',
-      version: '0.0.0',
+      version: '0.1.0-dev.1',
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord({ version: '0.1.0-dev.1' }),
     cli: {
       packageName: '@happier-dev/cli',
-      version: '0.2.10',
+      version: '0.2.10-dev.1',
       integrity: 'sha512-ZGVm',
       tarballPath: './cli.tgz',
       entrypoint: 'package/bin/happier.mjs',
     },
+    standaloneCli: candidateStandaloneCliRecord({ version: '0.2.10-dev.1' }),
   };
+  for (const { packageKind, version } of [
+    { packageKind: 'sdk', version: '01.1.0' },
+    { packageKind: 'sdk', version: '0.1.0-dev.01' },
+    { packageKind: 'sdk', version: '0.1.0-preview.1.01' },
+    { packageKind: 'cli', version: '01.2.10' },
+    { packageKind: 'cli', version: '0.2.10-dev.01' },
+    { packageKind: 'cli', version: '0.2.10-preview.1.01' },
+  ]) {
+    assert.throws(
+      () => parseCandidateManifest(JSON.stringify({
+        ...strictSemverCandidate,
+        [packageKind]: {
+          ...strictSemverCandidate[packageKind],
+          version,
+        },
+      }), '/tmp/candidate.json'),
+      /valid package semver/u,
+    );
+  }
   assert.throws(
-    () => parseCandidateManifest(JSON.stringify(candidate), '/tmp/candidate.json'),
-    /sourceBasis/u,
+    () => parseCandidateManifest(JSON.stringify({
+      ...strictSemverCandidate,
+      pluginUi: undefined,
+    }), '/tmp/candidate.json'),
+    /missing pluginUi/u,
   );
   assert.throws(
     () => parseCandidateManifest(JSON.stringify({
-      ...candidate,
-      sourceBasis: {
-        algorithm: 'sha256',
-        digest: '../not-a-digest',
+      ...strictSemverCandidate,
+      pluginUi: {
+        ...strictSemverCandidate.pluginUi,
+        pluginSdkVersion: '0.1.0-dev.2',
       },
     }), '/tmp/candidate.json'),
-    /sourceBasis/u,
+    /Plugin UI SDK dependency must equal the candidate SDK version/u,
+  );
+  assert.throws(
+    () => parseCandidateManifest(JSON.stringify({
+      ...strictSemverCandidate,
+      pluginUi: {
+        ...strictSemverCandidate.pluginUi,
+        version: '01.1.0',
+      },
+    }), '/tmp/candidate.json'),
+    /Plugin UI version must be a valid package semver/u,
   );
 });
 
-test('candidate manifest requires exact non-swappable installer custody records', () => {
+test('candidate manifest admission does not require or return source coordination metadata', () => {
   const candidate = {
     schemaVersion: 1,
-    runId: 'run-installer-custody',
-    sourceBasis: {
-      algorithm: 'sha256',
-      digest: 'a'.repeat(64),
-    },
+    runId: 'run-artifact-candidate',
     installers: candidateInstallerRecords(),
     sdk: {
       packageName: '@happier-dev/plugin-sdk',
@@ -2954,6 +3052,7 @@ test('candidate manifest requires exact non-swappable installer custody records'
       integrity: 'sha512-YWJj',
       tarballPath: './sdk.tgz',
     },
+    pluginUi: candidatePluginUiRecord(),
     cli: {
       packageName: '@happier-dev/cli',
       version: '0.2.10',
@@ -2961,6 +3060,35 @@ test('candidate manifest requires exact non-swappable installer custody records'
       tarballPath: './cli.tgz',
       entrypoint: 'package/bin/happier.mjs',
     },
+    standaloneCli: candidateStandaloneCliRecord(),
+  };
+  const parsed = parseCandidateManifest(
+    JSON.stringify(candidate),
+    '/tmp/candidate.json',
+  );
+  assert.equal(Object.hasOwn(parsed, 'sourceBasis'), false);
+});
+
+test('candidate manifest requires exact non-swappable installer custody records', () => {
+  const candidate = {
+    schemaVersion: 1,
+    runId: 'run-installer-custody',
+    installers: candidateInstallerRecords(),
+    sdk: {
+      packageName: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      integrity: 'sha512-YWJj',
+      tarballPath: './sdk.tgz',
+    },
+    pluginUi: candidatePluginUiRecord(),
+    cli: {
+      packageName: '@happier-dev/cli',
+      version: '0.2.10',
+      integrity: 'sha512-ZGVm',
+      tarballPath: './cli.tgz',
+      entrypoint: 'package/bin/happier.mjs',
+    },
+    standaloneCli: candidateStandaloneCliRecord(),
   };
   assert.throws(
     () => parseCandidateManifest(
@@ -3021,10 +3149,6 @@ test('candidate installer custody verification rejects exact-size byte tampering
     const candidate = parseCandidateManifest(JSON.stringify({
       schemaVersion: 1,
       runId: 'run-installer-tamper',
-      sourceBasis: {
-        algorithm: 'sha256',
-        digest: 'a'.repeat(64),
-      },
       installers,
       sdk: {
         packageName: '@happier-dev/plugin-sdk',
@@ -3032,6 +3156,7 @@ test('candidate installer custody verification rejects exact-size byte tampering
         integrity: 'sha512-YWJj',
         tarballPath: './sdk.tgz',
       },
+      pluginUi: candidatePluginUiRecord(),
       cli: {
         packageName: '@happier-dev/cli',
         version: '0.2.10',
@@ -3039,6 +3164,7 @@ test('candidate installer custody verification rejects exact-size byte tampering
         tarballPath: './cli.tgz',
         entrypoint: 'package/bin/happier.mjs',
       },
+      standaloneCli: candidateStandaloneCliRecord({ root: join(root, 'native') }),
     }), join(root, 'candidate.json'));
 
     await assert.doesNotReject(assertPackedAuthorCandidateInstallerArtifacts(
@@ -3056,6 +3182,633 @@ test('candidate installer custody verification rejects exact-size byte tampering
       ),
       /integrity mismatch/u,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('public authoring hosted web proof accepts only the emitted review-web graph bytes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'public-authoring-hosted-web-'));
+  try {
+    const artifactRoot = join(root, 'dist', 'happier-plugin-ui');
+    const entryPath = 'hosted-web/review-web/entry.mjs';
+    const stylePath = 'hosted-web/review-web/style.css';
+    const entryBytes = Buffer.from('export const reviewWeb = true;\n');
+    const styleBytes = Buffer.from('.review-web { color: blue; }\n');
+    const files = [
+      { relativePath: entryPath, bytes: entryBytes },
+      { relativePath: stylePath, bytes: styleBytes },
+    ];
+    const graphDigest = computePluginUiArtifactFileSetSha256DigestV1(files);
+    const artifactFiles = files.map(({ relativePath, bytes }) => ({
+      relativePath,
+      digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+      byteSize: bytes.byteLength,
+    }));
+    await mkdir(dirname(join(artifactRoot, entryPath)), { recursive: true });
+    await Promise.all([
+      writeFile(join(artifactRoot, entryPath), entryBytes),
+      writeFile(join(artifactRoot, stylePath), styleBytes),
+    ]);
+    await writeFile(join(artifactRoot, 'ui-artifacts.json'), `${JSON.stringify({
+      version: 1,
+      entries: [{
+        contributionId: 'review-web',
+        tier: 'hostedWeb',
+        platform: 'web',
+        entry: entryPath,
+        files: artifactFiles,
+        digest: graphDigest,
+        builtWith: { bundler: 'vite', version: '7.3.1' },
+        hostUiApiVersion: '1.0.0',
+        compat: {},
+      }],
+    })}\n`);
+
+    await assert.doesNotReject(
+      attestPackedPublicAuthoringHostedWebGraph({ artifactRoot }),
+    );
+    await writeFile(join(artifactRoot, stylePath), 'tampered\n');
+    await assert.rejects(
+      attestPackedPublicAuthoringHostedWebGraph({ artifactRoot }),
+      /public authoring hostedWeb file digest mismatch/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('packed scaffold artifact proof requires the exact React Native platform graph and hosted-web graph', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packed-scaffold-ui-graph-'));
+  try {
+    const reactNativeArtifactRoot = join(root, 'react-native', 'dist', 'happier-plugin-ui');
+    const hostedWebArtifactRoot = join(root, 'hosted-web', 'dist', 'happier-plugin-ui');
+    const reactNativeEntries = [
+      { platform: 'web', relativePath: 'react-native/main-renderer/web.js' },
+      { platform: 'ios', relativePath: 'react-native/main-renderer/ios.js' },
+      { platform: 'android', relativePath: 'react-native/main-renderer/android.js' },
+    ];
+    const createEntry = async ({ tier, platform, relativePath }) => {
+      const artifactRoot = tier === 'reactNative'
+        ? reactNativeArtifactRoot
+        : hostedWebArtifactRoot;
+      const bytes = Buffer.from(`${tier}:${platform}\n`);
+      await mkdir(dirname(join(artifactRoot, relativePath)), { recursive: true });
+      await writeFile(join(artifactRoot, relativePath), bytes);
+      return {
+        contributionId: 'main-renderer',
+        tier,
+        platform,
+        entry: relativePath,
+        files: [{
+          relativePath,
+          digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+          byteSize: bytes.byteLength,
+        }],
+        digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath, bytes }]),
+        builtWith: { bundler: platform === 'web' ? 'vite' : 'repack', version: '7.3.1' },
+        ...(tier === 'reactNative' && platform !== 'web' ? {
+          repack: {
+            containerName: 'happier_plugin_main_renderer',
+            modulePath: './renderSurface',
+            exportName: 'renderSurface',
+          },
+        } : {}),
+        hostUiApiVersion: '1.0.0',
+        compat: tier === 'hostedWeb'
+          ? {}
+          : { react: '19.2.0', reactNative: '0.83.4' },
+      };
+    };
+    const nativeManifestEntries = await Promise.all(reactNativeEntries.map(async ({ platform, relativePath }) => (
+      await createEntry({ tier: 'reactNative', platform, relativePath })
+    )));
+    const hostedManifestEntry = await createEntry({
+      tier: 'hostedWeb',
+      platform: 'web',
+      relativePath: 'hosted-web/main-renderer/index.html',
+    });
+    await Promise.all([
+      writeFile(join(reactNativeArtifactRoot, 'ui-artifacts.json'), `${JSON.stringify({
+        version: 1,
+        entries: nativeManifestEntries,
+      })}\n`),
+      writeFile(join(hostedWebArtifactRoot, 'ui-artifacts.json'), `${JSON.stringify({
+        version: 1,
+        entries: [hostedManifestEntry],
+      })}\n`),
+    ]);
+
+    assert.equal(typeof packedAuthorHarness.attestPackedScaffoldUiArtifactGraph, 'function');
+    const reactNativeGraph = await packedAuthorHarness.attestPackedScaffoldUiArtifactGraph({
+      artifactRoot: reactNativeArtifactRoot,
+      ui: 'reactNative',
+    });
+    assert.deepEqual(
+      reactNativeGraph.entries.map(({ tier, platform }) => ({ tier, platform })),
+      [
+        { tier: 'reactNative', platform: 'web' },
+        { tier: 'reactNative', platform: 'ios' },
+        { tier: 'reactNative', platform: 'android' },
+      ],
+    );
+    const hostedWebGraph = await packedAuthorHarness.attestPackedScaffoldUiArtifactGraph({
+      artifactRoot: hostedWebArtifactRoot,
+      ui: 'hostedWeb',
+    });
+    assert.deepEqual(
+      hostedWebGraph.entries.map(({ tier, platform }) => ({ tier, platform })),
+      [{ tier: 'hostedWeb', platform: 'web' }],
+    );
+    assert.deepEqual(
+      await packedAuthorHarness.attestPackedScaffoldUiArtifactGraph({
+        artifactRoot: join(root, 'no-ui', 'dist', 'happier-plugin-ui'),
+        ui: undefined,
+      }),
+      { mode: 'no-ui', entries: [] },
+    );
+
+    await writeFile(join(reactNativeArtifactRoot, reactNativeEntries[2].relativePath), 'tampered\n');
+    await assert.rejects(
+      packedAuthorHarness.attestPackedScaffoldUiArtifactGraph({
+        artifactRoot: reactNativeArtifactRoot,
+        ui: 'reactNative',
+      }),
+      /packed React Native scaffold file digest mismatch/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('public authoring toolchain packet is bound to exact packed SDK/UI/CLI provenance only', () => {
+  const candidate = {
+    sdk: {
+      packageName: '@happier-dev/plugin-sdk',
+      version: '0.3.1',
+      integrity: 'sha512-sdk-candidate',
+    },
+    pluginUi: {
+      packageName: '@happier-dev/plugin-ui',
+      version: '0.3.2',
+      pluginSdkVersion: '0.3.1',
+      integrity: 'sha512-plugin-ui-candidate',
+    },
+    cli: {
+      packageName: '@happier-dev/cli',
+      version: '0.9.4',
+      integrity: 'sha512-cli-candidate',
+    },
+  };
+  const packet = {
+    schemaVersion: 1,
+    host: {
+      buildIdentity: '@happier-dev/cli@0.9.4',
+    },
+    pluginSdk: { version: '0.3.1' },
+    pluginUi: { version: '0.3.2', pluginSdkVersion: '0.3.1' },
+  };
+  assert.equal(
+    typeof packedAuthorHarness.assertPackedPublicToolchainCompatibilityCandidate,
+    'function',
+  );
+  assert.equal(
+    packedAuthorHarness.assertPackedPublicToolchainCompatibilityCandidate({
+      packet,
+      candidate,
+    }),
+    packet,
+  );
+  assert.throws(
+    () => packedAuthorHarness.assertPackedPublicToolchainCompatibilityCandidate({
+      packet: {
+        ...packet,
+        pluginUi: { ...packet.pluginUi, version: '0.3.3' },
+      },
+      candidate,
+    }),
+    /Plugin UI/u,
+  );
+  assert.throws(
+    () => packedAuthorHarness.assertPackedPublicToolchainCompatibilityCandidate({
+      packet: {
+        ...packet,
+        host: { ...packet.host, buildIdentity: '@happier-dev/cli@0.9.5' },
+      },
+      candidate,
+    }),
+    /CLI/u,
+  );
+});
+
+test('candidate artifact capture keeps verified package bytes private after source mutation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'candidate-private-capture-'));
+  try {
+    const sdkBytes = Buffer.from('verified-sdk');
+    const pluginUiBytes = Buffer.from('verified-plugin-ui');
+    const cliBytes = Buffer.from('verified-cli');
+    const sdkPath = join(root, 'sdk.tgz');
+    const pluginUiPath = join(root, 'plugin-ui.tgz');
+    const cliPath = join(root, 'cli.tgz');
+    const manifestPath = join(root, 'candidate.json');
+    await Promise.all([
+      writeFile(sdkPath, sdkBytes),
+      writeFile(pluginUiPath, pluginUiBytes),
+      writeFile(cliPath, cliBytes),
+      writeFile(manifestPath, '{}'),
+    ]);
+    const candidate = {
+      schemaVersion: 1,
+      runId: 'private-capture',
+      installers: candidateInstallerRecords(join(root, 'installers')),
+      sdk: {
+        packageName: '@happier-dev/plugin-sdk',
+        version: '0.0.0',
+        integrity: sha512Sri(sdkBytes),
+        tarballPath: sdkPath,
+      },
+      pluginUi: {
+        ...candidatePluginUiRecord({ root }),
+        integrity: sha512Sri(pluginUiBytes),
+        tarballPath: pluginUiPath,
+      },
+      cli: {
+        packageName: '@happier-dev/cli',
+        version: '0.2.10',
+        integrity: sha512Sri(cliBytes),
+        tarballPath: cliPath,
+        entrypoint: 'package/bin/happier.mjs',
+      },
+      standaloneCli: candidateStandaloneCliRecord({ root: join(root, 'native') }),
+    };
+    const captured = await capturePackedAuthorCandidateArtifacts(candidate, {
+      manifestPath,
+      destinationParent: root,
+      selection: { packages: ['sdk', 'pluginUi', 'cli'] },
+    });
+
+    await Promise.all([
+      writeFile(sdkPath, 'mutated-sdk'),
+      writeFile(pluginUiPath, 'mutated-plugin-ui'),
+      writeFile(cliPath, 'mutated-cli'),
+    ]);
+    assert.notEqual(captured.candidate.sdk.tarballPath, sdkPath);
+    assert.notEqual(captured.candidate.pluginUi.tarballPath, pluginUiPath);
+    assert.notEqual(captured.candidate.cli.tarballPath, cliPath);
+    assert.deepEqual(await readFile(captured.candidate.sdk.tarballPath), sdkBytes);
+    assert.deepEqual(await readFile(captured.candidate.pluginUi.tarballPath), pluginUiBytes);
+    assert.deepEqual(await readFile(captured.candidate.cli.tarballPath), cliBytes);
+    if (process.platform !== 'win32') {
+      assert.equal((await stat(captured.root)).mode & 0o777, 0o700);
+      assert.equal((await stat(captured.candidate.sdk.tarballPath)).mode & 0o777, 0o600);
+    }
+    assert.equal(captured.manifestPath, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('complete candidate capture rewrites and reloads every real filesystem artifact', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'candidate-complete-private-capture-'));
+  try {
+    const sourceRoot = join(root, 'source');
+    const packagesRoot = join(sourceRoot, 'packages');
+    const installersRoot = join(sourceRoot, 'installers');
+    const nativeRoot = join(sourceRoot, 'native');
+    await Promise.all([
+      mkdir(packagesRoot, { recursive: true }),
+      mkdir(installersRoot, { recursive: true }),
+      mkdir(nativeRoot, { recursive: true }),
+    ]);
+    const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+    const version = '1.2.3';
+    const sdkBytes = Buffer.from('complete-sdk');
+    const pluginUiBytes = Buffer.from('complete-plugin-ui');
+    const cliBytes = Buffer.from('complete-cli');
+    const sdkPath = join(packagesRoot, 'sdk.tgz');
+    const pluginUiPath = join(packagesRoot, 'plugin-ui.tgz');
+    const cliPath = join(packagesRoot, 'cli.tgz');
+    const installerInputs = [
+      ['shell', 'shell', 'install-dev.sh', Buffer.from('shell-installer')],
+      ['powershell', 'powershell', 'install-dev.ps1', Buffer.from('powershell-installer')],
+      ['publicKey', 'minisign-public-key', 'happier-release.pub', Buffer.from('public-key')],
+    ];
+    const archiveInputs = PACKED_AUTHOR_NATIVE_TARGETS.map((target, index) => {
+      const [os, arch] = target.split('-');
+      const fileName = `happier-v${version}-${target}.tar.gz`;
+      return { os, arch, fileName, bytes: Buffer.from(`archive-${index}-${target}`) };
+    });
+    const evidenceInputs = ['darwin-x64', 'darwin-arm64'].map((target, index) => ({
+      target,
+      fileName: `${target}.cli.json`,
+      bytes: Buffer.from(`notarization-${index}-${target}`),
+    }));
+    const checksumBytes = Buffer.from([
+      ...archiveInputs.map(({ fileName, bytes }) => `${sha256(bytes)}  ${fileName}`),
+      ...evidenceInputs.map(({ fileName, bytes }) => `${sha256(bytes)}  ${fileName}`),
+      '',
+    ].join('\n'));
+    const signatureBytes = Buffer.from('test-minisign-signature\n');
+    await Promise.all([
+      writeFile(sdkPath, sdkBytes),
+      writeFile(pluginUiPath, pluginUiBytes),
+      writeFile(cliPath, cliBytes),
+      ...installerInputs.map(([, , fileName, bytes]) => (
+        writeFile(join(installersRoot, fileName), bytes)
+      )),
+      ...archiveInputs.map(({ fileName, bytes }) => writeFile(join(nativeRoot, fileName), bytes)),
+      ...evidenceInputs.map(({ fileName, bytes }) => writeFile(join(nativeRoot, fileName), bytes)),
+      writeFile(join(nativeRoot, `checksums-happier-v${version}.txt`), checksumBytes),
+      writeFile(join(nativeRoot, `checksums-happier-v${version}.txt.minisig`), signatureBytes),
+    ]);
+    const installers = Object.fromEntries(installerInputs.map(([field, kind, fileName, bytes]) => [
+      field,
+      {
+        kind,
+        fileName,
+        sizeBytes: bytes.length,
+        sha256: sha256(bytes),
+        filePath: join(installersRoot, fileName),
+      },
+    ]));
+    const archives = archiveInputs.map(({ os, arch, fileName, bytes }) => ({
+      product: 'happier',
+      version,
+      os,
+      arch,
+      sha256: sha256(bytes),
+      archivePath: join(nativeRoot, fileName),
+    }));
+    const candidate = {
+      schemaVersion: 1,
+      runId: 'complete-private-capture',
+      installers: { releaseChannel: 'dev', ...installers },
+      sdk: {
+        packageName: '@happier-dev/plugin-sdk',
+        version: '0.1.0',
+        integrity: sha512Sri(sdkBytes),
+        tarballPath: sdkPath,
+      },
+      pluginUi: {
+        ...candidatePluginUiRecord({ version: '0.1.0', root: packagesRoot }),
+        integrity: sha512Sri(pluginUiBytes),
+        tarballPath: pluginUiPath,
+      },
+      cli: {
+        packageName: '@happier-dev/cli',
+        version,
+        integrity: sha512Sri(cliBytes),
+        tarballPath: cliPath,
+        entrypoint: 'package/bin/happier.mjs',
+      },
+      standaloneCli: {
+        ...archives[0],
+        archives,
+        checksums: {
+          kind: 'sha256-checksums',
+          fileName: `checksums-happier-v${version}.txt`,
+          sizeBytes: checksumBytes.length,
+          sha256: sha256(checksumBytes),
+          filePath: join(nativeRoot, `checksums-happier-v${version}.txt`),
+        },
+        signature: {
+          kind: 'minisign-signature',
+          fileName: `checksums-happier-v${version}.txt.minisig`,
+          sizeBytes: signatureBytes.length,
+          sha256: sha256(signatureBytes),
+          filePath: join(nativeRoot, `checksums-happier-v${version}.txt.minisig`),
+        },
+        notarization: evidenceInputs.map(({ target, fileName, bytes }) => ({
+          target,
+          evidence: {
+            kind: 'apple-notarization-evidence',
+            fileName,
+            sizeBytes: bytes.length,
+            sha256: sha256(bytes),
+            filePath: join(nativeRoot, fileName),
+          },
+        })),
+      },
+    };
+    const sourceManifestPath = join(sourceRoot, 'candidate.json');
+    await writeFile(sourceManifestPath, `${JSON.stringify(candidate, null, 2)}\n`);
+    const sourceCandidate = await loadPackedAuthorCandidateManifest([
+      '--candidate',
+      sourceManifestPath,
+    ], { verifyMinisignImpl: () => true });
+    const captured = await capturePackedAuthorCandidateArtifacts(sourceCandidate, {
+      manifestPath: sourceManifestPath,
+      destinationParent: root,
+      selection: 'all',
+      writeManifest: true,
+    });
+    assert.ok(captured.manifestPath);
+    const reloaded = await loadPackedAuthorCandidateManifest([
+      '--candidate',
+      captured.manifestPath,
+    ], { verifyMinisignImpl: () => true });
+    const sourcePaths = [
+      sourceCandidate.sdk.tarballPath,
+      sourceCandidate.pluginUi.tarballPath,
+      sourceCandidate.cli.tarballPath,
+      sourceCandidate.installers.shell.filePath,
+      sourceCandidate.installers.powershell.filePath,
+      sourceCandidate.installers.publicKey.filePath,
+      ...sourceCandidate.standaloneCli.archives.map(({ archivePath }) => archivePath),
+      sourceCandidate.standaloneCli.checksums.filePath,
+      sourceCandidate.standaloneCli.signature.filePath,
+      ...sourceCandidate.standaloneCli.notarization.map(({ evidence }) => evidence.filePath),
+    ];
+    const reloadedPaths = [
+      reloaded.sdk.tarballPath,
+      reloaded.pluginUi.tarballPath,
+      reloaded.cli.tarballPath,
+      reloaded.installers.shell.filePath,
+      reloaded.installers.powershell.filePath,
+      reloaded.installers.publicKey.filePath,
+      ...reloaded.standaloneCli.archives.map(({ archivePath }) => archivePath),
+      reloaded.standaloneCli.checksums.filePath,
+      reloaded.standaloneCli.signature.filePath,
+      ...reloaded.standaloneCli.notarization.map(({ evidence }) => evidence.filePath),
+    ];
+    assert.equal(reloaded.standaloneCli.archives.length, 5);
+    assert.equal(reloaded.standaloneCli.notarization.length, 2);
+    for (let index = 0; index < reloadedPaths.length; index += 1) {
+      assert.notEqual(reloadedPaths[index], sourcePaths[index]);
+      const relativeCapturePath = relative(captured.root, reloadedPaths[index]);
+      assert.notEqual(relativeCapturePath, '..');
+      assert.equal(relativeCapturePath.startsWith(`..${sep}`), false);
+      assert.equal(isAbsolute(relativeCapturePath), false);
+      await access(reloadedPaths[index]);
+    }
+    if (process.platform !== 'win32') {
+      assert.equal((await stat(captured.root)).mode & 0o777, 0o700);
+      assert.equal((await stat(captured.manifestPath)).mode & 0o777, 0o600);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('candidate capture removes its real root when post-mkdtemp setup fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'candidate-capture-setup-failure-'));
+  try {
+    const sdkBytes = Buffer.from('setup-failure-sdk');
+    const sdkPath = join(root, 'sdk.tgz');
+    await writeFile(sdkPath, sdkBytes);
+    const candidate = {
+      schemaVersion: 1,
+      runId: 'setup-failure',
+      installers: candidateInstallerRecords(join(root, 'installers')),
+      sdk: {
+        packageName: '@happier-dev/plugin-sdk',
+        version: '0.1.0',
+        integrity: sha512Sri(sdkBytes),
+        tarballPath: sdkPath,
+      },
+      pluginUi: candidatePluginUiRecord({ version: '0.1.0', root }),
+      cli: {
+        packageName: '@happier-dev/cli',
+        version: '0.2.10',
+        integrity: sha512Sri(Buffer.from('unused-cli')),
+        tarballPath: join(root, 'cli.tgz'),
+        entrypoint: 'package/bin/happier.mjs',
+      },
+      standaloneCli: candidateStandaloneCliRecord({ root: join(root, 'native') }),
+    };
+    if (process.platform !== 'win32') {
+      await assert.rejects(
+        capturePackedAuthorCandidateArtifacts(candidate, {
+          manifestPath: join(root, 'candidate.json'),
+          destinationParent: root,
+          selection: { packages: ['sdk'] },
+          chmodImpl: async () => {
+            throw new Error('chmod setup failed');
+          },
+        }),
+        /chmod setup failed/u,
+      );
+      assert.deepEqual(
+        (await readdir(root)).filter((name) => name.startsWith('verified-candidate-')),
+        [],
+      );
+    }
+    await assert.rejects(
+      capturePackedAuthorCandidateArtifacts(candidate, {
+        manifestPath: join(root, 'candidate.json'),
+        destinationParent: root,
+        selection: { installers: ['unknown-installer'] },
+      }),
+      /Unknown candidate installer artifact selection/u,
+    );
+    assert.deepEqual(
+      (await readdir(root)).filter((name) => name.startsWith('verified-candidate-')),
+      [],
+    );
+    if (process.platform !== 'win32') {
+      const transientRoot = join(root, 'transient-cleanup-failure');
+      let transientCleanupAttempts = 0;
+      await assert.rejects(
+        capturePackedAuthorCandidateArtifacts(candidate, {
+          manifestPath: join(root, 'candidate.json'),
+          destinationParent: transientRoot,
+          selection: { packages: ['sdk'] },
+          chmodImpl: async () => {
+            throw new Error('transient capture setup failed');
+          },
+          rmImpl: async (path, options) => {
+            transientCleanupAttempts += 1;
+            if (transientCleanupAttempts === 1) {
+              throw new Error('transient capture cleanup failed');
+            }
+            await rm(path, options);
+          },
+        }),
+        /transient capture setup failed/u,
+      );
+      assert.equal(transientCleanupAttempts, 2);
+      assert.deepEqual(
+        (await readdir(transientRoot))
+          .filter((name) => name.startsWith('verified-candidate-')),
+        [],
+      );
+      const aggregateRoot = join(root, 'aggregate-cleanup-failure');
+      let permanentCleanupAttempts = 0;
+      await assert.rejects(
+        capturePackedAuthorCandidateArtifacts(candidate, {
+          manifestPath: join(root, 'candidate.json'),
+          destinationParent: aggregateRoot,
+          selection: { packages: ['sdk'] },
+          chmodImpl: async () => {
+            throw new Error('capture setup failed');
+          },
+          rmImpl: async () => {
+            permanentCleanupAttempts += 1;
+            throw new Error(`capture cleanup failed ${permanentCleanupAttempts}`);
+          },
+        }),
+        (error) => {
+          assert.equal(error instanceof AggregateError, true);
+          assert.deepEqual(
+            error.errors.map((entry) => entry.message),
+            ['capture setup failed', 'capture cleanup failed 1', 'capture cleanup failed 2'],
+          );
+          return true;
+        },
+      );
+      assert.equal(permanentCleanupAttempts, 2);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('candidate capture cleanup is single-flight and retries after a transient removal failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'candidate-capture-cleanup-retry-'));
+  try {
+    const sdkBytes = Buffer.from('cleanup-retry-sdk');
+    const sdkPath = join(root, 'sdk.tgz');
+    await writeFile(sdkPath, sdkBytes);
+    const candidate = {
+      schemaVersion: 1,
+      runId: 'cleanup-retry',
+      installers: candidateInstallerRecords(join(root, 'installers')),
+      sdk: {
+        packageName: '@happier-dev/plugin-sdk',
+        version: '0.1.0',
+        integrity: sha512Sri(sdkBytes),
+        tarballPath: sdkPath,
+      },
+      pluginUi: candidatePluginUiRecord({ version: '0.1.0', root }),
+      cli: {
+        packageName: '@happier-dev/cli',
+        version: '0.2.10',
+        integrity: sha512Sri(Buffer.from('unused-cli')),
+        tarballPath: join(root, 'cli.tgz'),
+        entrypoint: 'package/bin/happier.mjs',
+      },
+      standaloneCli: candidateStandaloneCliRecord({ root: join(root, 'native') }),
+    };
+    let removeAttempts = 0;
+    const captured = await capturePackedAuthorCandidateArtifacts(candidate, {
+      manifestPath: join(root, 'candidate.json'),
+      destinationParent: root,
+      selection: { packages: ['sdk'] },
+      rmImpl: async (path, options) => {
+        removeAttempts += 1;
+        if (removeAttempts === 1) throw new Error('transient capture cleanup failure');
+        await rm(path, options);
+      },
+    });
+    const firstCleanup = captured.cleanup();
+    const concurrentCleanup = captured.cleanup();
+    assert.equal(firstCleanup, concurrentCleanup);
+    await assert.rejects(firstCleanup, /transient capture cleanup failure/u);
+    const successfulCleanup = captured.cleanup();
+    await successfulCleanup;
+    assert.equal(captured.cleanup(), successfulCleanup);
+    assert.equal(removeAttempts, 2);
+    await assert.rejects(access(captured.root));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -3099,44 +3852,100 @@ test('scaffold inspection rejects repository links, bare tools, and TypeScript 5
   assert.ok(compilerDriftFailures.some((message) => message.includes('exact repository-selected')));
 });
 
+test('packed author inventory preserves untouched no-UI, React Native, and hosted-web scaffold roots', () => {
+  const specs = packedAuthorHarness.createPackedAuthorScaffoldSpecs('/fixture-root');
+  const untouched = specs.filter((spec) => spec.mode === 'untouched');
+
+  assert.deepEqual(
+    untouched.map(({ pluginId, root, ui }) => ({ pluginId, root, ui })),
+    [
+      {
+        pluginId: 'acme.scaffold.no-ui',
+        root: '/fixture-root/untouched-no-ui-plugin',
+        ui: undefined,
+      },
+      {
+        pluginId: 'acme.scaffold.react-native',
+        root: '/fixture-root/untouched-react-native-plugin',
+        ui: 'reactNative',
+      },
+      {
+        pluginId: 'acme.scaffold.hosted-web',
+        root: '/fixture-root/untouched-hosted-web-plugin',
+        ui: 'hostedWeb',
+      },
+    ],
+  );
+  assert.deepEqual(
+    packedAuthorHarness.configuredPackedAuthorScaffoldSpecs(specs).map(({ pluginId }) => pluginId),
+    [
+      'acme.vertical-a',
+      'acme.private-registry',
+      'acme.public-registry',
+      'acme.descriptor-only',
+    ],
+  );
+  assert.ok(specs.some((spec) => spec.pluginId === 'acme.vertical-a' && spec.mode === 'configured'));
+});
+
 test('vertical-a fixture configuration keeps its author test aligned with the roundtrip registration', async () => {
   const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-vertical-a-configure-'));
   try {
     await Promise.all([
-      mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true }),
       mkdir(join(pluginRoot, 'src'), { recursive: true }),
       mkdir(join(pluginRoot, 'src', 'ui'), { recursive: true }),
       mkdir(join(pluginRoot, 'test'), { recursive: true }),
     ]);
     await Promise.all([
-      writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
-        id: 'acme.vertical-a',
-        version: '0.0.0',
-        entrypoints: { development: './src/index.ts' },
-        contributes: {
-          actions: [],
-          ui: {
-            views: [{ id: 'main', placement: 'app.sidePanel', renderer: 'main-web' }],
-            renderers: [{
-              id: 'main-web',
-              kind: 'hostedWeb',
-              source: { kind: 'artifact', artifact: 'main-web' },
-              requiredHostMethods: ['context'],
-            }],
-            translations: [],
-          },
-        },
-      }), 'utf8'),
       writeFile(join(pluginRoot, 'package.json'), JSON.stringify({
         name: 'vertical-a-plugin',
         version: '0.0.0',
+        files: ['.happier-plugin', 'dist'],
       }), 'utf8'),
-      writeFile(join(pluginRoot, 'src', 'index.ts'), 'export {};\n', 'utf8'),
+      // The generated scaffold is code-defined: its manifest lives inside
+      // `definePlugin(...)` and no `.happier-plugin/plugin.json` exists.
+      writeFile(join(pluginRoot, 'src', 'index.ts'), [
+        "import { definePlugin, defineUiSurfaceDefinition } from '@happier-dev/plugin-sdk';",
+        "import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';",
+        '',
+        'export const mainSurface = defineUiSurfaceDefinition({',
+        "  id: 'main',",
+        "  placement: 'appPage',",
+        "  title: 'Vertical A',",
+        "  renderer: { kind: 'hostedWeb', requiredHostMethods: ['context', 'executeAction'] },",
+        "  build: { entry: 'src/ui/index.ts' },",
+        '});',
+        '',
+        'export const { manifest, activate } = definePlugin({',
+        "  id: 'acme.vertical-a',",
+        "  version: '0.1.0',",
+        "  displayName: 'Vertical A',",
+        "  description: 'Local Happier plugin scaffold for Vertical A.',",
+        '  runtime: { apiVersion: 1 },',
+        "  entrypoints: { daemon: './dist/index.js', development: './src/index.ts' },",
+        '  actions: {',
+        "    'save-note': {",
+        "      title: 'Save note',",
+        "      execution: { target: 'daemon' },",
+        "      inputSchema: defineProtocolObject({ note: defineProtocolString() }, { policy: 'closed' }),",
+        '      async run(input) {',
+        '        return { note: input.note };',
+        '      },',
+        '    },',
+        '  },',
+        '  ui: {',
+        '    surfaces: [mainSurface],',
+        '    translations: [],',
+        '  },',
+        '});',
+        '',
+      ].join('\n'), 'utf8'),
       writeFile(join(pluginRoot, 'test', 'index.test.mjs'), "invokeAction('save-note');\n", 'utf8'),
     ]);
 
     await configureVerticalAPlugin({
       pluginRoot,
+      sdkPackageRoot: resolve(import.meta.dirname, '../../../plugin-sdk'),
       pluginId: 'acme.vertical-a',
       version: '1.0.0',
       fetchOrigin: 'http://127.0.0.1:43123',
@@ -3145,21 +3954,108 @@ test('vertical-a fixture configuration keeps its author test aligned with the ro
 
     const configuredTest = await readFile(join(pluginRoot, 'test', 'index.test.mjs'), 'utf8');
     const configuredSource = await readFile(join(pluginRoot, 'src', 'index.ts'), 'utf8');
+    const configuredManifestLiteralStart = configuredSource.indexOf('export const manifest = ');
+    const configuredManifestLiteralEnd = configuredSource.indexOf('\n\nconst pluginVersion =');
+    assert.ok(
+      configuredManifestLiteralStart >= 0 && configuredManifestLiteralEnd > configuredManifestLiteralStart,
+      'configured fixture must author its canonical manifest in the module',
+    );
+    const configuredManifestLiteral = configuredSource.slice(
+      configuredManifestLiteralStart,
+      configuredManifestLiteralEnd,
+    );
+    assert.doesNotMatch(
+      configuredManifestLiteral,
+      /"engines"/u,
+      'the packed external fixture must not retain a synthesized engines.happier declaration',
+    );
+    // The manifest declaration carries authored prose such as host-access
+    // reasons; the code-vocabulary assertions below target the fixture's own
+    // runtime code, which is what must not reach for host internals.
+    const configuredCode = configuredSource.replace(configuredManifestLiteral, '');
     const configuredPackage = JSON.parse(await readFile(join(pluginRoot, 'package.json'), 'utf8'));
     const configuredUiBuild = await readFile(join(pluginRoot, 'pluginUiBuild.mjs'), 'utf8');
     const configuredVite = await readFile(join(pluginRoot, 'vite.config.mjs'), 'utf8');
-    const configuredHostedWeb = await readFile(join(pluginRoot, 'src', 'ui', 'index.html'), 'utf8');
+    const configuredHostedWeb = await readFile(join(pluginRoot, 'src', 'ui', 'index.ts'), 'utf8');
     assert.match(configuredTest, /registrations\(\)/u);
     assert.match(configuredTest, /localId === 'roundtrip'/u);
-    assert.match(configuredTest, /family === 'requestInterceptors'/u);
-    assert.match(configuredTest, /localId === 'observe-api'/u);
+    assert.doesNotMatch(configuredTest, /family === 'requestInterceptors'/u);
+    assert.doesNotMatch(configuredTest, /localId === 'observe-api'/u);
     assert.match(configuredTest, /family === 'agents'/u);
     assert.match(configuredTest, /localId === 'packed-external-agent'/u);
     assert.match(configuredTest, /family === 'connectedAccountDescriptors'/u);
     assert.match(configuredTest, /localId === 'novel-cloud'/u);
-    assert.match(configuredSource, /api\.interceptors\.register\('observe-api'/u);
+    assert.match(configuredTest, /plugin\.registration\('providers', 'packed-managed-provider'\)/u);
+    for (const reason of ['explicitStartLocal', 'catalogProbe', 'sessionDemand']) {
+      assert.ok(configuredTest.includes(`reason: '${reason}'`));
+    }
+    const healthySnapshotFixture = configuredTest.match(/const healthySnapshot = \{[^\n]+\};/u)?.[0];
+    assert.ok(healthySnapshotFixture, 'configured fixture must define its managed-service snapshot');
+    assert.match(healthySnapshotFixture, /baseUrl: ["']http:\/\/127\.0\.0\.1:43123["']/u);
+    assert.doesNotMatch(healthySnapshotFixture, /\bhost\s*:/u);
+    assert.doesNotMatch(healthySnapshotFixture, /\bport\s*:/u);
+    assert.match(configuredTest, /Object\.hasOwn\(healthySnapshot, 'host'\), false/u);
+    assert.match(configuredTest, /Object\.hasOwn\(healthySnapshot, 'port'\), false/u);
+    assert.doesNotMatch(configuredSource, /api\.interceptors\.register\(/u);
+    assert.match(configuredSource, /context\.services\.events\.plugin\.emit\('notification-ready'/u);
+    assert.doesNotMatch(configuredSource, /context\.services\.events\.emit\(/u);
+    assert.match(
+      configuredSource,
+      /context\.services\.settings\.forScope\(\{ kind: 'account' \}\)\.get\('webhook\.endpoint'\)/u,
+    );
+    assert.doesNotMatch(configuredSource, /context\.services\.settings\.get\(/u);
+    assert.match(configuredSource, /context\.services\.secrets\.get\('webhook\.token'/u);
+    assert.match(configuredSource, /api\.providers\.register\('packed-managed-provider', packedManagedProviderRuntime\)/u);
+    assert.match(configuredSource, /ManagedProviderRuntime/u);
+    assert.match(configuredSource, /ManagedServiceSpec/u);
+    assert.match(configuredSource, /context\.managedServices\.supervise\(/u);
+    assert.doesNotMatch(
+      configuredSource,
+      /managedRuntimeAdapter|MANAGED_PROVIDER_IMPLEMENTATION|\/src\/managed|plugin-sdk\/internal|experimental\/cloud\/request-auth/u,
+    );
+    assert.doesNotMatch(configuredCode, /provenance|first_party|bundled/u);
     assert.match(configuredSource, /api\.agents\.registerExternalSessions\('packed-external-agent'/u);
     assert.match(configuredSource, /api\.agents\.registerExternalSessionObservation\('packed-external-agent'/u);
+    assert.match(configuredSource, /context\.services\.sessions\.external\.capabilities\(\)/u);
+    assert.match(configuredSource, /context\.services\.sessions\.external\.list\(/u);
+    assert.match(configuredSource, /context\.services\.sessions\.external\.attach\(/u);
+    assert.match(configuredSource, /context\.services\.sessions\.external\.readTranscript\(/u);
+    assert.match(configuredSource, /context\.services\.sessions\.external\.followTranscript\(/u);
+    assert.match(configuredSource, /followed\.subscription\.dispose\(\)/u);
+    assert.match(configuredSource, /context\.services\.sessions\.external\.takeover\(/u);
+    assert.match(
+      configuredSource,
+      /context\.services\.actions\.execute\('sessions\.external\.operation\.status\.get'/u,
+    );
+    assert.match(
+      configuredSource,
+      /context\.services\.actions\.execute\('sessions\.external\.operation\.resume'/u,
+    );
+    assert.match(
+      configuredSource,
+      /import type \{ AgentExternalSessionHooksContribution, AgentExternalSessionObservationContribution, AgentExternalSessionsContribution \} from '@happier-dev\/plugin-sdk\/sessions\/external';/u,
+    );
+    assert.match(
+      configuredSource,
+      /import \{ readCurrentHostingProviderRuntimeServices \} from '@happier-dev\/plugin-sdk\/scm\/hosting';/u,
+    );
+    assert.match(
+      configuredSource,
+      /import type \{ HostingProviderRuntimeAdapter \} from '@happier-dev\/plugin-sdk\/scm\/hosting';/u,
+    );
+    assert.match(configuredSource, /import type \{ ActionHandler \} from '@happier-dev\/plugin-sdk\/actions';/u);
+    assert.match(
+      configuredSource,
+      /import type \{ ConnectedAccountAuthenticationContext, ConnectedAccountRuntime \} from '@happier-dev\/plugin-sdk\/connected-accounts';/u,
+    );
+    assert.match(
+      configuredSource,
+      /import type \{ ManagedServiceSpec \} from '@happier-dev\/plugin-sdk\/managed-services';/u,
+    );
+    assert.match(
+      configuredSource,
+      /import type \{ ManagedProviderRuntime \} from '@happier-dev\/plugin-sdk\/providers';/u,
+    );
     assert.match(configuredSource, /api\.connectedAccounts\.register\('novel-cloud', packedNovelCloudConnectedAccountRuntime\)/u);
     assert.match(configuredSource, /context\.services\.connectedAccounts\.requestSelection\(/u);
     assert.match(configuredSource, /context\.services\.connectedAccounts\.watch\('packed-novel-account'/u);
@@ -3185,9 +4081,38 @@ test('vertical-a fixture configuration keeps its author test aligned with the ro
     assert.equal(configuredPackage.scripts['build:ui'], 'happier-plugin-build-ui --project-root .');
     assert.equal(configuredPackage.dependencies.react, '19.2.0');
     assert.equal(configuredPackage.devDependencies.vite, '^7.0.0');
-    assert.match(configuredUiBuild, /rendererId: 'main-web'/u);
+    // Code-defined authoring: the configured fixture exposes its canonical
+    // manifest from the module and never checks in `.happier-plugin/plugin.json`.
+    assert.match(configuredSource, /^export const manifest = \{$/mu);
+    const configuredManifest = JSON.parse(
+      configuredManifestLiteral
+        .slice('export const manifest = '.length)
+        .replace(/;$/u, ''),
+    );
+    assert.equal(configuredManifest.id, 'acme.vertical-a');
+    assert.equal(configuredManifest.version, '1.0.0');
+    assert.equal(configuredManifest.entrypoints.development, './src/index.ts');
+    assert.ok(configuredManifest.contributes.actions.some(({ id }) => id === 'roundtrip'));
+    assert.ok(configuredManifest.contributes.ui.renderers.some(({ id, kind }) => (
+      id === 'main-renderer' && kind === 'hostedWeb'
+    )));
+    assert.deepEqual(configuredManifest.contributes.ui.views, [{
+      id: 'main',
+      container: 'appPage',
+      target: { kind: 'app' },
+      renderer: 'main-renderer',
+      title: 'Vertical A',
+    }]);
+    assert.equal(configuredPackage.files.includes('.happier-plugin'), false);
+    assert.ok(configuredPackage.files.includes('resources'));
+    await assert.rejects(access(join(pluginRoot, '.happier-plugin', 'plugin.json')));
+    assert.doesNotMatch(configuredTest, /\.happier-plugin\/plugin\.json/u);
+    assert.match(configuredTest, /const \{ manifest \} = module;/u);
+    assert.match(configuredUiBuild, /import \{ defineBuildConfig \} from '@happier-dev\/plugin-sdk\/ui\/build'/u);
+    assert.match(configuredUiBuild, /rendererId: ["']main-renderer["']/u);
+    assert.match(configuredUiBuild, /entry: 'src\/ui\/index\.ts'/u);
     assert.match(configuredUiBuild, /kind: 'hostedWeb'/u);
-    assert.match(configuredVite, /dist\/ui\/hosted-web\/main-web/u);
+    assert.match(configuredVite, /dist\/ui\/hosted-web\/main-renderer/u);
     assert.match(configuredHostedWeb, /Vertical A packed hosted web surface/u);
     assert.match(configuredSource, /\.cleanup-fatal/u);
     assert.match(configuredSource, /appendMarker\('cleanup-failure'\)/u);
@@ -3245,9 +4170,40 @@ test('vertical-a fixture configuration keeps its author test aligned with the ro
       new URL('./run-packed-author-ui-compat.mjs', import.meta.url),
       'utf8',
     );
+    const packedHarnessDeclaration = await readFile(
+      new URL('./run-packed-author-ui-compat.d.mts', import.meta.url),
+      'utf8',
+    );
     assert.match(
       packedRunnerSource,
       /RPC_METHODS\.DAEMON_EXTERNAL_SESSION_STATUS_GET/u,
+    );
+    // CSF-L5 removes the live generic structured-message resolver. The packed
+    // author proof retains the canonical snapshot Action dispatcher, but must
+    // never preserve the retired resolver as a second replay path.
+    assert.doesNotMatch(
+      packedRunnerSource,
+      /DAEMON_PLUGIN_STRUCTURED_MESSAGE_RESOLVE/u,
+    );
+    assert.match(
+      packedRunnerSource,
+      /RPC_METHODS\.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE/u,
+    );
+    assert.doesNotMatch(
+      packedHarnessSource,
+      /structuredResolution/u,
+    );
+    assert.doesNotMatch(
+      packedHarnessDeclaration,
+      /structuredResolution/u,
+    );
+    assert.match(
+      packedHarnessSource,
+      /structuredAction\?\.ok !== true/u,
+    );
+    assert.match(
+      packedHarnessSource,
+      /structuredAction\?\.ok !== false/u,
     );
     assert.match(
       packedRunnerSource,
@@ -3373,6 +4329,22 @@ test('vertical-a fixture configuration keeps its author test aligned with the ro
     assert.doesNotMatch(
       packedRunnerSource,
       /method:\s*['"]daemon\.connectedAccounts\.(?:authentication|control)\.command['"]/u,
+    );
+    assert.match(
+      packedHarnessSource,
+      /input:\s*\{ operation: 'external-sessions-public' \}/u,
+    );
+    assert.match(
+      packedHarnessSource,
+      /publicExternalSessions\.status\?\.ok !== true/u,
+    );
+    assert.match(
+      packedHarnessSource,
+      /publicExternalSessions\.recovery\?\.ok !== true/u,
+    );
+    assert.match(
+      packedHarnessSource,
+      /'external-public-follow-disposed'/u,
     );
     for (const durableEvidenceName of [
       'accountACredentialAfterScheduledStatus',
@@ -3522,28 +4494,31 @@ test('packed reviewed install carries exact daemon review through the authentica
       kind: 'archive',
       locator: '/candidate/vertical-a.tgz',
     },
-    integrity: {
-      packageDigest: `sha256:${'a'.repeat(64)}`,
-      manifestDigest: `sha256:${'b'.repeat(64)}`,
-      uiArtifactDigest: `sha256:${'c'.repeat(64)}`,
-    },
     signature: { status: 'notProvided' },
     provenance: { status: 'notProvided' },
     curation: { status: 'notApplicable' },
     executableRealms: ['daemon'],
     contributions: [{ family: 'actions', count: 1 }],
     uiArtifacts: { status: 'none', contributionIds: [] },
-    requiredHostAccess: [{
-      id: 'packed-notification-token',
-      capability: 'secrets',
-      reason: 'Authenticate the packed notification channel',
-      authorizationClass: 'hostResourceSelection',
-      normalizedScope: {
-        secretIds: ['packed-notification-token'],
-        access: ['read'],
+    requiredHostAccess: [],
+    optionalHostAccess: [],
+    rawCredentialAccess: [{
+      accessMode: 'raw',
+      contribution: { pluginId: 'acme.voice', localId: 'conversation' },
+      credentialSlot: {
+        id: 'voice_auth',
+        title: 'Voice credential',
+        purpose: 'voice.client-auth',
+      },
+      sourceClass: { kind: 'savedSecret', secretKinds: ['apiKey'] },
+      realm: 'web',
+      phase: 'connection',
+      request: {
+        kind: 'httpHeaders',
+        origin: 'https://voice.example.test',
+        headerNames: ['authorization'],
       },
     }],
-    optionalHostAccess: [],
     compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
     updatePolicy: 'manual',
   };
@@ -3628,11 +4603,6 @@ test('packed reviewed install reports the post-timeout daemon catalog state with
       kind: 'archive',
       locator: '/candidate/timeout-diagnostic.tgz',
     },
-    integrity: {
-      packageDigest: `sha256:${'a'.repeat(64)}`,
-      manifestDigest: `sha256:${'b'.repeat(64)}`,
-      uiArtifactDigest: `sha256:${'c'.repeat(64)}`,
-    },
     signature: { status: 'notProvided' },
     provenance: { status: 'notProvided' },
     curation: { status: 'notApplicable' },
@@ -3641,6 +4611,7 @@ test('packed reviewed install reports the post-timeout daemon catalog state with
     uiArtifacts: { status: 'none', contributionIds: [] },
     requiredHostAccess: [],
     optionalHostAccess: [],
+    rawCredentialAccess: [],
     compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
     updatePolicy: 'manual',
   };
@@ -3853,12 +4824,14 @@ test('candidate registry serves only exact SDK metadata and verified tarball byt
     integrity: sha512Sri(sdkBytes),
   };
   const registry = await startCandidateRegistry({
-    sdk,
-    sdkBytes,
-    packageManifest: {
-      dependencies: { '@types/node': '>=20' },
-      bundledDependencies: ['@happier-dev/agents', '@happier-dev/protocol'],
-    },
+    packages: [{
+      ...sdk,
+      bytes: sdkBytes,
+      packageManifest: {
+        dependencies: { '@types/node': '>=20' },
+        bundledDependencies: ['@happier-dev/agents', '@happier-dev/protocol'],
+      },
+    }],
   });
   try {
     const metadataResponse = await fetch(`${registry.origin}/@happier-dev%2fplugin-sdk`);
@@ -3871,6 +4844,58 @@ test('candidate registry serves only exact SDK metadata and verified tarball byt
     assert.equal(tarballResponse.status, 200);
     assert.equal(sha512Sri(Buffer.from(await tarballResponse.arrayBuffer())), sdk.integrity);
     assert.equal((await fetch(`${registry.origin}/typescript`)).status, 404);
+  } finally {
+    await registry.close();
+  }
+});
+
+test('candidate registry serves every packed author package, not only the SDK', async () => {
+  const sdkBytes = Buffer.from('candidate-sdk-bytes');
+  const pluginUiBytes = Buffer.from('candidate-plugin-ui-bytes');
+  const sdk = {
+    packageName: '@happier-dev/plugin-sdk',
+    version: '0.0.0',
+    integrity: sha512Sri(sdkBytes),
+  };
+  const pluginUi = {
+    packageName: '@happier-dev/plugin-ui',
+    version: '0.0.0',
+    integrity: sha512Sri(pluginUiBytes),
+  };
+  const registry = await startCandidateRegistry({
+    packages: [
+      { ...sdk, bytes: sdkBytes, packageManifest: { dependencies: { zod: '4.3.6' } } },
+      {
+        ...pluginUi,
+        bytes: pluginUiBytes,
+        packageManifest: {
+          dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+          peerDependencies: { react: '19.2.0' },
+        },
+      },
+    ],
+  });
+  try {
+    for (const [artifact, bytes, expectedDependencies] of [
+      [sdk, sdkBytes, { zod: '4.3.6' }],
+      [pluginUi, pluginUiBytes, { '@happier-dev/plugin-sdk': '0.0.0' }],
+    ]) {
+      const encodedName = encodeURIComponent(artifact.packageName);
+      const metadataResponse = await fetch(`${registry.origin}/${encodedName}`);
+      assert.equal(metadataResponse.status, 200, `${artifact.packageName} metadata`);
+      const metadata = await metadataResponse.json();
+      assert.equal(metadata.name, artifact.packageName);
+      assert.equal(metadata['dist-tags'].latest, artifact.version);
+      assert.deepEqual(metadata.versions[artifact.version].dependencies, expectedDependencies);
+      const tarballResponse = await fetch(metadata.versions[artifact.version].dist.tarball);
+      assert.equal(tarballResponse.status, 200, `${artifact.packageName} tarball`);
+      assert.equal(sha512Sri(Buffer.from(await tarballResponse.arrayBuffer())), artifact.integrity);
+    }
+    assert.deepEqual(
+      registry.packages.map((entry) => `${entry.packageName}@${entry.version}`),
+      ['@happier-dev/plugin-sdk@0.0.0', '@happier-dev/plugin-ui@0.0.0'],
+    );
+    assert.equal((await fetch(`${registry.origin}/@happier-dev%2Fprotocol`)).status, 404);
   } finally {
     await registry.close();
   }
@@ -4302,13 +5327,16 @@ test('packed CLI materialization ignores hostile ambient Node and npm configurat
 test('vertical-a rejects a sensitive verified archive before home preparation or CLI installation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-packed-a13-census-'));
   const sdkSourceRoot = join(root, 'sdk-source');
+  const pluginUiSourceRoot = join(root, 'plugin-ui-source');
   const cliSourceRoot = join(root, 'cli-source');
   const sdkTarballPath = join(root, 'sdk.tgz');
+  const pluginUiTarballPath = join(root, 'plugin-ui.tgz');
   const cliTarballPath = join(root, 'cli.tgz');
   let preparedHome = false;
   try {
     await Promise.all([
       mkdir(join(sdkSourceRoot, 'package'), { recursive: true }),
+      mkdir(join(pluginUiSourceRoot, 'package'), { recursive: true }),
       mkdir(join(cliSourceRoot, 'package', 'bin'), { recursive: true }),
     ]);
     await Promise.all([
@@ -4317,6 +5345,11 @@ test('vertical-a rejects a sensitive verified archive before home preparation or
         version: '0.0.0',
       }), 'utf8'),
       writeFile(join(sdkSourceRoot, 'package', '.env'), 'SDK_TOKEN=secret\n', 'utf8'),
+      writeFile(join(pluginUiSourceRoot, 'package', 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugin-ui',
+        version: '0.0.0',
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+      }), 'utf8'),
       writeFile(join(cliSourceRoot, 'package', 'package.json'), JSON.stringify({
         name: '@happier-dev/cli',
         version: '0.2.10',
@@ -4326,10 +5359,12 @@ test('vertical-a rejects a sensitive verified archive before home preparation or
     ]);
     await Promise.all([
       tar.c({ cwd: sdkSourceRoot, file: sdkTarballPath, gzip: true }, ['package']),
+      tar.c({ cwd: pluginUiSourceRoot, file: pluginUiTarballPath, gzip: true }, ['package']),
       tar.c({ cwd: cliSourceRoot, file: cliTarballPath, gzip: true }, ['package']),
     ]);
-    const [sdkBytes, cliBytes] = await Promise.all([
+    const [sdkBytes, pluginUiBytes, cliBytes] = await Promise.all([
       readFile(sdkTarballPath),
+      readFile(pluginUiTarballPath),
       readFile(cliTarballPath),
     ]);
 
@@ -4342,6 +5377,11 @@ test('vertical-a rejects a sensitive verified archive before home preparation or
           version: '0.0.0',
           integrity: sha512Sri(sdkBytes),
           tarballPath: sdkTarballPath,
+        },
+        pluginUi: {
+          ...candidatePluginUiRecord({ root }),
+          integrity: sha512Sri(pluginUiBytes),
+          tarballPath: pluginUiTarballPath,
         },
         cli: {
           packageName: '@happier-dev/cli',
@@ -4359,6 +5399,7 @@ test('vertical-a rejects a sensitive verified archive before home preparation or
         probeScm: async () => ({}),
         probeNotifications: async () => ({}),
         probeExternalSessions: async () => ({}),
+        probeExternalTool: async () => ({}),
         probeRetainedCapabilities: async () => ({}),
         probeConnectedAccounts: async () => ({}),
         decideInstallReview: async () => ({}),
@@ -4369,6 +5410,81 @@ test('vertical-a rejects a sensitive verified archive before home preparation or
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('vertical-a rejects a direct candidate missing its Plugin UI archive descriptor before tarball reads', async () => {
+  let preparedHome = false;
+  await assert.rejects(
+    runVerticalA({
+      schemaVersion: 1,
+      runId: 'missing-plugin-ui-archive',
+      sdk: {
+        packageName: '@happier-dev/plugin-sdk',
+        version: '0.0.0',
+        integrity: 'sha512-YWJj',
+        tarballPath: '/must-not-read/sdk.tgz',
+      },
+      cli: {
+        packageName: '@happier-dev/cli',
+        version: '0.2.10',
+        integrity: 'sha512-ZGVm',
+        tarballPath: '/must-not-read/cli.tgz',
+        entrypoint: 'package/bin/happier.mjs',
+      },
+    }, {
+      baseEnv: {},
+      prepareHome: async () => {
+        preparedHome = true;
+        return {};
+      },
+      probeScm: async () => ({}),
+      probeNotifications: async () => ({}),
+      probeExternalSessions: async () => ({}),
+      probeExternalTool: async () => ({}),
+      probeRetainedCapabilities: async () => ({}),
+      probeConnectedAccounts: async () => ({}),
+      decideInstallReview: async () => ({}),
+    }),
+    /Plugin UI tarball must provide a non-empty tarballPath and sha512 SRI integrity/u,
+  );
+  assert.equal(preparedHome, false);
+});
+
+test('vertical-a requires the composed external MCP Tool probe before candidate inspection', async () => {
+  let preparedHome = false;
+  await assert.rejects(
+    runVerticalA({
+      schemaVersion: 1,
+      runId: 'missing-external-tool-probe',
+      sdk: {
+        packageName: '@happier-dev/plugin-sdk',
+        version: '0.0.0',
+        integrity: 'sha512-YWJj',
+        tarballPath: '/must-not-read/sdk.tgz',
+      },
+      cli: {
+        packageName: '@happier-dev/cli',
+        version: '0.2.10',
+        integrity: 'sha512-ZGVm',
+        tarballPath: '/must-not-read/cli.tgz',
+        entrypoint: 'package/bin/happier.mjs',
+      },
+    }, {
+      baseEnv: {},
+      prepareHome: async () => {
+        preparedHome = true;
+        return {};
+      },
+      probeScm: async () => ({}),
+      probeNotifications: async () => ({}),
+      probeExternalSessions: async () => ({}),
+      probeRetainedCapabilities: async () => ({}),
+      probeConnectedAccounts: async () => ({}),
+      decideInstallReview: async () => ({}),
+    }),
+    /external MCP Tool probe/u,
+  );
+  assert.equal(preparedHome, false);
 });
 
 test('captured vertical-a failure retains its temp root only when explicitly requested', async () => {
@@ -4391,6 +5507,11 @@ test('captured vertical-a failure retains its temp root only when explicitly req
       integrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
       tarballPath: join(tmpdir(), `${runId}-missing-sdk.tgz`),
     },
+    pluginUi: {
+      ...candidatePluginUiRecord({ root: tmpdir() }),
+      integrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
+      tarballPath: join(tmpdir(), `${runId}-missing-plugin-ui.tgz`),
+    },
     cli: {
       packageName: '@happier-dev/cli',
       version: '0.2.10',
@@ -4408,6 +5529,7 @@ test('captured vertical-a failure retains its temp root only when explicitly req
     probeScm: async () => ({}),
     probeNotifications: async () => ({}),
     probeExternalSessions: async () => ({}),
+    probeExternalTool: async () => ({}),
     probeRetainedCapabilities: async () => ({}),
     probeConnectedAccounts: async () => ({}),
     decideInstallReview: async () => ({}),
@@ -4444,6 +5566,7 @@ test('packed novel QA handoff retains the exact initial archive with portable is
   const parent = await mkdtemp(join(tmpdir(), 'packed-novel-handoff-parent-'));
   const outputRoot = join(parent, 'packed-novel-handoff');
   const archiveBytes = Buffer.from('exact packed novel archive bytes');
+  const publicAuthoringArtifact = packedPublicAuthoringArtifact();
   const candidate = {
     schemaVersion: 1,
     runId: 'natural-packed-novel-handoff',
@@ -4452,6 +5575,10 @@ test('packed novel QA handoff retains the exact initial archive with portable is
       version: '0.3.1',
       integrity: 'sha512-sdk-candidate',
       tarballPath: '/candidate/sdk.tgz',
+    },
+    pluginUi: {
+      ...candidatePluginUiRecord({ version: '0.3.1', root: '/candidate' }),
+      integrity: 'sha512-plugin-ui-candidate',
     },
     cli: {
       packageName: '@happier-dev/cli',
@@ -4466,6 +5593,7 @@ test('packed novel QA handoff retains the exact initial archive with portable is
       outputRoot,
       candidate,
       archiveBytes,
+      publicAuthoringArtifact,
       pluginArtifact: {
         label: 'initial-v1',
         pluginId: 'acme.vertical-a',
@@ -4497,6 +5625,37 @@ test('packed novel QA handoff retains the exact initial archive with portable is
     assert.equal(
       loaded.plugin.archive.sha256,
       createHash('sha256').update(archiveBytes).digest('hex'),
+    );
+    assert.ok(loaded.publicAuthoring);
+    assert.equal(
+      await readFile(loaded.publicAuthoring.archivePath, 'utf8'),
+      publicAuthoringArtifact.archiveBytes.toString('utf8'),
+    );
+    assert.equal(
+      loaded.publicAuthoring.pluginId,
+      publicAuthoringArtifact.pluginId,
+    );
+    assert.equal(
+      loaded.publicAuthoring.version,
+      publicAuthoringArtifact.version,
+    );
+    assert.equal(
+      loaded.publicAuthoring.archive.integrity,
+      sha512Sri(publicAuthoringArtifact.archiveBytes),
+    );
+    assert.equal(
+      loaded.publicAuthoring.archive.sha256,
+      createHash('sha256')
+        .update(publicAuthoringArtifact.archiveBytes)
+        .digest('hex'),
+    );
+    assert.equal(
+      loaded.publicAuthoring.archive.archivePath,
+      loaded.publicAuthoring.archivePath,
+    );
+    assert.deepEqual(
+      loaded.publicAuthoring.hostedWeb,
+      publicAuthoringArtifact.hostedWeb,
     );
     assert.notEqual(
       loaded.consumers.browser.happyHomeDir,
@@ -4562,7 +5721,20 @@ test('packed novel QA handoff retains the exact initial archive with portable is
           },
         },
       }),
-      /exact SDK\/CLI candidate/u,
+      /exact SDK\/Plugin UI\/CLI candidate/u,
+    );
+    assert.throws(
+      () => assertPackedNovelConnectedAccountQaCandidate({
+        handoff: loaded,
+        candidate: {
+          ...candidate,
+          pluginUi: {
+            ...candidate.pluginUi,
+            integrity: 'sha512-substituted-plugin-ui-candidate',
+          },
+        },
+      }),
+      /exact SDK\/Plugin UI\/CLI candidate/u,
     );
     const serialized = JSON.stringify(loaded);
     for (const forbidden of [
@@ -4605,6 +5777,7 @@ test('packed novel QA handoff rejects archive tampering and fixture substitution
   const parent = await mkdtemp(join(tmpdir(), 'packed-novel-handoff-tamper-'));
   const outputRoot = join(parent, 'packed-novel-handoff');
   const archiveBytes = Buffer.from('exact packed novel archive bytes');
+  const publicAuthoringArtifact = packedPublicAuthoringArtifact();
   try {
     const created = await createPackedNovelConnectedAccountQaHandoff({
       outputRoot,
@@ -4617,6 +5790,10 @@ test('packed novel QA handoff rejects archive tampering and fixture substitution
           integrity: 'sha512-sdk-candidate',
           tarballPath: '/candidate/sdk.tgz',
         },
+        pluginUi: {
+          ...candidatePluginUiRecord({ version: '0.3.1', root: '/candidate' }),
+          integrity: 'sha512-plugin-ui-candidate',
+        },
         cli: {
           packageName: '@happier-dev/cli',
           version: '0.9.4',
@@ -4626,6 +5803,7 @@ test('packed novel QA handoff rejects archive tampering and fixture substitution
         },
       },
       archiveBytes,
+      publicAuthoringArtifact,
       pluginArtifact: {
         label: 'initial-v1',
         pluginId: 'acme.vertical-a',
@@ -4646,7 +5824,43 @@ test('packed novel QA handoff rejects archive tampering and fixture substitution
       /archive (?:integrity|size) mismatch/u,
     );
 
+    await writeFile(admitted.plugin.archivePath, archiveBytes);
+    await writeFile(
+      admitted.publicAuthoring.archivePath,
+      'tampered public authoring archive bytes',
+    );
+    await assert.rejects(
+      loadPackedNovelConnectedAccountQaHandoff({
+        manifestPath: created.manifestPath,
+      }),
+      /public authoring archive (?:integrity|size) mismatch/u,
+    );
+    await writeFile(
+      admitted.publicAuthoring.archivePath,
+      publicAuthoringArtifact.archiveBytes,
+    );
+
     const manifest = JSON.parse(await readFile(created.manifestPath, 'utf8'));
+    manifest.publicAuthoring.pluginId = 'examples.substitute-review-assistant';
+    await writeFile(created.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await assert.rejects(
+      loadPackedNovelConnectedAccountQaHandoff({
+        manifestPath: created.manifestPath,
+      }),
+      /public authoring fixture is invalid/u,
+    );
+
+    manifest.publicAuthoring.pluginId = 'examples.public-sdk-review-assistant';
+    manifest.publicAuthoring.hostedWeb.entry = '../substituted-entry.mjs';
+    await writeFile(created.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await assert.rejects(
+      loadPackedNovelConnectedAccountQaHandoff({
+        manifestPath: created.manifestPath,
+      }),
+      /public authoring hostedWeb graph is invalid/u,
+    );
+
+    manifest.publicAuthoring.hostedWeb.entry = publicAuthoringArtifact.hostedWeb.entry;
     manifest.plugin.service.localId = 'substitute-cloud';
     await writeFile(created.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     await assert.rejects(
@@ -4788,4 +6002,19 @@ test('pre-run argument failures report cleanup as not applicable', () => {
   assert.equal(result.status, 1);
   const envelope = JSON.parse(result.stdout.trim());
   assert.deepEqual(envelope.cleanup, { disposition: 'not_applicable' });
+});
+
+test('packed candidate callers do not select SDK versions through plugins create', async () => {
+  const callers = [
+    ['packed author', new URL('./run-packed-author-ui-compat.mjs', import.meta.url)],
+    ['plugins dev', new URL('../../src/plugin-platform/runPackedPluginsDev.ts', import.meta.url)],
+    ['managed provider', new URL('../../src/plugin-platform/packedManagedProviderComposedRuntime.ts', import.meta.url)],
+    ['native candidate', new URL('../../src/testkit/maestro/mobilePluginPlatformCandidateCli.ts', import.meta.url)],
+    ['resources browser', new URL('../../suites/ui-e2e/plugins.resourcesBrowser.candidate.spec.ts', import.meta.url)],
+  ];
+
+  for (const [caller, sourceUrl] of callers) {
+    const source = await readFile(sourceUrl, 'utf8');
+    assert.doesNotMatch(source, /--sdk-version/u, `${caller} passes the retired CLI SDK override`);
+  }
 });

@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 
+import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
+
 import {
   __cliDistTestHooks,
   ensureCliDistBuilt,
@@ -162,6 +164,43 @@ describe('ensureCliDistBuilt', () => {
     );
 
     expect(rebuildCalls).toBe(0);
+  });
+
+  it('passes the canonical owner lease into the nested CLI build', async () => {
+    const repoRoot = await createRepoRoot();
+    const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+    const sourcePath = join(repoRoot, 'apps', 'cli', 'src', 'index.ts');
+    const distEntryPath = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const older = new Date('2030-03-09T01:00:00.000Z');
+    const newer = new Date('2030-03-09T01:05:00.000Z');
+    utimesSync(distEntryPath, older, older);
+    utimesSync(sourcePath, newer, newer);
+
+    let nestedInherited = false;
+    await ensureCliDistBuilt(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        lockPath,
+        runCommand: async (invocation) => {
+          await withWorkspaceBundleLock(
+            async ({ inherited }) => {
+              nestedInherited = inherited;
+            },
+            {
+              lockPath,
+              heldLockValue: invocation.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+              timeoutMs: 50,
+              pollIntervalMs: 5,
+              staleAfterMs: 1_000,
+            },
+          );
+          utimesSync(distEntryPath, newer, newer);
+        },
+      },
+    );
+
+    expect(nestedInherited).toBe(true);
   });
 
   it('creates a replacement snapshot instead of mutating a stale ready shared snapshot', async () => {
@@ -1203,6 +1242,42 @@ describe('ensureCliDistBuilt', () => {
     expect(existsSync(join(snapshotDir, 'dist', 'index.mjs'))).toBe(true);
   });
 
+  it('materializes the canonical shared CLI snapshot without retaining the dist publication lock', async () => {
+    const repoRoot = await createRepoRoot();
+    const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+
+    await withCliDistBuildLock(
+      async () => {
+        const ensurePromise = ensureCliDistSnapshotEntrypoint(
+          { testDir: join(repoRoot, '.project'), env: process.env },
+          {
+            repoRoot,
+            snapshotDir,
+            timeoutMs: 1_000,
+            runCommand: async () => {
+              throw new Error('healthy canonical dist should not rebuild');
+            },
+          },
+        );
+
+        const raced = await Promise.race([
+          ensurePromise.then(() => 'resolved'),
+          sleep(250).then(() => 'pending'),
+        ]);
+        expect(raced).toBe('resolved');
+        await ensurePromise;
+      },
+      {
+        lockPath,
+        timeoutMs: 10_000,
+        staleAfterMs: 10_000,
+      },
+    );
+
+    expect(existsSync(join(snapshotDir, 'dist', 'index.mjs'))).toBe(true);
+  });
+
   it('repairs missing bundled runtime dependency files even when snapshot dist and ready marker already exist', async () => {
     const repoRoot = await createRepoRoot();
     const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
@@ -1432,6 +1507,76 @@ describe('ensureCliDistBuilt', () => {
     ).rejects.toThrow(/shared workspace deps runtime prerequisites are missing/i);
 
     expect(rebuildCalls).toBe(0);
+  });
+
+  it('accepts a generated plugin UI artifact matched by a wildcard export when the E2E build is skipped', async () => {
+    const repoRoot = await createRepoRoot();
+    const cliPackageJsonPath = join(repoRoot, 'apps', 'cli', 'package.json');
+    const inspectorWorkspaceDir = join(repoRoot, 'packages', 'plugins', 'inspector');
+    const bundledInspectorDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'plugins-inspector',
+    );
+    const inspectorPackageJson = {
+      name: '@happier-dev/plugins-inspector',
+      exports: {
+        '.': {
+          default: './dist/index.js',
+        },
+        './happier-plugin-ui/*': './dist/happier-plugin-ui/*',
+      },
+    };
+    const generatedUiArtifactRelativePath = join('dist', 'happier-plugin-ui', 'ui-artifacts.json');
+
+    await writeFile(
+      cliPackageJsonPath,
+      JSON.stringify({
+        name: '@happier-dev/cli',
+        bundledDependencies: [
+          ...CLI_SHARED_DEP_TEST_FIXTURE_PACKAGE_NAMES.map((packageName) => `@happier-dev/${packageName}`),
+          '@happier-dev/plugins-inspector',
+        ],
+      }),
+      'utf8',
+    );
+
+    for (const packageDir of [inspectorWorkspaceDir, bundledInspectorDir]) {
+      await mkdir(join(packageDir, 'dist', 'happier-plugin-ui'), { recursive: true });
+      await writeFile(join(packageDir, 'package.json'), JSON.stringify(inspectorPackageJson), 'utf8');
+      await writeFile(join(packageDir, 'dist', 'index.js'), 'export const inspector = true;\n', 'utf8');
+      await writeFile(join(packageDir, generatedUiArtifactRelativePath), '{"version":1,"entries":[]}\n', 'utf8');
+    }
+
+    const ensureSkippedSharedDeps = () => ensureCliSharedDepsBuilt(
+      {
+        testDir: join(repoRoot, '.project'),
+        env: {
+          ...process.env,
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+        },
+      },
+      {
+        repoRoot,
+        skipSourceFreshnessCheck: true,
+        runCommand: async () => {
+          throw new Error('skip-build mode must not invoke the canonical publisher');
+        },
+      },
+    );
+
+    await expect(ensureSkippedSharedDeps()).resolves.toBeUndefined();
+
+    for (const packageDir of [inspectorWorkspaceDir, bundledInspectorDir]) {
+      rmSync(join(packageDir, generatedUiArtifactRelativePath));
+    }
+
+    await expect(ensureSkippedSharedDeps()).rejects.toThrow(
+      /shared workspace deps runtime prerequisites are missing/i,
+    );
   });
 
   it('rebuilds when a bundled shared dependency workspace is missing from the CLI node_modules tree', async () => {

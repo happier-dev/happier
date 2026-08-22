@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": true,
+    "types": ["react"]
+  },
+  "files": [
+    "src/index.mjs",
+    "src/issueComposer.mjs",
+    "src/issueSurface.mjs",
+    "src/uiBuildIdentity.mjs"
+  ]
+}

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -25,7 +25,7 @@ import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerCli
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { countDuplicateLocalIds, fetchAllMessages, fetchSessionV2 } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { callLegacyEncryptedSessionRpc } from '../../src/testkit/sessionRpc';
 import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 import { extractAssistantCandidateTextsFromDecryptedRecord } from '../../src/testkit/providers/scenarios/sessionRuntime';
@@ -210,17 +210,31 @@ async function waitForVoiceTurnRows(params: Readonly<{
 describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
+  let retiredDaemon: StartedDaemon | null = null;
 
   afterEach(async () => {
-    await daemon?.stop().catch(() => {});
+    const cleanupErrors: Error[] = [];
+    await daemon?.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
     daemon = null;
-    await server?.stop();
+    await retiredDaemon?.proc.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
+    retiredDaemon = null;
+    await server?.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
     server = null;
+    if (cleanupErrors.length === 1) throw cleanupErrors[0];
+    if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'Voice daemon replacement teardown failed');
   });
 
   afterAll(async () => {
     await daemon?.stop().catch(() => {});
     daemon = null;
+    await retiredDaemon?.proc.stop().catch(() => {});
+    retiredDaemon = null;
     await server?.stop();
     server = null;
   });
@@ -237,8 +251,8 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
 	    await mkdir(daemonHomeDir, { recursive: true });
 	    await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
@@ -499,8 +513,8 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const daemonEnv: NodeJS.ProcessEnv = {
@@ -757,8 +771,8 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
 	    await mkdir(daemonHomeDir, { recursive: true });
 	    await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
 	    const daemonEnv: NodeJS.ProcessEnv = {
@@ -937,6 +951,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
       throw new Error('Expected daemon /list to expose the original tracked session PID');
     }
 
+    const originalDaemonPid = daemon.state.pid;
     const replacedDaemonState = await replaceTestDaemonWithoutStoppingSessions({
       testDir,
       happyHomeDir: daemonHomeDir,
@@ -945,14 +960,16 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
       stdoutPath: resolve(testDir, 'daemon.voice-agent-replace.stdout.log'),
       stderrPath: resolve(testDir, 'daemon.voice-agent-replace.stderr.log'),
     });
-    expect(replacedDaemonState.pid).not.toBe(daemon.state.pid);
+    retiredDaemon = daemon;
+    daemon = replacedDaemonState;
+    expect(replacedDaemonState.state.pid).not.toBe(originalDaemonPid);
     await waitFor(async () => {
       const listed = await daemonControlPostJson<{
         children?: Array<{ happySessionId?: string; pid?: number; startedBy?: string }>;
       }>({
-        port: replacedDaemonState.httpPort,
+        port: replacedDaemonState.state.httpPort,
         path: '/list',
-        controlToken: replacedDaemonState.controlToken,
+        controlToken: replacedDaemonState.state.controlToken,
       });
       expect(listed.status).toBe(200);
       expect(listed.data.children).toEqual(

@@ -1,9 +1,9 @@
 import {
-  SessionSystemRecordLatestResponseSchema,
-  SessionSystemRecordLookupResponseSchema,
-  SessionSystemRecordPageResponseSchema,
-  SessionSystemRecordUpsertResponseSchema,
-  type SessionSystemRecord,
+  LegacyHostSessionSystemRecordLatestResponseSchema,
+  LegacyHostSessionSystemRecordLookupResponseSchema,
+  LegacyHostSessionSystemRecordPageResponseSchema as SessionSystemRecordPageResponseSchema,
+  LegacyHostSessionSystemRecordUpsertResponseSchema as SessionSystemRecordUpsertResponseSchema,
+  type LegacyHostSessionSystemRecord as SessionSystemRecord,
   type SessionSystemRecordContent,
   type SessionSystemRecordKind,
   type SessionSystemRecordNamespace,
@@ -124,7 +124,7 @@ export async function fetchLatestSessionSystemRecord(params: Readonly<{
   if (res.status !== 200) {
     throw new Error(`Expected 200 session system record latest, received ${res.status}`);
   }
-  return parseProtocolResponse(SessionSystemRecordLatestResponseSchema, res.data, endpoint).record;
+  return parseProtocolResponse(LegacyHostSessionSystemRecordLatestResponseSchema, res.data, endpoint).record;
 }
 
 export async function fetchSessionSystemRecord(params: Readonly<{
@@ -146,5 +146,5 @@ export async function fetchSessionSystemRecord(params: Readonly<{
   if (res.status !== 200) {
     throw new Error(`Expected 200 session system record lookup, received ${res.status}`);
   }
-  return parseProtocolResponse(SessionSystemRecordLookupResponseSchema, res.data, endpoint).record;
+  return parseProtocolResponse(LegacyHostSessionSystemRecordLookupResponseSchema, res.data, endpoint).record;
 }

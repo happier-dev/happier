@@ -1,20 +1,26 @@
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import {
   createFeatureDecision,
   createRecipientContractDigestV1,
+  type PluginPermissionGrantRequestV1,
+  type PluginPermissionGrantV1,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
   RpcHandlerMap,
   RpcHandlerRegistrar,
 } from '../../../../apps/cli/src/api/rpc/types';
+import { createMachineVoiceClientCredentialAuthorizationService } from '../../../../apps/cli/src/api/machine/rpcHandlers.voiceClientCredentialAuthorization';
+import { registerMachineVoiceClientCredentialRpcHandlers } from '../../../../apps/cli/src/api/machine/rpcHandlers.voiceClientCredentials';
+import { registerMachineVoiceSpeechRpcHandlers } from '../../../../apps/cli/src/api/machine/rpcHandlers.voiceSpeech';
 import { createDaemonArchivePluginChangePreparer } from '../../../../apps/cli/src/plugins/daemon/archiveChangePreparer';
 import { createDaemonPluginChangeService } from '../../../../apps/cli/src/plugins/daemon/changeService';
 import { readCurrentDaemonPluginCatalog } from '../../../../apps/cli/src/plugins/daemon/currentCatalog';
@@ -25,6 +31,7 @@ import { resolveExecutablePluginRuntimeRegistry } from '../../../../apps/cli/src
 import { createPluginReloadController } from '../../../../apps/cli/src/plugins/runtime/reload/controller';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '../../../../apps/cli/src/plugins/runtime/reload/registryRuntimeLifecycle';
 import { createPluginRegistryStateStore } from '../../../../apps/cli/src/plugins/store/registry/currentState';
+import { createRegistryInstallReviewPrincipalReader } from '../../../../apps/cli/src/plugins/runtime/credentials/registryInstallReviewPrincipalReader';
 import {
   invalidateDaemonContributionRegistryProjectionCache,
   registerDaemonContributionRegistryProjectionHandler,
@@ -37,28 +44,52 @@ import {
   normalizeVoiceSettingsLocalDelta,
 } from '../../../../apps/ui/sources/sync/domains/settings/voiceSettingsPersistence';
 import {
+  machineContributionRegistryProjectionDescribe,
   publishMachineContributionRegistryProjectionInvalidation,
 } from '../../../../apps/ui/sources/sync/ops/machineContributionRegistryProjection';
-import { voiceSessionBindingStore } from '../../../../apps/ui/sources/voice/binding/voiceConversationBindingStore';
+import {
+  clearPluginAccountAvailabilityProjection,
+  replacePluginAccountAvailabilityProjection,
+} from '../../../../apps/ui/sources/sync/domains/plugins/availability/projection';
+import type {
+  PluginAccountAvailabilitySnapshot,
+} from '../../../../apps/ui/sources/sync/domains/plugins/availability/reader';
 import {
   isAccountVoiceCredentialRecipientApprovalRequired,
-  upsertAccountVoiceCredential,
 } from '../../../../apps/ui/sources/voice/credentials/accountVoiceCredential';
+import { BundledSpeechDaemonClient } from '../../../../apps/ui/sources/voice/credentials/bundledSpeechClient';
 import { createDefaultVoiceProviderRegistry } from '../../../../apps/ui/sources/voice/registry/defaultRegistry';
 import { getExternalVoiceProviderRegistration } from '../../../../apps/ui/sources/voice/registry/externalVoiceProviderRegistrations';
-import { projectVoiceProviderSettings } from '../../../../apps/ui/sources/voice/registry/providerRegistry';
-import { projectVoiceProviderSelectionRows } from '../../../../apps/ui/sources/voice/registry/providerSelection';
 import { getVoiceSessionLifecycleController } from '../../../../apps/ui/sources/voice/session/voiceSessionLifecycleControllerStore';
-import { readCanonicalVoiceTranscriptSnapshot } from '../../../../apps/ui/sources/voice/transcript/voiceConversationTranscript';
+import { loadPackedNovelConnectedAccountQaHandoff } from '../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
+import {
+  activate as activatePublicAuthoringDaemon,
+  manifest as publicAuthoringManifest,
+} from '../../../plugin-sdk/examples/public-authoring';
+import { activate as activatePublicAuthoringConversationProviders } from '../../../plugin-sdk/examples/public-authoring/voiceProvider';
 
-const FIXTURE_PLUGIN_ID = 'acme.packed-voice';
-const FIXTURE_PROVIDER_LOCAL_ID = 'conversation';
+const FIXTURE_PLUGIN_ID = 'examples.public-sdk-review-assistant';
+const FIXTURE_PROVIDER_LOCAL_ID = 'credentialed-browser';
 const FIXTURE_PROVIDER_ID = `${FIXTURE_PLUGIN_ID}/${FIXTURE_PROVIDER_LOCAL_ID}`;
+const FIXTURE_RAW_PROVIDER_ID = `${FIXTURE_PLUGIN_ID}/raw-browser`;
+const FIXTURE_STT_PROVIDER_ID = `${FIXTURE_PLUGIN_ID}/speech-stt`;
+const FIXTURE_TTS_PROVIDER_ID = `${FIXTURE_PLUGIN_ID}/speech-tts`;
+const FIXTURE_PROVIDER_CONTRIBUTION = Object.freeze({
+  pluginId: FIXTURE_PLUGIN_ID,
+  localId: FIXTURE_PROVIDER_LOCAL_ID,
+});
+const FIXTURE_RAW_PROVIDER_CONTRIBUTION = Object.freeze({
+  pluginId: FIXTURE_PLUGIN_ID,
+  localId: 'raw-browser',
+});
 const MACHINE_ID = 'machine-packed-voice';
 const SERVER_ID = 'server-packed-voice';
 const SOURCE_CREDENTIAL = 'source-account-secret';
 
-type RpcBoundaryHandler = (payload: unknown) => Promise<unknown> | unknown;
+type RpcBoundaryHandler = (
+  payload: unknown,
+  context?: Readonly<{ signal?: AbortSignal }>,
+) => Promise<unknown> | unknown;
 
 const composedBoundary = vi.hoisted(() => ({
   handlers: new Map<string, RpcBoundaryHandler>(),
@@ -129,7 +160,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     }
     const handler = composedBoundary.handlers.get(input.method);
     if (!handler) throw new Error(`unregistered_machine_rpc:${input.method}`);
-    return await handler(input.payload);
+    return await handler(input.payload, { signal: input.signal });
   },
 }));
 
@@ -171,9 +202,12 @@ vi.mock('@/sync/domains/state/storage', async () => {
     settings: composedBoundary.settings,
     settingsScope: composedBoundary.settingsScope,
     profile: {
+      id: composedBoundary.settingsScope.accountId,
       connectedServicesV2: [],
       connectedServiceCredentialRevisionsV1: [],
     },
+    profileScope: composedBoundary.settingsScope,
+    isDataReady: true,
     sessions: {},
     sessionMessages: {},
     applyMessagesLoaded: () => undefined,
@@ -294,53 +328,6 @@ async function waitForReact(assertion: () => void | Promise<void>): Promise<void
   }, { timeout: 15_000, interval: 20 });
 }
 
-function readFixtureEvents(): readonly unknown[] {
-  const value = (globalThis as typeof globalThis & {
-    __HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__?: unknown;
-  }).__HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__;
-  if (!Array.isArray(value)) throw new Error('packed_voice_fixture_events_unavailable');
-  return value;
-}
-
-function readPackedProviderSelectionTrace(renderedChecked: unknown): Readonly<Record<string, unknown>> {
-  const settings = composedBoundary.settings;
-  const persistedVoice = settings?.voiceSettingsV1;
-  const harnessVoice = composedBoundary.latestHarnessVoice;
-  const registration = getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID);
-  const descriptor = registration?.descriptor ?? null;
-  const runtimeEnvelope = settings?.voice.providers[FIXTURE_PROVIDER_ID] ?? null;
-  const projectedSettings = descriptor
-    ? projectVoiceProviderSettings(descriptor, runtimeEnvelope)
-    : null;
-  const row = settings
-    ? projectVoiceProviderSelectionRows(
-        settings.voice,
-        createDefaultVoiceProviderRegistry(),
-      ).find((candidate) => (
-        candidate.providerId === FIXTURE_PROVIDER_ID
-        && candidate.optionId === 'default'
-      )) ?? null
-    : null;
-  return Object.freeze({
-    runtimeProviderId: settings?.voice.providerId ?? null,
-    persistedProviderId: persistedVoice?.providerId ?? null,
-    harnessProviderId: harnessVoice?.providerId ?? null,
-    runtimeEnvelope,
-    persistedEnvelope: persistedVoice?.providers[FIXTURE_PROVIDER_ID] ?? null,
-    harnessEnvelope: harnessVoice?.providers[FIXTURE_PROVIDER_ID] ?? null,
-    descriptorProjection: projectedSettings,
-    row: row
-      ? {
-          providerId: row.providerId,
-          optionId: row.optionId,
-          modeId: row.modeId,
-          selected: row.selected,
-        }
-      : null,
-    renderedChecked: renderedChecked ?? null,
-  });
-}
-
 function AppShellProjectionProbe(): React.ReactElement | null {
   const { useAppShellPluginUiProjection } = requireAppShellProjectionModule();
   const projection = useAppShellPluginUiProjection();
@@ -364,6 +351,7 @@ async function packVoiceFixtureVariant(input: Readonly<{
   variant: string;
   version: string;
   daemonSource?: string;
+  daemonRelativePath?: string;
 }>): Promise<string> {
   const variantRoot = join(input.temporaryRoot, input.variant);
   const archivePath = join(input.temporaryRoot, `${input.variant}.tgz`);
@@ -375,7 +363,10 @@ async function packVoiceFixtureVariant(input: Readonly<{
     await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
   }
   if (input.daemonSource !== undefined) {
-    await writeFile(join(variantRoot, 'dist/daemon.js'), input.daemonSource);
+    await writeFile(
+      join(variantRoot, input.daemonRelativePath ?? 'dist/daemon.js'),
+      input.daemonSource,
+    );
   }
   const packed = await packLocalPlugin({
     locator: variantRoot,
@@ -387,15 +378,129 @@ async function packVoiceFixtureVariant(input: Readonly<{
   return archivePath;
 }
 
-describe('packed installed-artifact external Voice provider', () => {
-  it('runs through normal settings and lifecycle across replacement, disable/re-enable, and uninstall', async () => {
-    const temporaryRoot = await mkdtemp(join(tmpdir(), 'happier-packed-voice-composed-'));
+const PACKED_CANDIDATE_HANDOFF_MANIFEST =
+  process.env.HAPPIER_E2E_PACKED_NOVEL_QA_HANDOFF_MANIFEST?.trim() || null;
+
+const describePackedCandidate = PACKED_CANDIDATE_HANDOFF_MANIFEST
+  ? describe
+  : process.env.HAPPIER_E2E_PACKED_VOICE_REQUIRE_HANDOFF === '1'
+    ? describe
+    : describe.skip;
+
+function record(value: unknown, label: string): Readonly<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`packed_voice_${label}_invalid`);
+  }
+  return value as Readonly<Record<string, unknown>>;
+}
+
+describe('retained public-authoring Voice fixture contract', () => {
+  it('registers the shared client Action, exactly two conversation providers, two speech providers, and executes raw materialization', async () => {
+    const registrations = new Map<string, Readonly<Record<string, unknown>>>();
+    const clientActionIds: string[] = [];
+    const api = {
+      actions: {
+        register(localId: string) {
+          clientActionIds.push(localId);
+        },
+      },
+      voiceProviders: {
+        register(localId: string, runtime: Readonly<Record<string, unknown>>) {
+          if (registrations.has(localId)) throw new Error(`duplicate_voice_provider:${localId}`);
+          registrations.set(localId, runtime);
+        },
+      },
+    };
+    activatePublicAuthoringConversationProviders(api as never);
+    expect(clientActionIds).toEqual(['open-review-status']);
+    const testkit = await createPluginTestkit({
+      manifest: publicAuthoringManifest,
+      module: { activate: activatePublicAuthoringDaemon },
+    });
+    try {
+      const stt = testkit.registration('voiceProviders', 'speech-stt');
+      const tts = testkit.registration('voiceProviders', 'speech-tts');
+      if (!stt || !tts) {
+        throw new Error('public_authoring_speech_runtime_missing');
+      }
+      registrations.set('speech-stt', stt);
+      registrations.set('speech-tts', tts);
+      expect([...registrations.keys()].sort()).toEqual([
+        'credentialed-browser',
+        'raw-browser',
+        'speech-stt',
+        'speech-tts',
+      ]);
+      expect(Object.fromEntries([...registrations].map(([localId, runtime]) => [
+        localId,
+        runtime.kind,
+      ]))).toEqual({
+        'credentialed-browser': 'conversation',
+        'raw-browser': 'conversation',
+        'speech-stt': 'speech',
+        'speech-tts': 'speech',
+      });
+
+      const raw = registrations.get('raw-browser');
+      const createConnection = raw?.createConnection;
+      if (typeof createConnection !== 'function') {
+        throw new Error('public_authoring_raw_connection_missing');
+      }
+      const materialize = vi.fn(async () => ({
+        kind: 'httpHeaders' as const,
+        headers: { authorization: 'raw-boundary-value' },
+      }));
+      const signal = new AbortController().signal;
+      const connection = await createConnection({
+        credentials: {
+          phase: 'connection',
+          mediated: null,
+          raw: { materialize },
+        },
+        signal,
+      } as never) as Readonly<{
+        connect(signal: AbortSignal): Promise<void>;
+        close(): Promise<void>;
+      }>;
+      await connection.connect(signal);
+      await connection.close();
+      expect(materialize).toHaveBeenCalledOnce();
+      expect(materialize).toHaveBeenCalledWith({
+        kind: 'httpHeaders',
+        origin: 'https://voice.example.test',
+        headerNames: ['authorization'],
+      }, { signal });
+    } finally {
+      await testkit.dispose();
+    }
+  });
+});
+
+describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle', () => {
+  it('reuses the exact candidate archive through review, both credential paths, speech, replacement, retirement, and uninstall', async () => {
+    if (!PACKED_CANDIDATE_HANDOFF_MANIFEST) {
+      throw new Error('packed_voice_candidate_handoff_required');
+    }
+    const handoff = await loadPackedNovelConnectedAccountQaHandoff({
+      manifestPath: PACKED_CANDIDATE_HANDOFF_MANIFEST,
+    });
+    expect(handoff.publicAuthoring).toMatchObject({
+      pluginId: FIXTURE_PLUGIN_ID,
+      version: '0.1.0',
+      archive: {
+        integrity: expect.stringMatching(/^sha512-/),
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        sizeBytes: expect.any(Number),
+      },
+    });
+    expect(handoff.candidate).toMatchObject({
+      sdk: { packageName: '@happier-dev/plugin-sdk', integrity: expect.stringMatching(/^sha512-/) },
+      pluginUi: { packageName: '@happier-dev/plugin-ui', integrity: expect.stringMatching(/^sha512-/) },
+      cli: { packageName: '@happier-dev/cli', integrity: expect.stringMatching(/^sha512-/) },
+    });
+
+    const temporaryRoot = await mkdtemp(join(tmpdir(), 'happier-packed-candidate-voice-'));
     const happyHomeDir = join(temporaryRoot, 'happy-home');
-    const archivePath = join(temporaryRoot, 'packed-voice.tgz');
-    const fixtureRoot = fileURLToPath(new URL(
-      '../../../../apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/',
-      import.meta.url,
-    ));
     const reloadController = createPluginReloadController({ happyHomeDir });
     const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
       happyHomeDir,
@@ -409,51 +514,48 @@ describe('packed installed-artifact external Voice provider', () => {
       happyHomeDir,
       runtimeLifecycle,
     });
+    let pendingChangeSequence = 0;
     const changeService = createDaemonPluginChangeService({
       prepare: async (request) => request.kind === 'installArchive'
         ? await prepareArchiveChange(request)
         : await prepareStateChange(request),
-      createPendingChangeId: () => 'packed-voice-install-review',
+      createPendingChangeId: () => `packed-candidate-voice-review-${++pendingChangeSequence}`,
     });
     const originalFetch = globalThis.fetch;
     let appShell: Awaited<ReturnType<typeof renderScreen>> | null = null;
+    let speechRpcRegistration: ReturnType<typeof registerMachineVoiceSpeechRpcHandlers> | null = null;
+    let credentialRpcRegistration: ReturnType<typeof registerMachineVoiceClientCredentialRpcHandlers> | null = null;
+    let activeRawGrant: PluginPermissionGrantV1 | null = null;
+    let pendingRawRequest: PluginPermissionGrantRequestV1 | null = null;
+    const rawGrantListInputs: unknown[] = [];
+    const rawMaterializeRpcInputs: unknown[] = [];
+    const providerRequests: Array<Readonly<{
+      method: string;
+      url: string;
+      authorization: string | null;
+    }>> = [];
 
     try {
+      // Keep the selected Voice machine outside the app-wide presence union so
+      // AppShell exercises its dedicated, user-selected Voice projection path.
       composedBoundary.machines = [{
         id: MACHINE_ID,
         active: true,
-        activeAt: Date.now(),
-        lastSeen: Date.now(),
+        activeAt: 0,
+        lastSeen: 0,
         daemonStateVersion: 1,
-        metadata: {
-          host: 'packed-voice-safe-host',
-          privatePath: '/Users/alice/private-voice-workspace',
-        },
-        privateSessionSummary: 'private packed Voice session summary',
+        metadata: { host: 'packed-candidate-voice-host' },
       }];
       composedBoundary.settings = settingsParse({
         voice: {
           providerId: 'off',
-          executionMachine: {
-            mode: 'fixed',
-            machineId: MACHINE_ID,
-          },
-          privacy: {
-            shareDeviceInventory: true,
-            shareFilePaths: false,
-            shareSessionSummary: false,
-            sharePermissionRequests: false,
-            shareRecentMessages: false,
-          },
+          executionMachine: { mode: 'fixed', machineId: MACHINE_ID },
         },
       });
       composedBoundary.audioSessionAcquireRequests = [];
       composedBoundary.audioSessionReleaseCount = 0;
 
-      const stateStore = createPluginRegistryStateStore({
-        happyHomeDir,
-        runtimeLifecycle,
-      });
+      const stateStore = createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle });
       await stateStore.initialize();
       const initialRuntimeLease = await reloadController.acquireRuntimeRegistry({
         resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
@@ -463,57 +565,40 @@ describe('packed installed-artifact external Voice provider', () => {
       });
       await initialRuntimeLease.release();
 
-      const packed = await packLocalPlugin({
-        locator: fixtureRoot,
-        outPath: archivePath,
-      });
-      expect(
-        packed,
-        packed.ok ? '' : packed.diagnostics.map((entry) => entry.message).join('\n'),
-      ).toMatchObject({ ok: true });
-      if (!packed.ok) return;
-
       const requested = await changeService.requestPluginChange({
         kind: 'installArchive',
-        locator: archivePath,
+        locator: handoff.publicAuthoring.archivePath,
       });
       expect(requested).toMatchObject({
         kind: 'reviewRequired',
         review: {
           pluginId: FIXTURE_PLUGIN_ID,
-          source: {
-            kind: 'archive',
-            locator: expect.stringMatching(/packed-voice\.tgz$/),
-          },
-          executableRealms: ['daemon'],
-          contributions: expect.arrayContaining([
-            { family: 'voiceProviders', count: 1 },
-          ]),
+          packageIdentity: { version: '0.1.0' },
+          source: { kind: 'archive', locator: handoff.publicAuthoring.archivePath },
+          contributions: expect.arrayContaining([{ family: 'voiceProviders', count: 4 }]),
           uiArtifacts: {
             status: 'verified',
-            contributionIds: expect.arrayContaining(['voice-runtime-web']),
+            contributionIds: expect.arrayContaining([
+              'review-native',
+              'review-web',
+              'voice-runtime-web',
+            ]),
           },
-          requiredHostAccess: [{
-            id: 'voice-provider-api',
-            capability: 'network',
-            reason: 'Read, provision, and authenticate a bounded Voice session',
-            authorizationClass: 'cooperativeDisclosure',
-            normalizedScope: expect.objectContaining({
-              methods: expect.arrayContaining(['GET', 'PATCH', 'POST']),
-            }),
-          }],
+          requiredHostAccess: expect.arrayContaining([
+            expect.objectContaining({ id: 'voice-client-auth', capability: 'network' }),
+            expect.objectContaining({ id: 'voice-catalog', capability: 'network' }),
+          ]),
         },
       });
       if (requested.kind !== 'reviewRequired') {
-        throw new Error(`expected_packed_voice_review:${requested.kind}`);
+        throw new Error(`packed_voice_review_missing:${requested.kind}`);
       }
-
       const committed = await changeService.decidePluginChange({
         pendingChangeId: requested.pendingChangeId,
         decision: 'installAndTrust',
         actorEvidence: {
           kind: 'authenticatedLocalUser',
-          interactionId: 'packed-voice-install',
+          interactionId: 'packed-candidate-voice-install',
           occurredAtMs: 35,
         },
       });
@@ -522,51 +607,95 @@ describe('packed installed-artifact external Voice provider', () => {
         pluginId: FIXTURE_PLUGIN_ID,
         desiredGeneration: expect.any(String),
         appliedGeneration: expect.any(String),
-        pendingSurfaces: [],
       });
       if (committed.kind !== 'committed' || !committed.appliedGeneration) {
         throw new Error(`packed_voice_install_not_current:${committed.kind}`);
       }
-
       const loaded = await loadInstalledPlugins({ happyHomeDir });
       expect(loaded.loadedPlugins).toEqual([
         expect.objectContaining({
           pluginId: FIXTURE_PLUGIN_ID,
           pluginRootPath: expect.stringContaining(committed.appliedGeneration),
-          sourceSpec: expect.objectContaining({
-            kind: 'archive',
-            trustPolicy: 'prompt',
-          }),
+          sourceSpec: expect.objectContaining({ kind: 'archive', trustPolicy: 'prompt' }),
         }),
       ]);
-      const currentCatalog = await readCurrentDaemonPluginCatalog({
-        happyHomeDir,
-        reloadController,
-      });
-      expect(currentCatalog).toEqual([
-        expect.objectContaining({
-          pluginId: FIXTURE_PLUGIN_ID,
-          enabled: true,
-          desiredGeneration: committed.desiredGeneration,
-          appliedGeneration: committed.appliedGeneration,
-          install: expect.objectContaining({
-            trust: expect.objectContaining({
-              pluginId: FIXTURE_PLUGIN_ID,
-              state: 'trusted',
-              approvedAtMs: 35,
-            }),
-          }),
-        }),
-      ]);
-      expect(reloadController.getState()).toMatchObject({
-        generation: expect.any(Number),
-        activeRegistry: expect.objectContaining({
-          generation: expect.any(Number),
-        }),
-      });
+      const installedFixtureRoot = loaded.loadedPlugins[0]?.pluginRootPath;
+      if (!installedFixtureRoot) throw new Error('packed_voice_installed_root_missing');
 
       const { handlers, registrar } = createRegistrar();
       composedBoundary.handlers = handlers as Map<string, RpcBoundaryHandler>;
+      const installReviewPrincipal = createRegistryInstallReviewPrincipalReader();
+      credentialRpcRegistration = registerMachineVoiceClientCredentialRpcHandlers({
+        rpcHandlerManager: registrar,
+        machineId: MACHINE_ID,
+        resolveRawCredentialDependencies: async () => ({
+          currentInstallReviewPrincipal: installReviewPrincipal,
+          grants: {
+            list: async (input) => {
+              rawGrantListInputs.push(input);
+              return { grants: activeRawGrant ? [activeRawGrant] : [], pendingRequests: [] };
+            },
+          },
+          getAccountSettingsSnapshot: () => composedBoundary.settings
+            ? {
+                source: 'network',
+                scopeKey: composedBoundary.settingsScope.accountId,
+                settingsVersion: 1,
+                loadedAtMs: 1,
+                settingsSecretsReadKeys: [],
+                settings: composedBoundary.settings as never,
+              }
+            : null,
+        }),
+      });
+      const rawMaterializeHandler = handlers.get(
+        RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_MATERIALIZE,
+      );
+      if (!rawMaterializeHandler) {
+        throw new Error('packed_voice_raw_materialize_rpc_missing');
+      }
+      handlers.set(
+        RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_MATERIALIZE,
+        async (payload, context) => {
+          rawMaterializeRpcInputs.push(payload);
+          return await rawMaterializeHandler(payload, context);
+        },
+      );
+      speechRpcRegistration = registerMachineVoiceSpeechRpcHandlers({
+        rpcHandlerManager: registrar,
+        machineId: MACHINE_ID,
+        resolveSpeechRuntime: async (target) => {
+          const registry = reloadController.getState().activeRegistry;
+          if (!registry) throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
+          await registry.activateContributionsOnDemand([{
+            pluginId: target.pluginId,
+            family: 'voiceProviders',
+            localId: target.localId,
+          }]);
+          const speech = registry.voiceSpeechProviders?.read(target) ?? null;
+          if (!speech?.isCurrent()) {
+            throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
+          }
+          const settingsSnapshot = composedBoundary.settings;
+          const envelope = settingsSnapshot?.voice.providers[`${target.pluginId}/${target.localId}`];
+          if (!settingsSnapshot || !envelope) {
+            throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
+          }
+          return Object.freeze({
+            runtime: speech.runtime,
+            contribution: speech.contribution,
+            readSettings: () => Object.freeze({
+              settings: envelope.config,
+              resolveCredentials: () => Object.freeze({ phase: 'speech' as const, mediated: null, raw: null }),
+              isCurrent: () => composedBoundary.settings === settingsSnapshot && speech.isCurrent(),
+            }),
+            createHttp: speech.createHttp,
+            isCurrent: speech.isCurrent,
+            retirementSignal: speech.retirementSignal,
+            release: async () => undefined,
+          });
+        },
+      });
       registerDaemonContributionRegistryProjectionHandler(registrar, {
         resolveRuntimeRegistry: async () => {
           const registry = reloadController.getState().activeRegistry;
@@ -585,15 +714,81 @@ describe('packed installed-artifact external Voice provider', () => {
         reactNativeHostRuntime: { platform: 'web', channel: 'internal' },
       });
       invalidateDaemonContributionRegistryProjectionCache();
-
       composedBoundary.loaderBackend = createReactNativeWebLoaderBackend({
         importModule: async (blobUrl) => {
           const source = await (await originalFetch(blobUrl)).text();
-          return await import(
-            /* @vite-ignore */ `data:text/javascript,${encodeURIComponent(source)}`
-          );
+          return await import(/* @vite-ignore */ `data:text/javascript,${encodeURIComponent(source)}`);
         },
       });
+
+      const initialProjection = await machineContributionRegistryProjectionDescribe(MACHINE_ID, {
+        serverId: SERVER_ID,
+      });
+      expect(initialProjection).toMatchObject({ supported: true });
+      if (!initialProjection.supported) throw new Error('packed_voice_projection_unavailable');
+      const initialVoiceEntries = record(
+        record(initialProjection.projection.familiesById.voiceProviders, 'voice_family').entriesById,
+        'voice_entries',
+      );
+      expect(Object.keys(initialVoiceEntries)
+        .filter((id) => id.startsWith(`${FIXTURE_PLUGIN_ID}/`))
+        .sort())
+        .toEqual([
+          FIXTURE_PROVIDER_ID,
+          FIXTURE_RAW_PROVIDER_ID,
+          FIXTURE_STT_PROVIDER_ID,
+          FIXTURE_TTS_PROVIDER_ID,
+        ].sort());
+      const publishAvailability = async () => {
+        const inventory = await stateStore.readAvailabilityInventory();
+        if (inventory.materializations.length === 0) {
+          clearPluginAccountAvailabilityProjection();
+          return;
+        }
+        expect(inventory.releasePublications).toHaveLength(1);
+        expect(inventory.materializations).toHaveLength(1);
+        const release = inventory.releasePublications[0]?.facts;
+        const materialization = inventory.materializations[0];
+        if (!release || !materialization) {
+          throw new Error('packed_voice_canonical_availability_incomplete');
+        }
+        expect(materialization).toMatchObject({
+          pluginId: release.ref.pluginId,
+          version: release.ref.version,
+          archiveDigestSha256: release.archiveDigestSha256,
+        });
+        const snapshot = {
+          availabilityCursor: inventory.revision,
+          intentReads: [{
+            pluginId: FIXTURE_PLUGIN_ID,
+            response: {
+              availabilityCursor: inventory.revision,
+              hostingCapability: { enabled: false },
+              intent: {
+                pluginId: FIXTURE_PLUGIN_ID,
+                desiredVersion: release.ref.version,
+                enabled: materialization.enabled,
+                offlineUiHosting: 'disabled',
+                writableCollections: [],
+                revision: `packed-voice-${inventory.revision}`,
+              },
+              release,
+              uiArtifacts: [],
+            },
+          }],
+          materializations: [{
+            ...materialization,
+            serverIdentityId: 'srv_packed_voice',
+            machineId: MACHINE_ID,
+          }],
+        } satisfies PluginAccountAvailabilitySnapshot;
+        replacePluginAccountAvailabilityProjection({
+          scope: composedBoundary.settingsScope,
+          snapshot,
+        });
+      };
+      await publishAvailability();
+
       appShellProjectionModule = await import(
         '../../../../apps/ui/sources/components/appShell/plugins/AppShellPluginUiProjection'
       );
@@ -605,396 +800,374 @@ describe('packed installed-artifact external Voice provider', () => {
           '../../../../apps/ui/sources/voice/session/VoiceSessionRuntime'
         )).VoiceSessionRuntime,
       };
-      // Packing and installation can outlive the real machine-online grace
-      // period; refresh this synthetic presence at the UI boundary it drives.
-      const appShellRenderStartedAt = Date.now();
-      composedBoundary.machines = composedBoundary.machines.map((machine) => (
-        machine.id === MACHINE_ID
-          ? {
-              ...machine,
-              activeAt: appShellRenderStartedAt,
-              lastSeen: appShellRenderStartedAt,
-            }
-          : machine
-      ));
       appShell = await renderScreen(React.createElement(
         appShellProjectionModule.AppShellPluginUiProjectionProvider,
         null,
         React.createElement(AppShellProjectionProbe),
         React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 0 }),
       ));
-      await flushHookEffects({ cycles: 8 });
+      await flushHookEffects({ cycles: 10 });
       await waitForReact(() => {
-        expect(
-          getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID),
-          JSON.stringify(composedBoundary.latestAppShellProjection, null, 2),
-        ).not.toBeNull();
+        expect(getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID)).not.toBeNull();
+        expect(getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID)).not.toBeNull();
+        expect(createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID)).not.toBeNull();
+        expect(createDefaultVoiceProviderRegistry().get(FIXTURE_TTS_PROVIDER_ID)).not.toBeNull();
       });
 
-      const appProjection = composedBoundary.latestAppShellProjection;
-      expect(appProjection).toMatchObject({
-        interactionEnabled: true,
-        machineId: MACHINE_ID,
-        pluginUiProjection: {
-          generation: reloadController.getState().generation,
-          voiceProvidersById: {
-            [FIXTURE_PROVIDER_ID]: expect.objectContaining({
-              pluginId: FIXTURE_PLUGIN_ID,
-              definition: expect.objectContaining({
-                id: FIXTURE_PROVIDER_LOCAL_ID,
-                kind: 'conversation',
-                platforms: ['web'],
-              }),
-              recipientContract: expect.objectContaining({
-                operations: expect.arrayContaining([
-                  expect.objectContaining({ id: 'list-voices', effect: 'read' }),
-                  expect.objectContaining({ id: 'provision-voice', effect: 'mutation' }),
-                  expect.objectContaining({ id: 'client-auth', effect: 'read' }),
-                ]),
-              }),
-            }),
+      const mediatedRegistration = getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID);
+      const rawRegistration = getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID);
+      expect(rawRegistration).toMatchObject({
+        pluginId: FIXTURE_PLUGIN_ID,
+        localId: 'raw-browser',
+        descriptor: {
+          declaration: {
+            credentials: {
+              sources: expect.arrayContaining([
+                expect.objectContaining({
+                  kind: 'savedSecret',
+                  rawGrants: [expect.objectContaining({ realm: 'web', phase: 'connection' })],
+                }),
+              ]),
+            },
           },
         },
       });
-
-      const registration = getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID);
-      if (
-        !registration?.descriptor
-        || !registration.adapter
-        || !registration.settingsOperations?.listCatalog
-        || !registration.settingsOperations.provision
-      ) {
-        throw new Error('packed_voice_registration_incomplete');
+      if (!mediatedRegistration?.descriptor || !mediatedRegistration.settingsOperations?.listCatalog) {
+        throw new Error('packed_voice_mediated_registration_incomplete');
       }
-      const descriptor = registration.descriptor;
-      const listCatalog = registration.settingsOperations.listCatalog;
-      const provision = registration.settingsOperations.provision;
-      const recipientContract = descriptor.accountCredentialSlot?.recipientContract;
+      const recipientContract = mediatedRegistration.descriptor.accountCredentialSlot?.recipientContract;
       if (!recipientContract) throw new Error('packed_voice_recipient_contract_missing');
       const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
-      expect(descriptor.accountCredentialSlot?.recipientContractDigest)
+      expect(mediatedRegistration.descriptor.accountCredentialSlot?.recipientContractDigest)
         .toBe(recipientContractDigest);
 
       composedBoundary.settings = settingsParse({
-        secrets: [{
-          id: 'packed-voice-secret',
-          name: 'Packed Voice',
-          kind: 'apiKey',
-          encryptedValue: { _isSecretValue: true, value: SOURCE_CREDENTIAL },
-          createdAt: 1,
-          updatedAt: 1,
-        }],
+        secrets: [
+          {
+            id: 'packed-voice-mediated-secret',
+            name: 'Packed Voice mediated',
+            kind: 'apiKey',
+            encryptedValue: { _isSecretValue: true, value: SOURCE_CREDENTIAL },
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            id: 'packed-voice-raw-secret',
+            name: 'Packed Voice raw',
+            kind: 'apiKey',
+            encryptedValue: { _isSecretValue: true, value: 'raw-source-account-secret' },
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
         voice: {
-          providerId: null,
-          executionMachine: {
-            mode: 'fixed',
-            machineId: MACHINE_ID,
-          },
-          privacy: {
-            shareDeviceInventory: true,
-            shareFilePaths: false,
-            shareSessionSummary: false,
-            sharePermissionRequests: false,
-            shareRecentMessages: false,
-          },
+          providerId: FIXTURE_PROVIDER_ID,
+          executionMachine: { mode: 'fixed', machineId: MACHINE_ID },
           providers: {
-            [FIXTURE_PROVIDER_ID]: {
+            [FIXTURE_STT_PROVIDER_ID]: {
               schemaVersion: 2,
-              config: {
-                mode: 'default',
-                profile: 'balanced',
-                enableProvisioning: true,
-              },
+              config: { model: 'synthetic-stt-v1' },
+            },
+            [FIXTURE_TTS_PROVIDER_ID]: {
+              schemaVersion: 2,
+              config: { voice: 'synthetic-voice' },
             },
           },
-          credentialBindings: [{
-            providerId: FIXTURE_PROVIDER_ID,
-            approvedRecipientContractDigest: recipientContractDigest,
-            credentialBindings: {
-              account: { api_key: 'packed-voice-secret' },
+          credentialBindings: [
+            {
+              contribution: FIXTURE_PROVIDER_CONTRIBUTION,
+              credentialSlotId: 'api_key',
+              credentialSource: { kind: 'savedSecret' },
+              approvedRecipientContractDigest: recipientContractDigest,
+              credentialBindings: { account: { api_key: 'packed-voice-mediated-secret' } },
             },
-          }],
+            {
+              contribution: FIXTURE_RAW_PROVIDER_CONTRIBUTION,
+              credentialSlotId: 'raw_key',
+              credentialSource: { kind: 'savedSecret' },
+              credentialBindings: { account: { raw_key: 'packed-voice-raw-secret' } },
+            },
+          ],
         },
       });
-
       await appShell.update(React.createElement(
         appShellProjectionModule.AppShellPluginUiProjectionProvider,
         null,
         React.createElement(AppShellProjectionProbe),
         React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 1 }),
       ));
-      await flushHookEffects({ cycles: 4 });
-      const providerSelectionTestId =
-        `settings.voice.provider.${encodeURIComponent(FIXTURE_PROVIDER_ID)}.default`;
-      await waitForReact(() => {
-        const rows = appShell?.findAll((node) => (
-          typeof node.props.testID === 'string'
-          && node.props.testID.startsWith('settings.voice.provider.')
-        )).map((node) => ({
-          testID: node.props.testID,
-          ariaChecked: node.props['aria-checked'],
-          ariaDisabled: node.props['aria-disabled'],
-        })) ?? [];
-        expect(rows).toEqual(expect.arrayContaining([
-          {
-            testID: providerSelectionTestId,
-            ariaChecked: false,
-            ariaDisabled: undefined,
-          },
-        ]));
-      });
-      await appShell.pressByTestIdAsync(providerSelectionTestId);
-      await flushHookEffects({ cycles: 2 });
-      const lifecycle = getVoiceSessionLifecycleController();
-      if (!lifecycle) throw new Error('packed_voice_lifecycle_unavailable');
-      await waitForReact(() => {
-        expect(lifecycle.getConfiguredProviderId()).toBe(FIXTURE_PROVIDER_ID);
-        expect(appShell?.findByTestId(providerSelectionTestId)?.props['aria-checked']).toBe(true);
-      });
+      await flushHookEffects({ cycles: 5 });
 
-      const providerRequests: Array<Readonly<{
-        method: string;
-        url: string;
-        authorization: string | null;
-        body: string | null;
-      }>> = [];
-      globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        const method = String(init?.method ?? 'GET');
-        const body = init?.body instanceof ArrayBuffer
-          ? new TextDecoder().decode(new Uint8Array(init.body))
-          : null;
-        providerRequests.push(Object.freeze({
-          method,
+      globalThis.fetch = vi.fn(async (input, init) => {
+        const url = typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+        const headers = new Headers(init?.headers);
+        providerRequests.push({
+          method: init?.method ?? 'GET',
           url,
-          authorization: new Headers(init?.headers).get('authorization'),
-          body,
-        }));
-        const responseBody = method === 'GET'
-          ? {
-              voices: [{
-                voice_id: 'packed-voice-primary',
-                name: 'Packed Primary',
-                language: 'en',
-              }],
-            }
-          : method === 'PATCH'
-            ? {
-                provisioned_voice_id: 'packed-voice-primary',
-                profile: 'balanced',
-              }
-            : {
-                client_secret: {
-                  value: 'short-lived-packed-artifact',
-                  expires_at_ms: Date.now() + 60_000,
-                },
-              };
-        return new Response(JSON.stringify(responseBody), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
+          authorization: headers.get('authorization'),
         });
-      });
+        if (url === 'https://voice.example.test/v1/catalog') {
+          return new Response(JSON.stringify({
+            voices: [{
+              voiceId: 'synthetic-voice',
+              displayName: 'Synthetic Voice',
+              locale: 'en',
+            }],
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (url === 'https://voice.example.test/v1/session') {
+          return new Response(JSON.stringify({
+            sessionToken: 'synthetic-short-lived-client-artifact',
+            expiresAtMs: Date.now() + 60_000,
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        throw new Error(`unexpected_packed_voice_fetch:${url}`);
+      }) as typeof fetch;
 
-      await expect(listCatalog({
+      await expect(mediatedRegistration.settingsOperations.listCatalog({
         catalog: 'voices',
-        providerConfig: {
-          mode: 'default',
-          profile: 'balanced',
-          enableProvisioning: true,
-        },
+        providerConfig: {},
         signal: new AbortController().signal,
       })).resolves.toEqual([{
-        id: 'packed-voice-primary',
-        name: 'Packed Primary',
-        metadata: { language: 'en' },
+        id: 'synthetic-voice',
+        name: 'Synthetic Voice',
+        metadata: { locale: 'en' },
       }]);
-      await expect(provision({
-        request: {
-          kind: 'provision_selected_voice',
-          voiceId: 'packed-voice-primary',
+
+      const registry = createDefaultVoiceProviderRegistry();
+      const sttEntry = registry.get(FIXTURE_STT_PROVIDER_ID);
+      const ttsEntry = registry.get(FIXTURE_TTS_PROVIDER_ID);
+      if (!sttEntry || !ttsEntry) throw new Error('packed_voice_speech_projection_incomplete');
+      const speechClient = new BundledSpeechDaemonClient({
+        resolveMachineId: () => MACHINE_ID,
+        machineRpc: async (input) => {
+          const handler = handlers.get(input.method);
+          if (!handler) throw new Error(`unregistered_machine_rpc:${input.method}`);
+          return await handler(input.payload, { signal: input.signal });
         },
-        providerConfig: {
-          mode: 'default',
-          profile: 'balanced',
-          enableProvisioning: true,
-        },
-        disabledActionIds: [],
-        extraSystemAppendBlocks: [],
-        signal: new AbortController().signal,
-      })).resolves.toMatchObject({
-        selectedVoiceId: 'packed-voice-primary',
-        profile: 'balanced',
+      });
+      await expect(speechClient.transcribe({
+        entry: sttEntry,
+        source: { kind: 'memory', bytes: new Uint8Array([82, 73, 70, 70]) },
+        mimeType: 'audio/wav',
+        fileName: 'synthetic.wav',
+        model: 'synthetic-stt-v1',
+        language: 'en',
+      })).resolves.toBe('synthetic transcript');
+      await expect(speechClient.synthesize({
+        entry: ttsEntry,
+        input: 'synthetic speech',
+        model: null,
+        voiceName: 'synthetic-voice',
+        languageCode: 'en',
+        format: 'wav',
+        speakingRate: null,
+        pitch: null,
+      })).resolves.toEqual({
+        bytes: new Uint8Array([82, 73, 70, 70]),
+        mimeType: 'audio/wav',
       });
 
-      const controlSessionId = 'packed-voice-control-session';
-      await lifecycle.toggle(controlSessionId);
+      const lifecycle = getVoiceSessionLifecycleController();
+      await lifecycle.toggle('packed-candidate-mediated-session');
       await waitForReact(() => {
-        expect(JSON.stringify(readFixtureEvents())).toContain('fixture_continue');
+        expect(lifecycle.getSnapshot()).toMatchObject({
+          adapterId: FIXTURE_PROVIDER_ID,
+          status: 'connected',
+        });
       });
-      expect(lifecycle.getSnapshot()).toMatchObject({
-        adapterId: FIXTURE_PROVIDER_ID,
-        status: 'connected',
-      });
-      const binding = voiceSessionBindingStore.getState().getByControlSessionId(controlSessionId);
-      expect(binding).toMatchObject({
-        adapterId: FIXTURE_PROVIDER_ID,
-        controlSessionId,
-        lifetime: 'runtime_attempt',
-        transcriptMode: 'synthetic',
-      });
-      if (!binding) throw new Error('packed_voice_runtime_binding_missing');
-      const transcriptSnapshot = readCanonicalVoiceTranscriptSnapshot(binding.conversationSessionId);
-      expect(transcriptSnapshot).toEqual([
-        expect.objectContaining({
-          role: 'user',
-          text: 'packed provider transcript',
-          final: true,
-        }),
-      ]);
-
-      expect(readFixtureEvents()).toEqual(expect.arrayContaining([
-        { kind: 'activated' },
-        { kind: 'catalog', selectedVoiceId: 'packed-voice-primary' },
-        {
-          kind: 'provisioned',
-          selectedVoiceId: 'packed-voice-primary',
-          profile: 'balanced',
-        },
-        expect.objectContaining({
-          kind: 'client_auth',
-          artifact: expect.objectContaining({
-            kind: 'bearer_token',
-            placement: 'authorization_header',
-          }),
-        }),
-        { kind: 'prepared', profile: 'balanced' },
-        expect.objectContaining({
-          kind: 'attempt_tool',
-          toolName: 'listMachines',
-          result: expect.objectContaining({
-            items: [expect.objectContaining({
-              machineId: MACHINE_ID,
-              host: 'packed-voice-safe-host',
-            })],
-          }),
-        }),
-        { kind: 'connection_created' },
-        { kind: 'host_media_opened' },
-        expect.objectContaining({ kind: 'sent', event: expect.objectContaining({ kind: 'fixture_tool_results' }) }),
-        expect.objectContaining({ kind: 'sent', event: expect.objectContaining({ kind: 'fixture_continue' }) }),
-      ]));
-
-      await lifecycle.interrupt(controlSessionId);
-      expect(readFixtureEvents()).toEqual(expect.arrayContaining([
-        {
-          kind: 'sent',
-          event: { kind: 'fixture_cancel' },
-        },
-      ]));
-
+      await lifecycle.interrupt('packed-candidate-mediated-session');
       expect(providerRequests).toEqual([
         {
           method: 'GET',
-          url: 'https://voice.example.test/v1/voices',
+          url: 'https://voice.example.test/v1/catalog',
           authorization: `Bearer ${SOURCE_CREDENTIAL}`,
-          body: null,
-        },
-        {
-          method: 'PATCH',
-          url: 'https://voice.example.test/v1/voices/packed-voice-primary',
-          authorization: `Bearer ${SOURCE_CREDENTIAL}`,
-          body: '{"profile":"balanced"}',
         },
         {
           method: 'POST',
           url: 'https://voice.example.test/v1/session',
           authorization: `Bearer ${SOURCE_CREDENTIAL}`,
-          body: '{"audience":"realtime","voiceId":"packed-voice-primary"}',
         },
       ]);
-      expect(JSON.stringify(readFixtureEvents())).not.toContain(SOURCE_CREDENTIAL);
-      expect(JSON.stringify(readFixtureEvents())).not.toContain('short-lived-packed-artifact');
-      expect(JSON.stringify(readFixtureEvents())).not.toContain('/Users/alice');
-      expect(JSON.stringify(readFixtureEvents())).not.toContain('private packed Voice session summary');
-      expect(JSON.stringify(transcriptSnapshot)).not.toContain(SOURCE_CREDENTIAL);
+
+      const authorizationService = createMachineVoiceClientCredentialAuthorizationService({
+        machineId: MACHINE_ID,
+        currentInstallReviewPrincipal: installReviewPrincipal,
+        readStoredCredentials: async () => ({ token: 'test-system-boundary-token' } as never),
+        createGrantRequester: () => ({
+          request: async (input) => {
+            pendingRawRequest = {
+              v: 1,
+              id: `packed-raw-request-${pendingChangeSequence}`,
+              accountId: composedBoundary.settingsScope.accountId,
+              ...input,
+              authoritySource: { kind: 'bundled' },
+              status: 'pending',
+              createdAt: 2,
+              updatedAt: 2,
+            };
+            return { pendingRequest: pendingRawRequest };
+          },
+        }),
+      });
+      const inspectedRaw = await authorizationService.inspect({
+        contribution: FIXTURE_RAW_PROVIDER_CONTRIBUTION,
+      });
+      expect(inspectedRaw).toMatchObject({
+        authorization: {
+          pluginId: FIXTURE_PLUGIN_ID,
+          capability: 'credentials.materialize.raw',
+          targetScope: { kind: 'account' },
+          subject: {
+            contribution: FIXTURE_RAW_PROVIDER_CONTRIBUTION,
+            credentialSlotId: 'raw_key',
+            purpose: 'voice.raw-client',
+          },
+          disclosures: expect.arrayContaining([
+            expect.objectContaining({
+              sourceClass: { kind: 'savedSecret', secretKinds: ['apiKey'] },
+              realm: 'web',
+              phase: 'connection',
+              materialization: 'httpHeaders',
+              origin: 'https://voice.example.test',
+              destination: 'authorization',
+            }),
+          ]),
+        },
+        review: {
+          plugin: { id: FIXTURE_PLUGIN_ID, version: '0.1.0' },
+          contribution: { identity: FIXTURE_RAW_PROVIDER_CONTRIBUTION },
+          credentialSlot: { id: 'raw_key', purpose: 'voice.raw-client' },
+        },
+      });
+      const requestedRaw = await authorizationService.request({
+        contribution: FIXTURE_RAW_PROVIDER_CONTRIBUTION,
+      });
+      if (requestedRaw.authorization.subject.kind !== 'credential_access_disclosure') {
+        throw new Error('packed_voice_raw_authorization_subject_invalid');
+      }
+      expect(requestedRaw.pendingRequest).toBe(pendingRawRequest);
+      activeRawGrant = {
+        v: 1,
+        id: 'packed-raw-grant-1',
+        accountId: composedBoundary.settingsScope.accountId,
+        pluginId: requestedRaw.authorization.pluginId,
+        capability: requestedRaw.authorization.capability,
+        targetScope: requestedRaw.authorization.targetScope,
+        subject: requestedRaw.authorization.subject,
+        authoritySource: { kind: 'bundled' },
+        status: 'active',
+        requestId: requestedRaw.pendingRequest.id,
+        grantedByUserId: 'packed-voice-user',
+        grantedAt: 3,
+        createdAt: 3,
+        updatedAt: 3,
+      };
+
+      const settingsBeforeRaw = composedBoundary.settings;
+      if (!settingsBeforeRaw) throw new Error('packed_voice_settings_missing');
+      composedBoundary.settings = settingsParse({
+        ...settingsBeforeRaw,
+        voice: { ...settingsBeforeRaw.voice, providerId: FIXTURE_RAW_PROVIDER_ID },
+      });
+      await appShell.update(React.createElement(
+        appShellProjectionModule.AppShellPluginUiProjectionProvider,
+        null,
+        React.createElement(AppShellProjectionProbe),
+        React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 2 }),
+      ));
+      await flushHookEffects({ cycles: 4 });
+      await lifecycle.toggle('packed-candidate-raw-session');
+      await waitForReact(() => {
+        expect(lifecycle.getSnapshot()).toMatchObject({
+          adapterId: FIXTURE_RAW_PROVIDER_ID,
+          status: 'connected',
+        });
+      });
+      expect(rawMaterializeRpcInputs).toHaveLength(1);
+      expect(rawMaterializeRpcInputs[0]).toMatchObject({
+        phase: 'connection',
+        request: {
+          kind: 'httpHeaders',
+          origin: 'https://voice.example.test',
+          headerNames: ['authorization'],
+        },
+      });
+      expect(rawGrantListInputs).toHaveLength(2);
+      expect(rawGrantListInputs).toEqual([
+        expect.objectContaining({
+          pluginId: FIXTURE_PLUGIN_ID,
+          capability: 'credentials.materialize.raw',
+          subject: requestedRaw.authorization.subject,
+        }),
+        expect.objectContaining({
+          pluginId: FIXTURE_PLUGIN_ID,
+          capability: 'credentials.materialize.raw',
+          subject: requestedRaw.authorization.subject,
+        }),
+      ]);
+      expect(JSON.stringify(rawGrantListInputs)).not.toContain('raw-source-account-secret');
 
       const failedUpdateArchivePath = await packVoiceFixtureVariant({
-        fixtureRoot,
+        fixtureRoot: installedFixtureRoot,
         temporaryRoot,
-        variant: 'packed-voice-failed-update',
-        version: '1.0.1',
-        daemonSource:
-          'export function activate() { throw new Error("packed_voice_update_rejected"); }\n',
+        variant: 'packed-candidate-voice-failed-update',
+        version: '0.1.1',
+        daemonRelativePath: 'daemon.js',
+        daemonSource: 'export function activate() { throw new Error("packed_candidate_voice_update_rejected"); }\n',
       });
-      const failedUpdateRequested = await changeService.requestPluginChange({
+      const failedRequested = await changeService.requestPluginChange({
         kind: 'installArchive',
         locator: failedUpdateArchivePath,
       });
-      expect(failedUpdateRequested).toMatchObject({
-        kind: 'reviewRequired',
-        review: {
-          pluginId: FIXTURE_PLUGIN_ID,
-          packageIdentity: { version: '1.0.1' },
-        },
-      });
-      if (failedUpdateRequested.kind !== 'reviewRequired') {
-        throw new Error(`expected_packed_voice_failed_update_review:${failedUpdateRequested.kind}`);
+      if (failedRequested.kind !== 'reviewRequired') {
+        throw new Error(`packed_voice_failed_review_missing:${failedRequested.kind}`);
       }
-      const failedUpdate = await changeService.decidePluginChange({
-        pendingChangeId: failedUpdateRequested.pendingChangeId,
+      await expect(changeService.decidePluginChange({
+        pendingChangeId: failedRequested.pendingChangeId,
         decision: 'installAndTrust',
         actorEvidence: {
           kind: 'authenticatedLocalUser',
-          interactionId: 'packed-voice-failed-update',
+          interactionId: 'packed-candidate-voice-failed-update',
           occurredAtMs: 36,
         },
-      });
-      expect(failedUpdate).toMatchObject({
-        kind: 'failed',
-        code: 'plugin_install_failed',
-      });
-      expect(await readCurrentDaemonPluginCatalog({
-        happyHomeDir,
-        reloadController,
-      })).toEqual([
-        expect.objectContaining({
+      })).resolves.toMatchObject({ kind: 'failed', code: 'plugin_install_failed' });
+      expect(await readCurrentDaemonPluginCatalog({ happyHomeDir, reloadController }))
+        .toEqual([expect.objectContaining({
           pluginId: FIXTURE_PLUGIN_ID,
-          enabled: true,
           desiredGeneration: committed.desiredGeneration,
           appliedGeneration: committed.appliedGeneration,
-        }),
-      ]);
+        })]);
       expect(lifecycle.getSnapshot()).toMatchObject({
-        adapterId: FIXTURE_PROVIDER_ID,
+        adapterId: FIXTURE_RAW_PROVIDER_ID,
         status: 'connected',
       });
+      expect(rawMaterializeRpcInputs).toHaveLength(1);
+      expect(rawGrantListInputs).toHaveLength(2);
 
       const replacementArchivePath = await packVoiceFixtureVariant({
-        fixtureRoot,
+        fixtureRoot: installedFixtureRoot,
         temporaryRoot,
-        variant: 'packed-voice-replacement',
-        version: '1.0.2',
+        variant: 'packed-candidate-voice-replacement',
+        version: '0.1.2',
       });
       const replacementRequested = await changeService.requestPluginChange({
         kind: 'installArchive',
         locator: replacementArchivePath,
       });
-      expect(replacementRequested).toMatchObject({
-        kind: 'reviewRequired',
-        review: {
-          pluginId: FIXTURE_PLUGIN_ID,
-          packageIdentity: { version: '1.0.2' },
-        },
-      });
       if (replacementRequested.kind !== 'reviewRequired') {
-        throw new Error(`expected_packed_voice_replacement_review:${replacementRequested.kind}`);
+        throw new Error(`packed_voice_replacement_review_missing:${replacementRequested.kind}`);
       }
       const replacement = await changeService.decidePluginChange({
         pendingChangeId: replacementRequested.pendingChangeId,
         decision: 'installAndTrust',
         actorEvidence: {
           kind: 'authenticatedLocalUser',
-          interactionId: 'packed-voice-replacement',
+          interactionId: 'packed-candidate-voice-replacement',
           occurredAtMs: 37,
         },
       });
@@ -1003,139 +1176,112 @@ describe('packed installed-artifact external Voice provider', () => {
         pluginId: FIXTURE_PLUGIN_ID,
         desiredGeneration: expect.any(String),
         appliedGeneration: expect.any(String),
-        pendingSurfaces: ['reconciliation'],
       });
       if (replacement.kind !== 'committed' || !replacement.appliedGeneration) {
         throw new Error(`packed_voice_replacement_not_current:${replacement.kind}`);
       }
       expect(replacement.appliedGeneration).not.toBe(committed.appliedGeneration);
-
-      const publishProjectionInvalidation = async () => {
-        invalidateDaemonContributionRegistryProjectionCache();
-        await act(async () => {
-          publishMachineContributionRegistryProjectionInvalidation({
-            machineId: MACHINE_ID,
-            serverId: SERVER_ID,
-          });
+      await publishAvailability();
+      invalidateDaemonContributionRegistryProjectionCache();
+      await act(async () => {
+        publishMachineContributionRegistryProjectionInvalidation({
+          machineId: MACHINE_ID,
+          serverId: SERVER_ID,
         });
-        await flushHookEffects({ cycles: 8 });
-      };
-      await publishProjectionInvalidation();
+      });
+      await flushHookEffects({ cycles: 10 });
       await waitForReact(() => {
+        expect(getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID)).not.toBeNull();
+        expect(getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID)).not.toBeNull();
         expect(lifecycle.getSnapshot()).toMatchObject({
           status: 'disconnected',
           canStop: false,
         });
-        expect(appShell?.findByTestId(providerSelectionTestId)).toBeTruthy();
-        expect(JSON.stringify(readFixtureEvents())).toContain('runtime_disposed');
       });
-      await expect(listCatalog({
-        catalog: 'voices',
-        providerConfig: {
-          mode: 'default',
-          profile: 'balanced',
-          enableProvisioning: true,
-        },
-        signal: new AbortController().signal,
-      })).rejects.toMatchObject({
-        code: 'voice_account_operation_cancelled',
-      });
-
-      const replacementRegistration =
-        getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID);
-      const replacementRecipientContractDigest =
-        replacementRegistration?.descriptor?.accountCredentialSlot?.recipientContractDigest;
-      expect(replacementRecipientContractDigest).toEqual(expect.any(String));
-      expect(replacementRecipientContractDigest).not.toBe(recipientContractDigest);
-      const credentialItemTestId =
-        `settings.voice.externalCredential.${encodeURIComponent(FIXTURE_PROVIDER_ID)}.api_key`;
-      await waitForReact(() => {
-        const credentialItem = appShell?.findByTestId(credentialItemTestId);
-        expect(credentialItem).toBeTruthy();
-        expect(isAccountVoiceCredentialRecipientApprovalRequired({
-          settings: composedBoundary.settings!,
-          providerId: FIXTURE_PROVIDER_ID,
-          credentialSlotId: 'api_key',
-          requiredRecipientContractDigest: replacementRecipientContractDigest,
-        })).toBe(true);
-      });
-      const selectionBeforeRecipientApproval = readPackedProviderSelectionTrace(
-        appShell?.findByTestId(providerSelectionTestId)?.props['aria-checked'],
-      );
-      if (!replacementRecipientContractDigest) {
-        throw new Error('packed_voice_replacement_recipient_contract_missing');
-      }
-      const settingsBeforeRecipientApproval = composedBoundary.settings;
-      if (!settingsBeforeRecipientApproval) {
-        throw new Error('packed_voice_settings_unavailable');
-      }
-      composedBoundary.settings = upsertAccountVoiceCredential({
-        settings: settingsBeforeRecipientApproval,
-        providerId: FIXTURE_PROVIDER_ID,
+      expect(rawMaterializeRpcInputs).toHaveLength(1);
+      expect(rawGrantListInputs).toHaveLength(2);
+      expect(composedBoundary.audioSessionReleaseCount)
+        .toBe(composedBoundary.audioSessionAcquireRequests.length);
+      const replacementMediated = getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID);
+      expect(replacementMediated?.descriptor?.accountCredentialSlot?.recipientContractDigest)
+        .toBe(recipientContractDigest);
+      expect(isAccountVoiceCredentialRecipientApprovalRequired({
+        settings: composedBoundary.settings!,
+        contribution: FIXTURE_PROVIDER_CONTRIBUTION,
         credentialSlotId: 'api_key',
-        value: SOURCE_CREDENTIAL,
-        generateId: () => 'packed-voice-secret-reapproved',
-        now: 2,
-        expectedSecretId: 'packed-voice-secret',
-        expectedSecretUpdatedAt: 1,
-        approvedRecipientContractDigest: replacementRecipientContractDigest,
-      }).settings;
-      await appShell.update(React.createElement(
-        appShellProjectionModule.AppShellPluginUiProjectionProvider,
-        null,
-        React.createElement(AppShellProjectionProbe),
-        React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 2 }),
-      ));
-      await flushHookEffects({ cycles: 4 });
-      await waitForReact(() => {
-        const selectionAfterRecipientApproval = readPackedProviderSelectionTrace(
-          appShell?.findByTestId(providerSelectionTestId)?.props['aria-checked'],
-        );
-        const selectionTrace = JSON.stringify({
-          beforeRecipientApproval: selectionBeforeRecipientApproval,
-          afterRecipientApproval: selectionAfterRecipientApproval,
-        });
-        expect(isAccountVoiceCredentialRecipientApprovalRequired({
-          settings: composedBoundary.settings!,
-          providerId: FIXTURE_PROVIDER_ID,
-          credentialSlotId: 'api_key',
-          requiredRecipientContractDigest: replacementRecipientContractDigest,
-        })).toBe(false);
-        expect(
-          selectionAfterRecipientApproval.runtimeProviderId,
-          selectionTrace,
-        ).toBe(FIXTURE_PROVIDER_ID);
-        expect(
-          selectionAfterRecipientApproval.persistedProviderId,
-          selectionTrace,
-        ).toBe(FIXTURE_PROVIDER_ID);
-        expect(
-          selectionAfterRecipientApproval.harnessProviderId,
-          selectionTrace,
-        ).toBe(FIXTURE_PROVIDER_ID);
-        expect(
-          selectionAfterRecipientApproval.descriptorProjection,
-          selectionTrace,
-        ).toMatchObject({ status: 'ready', modeId: 'default' });
-        expect(
-          selectionAfterRecipientApproval.row,
-          selectionTrace,
-        ).toMatchObject({ selected: true, modeId: 'default' });
-        expect(
-          selectionAfterRecipientApproval.renderedChecked,
-          selectionTrace,
-        ).toBe(true);
-        expect(appShell?.findByTestId(credentialItemTestId)).toBeTruthy();
-      });
+        requiredRecipientContractDigest: recipientContractDigest,
+      })).toBe(false);
 
-      await lifecycle.toggle(controlSessionId);
+      const replacementRawInspection = await authorizationService.inspect({
+        contribution: FIXTURE_RAW_PROVIDER_CONTRIBUTION,
+      });
+      if (replacementRawInspection.authorization.subject.kind !== 'credential_access_disclosure') {
+        throw new Error('packed_voice_replacement_raw_authorization_subject_invalid');
+      }
+      expect(replacementRawInspection.authorization.subject.installReviewPrincipalDigest)
+        .toBe(requestedRaw.authorization.subject.installReviewPrincipalDigest);
+      expect(replacementRawInspection.authorization.subject.installedGenerationId)
+        .not.toBe(requestedRaw.authorization.subject.installedGenerationId);
+      await expect(lifecycle.toggle('packed-candidate-raw-stale-grant-session'))
+        .resolves.toBeUndefined();
       await waitForReact(() => {
         const snapshot = lifecycle.getSnapshot();
-        expect(snapshot, JSON.stringify(snapshot)).toMatchObject({
-          adapterId: FIXTURE_PROVIDER_ID,
+        expect(snapshot.adapterId).toBe(FIXTURE_RAW_PROVIDER_ID);
+        expect(['disconnected', 'error']).toContain(snapshot.status);
+        expect(snapshot).toMatchObject({
+          canStop: false,
+          errorCode: 'provider_auth_invalid',
+        });
+      });
+      expect(rawMaterializeRpcInputs).toHaveLength(2);
+      expect(rawGrantListInputs).toHaveLength(3);
+      expect(rawGrantListInputs[2]).toMatchObject({
+        pluginId: FIXTURE_PLUGIN_ID,
+        capability: 'credentials.materialize.raw',
+        subject: replacementRawInspection.authorization.subject,
+      });
+
+      const replacementRawRequest = await authorizationService.request({
+        contribution: FIXTURE_RAW_PROVIDER_CONTRIBUTION,
+      });
+      activeRawGrant = {
+        v: 1,
+        id: 'packed-raw-grant-2',
+        accountId: composedBoundary.settingsScope.accountId,
+        pluginId: replacementRawRequest.authorization.pluginId,
+        capability: replacementRawRequest.authorization.capability,
+        targetScope: replacementRawRequest.authorization.targetScope,
+        subject: replacementRawRequest.authorization.subject,
+        authoritySource: { kind: 'bundled' },
+        status: 'active',
+        requestId: replacementRawRequest.pendingRequest.id,
+        grantedByUserId: 'packed-voice-user',
+        grantedAt: 4,
+        createdAt: 4,
+        updatedAt: 4,
+      };
+      lifecycle.rearmAfterCredentialAuthorityChange();
+      await lifecycle.toggle('packed-candidate-raw-replacement-session');
+      await waitForReact(() => {
+        expect(lifecycle.getSnapshot()).toMatchObject({
+          adapterId: FIXTURE_RAW_PROVIDER_ID,
           status: 'connected',
         });
       });
+      expect(rawMaterializeRpcInputs).toHaveLength(3);
+      expect(rawGrantListInputs).toHaveLength(5);
+      expect(rawGrantListInputs.slice(3)).toEqual([
+        expect.objectContaining({
+          pluginId: FIXTURE_PLUGIN_ID,
+          capability: 'credentials.materialize.raw',
+          subject: replacementRawRequest.authorization.subject,
+        }),
+        expect.objectContaining({
+          pluginId: FIXTURE_PLUGIN_ID,
+          capability: 'credentials.materialize.raw',
+          subject: replacementRawRequest.authorization.subject,
+        }),
+      ]);
 
       const disabled = await changeService.requestPluginChange({
         kind: 'disable',
@@ -1144,30 +1290,28 @@ describe('packed installed-artifact external Voice provider', () => {
       expect(disabled).toMatchObject({
         kind: 'committed',
         pluginId: FIXTURE_PLUGIN_ID,
-        desiredGeneration: replacement.desiredGeneration,
         appliedGeneration: null,
       });
-      await publishProjectionInvalidation();
+      await publishAvailability();
+      invalidateDaemonContributionRegistryProjectionCache();
+      await act(async () => {
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID });
+      });
+      await flushHookEffects({ cycles: 8 });
       await waitForReact(() => {
         expect(getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID)).toBeNull();
-        expect(appShell?.findByTestId(providerSelectionTestId)).toBeNull();
+        expect(getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID)).toBeNull();
+        expect(createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID)).toBeNull();
+        expect(createDefaultVoiceProviderRegistry().get(FIXTURE_TTS_PROVIDER_ID)).toBeNull();
         expect(lifecycle.getSnapshot()).toMatchObject({
           status: 'disconnected',
           canStop: false,
         });
       });
-      expect((await loadInstalledPlugins({ happyHomeDir })).loadedPlugins).toEqual([]);
-      expect(await readCurrentDaemonPluginCatalog({
-        happyHomeDir,
-        reloadController,
-      })).toEqual([
-        expect.objectContaining({
-          pluginId: FIXTURE_PLUGIN_ID,
-          enabled: false,
-          desiredGeneration: replacement.desiredGeneration,
-          appliedGeneration: null,
-        }),
-      ]);
+      expect(rawMaterializeRpcInputs).toHaveLength(3);
+      expect(rawGrantListInputs).toHaveLength(5);
+      expect(composedBoundary.audioSessionReleaseCount)
+        .toBe(composedBoundary.audioSessionAcquireRequests.length);
 
       const enabled = await changeService.requestPluginChange({
         kind: 'enable',
@@ -1176,22 +1320,53 @@ describe('packed installed-artifact external Voice provider', () => {
       expect(enabled).toMatchObject({
         kind: 'committed',
         pluginId: FIXTURE_PLUGIN_ID,
-        desiredGeneration: replacement.desiredGeneration,
         appliedGeneration: replacement.appliedGeneration,
       });
-      await publishProjectionInvalidation();
+      await publishAvailability();
+      invalidateDaemonContributionRegistryProjectionCache();
+      await act(async () => {
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID });
+      });
+      await flushHookEffects({ cycles: 8 });
       await waitForReact(() => {
         expect(getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID)).not.toBeNull();
-        expect(appShell?.findByTestId(providerSelectionTestId)).toBeTruthy();
+        expect(getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID)).not.toBeNull();
+        expect(createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID)).not.toBeNull();
+        expect(createDefaultVoiceProviderRegistry().get(FIXTURE_TTS_PROVIDER_ID)).not.toBeNull();
       });
-      expect(lifecycle.getConfiguredProviderId()).toBe(FIXTURE_PROVIDER_ID);
-      await lifecycle.toggle(controlSessionId);
+      const reenabledSpeech = createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID);
+      if (!reenabledSpeech) throw new Error('packed_voice_reenabled_speech_missing');
+      await expect(speechClient.transcribe({
+        entry: reenabledSpeech,
+        source: { kind: 'memory', bytes: new Uint8Array([82, 73, 70, 70]) },
+        mimeType: 'audio/wav',
+        fileName: 'synthetic-reenabled.wav',
+        model: 'synthetic-stt-v1',
+        language: 'en',
+      })).resolves.toBe('synthetic transcript');
+
+      const settingsBeforeReenabledStart = composedBoundary.settings;
+      if (!settingsBeforeReenabledStart) throw new Error('packed_voice_reenabled_settings_missing');
+      composedBoundary.settings = settingsParse({
+        ...settingsBeforeReenabledStart,
+        voice: { ...settingsBeforeReenabledStart.voice, providerId: FIXTURE_PROVIDER_ID },
+      });
+      await appShell.update(React.createElement(
+        appShellProjectionModule.AppShellPluginUiProjectionProvider,
+        null,
+        React.createElement(AppShellProjectionProbe),
+        React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 3 }),
+      ));
+      await flushHookEffects({ cycles: 4 });
+      lifecycle.rearmAfterCredentialAuthorityChange();
+      await lifecycle.toggle('packed-candidate-mediated-reenabled-session');
       await waitForReact(() => {
         expect(lifecycle.getSnapshot()).toMatchObject({
           adapterId: FIXTURE_PROVIDER_ID,
           status: 'connected',
         });
       });
+      expect(providerRequests.filter((request) => request.method === 'POST')).toHaveLength(2);
 
       const uninstalled = await changeService.requestPluginChange({
         kind: 'uninstall',
@@ -1203,55 +1378,42 @@ describe('packed installed-artifact external Voice provider', () => {
         desiredGeneration: null,
         appliedGeneration: null,
       });
-      await publishProjectionInvalidation();
+      await publishAvailability();
+      invalidateDaemonContributionRegistryProjectionCache();
+      await act(async () => {
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID });
+      });
+      await flushHookEffects({ cycles: 8 });
       await waitForReact(() => {
         expect(getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID)).toBeNull();
-        expect(appShell?.findByTestId(providerSelectionTestId)).toBeNull();
+        expect(getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID)).toBeNull();
+        expect(createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID)).toBeNull();
+        expect(createDefaultVoiceProviderRegistry().get(FIXTURE_TTS_PROVIDER_ID)).toBeNull();
         expect(lifecycle.getSnapshot()).toMatchObject({
           status: 'disconnected',
           canStop: false,
         });
       });
-      expect(composedBoundary.settings?.voice.providerId).toBe(FIXTURE_PROVIDER_ID);
-      expect(await readCurrentDaemonPluginCatalog({
-        happyHomeDir,
-        reloadController,
-      })).toEqual([]);
+      expect(composedBoundary.audioSessionAcquireRequests.length).toBeGreaterThan(0);
+      expect(composedBoundary.audioSessionReleaseCount)
+        .toBe(composedBoundary.audioSessionAcquireRequests.length);
+      expect(providerRequests.filter((request) => request.method === 'POST')).toHaveLength(2);
+      expect(await readCurrentDaemonPluginCatalog({ happyHomeDir, reloadController })).toEqual([]);
       expect((await loadInstalledPlugins({ happyHomeDir })).loadedPlugins).toEqual([]);
-      expect(providerRequests.filter((request) => request.method === 'POST')).toHaveLength(3);
-      expect(composedBoundary.audioSessionAcquireRequests).toEqual([
-        {
-          ownerId: `realtime-provider:${FIXTURE_PROVIDER_ID}`,
-          mode: 'conversation',
-          input: true,
-          output: true,
-          aec: 'preferred',
-          capture: 'provider_managed_exclusive',
-        },
-        {
-          ownerId: `realtime-provider:${FIXTURE_PROVIDER_ID}`,
-          mode: 'conversation',
-          input: true,
-          output: true,
-          aec: 'preferred',
-          capture: 'provider_managed_exclusive',
-        },
-        {
-          ownerId: `realtime-provider:${FIXTURE_PROVIDER_ID}`,
-          mode: 'conversation',
-          input: true,
-          output: true,
-          aec: 'preferred',
-          capture: 'provider_managed_exclusive',
-        },
-      ]);
-      expect(composedBoundary.audioSessionReleaseCount).toBe(3);
-      expect(readFixtureEvents().filter((event) => (
-        typeof event === 'object'
-        && event !== null
-        && 'kind' in event
-        && event.kind === 'runtime_disposed'
-      ))).toHaveLength(3);
+      // The genuine network boundary necessarily receives the mediated secret;
+      // UI projections, lifecycle state, and grant inspection must not.
+      expect(JSON.stringify({
+        projection: composedBoundary.latestAppShellProjection,
+        lifecycle: lifecycle.getSnapshot(),
+        rawGrantListInputs,
+        rawMaterializeRpcInputs,
+      })).not.toContain(SOURCE_CREDENTIAL);
+      expect(JSON.stringify({
+        projection: composedBoundary.latestAppShellProjection,
+        lifecycle: lifecycle.getSnapshot(),
+        rawGrantListInputs,
+        rawMaterializeRpcInputs,
+      })).not.toContain('raw-source-account-secret');
     } finally {
       globalThis.fetch = originalFetch;
       standardCleanup();
@@ -1261,10 +1423,13 @@ describe('packed installed-artifact external Voice provider', () => {
         '../../../../apps/ui/sources/components/plugins/reactNative/executableModuleHost'
       );
       await getInstalledPluginUiExecutableModuleHost().unload().catch(() => undefined);
+      await speechRpcRegistration?.dispose().catch(() => undefined);
+      await credentialRpcRegistration?.dispose().catch(() => undefined);
       await changeService.shutdown().catch(() => undefined);
       await reloadController.shutdown({ timeoutMs: 5_000 }).catch(() => undefined);
       await rm(temporaryRoot, { recursive: true, force: true });
       invalidateDaemonContributionRegistryProjectionCache();
+      clearPluginAccountAvailabilityProjection();
       composedBoundary.handlers.clear();
       composedBoundary.loaderBackend = null;
       composedBoundary.machines = [];
@@ -1273,7 +1438,6 @@ describe('packed installed-artifact external Voice provider', () => {
       composedBoundary.latestAppShellProjection = null;
       appShellProjectionModule = null;
       voiceNormalSurfaceModules = null;
-      Reflect.deleteProperty(globalThis, '__HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__');
     }
   }, 180_000);
 });

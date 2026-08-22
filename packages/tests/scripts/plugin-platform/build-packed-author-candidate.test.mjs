@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  generateKeyPairSync,
+  sign,
+} from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
   chmod,
@@ -8,6 +12,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -21,12 +26,12 @@ import { gzipSync } from 'node:zlib';
 import {
   buildPackedAuthorNaturalArtifacts,
   buildPackedAuthorCandidate,
-  captureCandidateBuildBasis,
   createCandidateInstallerArtifacts,
+  importOwnedStandaloneCliMatrix,
   main,
   parsePackedAuthorCandidateBuilderArgs,
   parsePackedAuthorNaturalBuilderArgs,
-  resolveCandidateBuildBasisPaths,
+  resolveOwnedStandaloneCliMatrixVersion,
   verifyDarwinNotarizationEvidenceAgainstArchive,
 } from './build-packed-author-candidate.mjs';
 import {
@@ -43,6 +48,42 @@ const RELEASED_NATIVE_TARGETS = Object.freeze([
   'darwin-arm64',
   'windows-x64',
 ]);
+
+const TEST_MINISIGN_KEY_ID = Buffer.from('0102030405060708', 'hex');
+const TEST_MINISIGN_KEY_PAIR = generateKeyPairSync('ed25519');
+const TEST_MINISIGN_RAW_PUBLIC_KEY = Buffer.from(
+  TEST_MINISIGN_KEY_PAIR.publicKey.export({ format: 'der', type: 'spki' }),
+).subarray(-32);
+const TEST_MINISIGN_PUBLIC_KEY = [
+  'untrusted comment: candidate fixture minisign public key',
+  Buffer.concat([
+    Buffer.from('Ed'),
+    TEST_MINISIGN_KEY_ID,
+    TEST_MINISIGN_RAW_PUBLIC_KEY,
+  ]).toString('base64'),
+  '',
+].join('\n');
+
+function signTestMinisign(message) {
+  const signature = sign(null, message, TEST_MINISIGN_KEY_PAIR.privateKey);
+  const trustedSuffix = Buffer.from('timestamp:0', 'utf8');
+  const globalSignature = sign(
+    null,
+    Buffer.concat([signature, trustedSuffix]),
+    TEST_MINISIGN_KEY_PAIR.privateKey,
+  );
+  return [
+    'untrusted comment: candidate fixture signature',
+    Buffer.concat([
+      Buffer.from('Ed'),
+      TEST_MINISIGN_KEY_ID,
+      signature,
+    ]).toString('base64'),
+    `trusted comment: ${trustedSuffix.toString('utf8')}`,
+    globalSignature.toString('base64'),
+    '',
+  ].join('\n');
+}
 
 function writeTarString(header, offset, length, value) {
   Buffer.from(value, 'utf8').copy(header, offset, 0, length);
@@ -82,8 +123,11 @@ function createTarGzip(entries) {
 function candidateFor({
   runId,
   sdkTarballPath,
+  pluginUiTarballPath,
+  channelsProtocolTarballPath,
   cliTarballPath,
   standaloneCliArtifactPath = null,
+  cliVersion = '0.2.10',
 }) {
   return {
     schemaVersion: 1,
@@ -96,9 +140,30 @@ function candidateFor({
         .digest('base64')}`,
       tarballPath: sdkTarballPath,
     },
+    pluginUi: {
+      packageName: '@happier-dev/plugin-ui',
+      version: '0.0.0',
+      pluginSdkVersion: '0.0.0',
+      integrity: `sha512-${createHash('sha512')
+        .update('exact:packages/plugin-ui')
+        .digest('base64')}`,
+      tarballPath: pluginUiTarballPath,
+    },
+    ...(channelsProtocolTarballPath
+      ? {
+          channelsProtocol: {
+            packageName: '@happier-dev/channels-protocol',
+            version: '0.0.0',
+            integrity: `sha512-${createHash('sha512')
+              .update('exact:packages/channels-protocol')
+              .digest('base64')}`,
+            tarballPath: channelsProtocolTarballPath,
+          },
+        }
+      : {}),
     cli: {
       packageName: '@happier-dev/cli',
-      version: '0.2.10',
+      version: cliVersion,
       entrypoint: 'package/bin/happier.mjs',
       integrity: `sha512-${createHash('sha512')
         .update('exact:apps/cli')
@@ -109,7 +174,7 @@ function candidateFor({
       ? {
           standaloneCli: {
             product: 'happier',
-            version: '0.2.10',
+            version: cliVersion,
             os: 'darwin',
             arch: 'arm64',
             sha256: createHash('sha256')
@@ -120,6 +185,39 @@ function candidateFor({
         }
       : {}),
   };
+}
+
+function packedArtifactMetadata(packageRelDir, packageVersion = null) {
+  if (packageRelDir === 'packages/plugin-sdk') {
+    return {
+      packageName: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      tarballName: 'happier-dev-plugin-sdk-0.0.0.tgz',
+    };
+  }
+  if (packageRelDir === 'packages/plugin-ui') {
+    return {
+      packageName: '@happier-dev/plugin-ui',
+      version: '0.0.0',
+      tarballName: 'happier-dev-plugin-ui-0.0.0.tgz',
+    };
+  }
+  if (packageRelDir === 'packages/channels-protocol') {
+    return {
+      packageName: '@happier-dev/channels-protocol',
+      version: '0.0.0',
+      tarballName: 'happier-dev-channels-protocol-0.0.0.tgz',
+    };
+  }
+  if (packageRelDir === 'apps/cli') {
+    const version = packageVersion ?? '0.2.10';
+    return {
+      packageName: '@happier-dev/cli',
+      version,
+      tarballName: `happier-dev-cli-${version}.tgz`,
+    };
+  }
+  throw new Error(`Unknown packed artifact fixture: ${packageRelDir}`);
 }
 
 async function writeTestInstallerArtifacts({ destinationDir }) {
@@ -147,16 +245,70 @@ async function writeTestInstallerArtifacts({ destinationDir }) {
   return installers;
 }
 
-async function writeTestPackedArtifact({ packageRelDir, destinationDir }) {
-  const isSdk = packageRelDir === 'packages/plugin-sdk';
-  const packageName = isSdk
-    ? '@happier-dev/plugin-sdk'
-    : '@happier-dev/cli';
-  const version = isSdk ? '0.0.0' : '0.2.10';
-  const tarballName = isSdk
-    ? 'happier-dev-plugin-sdk-0.0.0.tgz'
-    : 'happier-dev-cli-0.2.10.tgz';
+async function writeTestPackedArtifact({
+  packageRelDir,
+  destinationDir,
+  packageVersion = null,
+}) {
+  const { packageName, version, tarballName } = packedArtifactMetadata(packageRelDir, packageVersion);
   const bytes = `exact:${packageRelDir}`;
+  await writeFile(join(destinationDir, tarballName), bytes);
+  return {
+    ok: true,
+    package: { name: packageName, version },
+    tarball: { name: tarballName, sizeBytes: bytes.length },
+  };
+}
+
+async function writeAttestableTestPackedArtifact({
+  packageRelDir,
+  destinationDir,
+  packageVersion = null,
+}) {
+  const { packageName, version, tarballName } = packedArtifactMetadata(packageRelDir, packageVersion);
+  const bytes = createTarGzip([
+    { name: 'package', type: '5' },
+    {
+      name: 'package/package.json',
+      contents: JSON.stringify({
+        name: packageName,
+        version,
+        ...(packageRelDir === 'packages/plugin-ui'
+          ? { dependencies: { '@happier-dev/plugin-sdk': '0.0.0' } }
+          : {}),
+        ...(packageRelDir === 'packages/channels-protocol'
+          ? {
+              main: './dist/index.js',
+              types: './dist/index.d.ts',
+              exports: {
+                '.': {
+                  types: './dist/index.d.ts',
+                  default: './dist/index.js',
+                },
+                './v1': {
+                  types: './dist/v1/index.d.ts',
+                  default: './dist/v1/index.js',
+                },
+                './testing/v1': {
+                  types: './dist/testing/v1/index.d.ts',
+                  default: './dist/testing/v1/index.js',
+                },
+              },
+            }
+          : {}),
+        ...(packageRelDir === 'apps/cli' ? { bin: { happier: './bin/happier.mjs' } } : {}),
+      }),
+    },
+    ...(packageRelDir === 'apps/cli'
+      ? [
+          { name: 'package/bin', type: '5' },
+          {
+            name: 'package/bin/happier.mjs',
+            contents: '#!/usr/bin/env node\n',
+          },
+        ]
+      : []),
+  ]);
   await writeFile(join(destinationDir, tarballName), bytes);
   return {
     ok: true,
@@ -170,6 +322,7 @@ async function writeTestNativeMatrix({
   version = '0.2.10',
   targets = RELEASED_NATIVE_TARGETS,
   includeDarwinNotarizationEvidence = false,
+  includeSignature = true,
   archiveEntriesForTarget = (target) => [
     {
       name: `happier-v${version}-${target}`,
@@ -194,14 +347,10 @@ async function writeTestNativeMatrix({
       sha256: createHash('sha256').update(bytes).digest('hex'),
     });
   }
-  await writeFile(
-    join(destinationDir, `checksums-happier-v${version}.txt`),
-    entries.map((entry) => `${entry.sha256}  ${entry.fileName}`).join('\n').concat('\n'),
-  );
   if (includeDarwinNotarizationEvidence) {
     for (const target of ['darwin-x64', 'darwin-arm64']) {
-      await writeFile(
-        join(destinationDir, `${target}.cli.json`),
+      const fileName = `${target}.cli.json`;
+      const bytes = Buffer.from(
         `${JSON.stringify({
           schemaVersion: 2,
           payload: `happier-v${version}-${target}`,
@@ -222,12 +371,223 @@ async function writeTestNativeMatrix({
           },
         }, null, 2)}\n`,
       );
+      await writeFile(
+        join(destinationDir, fileName),
+        bytes,
+      );
+      entries.push({
+        target,
+        fileName,
+        bytes,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      });
     }
   }
-  return entries;
+  const checksumsBytes = Buffer.from(
+    entries.map((entry) => `${entry.sha256}  ${entry.fileName}`).join('\n').concat('\n'),
+  );
+  await writeFile(
+    join(destinationDir, `checksums-happier-v${version}.txt`),
+    checksumsBytes,
+  );
+  if (includeSignature) {
+    await writeFile(
+      join(destinationDir, `checksums-happier-v${version}.txt.minisig`),
+      signTestMinisign(checksumsBytes),
+    );
+  }
+  return entries.filter((entry) => entry.fileName.endsWith('.tar.gz'));
 }
 
-test('ordinary natural builder exports only the exact SDK/CLI pair under one canonical lease', async () => {
+async function rewriteTestNativeChecksums({
+  sourceDir,
+  version = '0.2.10',
+  transform,
+}) {
+  const checksumsPath = join(sourceDir, `checksums-happier-v${version}.txt`);
+  const lines = (await readFile(checksumsPath, 'utf8')).trim().split('\n');
+  await writeFile(checksumsPath, `${transform(lines).join('\n')}\n`);
+}
+
+function nativeChecksumSetInvalidCases() {
+  return [
+    {
+      name: 'missing',
+      transform: (lines) => lines.filter((line) => !line.endsWith('darwin-x64.cli.json')),
+    },
+    {
+      name: 'extra',
+      transform: (lines) => [...lines, `${'1'.repeat(64)}  extra.cli.json`],
+    },
+    {
+      name: 'wrong-name',
+      transform: (lines) => lines.map((line) => (
+        line.endsWith('darwin-x64.cli.json')
+          ? line.replace('darwin-x64.cli.json', 'darwin-x86_64.cli.json')
+          : line
+      )),
+    },
+    {
+      name: 'duplicate',
+      transform: (lines) => [...lines.slice(0, -1), lines[0]],
+    },
+    {
+      name: 'wrong-digest',
+      transform: (lines) => lines.map((line) => (
+        line.endsWith('darwin-arm64.cli.json')
+          ? `${'2'.repeat(64)}  darwin-arm64.cli.json`
+          : line
+      )),
+    },
+  ];
+}
+
+test('native candidate version identity rejects mixed and duplicate release matrices', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packed-candidate-version-identity-'));
+  const mixedDir = join(root, 'mixed');
+  const duplicateDir = join(root, 'duplicate');
+  const invalidNameDir = join(root, 'invalid-name');
+  const invalidSemverDir = join(root, 'invalid-semver');
+  try {
+    await writeTestNativeMatrix({ destinationDir: mixedDir });
+    await rename(
+      join(mixedDir, 'happier-v0.2.10-linux-x64.tar.gz'),
+      join(mixedDir, 'happier-v0.2.10-dev.1770000000.42-linux-x64.tar.gz'),
+    );
+    await assert.rejects(
+      resolveOwnedStandaloneCliMatrixVersion(mixedDir),
+      /all five release archives at one exact version/u,
+    );
+
+    await writeTestNativeMatrix({ destinationDir: duplicateDir });
+    await cp(
+      join(duplicateDir, 'happier-v0.2.10-linux-x64.tar.gz'),
+      join(duplicateDir, 'happier-v0.2.10-dev.1770000000.42-linux-x64.tar.gz'),
+    );
+    await assert.rejects(
+      resolveOwnedStandaloneCliMatrixVersion(duplicateDir),
+      /all five release archives at one exact version/u,
+    );
+
+    await writeTestNativeMatrix({ destinationDir: invalidNameDir });
+    await writeFile(join(invalidNameDir, 'not-a-release-archive.tar.gz'), 'invalid-name');
+    await assert.rejects(
+      resolveOwnedStandaloneCliMatrixVersion(invalidNameDir),
+      /all five release archives at one exact version/u,
+    );
+
+    await writeTestNativeMatrix({
+      destinationDir: invalidSemverDir,
+      version: '0.2.10-dev.01',
+    });
+    await assert.rejects(
+      resolveOwnedStandaloneCliMatrixVersion(invalidSemverDir),
+      /exact stable or allocated dev CLI version/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native candidate import requires the finalized matrix minisign artifact', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packed-candidate-required-signature-'));
+  const sourceDir = join(root, 'source');
+  const destinationDir = join(root, 'destination');
+  try {
+    await writeTestNativeMatrix({
+      destinationDir: sourceDir,
+      includeDarwinNotarizationEvidence: true,
+      includeSignature: false,
+    });
+    await assert.rejects(
+      importOwnedStandaloneCliMatrix({
+        sourceDir,
+        destinationDir,
+        version: '0.2.10',
+        target: 'darwin-arm64',
+      }, {
+        verifyReleaseArchiveAdmissionImpl: async () => [],
+        verifyDarwinNotarizationEvidenceImpl: async () => {},
+      }),
+      /signature/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native candidate import rejects an unauthenticated minisign artifact', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packed-candidate-invalid-signature-'));
+  const sourceDir = join(root, 'source');
+  const destinationDir = join(root, 'destination');
+  try {
+    await writeTestNativeMatrix({
+      destinationDir: sourceDir,
+      includeDarwinNotarizationEvidence: true,
+    });
+    await writeFile(
+      join(sourceDir, 'checksums-happier-v0.2.10.txt.minisig'),
+      'candidate-minisign-signature\n',
+    );
+    await assert.rejects(
+      importOwnedStandaloneCliMatrix({
+        sourceDir,
+        destinationDir,
+        version: '0.2.10',
+        target: 'darwin-arm64',
+      }, {
+        verifyReleaseArchiveAdmissionImpl: async () => [],
+        verifyDarwinNotarizationEvidenceImpl: async () => {},
+        trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
+      }),
+      /signature/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native candidate import accepts only the canonical seven-entry checksum set', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packed-candidate-checksum-envelope-'));
+  const version = '0.2.10';
+  const importMatrix = async (sourceDir, destinationName) => await importOwnedStandaloneCliMatrix({
+    sourceDir,
+    destinationDir: join(root, destinationName),
+    version,
+    target: 'darwin-arm64',
+  }, {
+    verifyReleaseArchiveAdmissionImpl: async () => [],
+    verifyDarwinNotarizationEvidenceImpl: async () => {},
+    trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
+  });
+  try {
+    const canonicalSourceDir = join(root, 'canonical-source');
+    await writeTestNativeMatrix({
+      destinationDir: canonicalSourceDir,
+      includeDarwinNotarizationEvidence: true,
+    });
+    await assert.doesNotReject(importMatrix(canonicalSourceDir, 'canonical-destination'));
+
+    for (const invalidCase of nativeChecksumSetInvalidCases()) {
+      const sourceDir = join(root, `${invalidCase.name}-source`);
+      await cp(canonicalSourceDir, sourceDir, { recursive: true });
+      await rewriteTestNativeChecksums({
+        sourceDir,
+        version,
+        transform: invalidCase.transform,
+      });
+      await assert.rejects(
+        importMatrix(sourceDir, `${invalidCase.name}-destination`),
+        /exact seven-artifact release envelope/u,
+        invalidCase.name,
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ordinary natural builder exports the exact SDK/Plugin UI/Channels protocol/CLI set under one canonical lease', async () => {
   const root = await mkdtemp(join(tmpdir(), 'packed-natural-builder-'));
   const monorepoRoot = join(root, 'repo');
   const outputRoot = join(root, 'output');
@@ -267,18 +627,33 @@ test('ordinary natural builder exports only the exact SDK/CLI pair under one can
     assert.equal(lockCalls.length, 1);
     assert.deepEqual(
       packCalls.map(({ packageRelDir }) => packageRelDir),
-      ['packages/plugin-sdk', 'apps/cli'],
+      [
+        'packages/plugin-sdk',
+        'packages/plugin-ui',
+        'packages/channels-protocol',
+        'apps/cli',
+      ],
     );
     assert.deepEqual(await readdir(runRoot), ['npm']);
     assert.deepEqual((await readdir(npmRoot)).sort(), [
+      'happier-dev-channels-protocol-0.0.0.tgz',
       'happier-dev-cli-0.2.10.tgz',
       'happier-dev-plugin-sdk-0.0.0.tgz',
+      'happier-dev-plugin-ui-0.0.0.tgz',
     ]);
     assert.deepEqual(result, {
       runId: 'natural-pair-1',
       sdkTarballPath: join(
         npmRoot,
         'happier-dev-plugin-sdk-0.0.0.tgz',
+      ),
+      pluginUiTarballPath: join(
+        npmRoot,
+        'happier-dev-plugin-ui-0.0.0.tgz',
+      ),
+      channelsProtocolTarballPath: join(
+        npmRoot,
+        'happier-dev-channels-protocol-0.0.0.tgz',
       ),
       cliTarballPath: join(npmRoot, 'happier-dev-cli-0.2.10.tgz'),
     });
@@ -328,104 +703,40 @@ test('ordinary natural builder removes its run root when canonical pack identity
   }
 });
 
-test('buildPackedAuthorCandidate exports one leased SDK/CLI basis and publishes one npm/installers manifest', async () => {
+test('buildPackedAuthorCandidate rejects missing native-matrix arguments before output mutation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'packed-candidate-builder-'));
   const monorepoRoot = join(root, 'repo');
   const outputRoot = join(root, 'output');
-  const events = [];
   try {
     await mkdir(monorepoRoot, { recursive: true });
-    await mkdir(join(monorepoRoot, 'apps', 'cli'), { recursive: true });
-    await writeFile(
-      join(monorepoRoot, 'apps', 'cli', 'package.json'),
-      JSON.stringify({ name: '@happier-dev/cli', version: '0.2.10' }),
-    );
     await mkdir(outputRoot);
-
-    const result = await buildPackedAuthorCandidate({
-      monorepoRoot,
-      outputRoot,
-      runId: 'r447-g9-assigned',
-    }, {
-      captureCandidateBuildBasisImpl: async () => {
-        events.push('basis');
-        return 'a'.repeat(64);
-      },
-      withCliDistBuildLockImpl: async (callback, options) => {
-        events.push(`lock:${options.lockPath}`);
-        return await callback({
-          waited: true,
-          heldLockValue: 'authenticated-inherited-lease',
-          inherited: false,
-        });
-      },
-      exportPackSandboxTarballImpl: async ({
-        packageRelDir,
-        destinationDir,
-        env,
-      }) => {
-        events.push(`pack:${packageRelDir}`);
-        assert.equal(
-          env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
-          'authenticated-inherited-lease',
-        );
-        return await writeTestPackedArtifact({ packageRelDir, destinationDir });
-      },
-      createPackedAuthorCandidateImpl: async (params) => {
-        events.push('attest');
-        return candidateFor(params);
-      },
-      createCandidateInstallerArtifactsImpl: async (params) => {
-        events.push('installers');
-        return await writeTestInstallerArtifacts(params);
-      },
-    });
-
-    const runRoot = join(outputRoot, 'r447-g9-assigned');
-    assert.deepEqual(
-      events.filter((event) => event === 'basis'),
-      ['basis', 'basis'],
+    let lockAcquired = false;
+    await assert.rejects(
+      buildPackedAuthorCandidate({
+        monorepoRoot,
+        outputRoot,
+        runId: 'r447-g9-assigned',
+      }, {
+        withCliDistBuildLockImpl: async () => {
+          lockAcquired = true;
+          throw new Error('must not acquire candidate build lock');
+        },
+      }),
+      /complete native matrix/u,
     );
-    assert.deepEqual(
-      events.filter((event) => event.startsWith('pack:')),
-      ['pack:packages/plugin-sdk', 'pack:apps/cli'],
-    );
-    assert.equal(events.indexOf('basis') < events.indexOf('pack:packages/plugin-sdk'), true);
-    assert.equal(events.lastIndexOf('basis') > events.indexOf('attest'), true);
-    assert.equal(result.manifestPath, join(runRoot, 'candidate.json'));
-    const writtenManifest = JSON.parse(await readFile(result.manifestPath, 'utf8'));
-    assert.equal(
-      writtenManifest.sdk.tarballPath,
-      'npm/happier-dev-plugin-sdk-0.0.0.tgz',
-    );
-    assert.equal(
-      writtenManifest.cli.tarballPath,
-      'npm/happier-dev-cli-0.2.10.tgz',
-    );
-    assert.deepEqual(result.candidate.sourceBasis, {
-      algorithm: 'sha256',
-      digest: 'a'.repeat(64),
-    });
-    assert.equal(result.candidate.sdk.tarballPath.startsWith(`${runRoot}/`), true);
-    assert.equal(result.candidate.cli.tarballPath.startsWith(`${runRoot}/`), true);
-    assert.equal(result.candidate.standaloneCli, undefined);
-    assert.equal(
-      await readFile(result.candidate.installers.shell.filePath, 'utf8'),
-      'candidate shell installer\n',
-    );
-    assert.equal(result.candidate.installers.releaseChannel, 'dev');
-    assert.equal(result.candidate.installers.powershell.fileName, 'install-dev.ps1');
-    assert.equal(result.candidate.installers.publicKey.fileName, 'happier-release.pub');
+    assert.equal(lockAcquired, false);
+    assert.deepEqual(await readdir(outputRoot), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('buildPackedAuthorCandidate imports and binds the exact five-archive native matrix without rebuilding it', async () => {
+test('buildPackedAuthorCandidate uses the downloaded qualified native candidate version for the packed CLI and canonical release envelope', async () => {
   const root = await mkdtemp(join(tmpdir(), 'packed-candidate-native-matrix-'));
   const monorepoRoot = join(root, 'repo');
   const outputRoot = join(root, 'output');
   const suppliedArtifactsDir = join(root, 'supplied-native');
+  const candidateVersion = '0.2.10-dev.1770000000.42';
   try {
     await mkdir(join(monorepoRoot, 'apps', 'cli'), { recursive: true });
     await writeFile(
@@ -435,6 +746,7 @@ test('buildPackedAuthorCandidate imports and binds the exact five-archive native
     await mkdir(outputRoot);
     const supplied = await writeTestNativeMatrix({
       destinationDir: suppliedArtifactsDir,
+      version: candidateVersion,
       includeDarwinNotarizationEvidence: true,
     });
     const verifiedDarwinEvidence = [];
@@ -446,19 +758,10 @@ test('buildPackedAuthorCandidate imports and binds the exact five-archive native
       nativeTarget: 'darwin-arm64',
       nativeArtifactsDir: suppliedArtifactsDir,
     }, {
-      captureCandidateBuildBasisImpl: async () => 'a'.repeat(64),
       withCliDistBuildLockImpl: async (callback) => await callback({
         heldLockValue: 'authenticated-inherited-lease',
       }),
-      exportPackSandboxTarballImpl: writeTestPackedArtifact,
-      createPackedAuthorCandidateImpl: async (params) => {
-        const candidate = candidateFor(params);
-        const archiveBytes = await readFile(params.standaloneCliArtifactPath);
-        candidate.standaloneCli.sha256 = createHash('sha256')
-          .update(archiveBytes)
-          .digest('hex');
-        return candidate;
-      },
+      exportPackSandboxTarballImpl: writeAttestableTestPackedArtifact,
       createCandidateInstallerArtifactsImpl: writeTestInstallerArtifacts,
       verifyDarwinNotarizationEvidenceImpl: async (params) => {
         verifiedDarwinEvidence.push({
@@ -467,6 +770,7 @@ test('buildPackedAuthorCandidate imports and binds the exact five-archive native
           target: params.target,
         });
       },
+      trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
     });
 
     assert.deepEqual(
@@ -497,17 +801,17 @@ test('buildPackedAuthorCandidate imports and binds the exact five-archive native
         outputRoot,
         'r447-g9-matrix',
         'native',
-        'happier-v0.2.10-darwin-arm64.tar.gz',
+        `happier-v${candidateVersion}-darwin-arm64.tar.gz`,
       ),
     );
     assert.deepEqual(verifiedDarwinEvidence, [
       {
-        archiveName: 'happier-v0.2.10-darwin-x64.tar.gz',
+        archiveName: `happier-v${candidateVersion}-darwin-x64.tar.gz`,
         evidenceFileName: 'darwin-x64.cli.json',
         target: 'darwin-x64',
       },
       {
-        archiveName: 'happier-v0.2.10-darwin-arm64.tar.gz',
+        archiveName: `happier-v${candidateVersion}-darwin-arm64.tar.gz`,
         evidenceFileName: 'darwin-arm64.cli.json',
         target: 'darwin-arm64',
       },
@@ -534,10 +838,16 @@ test('buildPackedAuthorCandidate imports and binds the exact five-archive native
 
     const manifest = JSON.parse(await readFile(result.manifestPath, 'utf8'));
     assert.equal(manifest.sdk.tarballPath, 'npm/happier-dev-plugin-sdk-0.0.0.tgz');
-    assert.equal(manifest.cli.tarballPath, 'npm/happier-dev-cli-0.2.10.tgz');
+    assert.equal(manifest.pluginUi.tarballPath, 'npm/happier-dev-plugin-ui-0.0.0.tgz');
+    assert.equal(manifest.pluginUi.pluginSdkVersion, manifest.sdk.version);
+    assert.equal(
+      manifest.cli.tarballPath,
+      `npm/happier-dev-cli-${candidateVersion}.tgz`,
+    );
+    assert.equal(manifest.cli.version, candidateVersion);
     assert.equal(
       manifest.standaloneCli.archivePath,
-      'native/happier-v0.2.10-darwin-arm64.tar.gz',
+      `native/happier-v${candidateVersion}-darwin-arm64.tar.gz`,
     );
     assert.equal(
       manifest.standaloneCli.notarization[0].evidence.filePath,
@@ -549,19 +859,131 @@ test('buildPackedAuthorCandidate imports and binds the exact five-archive native
     });
     const transferredCandidate = await loadPackedAuthorCandidateManifest(
       ['--candidate', join(transferredRunRoot, 'candidate.json')],
-      { cwd: root },
+      {
+        cwd: root,
+        trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
+      },
     );
     assert.equal(
       transferredCandidate.standaloneCli.archivePath,
       join(
         transferredRunRoot,
         'native',
-        'happier-v0.2.10-darwin-arm64.tar.gz',
+        `happier-v${candidateVersion}-darwin-arm64.tar.gz`,
       ),
     );
     assert.equal(
       transferredCandidate.standaloneCli.notarization[0].evidence.filePath,
       join(transferredRunRoot, 'native', 'darwin-x64.cli.json'),
+    );
+    for (const invalidCase of nativeChecksumSetInvalidCases()) {
+      const invalidRunRoot = join(root, `transferred-${invalidCase.name}`);
+      await cp(join(outputRoot, 'r447-g9-matrix'), invalidRunRoot, {
+        recursive: true,
+      });
+      await rewriteTestNativeChecksums({
+        sourceDir: join(invalidRunRoot, 'native'),
+        version: candidateVersion,
+        transform: invalidCase.transform,
+      });
+      const invalidChecksumsPath = join(
+        invalidRunRoot,
+        'native',
+        `checksums-happier-v${candidateVersion}.txt`,
+      );
+      const invalidChecksumsBytes = await readFile(invalidChecksumsPath);
+      const invalidManifest = JSON.parse(
+        await readFile(join(invalidRunRoot, 'candidate.json'), 'utf8'),
+      );
+      invalidManifest.standaloneCli.checksums = {
+        ...invalidManifest.standaloneCli.checksums,
+        sizeBytes: invalidChecksumsBytes.length,
+        sha256: createHash('sha256').update(invalidChecksumsBytes).digest('hex'),
+      };
+      await writeFile(
+        join(invalidRunRoot, 'candidate.json'),
+        `${JSON.stringify(invalidManifest, null, 2)}\n`,
+      );
+      await assert.rejects(
+        loadPackedAuthorCandidateManifest(
+          ['--candidate', join(invalidRunRoot, 'candidate.json')],
+          {
+            cwd: root,
+            trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
+          },
+        ),
+        /exact seven-artifact release envelope/u,
+        invalidCase.name,
+      );
+    }
+    const renamedArchiveRunRoot = join(root, 'transferred-renamed-archive');
+    await cp(join(outputRoot, 'r447-g9-matrix'), renamedArchiveRunRoot, {
+      recursive: true,
+    });
+    const canonicalArchiveName = `happier-v${candidateVersion}-linux-x64.tar.gz`;
+    const renamedArchiveName = `happier-v${candidateVersion}-linux-x86_64.tar.gz`;
+    await rename(
+      join(renamedArchiveRunRoot, 'native', canonicalArchiveName),
+      join(renamedArchiveRunRoot, 'native', renamedArchiveName),
+    );
+    await rewriteTestNativeChecksums({
+      sourceDir: join(renamedArchiveRunRoot, 'native'),
+      version: candidateVersion,
+      transform: (lines) => lines.map((line) => (
+        line.endsWith(canonicalArchiveName)
+          ? line.replace(canonicalArchiveName, renamedArchiveName)
+          : line
+      )),
+    });
+    const renamedArchiveChecksumsPath = join(
+      renamedArchiveRunRoot,
+      'native',
+      `checksums-happier-v${candidateVersion}.txt`,
+    );
+    const renamedArchiveChecksumsBytes = await readFile(renamedArchiveChecksumsPath);
+    const renamedArchiveManifest = JSON.parse(
+      await readFile(join(renamedArchiveRunRoot, 'candidate.json'), 'utf8'),
+    );
+    renamedArchiveManifest.standaloneCli.archives[0].archivePath =
+      `native/${renamedArchiveName}`;
+    renamedArchiveManifest.standaloneCli.checksums = {
+      ...renamedArchiveManifest.standaloneCli.checksums,
+      sizeBytes: renamedArchiveChecksumsBytes.length,
+      sha256: createHash('sha256').update(renamedArchiveChecksumsBytes).digest('hex'),
+    };
+    await writeFile(
+      join(renamedArchiveRunRoot, 'candidate.json'),
+      `${JSON.stringify(renamedArchiveManifest, null, 2)}\n`,
+    );
+    await assert.rejects(
+      loadPackedAuthorCandidateManifest(
+        ['--candidate', join(renamedArchiveRunRoot, 'candidate.json')],
+        {
+          cwd: root,
+          trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
+        },
+      ),
+      /exact canonical archive name/u,
+    );
+    await writeFile(
+      join(transferredRunRoot, 'candidate.json'),
+      `${JSON.stringify({
+        ...manifest,
+        standaloneCli: {
+          ...manifest.standaloneCli,
+          signature: null,
+        },
+      }, null, 2)}\n`,
+    );
+    await assert.rejects(
+      loadPackedAuthorCandidateManifest(
+        ['--candidate', join(transferredRunRoot, 'candidate.json')],
+        {
+          cwd: root,
+          trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
+        },
+      ),
+      /signature/u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -653,7 +1075,6 @@ test('buildPackedAuthorCandidate rejects and removes a partial supplied native m
         nativeTarget: 'darwin-arm64',
         nativeArtifactsDir: suppliedArtifactsDir,
       }, {
-        captureCandidateBuildBasisImpl: async () => 'a'.repeat(64),
         withCliDistBuildLockImpl: async (callback) => await callback({
           heldLockValue: 'authenticated-inherited-lease',
         }),
@@ -707,7 +1128,6 @@ test('buildPackedAuthorCandidate rejects traversal in an unselected native matri
         nativeTarget: 'darwin-arm64',
         nativeArtifactsDir: suppliedArtifactsDir,
       }, {
-        captureCandidateBuildBasisImpl: async () => 'a'.repeat(64),
         withCliDistBuildLockImpl: async (callback) => await callback({
           heldLockValue: 'authenticated-inherited-lease',
         }),
@@ -771,7 +1191,6 @@ test('buildPackedAuthorCandidate rejects foreign target layout in an unselected 
         nativeTarget: 'darwin-arm64',
         nativeArtifactsDir: suppliedArtifactsDir,
       }, {
-        captureCandidateBuildBasisImpl: async () => 'a'.repeat(64),
         withCliDistBuildLockImpl: async (callback) => await callback({
           heldLockValue: 'authenticated-inherited-lease',
         }),
@@ -830,43 +1249,6 @@ test('buildPackedAuthorCandidate rejects a borrowed standalone archive before lo
   }
 });
 
-test('buildPackedAuthorCandidate withholds the manifest and removes only its run root when the basis moves', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'packed-candidate-builder-moving-'));
-  const monorepoRoot = join(root, 'repo');
-  const outputRoot = join(root, 'output');
-  const preservedSiblingPath = join(outputRoot, 'preserved-sibling.txt');
-  const bases = ['a'.repeat(64), 'b'.repeat(64)];
-  try {
-    await mkdir(monorepoRoot, { recursive: true });
-    await mkdir(outputRoot);
-    await writeFile(preservedSiblingPath, 'preserve me');
-
-    await assert.rejects(
-      buildPackedAuthorCandidate({
-        monorepoRoot,
-        outputRoot,
-        runId: 'r447-moving-basis',
-      }, {
-        captureCandidateBuildBasisImpl: async () => bases.shift(),
-        withCliDistBuildLockImpl: async (callback) => await callback({
-          waited: false,
-          heldLockValue: 'lease',
-          inherited: false,
-        }),
-        exportPackSandboxTarballImpl: writeTestPackedArtifact,
-        createPackedAuthorCandidateImpl: async (params) => candidateFor(params),
-        createCandidateInstallerArtifactsImpl: writeTestInstallerArtifacts,
-      }),
-      /source\/generated\/dist basis changed/i,
-    );
-
-    assert.equal(existsSync(join(outputRoot, 'r447-moving-basis')), false);
-    assert.equal(await readFile(preservedSiblingPath, 'utf8'), 'preserve me');
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test('buildPackedAuthorCandidate refuses an old run root without acquiring the shared lock or deleting it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'packed-candidate-builder-old-run-'));
   const monorepoRoot = join(root, 'repo');
@@ -884,6 +1266,8 @@ test('buildPackedAuthorCandidate refuses an old run root without acquiring the s
         monorepoRoot,
         outputRoot,
         runId: 'r447-existing',
+        nativeTarget: 'darwin-arm64',
+        nativeArtifactsDir: join(root, 'unused-native-matrix'),
       }, {
         withCliDistBuildLockImpl: async () => {
           acquired = true;
@@ -903,17 +1287,23 @@ test('buildPackedAuthorCandidate rejects a mixed-root manifest before announceme
   const root = await mkdtemp(join(tmpdir(), 'packed-candidate-builder-mixed-'));
   const monorepoRoot = join(root, 'repo');
   const outputRoot = join(root, 'output');
+  const nativeArtifactsDir = join(root, 'native-matrix');
   try {
     await mkdir(monorepoRoot, { recursive: true });
     await mkdir(outputRoot);
+    await writeTestNativeMatrix({
+      destinationDir: nativeArtifactsDir,
+      includeDarwinNotarizationEvidence: true,
+    });
 
     await assert.rejects(
       buildPackedAuthorCandidate({
         monorepoRoot,
         outputRoot,
         runId: 'r447-mixed-root',
+        nativeTarget: 'darwin-arm64',
+        nativeArtifactsDir,
       }, {
-        captureCandidateBuildBasisImpl: async () => 'a'.repeat(64),
         withCliDistBuildLockImpl: async (callback) => await callback({
           waited: false,
           heldLockValue: 'lease',
@@ -928,6 +1318,8 @@ test('buildPackedAuthorCandidate rejects a mixed-root manifest before announceme
           },
         }),
         createCandidateInstallerArtifactsImpl: writeTestInstallerArtifacts,
+        verifyDarwinNotarizationEvidenceImpl: async () => {},
+        trustedMinisignPublicKey: TEST_MINISIGN_PUBLIC_KEY,
       }),
       /outside the current run root/i,
     );
@@ -936,66 +1328,6 @@ test('buildPackedAuthorCandidate rejects a mixed-root manifest before announceme
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-
-test('captureCandidateBuildBasis detects source, generated, and dist byte changes', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'packed-candidate-builder-basis-'));
-  const sourcePath = join(root, 'source.ts');
-  const generatedPath = join(root, 'generated.ts');
-  const distPath = join(root, 'dist', 'index.js');
-  try {
-    await mkdir(dirname(distPath), { recursive: true });
-    await writeFile(sourcePath, 'source-a');
-    await writeFile(generatedPath, 'generated-a');
-    await writeFile(distPath, 'dist-a');
-    const basisPaths = ['source.ts', 'generated.ts', 'dist'];
-
-    const initial = await captureCandidateBuildBasis({ monorepoRoot: root, basisPaths });
-    await writeFile(sourcePath, 'source-b');
-    const sourceChanged = await captureCandidateBuildBasis({ monorepoRoot: root, basisPaths });
-    await writeFile(generatedPath, 'generated-b');
-    const generatedChanged = await captureCandidateBuildBasis({ monorepoRoot: root, basisPaths });
-    await writeFile(distPath, 'dist-b');
-    const distChanged = await captureCandidateBuildBasis({ monorepoRoot: root, basisPaths });
-
-    assert.notEqual(initial, sourceChanged);
-    assert.notEqual(sourceChanged, generatedChanged);
-    assert.notEqual(generatedChanged, distChanged);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('candidate basis includes the canonical pack, generator, and native release owners', async () => {
-  const monorepoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-  const basisPaths = await resolveCandidateBuildBasisPaths({ monorepoRoot });
-
-  for (const expectedPath of [
-    'apps/stack/scripts/pack.mjs',
-    'apps/stack/scripts/utils',
-    'scripts/migrations/extensions',
-    'scripts/pipeline/release/build-cli-binaries.mjs',
-    'scripts/pipeline/release/lib',
-    'scripts/pipeline/release/notarize-standalone-binary.mjs',
-    'scripts/pipeline/release/verify-artifacts.mjs',
-    'apps/website/public/install-dev.sh',
-    'apps/website/public/install-dev.ps1',
-    'apps/website/public/happier-release.pub',
-  ]) {
-    assert.equal(
-      basisPaths.includes(expectedPath),
-      true,
-      `missing canonical candidate basis owner: ${expectedPath}`,
-    );
-  }
-  assert.equal(basisPaths.includes('packages/plugin-sdk'), true);
-  assert.equal(basisPaths.includes('apps/cli'), true);
-  assert.equal(basisPaths.includes('packages/plugins/cliproxyapi'), true);
-  assert.equal(
-    basisPaths.some((relativePath) => relativePath.startsWith('dist/')),
-    false,
-    'candidate output roots must never enter their own source basis',
-  );
 });
 
 test('createCandidateInstallerArtifacts copies and binds only exact published dev projections', async () => {
@@ -1058,6 +1390,26 @@ test('parsePackedAuthorCandidateBuilderArgs requires explicit assigned inputs', 
     ]),
     /--output-root/u,
   );
+  assert.throws(
+    () => parsePackedAuthorCandidateBuilderArgs([
+      '--run-id',
+      'r447-g9',
+      '--output-root',
+      '../candidate-root',
+    ]),
+    /native-target/u,
+  );
+  assert.throws(
+    () => parsePackedAuthorCandidateBuilderArgs([
+      '--run-id',
+      'r447-g9',
+      '--output-root',
+      '../candidate-root',
+      '--native-target',
+      'darwin-arm64',
+    ]),
+    /native-artifacts-dir/u,
+  );
 });
 
 test('natural builder CLI mode exposes only run/output inputs and delegates to the paired owner', async () => {
@@ -1088,7 +1440,7 @@ test('natural builder CLI mode exposes only run/output inputs and delegates to t
       '--native-target',
       'darwin-arm64',
     ]),
-    /only the SDK and CLI npm pair/u,
+    /SDK, Plugin UI, Channels protocol, and CLI npm/u,
   );
 
   const testsPackageManifest = JSON.parse(await readFile(
@@ -1117,6 +1469,10 @@ test('natural builder CLI mode exposes only run/output inputs and delegates to t
         runId: params.runId,
         sdkTarballPath:
           '/tmp/natural-root/natural-cli-1/npm/happier-dev-plugin-sdk-0.0.0.tgz',
+        pluginUiTarballPath:
+          '/tmp/natural-root/natural-cli-1/npm/happier-dev-plugin-ui-0.0.0.tgz',
+        channelsProtocolTarballPath:
+          '/tmp/natural-root/natural-cli-1/npm/happier-dev-channels-protocol-0.0.0.tgz',
         cliTarballPath:
           '/tmp/natural-root/natural-cli-1/npm/happier-dev-cli-0.2.10.tgz',
       };
@@ -1137,6 +1493,10 @@ test('natural builder CLI mode exposes only run/output inputs and delegates to t
     runId: 'natural-cli-1',
     sdkTarballPath:
       '/tmp/natural-root/natural-cli-1/npm/happier-dev-plugin-sdk-0.0.0.tgz',
+    pluginUiTarballPath:
+      '/tmp/natural-root/natural-cli-1/npm/happier-dev-plugin-ui-0.0.0.tgz',
+    channelsProtocolTarballPath:
+      '/tmp/natural-root/natural-cli-1/npm/happier-dev-channels-protocol-0.0.0.tgz',
     cliTarballPath:
       '/tmp/natural-root/natural-cli-1/npm/happier-dev-cli-0.2.10.tgz',
   });
@@ -1163,6 +1523,7 @@ test('main forwards the selected native target and exact matrix to the candidate
         candidate: candidateFor({
           runId: params.runId,
           sdkTarballPath: '/tmp/r447-main-output/r447-g9-main/npm/sdk.tgz',
+          pluginUiTarballPath: '/tmp/r447-main-output/r447-g9-main/npm/plugin-ui.tgz',
           cliTarballPath: '/tmp/r447-main-output/r447-g9-main/npm/cli.tgz',
           standaloneCliArtifactPath:
             '/tmp/r447-main-output/r447-g9-main/native/happier-v0.2.10-darwin-arm64.tar.gz',

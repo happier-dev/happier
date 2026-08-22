@@ -188,6 +188,7 @@ export function readStressConfig(): StressConfig {
       apiReplicas: readPositiveInt(['HAPPIER_STRESS_COMPOSE_API_REPLICAS'], profileConfig.compose.apiReplicas),
       workerReplicas: readPositiveInt(['HAPPIER_STRESS_COMPOSE_WORKER_REPLICAS'], profileConfig.compose.workerReplicas),
       imageBuildStrategy: readImageBuildStrategy(profileConfig.compose.imageBuildStrategy),
+      imageFingerprint: readString(['HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT']),
       reuseRunningTopology: envFlag(
         ['HAPPIER_STRESS_COMPOSE_REUSE_RUNNING'],
         profileConfig.compose.reuseRunningTopology,

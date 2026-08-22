@@ -21,4 +21,54 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     id: app-scope-right-sidebar-tab:plugin:happier.inspector:inspector-app
 - assertVisible:
     id: inspector-plugin-${HAPPIER_E2E_PLUGIN_ID}
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/examples.packed-targeted-projection-contributor/packed-provider-page
+- extendedWaitUntil:
+    visible:
+      id: packed-targeted-provider-title
+    timeout: 120000
+- assertVisible:
+    id: packed-targeted-context-action
+- assertVisible:
+    id: packed-targeted-context-result
+- tapOn:
+    id: packed-targeted-context-action
+- extendedWaitUntil:
+    visible: "page:ui"
+    timeout: 120000
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/voice
+- extendedWaitUntil:
+    visible:
+      id: settings.voice.provider.off
+    timeout: 120000
+- assertVisible:
+    id: settings.voice.provider.examples.packed-targeted-projection-contributor%2Fpacked-conversation.default
+- tapOn:
+    id: settings.voice.provider.examples.packed-targeted-projection-contributor%2Fpacked-conversation.default
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/examples.packed-targeted-projection-contributor/packed-provider-page
+- extendedWaitUntil:
+    visible:
+      id: packed-targeted-provider-title
+    timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-toggle:sidebar
+    timeout: 120000
+- tapOn:
+    id: voice-surface-toggle:sidebar
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-status:sidebar:connected
+    timeout: 120000
+- runFlow:
+    when:
+      notVisible: "Packed Voice action completed for packed-provider-detail."
+    commands:
+      - tapOn:
+          id: voice-surface-activity-toggle:sidebar
+- extendedWaitUntil:
+    visible: "Packed Voice action completed for packed-provider-detail."
+    timeout: 120000
 - takeScreenshot: plugin-platform-reconnected-${HAPPIER_E2E_MOBILE_PLATFORM}

@@ -1,13 +1,12 @@
-import { expect, test, type Page, type TestInfo } from '@playwright/test';
-import { createHash, randomBytes } from 'node:crypto';
+import { expect, test } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import {
   sanitizeDaemonEnvForSpawn,
   startTestDaemon,
@@ -20,7 +19,6 @@ import {
   type StartedUiWeb,
 } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
-import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import {
@@ -33,25 +31,12 @@ import {
   decideAuthenticatedPluginInstallReview,
   readPluginInstallReviewRequiredEnvelope,
 } from '../../src/testkit/pluginPlatform/authenticatedInstallReview';
-import { buildAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/buildAuthBootstrapStorageSnapshot';
 import { runCliJson, writeRedactedResultArtifact, type JsonEnvelope } from '../../src/testkit/uiE2e/cliJson';
-import {
-  gotoDomContentLoadedWithRetries,
-  normalizeLoopbackBaseUrl,
-  waitForAuthenticatedHomeUi,
-} from '../../src/testkit/uiE2e/pageNavigation';
-import { installAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
-import { encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
+import { normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'packed-resources-browser' });
 const PLUGIN_ID = 'acme.resources-browser';
 const PLUGIN_VERSION = '1.0.0';
-const TARGET_ENTRY_ID = `browserTarget:${PLUGIN_ID}:preview`;
-const ACTION_ENTRY_IDS = [
-  `browserAction:${PLUGIN_ID}:preview-toolbar`,
-  `browserAction:${PLUGIN_ID}:preview-details`,
-  `browserAction:${PLUGIN_ID}:preview-context`,
-] as const;
 
 type CandidateRegistry = Readonly<{
   origin: string;
@@ -64,9 +49,10 @@ type CandidateRunnerModule = Readonly<{
     extractionRoot: string,
   ) => Promise<Record<string, unknown>>;
   startCandidateRegistry: (params: Readonly<{
-    sdk: PreparedPackedCandidateBrowserQa['candidate']['sdk'];
-    sdkBytes: Uint8Array;
-    packageManifest: Record<string, unknown>;
+    packages: readonly Readonly<
+      PreparedPackedCandidateBrowserQa['candidate']['sdk']
+      & { bytes: Uint8Array; packageManifest?: Record<string, unknown> }
+    >[];
   }>) => Promise<CandidateRegistry>;
 }>;
 
@@ -86,13 +72,6 @@ type FixtureModule = Readonly<{
   >>;
 }>;
 
-type InvocationMarker = Readonly<{
-  pluginId: string;
-  version: string;
-  resources: Readonly<Record<string, string>>;
-  input: unknown;
-}>;
-
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
@@ -108,12 +87,6 @@ function requireSuccessfulEnvelope(envelope: JsonEnvelope, expectedKind: string)
     throw new Error(`packed_resources_browser_${expectedKind}_data_missing`);
   }
   return data;
-}
-
-function buildServerScopedUiUrl(uiBaseUrl: string, serverBaseUrl: string, path: string): string {
-  const url = new URL(path, uiBaseUrl.endsWith('/') ? uiBaseUrl : `${uiBaseUrl}/`);
-  url.searchParams.set('server', serverBaseUrl);
-  return url.toString();
 }
 
 async function configureExternalPlugin(params: Readonly<{
@@ -170,54 +143,21 @@ async function configureExternalPlugin(params: Readonly<{
   return payloads;
 }
 
-function readProjectionEntries(response: unknown): Readonly<Record<string, unknown>> {
+function readProjectionFamilies(response: unknown): Readonly<Record<string, unknown>> {
   const responseRecord = asRecord(response);
   const projection = asRecord(responseRecord?.projection);
   const families = asRecord(projection?.familiesById);
-  const pluginBrowser = asRecord(families?.pluginBrowser);
-  const entries = asRecord(pluginBrowser?.entriesById);
-  if (!projection || !entries) {
-    throw new Error('packed_resources_browser_projection_missing');
+  if (!projection || !families) {
+    throw new Error('packed_resources_projection_missing');
   }
-  return entries;
+  return families;
 }
 
-async function readInvocationMarkers(markerPath: string): Promise<readonly InvocationMarker[]> {
-  const raw = await readFile(markerPath, 'utf8').catch(() => '');
-  return raw
-    .split(/\r?\n/u)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as InvocationMarker);
-}
-
-async function clickPackedBrowserActions(page: Page): Promise<void> {
-  const shell = 'browser-view-details-surface';
-  await page.getByTestId(`${shell}-overflow`).click();
-  await page.getByTestId(`${shell}-overflow-item-${ACTION_ENTRY_IDS[0]}`).click();
-  await page.getByTestId(`${shell}-plugin-action-detailsPanel-${ACTION_ENTRY_IDS[1]}`).click();
-  await page.getByTestId(`${shell}-plugin-action-contextMenu-trigger`).click();
-  await page.getByTestId(`${shell}-plugin-action-contextMenu-${ACTION_ENTRY_IDS[2]}`).click();
-}
-
-async function attachEvidenceScreenshot(
-  page: Page,
-  testInfo: TestInfo,
-  testDir: string,
-): Promise<string> {
-  const screenshotPath = join(testDir, 'packed-resources-browser-live.png');
-  await page.screenshot({ path: screenshotPath, fullPage: true });
-  await testInfo.attach('packed-resources-browser-live', {
-    path: screenshotPath,
-    contentType: 'image/png',
-  });
-  return screenshotPath;
-}
-
-test.describe('packed candidate: resources and browser consumed vertical', () => {
+test.describe('packed candidate: resources package vertical', () => {
   test.describe.configure({ mode: 'serial' });
   test.skip(
     process.env.HAPPIER_PACKED_RESOURCES_BROWSER_QA !== '1',
-    'requires the dedicated packed resources/browser runner',
+    'requires the dedicated packed resources runner',
   );
 
   const suiteDir = run.testDir('resources-browser-suite');
@@ -250,8 +190,6 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
       dbProvider: 'sqlite',
       extraEnv: {
         NODE_ENV: process.env.NODE_ENV ?? 'test',
-        HAPPIER_FEATURE_BROWSER__ENABLED: '1',
-        HAPPIER_FEATURE_BROWSER_VIEW_TARGETS__ENABLED: '1',
       },
     });
     ui = await startUiWeb({
@@ -277,9 +215,11 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
     await registry?.close().catch(() => undefined);
     await ui?.stop().catch(() => undefined);
     await server?.stop().catch(() => undefined);
+    await candidate?.cleanup();
+    candidate = null;
   });
 
-  test('authors, installs, invokes, renders, and uninstalls the exact candidate plugin', async ({ page }, testInfo) => {
+  test('authors, installs, and uninstalls the exact candidate resources plugin', async ({}, testInfo) => {
     test.setTimeout(900_000);
     if (!candidate || !server || !uiBaseUrl || !ui) {
       throw new Error('packed_resources_browser_suite_not_ready');
@@ -288,9 +228,7 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
     const cliHomeDir = join(testDir, 'happier-home');
     const pluginRoot = join(testDir, 'external-plugin');
     const archivePath = join(testDir, `${PLUGIN_ID}.happier-plugin.tgz`);
-    const markerPath = join(testDir, 'action-invocations.jsonl');
     await mkdir(cliHomeDir, { recursive: true });
-    await page.setViewportSize({ width: 1440, height: 900 });
 
     const candidateModule = await import(
       '../../scripts/plugin-platform/run-packed-author-ui-compat.mjs'
@@ -304,18 +242,16 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
       join(testDir, 'verify-sdk'),
     );
     registry = await candidateModule.startCandidateRegistry({
-      sdk: candidate.candidate.sdk,
-      sdkBytes,
-      packageManifest: sdkPackageManifest,
+      packages: [{ ...candidate.candidate.sdk, bytes: sdkBytes, packageManifest: sdkPackageManifest }],
     });
 
     const auth = await createTestAuth(server.baseUrl);
-    const machineKey = Uint8Array.from(randomBytes(32));
-    const seeded = await seedCliDataKeyAuthForServer({
+    const machineKey = auth.accountMachineKey;
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: cliHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      machineKey,
+      auth,
+      mode: 'dataKey',
     });
     const cliParams = {
       testDir,
@@ -335,13 +271,11 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
         pluginRoot,
         '--id',
         PLUGIN_ID,
-        '--sdk-version',
-        candidate.candidate.sdk.version,
         '--json',
       ],
       timeoutMs: 120_000,
     }), 'plugins_create');
-    const expectedResources = await configureExternalPlugin({ pluginRoot, fixture });
+    await configureExternalPlugin({ pluginRoot, fixture });
     const authoredSource = await readFile(join(pluginRoot, 'src', 'index.ts'), 'utf8');
     expect(authoredSource).not.toMatch(/packages\/plugin-sdk|@\/|HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT/u);
 
@@ -389,7 +323,6 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
         HAPPIER_WEBAPP_URL: uiBaseUrl,
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
-        HAPPIER_PACKED_RESOURCES_BROWSER_MARKER: markerPath,
       },
     });
     expect(daemon.state.startedWithCliVersion).toBe(candidate.attestation.cliVersion);
@@ -429,109 +362,11 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
         { machineId: seeded.machineId },
         60_000,
       ),
-      'packed resources/browser contribution projection',
+      'packed resources contribution projection',
     );
     try {
-      const installedEntries = readProjectionEntries(await readProjection());
-      expect(asRecord(installedEntries[TARGET_ENTRY_ID])).toMatchObject({
-        id: TARGET_ENTRY_ID,
-        pluginId: PLUGIN_ID,
-        contributionKind: 'browserTarget',
-        currentUrl: 'https://preview.example.test/',
-        launchMode: 'currentView',
-        profileMode: 'user',
-      });
-      expect(ACTION_ENTRY_IDS.map((id) => asRecord(installedEntries[id])?.placement)).toEqual([
-        'toolbar',
-        'detailsPanel',
-        'contextMenu',
-      ]);
-      for (const actionId of ACTION_ENTRY_IDS) {
-        expect(asRecord(installedEntries[actionId])).toMatchObject({
-          pluginId: PLUGIN_ID,
-          contributionKind: 'browserAction',
-          qualifiedActionId: `${PLUGIN_ID}/roundtrip`,
-          targetId: TARGET_ENTRY_ID,
-        });
-      }
-
-      await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
-        serverUrl: server.baseUrl,
-        credentials: {
-          token: auth.token,
-          encryption: {
-            publicKey: Buffer.from(seeded.publicKey).toString('base64'),
-            machineKey: Buffer.from(machineKey).toString('base64'),
-          },
-        },
-        storageScope,
-      }));
-      const sessionDataKey = Uint8Array.from(randomBytes(32));
-      const sessionDataKeyEnvelope = sealEncryptedDataKeyEnvelopeV1({
-        dataKey: sessionDataKey,
-        recipientPublicKey: seeded.publicKey,
-        randomBytes: (length) => Uint8Array.from(randomBytes(length)),
-      });
-      const session = await createSessionWithCiphertexts({
-        baseUrl: server.baseUrl,
-        token: auth.token,
-        metadataCiphertextBase64: encryptDataKeyBase64({
-          machineId: seeded.machineId,
-          path: testDir,
-        }, sessionDataKey),
-        dataEncryptionKeyBase64: Buffer.from(sessionDataKeyEnvelope).toString('base64'),
-      });
-
-      await gotoDomContentLoadedWithRetries(
-        page,
-        buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/?happier_hmr=0'),
-        180_000,
-      );
-      await waitForAuthenticatedHomeUi({ page, timeoutMs: 180_000 });
-      await gotoDomContentLoadedWithRetries(
-        page,
-        buildServerScopedUiUrl(
-          uiBaseUrl,
-          server.baseUrl,
-          `/session/${encodeURIComponent(session.sessionId)}?happier_hmr=0`,
-        ),
-        180_000,
-      );
-      const openBrowser = page.getByTestId('session-header-browser-button');
-      await expect(openBrowser).toBeVisible({ timeout: 180_000 });
-      await openBrowser.click();
-
-      const shell = 'browser-view-details-surface';
-      const targetRow = `${shell}-launchpad-card:pluginExternalUrl:${TARGET_ENTRY_ID}`;
-      await expect(page.getByTestId(`${targetRow}-available`)).toBeVisible({ timeout: 180_000 });
-      await page.getByTestId(targetRow).click();
-      await expect(page.getByTestId(`${shell}-overflow`)).toBeVisible({ timeout: 120_000 });
-      await expect(page.getByTestId(
-        `${shell}-plugin-action-detailsPanel-${ACTION_ENTRY_IDS[1]}`,
-      )).toBeEnabled();
-      await expect(page.getByTestId(
-        `${shell}-plugin-action-contextMenu-trigger`,
-      )).toBeEnabled();
-
-      await clickPackedBrowserActions(page);
-      await expect.poll(
-        async () => (await readInvocationMarkers(markerPath)).length,
-        { timeout: 120_000 },
-      ).toBe(3);
-      const invocations = await readInvocationMarkers(markerPath);
-      for (const invocation of invocations) {
-        expect(invocation.pluginId).toBe(PLUGIN_ID);
-        expect(invocation.version).toBe(PLUGIN_VERSION);
-        expect(invocation.resources).toEqual(expectedResources);
-        const browser = asRecord(invocation.input);
-        expect(browser).toMatchObject({
-          targetId: TARGET_ENTRY_ID,
-          currentUrl: 'https://preview.example.test/',
-        });
-        expect(typeof browser?.browserSessionId).toBe('string');
-        expect(typeof browser?.viewId).toBe('string');
-      }
-      const screenshotPath = await attachEvidenceScreenshot(page, testInfo, testDir);
+      const families = readProjectionFamilies(await readProjection());
+      expect(families.pluginBrowser).toBeUndefined();
 
       const uninstallData = requireSuccessfulEnvelope(await runCliJson({
         ...cliParams,
@@ -542,13 +377,10 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
       expect(uninstallData.pluginId).toBe(PLUGIN_ID);
       expect(uninstallData.desiredGeneration).toBeNull();
       expect(uninstallData.appliedGeneration).toBeNull();
-      await expect.poll(async () => {
-        const entries = readProjectionEntries(await readProjection());
-        return [TARGET_ENTRY_ID, ...ACTION_ENTRY_IDS].every((id) => entries[id] === undefined);
-      }, { timeout: 120_000 }).toBe(true);
-      await expect(page.getByTestId(
-        `${shell}-plugin-action-detailsPanel-${ACTION_ENTRY_IDS[1]}`,
-      )).toHaveCount(0, { timeout: 120_000 });
+      await expect.poll(
+        async () => readProjectionFamilies(await readProjection()).pluginBrowser,
+        { timeout: 120_000 },
+      ).toBeUndefined();
 
       await writeRedactedResultArtifact({
         testDir,
@@ -563,9 +395,7 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
           pluginIntegrity,
           installedGeneration,
           resourceKinds: 'prompt,skill,template,asset,config',
-          placements: 'toolbar,detailsPanel,contextMenu',
-          actionInvocationCount: invocations.length,
-          projectionUninstallAbsence: true,
+          deferredBrowserProjectionAbsent: true,
           sourceFixtureUsed: false,
           sourceCliFallbackUsed: false,
           daemonPid: daemon.state.pid,
@@ -573,9 +403,7 @@ test.describe('packed candidate: resources and browser consumed vertical', () =>
           uiPid: ui.proc?.child.pid ?? -1,
           serverUrl: server.baseUrl,
           uiUrl: uiBaseUrl,
-          productProfileMode: 'user',
           playwrightProject: testInfo.project.name,
-          screenshotPath,
         },
       });
     } finally {

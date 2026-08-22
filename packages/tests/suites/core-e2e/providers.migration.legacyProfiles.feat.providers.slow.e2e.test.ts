@@ -30,7 +30,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import {
@@ -260,7 +260,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
     const testDir = run.testDir(`providers-legacy-migration-${randomUUID()}`);
     server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
-    const secret = Uint8Array.from(randomBytes(32));
+    const secret = auth.accountSigningSeed;
 
     const azure = getBuiltInBackendProfile('azure-openai');
     if (!azure) throw new Error('Missing retained Azure legacy profile fixture');
@@ -331,11 +331,11 @@ describe('core e2e: encrypted legacy profile migration', () => {
     const homes = [resolve(join(testDir, 'daemon-a')), resolve(join(testDir, 'daemon-b'))];
     const seededMachines = await Promise.all(homes.map(async (home) => {
       await mkdir(home, { recursive: true });
-      return await seedCliAuthForServer({
+      return await seedCliAuthForTestAccount({
         cliHome: home,
         serverUrl: server!.baseUrl,
-        token: auth.token,
-        secret,
+        auth,
+        mode: 'legacy',
       });
     }));
     daemons = await Promise.all(homes.map(async (home, index) => startTestDaemon({
@@ -644,7 +644,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
     const testDir = run.testDir(`providers-legacy-restart-launch-${randomUUID()}`);
     server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
-    const secret = Uint8Array.from(randomBytes(32));
+    const secret = auth.accountSigningSeed;
     const providerSecret = `sk-provider-migrated-${randomUUID()}`;
     const ambientNativeApiKey = `sk-ant-native-${randomUUID()}`;
     const ambientNativeOauthToken = `native-oauth-${randomUUID()}`;
@@ -679,11 +679,11 @@ describe('core e2e: encrypted legacy profile migration', () => {
     const daemonHome = resolve(join(testDir, 'daemon-home'));
     const workspace = resolve(join(testDir, 'workspace'));
     await Promise.all([mkdir(daemonHome, { recursive: true }), mkdir(workspace, { recursive: true })]);
-    const seeded = await seedCliAuthForServer({
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: daemonHome,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
     const invocationId = `migrated-provider-launch-${randomUUID()}`;
     const fakeClaudeFixture = await createIsolatedFakeClaudeControlShim({
@@ -993,7 +993,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
     const testDir = run.testDir(`providers-legacy-conflict-${randomUUID()}`);
     server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
-    const secret = Uint8Array.from(randomBytes(32));
+    const secret = auth.accountSigningSeed;
     const contributionKey = 'happier.provider.deepseek/deepseek';
     const existingConnectionId = ProviderConnectionIdSchema.parse('pc_existing_deepseek');
     const seedSettings = {
@@ -1043,11 +1043,11 @@ describe('core e2e: encrypted legacy profile migration', () => {
 
     const daemonHome = resolve(join(testDir, 'daemon'));
     await mkdir(daemonHome, { recursive: true });
-    const seeded = await seedCliAuthForServer({
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: daemonHome,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
     daemons = [await startTestDaemon({
       testDir: resolve(join(testDir, 'daemon-runtime')),

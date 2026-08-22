@@ -17,7 +17,7 @@ import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 
 import { resolveAcpSdkTestRuntime } from "../../src/testkit/providers/acpSdkTestRuntime";
 
@@ -63,7 +63,7 @@ describe('core e2e: Gemini modelOverrideV1 applies from metadata', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

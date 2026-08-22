@@ -17,7 +17,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createTestAuth } from '../../src/testkit/auth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
 import { waitFor } from '../../src/testkit/timing';
@@ -76,7 +76,7 @@ describe('core e2e: Codex app-server native review', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const requestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));
     const fakeAppServer = await writeFakeCodexAppServerScript({ dir: testDir, requestLogPath });

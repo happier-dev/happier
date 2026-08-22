@@ -16,7 +16,7 @@ import { createUserScopedSocketCollector } from '../../src/testkit/socketClient'
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { waitFor } from '../../src/testkit/timing';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
 import {
@@ -54,11 +54,11 @@ describe('core e2e: bridge lifecycle hook dispatch', () => {
         const auth = await createTestAuth(serverBaseUrl);
 
         const secret = Uint8Array.from(randomBytes(32));
-        await seedCliAuthForServer({
+        await seedCliAuthForTestAccount({
             cliHome: daemonHomeDir,
             serverUrl: serverBaseUrl,
-            token: auth.token,
-            secret,
+            auth,
+            mode: 'legacy',
         });
 
         await writeLocalPathPluginFixture({

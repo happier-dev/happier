@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -17,7 +17,7 @@ import { yarnCommand } from '../../src/testkit/process/commands';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { resolveAcpSdkTestRuntime } from '../../src/testkit/providers/acpSdkTestRuntime';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -43,8 +43,8 @@ describe('core e2e: message meta permission overrides session metadata for that 
     await mkdir(cliHome, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

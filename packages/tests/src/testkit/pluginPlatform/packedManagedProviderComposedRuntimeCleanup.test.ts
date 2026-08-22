@@ -8,89 +8,9 @@ import {
   assertPackedManagedProviderCandidateDaemonRunning,
   cleanupPackedManagedProviderRuntimeResources,
   createPackedManagedProviderCandidateDaemonStartupError,
-  readPackedManagedProviderRequestAuthCapability,
 } from '../../plugin-platform/packedManagedProviderComposedRuntime';
 
 describe('packed managed Provider composed-runtime cleanup', () => {
-  it('accepts the exact canonical V2 capability document', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'packed-managed-capability-'));
-    const path = join(root, 'capability.json');
-    const document = {
-      v: 2 as const,
-      materializationId: 'packed-materialization',
-      subjectScopeDigest: 'a'.repeat(64),
-      capability: 'A'.repeat(43),
-      httpPort: 43_123,
-    };
-    try {
-      await writeFile(path, JSON.stringify(document), 'utf8');
-
-      await expect(
-        readPackedManagedProviderRequestAuthCapability(path),
-      ).resolves.toEqual(document);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    [
-      'an unknown top-level field',
-      {
-        v: 2,
-        materializationId: 'packed-materialization',
-        subjectScopeDigest: 'a'.repeat(64),
-        capability: 'A'.repeat(43),
-        httpPort: 43_123,
-        daemonId: 'legacy-split-owner',
-      },
-    ],
-    [
-      'a malformed capability',
-      {
-        v: 2,
-        materializationId: 'packed-materialization',
-        subjectScopeDigest: 'a'.repeat(64),
-        capability: 'A'.repeat(42),
-        httpPort: 43_123,
-      },
-    ],
-    [
-      'a noncanonical materialization id',
-      {
-        v: 2,
-        materializationId: ' packed-materialization ',
-        subjectScopeDigest: 'a'.repeat(64),
-        capability: 'A'.repeat(43),
-        httpPort: 43_123,
-      },
-    ],
-    [
-      'a materialization id above the 256-byte UTF-8 limit',
-      {
-        v: 2,
-        materializationId: '😀'.repeat(65),
-        subjectScopeDigest: 'a'.repeat(64),
-        capability: 'A'.repeat(43),
-        httpPort: 43_123,
-      },
-    ],
-  ])('rejects a capability document with %s', async (_label, document) => {
-    const root = await mkdtemp(join(tmpdir(), 'packed-managed-capability-'));
-    const path = join(root, 'capability.json');
-    try {
-      await writeFile(path, JSON.stringify(document), 'utf8');
-
-      await expect(
-        readPackedManagedProviderRequestAuthCapability(path),
-      ).rejects.toThrow(
-        'packed_managed_provider_request_auth_capability_invalid',
-      );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
   it('stops every acquired resource after an earlier stop fails', async () => {
     const events: string[] = [];
     const resource = (name: string, error?: Error) => ({
@@ -102,7 +22,6 @@ describe('packed managed Provider composed-runtime cleanup', () => {
 
     await expect(cleanupPackedManagedProviderRuntimeResources({
       daemon: resource('daemon', new Error('daemon stop failed')),
-      brokerProxy: null,
       serverProxy: resource('server-proxy'),
       connectProxy: resource('connect-proxy'),
       server: resource('server'),

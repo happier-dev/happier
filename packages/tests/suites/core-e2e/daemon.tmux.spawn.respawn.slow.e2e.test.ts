@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 	import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 	import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 	import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-	import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+	import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 
 function tmuxAvailable(): boolean {
   if (process.platform === 'win32') return false;
@@ -119,8 +119,12 @@ describe('core e2e: daemon tmux spawn respawn supervision', () => {
       await mkdir(workspaceDir, { recursive: true });
 
       const fakeClaudePath = fakeClaudeFixturePath();
-      const machineKey = Uint8Array.from(randomBytes(32));
-      await seedCliDataKeyAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, machineKey });
+      await seedCliAuthForTestAccount({
+        cliHome: daemonHomeDir,
+        serverUrl: serverBaseUrl,
+        auth,
+        mode: 'dataKey',
+      });
 
 	      writeTestManifestForServer({
 	        testDir,

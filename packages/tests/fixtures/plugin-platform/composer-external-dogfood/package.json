@@ -1,0 +1,50 @@
+{
+  "name": "happier-composer-external-dogfood",
+  "version": "0.0.0",
+  "description": "External-only r1.0 Composer issue-attachment dogfood fixture.",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./composer": "./src/issueComposer.mjs",
+    "./ui": "./src/issueSurface.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugin-ui": "0.0.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.5",
+    "react-native-web": "0.21.2"
+  },
+  "devDependencies": {
+    "@callstack/repack": "5.2.5",
+    "@react-native-community/cli": "20.1.2",
+    "@rspack/core": "2.1.3",
+    "@swc/helpers": "0.5.23",
+    "@types/node": "25.0.10",
+    "@types/react": "19.2.0",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "@vitejs/plugin-react": "4.7.0",
+    "vite": "7.3.1"
+  },
+  "files": [
+    ".happier-plugin/plugin.json",
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "manifest": "node scripts/write-manifest.mjs",
+    "build:ui": "happier-plugin-build-ui --project-root .",
+    "prepack": "npm run manifest && npm run build:ui",
+    "pack:fixture": "node scripts/pack-fixture.mjs",
+    "typecheck:public": "node ../../../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.public.json",
+    "test": "npm run test:public && npm run test:pack",
+    "test:public": "node --test test/public-only.test.mjs test/external-semantic.test.mjs",
+    "test:pack": "node --test test/pack-fixture.test.mjs"
+  }
+}

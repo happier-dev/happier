@@ -24,6 +24,20 @@ function isTransientSyncDirName(name: string): boolean {
   return name.startsWith('dist.__sync_tmp__.') || name.startsWith('dist.__sync_backup__.');
 }
 
+function isNodeModulesPackageContainer(path: string): boolean {
+  if (basename(path) === 'node_modules') return true;
+  return basename(dirname(path)) === 'node_modules' && basename(path).startsWith('@');
+}
+
+function isIgnoredCopiedPackageEntry(parentPath: string, name: string): boolean {
+  // Package-manager metadata belongs to node_modules and scope containers. Once
+  // a package is selected for copying, its runtime subtree is copied exactly,
+  // including generated hidden output directories.
+  return isNodeModulesPackageContainer(parentPath)
+    && name.startsWith('.')
+    && name !== '.happier-plugin';
+}
+
 function resolveSymlinkType(sourcePath: string): 'dir' | 'file' | 'junction' | undefined {
   if (process.platform !== 'win32') return undefined;
   try {
@@ -102,7 +116,7 @@ function copyMissingEntry(destPath: string, sourcePath: string, options: CopyMis
     if (!mergeExistingDirectoryContents) return;
 
     for (const entry of listNodeModulesEntries(sourcePath)) {
-      if (entry.name.startsWith('.')) continue;
+      if (isIgnoredCopiedPackageEntry(sourcePath, entry.name)) continue;
       if (pruneNestedNodeModules && entry.name === 'node_modules') continue;
       copyMissingEntry(resolve(destPath, entry.name), resolve(sourcePath, entry.name), options);
     }
@@ -113,7 +127,7 @@ function copyMissingEntry(destPath: string, sourcePath: string, options: CopyMis
   if (isDirectoryEntry(sourcePath)) {
     mkdirSync(destPath, { recursive: true });
     for (const entry of listNodeModulesEntries(sourcePath)) {
-      if (entry.name.startsWith('.')) continue;
+      if (isIgnoredCopiedPackageEntry(sourcePath, entry.name)) continue;
       if (pruneNestedNodeModules && entry.name === 'node_modules') continue;
       copyMissingEntry(resolve(destPath, entry.name), resolve(sourcePath, entry.name), options);
     }
@@ -144,7 +158,7 @@ function ensureCopiedDirectoryFromCandidates(
 
 function ensureCopiedNodeModulesEntries(sourceNodeModulesDir: string, destNodeModulesDir: string, skipNames: ReadonlySet<string> = new Set()): void {
   for (const entry of listNodeModulesEntries(sourceNodeModulesDir)) {
-    if (entry.name.startsWith('.')) continue;
+    if (isIgnoredCopiedPackageEntry(sourceNodeModulesDir, entry.name)) continue;
     if (skipNames.has(entry.name)) continue;
 
     const sourcePath = resolve(sourceNodeModulesDir, entry.name);
@@ -589,6 +603,7 @@ export function ensureCliDistSnapshotNodeModules(params: {
   const cliNodeModulesDir = resolve(params.rootDir, 'apps', 'cli', 'node_modules');
   const rootNodeModulesDir = resolve(params.rootDir, 'node_modules');
   const snapshotNodeModulesDir = resolve(params.snapshotDir, 'node_modules');
+  const firstPartyClosureMode = params.firstPartyClosureMode ?? 'workspace-overlay';
 
   // Symlink-mode snapshots intentionally resolve the live CLI dependency tree directly. A later
   // copy-mode hydration must treat that alias as read-only instead of repairing through it.
@@ -600,17 +615,23 @@ export function ensureCliDistSnapshotNodeModules(params: {
       resolve(snapshotNodeModulesDir, '@happier-dev'),
       resolve(cliNodeModulesDir, '@happier-dev'),
     );
-    if ((params.firstPartyClosureMode ?? 'workspace-overlay') === 'workspace-overlay') {
+    if (firstPartyClosureMode === 'workspace-overlay') {
       ensureWorkspacePackageManifests(snapshotNodeModulesDir, params.rootDir);
       ensureWorkspacePackageDistTrees(snapshotNodeModulesDir, params.rootDir);
       ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
+      ensureCopiedNodeModulesEntries(cliNodeModulesDir, snapshotNodeModulesDir, new Set(['@happier-dev']));
     }
-    ensureCopiedNodeModulesEntries(cliNodeModulesDir, snapshotNodeModulesDir, new Set(['@happier-dev']));
-    if (params.firstPartyClosureMode === 'bundled-only') {
+    if (firstPartyClosureMode === 'bundled-only') {
       ensureCliPackSnapshotRuntimeDependencies({
         snapshotDir: params.snapshotDir,
         rootDir: params.rootDir,
         hydrationScope: 'bundled-workspaces-only',
+      });
+      ensurePackageRuntimeDependenciesFromPackageJson({
+        packageJsonPath: resolve(params.rootDir, 'apps', 'cli', 'package.json'),
+        destNodeModulesDir: snapshotNodeModulesDir,
+        rootDir: params.rootDir,
+        visited: new Set<string>(),
       });
     }
     ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
@@ -637,7 +658,7 @@ function isCopiedTreeSubset(sourcePath: string, destPath: string): boolean {
   if (!sourceStats.isDirectory()) return sourceStats.size === destStats.size;
 
   for (const entry of listNodeModulesEntries(sourcePath)) {
-    if (entry.name.startsWith('.')) continue;
+    if (isIgnoredCopiedPackageEntry(sourcePath, entry.name)) continue;
     if (!isCopiedTreeSubset(resolve(sourcePath, entry.name), resolve(destPath, entry.name))) {
       return false;
     }

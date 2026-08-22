@@ -11,8 +11,6 @@ import {
   ConnectedAccountDaemonControlResponseSchema,
   DaemonContributionRegistryProjectionDescribeResponseSchema,
   DaemonPluginStructuredMessageActionExecuteResponseSchema,
-  DaemonPluginStructuredMessageResolveResponseSchema,
-  DaemonPluginSettingsSetResponseSchema,
   ExternalSessionLinkEnsureResponseSchema,
   ExternalSessionStatusGetResponseSchema,
   ExternalSessionsCandidatesListResponseSchema,
@@ -37,7 +35,16 @@ import {
   QualifiedConnectedAccountSuccessV4Schema,
   ScmHostingRepositoryDescribePublishTargetsResponseSchema,
   ScmStatusSnapshotResponseSchema,
+  PluginAccountSettingsMutationResponseV1Schema,
+  PluginAccountSettingsReadResponseV1Schema,
+  PluginAccountSettingsValuesV1Schema,
+  applyAccountSettingsSavedSecretMutation,
+  deriveSettingsSecretsKeySetV1,
   encodeQualifiedConnectedAccountV4StructuredQueryValue,
+  encryptSecretStringV1,
+  openAccountScopedBlobCiphertext,
+  resolveAccountSettingsPluginSecret,
+  sealAccountScopedBlobCiphertext,
   type ConnectedAccountAttemptResponse,
   type ConnectedAccountDaemonCommand,
   type ConnectedAccountDaemonControlCommand,
@@ -50,10 +57,10 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   assertPackedAuthorCredentialSentinelsAbsent,
   formatPackedQualifiedConnectedAccountHttpFailure,
-  loadPackedAuthorNaturalArtifacts,
-  parseRunnerArgs,
+  loadPackedAuthorVerticalAArtifacts,
   runVerticalA,
-  type PackedAuthorCandidate,
+  type PackedAuthorArtifactAdmission,
+  type PackedAuthorDirectArtifactsSmoke,
 } from '../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 import {
   readEncryptedAccountSettingsV2OrEmpty,
@@ -61,6 +68,8 @@ import {
 } from '../testkit/accountSettings';
 import { createTestAuth } from '../testkit/auth';
 import { seedCliAuthForServer } from '../testkit/cliAuth';
+import { connectExternalMcp, parseToolJson } from '../testkit/externalMcp';
+import { fetchJson } from '../testkit/http';
 import {
   callEncryptedMachineRpc,
   type MemoryRpcSchema,
@@ -84,12 +93,12 @@ const PACKED_NOVEL_SIMULATED_AUTHORIZATION_ORIGIN =
   'https://auth.novel.example';
 const PACKED_GITHUB_CONNECTED_ACCOUNT_SERVICE =
   QualifiedConnectedAccountServiceRefSchema.parse({
-    pluginId: 'happier.scm.hosting.github',
+    pluginId: 'happier.scm.forge.github',
     localId: 'github-account',
   });
 const PACKED_BITBUCKET_CONNECTED_ACCOUNT_SERVICE =
   QualifiedConnectedAccountServiceRefSchema.parse({
-    pluginId: 'happier.scm.hosting.bitbucket',
+    pluginId: 'happier.scm.forge.bitbucket',
     localId: 'bitbucket-account',
   });
 const PACKED_CLAUDE_CONNECTED_ACCOUNT_SERVICE =
@@ -106,13 +115,89 @@ function closeSocketCollector(collector: SocketCollector | null): void {
   collector?.close();
 }
 
-async function loadCandidate(argv: readonly string[]): Promise<PackedAuthorCandidate> {
-  return await loadPackedAuthorNaturalArtifacts(argv);
+async function setPackedAccountPluginSetting(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  secret: Uint8Array;
+  pluginId: string;
+  fieldId: string;
+  value: unknown;
+}>): Promise<void> {
+  const endpoint = `${params.baseUrl}/v1/account/plugin-settings/${encodeURIComponent(params.pluginId)}`;
+  const currentResponse = await fetchJson<unknown>(endpoint, {
+    headers: { Authorization: `Bearer ${params.token}` },
+    timeoutMs: 20_000,
+  });
+  if (currentResponse.status !== 200) {
+    throw new Error(`Failed to read packed Account plugin settings (status=${currentResponse.status})`);
+  }
+  const current = PluginAccountSettingsReadResponseV1Schema.safeParse(currentResponse.data);
+  if (!current.success) {
+    throw new Error('Failed to parse packed Account plugin settings');
+  }
+
+  let expectedRevision: number | 'absent';
+  let values: Record<string, unknown>;
+  if (current.data.status === 'present') {
+    expectedRevision = current.data.revision;
+    if (current.data.content.t !== 'encrypted') {
+      throw new Error('Packed Account plugin settings must use the encrypted Account envelope');
+    }
+    const opened = openAccountScopedBlobCiphertext({
+      kind: 'plugin_declarative_settings',
+      material: { type: 'legacy', secret: params.secret },
+      ciphertext: current.data.content.c,
+    });
+    const parsedValues = PluginAccountSettingsValuesV1Schema.safeParse(opened?.value);
+    if (!parsedValues.success) {
+      throw new Error('Failed to decrypt packed Account plugin settings values');
+    }
+    values = { ...parsedValues.data.values };
+  } else if (current.data.status === 'deleted') {
+    expectedRevision = current.data.revision;
+    values = {};
+  } else {
+    expectedRevision = 'absent';
+    values = {};
+  }
+
+  const nextValues = PluginAccountSettingsValuesV1Schema.parse({
+    v: 1,
+    values: { ...values, [params.fieldId]: params.value },
+  });
+  const response = await fetchJson<unknown>(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      expectedRevision,
+      content: {
+        t: 'encrypted',
+        c: sealAccountScopedBlobCiphertext({
+          kind: 'plugin_declarative_settings',
+          material: { type: 'legacy', secret: params.secret },
+          payload: nextValues,
+          randomBytes: (length) => Uint8Array.from(randomBytes(length)),
+        }),
+      },
+    }),
+    timeoutMs: 20_000,
+  });
+  if (response.status !== 200) {
+    throw new Error(`Failed to update packed Account plugin settings (status=${response.status})`);
+  }
+  const mutation = PluginAccountSettingsMutationResponseV1Schema.safeParse(response.data);
+  if (!mutation.success || mutation.data.status !== 'updated') {
+    throw new Error('Packed Account plugin settings CAS did not update');
+  }
 }
 
 export async function runPackedAuthorVerticalAWithTestServer(
-  candidate: PackedAuthorCandidate,
+  candidate: PackedAuthorDirectArtifactsSmoke,
   options: Readonly<{
+    artifactAdmission?: PackedAuthorArtifactAdmission;
     packedNovelQaHandoffRoot?: string;
   }> = {},
 ): Promise<Awaited<ReturnType<typeof runVerticalA>>> {
@@ -120,8 +205,16 @@ export async function runPackedAuthorVerticalAWithTestServer(
   const testDir = run.testDir('vertical-a');
   let server: StartedServer | null = null;
   let ui: SocketCollector | null = null;
+  let externalToolMcp: Awaited<ReturnType<typeof connectExternalMcp>> | null = null;
   let packedHookInstallationId: string | null = null;
   let packedHookTargetPath: string | null = null;
+  const closeExternalToolMcp = async (): Promise<void> => {
+    const active = externalToolMcp;
+    externalToolMcp = null;
+    if (!active) return;
+    await active.client.close().catch(() => undefined);
+    await active.transport.close().catch(() => undefined);
+  };
   try {
     const databaseUrl = renderPrismaCompatibleSqliteDatabaseUrl({
       dbPath: resolve(
@@ -178,6 +271,7 @@ export async function runPackedAuthorVerticalAWithTestServer(
       return { machineId, ui };
     };
     const result = await runVerticalA(candidate, {
+      artifactAdmission: options.artifactAdmission,
       captureLayerResultsOnFailure: true,
       baseEnv: sanitizeDaemonEnvForSpawn(process.env),
       ...(options.packedNovelQaHandoffRoot
@@ -261,7 +355,13 @@ export async function runPackedAuthorVerticalAWithTestServer(
           confirmPresentUser: async () => true,
         });
       },
-      probeRetainedCapabilities: async ({ phase, happyHomeDir, pluginId }) => {
+      probeRetainedCapabilities: async ({
+        phase,
+        happyHomeDir,
+        pluginId,
+        actionId = 'roundtrip',
+        actionInput = { operation: 'structured-message-action' },
+      }) => {
         const connection = await ensureUi(happyHomeDir);
         const projection = await callEncryptedMachineRpc({
           ui: connection.ui,
@@ -272,38 +372,112 @@ export async function runPackedAuthorVerticalAWithTestServer(
           schema: DaemonContributionRegistryProjectionDescribeResponseSchema,
         });
         const expectedGeneration = String(projection.projection.generation);
-        const structuredResolution = await callEncryptedMachineRpc({
-          ui: connection.ui,
-          machineId: connection.machineId,
-          method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_RESOLVE,
-          req: {
-            machineId: connection.machineId,
-            expectedGeneration,
-            kind: 'acme.vertical-a/roundtrip-result.v1',
-            payload: { message: phase === 'uninstalled' ? 'uninstalled' : 'installed' },
-            facts: {},
-          },
-          secret,
-          schema: DaemonPluginStructuredMessageResolveResponseSchema,
+        const structuredAction = actionId === null
+          ? null
+          : await callEncryptedMachineRpc({
+              ui: connection.ui,
+              machineId: connection.machineId,
+              method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+              req: {
+                machineId: connection.machineId,
+                expectedGeneration,
+                qualifiedActionId: `${pluginId}/${actionId}`,
+                input: actionInput,
+                executionSurface: 'ui',
+              },
+              secret,
+              schema: DaemonPluginStructuredMessageActionExecuteResponseSchema,
+            });
+        return { projection, structuredAction };
+      },
+      probeExternalTool: async ({
+        phase,
+        cliEntrypoint,
+        happyHomeDir,
+        pluginId,
+        toolName,
+        value,
+      }) => {
+        const open = async () => await connectExternalMcp({
+          cliEntrypoint,
+          sessionId: `packed-vertical-a-tool-${phase}-${randomUUID()}`,
+          cliHome: happyHomeDir,
+          serverBaseUrl,
         });
-        if (phase === 'uninstalled' || !structuredResolution.ok) {
-          return { projection, structuredResolution };
+        const inspect = async (connection: Awaited<ReturnType<typeof connectExternalMcp>>) => {
+          const tools = await connection.client.listTools();
+          return Object.freeze(tools.tools.map((tool) => tool.name));
+        };
+        const invoke = async (connection: Awaited<ReturnType<typeof connectExternalMcp>>) => {
+          const call = await connection.client.callTool({
+            name: toolName,
+            arguments: { value },
+          });
+          const payload = parseToolJson<Record<string, unknown>>(call);
+          return Object.freeze({
+            isError: call.isError === true,
+            errorCode: typeof payload.errorCode === 'string' ? payload.errorCode : null,
+            pluginId: typeof payload.pluginId === 'string' ? payload.pluginId : null,
+            version: typeof payload.version === 'string' ? payload.version : null,
+            value: typeof payload.value === 'string' ? payload.value : null,
+          });
+        };
+        const openAndInspect = async () => {
+          const connection = await open();
+          try {
+            return Object.freeze({
+              toolNames: await inspect(connection),
+              invocation: await invoke(connection),
+            });
+          } finally {
+            await connection.client.close().catch(() => undefined);
+            await connection.transport.close().catch(() => undefined);
+          }
+        };
+        const openAndInspectOnly = async () => {
+          const connection = await open();
+          try {
+            return await inspect(connection);
+          } finally {
+            await connection.client.close().catch(() => undefined);
+            await connection.transport.close().catch(() => undefined);
+          }
+        };
+
+        if (phase === 'installed' || phase === 'beforeDisable' || phase === 'beforeUninstall') {
+          if (externalToolMcp) {
+            throw new Error(`Packed external MCP Tool probe retained an unexpected ${phase} connection`);
+          }
+          const connection = await open();
+          externalToolMcp = connection;
+          return Object.freeze({
+            toolNames: await inspect(connection),
+            invocation: await invoke(connection),
+          });
         }
-        const structuredAction = await callEncryptedMachineRpc({
-          ui: connection.ui,
-          machineId: connection.machineId,
-          method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-          req: {
-            machineId: connection.machineId,
-            expectedGeneration,
-            qualifiedActionId: `${pluginId}/roundtrip`,
-            input: { operation: 'structured-message-action' },
-            executionSurface: 'ui',
-          },
-          secret,
-          schema: DaemonPluginStructuredMessageActionExecuteResponseSchema,
-        });
-        return { projection, structuredResolution, structuredAction };
+        if (phase === 'replaced') {
+          if (!externalToolMcp) {
+            throw new Error('Packed external MCP Tool replacement probe has no installed catalog snapshot');
+          }
+          const staleInvocation = await invoke(externalToolMcp);
+          await closeExternalToolMcp();
+          return Object.freeze({
+            staleInvocation,
+            fresh: await openAndInspect(),
+          });
+        }
+        if (phase === 'disabled' || phase === 'uninstalled') {
+          if (!externalToolMcp) {
+            throw new Error(`Packed external MCP Tool ${phase} probe has no current catalog snapshot`);
+          }
+          const retiredInvocation = await invoke(externalToolMcp);
+          await closeExternalToolMcp();
+          return Object.freeze({
+            retiredInvocation,
+            freshToolNames: await openAndInspectOnly(),
+          });
+        }
+        throw new Error(`Unknown packed external MCP Tool probe phase: ${String(phase)}`);
       },
       probeConnectedAccounts: async ({
         phase,
@@ -1001,9 +1175,12 @@ export async function runPackedAuthorVerticalAWithTestServer(
             readGroup(),
             listAccounts(),
           ]);
-          if (!accountBCredentialBefore) {
+          if (
+            !accountBCredentialBefore
+            || typeof accountBCredentialBefore.credentialRevision !== 'string'
+          ) {
             throw new Error(
-              'Packed direct delete requires a durable account B credential',
+              'Packed direct delete requires a durable account B credential revision',
             );
           }
           const deletion = await requestV4(
@@ -2035,47 +2212,76 @@ export async function runPackedAuthorVerticalAWithTestServer(
         };
       },
       probeNotifications: async ({ phase, happyHomeDir, pluginId }) => {
-        const connection = await ensureUi(happyHomeDir);
+        await ensureUi(happyHomeDir);
         if (
           phase === 'configure'
           || phase === 'credential-invalid'
           || phase === 'credential-valid'
         ) {
           if (phase === 'configure') {
-            await callEncryptedMachineRpc({
-              ui: connection.ui,
-              machineId: connection.machineId,
-              method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET,
-              req: {
-                machineId: connection.machineId,
-                pluginId,
-                fieldId: 'webhook.endpoint',
-                value: 'https://notifications.example.test/deliver',
-              },
+            await setPackedAccountPluginSetting({
+              baseUrl: serverBaseUrl,
+              token: auth.token,
               secret,
-              schema: DaemonPluginSettingsSetResponseSchema,
+              pluginId,
+              fieldId: 'webhook.endpoint',
+              value: 'https://notifications.example.test/deliver',
             });
           }
           const credential = phase === 'credential-invalid'
             ? 'invalid-notification-token'
             : 'configured-notification-token';
-          const snapshot = await callEncryptedMachineRpc({
-            ui: connection.ui,
-            machineId: connection.machineId,
-            method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET,
-            req: {
-              machineId: connection.machineId,
-              pluginId,
-              fieldId: 'webhook.token',
-              value: credential,
-            },
+          const current = await readEncryptedAccountSettingsV2OrEmpty({
+            baseUrl: serverBaseUrl,
+            token: auth.token,
             secret,
-            schema: DaemonPluginSettingsSetResponseSchema,
           });
-          if (JSON.stringify(snapshot).includes(credential)) {
-            throw new Error('Notification settings RPC exposed credential material');
+          const secretTarget = { pluginId, localId: 'webhook.token' };
+          const existing = resolveAccountSettingsPluginSecret(current.settings, secretTarget);
+          const now = Date.now();
+          const settingsSecretKeys = deriveSettingsSecretsKeySetV1({
+            type: 'legacy',
+            secret,
+          });
+          const mutation = applyAccountSettingsSavedSecretMutation(current.settings, {
+            kind: 'replacePluginSecret',
+            target: secretTarget,
+            expectedSecretId: existing?.binding.savedSecretId ?? null,
+            expectedSecretUpdatedAt: existing?.secret.updatedAt ?? null,
+            secret: {
+              id: `packed-notification-token-${phase}-${randomUUID()}`,
+              name: 'Packed notification token',
+              kind: 'token',
+              encryptedValue: {
+                _isSecretValue: true,
+                encryptedValue: encryptSecretStringV1(
+                  credential,
+                  settingsSecretKeys.writeKey,
+                  (length) => Uint8Array.from(randomBytes(length)),
+                ),
+              },
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+          const settingsVersion = await upsertEncryptedAccountSettingsV2({
+            baseUrl: serverBaseUrl,
+            token: auth.token,
+            secret,
+            expectedVersion: current.settingsVersion,
+            settings: accountSettingsParse(mutation.settings),
+          });
+          const resolved = resolveAccountSettingsPluginSecret(mutation.settings, secretTarget);
+          if (!resolved) {
+            throw new Error('Packed Account SavedSecret mutation did not create the notification binding');
           }
-          return snapshot;
+          return {
+            scope: { kind: 'account' },
+            settingsVersion,
+            values: { 'webhook.endpoint': 'https://notifications.example.test/deliver' },
+            redactedKeys: ['webhook.token'],
+            secrets: { 'webhook.token': { state: 'configured' } },
+          };
         }
 
         const enabled = phase === 'policy-enabled';
@@ -2158,6 +2364,7 @@ export async function runPackedAuthorVerticalAWithTestServer(
     });
     return result;
   } finally {
+    await closeExternalToolMcp();
     closeSocketCollector(ui);
     await server?.stop().catch(() => undefined);
   }
@@ -2165,17 +2372,24 @@ export async function runPackedAuthorVerticalAWithTestServer(
 
 async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const startedAt = new Date().toISOString();
-  let candidate: PackedAuthorCandidate | null = null;
+  let candidate: PackedAuthorDirectArtifactsSmoke | null = null;
+  let artifactAdmission: Awaited<
+    ReturnType<typeof loadPackedAuthorVerticalAArtifacts>
+  >['admission'] | null = null;
   try {
-    const { packedNovelQaHandoffRoot } = parseRunnerArgs(argv);
-    candidate = await loadCandidate(argv);
+    const loaded = await loadPackedAuthorVerticalAArtifacts(argv);
+    candidate = loaded.candidate;
+    artifactAdmission = loaded.admission;
+    const { packedNovelQaHandoffRoot } = loaded.runnerArgs;
     const result = await runPackedAuthorVerticalAWithTestServer(candidate, {
+      artifactAdmission,
       ...(packedNovelQaHandoffRoot
         ? { packedNovelQaHandoffRoot }
         : {}),
     });
     process.stdout.write(`${JSON.stringify({
       ...result,
+      artifactAdmission,
       startedAt,
       completedAt: new Date().toISOString(),
     })}\n`);
@@ -2185,6 +2399,7 @@ async function main(argv: readonly string[] = process.argv.slice(2)): Promise<vo
       ok: false,
       scenario: 'vertical-a',
       candidate: candidate ? { runId: candidate.runId, sdk: candidate.sdk, cli: candidate.cli } : null,
+      artifactAdmission,
       error: {
         code: 'packed_author_boundary_failed',
         message: error instanceof Error ? error.message : String(error),

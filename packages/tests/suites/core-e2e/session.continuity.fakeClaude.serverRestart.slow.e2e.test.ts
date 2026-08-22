@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -8,7 +8,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createTestAuth } from '../../src/testkit/auth';
 import { startTestDaemon, stopDaemonFromHomeDir, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { waitFor } from '../../src/testkit/timing';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
@@ -88,8 +88,8 @@ describe('core e2e: session continuity survives server restart without restartin
         await mkdir(daemonHomeDir, { recursive: true });
         await mkdir(workspaceDir, { recursive: true });
 
-        const secret = Uint8Array.from(randomBytes(32));
-        await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+        const secret = auth.accountSigningSeed;
+        await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
         const fakeClaudePath = fakeClaudeFixturePath();
         const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));

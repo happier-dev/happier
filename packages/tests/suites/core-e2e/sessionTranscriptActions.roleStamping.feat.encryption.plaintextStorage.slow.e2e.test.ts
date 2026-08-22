@@ -1,11 +1,11 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { connectExternalMcp, parseToolJson } from '../../src/testkit/externalMcp';
 import { fetchJson } from '../../src/testkit/http';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
@@ -216,11 +216,11 @@ describe('core e2e: session transcript/events action role stamping', () => {
 
     const cliHome = resolve(join(testDir, 'cli-home'));
     await mkdir(cliHome, { recursive: true });
-    await seedCliAuthForServer({
+    await seedCliAuthForTestAccount({
       cliHome,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret: Uint8Array.from(randomBytes(32)),
+      auth,
+      mode: 'tokenOnly',
     });
     const cliEntrypoint = await ensureCliDistBuilt(
       { testDir, env: process.env },

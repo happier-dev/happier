@@ -4,7 +4,12 @@ import { isAbsolute, resolve } from 'node:path';
 function fakeMediaArgs(fixturePath, { autoGrant }) {
   const args = ['--use-fake-device-for-media-stream'];
   if (autoGrant) args.unshift('--use-fake-ui-for-media-stream');
-  if (fixturePath) args.push(`--use-file-for-fake-audio-capture=${fixturePath}`);
+  if (fixturePath) {
+    args.push(
+      '--disable-features=AudioServiceOutOfProcess,AudioServiceSandbox',
+      `--use-file-for-fake-audio-capture=${fixturePath}`,
+    );
+  }
   return args;
 }
 

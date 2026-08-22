@@ -8,6 +8,7 @@ export default mergeConfig(createUiProductionHooksVitestConfig(), defineConfig({
     environment: 'node',
     include: [
       'suites/contracts/**/*.test.ts',
+      'suites/core-layer/**/*.test.ts',
       'suites/core-e2e/**/*.test.ts',
       'suites/runtime-unification/**/*.test.ts',
       'src/testkit/**/*.{test,spec}.ts',

@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import nacl from 'tweetnacl';
 
 import { repoRootDir } from '../../paths';
+import type { StressConfig } from '../config/stressScenarioSchema';
 import { computeComposeServerImageFingerprint } from '../docker/computeComposeServerImageFingerprint';
 import {
   createRepoRootFingerprint,
@@ -26,6 +27,7 @@ import type {
 } from './stressTargetTypes';
 
 const stressServerImageNamePrefix = 'happier-stress-compose-server';
+const stressServerImageFingerprintPattern = /^[a-f0-9]{40}$/u;
 const relayRouteGrantSigningKeyId = 'stress-route-grant';
 const relayAllowedPorts = [3000] as const;
 
@@ -150,12 +152,22 @@ function parseServiceContainers(params: {
       Name?: string;
       Config?: { Labels?: Record<string, string> };
       State?: { Status?: string; Health?: { Status?: string } };
-      NetworkSettings?: { Networks?: Record<string, { IPAddress?: string }> };
+      NetworkSettings?: { Networks?: Record<string, { Aliases?: string[]; IPAddress?: string }> };
     };
 
-    const ipv4Addresses = Object.values(raw.NetworkSettings?.Networks ?? {})
+    const networks = raw.NetworkSettings?.Networks ?? {};
+    const ipv4Addresses = Object.values(networks)
       .map((network) => network?.IPAddress?.trim())
       .filter((value): value is string => typeof value === 'string' && value.length > 0);
+    const networkAttachments = Object.fromEntries(Object.entries(networks).map(([networkName, network]) => [
+      networkName,
+      {
+        aliases: (network?.Aliases ?? []).filter((alias): alias is string =>
+          typeof alias === 'string' && alias.length > 0,
+        ),
+        ...(network?.IPAddress?.trim() ? { ipv4Address: network.IPAddress.trim() } : {}),
+      },
+    ]));
 
     return [{
       id: containerId,
@@ -164,6 +176,7 @@ function parseServiceContainers(params: {
       state: raw.State?.Status ?? 'unknown',
       health: raw.State?.Health?.Status,
       ipv4Addresses,
+      networkAttachments,
     }];
   });
 }
@@ -258,10 +271,92 @@ function imageMatchesFreshness(params: {
   );
 }
 
+function requirePinnedFrozenImageFingerprint(imageFingerprint: string | undefined): string {
+  if (!imageFingerprint || !stressServerImageFingerprintPattern.test(imageFingerprint)) {
+    throw new Error(
+      'HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT must pin an existing 40-character lowercase hexadecimal '
+      + 'image fingerprint when HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=never.',
+    );
+  }
+  return imageFingerprint;
+}
+
+function createStressServerImageName(repoRootFingerprint: string, imageFingerprint: string): string {
+  return `${stressServerImageNamePrefix}-${repoRootFingerprint}-${imageFingerprint}`;
+}
+
+function assertPinnedFrozenImageIdentity(params: {
+  serverImageName: string;
+  imageMetadata: Awaited<ReturnType<ComposeRuntime['inspectImage']>>;
+  expectedImageFingerprint: string;
+  expectedRepoRootFingerprint: string;
+}): void {
+  if (imageMatchesFreshness(params)) {
+    return;
+  }
+
+  throw new Error(
+    `Canonical stress compose image ${params.serverImageName} does not match the pinned frozen-image identity. `
+    + `Expected ${stressComposeOwnerLabelKey}=${stressComposeOwnerLabelValue}, `
+    + `${stressComposeRepoRootLabelKey}=${params.expectedRepoRootFingerprint}, and `
+    + `${stressComposeImageFingerprintLabelKey}=${params.expectedImageFingerprint}.`,
+  );
+}
+
+async function requirePinnedFrozenImage(params: {
+  runtime: Pick<ComposeRuntime, 'imageExists' | 'inspectImage'>;
+  serverImageName: string;
+  expectedImageFingerprint: string;
+  expectedRepoRootFingerprint: string;
+}): Promise<void> {
+  if (!await params.runtime.imageExists(params.serverImageName)) {
+    throw new Error(
+      `Canonical stress compose image ${params.serverImageName} is missing. `
+      + 'Build it first or switch HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY away from never.',
+    );
+  }
+
+  const imageMetadata = await params.runtime.inspectImage(params.serverImageName);
+  if (!imageMetadata) {
+    throw new Error(
+      `Canonical stress compose image ${params.serverImageName} is missing. `
+      + 'Build it first or switch HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY away from never.',
+    );
+  }
+  assertPinnedFrozenImageIdentity({
+    serverImageName: params.serverImageName,
+    imageMetadata,
+    expectedImageFingerprint: params.expectedImageFingerprint,
+    expectedRepoRootFingerprint: params.expectedRepoRootFingerprint,
+  });
+}
+
+export async function preflightFullComposeFrozenImage(params: {
+  config: StressConfig;
+  repoRootDir: string;
+  runtime: Pick<ComposeRuntime, 'imageExists' | 'inspectImage'>;
+}): Promise<void> {
+  if (params.config.compose.imageBuildStrategy !== 'never') {
+    return;
+  }
+
+  const imageFingerprint = requirePinnedFrozenImageFingerprint(params.config.compose.imageFingerprint);
+  const repoRootFingerprint = createRepoRootFingerprint(params.repoRootDir);
+  await requirePinnedFrozenImage({
+    runtime: params.runtime,
+    serverImageName: createStressServerImageName(repoRootFingerprint, imageFingerprint),
+    expectedImageFingerprint: imageFingerprint,
+    expectedRepoRootFingerprint: repoRootFingerprint,
+  });
+}
+
 export async function startFullComposeStressTarget(
   params: StartStressTargetParams,
   deps: StartFullComposeDeps = defaultDeps,
 ): Promise<StartedStressTarget> {
+  const pinnedFrozenImageFingerprint = params.config.compose.imageBuildStrategy === 'never'
+    ? requirePinnedFrozenImageFingerprint(params.config.compose.imageFingerprint)
+    : undefined;
   const topologyDir = resolve(params.testDir, 'topology');
   mkdirSync(topologyDir, { recursive: true });
   const frontDoorMode = params.config.compose.frontDoorMode ?? 'gateway';
@@ -274,6 +369,7 @@ export async function startFullComposeStressTarget(
   const resolvedRepoRootDir = deps.repoRootDir();
   const repoRootFingerprint = deps.createRepoRootFingerprint(resolvedRepoRootDir);
   const imageFreshnessFingerprint = deps.computeComposeServerImageFingerprint(resolvedRepoRootDir);
+  const selectedImageFingerprint = pinnedFrozenImageFingerprint ?? imageFreshnessFingerprint;
 
   const gatewayPort = await resolvePort(params.config.compose.gatewayPort, deps.pickAvailablePort);
   const apiDirectPort = frontDoorMode === 'api-direct'
@@ -288,7 +384,7 @@ export async function startFullComposeStressTarget(
     : gatewayPort;
   const publicBaseUrl = `http://127.0.0.1:${frontDoorPort}`;
   const composeProjectName = createComposeProjectName(params.testDir);
-  const serverImageName = `${stressServerImageNamePrefix}-${repoRootFingerprint}-${imageFreshnessFingerprint}`;
+  const serverImageName = createStressServerImageName(repoRootFingerprint, selectedImageFingerprint);
 
   const secrets = {
     postgresDb: 'stressdb',
@@ -366,7 +462,7 @@ export async function startFullComposeStressTarget(
     },
     image: {
       name: serverImageName,
-      freshnessFingerprint: imageFreshnessFingerprint,
+      freshnessFingerprint: selectedImageFingerprint,
       repoRootFingerprint,
     },
     ports: {
@@ -386,6 +482,15 @@ export async function startFullComposeStressTarget(
     cwd: resolvedRepoRootDir,
   });
 
+  if (pinnedFrozenImageFingerprint) {
+    await requirePinnedFrozenImage({
+      runtime,
+      serverImageName,
+      expectedImageFingerprint: pinnedFrozenImageFingerprint,
+      expectedRepoRootFingerprint: repoRootFingerprint,
+    });
+  }
+
   let topologyIsRunning = false;
   let startupAttemptActive = false;
   let startupFailureCleanedUp = false;
@@ -393,31 +498,24 @@ export async function startFullComposeStressTarget(
   try {
     await cleanupOwnedStressComposeProjects(runtime, composeProjectName, repoRootFingerprint);
 
-    const imageExists = await runtime.imageExists(serverImageName);
-    const existingImageMetadata = imageExists ? await runtime.inspectImage(serverImageName) : null;
-    const existingImageIsFresh = imageMatchesFreshness({
-      imageMetadata: existingImageMetadata,
-      expectedImageFingerprint: imageFreshnessFingerprint,
-      expectedRepoRootFingerprint: repoRootFingerprint,
-    });
-    if (params.config.compose.imageBuildStrategy === 'never') {
-      if (!imageExists || !existingImageMetadata) {
-        throw new Error(
-          `Canonical stress compose image ${serverImageName} is missing. `
-          + 'Build it first or switch HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY away from never.',
-        );
-      }
-    } else {
-    const shouldBuildImage =
-      params.config.compose.imageBuildStrategy === 'always'
-      || !imageExists
-      || !existingImageIsFresh;
+    if (params.config.compose.imageBuildStrategy !== 'never') {
+      const imageExists = await runtime.imageExists(serverImageName);
+      const existingImageMetadata = imageExists ? await runtime.inspectImage(serverImageName) : null;
+      const existingImageIsFresh = imageMatchesFreshness({
+        imageMetadata: existingImageMetadata,
+        expectedImageFingerprint: selectedImageFingerprint,
+        expectedRepoRootFingerprint: repoRootFingerprint,
+      });
+      const shouldBuildImage =
+        params.config.compose.imageBuildStrategy === 'always'
+        || !imageExists
+        || !existingImageIsFresh;
       if (shouldBuildImage) {
         await runtime.buildServerImage(serverImageName, {
           labels: {
             [stressComposeOwnerLabelKey]: stressComposeOwnerLabelValue,
             [stressComposeRepoRootLabelKey]: repoRootFingerprint,
-            [stressComposeImageFingerprintLabelKey]: imageFreshnessFingerprint,
+            [stressComposeImageFingerprintLabelKey]: selectedImageFingerprint,
           },
           dockerfilePath: generatedStressDockerfilePath,
           contextDir: resolvedRepoRootDir,
@@ -426,7 +524,7 @@ export async function startFullComposeStressTarget(
           assertFreshReusableImage({
             serverImageName,
             imageMetadata: await runtime.inspectImage(serverImageName),
-            expectedImageFingerprint: imageFreshnessFingerprint,
+            expectedImageFingerprint: selectedImageFingerprint,
             expectedRepoRootFingerprint: repoRootFingerprint,
           });
         }
@@ -434,7 +532,7 @@ export async function startFullComposeStressTarget(
         assertFreshReusableImage({
           serverImageName,
           imageMetadata: existingImageMetadata,
-          expectedImageFingerprint: imageFreshnessFingerprint,
+          expectedImageFingerprint: selectedImageFingerprint,
           expectedRepoRootFingerprint: repoRootFingerprint,
         });
       }
@@ -471,12 +569,14 @@ export async function startFullComposeStressTarget(
           attempts: params.config.flakeRetry ? 2 : 1,
         });
         await runtime.attestServicesUseImage?.({
-          services: ['api', 'worker'],
+          services: frontDoorMode === 'api-direct'
+            ? ['api', 'api-direct', 'worker']
+            : ['api', 'worker'],
           imageName: serverImageName,
           expectedLabels: {
             [stressComposeOwnerLabelKey]: stressComposeOwnerLabelValue,
             [stressComposeRepoRootLabelKey]: repoRootFingerprint,
-            [stressComposeImageFingerprintLabelKey]: imageFreshnessFingerprint,
+            [stressComposeImageFingerprintLabelKey]: selectedImageFingerprint,
           },
         });
         startupAttemptActive = false;
@@ -593,6 +693,14 @@ export async function startFullComposeStressTarget(
         },
         startContainer: runtime.startContainer
           ? async (containerId) => await runtime.startContainer!(containerId)
+          : undefined,
+        disconnectContainerFromNetwork: runtime.disconnectContainerFromNetwork
+          ? async (containerId, networkName) =>
+              await runtime.disconnectContainerFromNetwork!(containerId, networkName)
+          : undefined,
+        connectContainerToNetwork: runtime.connectContainerToNetwork
+          ? async (containerId, networkName, options) =>
+              await runtime.connectContainerToNetwork!(containerId, networkName, options)
           : undefined,
         execInService: async (service, command) => {
           return await runtime.execCapture(service, command);

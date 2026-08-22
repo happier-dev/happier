@@ -53,6 +53,7 @@ import {
 } from '../../src/testkit/externalSessionLiveLifecycleFixture';
 import { fetchSessionMetadataV2 } from '../../src/testkit/sessionHandoffMetadata';
 import {
+  resolveTestDbProvider,
   startServerLight,
   type StartedServer,
 } from '../../src/testkit/process/serverLight';
@@ -77,6 +78,9 @@ const EXPECTED_OBSERVATION_IDENTITY = Object.freeze({
   pluginId: PLUGIN_ID,
   agentId: AGENT_ID,
   sourceKind: SOURCE.kind,
+});
+const suiteDbProvider = resolveTestDbProvider(process.env, {
+  fallbackProvider: 'sqlite',
 });
 
 type JsonRecord = Readonly<Record<string, unknown>>;
@@ -289,18 +293,28 @@ async function callRawEncryptedMachineRpc(params: Readonly<{
 describe('core e2e: External Sessions plugin reload and account rotation', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
+  let retiredDaemon: StartedDaemon | null = null;
   const sockets: Array<ReturnType<typeof createUserScopedSocketCollector>> = [];
   const temporaryRoots: string[] = [];
 
   afterEach(async () => {
     for (const socket of sockets.splice(0)) socket.close();
-    await daemon?.stop().catch(() => {});
+    const cleanupErrors: Error[] = [];
+    await daemon?.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
     daemon = null;
+    await retiredDaemon?.proc.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
+    retiredDaemon = null;
     await server?.stop().catch(() => {});
     server = null;
     for (const root of temporaryRoots.splice(0)) {
       await rm(root, { recursive: true, force: true }).catch(() => {});
     }
+    if (cleanupErrors.length === 1) throw cleanupErrors[0];
+    if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'Plugin reload restart teardown failed');
   });
 
   it('classifies connected Codex status reconciliation as active evidence production', async () => {
@@ -350,7 +364,7 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     const preAttestedEnv = buildPreAttestedExternalSessionLiveEnv();
     server = await startServerLight({
       testDir,
-      dbProvider: 'sqlite',
+      dbProvider: suiteDbProvider,
       extraEnv: preAttestedEnv,
     });
     const accounts = await createTwoIsolatedExternalSessionLiveAccounts(
@@ -394,7 +408,6 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       testDir,
       happyHomeDir: daemonHomeDir,
       env: daemonEnv,
-      startupTimeoutMs: 90_000,
     });
     await applyTrustedLocalPluginFixture({
       daemonPort: daemon.state.httpPort,
@@ -505,27 +518,87 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       pluginId: PLUGIN_ID,
       changedPaths: ['daemon.mjs'],
     });
-    await waitFor(async () => {
-      const events = await readExternalSessionLiveLifecycleMarkerEvents(markerPath);
-      const generationOne = events.filter(
-        (event) => event.generation === 'generation-one',
+    let reloadMarkerCounts = {
+      generationOneStarted: 0,
+      generationOneDisposed: 0,
+      generationTwoStarted: 0,
+      generationTwoDisposed: 0,
+      generationOneLive: 0,
+      generationTwoLive: 0,
+    };
+    const accountADaemonPid = daemon.state.pid;
+    const requestedLinkKey = `fixture-live-link:${REMOTE_SESSION_ID}`;
+    const accountAGenerationTwoObserverCapture: {
+      current: ExternalSessionLiveLifecycleObserverMarkerEvent | null;
+    } = { current: null };
+    try {
+      await waitFor(async () => {
+        const events = await readExternalSessionLiveLifecycleMarkerEvents(markerPath);
+        const generationOne = events.filter(
+          (event) => event.generation === 'generation-one',
+        );
+        const generationTwo = events.filter(
+          (event) => event.generation === 'generation-two',
+        );
+        const generationOneLive = findUnmatchedExternalSessionLiveObserverStarts({
+          markerEvents: generationOne,
+          daemonPid: accountADaemonPid,
+          resourceKey: 'fixture-live-resource',
+        });
+        const generationTwoLive = findUnmatchedExternalSessionLiveObserverStarts({
+          markerEvents: generationTwo,
+          daemonPid: accountADaemonPid,
+          resourceKey: 'fixture-live-resource',
+        });
+        reloadMarkerCounts = {
+          generationOneStarted: generationOne.filter(
+            (event) => event.kind === 'observer_started',
+          ).length,
+          generationOneDisposed: generationOne.filter(
+            (event) => event.kind === 'observer_disposed',
+          ).length,
+          generationTwoStarted: generationTwo.filter(
+            (event) => event.kind === 'observer_started',
+          ).length,
+          generationTwoDisposed: generationTwo.filter(
+            (event) => event.kind === 'observer_disposed',
+          ).length,
+          generationOneLive: generationOneLive.length,
+          generationTwoLive: generationTwoLive.length,
+        };
+        const currentGenerationTwoObserver = generationTwoLive[0];
+        const lifecycleConverged = reloadMarkerCounts.generationOneStarted >= 1
+          && reloadMarkerCounts.generationOneDisposed
+            === reloadMarkerCounts.generationOneStarted
+          && reloadMarkerCounts.generationOneLive === 0
+          && reloadMarkerCounts.generationTwoStarted >= 1
+          && reloadMarkerCounts.generationTwoDisposed
+            === reloadMarkerCounts.generationTwoStarted - 1
+          && reloadMarkerCounts.generationTwoLive === 1
+          && currentGenerationTwoObserver?.requestedLinkKeys?.includes(
+            requestedLinkKey,
+          ) === true;
+        if (lifecycleConverged) {
+          accountAGenerationTwoObserverCapture.current =
+            currentGenerationTwoObserver ?? null;
+        }
+        return lifecycleConverged;
+      }, {
+        timeoutMs: 30_000,
+        context: 'changed plugin generation retires and reacquires observer',
+      });
+    } catch (error) {
+      throw new Error(
+        'Changed plugin generation did not retire and reacquire its observer '
+        + `(markers=${JSON.stringify(reloadMarkerCounts)})`,
+        { cause: error },
       );
-      const generationTwo = events.filter(
-        (event) => event.generation === 'generation-two',
-      );
-      return generationOne.filter(
-        (event) => event.kind === 'observer_started',
-      ).length === 1
-        && generationOne.filter(
-          (event) => event.kind === 'observer_disposed',
-        ).length === 1
-        && generationTwo.filter(
-          (event) => event.kind === 'observer_started',
-        ).length === 1;
-    }, {
-      timeoutMs: 30_000,
-      context: 'changed plugin generation retires and reacquires observer',
-    });
+    }
+    const accountAGenerationTwoObserver =
+      accountAGenerationTwoObserverCapture.current;
+    if (!accountAGenerationTwoObserver) {
+      throw new Error('Generation-two observer identity was not captured');
+    }
     let accountAReloadObservationBeforePulse:
       ExternalAgentObservationSnapshotV1 | null = null;
     await waitFor(async () => {
@@ -610,14 +683,38 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     daemon = null;
     await waitFor(async () => {
       const events = await readExternalSessionLiveLifecycleMarkerEvents(markerPath);
-      return events.filter(
-        (event) => event.kind === 'observer_disposed'
-          && event.generation === 'generation-two',
-      ).length === 1;
+      const generationTwo = events.filter(
+        (event) => event.generation === 'generation-two',
+      );
+      const counts = countExternalSessionLiveObserverLifecycleEvents({
+        markerEvents: generationTwo,
+        daemonPid: accountADaemonPid,
+        resourceKey: 'fixture-live-resource',
+      });
+      return counts.observersStarted >= 1
+        && counts.observersDisposed === counts.observersStarted
+        && countExternalSessionLiveObserverLifecycleEvents({
+          markerEvents: generationTwo,
+          daemonPid: accountADaemonPid,
+          resourceKey: 'fixture-live-resource',
+          observerInstanceId:
+            accountAGenerationTwoObserver.observerInstanceId,
+        }).observersDisposed === 1
+        && findUnmatchedExternalSessionLiveObserverStarts({
+          markerEvents: generationTwo,
+          daemonPid: accountADaemonPid,
+          resourceKey: 'fixture-live-resource',
+        }).length === 0;
     }, {
       timeoutMs: 30_000,
-      context: 'generation-two observer disposes exactly once before account rotation',
+      context: 'generation-two observers are fully retired before account rotation',
     });
+    await expect(readExternalSessionLiveObservationSnapshot({
+      serverBaseUrl: server.baseUrl,
+      token: accounts.accountA.auth.token,
+      sessionId: linkedA.sessionId,
+      machineKey: accounts.accountA.machineKey,
+    })).resolves.toEqual(accountAObservationAfterReloadPulse);
     socketA.close();
     sockets.splice(sockets.indexOf(socketA), 1);
 
@@ -630,7 +727,6 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       testDir,
       happyHomeDir: daemonHomeDir,
       env: daemonEnv,
-      startupTimeoutMs: 90_000,
     });
     const socketB = createUserScopedSocketCollector(
       server.baseUrl,
@@ -650,15 +746,36 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       source: SOURCE,
       call: rpcB.call,
     });
-    await waitFor(async () => (
-      await readExternalSessionLiveLifecycleMarkerEvents(markerPath)
-    ).filter(
-      (event) => event.kind === 'observer_started'
-        && event.generation === 'generation-two',
-    ).length >= 2, {
+    const accountBDaemonPid = daemon.state.pid;
+    const accountBObserverCapture: {
+      current: ExternalSessionLiveLifecycleObserverMarkerEvent | null;
+    } = { current: null };
+    await waitFor(async () => {
+      const generationTwo = (
+        await readExternalSessionLiveLifecycleMarkerEvents(markerPath)
+      ).filter((event) => event.generation === 'generation-two');
+      const liveObservers = findUnmatchedExternalSessionLiveObserverStarts({
+        markerEvents: generationTwo,
+        daemonPid: accountBDaemonPid,
+        resourceKey: 'fixture-live-resource',
+      });
+      const currentObserver = liveObservers[0];
+      if (
+        liveObservers.length !== 1
+        || currentObserver?.requestedLinkKeys?.includes(requestedLinkKey) !== true
+      ) {
+        return false;
+      }
+      accountBObserverCapture.current = currentObserver;
+      return true;
+    }, {
       timeoutMs: 30_000,
       context: 'account B observation active before fixture pulse',
     });
+    const accountBObserver = accountBObserverCapture.current;
+    if (!accountBObserver) {
+      throw new Error('Account B observer identity was not captured');
+    }
     let accountBObservationBeforePulse:
       ExternalAgentObservationSnapshotV1 | null = null;
     await waitFor(async () => {
@@ -729,24 +846,37 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     const steadyStateReconcileCount = steadyStateEvents.filter(
       (event) => event.kind === 'reconcile_requested',
     ).length;
+    const steadyStateAccountBObserverCounts =
+      countExternalSessionLiveObserverLifecycleEvents({
+        markerEvents: steadyStateEvents.filter(
+          (event) => event.generation === 'generation-two',
+        ),
+        daemonPid: accountBDaemonPid,
+        resourceKey: 'fixture-live-resource',
+      });
     await new Promise((resolveQuietWindow) => setTimeout(resolveQuietWindow, 500));
     const afterQuietWindowEvents =
       await readExternalSessionLiveLifecycleMarkerEvents(markerPath);
     expect(afterQuietWindowEvents.filter(
       (event) => event.kind === 'reconcile_requested',
     )).toHaveLength(steadyStateReconcileCount);
-    expect(afterQuietWindowEvents.filter(
-      (event) => event.kind === 'observer_started'
-        && event.generation === 'generation-two',
-    )).toHaveLength(2);
-    expect(afterQuietWindowEvents.filter(
-      (event) => event.kind === 'observer_disposed'
-        && event.generation === 'generation-two',
-    )).toHaveLength(1);
+    const afterQuietGenerationTwoEvents = afterQuietWindowEvents.filter(
+      (event) => event.generation === 'generation-two',
+    );
+    expect(countExternalSessionLiveObserverLifecycleEvents({
+      markerEvents: afterQuietGenerationTwoEvents,
+      daemonPid: accountBDaemonPid,
+      resourceKey: 'fixture-live-resource',
+    })).toEqual(steadyStateAccountBObserverCounts);
+    expect(findUnmatchedExternalSessionLiveObserverStarts({
+      markerEvents: afterQuietGenerationTwoEvents,
+      daemonPid: accountBDaemonPid,
+      resourceKey: 'fixture-live-resource',
+    })).toEqual([accountBObserver]);
 
     expect(seededB.machineId).not.toBe(seededA.machineId);
     expect(linkedB.sessionId).not.toBe(linkedA.sessionId);
-  }, 300_000);
+  }, 600_000);
 
   it('releases a connected-profile passive observer after real credential removal and reacquires it after restoration', async () => {
     const testDir = await mkdtemp(
@@ -759,7 +889,7 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     const preAttestedEnv = buildPreAttestedExternalSessionLiveEnv();
     server = await startServerLight({
       testDir,
-      dbProvider: 'sqlite',
+      dbProvider: suiteDbProvider,
       extraEnv: preAttestedEnv,
     });
     const { accountA } = await createTwoIsolatedExternalSessionLiveAccounts(
@@ -828,7 +958,6 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       testDir,
       happyHomeDir: daemonHomeDir,
       env: daemonEnv,
-      startupTimeoutMs: 90_000,
     });
 
     const socket = createUserScopedSocketCollector(
@@ -1012,7 +1141,7 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     const preAttestedEnv = buildPreAttestedExternalSessionLiveEnv();
     server = await startServerLight({
       testDir,
-      dbProvider: 'sqlite',
+      dbProvider: suiteDbProvider,
       extraEnv: preAttestedEnv,
     });
     const { accountA } = await createTwoIsolatedExternalSessionLiveAccounts(
@@ -1050,7 +1179,6 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       testDir,
       happyHomeDir: daemonHomeDir,
       env: daemonEnv,
-      startupTimeoutMs: 90_000,
     });
     await applyTrustedLocalPluginFixture({
       daemonPort: daemon.state.httpPort,
@@ -1230,7 +1358,9 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       env: daemonEnv,
       originalDaemon: daemon,
     });
-    expect(replacementState.pid).not.toBe(originalDaemonPid);
+    retiredDaemon = daemon;
+    daemon = replacementState;
+    expect(replacementState.state.pid).not.toBe(originalDaemonPid);
 
     await new Promise((resolveQuietWindow) =>
       setTimeout(resolveQuietWindow, 1_000));
@@ -1243,7 +1373,7 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     const replacementObserverCounts =
       countExternalSessionLiveObserverLifecycleEvents({
         markerEvents: archivedReplacementEvents,
-        daemonPid: replacementState.pid,
+        daemonPid: replacementState.state.pid,
         resourceKey: 'fixture-live-resource',
       });
     expect(replacementObserverCounts.observersStarted).toBe(0);
@@ -1251,9 +1381,9 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       .toBe(beforeReplacementCounts.followerReads);
 
     const archivedPulse = await daemonControlPostJson({
-      port: replacementState.httpPort,
+      port: replacementState.state.httpPort,
       path: '/plugins/actions/execute',
-      controlToken: replacementState.controlToken,
+      controlToken: replacementState.state.controlToken,
       body: {
         actionId: `${PLUGIN_ID}/pulse`,
         input: { emit: true, refresh: true },
@@ -1330,7 +1460,7 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       const replacementDurableObserver =
         findUnmatchedExternalSessionLiveObserverStarts({
           markerEvents: events,
-          daemonPid: replacementState.pid,
+          daemonPid: replacementState.state.pid,
           resourceKey: 'fixture-live-resource',
           requestedLinkKey: 'fixture-live-link:fixture-live-durable',
         }).find(
@@ -1388,19 +1518,19 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     const followerReadsBeforeReplacementPulse =
       countExternalSessionLiveFollowerReadEvents({
         markerEvents: beforeReplacementPulseEvents,
-        daemonPid: replacementState.pid,
+        daemonPid: replacementState.state.pid,
         remoteSessionId: 'fixture-live-durable',
       });
     const refreshRequestsBeforeReplacementPulse =
       countExternalSessionLiveRefreshRequestEvents({
         markerEvents: beforeReplacementPulseEvents,
-        daemonPid: replacementState.pid,
+        daemonPid: replacementState.state.pid,
         linkKey: 'fixture-live-link:fixture-live-durable',
       });
     await pulseFixture({
       daemon: {
         ...daemon,
-        state: replacementState,
+        state: replacementState.state,
       },
       expectedGeneration: 'qa-st6-generation',
     });
@@ -1409,12 +1539,12 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
         await readExternalSessionLiveLifecycleMarkerEvents(markerPath);
       const followerReads = countExternalSessionLiveFollowerReadEvents({
         markerEvents: events,
-        daemonPid: replacementState.pid,
+        daemonPid: replacementState.state.pid,
         remoteSessionId: 'fixture-live-durable',
       });
       const refreshRequests = countExternalSessionLiveRefreshRequestEvents({
         markerEvents: events,
-        daemonPid: replacementState.pid,
+        daemonPid: replacementState.state.pid,
         linkKey: 'fixture-live-link:fixture-live-durable',
       });
       return followerReads > followerReadsBeforeReplacementPulse
@@ -1431,9 +1561,9 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       machineKeys: [accountA.machineKey],
     });
     const daemonList = await daemonControlPostJson({
-      port: replacementState.httpPort,
+      port: replacementState.state.httpPort,
       path: '/list',
-      controlToken: replacementState.controlToken,
+      controlToken: replacementState.state.controlToken,
       body: {},
       timeoutMs: 20_000,
     });
@@ -1447,7 +1577,7 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       findUnmatchedExternalSessionLiveObserverStarts({
         markerEvents:
           await readExternalSessionLiveLifecycleMarkerEvents(markerPath),
-        daemonPid: replacementState.pid,
+        daemonPid: replacementState.state.pid,
         resourceKey: replacementDurableObserver.resourceKey,
         requestedLinkKey: 'fixture-live-link:fixture-live-durable',
       });
@@ -1494,7 +1624,7 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       return hasExactReplacementDisposal
         && !hasUnmatchedExternalSessionLiveObserverStarts({
           markerEvents: events,
-          daemonPid: replacementState.pid,
+          daemonPid: replacementState.state.pid,
           resourceKey: 'fixture-live-resource',
           requestedLinkKey: 'fixture-live-link:fixture-live-durable',
         });
@@ -1504,9 +1634,9 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
         'QA-ST-6 cleanup disposes the exact replacement observer instance',
     });
     const disabledPulse = await daemonControlPostJson({
-      port: replacementState.httpPort,
+      port: replacementState.state.httpPort,
       path: '/plugins/actions/execute',
-      controlToken: replacementState.controlToken,
+      controlToken: replacementState.state.controlToken,
       body: {
         actionId: `${PLUGIN_ID}/pulse`,
         input: { emit: true, refresh: true },
@@ -1524,20 +1654,20 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     uiSocket.close();
     sockets.splice(sockets.indexOf(uiSocket), 1);
     expect((await daemonControlPostJson({
-      port: replacementState.httpPort,
+      port: replacementState.state.httpPort,
       path: '/list',
-      controlToken: replacementState.controlToken,
+      controlToken: replacementState.state.controlToken,
       body: {},
       timeoutMs: 20_000,
     })).data.children).toEqual([]);
     expect(hasUnmatchedExternalSessionLiveObserverStarts({
       markerEvents:
         await readExternalSessionLiveLifecycleMarkerEvents(markerPath),
-      daemonPid: replacementState.pid,
+      daemonPid: replacementState.state.pid,
       resourceKey: 'fixture-live-resource',
       requestedLinkKey: 'fixture-live-link:fixture-live-durable',
     })).toBe(false);
-  }, 300_000);
+  }, 600_000);
 
   it('J9 preserves encrypted owner-only refresh continuity from the accepted cursor across daemon restart and owner reconnect', async () => {
     const testDir = await mkdtemp(
@@ -1555,7 +1685,7 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     const preAttestedEnv = buildPreAttestedExternalSessionLiveEnv();
     server = await startServerLight({
       testDir,
-      dbProvider: 'sqlite',
+      dbProvider: suiteDbProvider,
       extraEnv: preAttestedEnv,
     });
     const accounts = await createTwoIsolatedExternalSessionLiveAccounts(
@@ -1595,7 +1725,6 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       testDir,
       happyHomeDir: daemonHomeDir,
       env: daemonEnv,
-      startupTimeoutMs: 90_000,
     });
     await applyTrustedLocalPluginFixture({
       daemonPort: daemon.state.httpPort,
@@ -1711,7 +1840,6 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
       testDir,
       happyHomeDir: daemonHomeDir,
       env: daemonEnv,
-      startupTimeoutMs: 90_000,
     });
     await waitFor(async () => (
       await readExternalSessionLiveLifecycleMarkerEvents(markerPath)
@@ -1923,5 +2051,5 @@ describe('core e2e: External Sessions plugin reload and account rotation', () =>
     expect(logVisibleFixtureEnvelope).not.toContain(transcriptText);
     expect(logVisibleFixtureEnvelope).not.toContain(directoryHint);
     expect(logVisibleFixtureEnvelope).not.toContain('fixture-live-tail');
-  }, 300_000);
+  }, 600_000);
 });

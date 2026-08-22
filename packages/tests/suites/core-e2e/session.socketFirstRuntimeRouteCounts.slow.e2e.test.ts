@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import {
   startTestDaemon,
@@ -204,8 +204,8 @@ describe('core e2e: socket-first runtime route counts', () => {
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: proxy.baseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: proxy.baseUrl, auth, mode: 'legacy' });
 
     const sessionIds: string[] = [];
     for (let index = 0; index < 6; index += 1) {

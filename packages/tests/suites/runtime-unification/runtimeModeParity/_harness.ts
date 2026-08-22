@@ -1,8 +1,15 @@
 import { applyTerminalRemoteLaunchGating } from '../../../../../apps/cli/src/agent/runtime/mode/switching/launchGating';
 import { resolvePendingQueueHandoff } from '../../../../../apps/cli/src/agent/runtime/mode/switching/pendingQueueHandoffOrchestrator';
 import { resolveTerminalRemoteSwitchRequestTarget } from '../../../../../apps/cli/src/agent/runtime/mode/switching/switchTarget';
-import { createRuntimeModeChangeEvent, type RuntimeMode, type RuntimeModeSwitchReason } from './_capture';
 import { normalizeRuntimeModeParitySnapshot, type NormalizedRuntimeModeParitySnapshot } from './_normalize';
+
+export type RuntimeMode = 'terminal' | 'remote';
+export type RuntimeModeSwitchReason =
+  | 'user_request'
+  | 'incoming_ui_message'
+  | 'terminal_unavailable'
+  | 'remote_takeover'
+  | 'host_recovery';
 
 type BackendId = 'codex' | 'claude';
 type TerminalRemoteStartingMode = 'local' | 'remote';
@@ -69,7 +76,6 @@ export type RuntimeModeParityCapture = Readonly<{
       canDetach: boolean;
     }>;
   }>;
-  runtimeEvents: readonly ReturnType<typeof createRuntimeModeChangeEvent>[];
 }>;
 
 function resolveQueueOutcome(actionType: string): RuntimeModeParityCapture['queueOutcome'] {
@@ -136,16 +142,6 @@ export function captureOrchestratorPath(scenario: RuntimeModeParityScenario): Ru
     pendingQueue,
     queueOutcome: resolveQueueOutcome(pendingQueue.action.type),
     agentStateRuntimeSlice: createAgentStateRuntimeSlice(scenario.to),
-    runtimeEvents: [
-      createRuntimeModeChangeEvent({
-        sessionId: scenario.sessionId,
-        emittedAtMs: scenario.nowMs + 1,
-        from: scenario.from,
-        to: scenario.to,
-        reason: scenario.reason,
-        providerSessionId: scenario.providerSessionId,
-      }),
-    ],
   };
 }
 

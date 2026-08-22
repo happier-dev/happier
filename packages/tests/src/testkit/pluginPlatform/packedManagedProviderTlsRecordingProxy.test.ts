@@ -15,21 +15,10 @@ import { describe, expect, it } from 'vitest';
 import {
   startPackedManagedProviderTlsRecordingProxy,
 } from '../../plugin-platform/packedManagedProviderComposedRuntime';
-import {
-  MANAGED_PROVIDER_IMPLEMENTATION,
-} from '../../../../plugins/cliproxyapi/src/managed';
 
 describe('packed managed Provider decrypted upstream observer', () => {
   it('records the exact prompt and Authorization fingerprint after CONNECT and TLS', async () => {
-    const managedOpenAiUse =
-      MANAGED_PROVIDER_IMPLEMENTATION.facet.requestAuthUses.find(
-        (use) => use.purpose === 'openai-upstream',
-      );
-    expect(managedOpenAiUse?.materialization.origin)
-      .toBe('https://chatgpt.com');
-    const managedOrigin = new URL(
-      managedOpenAiUse?.materialization.origin ?? '',
-    );
+    const managedOrigin = new URL('https://chatgpt.com');
     const managedConnectTarget =
       `${managedOrigin.hostname}:${managedOrigin.port || '443'}`;
     const observer = await startPackedManagedProviderTlsRecordingProxy();
@@ -139,7 +128,7 @@ describe('packed managed Provider decrypted upstream observer', () => {
     };
 
     try {
-      const sentinel = 'packed-managed-held-after-lease:test-boundary';
+      const sentinel = 'packed-managed-held-upstream:test-boundary';
       const hold = observer.holdNextRequestBodyContaining(sentinel);
       const heldSocket = await connectObserver();
       const heldResponse = sendRequest(

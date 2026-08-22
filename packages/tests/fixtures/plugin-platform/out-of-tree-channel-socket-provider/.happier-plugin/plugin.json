@@ -1,0 +1,2516 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.channels.out-of-tree-socket",
+  "version": "1.0.0",
+  "displayName": "External socket channel fixture",
+  "description": "Public-only out-of-tree provider fixture for Conversation Channels.",
+  "engines": {
+    "happier": ">=0.0.0 <1.0.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./src/index.mjs"
+  },
+  "brand": {
+    "iconResourceId": "brand-icon"
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "hostAccess": {
+    "required": [
+      {
+        "id": "fixture-network-client",
+        "capability": "network.client",
+        "reason": "Receive deterministic socket frames through the host-vended WebSocket client.",
+        "scope": {
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://channels-fixture.invalid"
+            }
+          ],
+          "transports": [
+            "websocket"
+          ],
+          "privateNetwork": false
+        }
+      }
+    ],
+    "optional": []
+  },
+  "contributes": {
+    "actions": [
+      {
+        "title": "Set up external socket channel",
+        "description": "Pair the deterministic fixture socket and create a Channel connection.",
+        "inputHints": {
+          "title": "Pair external socket",
+          "description": "Provide the fixture endpoint and one-time pairing code.",
+          "submitLabel": "Pair",
+          "fields": [
+            {
+              "path": "socketUrl",
+              "title": "Socket URL",
+              "placeholder": "wss://channels-fixture.invalid/socket",
+              "widget": "url",
+              "required": true
+            },
+            {
+              "path": "pairingCode",
+              "title": "Pairing code",
+              "widget": "secret",
+              "required": true
+            }
+          ]
+        },
+        "hostAccess": [
+          "fixture-network-client"
+        ],
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "socketUrl": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "pairingCode": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "socketUrl",
+            "pairingCode"
+          ]
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "v": {
+                  "const": 1
+                },
+                "credentialRef": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "service": {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 256,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                            },
+                            "localId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "accountId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "providerConnectionKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 512
+                },
+                "providerConfigVersion": {
+                  "const": 1
+                },
+                "providerConfig": {
+                  "x-happier-max-serialized-utf8-bytes": 49152
+                },
+                "integrationPrincipal": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                "supportedTransports": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "const": "checkpointedPull"
+                      },
+                      {
+                        "const": "socket"
+                      },
+                      {
+                        "const": "durablePush"
+                      }
+                    ]
+                  },
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "uniqueItems": true
+                },
+                "recommendedTransport": {
+                  "anyOf": [
+                    {
+                      "const": "checkpointedPull"
+                    },
+                    {
+                      "const": "socket"
+                    },
+                    {
+                      "const": "durablePush"
+                    }
+                  ]
+                },
+                "overlapSafety": {
+                  "anyOf": [
+                    {
+                      "const": "safe"
+                    },
+                    {
+                      "const": "providerExclusive"
+                    },
+                    {
+                      "const": "destructive"
+                    }
+                  ]
+                },
+                "replayContinuity": {
+                  "anyOf": [
+                    {
+                      "const": "checkpointed"
+                    },
+                    {
+                      "const": "sessionBound"
+                    },
+                    {
+                      "const": "none"
+                    }
+                  ]
+                },
+                "outboundTextLimit": {
+                  "type": "object",
+                  "properties": {
+                    "maximum": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "unit": {
+                      "anyOf": [
+                        {
+                          "const": "utf8Bytes"
+                        },
+                        {
+                          "const": "utf16CodeUnits"
+                        },
+                        {
+                          "const": "unicodeCodePoints"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "maximum",
+                    "unit"
+                  ],
+                  "additionalProperties": false
+                },
+                "pairingDeepLinkTemplate": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?:(?!\\{\\{token\\}\\})[\\s\\S])*\\{\\{token\\}\\}(?:(?!\\{\\{token\\}\\})[\\s\\S])*$",
+                  "x-happier-max-utf8-bytes": 2048
+                },
+                "webhookContributionRef": {
+                  "type": "object",
+                  "properties": {
+                    "pluginId": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 256,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                    },
+                    "localId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "v",
+                "credentialRef",
+                "providerConnectionKey",
+                "providerConfigVersion",
+                "providerConfig",
+                "integrationPrincipal",
+                "supportedTransports",
+                "recommendedTransport",
+                "overlapSafety",
+                "replayContinuity",
+                "outboundTextLimit"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "requiresRemediation"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "dangerLevel": "safe",
+        "id": "fixture/setup"
+      },
+      {
+        "title": "Test external socket channel",
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "connectionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[\\x21-\\x7E]+$"
+            },
+            "providerConnectionKey": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 512
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "type": "object",
+                      "properties": {
+                        "pluginId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 256,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                        },
+                        "localId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "selectedTransport": {
+              "anyOf": [
+                {
+                  "const": "checkpointedPull"
+                },
+                {
+                  "const": "socket"
+                },
+                {
+                  "const": "durablePush"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "selectedTransport"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "ready"
+                },
+                "integrationPrincipal": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                "providerConnectionKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 512
+                }
+              },
+              "required": [
+                "kind",
+                "integrationPrincipal",
+                "providerConnectionKey"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 86400000
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 1024
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "dangerLevel": "safe",
+        "id": "fixture/test"
+      },
+      {
+        "title": "Resolve fixture endpoints",
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "connectionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[\\x21-\\x7E]+$"
+            },
+            "providerConnectionKey": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 512
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "type": "object",
+                      "properties": {
+                        "pluginId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 256,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                        },
+                        "localId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 2048
+            },
+            "kinds": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "direct"
+                  },
+                  {
+                    "const": "shared"
+                  },
+                  {
+                    "const": "thread"
+                  },
+                  {
+                    "const": "githubIssue"
+                  },
+                  {
+                    "const": "githubPullRequest"
+                  }
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 5,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "query"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "resolved"
+                },
+                "candidates": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "direct"
+                          },
+                          "audience": {
+                            "const": "direct"
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "parentLabel": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "shared"
+                          },
+                          "audience": {
+                            "const": "shared"
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "parentLabel": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "thread"
+                          },
+                          "audience": {
+                            "anyOf": [
+                              {
+                                "const": "direct"
+                              },
+                              {
+                                "const": "shared"
+                              }
+                            ]
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "parentLabel": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "githubIssue"
+                          },
+                          "audience": {
+                            "const": "shared"
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "parentLabel": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "githubPullRequest"
+                          },
+                          "audience": {
+                            "const": "shared"
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "parentLabel": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "maxItems": 50,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "kind",
+                "candidates"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 86400000
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 1024
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "dangerLevel": "safe",
+        "id": "fixture/endpoint"
+      },
+      {
+        "title": "Resolve fixture principals",
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "connectionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[\\x21-\\x7E]+$"
+            },
+            "providerConnectionKey": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 512
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "type": "object",
+                      "properties": {
+                        "pluginId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 256,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                        },
+                        "localId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "direct"
+                    },
+                    "audience": {
+                      "const": "direct"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "shared"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "thread"
+                    },
+                    "audience": {
+                      "anyOf": [
+                        {
+                          "const": "direct"
+                        },
+                        {
+                          "const": "shared"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "githubIssue"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "githubPullRequest"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 2048
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "endpoint",
+            "query"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "resolved"
+                },
+                "candidates": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "x-happier-max-utf8-bytes": 512
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "kind": {
+                        "anyOf": [
+                          {
+                            "const": "human"
+                          },
+                          {
+                            "const": "integration"
+                          },
+                          {
+                            "const": "bot"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "maxItems": 50,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "kind",
+                "candidates"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 86400000
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 1024
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "dangerLevel": "safe",
+        "id": "fixture/principal"
+      },
+      {
+        "title": "Stop external socket channel",
+        "confirmation": {
+          "title": "Stop external socket channel"
+        },
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "connectionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[\\x21-\\x7E]+$"
+            },
+            "providerConnectionKey": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 512
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "type": "object",
+                      "properties": {
+                        "pluginId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 256,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                        },
+                        "localId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "authorityEpoch": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "const": "disable"
+                },
+                {
+                  "const": "delete"
+                },
+                {
+                  "const": "transfer"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "authorityEpoch",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "anyOf": [
+                    {
+                      "const": "stopped"
+                    },
+                    {
+                      "const": "notRunning"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "pending"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 86400000
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 1024
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "dangerLevel": "writesRemote",
+        "id": "fixture/stop"
+      },
+      {
+        "title": "Deliver a fixture message",
+        "confirmation": {
+          "title": "Deliver fixture message"
+        },
+        "hostAccess": [
+          "fixture-network-client"
+        ],
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "connectionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[\\x21-\\x7E]+$"
+            },
+            "providerConnectionKey": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 512
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "type": "object",
+                      "properties": {
+                        "pluginId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 256,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                        },
+                        "localId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "direct"
+                    },
+                    "audience": {
+                      "const": "direct"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "shared"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "thread"
+                    },
+                    "audience": {
+                      "anyOf": [
+                        {
+                          "const": "direct"
+                        },
+                        {
+                          "const": "shared"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "githubIssue"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "githubPullRequest"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 196608
+            },
+            "deliveryKey": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 256
+            },
+            "replyContext": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "replyToMessageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    }
+                  },
+                  "required": [
+                    "replyToMessageId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "threadId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    }
+                  },
+                  "required": [
+                    "threadId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "replyToMessageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "threadId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    }
+                  },
+                  "required": [
+                    "replyToMessageId",
+                    "threadId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "mentionPolicy": {
+              "const": "suppress"
+            },
+            "linkPreviewPolicy": {
+              "anyOf": [
+                {
+                  "const": "suppress"
+                },
+                {
+                  "const": "providerDefault"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "endpoint",
+            "content",
+            "deliveryKey",
+            "mentionPolicy",
+            "linkPreviewPolicy"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "delivered"
+                },
+                "providerMessageIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32
+                }
+              },
+              "required": [
+                "kind",
+                "providerMessageIds"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "partial"
+                },
+                "providerMessageIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32
+                },
+                "failedChunk": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 32
+                },
+                "retrySafe": {
+                  "const": false
+                }
+              },
+              "required": [
+                "kind",
+                "providerMessageIds",
+                "failedChunk",
+                "retrySafe"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "notDelivered"
+                },
+                "retry": {
+                  "anyOf": [
+                    {
+                      "const": "safe"
+                    },
+                    {
+                      "const": "after"
+                    },
+                    {
+                      "const": "never"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 86400000
+                }
+              },
+              "required": [
+                "kind",
+                "retry"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "endpointArchived"
+                },
+                "recovery": {
+                  "anyOf": [
+                    {
+                      "const": "unarchiveAndRetry"
+                    },
+                    {
+                      "const": "ownerMustUnarchiveOrRebind"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "recovery"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "outcomeUnknown"
+                },
+                "providerMessageIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "dangerLevel": "writesRemote",
+        "id": "fixture/deliver"
+      },
+      {
+        "title": "Reconcile fixture message delivery",
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "connectionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[\\x21-\\x7E]+$"
+            },
+            "providerConnectionKey": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 512
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "type": "object",
+                      "properties": {
+                        "pluginId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 256,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                        },
+                        "localId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "direct"
+                    },
+                    "audience": {
+                      "const": "direct"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "shared"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "thread"
+                    },
+                    "audience": {
+                      "anyOf": [
+                        {
+                          "const": "direct"
+                        },
+                        {
+                          "const": "shared"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "githubIssue"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "githubPullRequest"
+                    },
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parentLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "deliveryKey": {
+              "type": "string",
+              "minLength": 1,
+              "x-happier-max-utf8-bytes": 256
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "endpoint",
+            "deliveryKey"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "delivered"
+                },
+                "providerMessageIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32
+                }
+              },
+              "required": [
+                "kind",
+                "providerMessageIds"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "partial"
+                },
+                "providerMessageIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32
+                },
+                "failedChunk": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 32
+                },
+                "retrySafe": {
+                  "const": false
+                }
+              },
+              "required": [
+                "kind",
+                "providerMessageIds",
+                "failedChunk",
+                "retrySafe"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "notDelivered"
+                },
+                "retry": {
+                  "anyOf": [
+                    {
+                      "const": "safe"
+                    },
+                    {
+                      "const": "after"
+                    },
+                    {
+                      "const": "never"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 86400000
+                }
+              },
+              "required": [
+                "kind",
+                "retry"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "endpointArchived"
+                },
+                "recovery": {
+                  "anyOf": [
+                    {
+                      "const": "unarchiveAndRetry"
+                    },
+                    {
+                      "const": "ownerMustUnarchiveOrRebind"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "recovery"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "outcomeUnknown"
+                },
+                "providerMessageIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "dangerLevel": "safe",
+        "id": "fixture/reconcile"
+      }
+    ],
+    "backgroundServices": [
+      {
+        "id": "socket-observer",
+        "title": "Fixture socket observer"
+      }
+    ],
+    "resources": [
+      {
+        "kind": "asset",
+        "path": "assets/brand.png",
+        "contentType": "image/png",
+        "id": "brand-icon"
+      },
+      {
+        "source": "dynamic",
+        "kind": "config",
+        "contentType": "application/json",
+        "scope": "global",
+        "maxBytes": 16384,
+        "id": "status-v1"
+      }
+    ],
+    "targetedPluginContributions": [
+      {
+        "protocol": {
+          "id": "happier.channels/providers",
+          "version": 1
+        },
+        "operations": {
+          "setup": "fixture/setup",
+          "connectionTest": "fixture/test",
+          "endpointResolve": "fixture/endpoint",
+          "principalResolve": "fixture/principal",
+          "messageDeliver": "fixture/deliver",
+          "deliveryReconcile": "fixture/reconcile",
+          "connectionStop": "fixture/stop"
+        },
+        "id": "fixture-socket",
+        "target": {
+          "pluginId": "happier.channels",
+          "pointId": "providers"
+        }
+      }
+    ]
+  }
+}

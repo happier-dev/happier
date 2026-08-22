@@ -3,11 +3,22 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import {
+  createServerUrlComparableKey,
+  deriveAccountMachineKeyFromRecoverySecret,
+} from '@happier-dev/protocol';
+import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { TestAuth } from './auth';
 import { readCliAccessKey } from './cliAccessKey';
-import { seedCliAuthForServer, seedCliDataKeyAuthForServer } from './cliAuth';
+import {
+  buildTestAccountCliAuthCredentials,
+  seedCliAuthForServer,
+  seedCliAuthForTestAccount,
+  seedCliDataKeyAuthForServer,
+  type TestAccountCliAuthMode,
+} from './cliAuth';
 
 function deriveExpectedServerId(url: string): string {
   const value = createServerUrlComparableKey(url) || url;
@@ -101,6 +112,9 @@ describe('seedCliDataKeyAuthForServer', () => {
         replacementReason: 'reauth',
       },
     });
+    expect(seeded.publicKey).toEqual(Uint8Array.from(
+      tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey,
+    ));
 
     const settings = JSON.parse(await readFile(join(cliHome, 'settings.json'), 'utf8')) as {
       machineReplacementCandidatesByServerIdByAccountId?: Record<string, Record<string, unknown>>;
@@ -108,6 +122,90 @@ describe('seedCliDataKeyAuthForServer', () => {
     expect(settings.machineReplacementCandidatesByServerIdByAccountId?.[seeded.serverId]?.[accountId]).toMatchObject({
       machineId: oldMachineId,
       replacementReason: 'reauth',
+    });
+  });
+});
+
+describe('seedCliAuthForTestAccount', () => {
+  const tempDirs: string[] = [];
+  const accountSigningSeed = new Uint8Array(32).fill(0x31);
+  const auth: TestAuth = {
+    token: 'token-account-coherent',
+    publicKeyBase64: 'unused-by-cli-auth-seeding',
+    accountSigningSeed,
+    accountMachineKey: deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed),
+  };
+
+  afterEach(async () => {
+    await Promise.all(tempDirs.map(async (dir) => await rm(dir, { recursive: true, force: true })));
+    tempDirs.length = 0;
+  });
+
+  async function seedAndRead(mode: TestAccountCliAuthMode): Promise<Record<string, unknown>> {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-tests-cli-account-auth-'));
+    tempDirs.push(cliHome);
+    await seedCliAuthForTestAccount({
+      cliHome,
+      serverUrl: 'http://127.0.0.1:34567',
+      auth,
+      mode,
+    });
+    return JSON.parse(await readFile(join(cliHome, 'access.key'), 'utf8')) as Record<string, unknown>;
+  }
+
+  it('writes the exact legacy credential shape with the Account signing seed', async () => {
+    await expect(seedAndRead('legacy')).resolves.toEqual({
+      token: auth.token,
+      secret: Buffer.from(auth.accountSigningSeed).toString('base64'),
+    });
+  });
+
+  it('writes the exact data-key credential shape with the Account content-binding key', async () => {
+    const contentPublicKey = tweetnacl.box.keyPair.fromSecretKey(
+      auth.accountMachineKey,
+    ).publicKey;
+    await expect(seedAndRead('dataKey')).resolves.toEqual({
+      token: auth.token,
+      encryption: {
+        publicKey: Buffer.from(contentPublicKey).toString('base64'),
+        machineKey: Buffer.from(auth.accountMachineKey).toString('base64'),
+      },
+    });
+  });
+
+  it('writes a genuinely keyless token-only credential shape', async () => {
+    await expect(seedAndRead('tokenOnly')).resolves.toEqual({
+      token: auth.token,
+    });
+  });
+});
+
+describe('buildTestAccountCliAuthCredentials', () => {
+  const accountSigningSeed = new Uint8Array(32).fill(0x41);
+  const auth: TestAuth = {
+    token: 'token-owned-by-test-auth',
+    publicKeyBase64: 'unused-by-credential-builder',
+    accountSigningSeed,
+    accountMachineKey: deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed),
+  };
+
+  it('builds every supported persisted credential shape from one TestAuth account', () => {
+    const contentPublicKey = tweetnacl.box.keyPair.fromSecretKey(
+      auth.accountMachineKey,
+    ).publicKey;
+    expect(buildTestAccountCliAuthCredentials({ auth, mode: 'legacy' })).toEqual({
+      token: auth.token,
+      secret: Buffer.from(auth.accountSigningSeed).toString('base64'),
+    });
+    expect(buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' })).toEqual({
+      token: auth.token,
+      encryption: {
+        publicKey: Buffer.from(contentPublicKey).toString('base64'),
+        machineKey: Buffer.from(auth.accountMachineKey).toString('base64'),
+      },
+    });
+    expect(buildTestAccountCliAuthCredentials({ auth, mode: 'tokenOnly' })).toEqual({
+      token: auth.token,
     });
   });
 });

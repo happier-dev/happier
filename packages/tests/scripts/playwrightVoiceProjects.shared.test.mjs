@@ -26,12 +26,18 @@ test('voice browser projects prove distinct input, permission, and output layers
   assert.ok(fakeMic.use.launchOptions.args.includes('--use-fake-ui-for-media-stream'));
   assert.ok(fakeMic.use.launchOptions.args.includes('--use-fake-device-for-media-stream'));
   assert.ok(fakeMic.use.launchOptions.args.includes(`--use-file-for-fake-audio-capture=${fixturePath}`));
+  assert.ok(fakeMic.use.launchOptions.args.includes(
+    '--disable-features=AudioServiceOutOfProcess,AudioServiceSandbox',
+  ));
   assert.ok(!fakeMic.use.launchOptions.args.includes('--mute-audio'));
 
   const deniedPermissions = projects[1];
   assert.deepEqual(deniedPermissions.use.permissions, []);
   assert.ok(!deniedPermissions.use.launchOptions.args.includes('--use-fake-ui-for-media-stream'));
   assert.ok(deniedPermissions.use.launchOptions.args.includes('--use-fake-device-for-media-stream'));
+  assert.ok(!deniedPermissions.use.launchOptions.args.includes(
+    '--disable-features=AudioServiceOutOfProcess,AudioServiceSandbox',
+  ));
   assert.ok(!deniedPermissions.use.launchOptions.args.some((arg) => arg.startsWith('--use-file-for-fake-audio-capture=')));
   assert.match('explicit denial', deniedPermissions.grep);
   assert.doesNotMatch('explicit grant', deniedPermissions.grep);
@@ -41,6 +47,9 @@ test('voice browser projects prove distinct input, permission, and output layers
   assert.deepEqual(grantedPermissions.use.permissions, []);
   assert.ok(grantedPermissions.use.launchOptions.args.includes('--use-fake-ui-for-media-stream'));
   assert.ok(grantedPermissions.use.launchOptions.args.includes('--use-fake-device-for-media-stream'));
+  assert.ok(!grantedPermissions.use.launchOptions.args.includes(
+    '--disable-features=AudioServiceOutOfProcess,AudioServiceSandbox',
+  ));
   assert.ok(!grantedPermissions.use.launchOptions.args.some((arg) => arg.startsWith('--use-file-for-fake-audio-capture=')));
   assert.match('explicit grant', grantedPermissions.grep);
   assert.doesNotMatch('explicit denial', grantedPermissions.grep);
@@ -49,6 +58,9 @@ test('voice browser projects prove distinct input, permission, and output layers
   const output = projects[3];
   assert.deepEqual(output.use.permissions, ['microphone']);
   assert.ok(output.use.launchOptions.args.includes(`--use-file-for-fake-audio-capture=${fixturePath}`));
+  assert.ok(output.use.launchOptions.args.includes(
+    '--disable-features=AudioServiceOutOfProcess,AudioServiceSandbox',
+  ));
   assert.ok(!output.use.launchOptions.args.includes('--mute-audio'));
   assert.equal(output.metadata.happierVoiceOutputCapture, true);
 });

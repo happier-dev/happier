@@ -17,7 +17,7 @@ import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { repoRootDir } from '../../src/testkit/paths';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -135,7 +135,7 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       { path: workspaceDir, host: 'e2e', name: 'claude-taskoutput-sidechains', createdAt: Date.now() },

@@ -1,29 +1,34 @@
 import {
-  closeSync,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   statSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { cp } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, resolve } from 'node:path';
-import { clearInterval as clearNodeInterval, setInterval as setNodeInterval } from 'node:timers';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
+
+import {
+  resolveWorkspaceBundleLockPath,
+  withWorkspaceBundleLock,
+  type WorkspaceBundleLockContext,
+} from '@happier-dev/cli-common/workspaceBundleLock';
 
 import { repoRootDir } from '../paths';
 import { sleep } from '../timing';
 import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
 import { yarnCommand } from './commands';
 import { runLoggedCommand } from './spawnProcess';
+import {
+  resolvePackageBuildOutputTargetMatches,
+  resolvePackageBuildOutputTargetPath,
+} from '../../../../../scripts/workspaces/packageBuildOutputTargets.mjs';
 import {
   resolveCliSharedDepPackageNames,
   resolveCliBundledWorkspacePackageDir,
@@ -49,19 +54,10 @@ export function shouldSkipCliSharedDepsBuild(env: NodeJS.ProcessEnv): boolean {
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
 }
 
-type CliDistBuildLockOwner = {
-  pid: number | null;
-  createdAtMs: number | null;
-};
-
-type CliDistBuildLockSnapshot = {
-  exists: boolean;
-  raw: string | null;
-  owner: CliDistBuildLockOwner;
-};
-
 type CliDistBuildLockOptions = {
   lockPath?: string;
+  heldLockValue?: string;
+  env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   pollIntervalMs?: number;
   staleAfterMs?: number;
@@ -101,14 +97,6 @@ type EnsureCliDistBuiltOptions = CliDistBuildLockOptions & {
   }) => Promise<void>;
 };
 
-function unrefNodeTimer(timer: unknown): void {
-  if (typeof timer !== 'object' || timer === null || !('unref' in timer)) return;
-  const unref = timer.unref;
-  if (typeof unref === 'function') {
-    unref.call(timer);
-  }
-}
-
 type CliDistBuildInvocation = {
   command: string;
   args: string[];
@@ -118,118 +106,6 @@ type CliDistBuildInvocation = {
 type EnsureCliDistSnapshotOptions = EnsureCliDistBuiltOptions & {
   snapshotDir: string;
 };
-
-function describeCliDistBuildLockOwner(lockPath: string, nowMs: number): string {
-  try {
-    const owner = parseCliDistLockOwner(readFileSync(lockPath, 'utf8'));
-    const ownerPid = owner.pid ?? 'unknown';
-    const ownerAgeMs = owner.createdAtMs != null ? Math.max(0, nowMs - owner.createdAtMs) : 'unknown';
-    return `ownerPid=${ownerPid} ownerAgeMs=${ownerAgeMs}`;
-  } catch {
-    return 'ownerPid=unknown ownerAgeMs=unknown';
-  }
-}
-
-function isRunningPid(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: any) {
-    if (error?.code === 'ESRCH') return false;
-    return true;
-  }
-}
-
-function parseCliDistLockOwner(raw: string): CliDistBuildLockOwner {
-  const text = raw.trim();
-  if (!text) return { pid: null, createdAtMs: null };
-
-  if (/^\d+$/.test(text)) {
-    return { pid: Number.parseInt(text, 10), createdAtMs: null };
-  }
-
-  try {
-    const parsed = JSON.parse(text) as { pid?: unknown; createdAtMs?: unknown };
-    const pid = typeof parsed.pid === 'number' && Number.isFinite(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
-    const createdAtMs =
-      typeof parsed.createdAtMs === 'number' && Number.isFinite(parsed.createdAtMs) && parsed.createdAtMs > 0
-        ? parsed.createdAtMs
-        : null;
-    return { pid, createdAtMs };
-  } catch {
-    return { pid: null, createdAtMs: null };
-  }
-}
-
-function readCliDistBuildLockSnapshot(lockPath: string): CliDistBuildLockSnapshot {
-  try {
-    const raw = readFileSync(lockPath, 'utf8');
-    return { exists: true, raw, owner: parseCliDistLockOwner(raw) };
-  } catch {
-    return { exists: false, raw: null, owner: { pid: null, createdAtMs: null } };
-  }
-}
-
-function serializeCliDistLockOwner(createdAtMs: number): string {
-  return JSON.stringify({ pid: process.pid, createdAtMs });
-}
-
-function shouldReclaimCliDistBuildLockSnapshot(
-  snapshot: CliDistBuildLockSnapshot,
-  staleAfterMs: number,
-  nowMs: number,
-): boolean {
-  if (!snapshot.exists) return true;
-  const owner = snapshot.owner;
-  if (owner.pid == null && owner.createdAtMs == null) return true;
-  if (owner.pid != null) return !isRunningPid(owner.pid);
-  if (owner.createdAtMs != null && nowMs - owner.createdAtMs > staleAfterMs) return true;
-  return false;
-}
-
-function reclaimCliDistBuildLockSnapshot(lockPath: string, expectedRaw: string | null): boolean {
-  if (expectedRaw == null) return true;
-  const reclaimPath = `${lockPath}.reclaim-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  try {
-    renameSync(lockPath, reclaimPath);
-  } catch (error: any) {
-    if (error?.code === 'ENOENT') return true;
-    return false;
-  }
-
-  let movedRaw: string | null = null;
-  try {
-    movedRaw = readFileSync(reclaimPath, 'utf8');
-  } catch {
-    return false;
-  }
-
-  if (movedRaw === expectedRaw) {
-    try {
-      unlinkSync(reclaimPath);
-    } catch {
-      // ignore
-    }
-    return true;
-  }
-
-  try {
-    writeFileSync(lockPath, movedRaw, { encoding: 'utf8', flag: 'wx' });
-    unlinkSync(reclaimPath);
-  } catch {
-    // Another owner already has the lock path. Keep the quarantined file for diagnostics.
-  }
-  return false;
-}
-
-function isCliDistBuildLockOwnedBy(lockPath: string, expectedRaw: string | null): boolean {
-  if (expectedRaw == null) return false;
-  try {
-    return readFileSync(lockPath, 'utf8') === expectedRaw;
-  } catch {
-    return false;
-  }
-}
 
 function findMissingDistChunkImports(distDir: string): string[] {
   // Sanity check: ensure local chunk imports resolve to files that exist on disk.
@@ -339,7 +215,16 @@ function resolveWorkspacePackageExpectedOutputPaths(
   }
 
   if (distPaths.size === 0) distPaths.add('dist/index.js');
-  return [...distPaths].map((relPath) => resolve(packageDir, relPath));
+  const outputDir = resolve(packageDir, 'dist');
+  return [...distPaths].flatMap((target) => {
+    const matches = resolvePackageBuildOutputTargetMatches({
+      packageDir,
+      outputDir,
+      target,
+    });
+    if (matches.length > 0) return matches;
+    return [resolvePackageBuildOutputTargetPath({ packageDir, outputDir, target })];
+  });
 }
 
 function resolveCliBundledWorkspaceExpectedOutputPaths(rootDir: string, packageName: CliSharedDepPackageName): string[] {
@@ -351,23 +236,11 @@ function resolveCliBundledWorkspaceExpectedOutputPaths(rootDir: string, packageN
 }
 
 function resolveCliWorkspaceExpectedOutputPaths(rootDir: string, packageName: CliSharedDepPackageName): string[] {
-  const packageDir = resolveCliWorkspacePackageDir(rootDir, packageName);
-  const packageJsonPath = resolve(packageDir, 'package.json');
-  const distPaths = new Set<string>();
-
-  try {
-    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
-      main?: unknown;
-      exports?: unknown;
-    };
-    collectPackageJsonDistPaths(pkg.main, distPaths);
-    collectPackageJsonDistPaths(pkg.exports, distPaths);
-  } catch {
-    distPaths.add('dist/index.js');
-  }
-
-  if (distPaths.size === 0) distPaths.add('dist/index.js');
-  return [...distPaths].map((relPath) => resolve(packageDir, relPath));
+  return resolveWorkspacePackageExpectedOutputPaths(
+    rootDir,
+    packageName,
+    resolveCliWorkspacePackageDir(rootDir, packageName),
+  );
 }
 
 function isTypeScriptIncrementalMetadataPath(relativePath: string): boolean {
@@ -637,21 +510,8 @@ function resolveCliBackupDistDir(rootDir: string): string {
   return resolve(rootDir, 'apps', 'cli', '.dist.hstack-backup');
 }
 
-function resolveCanonicalSharedCliDistSnapshotDir(rootDir: string): string {
-  return resolve(rootDir, '.project', 'tmp', 'cli-dist-snapshot');
-}
-
-function resolveCliDistSnapshotLockPath(params: Readonly<{
-  rootDir: string;
-  snapshotDir: string;
-  defaultLockPath: string;
-}>): string {
-  const canonicalSharedSnapshotDir = resolveCanonicalSharedCliDistSnapshotDir(params.rootDir);
-  if (resolve(params.snapshotDir) === canonicalSharedSnapshotDir) {
-    return params.defaultLockPath;
-  }
-
-  return `${params.snapshotDir}.lock`;
+function resolveCliDistSnapshotLockPath(snapshotDir: string): string {
+  return `${snapshotDir}.lock`;
 }
 
 function resolveCliDistEntrypoint(dir: string): string {
@@ -1187,71 +1047,49 @@ export async function ensureCliSourceDevSharedDepsCurrent(
   });
 }
 
-export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: CliDistBuildLockOptions = {}): Promise<T> {
-  const lockPath = options.lockPath ?? resolve(repoRootDir(), '.project', 'tmp', 'cli-dist-build.lock');
-  mkdirSync(dirname(lockPath), { recursive: true });
+export async function ensureCliBundledPluginProjectionsCurrent(
+  params: { testDir: string; env: NodeJS.ProcessEnv },
+  options: Pick<EnsureCliSharedDepsBuiltOptions, 'repoRoot' | 'runCommand' | 'buildTimeoutMs'> = {},
+): Promise<void> {
+  mkdirSync(params.testDir, { recursive: true });
+  const rootDir = options.repoRoot ?? repoRootDir();
+  const runCommand = options.runCommand ?? runLoggedCommand;
+  await runCommand({
+    command: process.execPath,
+    args: [
+      '--experimental-strip-types',
+      resolve(rootDir, 'scripts', 'migrations', 'extensions', 'generateBundledPluginEntries.ts'),
+      '--root',
+      rootDir,
+      '--mode',
+      'check',
+    ],
+    cwd: rootDir,
+    env: { ...process.env, ...params.env, CI: '1' },
+    stdoutPath: resolve(params.testDir, 'cli.bundledPluginProjectionsCheck.stdout.log'),
+    stderrPath: resolve(params.testDir, 'cli.bundledPluginProjectionsCheck.stderr.log'),
+    timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
+  });
+}
 
-  const startedAt = Date.now();
+export async function withCliDistBuildLock<T>(
+  fn: (context: WorkspaceBundleLockContext) => Promise<T> | T,
+  options: CliDistBuildLockOptions = {},
+): Promise<T> {
+  const lockPath = options.lockPath ?? resolveWorkspaceBundleLockPath(repoRootDir());
   const timeoutMs = options.timeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
   const staleAfterMs = options.staleAfterMs ?? timeoutMs;
-
-  let fd: number | null = null;
-  let heartbeatTimer: ReturnType<typeof setNodeInterval> | null = null;
-  let ownLockRaw: string | null = null;
-  while (true) {
-    try {
-      ownLockRaw = serializeCliDistLockOwner(Date.now());
-      fd = openSync(lockPath, 'wx');
-      writeFileSync(fd, ownLockRaw, 'utf8');
-      break;
-    } catch (e: any) {
-      if (e?.code !== 'EEXIST') throw e;
-      ownLockRaw = null;
-      const snapshot = readCliDistBuildLockSnapshot(lockPath);
-      if (shouldReclaimCliDistBuildLockSnapshot(snapshot, staleAfterMs, Date.now())) {
-        reclaimCliDistBuildLockSnapshot(lockPath, snapshot.raw);
-        continue;
-      }
-      if (Date.now() - startedAt > timeoutMs) {
-        const owner = describeCliDistBuildLockOwner(lockPath, Date.now());
-        throw new Error(`Timed out waiting for CLI dist build lock: ${lockPath} (${owner})`);
-      }
-      await sleep(pollIntervalMs);
-    }
-  }
-
-  try {
-    if (staleAfterMs > 0) {
-      const heartbeatIntervalMs = Math.max(250, Math.min(5_000, Math.floor(staleAfterMs / 4) || 250));
-      heartbeatTimer = setNodeInterval(() => {
-        try {
-          if (!isCliDistBuildLockOwnedBy(lockPath, ownLockRaw)) return;
-          ownLockRaw = serializeCliDistLockOwner(Date.now());
-          writeFileSync(lockPath, ownLockRaw, 'utf8');
-        } catch {
-          // Best-effort lease heartbeat only.
-        }
-      }, heartbeatIntervalMs);
-      unrefNodeTimer(heartbeatTimer);
-    }
-
-    return await fn();
-  } finally {
-    if (heartbeatTimer) {
-      clearNodeInterval(heartbeatTimer);
-    }
-    try {
-      if (fd != null) closeSync(fd);
-    } catch {
-      // ignore
-    }
-    try {
-      if (isCliDistBuildLockOwnedBy(lockPath, ownLockRaw)) unlinkSync(lockPath);
-    } catch {
-      // ignore
-    }
-  }
+  return await withWorkspaceBundleLock(fn, {
+    lockPath,
+    heldLockValue:
+      options.heldLockValue
+      ?? options.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+    timeoutMs,
+    pollIntervalMs,
+    staleAfterMs,
+    errorLabel: 'CLI dist build lock',
+  });
 }
 
 export async function ensureCliDistBuilt(
@@ -1300,7 +1138,7 @@ export async function ensureCliDistBuilt(
     if (availableEntrypoint) return availableEntrypoint;
   }
 
-  const promise = withCliDistBuildLock(async () => {
+  const promise = withCliDistBuildLock(async ({ heldLockValue }) => {
     const reusableEntrypoint = resolveReusableEntrypoint();
     if (reusableEntrypoint) return reusableEntrypoint;
     if (!allowRebuild) {
@@ -1332,7 +1170,11 @@ export async function ensureCliDistBuilt(
         command: invocation.command,
         args: invocation.args,
         cwd: invocation.cwd,
-        env: { ...params.env, CI: '1' },
+        env: {
+          ...params.env,
+          CI: '1',
+          HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
+        },
         stdoutPath: resolve(params.testDir, 'cli.build.stdout.log'),
         stderrPath: resolve(params.testDir, 'cli.build.stderr.log'),
         timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
@@ -1359,10 +1201,11 @@ export async function ensureCliDistBuilt(
 
     return entrypoint;
   }, {
-    lockPath: options.lockPath ?? resolve(rootDir, '.project', 'tmp', 'cli-dist-build.lock'),
+    lockPath: options.lockPath ?? resolveWorkspaceBundleLockPath(rootDir),
     timeoutMs: options.timeoutMs,
     pollIntervalMs: options.pollIntervalMs,
     staleAfterMs: options.staleAfterMs,
+    env: params.env,
   });
 
   ensureDistPromisesByRepoRoot.set(rootDir, promise);
@@ -1461,11 +1304,7 @@ export async function ensureCliDistSnapshotEntrypoint(
 ): Promise<string> {
   const rootDir = options.repoRoot ?? repoRootDir();
   const distLockPath = options.lockPath ?? resolve(rootDir, '.project', 'tmp', 'cli-dist-build.lock');
-  const snapshotLockPath = resolveCliDistSnapshotLockPath({
-    rootDir,
-    snapshotDir: options.snapshotDir,
-    defaultLockPath: distLockPath,
-  });
+  const snapshotLockPath = resolveCliDistSnapshotLockPath(options.snapshotDir);
   const snapshotDistDir = resolve(options.snapshotDir, 'dist');
   const snapshotEntrypoint = resolve(snapshotDistDir, 'index.mjs');
   const maxAttempts = 3;

@@ -1,0 +1,28 @@
+{
+  "name": "happier-automation-event-observer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "External public-SDK fixture: an Automation Event source that also observes Automation Run lifecycle events.",
+  "keywords": [
+    "happier-plugin"
+  ],
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "happier plugins author build .",
+    "typecheck": "happier plugins author typecheck .",
+    "pack:plugin": "happier plugins pack ."
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.10",
+    "@typescript/native": "npm:typescript@7.0.2"
+  }
+}

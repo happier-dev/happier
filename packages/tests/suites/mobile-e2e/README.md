@@ -34,12 +34,22 @@ Prereqs:
 Install a **development build** on the target device/simulator first:
 
 ```bash
-# Android (installs `dev.happier.app.internaldev` on the active emulator/device)
-yarn workspace @happier-dev/app android:dev
+# iOS (the default platform)
+hstack mobile-dev-client --install --profile=internaldev
 
-# iOS simulator (installs `dev.happier.app.dev.internal`)
-yarn workspace @happier-dev/app ios:dev
+# Android
+hstack mobile-dev-client --install --platform=android --profile=internaldev
 ```
+
+The runner resolves the native app identity in this order: explicit `--appId`,
+`HAPPIER_E2E_MOBILE_APP_ID`, then the Stack dev-client profile
+(`HAPPIER_STACK_DEV_CLIENT_PROFILE`, with
+`HAPPIER_MOBILE_DEV_CLIENT_PROFILE` as its alias). The Stack identity helper
+owns the standard IDs; `internaldev` is its default. Set the profile before
+installing and running when selecting another standard dev client. For a
+nonstandard generated app, set `HAPPIER_E2E_MOBILE_APP_ID` to its emitted ID;
+also set `HAPPIER_E2E_MOBILE_APP_SCHEME` only if its scheme differs from the
+standard selected app.
 
 From repo root:
 
@@ -83,6 +93,6 @@ yarn -s test:e2e:mobile:android:connected-machine:transcript
 Equivalent direct commands from `packages/tests`:
 
 ```bash
-HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE=cli-terminal-daemon node scripts/run-maestro-with-heartbeat.mjs --platform ios --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml --appId dev.happier.app.dev.internal
-HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE=cli-terminal-daemon node scripts/run-maestro-with-heartbeat.mjs --platform android --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml --appId dev.happier.app.internaldev
+HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE=cli-terminal-daemon node scripts/run-maestro-with-heartbeat.mjs --platform ios --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml
+HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE=cli-terminal-daemon node scripts/run-maestro-with-heartbeat.mjs --platform android --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml
 ```

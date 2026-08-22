@@ -6,6 +6,44 @@ export type PluginInstallationReviewHostAccess = Readonly<{
   normalizedScope: Readonly<Record<string, unknown>>;
 }>;
 
+export type PluginInstallationReviewRawCredentialAccess = Readonly<{
+  accessMode: 'raw';
+  contribution: Readonly<{ pluginId: string; localId: string }>;
+  credentialSlot: Readonly<{ id: string; title: string; purpose: string }>;
+  sourceClass:
+    | Readonly<{
+        kind: 'savedSecret';
+        secretKinds: readonly ('apiKey' | 'token' | 'password' | 'other')[];
+      }>
+    | Readonly<{
+        kind: 'connectedAccount';
+        service: Readonly<{ pluginId: string; localId: string }>;
+      }>;
+  realm: 'web' | 'ios' | 'android' | 'daemon';
+  phase: 'settings' | 'prepare' | 'connection' | 'speech';
+  request:
+    | Readonly<{
+        kind: 'httpHeaders';
+        origin: string;
+        headerNames: readonly string[];
+      }>
+    | Readonly<{
+        kind: 'environment';
+        keys: readonly string[];
+      }>
+    | Readonly<{
+        kind: 'files';
+        fileIds: readonly string[];
+      }>;
+}>;
+
+export type PluginInstallationReviewRequestInterceptor = Readonly<{
+  id: string;
+  origins: readonly string[];
+  methods?: readonly ('GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS')[];
+  priority: number;
+}>;
+
 export type PluginInstallationReviewFacts = Readonly<{
   pluginId: string;
   displayName: string;
@@ -14,11 +52,9 @@ export type PluginInstallationReviewFacts = Readonly<{
   publisherIdentity:
     | Readonly<{ status: 'unavailable' }>
     | Readonly<{ status: 'unverified'; id: string; displayName: string }>;
-  source: Readonly<{
-    kind: 'path' | 'archive' | 'npm';
-    locator: string;
-    integrity?: string;
-  }>;
+  source:
+    | Readonly<{ kind: 'path'; locator: string }>
+    | Readonly<{ kind: 'archive' | 'npm'; locator: string; integrity?: string }>;
   updateChannel:
     | Readonly<{ kind: 'path'; locator: string; development: boolean }>
     | Readonly<{ kind: 'archive'; locator: string }>
@@ -33,11 +69,6 @@ export type PluginInstallationReviewFacts = Readonly<{
           sourceUrl: string;
         }>;
       }>;
-  integrity: Readonly<{
-    packageDigest: string;
-    manifestDigest: string;
-    uiArtifactDigest: string;
-  }>;
   signature:
     | Readonly<{ status: 'notProvided' }>
     | Readonly<{ status: 'verified' | 'unsupported'; keyId: string }>;
@@ -52,6 +83,7 @@ export type PluginInstallationReviewFacts = Readonly<{
     | Readonly<{ status: 'unreviewed'; sourceId: string }>;
   executableRealms: readonly ('daemon' | 'reactNative')[];
   contributions: readonly Readonly<{ family: string; count: number }>[];
+  requestInterceptors: readonly PluginInstallationReviewRequestInterceptor[];
   uiArtifacts: Readonly<{
     status: 'verified' | 'none' | 'unavailable';
     contributionIds: readonly string[];
@@ -60,7 +92,15 @@ export type PluginInstallationReviewFacts = Readonly<{
   optionalHostAccess: readonly (PluginInstallationReviewHostAccess & Readonly<{
     authorizationClass: 'hostResourceSelection';
   }>)[];
-  compatibility: Readonly<{ happier: string; runtimeApiVersion: 1 }>;
+  rawCredentialAccess: readonly PluginInstallationReviewRawCredentialAccess[];
+  compatibility: Readonly<{
+    happier?: string;
+    runtimeApiVersion: 1;
+    blockedNewerVersions?: readonly Readonly<{
+      version: string;
+      diagnostics: readonly Readonly<{ code: string; message: string }>[];
+    }>[];
+  }>;
   updatePolicy: 'automatic' | 'manual' | 'pinned';
 }>;
 

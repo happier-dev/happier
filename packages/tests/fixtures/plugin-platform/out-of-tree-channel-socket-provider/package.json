@@ -1,0 +1,33 @@
+{
+  "name": "happier-out-of-tree-channel-socket-provider",
+  "version": "1.0.0",
+  "description": "External-style public SDK fixture for the Conversation Channels socket-provider contract.",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@happier-dev/channels-protocol": ">=0.0.0 <1.0.0",
+    "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0"
+  },
+  "files": [
+    ".happier-plugin/plugin.json",
+    "assets",
+    "src"
+  ],
+  "scripts": {
+    "manifest": "node scripts/write-manifest.mjs",
+    "typecheck:public": "node ../../../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.public.json",
+    "build": "npm run manifest && npm run typecheck:public",
+    "pack:fixture": "node scripts/pack-fixture.mjs",
+    "test": "npm run test:public && npm run test:runtime",
+    "test:public": "node --test test/public-only.test.mjs",
+    "test:runtime": "node --test test/public-runtime.test.mjs",
+    "test:pack": "node --test test/pack-fixture.test.mjs"
+  }
+}

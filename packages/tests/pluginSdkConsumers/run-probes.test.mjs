@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+
+import ts from 'typescript';
 
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import * as probeHarness from './run-probes.mjs';
@@ -23,6 +25,173 @@ function spawnResult({ status, signal, error }) {
   };
 }
 
+function readImportSpecifiers(source) {
+  const sourceFile = ts.createSourceFile(
+    'packed-negative-probe.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TS,
+  );
+  const specifiers = new Set();
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      specifiers.add(node.moduleSpecifier.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return specifiers;
+}
+
+function createSyntheticInventory(
+  authorSymbols = [['InventoryOnlyName', 'type']],
+) {
+  return {
+    schemaVersion: 1,
+    entrypoints: [
+      {
+        specifier: '.',
+        sourceModule: 'src/index.ts',
+        visibility: 'author',
+        realm: 'any',
+        conditions: { types: './dist/index.d.ts', default: './dist/index.js' },
+      },
+      {
+        specifier: './host/registration',
+        sourceModule: 'src/host/registration/index.ts',
+        visibility: 'host',
+        realm: 'any',
+        conditions: {
+          types: './dist/host/registration/index.d.ts',
+          browser: './dist/host/registration/index.js',
+          'react-native': './dist/host/registration/index.js',
+          default: './dist/host/registration/index.js',
+        },
+      },
+      {
+        specifier: './host/targeted-contributions',
+        sourceModule: 'src/host/targeted-contributions/index.ts',
+        visibility: 'host',
+        realm: 'daemon',
+        conditions: {
+          types: './dist/host/targeted-contributions/index.d.ts',
+          default: './dist/host/targeted-contributions/index.js',
+        },
+      },
+      {
+        specifier: './host/fs/json-owner-file-lock',
+        sourceModule: 'src/host/fs/jsonOwnerFileLock.ts',
+        visibility: 'host',
+        realm: 'daemon',
+        conditions: {
+          types: './dist/host/fs/jsonOwnerFileLock.d.ts',
+          default: './dist/host/fs/jsonOwnerFileLock.js',
+        },
+      },
+    ],
+    symbols: [
+      ...authorSymbols.map(([exportName, kind]) => ({
+        specifier: '.',
+        exportName,
+        kind,
+        sourceModule: 'src/contracts.ts',
+        sourceExport: exportName,
+        realm: 'any',
+        stability: 'preview',
+      })),
+      ...[
+        ['createPluginRegistrationScope', 'value'],
+        ['PluginRegistrationRight', 'type'],
+        ['PluginAgentRuntimeRegistration', 'type'],
+        ['PluginRuntimeRegistration', 'type'],
+      ].map(([exportName, kind]) => ({
+        specifier: './host/registration',
+        exportName,
+        kind,
+        sourceModule: 'src/host/registration/contract.ts',
+        sourceExport: exportName,
+        realm: 'any',
+        stability: 'host-internal',
+      })),
+      ...[
+        ['decodeTargetedContributionPointSemantics', 'value'],
+        ['readTargetedContributionPointSemanticRefs', 'value'],
+        ['TargetedContributionPointSemanticInput', 'type'],
+        ['TargetedContributionPointSemanticProjection', 'type'],
+        ['TargetedContributionPointSemanticSurface', 'type'],
+      ].map(([exportName, kind]) => ({
+        specifier: './host/targeted-contributions',
+        exportName,
+        kind,
+        sourceModule: 'src/targetedContributionAuthoring.ts',
+        sourceExport: exportName,
+        realm: 'daemon',
+        stability: 'host-internal',
+      })),
+      ...[
+        'reclaimJsonOwnerFileLockSnapshot',
+        'withJsonOwnerFileLock',
+      ].map((exportName) => ({
+        specifier: './host/fs/json-owner-file-lock',
+        exportName,
+        kind: 'value',
+        sourceModule: 'src/host/fs/jsonOwnerFileLockContract.ts',
+        sourceExport: exportName,
+        realm: 'daemon',
+        stability: 'host-internal',
+      })),
+    ],
+  };
+}
+
+async function writeSyntheticPackedSdk(
+  fixtureRoot,
+  contract,
+  {
+    authorDeclaration = 'export type InventoryOnlyName = string;\n',
+    registrationDeclaration = [
+      'export declare function createPluginRegistrationScope(): unknown;',
+      'export interface PluginRegistrationRight {}',
+      'export interface PluginAgentRuntimeRegistration {}',
+      'export interface PluginRuntimeRegistration {}',
+      '',
+    ].join('\n'),
+    targetedContributionsDeclaration = [
+      'export declare function decodeTargetedContributionPointSemantics(): unknown;',
+      'export declare function readTargetedContributionPointSemanticRefs(): unknown;',
+      'export interface TargetedContributionPointSemanticInput {}',
+      'export interface TargetedContributionPointSemanticProjection {}',
+      'export interface TargetedContributionPointSemanticSurface {}',
+      '',
+    ].join('\n'),
+    fileLockDeclaration = [
+      'export declare function reclaimJsonOwnerFileLockSnapshot(): void;',
+      'export declare function withJsonOwnerFileLock(): void;',
+      '',
+    ].join('\n'),
+  } = {},
+) {
+  await writeFile(join(fixtureRoot, 'package.json'), JSON.stringify({
+    type: 'module',
+    exports: Object.fromEntries(contract.inventory.entrypoints.map((entrypoint) => [
+      entrypoint.specifier,
+      entrypoint.conditions,
+    ])),
+  }));
+  for (const [relativePath, declaration] of [
+    ['dist/index.d.ts', authorDeclaration],
+    ['dist/host/registration/index.d.ts', registrationDeclaration],
+    ['dist/host/targeted-contributions/index.d.ts', targetedContributionsDeclaration],
+    ['dist/host/fs/jsonOwnerFileLock.d.ts', fileLockDeclaration],
+  ]) {
+    if (declaration === null) continue;
+    const targetPath = join(fixtureRoot, relativePath);
+    await mkdir(dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, declaration);
+  }
+}
+
 test('NodeNext consumer config fixes its source root for the repository TypeScript compiler', () => {
   assert.equal(
     typeof probeHarness.buildNodeNextTsconfig,
@@ -36,11 +205,11 @@ test('NodeNext consumer config fixes its source root for the repository TypeScri
   assert.deepEqual(config.include, ['src/**/*.ts']);
 });
 
-test('normal-surface source generation compiles every retained type and behavior-consumes runtime values', () => {
+test('normal-surface source generation compiles types, resolves values, and behavior-consumes representative values', () => {
   assert.equal(
     typeof probeHarness.renderNormalSurfaceProbeSource,
     'function',
-    'the packed consumer must generate its source from the canonical normal-surface contract',
+    'the packed consumer must generate its source from the canonical SDK inventory',
   );
 
   const source = probeHarness.renderNormalSurfaceProbeSource({
@@ -57,6 +226,19 @@ test('normal-surface source generation compiles every retained type and behavior
       },
       { name: 'RootTypeOnly', runtime: false },
       { name: 'PluginError', runtime: true },
+      { name: 'definePlugin', runtime: true },
+    ],
+    './actions': [
+      { name: 'getActionSpec', runtime: true },
+    ],
+    './protocol': [
+      { name: 'defineProtocolObject', runtime: true },
+    ],
+    './secrets': [
+      { name: 'SecretStringV1Schema', runtime: true },
+    ],
+    './sessions/external': [
+      { name: 'ExternalSessionAgentIdSchema', runtime: true },
     ],
     './ui/client': [
       { name: 'UiClientTypeOnly', runtime: false },
@@ -67,6 +249,9 @@ test('normal-surface source generation compiles every retained type and behavior
         name: 'PluginConnectedAccountAuthenticationModeRuntime',
         runtime: false,
       },
+    ],
+    './testing': [
+      { name: 'createPluginTestkit', runtime: true },
     ],
   });
 
@@ -109,7 +294,52 @@ test('normal-surface source generation compiles every retained type and behavior
   );
   assert.match(
     source,
+    /runtime0\.definePlugin\(\{/u,
+    'the packed external consumer must invoke the final root definePlugin export',
+  );
+  assert.match(
+    source,
+    /__definedPlugin\d+\.manifest\.displayName !== "com\.example\.packed-consumer"/u,
+    'the packed external consumer must exercise canonical manifest projection',
+  );
+  assert.match(
+    source,
+    /typeof __definedPlugin\d+\.activate !== "function"/u,
+    'the packed external consumer must exercise the named activation ABI',
+  );
+  assert.match(
+    source,
+    /\.defineProtocolObject\(\{\}, \{ policy: "closed" \}\)/u,
+    'the packed external consumer must compose an executable protocol schema',
+  );
+  assert.match(
+    source,
+    /\.getActionSpec\("session\.open"\)/u,
+    'the packed external consumer must exercise the canonical ActionSpec lookup',
+  );
+  assert.match(
+    source,
+    /\.SecretStringV1Schema\.parse\(\{/u,
+    'the packed external consumer must exercise the public secret schema',
+  );
+  assert.match(
+    source,
+    /\.ExternalSessionAgentIdSchema\.safeParse\(" packed-consumer-agent "\)/u,
+    'the packed external consumer must exercise exact External Session Agent-id validation',
+  );
+  assert.match(
+    source,
     /ui_host_bootstrap_missing/u,
+  );
+  assert.match(
+    source,
+    /createPluginTestkit\(/u,
+    'the packed external consumer must exercise the public testkit constructor',
+  );
+  assert.doesNotMatch(
+    source,
+    /engines:\s*\{\s*happier:/u,
+    'the packed external consumer must not synthesize engines.happier from toolchain metadata',
   );
   assert.doesNotMatch(
     source,
@@ -118,11 +348,32 @@ test('normal-surface source generation compiles every retained type and behavior
   );
   assert.match(source, /normal-surface:contract-ok/u);
   assert.doesNotMatch(source, /normal-surface:4:2/u);
+  const genericSource = probeHarness.renderNormalSurfaceProbeSource({
+    '.': [{ name: 'InventoryClassifiedRuntimeValue', runtime: true }],
+  });
+  assert.match(
+    genericSource,
+    /runtime0\.InventoryClassifiedRuntimeValue === undefined/u,
+    'inventory-classified runtime values without bespoke behavior still require packed resolution',
+  );
+
+  assert.equal(
+    typeof probeHarness.renderRuntimeBehaviorConsumer,
+    'function',
+    'the generated generic resolution guard must be directly testable',
+  );
+  const executeGenericResolutionGuard = new Function(
+    'runtimeValue',
+    probeHarness.renderRuntimeBehaviorConsumer(
+      '@happier-dev/plugin-sdk:InventoryClassifiedRuntimeValue',
+      'runtimeValue',
+      0,
+    ).join('\n'),
+  );
+  assert.doesNotThrow(() => executeGenericResolutionGuard(() => 'resolved'));
   assert.throws(
-    () => probeHarness.renderNormalSurfaceProbeSource({
-      '.': [{ name: 'UnexpectedRuntimeValue', runtime: true }],
-    }),
-    /runtime export lacks a behavior consumer: @happier-dev\/plugin-sdk:UnexpectedRuntimeValue/u,
+    () => executeGenericResolutionGuard(undefined),
+    /Packed runtime export failed to resolve: @happier-dev\/plugin-sdk:InventoryClassifiedRuntimeValue/u,
   );
 });
 
@@ -144,40 +395,48 @@ test('Re.Pack singleton probe checks excluded compiler runtime without widening 
   );
 });
 
-test('canonical SDK contract drives the exact eight supported paths', async () => {
-  assert.equal(typeof probeHarness.readCanonicalNormalSurfaceContract, 'function');
-  const contract = await probeHarness.readCanonicalNormalSurfaceContract();
+test('canonical SDK inventory is the packed probe package-graph input', async () => {
+  assert.equal(typeof probeHarness.readCanonicalAuthorSurfaceInventory, 'function');
+  const contract = await probeHarness.readCanonicalAuthorSurfaceInventory();
 
-  assert.deepEqual(Object.keys(contract.allowlist), [
-    '.',
-    './manifest',
-    './runtime',
-    './agent-runtime',
-    './ui',
-    './ui/client',
-    './ui/build',
-    './testing',
-  ]);
-  for (const names of Object.values(contract.allowlist)) {
-    assert.ok(names.length > 0, 'every supported path must name its retained public contracts');
+  for (const entrypoint of contract.inventory.entrypoints) {
+    if (entrypoint.visibility !== 'author') continue;
+    assert.ok(
+      contract.inventory.symbols.some((symbol) => symbol.specifier === entrypoint.specifier),
+      `author path ${entrypoint.specifier} must name its retained public contracts`,
+    );
   }
-  assert.equal(contract.allowlist['./manifest'].includes('PluginToolContributionV2'), false);
-  assert.equal(contract.allowlist['./manifest'].includes('PluginAgentAcpTransport'), false);
-  assert.equal(contract.allowlist['./runtime'].includes('PluginActivationApi'), false);
 });
 
-test('packed consumers read the normal surface from a retained non-test contract owner', async () => {
+test('canonical SDK inventory reader preserves author and host fixture rows', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-contract-'));
+  const fixturePath = join(fixtureRoot, 'api-surface.json');
+  try {
+    const expectedInventory = createSyntheticInventory();
+    await writeFile(fixturePath, JSON.stringify(expectedInventory));
+    const contract = await probeHarness.readCanonicalAuthorSurfaceInventory(fixturePath);
+    assert.deepEqual(
+      contract.inventory,
+      expectedInventory,
+    );
+    assert.deepEqual(Object.keys(contract), ['inventory']);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('packed consumers read the package graph only from the tracked inventory', async () => {
   const source = await readFile(new URL('./run-probes.mjs', import.meta.url), 'utf8');
 
   assert.match(
     source,
-    /src['"], ['"]normalSurfaceContract\.ts['"]/u,
-    'the packed probe must consume the retained SDK contract owner',
+    /api-surface\.json/u,
+    'the packed probe must consume the tracked SDK inventory',
   );
   assert.doesNotMatch(
     source,
-    /normalSurfaceContract\.test\.ts/u,
-    'a test file cannot be the packed probe oracle',
+    /normalSurfaceContract\.ts/u,
+    'the packed probe cannot consume a parallel source registry',
   );
 });
 
@@ -200,42 +459,113 @@ test('packed negative consumer keeps the V1 context fixture harness off the norm
   }
 });
 
-test('packed negative consumer rejects every retired Agent runtime V1 alias', () => {
+test('packed negative consumer makes retired legacy runtime entrypoints explicit path tombstones', () => {
+  assert.equal(typeof probeHarness.renderNegativeTypeProbeSource, 'function');
+  const source = probeHarness.renderNegativeTypeProbeSource();
+
+  for (const entrypoint of ['runtime', 'agent-runtime']) {
+    assert.ok(
+      source.includes(
+        `from "@happier-dev/plugin-sdk/${entrypoint}";`,
+      ),
+      `${entrypoint} must remain an explicit packed path tombstone`,
+    );
+  }
+});
+
+test('packed negative consumer rejects retired symbols through their real retained entrypoints', () => {
   assert.equal(typeof probeHarness.renderNegativeTypeProbeSource, 'function');
   const source = probeHarness.renderNegativeTypeProbeSource();
 
   for (const [entrypoint, name] of [
-    ['runtime', 'RuntimeCoreV1'],
-    ['agent-runtime', 'AcpSessionRuntimeV1'],
-    ['agent-runtime', 'AgentRuntimeV1'],
+    ['', 'PluginActivationApi'],
+    ['agents/runtime', 'RuntimeCoreV1'],
+    ['agents/runtime', 'AcpSessionRuntimeV1'],
+    ['agents/runtime', 'AgentRuntimeV1'],
+    ['agents/runtime', 'AgentSessionAuthService'],
+    ['sessions/external', 'PluginExternalSessionCandidate'],
+    ['sessions/external', 'PluginExternalSessionRef'],
+    ['sessions/external', 'PluginExternalSessionsService'],
+    ['sessions/external', 'PluginExternalTranscriptFollowEvent'],
+    ['sessions/external', 'PluginExternalTranscriptFollowResult'],
+    ['sessions/external', 'PluginExternalTranscriptItem'],
+    ['sessions/external', 'PluginProjectsService'],
   ]) {
     assert.ok(
       source.includes(
-        `import type { ${name} } from "@happier-dev/plugin-sdk/${entrypoint}";`,
+        `import type { ${name} } from "@happier-dev/plugin-sdk${entrypoint ? `/${entrypoint}` : ''}";`,
       ),
       `${name} must remain an explicit packed negative import`,
     );
   }
 });
 
-test('packed negative consumer rejects removed host-private runtime services and DTOs', () => {
+test('packed negative consumer does not mislabel retained normal exports as retired', () => {
   assert.equal(typeof probeHarness.renderNegativeTypeProbeSource, 'function');
   const source = probeHarness.renderNegativeTypeProbeSource();
 
   for (const name of [
-    'PluginExternalSessionCandidate',
-    'PluginExternalSessionRef',
-    'PluginExternalSessionsService',
-    'PluginExternalTranscriptFollowEvent',
-    'PluginExternalTranscriptFollowResult',
-    'PluginExternalTranscriptItem',
-    'PluginProjectsService',
+    'PluginLoopbackWebSocketClientSpec',
+    'PluginLoopbackWebSocketHandshake',
+    'PluginLoopbackWebSocketHeader',
+    'PluginProtocolClientKind',
+    'AgentAccountUsageService',
+    'AgentConfigurationScalar',
+    'AgentRuntimeRegistrationOptions',
+    'AgentRuntimeSurfaces',
+    'AgentSessionMcpTransport',
+    'AgentTerminalLaunchRequest',
   ]) {
-    assert.ok(
-      source.includes(
-        `import type { ${name} } from "@happier-dev/plugin-sdk/runtime";`,
-      ),
-      `${name} must remain an explicit packed negative import`,
+    assert.equal(
+      source.includes(`import type { ${name} }`),
+      false,
+      `${name} is retained through the current normal surface`,
+    );
+  }
+});
+
+test('packed negative consumers do not reject approved final author paths', () => {
+  assert.equal(typeof probeHarness.renderNegativeRuntimeProbeSource, 'function');
+  const typeSource = probeHarness.renderNegativeTypeProbeSource();
+  const runtimeSource = probeHarness.renderNegativeRuntimeProbeSource();
+  const typeSpecifiers = readImportSpecifiers(typeSource);
+  const runtimeSpecifiers = readImportSpecifiers(runtimeSource);
+
+  for (const subpath of [
+    'agents',
+    'events',
+    'hooks',
+    'mcp',
+    'reviews',
+    'scm',
+    'sessions',
+  ]) {
+    const specifier = `@happier-dev/plugin-sdk/${subpath}`;
+    assert.equal(typeSpecifiers.has(specifier), false, specifier);
+    assert.equal(runtimeSpecifiers.has(specifier), false, specifier);
+  }
+
+  assert.equal(
+    typeSpecifiers.has('@happier-dev/plugin-sdk/agents/runtime'),
+    true,
+    'the retained child entrypoint remains a valid negative-symbol probe source',
+  );
+  const injectedRetiredParent = `${typeSource}\nimport type { RemovedAgentsParent } from "@happier-dev/plugin-sdk/agents";\n`;
+  assert.equal(
+    readImportSpecifiers(injectedRetiredParent).has('@happier-dev/plugin-sdk/agents'),
+    true,
+    'an exact retired parent import remains distinguishable from its retained child entrypoint',
+  );
+
+  for (const name of [
+    'ReactNativeWebViteBuildPresetInput',
+    'PluginTestkit',
+    'PluginTestkitRegistration',
+  ]) {
+    assert.equal(
+      typeSource.includes(`import type { ${name} }`),
+      false,
+      `${name} is an approved final author export`,
     );
   }
 });
@@ -244,59 +574,65 @@ test('Vite consumer compiles against the retained UI render-surface contract', a
   const source = await readFile(new URL('./run-probes.mjs', import.meta.url), 'utf8');
   assert.match(
     source,
-    /import type \{ PluginUiRenderSurface \} from "@happier-dev\/plugin-sdk\/ui";/u,
+    /import \{ defineBuildConfig \} from "@happier-dev\/plugin-sdk\/ui\/build";/u,
+  );
+  assert.match(
+    source,
+    /import type \{ RenderSurface \} from "@happier-dev\/plugin-sdk\/ui";/u,
   );
   assert.doesNotMatch(
     source,
     /import type \{ PluginUiSurfaceModule \} from "@happier-dev\/plugin-sdk\/ui";/u,
   );
+  assert.doesNotMatch(source, /PluginUiRenderSurface/u);
+  assert.doesNotMatch(source, /definePluginUiBuildConfig/u);
 });
 
 test('packed declaration classification distinguishes runtime values from type-only exports', async () => {
   assert.equal(typeof probeHarness.classifyPackedNormalSurface, 'function');
   const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-classifier-'));
   try {
-    await mkdir(join(fixtureRoot, 'dist'), { recursive: true });
-    await writeFile(join(fixtureRoot, 'package.json'), JSON.stringify({
-      type: 'module',
-      exports: {
-        '.': {
-          types: './dist/index.d.ts',
-          default: './dist/index.js',
-        },
-      },
-    }));
-    await writeFile(join(fixtureRoot, 'dist/index.d.ts'), [
-      'export type ConstrainedGenericType<K extends "a" | "b"> = Readonly<{ kind: K }>;',
-      'export type GenericType<T> = Readonly<{ value: T }>;',
-      "export type PluginProtocolClientKind = 'jsonRpc' | 'jsonStream';",
-      'export type PluginProtocolClientSpecByKind<K extends PluginProtocolClientKind> = Readonly<{ kind: K }>;',
-      'export interface PluginProtocolClientHandle<K extends PluginProtocolClientKind = PluginProtocolClientKind> {',
-      '  readonly kind: K;',
-      '}',
-      'export type TypeOnly = Readonly<{ value: string }>;',
-      'export declare const RuntimeValue: Readonly<{ value: string }>;',
-      '',
-    ].join('\n'));
+    const expectedSymbols = [
+      ['ConstrainedGenericType', 'type'],
+      ['DefaultedGenericType', 'type'],
+      ['GenericType', 'type'],
+      ['PluginProtocolClientHandle', 'type'],
+      ['PluginProtocolClientKind', 'type'],
+      ['PluginProtocolClientSpecByKind', 'type'],
+      ['RuntimeValue', 'value'],
+      ['TypeOnly', 'type'],
+    ];
+    const inventoryPath = join(fixtureRoot, 'api-surface.json');
+    await writeFile(inventoryPath, JSON.stringify(createSyntheticInventory(expectedSymbols)));
+    const contract = await probeHarness.readCanonicalAuthorSurfaceInventory(inventoryPath);
+    await writeSyntheticPackedSdk(fixtureRoot, contract, {
+      authorDeclaration: [
+        'export type ConstrainedGenericType<K extends "a" | "b"> = Readonly<{ kind: K }>;',
+        'export type DefaultedGenericType<T extends { readonly value: string } = { readonly value: string }> = Readonly<{ value: T }>;',
+        'export type GenericType<T> = Readonly<{ value: T }>;',
+        "export type PluginProtocolClientKind = 'jsonRpc' | 'jsonStream';",
+        'export type PluginProtocolClientSpecByKind<K extends PluginProtocolClientKind> = Readonly<{ kind: K }>;',
+        'export interface PluginProtocolClientHandle<K extends PluginProtocolClientKind = PluginProtocolClientKind> {',
+        '  readonly kind: K;',
+        '}',
+        'export type TypeOnly = Readonly<{ value: string }>;',
+        'export declare const RuntimeValue: Readonly<{ value: string }>;',
+        '',
+      ].join('\n'),
+    });
 
     assert.deepEqual(
-      await probeHarness.classifyPackedNormalSurface(fixtureRoot, {
-        '.': [
-          'ConstrainedGenericType',
-          'GenericType',
-          'PluginProtocolClientHandle',
-          'PluginProtocolClientKind',
-          'PluginProtocolClientSpecByKind',
-          'RuntimeValue',
-          'TypeOnly',
-        ],
-      }),
+      await probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
       {
         '.': [
           {
             name: 'ConstrainedGenericType',
             runtime: false,
             typeArguments: ['"a" | "b"'],
+          },
+          {
+            name: 'DefaultedGenericType',
+            runtime: false,
           },
           {
             name: 'GenericType',
@@ -322,11 +658,166 @@ test('packed declaration classification distinguishes runtime values from type-o
         ],
       },
     );
+    await writeFile(join(fixtureRoot, 'dist/index.d.ts'), 'export type MissingExport = string;\n');
     await assert.rejects(
-      probeHarness.classifyPackedNormalSurface(fixtureRoot, {
-        '.': ['MissingExport'],
-      }),
-      /Packed normal surface mismatch for \.: missing MissingExport/u,
+      probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
+      /Packed normal surface mismatch for \.: missing ConstrainedGenericType/u,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('packed declaration classification requires every host declaration and exact host exports', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-host-declaration-'));
+  const inventoryPath = join(fixtureRoot, 'api-surface.json');
+  try {
+    await writeFile(inventoryPath, JSON.stringify(createSyntheticInventory()));
+    const contract = await probeHarness.readCanonicalAuthorSurfaceInventory(inventoryPath);
+    await writeSyntheticPackedSdk(fixtureRoot, contract, { fileLockDeclaration: null });
+    await assert.rejects(
+      probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
+      /Packed SDK declaration is missing for \.\/host\/fs\/json-owner-file-lock/u,
+    );
+
+    await writeSyntheticPackedSdk(fixtureRoot, contract, {
+      fileLockDeclaration: 'export declare function reclaimJsonOwnerFileLockSnapshot(): void;\n',
+    });
+    await assert.rejects(
+      probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
+      /Packed normal surface mismatch for \.\/host\/fs\/json-owner-file-lock: missing withJsonOwnerFileLock/u,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('packed declaration classification rejects wrong host symbol kind', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-host-kind-'));
+  const inventoryPath = join(fixtureRoot, 'api-surface.json');
+  try {
+    await writeFile(inventoryPath, JSON.stringify(createSyntheticInventory()));
+    const contract = await probeHarness.readCanonicalAuthorSurfaceInventory(inventoryPath);
+    await writeSyntheticPackedSdk(fixtureRoot, contract, {
+      registrationDeclaration: [
+        'export type createPluginRegistrationScope = () => unknown;',
+        'export interface PluginRegistrationRight {}',
+        'export interface PluginAgentRuntimeRegistration {}',
+        'export interface PluginRuntimeRegistration {}',
+        '',
+      ].join('\n'),
+    });
+    await assert.rejects(
+      probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
+      /Packed SDK export kind mismatch for \.\/host\/registration:createPluginRegistrationScope: expected value, received type/u,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('packed declaration classification rejects wrong author symbol kind', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-author-kind-'));
+  const inventoryPath = join(fixtureRoot, 'api-surface.json');
+  try {
+    await writeFile(inventoryPath, JSON.stringify(createSyntheticInventory()));
+    const contract = await probeHarness.readCanonicalAuthorSurfaceInventory(inventoryPath);
+    await writeSyntheticPackedSdk(fixtureRoot, contract, {
+      authorDeclaration: 'export declare const InventoryOnlyName: string;\n',
+    });
+    await assert.rejects(
+      probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
+      /Packed SDK export kind mismatch for \.:InventoryOnlyName: expected type, received value/u,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('packed package graph rejects extra entrypoints and wrong conditions before author probes', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-package-graph-'));
+  const inventoryPath = join(fixtureRoot, 'api-surface.json');
+  try {
+    await writeFile(inventoryPath, JSON.stringify(createSyntheticInventory()));
+    const contract = await probeHarness.readCanonicalAuthorSurfaceInventory(inventoryPath);
+    const canonicalExports = Object.fromEntries(
+      contract.inventory.entrypoints.map((entrypoint) => [
+        entrypoint.specifier,
+        entrypoint.conditions,
+      ]),
+    );
+
+    await writeFile(join(fixtureRoot, 'package.json'), JSON.stringify({
+      type: 'module',
+      exports: {
+        ...canonicalExports,
+        './unexpected': {
+          types: './dist/unexpected.d.ts',
+          default: './dist/unexpected.js',
+        },
+      },
+    }));
+    await assert.rejects(
+      probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
+      /Packed SDK package export graph mismatch/u,
+    );
+
+    await writeFile(join(fixtureRoot, 'package.json'), JSON.stringify({
+      type: 'module',
+      exports: {
+        ...canonicalExports,
+        '.': {
+          ...canonicalExports['.'],
+          default: './dist/wrong-index.js',
+        },
+      },
+    }));
+    await assert.rejects(
+      probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
+      /Packed SDK package export graph mismatch/u,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('packed SDK requires publication-ready package metadata before accepting its API surface', async () => {
+  assert.equal(
+    typeof probeHarness.assertPackedPublishReadyPackageMetadata,
+    'function',
+    'the external packed consumer must reject pre-publication SDK package metadata',
+  );
+
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-package-metadata-'));
+  const packageJsonPath = join(fixtureRoot, 'package.json');
+  try {
+    await writeFile(packageJsonPath, JSON.stringify({
+      name: '@happier-dev/plugin-sdk',
+      version: '1.0.0',
+      private: false,
+    }));
+    await assert.doesNotReject(
+      probeHarness.assertPackedPublishReadyPackageMetadata(fixtureRoot),
+    );
+
+    await writeFile(packageJsonPath, JSON.stringify({
+      name: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      private: false,
+    }));
+    await assert.rejects(
+      probeHarness.assertPackedPublishReadyPackageMetadata(fixtureRoot),
+      /Packed SDK package must not use placeholder version 0\.0\.0 at publication readiness/u,
+    );
+
+    await writeFile(packageJsonPath, JSON.stringify({
+      name: '@happier-dev/plugin-sdk',
+      version: '1.0.0',
+      private: true,
+    }));
+    await assert.rejects(
+      probeHarness.assertPackedPublishReadyPackageMetadata(fixtureRoot),
+      /Packed SDK package must not remain private at publication readiness/u,
     );
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });

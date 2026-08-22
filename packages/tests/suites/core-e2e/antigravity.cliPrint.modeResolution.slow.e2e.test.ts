@@ -1,17 +1,18 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
+
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { startTestDaemon, stopDaemonFromHomeDir, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { createTempPathBin, type TempPathBin } from '../../src/testkit/fs/tempPathBin';
-import { fetchSessionV2 } from '../../src/testkit/sessions';
-import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { fetchSessionMetadataV2 } from '../../src/testkit/sessionHandoffMetadata';
 import { sleep } from '../../src/testkit/timing';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
@@ -81,24 +82,12 @@ function readAntigravityMetadata(metadata: unknown): {
   agentId: string | null;
   agyConversationId: string | null;
 } {
-  const record = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
-    ? metadata as Record<string, unknown>
-    : {};
-  const descriptor = record.runtimeDescriptorV1 && typeof record.runtimeDescriptorV1 === 'object' && !Array.isArray(record.runtimeDescriptorV1)
-    ? record.runtimeDescriptorV1 as Record<string, unknown>
-    : {};
-  const provider = descriptor.provider && typeof descriptor.provider === 'object' && !Array.isArray(descriptor.provider)
-    ? descriptor.provider as Record<string, unknown>
-    : {};
+  const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
   return {
-    agentId: typeof descriptor.agentId === 'string' ? descriptor.agentId : null,
-    agyConversationId: typeof provider.agyConversationId === 'string'
-      ? provider.agyConversationId
-      : typeof record.antigravitySessionId === 'string'
-        ? record.antigravitySessionId
-      : typeof record.agyConversationId === 'string'
-        ? record.agyConversationId
-        : null,
+    agentId: descriptor?.agentId ?? null,
+    agyConversationId: typeof descriptor?.agent.agyConversationId === 'string'
+      ? descriptor.agent.agyConversationId
+      : null,
   };
 }
 
@@ -108,8 +97,13 @@ async function readSessionAntigravityMetadata(params: Readonly<{
   sessionId: string;
   secret: Uint8Array;
 }>): Promise<ReturnType<typeof readAntigravityMetadata>> {
-  const snap = await fetchSessionV2(params.baseUrl, params.token, params.sessionId);
-  const metadata = decryptLegacyBase64(snap.metadata, params.secret);
+  const metadata = await fetchSessionMetadataV2({
+    baseUrl: params.baseUrl,
+    token: params.token,
+    sessionId: params.sessionId,
+    machineKeys: [],
+    accountEncryptionMaterials: [{ type: 'legacy', secret: params.secret }],
+  });
   return readAntigravityMetadata(metadata);
 }
 
@@ -303,12 +297,12 @@ describe('core e2e: Antigravity cliPrint mode resolution with fake agy', () => {
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
 
     tempPathBin = await createTempPathBin({
@@ -348,6 +342,7 @@ describe('core e2e: Antigravity cliPrint mode resolution with fake agy', () => {
       controlToken: daemon.state.controlToken,
       body: {
         directory: workspaceDir,
+        spawnNonce: randomUUID(),
         backendTarget: { kind: 'builtInAgent', agentId: 'antigravity' },
         terminal: { mode: 'plain' },
         environmentVariables: daemonEnv,

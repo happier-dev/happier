@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -7,6 +7,8 @@ import {
   EXTERNAL_SESSION_OPERATION_TIMELINES_V1,
   ExternalSessionOperationRecordV1Schema,
   ExternalSessionOperationSharedPresentationV1Schema,
+  ExternalSessionOperationStateV1Schema,
+  openSessionOwnerMetadataEnvelopeV1,
   projectExternalSessionOperationProgressV1,
   projectExternalSessionOperationSharedPresentationV1,
 } from '@happier-dev/protocol';
@@ -14,10 +16,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   readExternalSessionOperationRecord,
+  readExternalSessionOperationStoredEntry,
   writeExternalSessionOperationRecord,
 } from '../../../../apps/cli/src/session/actions/externalSessions/operationRecordStore';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import {
   replaceTestDaemonWithoutStoppingSessions,
   startTestDaemon,
@@ -32,7 +35,12 @@ import {
   decryptLegacyBase64,
   encryptLegacyBase64,
 } from '../../src/testkit/messageCrypto';
-import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
+import { buildPreAttestedExternalSessionLiveEnv } from '../../src/testkit/externalSessionLiveLifecycleFixture';
+import {
+  resolveTestDbProvider,
+  startServerLight,
+  type StartedServer,
+} from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
 import {
   createSessionWithCiphertexts,
@@ -42,6 +50,9 @@ import { waitFor } from '../../src/testkit/timing';
 import { withTimeoutMs } from '../../src/testkit/timing/withTimeout';
 
 const run = createRunDirs({ runLabel: 'core' });
+const suiteDbProvider = resolveTestDbProvider(process.env, {
+  fallbackProvider: 'sqlite',
+});
 
 function createTerminalOperationRecord(input: Readonly<{
   operationId: string;
@@ -121,17 +132,27 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
   let server: StartedServer | null = null;
   let proxy: HttpRequestRecordingProxy | null = null;
   let daemon: StartedDaemon | null = null;
+  let retiredDaemon: StartedDaemon | null = null;
   let releaseCommittedResponse: (() => void) | null = null;
 
   afterEach(async () => {
     releaseCommittedResponse?.();
     releaseCommittedResponse = null;
-    await daemon?.stop().catch(() => {});
+    const cleanupErrors: Error[] = [];
+    await daemon?.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
     daemon = null;
+    await retiredDaemon?.proc.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
+    retiredDaemon = null;
     await proxy?.stop().catch(() => {});
     proxy = null;
     await server?.stop().catch(() => {});
     server = null;
+    if (cleanupErrors.length === 1) throw cleanupErrors[0];
+    if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'Operation projection restart teardown failed');
   });
 
   it('repairs a committed presentation whose daemon dies before recording its receipt', async () => {
@@ -143,13 +164,13 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
 
     server = await startServerLight({
       testDir,
-      dbProvider: 'sqlite',
+      dbProvider: suiteDbProvider,
       extraEnv: {
         HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
       },
     });
     const auth = await createTestAuth(server.baseUrl);
-    const secret = Uint8Array.from(randomBytes(32));
+    const secret = auth.accountSigningSeed;
     const created = await createSessionWithCiphertexts({
       baseUrl: server.baseUrl,
       token: auth.token,
@@ -182,11 +203,11 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
       },
     });
 
-    const seeded = await seedCliAuthForServer({
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: proxy.baseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
     const activeServerDir = join(
       daemonHomeDir,
@@ -204,11 +225,9 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
 
     const daemonEnv = {
       ...process.env,
+      ...buildPreAttestedExternalSessionLiveEnv(),
       CI: '1',
       HAPPIER_CLI_TEST_SKIP_BUILD: '1',
-      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-      HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
-      HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
       HAPPIER_HOME_DIR: daemonHomeDir,
       HAPPIER_SERVER_URL: proxy.baseUrl,
     };
@@ -235,6 +254,7 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
       auth.token,
       sessionId,
     );
+    expect(committedSession.metadataLayoutVersion).toBe(1);
     const committedMetadata = decryptLegacyBase64(
       committedSession.metadata,
       secret,
@@ -251,6 +271,23 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
         projectExternalSessionOperationProgressV1(initialRecord),
       ),
     );
+    const committedOwnerMetadata = openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
+      envelope: committedSession.ownerMetadata,
+      material: { type: 'legacy', secret },
+    });
+    expect(committedOwnerMetadata.ok).toBe(true);
+    if (!committedOwnerMetadata.ok) {
+      throw new Error(`Expected readable owner metadata (${committedOwnerMetadata.reason})`);
+    }
+    expect(
+      ExternalSessionOperationStateV1Schema.parse(
+        committedOwnerMetadata.ownerMetadata.runtime?.externalSessionOperationV1,
+      ),
+    ).toEqual({
+      v: 1,
+      progress: projectExternalSessionOperationProgressV1(initialRecord),
+    });
 
     const originalDaemonPid = daemon.state.pid;
     const replacementPromise = replaceTestDaemonWithoutStoppingSessions({
@@ -272,30 +309,44 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
     });
     releaseCommittedResponse?.();
     const replacement = await replacementPromise;
-    expect(replacement.pid).not.toBe(originalDaemonPid);
+    retiredDaemon = daemon;
+    daemon = replacement;
+    expect(replacement.state.pid).not.toBe(originalDaemonPid);
 
     await waitFor(async () => {
-      const current = await readExternalSessionOperationRecord(
+      const current = await readExternalSessionOperationStoredEntry(
         activeServerDir,
         initialRecord.operationId,
       );
-      return current?.progressProjection.acknowledgedRevision
-        === initialRecord.revision;
+      return current?.kind === 'completion_receipt'
+        && current.receipt.reference.revision === initialRecord.revision;
     }, {
       timeoutMs: 30_000,
       context: 'replacement daemon receipt-only convergence',
     });
 
-    const repairedRecord = await readExternalSessionOperationRecord(
+    const repairedEntry = await readExternalSessionOperationStoredEntry(
       activeServerDir,
       initialRecord.operationId,
     );
-    expect(repairedRecord).toEqual({
-      ...initialRecord,
-      progressProjection: {
-        acknowledgedRevision: initialRecord.revision,
+    expect(repairedEntry).toMatchObject({
+      kind: 'completion_receipt',
+      receipt: {
+        reference: {
+          sessionId,
+          operationId: initialRecord.operationId,
+          revision: initialRecord.revision,
+        },
+        presentation:
+          projectExternalSessionOperationSharedPresentationV1(
+            projectExternalSessionOperationProgressV1(initialRecord),
+          ),
       },
     });
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      initialRecord.operationId,
+    )).resolves.toBeNull();
     const sessionAfterRepair = await fetchSessionV2(
       server.baseUrl,
       auth.token,

@@ -99,74 +99,6 @@ try {
     throw new Error('packed declarative ACP fixture must remain static and entrypoint-free');
   }
 
-  const daemonChildBridgeTestFile =
-    'src/daemon/agentRuntime/sessionBridgeRoutes.real.integration.test.ts';
-  const sourceDaemonChildBridgeTestName =
-    'runs the real daemon route, child ACP composer, provider process, retirement, and restart';
-  const packedDaemonChildBridgeTestName =
-    'runs the installed packed third-party native Agent through the real daemon-child bridge';
-  let sourceDaemonChildBridgeReport;
-  let packedDaemonChildBridgeReport;
-  if (scenario === 'vertical-b') {
-    const vitestCliPath = join(repoRoot, 'node_modules/vitest/vitest.mjs');
-    const runDaemonChildBridgeTest = (testName, env = {}) => JSON.parse(
-      run(process.execPath, [
-        vitestCliPath,
-        'run',
-        '--config',
-        'vitest.integration.config.ts',
-        daemonChildBridgeTestFile,
-        '-t',
-        testName,
-        '--reporter=json',
-      ], join(repoRoot, 'apps/cli'), {
-        // This runner proves current-source daemon/child ownership and packs
-        // its third-party fixtures itself. It does not make a CLI-dist claim
-        // and must not contend with the canonical artifact publisher.
-        HAPPIER_CLI_TEST_SKIP_BUILD: '1',
-        ...env,
-      }),
-    );
-    const assertDaemonChildBridgeTestPassed = (report, testName) => {
-      const assertions =
-        report.testResults?.flatMap(
-        (result) => result.assertionResults ?? [],
-      ) ?? [];
-      if (
-        report.success !== true
-        || report.numFailedTests !== 0
-        || !assertions.some(
-        (assertion) => (
-          assertion.status === 'passed'
-          && assertion.fullName.includes(testName)
-        ),
-        )
-      ) {
-        throw new Error(
-          `native AgentRuntime daemon-child bridge proof did not pass: ${testName}`,
-        );
-      }
-    };
-    packedDaemonChildBridgeReport = runDaemonChildBridgeTest(
-      packedDaemonChildBridgeTestName,
-      {
-        HAPPIER_AGENT_RUNTIME_CONFORMANCE_PACKED_PLUGIN_ROOT:
-          installedPluginRoot,
-      },
-    );
-    assertDaemonChildBridgeTestPassed(
-      packedDaemonChildBridgeReport,
-      packedDaemonChildBridgeTestName,
-    );
-    sourceDaemonChildBridgeReport = runDaemonChildBridgeTest(
-      sourceDaemonChildBridgeTestName,
-    );
-    assertDaemonChildBridgeTestPassed(
-      sourceDaemonChildBridgeReport,
-      sourceDaemonChildBridgeTestName,
-    );
-  }
-
   const viteNodeCliPath = join(repoRoot, 'node_modules/vite-node/vite-node.mjs');
   const stdout = run(process.execPath, [
     viteNodeCliPath,
@@ -213,7 +145,7 @@ try {
     || report.processFoundation?.blockedBy !== 'WS2.VB-HANDOFF'
   ) {
     throw new Error(
-      'native AgentRuntime foundation must report the authenticated daemon-child bridge and restart proof as blocked on WS2.VB-HANDOFF',
+      'native AgentRuntime foundation must report the authenticated Runner Agent service and restart proof as blocked on WS2.VB-HANDOFF',
     );
   }
   if (
@@ -260,64 +192,6 @@ try {
   process.stdout.write(`${JSON.stringify({
     ...report,
     ...(declarativeAcpReport ? { declarativeAcp: declarativeAcpReport } : {}),
-    ...(scenario === 'vertical-b'
-      ? {
-        sourceDaemonChildBridge: {
-          scope: 'svc08-authenticated-daemon-child',
-          authenticatedDaemonChildBridge: true,
-          restart: true,
-          orderedProjection: true,
-          durableTranscript: true,
-          lateGenerationObservationFenced: true,
-          evidence: {
-             hostBytes: 'current-source',
-             fixtureRelation: 'independent-from-packed-plugin',
-             testFile: daemonChildBridgeTestFile,
-             testName: sourceDaemonChildBridgeTestName,
-             passedTests: sourceDaemonChildBridgeReport.numPassedTests,
-           },
-         },
-         packedDaemonChildBridge: {
-           authenticatedDaemonChildBridge: true,
-           restart: true,
-           evidence: {
-             hostBytes: 'current-source',
-             fixtureRelation: 'installed-packed-third-party',
-             testFile: daemonChildBridgeTestFile,
-             testName: packedDaemonChildBridgeTestName,
-             passedTests: packedDaemonChildBridgeReport.numPassedTests,
-           },
-         },
-       }
-       : {}),
-    processFoundation: scenario === 'vertical-b'
-      ? {
-          scope: 'composite-packed-process-foundation',
-          authenticatedDaemonChildBridge: true,
-          unexpectedExit: report.processFoundation.unexpectedExit,
-          cancellation: report.processFoundation.cancellation,
-          disposal: report.processFoundation.disposal,
-          lateObservation: report.processFoundation.lateObservation,
-          restart: true,
-          exactOneProcessFallbackTerminal: true,
-          evidence: {
-            daemonChildBridge: {
-              hostBytes: 'current-source',
-              fixtureRelation: 'installed-packed-third-party',
-              testFile: daemonChildBridgeTestFile,
-              testName: packedDaemonChildBridgeTestName,
-            },
-            hostRuntimeAndSupervisor: {
-              hostBytes: 'current-source',
-              fixtureRelation: 'installed-packed-third-party-in-process-host',
-              probeFile: join(
-                fixtureRoot,
-                'host-probe.mts',
-              ),
-            },
-          },
-        }
-      : report.processFoundation,
     requestedScenario: scenario,
   })}\n`);
 } finally {

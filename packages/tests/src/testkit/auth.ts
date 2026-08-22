@@ -2,12 +2,19 @@ import tweetnacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { randomBytes } from 'node:crypto';
 
+import {
+  deriveAccountMachineKeyFromRecoverySecret,
+} from '@happier-dev/protocol';
+
 import { fetchJson } from './http';
+
+const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');
 
 export type TestAuth = {
   token: string;
   publicKeyBase64: string;
   accountSigningSeed: Uint8Array;
+  accountMachineKey: Uint8Array;
 };
 
 export type TestAuthMtls = {
@@ -22,11 +29,25 @@ export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
   const secretKey = Uint8Array.from(kp.secretKey);
   const challenge = Uint8Array.from(randomBytes(32));
   const signature = Uint8Array.from(tweetnacl.sign.detached(challenge, secretKey));
+  const accountMachineKey = deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed);
+  const contentPublicKey = Uint8Array.from(
+    tweetnacl.box.keyPair.fromSecretKey(accountMachineKey).publicKey,
+  );
+  const contentKeyBinding = new Uint8Array(
+    CONTENT_KEY_BINDING_PREFIX.length + contentPublicKey.length,
+  );
+  contentKeyBinding.set(CONTENT_KEY_BINDING_PREFIX, 0);
+  contentKeyBinding.set(contentPublicKey, CONTENT_KEY_BINDING_PREFIX.length);
+  const contentPublicKeySig = Uint8Array.from(
+    tweetnacl.sign.detached(contentKeyBinding, secretKey),
+  );
 
   const body = {
     publicKey: privacyKit.encodeBase64(publicKey),
     challenge: privacyKit.encodeBase64(challenge),
     signature: privacyKit.encodeBase64(signature),
+    contentPublicKey: privacyKit.encodeBase64(contentPublicKey),
+    contentPublicKeySig: privacyKit.encodeBase64(contentPublicKeySig),
   };
 
   const res = await fetchJson<{ token?: string }>(`${baseUrl}/v1/auth`, {
@@ -40,7 +61,12 @@ export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
     throw new Error(`Failed to create test auth token (status=${res.status})`);
   }
 
-  return { token: res.data.token, publicKeyBase64: body.publicKey, accountSigningSeed };
+  return {
+    token: res.data.token,
+    publicKeyBase64: body.publicKey,
+    accountSigningSeed,
+    accountMachineKey,
+  };
 }
 
 export async function createTestAuthMtls(

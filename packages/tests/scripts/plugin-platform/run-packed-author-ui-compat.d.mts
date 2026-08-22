@@ -1,18 +1,21 @@
-export type PackedAuthorCandidate = Readonly<{
+export type PackedAuthorArtifactSet = Readonly<{
   schemaVersion: 1;
   runId: string;
-  sourceBasis?: Readonly<{
-    algorithm: 'sha256';
-    digest: string;
-  }>;
-  installers?: Readonly<{
-    releaseChannel: 'dev';
-    shell: PackedAuthorCandidateBoundFile<'shell', 'install-dev.sh'>;
-    powershell: PackedAuthorCandidateBoundFile<'powershell', 'install-dev.ps1'>;
-    publicKey: PackedAuthorCandidateBoundFile<'minisign-public-key', 'happier-release.pub'>;
-  }>;
   sdk: Readonly<{
     packageName: '@happier-dev/plugin-sdk';
+    version: string;
+    integrity: string;
+    tarballPath: string;
+  }>;
+  pluginUi: Readonly<{
+    packageName: '@happier-dev/plugin-ui';
+    version: string;
+    pluginSdkVersion: string;
+    integrity: string;
+    tarballPath: string;
+  }>;
+  channelsProtocol?: Readonly<{
+    packageName: '@happier-dev/channels-protocol';
     version: string;
     integrity: string;
     tarballPath: string;
@@ -24,7 +27,21 @@ export type PackedAuthorCandidate = Readonly<{
     tarballPath: string;
     entrypoint: string;
   }>;
-  standaloneCli?: Readonly<{
+}>;
+
+export type PackedAuthorDirectArtifactsSmoke = Pick<
+  PackedAuthorCandidate,
+  'runId' | 'sdk' | 'pluginUi' | 'cli'
+>;
+
+export type PackedAuthorCandidate = Readonly<PackedAuthorArtifactSet & {
+  installers: Readonly<{
+    releaseChannel: 'dev';
+    shell: PackedAuthorCandidateBoundFile<'shell', 'install-dev.sh'>;
+    powershell: PackedAuthorCandidateBoundFile<'powershell', 'install-dev.ps1'>;
+    publicKey: PackedAuthorCandidateBoundFile<'minisign-public-key', 'happier-release.pub'>;
+  }>;
+  standaloneCli: Readonly<{
     product: 'happier';
     version: string;
     os: string;
@@ -43,12 +60,17 @@ export type PackedAuthorCandidate = Readonly<{
       'sha256-checksums',
       `checksums-happier-v${string}.txt`
     >;
-    signature:
-      | PackedAuthorCandidateBoundFile<
-          'minisign-signature',
-          `checksums-happier-v${string}.txt.minisig`
-        >
-      | null;
+    signature: PackedAuthorCandidateBoundFile<
+      'minisign-signature',
+      `checksums-happier-v${string}.txt.minisig`
+    >;
+    notarization: readonly Readonly<{
+      target: 'darwin-x64' | 'darwin-arm64';
+      evidence: PackedAuthorCandidateBoundFile<
+        'apple-notarization-evidence',
+        'darwin-x64.cli.json' | 'darwin-arm64.cli.json'
+      >;
+    }>[];
   }>;
 }>;
 
@@ -112,6 +134,12 @@ export type PackedNovelConnectedAccountQaHandoff = Readonly<{
       version: string;
       integrity: string;
     }>;
+    pluginUi: Readonly<{
+      packageName: '@happier-dev/plugin-ui';
+      version: string;
+      pluginSdkVersion: string;
+      integrity: string;
+    }>;
     cli: Readonly<{
       packageName: '@happier-dev/cli';
       version: string;
@@ -136,6 +164,28 @@ export type PackedNovelConnectedAccountQaHandoff = Readonly<{
       archivePath: string;
     }>;
     archivePath: string;
+  }>;
+  publicAuthoring: Readonly<{
+    pluginId: 'examples.public-sdk-review-assistant';
+    version: '0.1.0';
+    archive: Readonly<{
+      path: string;
+      integrity: string;
+      sha256: string;
+      sizeBytes: number;
+      archivePath: string;
+    }>;
+    archivePath: string;
+    hostedWeb: Readonly<{
+      contributionId: 'review-web';
+      entry: string;
+      digest: string;
+      files: readonly Readonly<{
+        relativePath: string;
+        digest: string;
+        byteSize: number;
+      }>[];
+    }>;
   }>;
   lifecycle: Readonly<{
     scenario: 'vertical-a';
@@ -184,7 +234,7 @@ export function buildVerticalAEvidenceLayerResult(
 ): PackedAuthorVerticalAEvidenceLayerResult;
 
 export function buildVerticalAResult(input: Readonly<{
-  candidate: PackedAuthorCandidate;
+  candidate: PackedAuthorDirectArtifactsSmoke;
   stages: readonly Readonly<{ id: string; ok?: boolean }>[];
   loadedIdentities: unknown;
   executionFailure?: Readonly<{
@@ -228,6 +278,7 @@ export function assertPackedConnectedAccountWatchRematerialization(
 ): Readonly<{
   selection: string;
   resyncCount: number;
+  movedTargetResyncs: number;
   rematerializedAccountIds: readonly string[];
 }>;
 
@@ -264,8 +315,40 @@ export function assertPackedAuthorCandidateManifestArtifacts(
     readFileImpl?: (path: string) => Promise<Uint8Array>;
     lstatImpl?: typeof import('node:fs/promises').lstat;
     realpathImpl?: typeof import('node:fs/promises').realpath;
+    trustedMinisignPublicKey?: string;
   }>,
 ): Promise<void>;
+
+export type PackedAuthorCandidateArtifactCaptureSelection = Readonly<{
+  packages?: readonly ('sdk' | 'pluginUi' | 'channelsProtocol' | 'cli')[];
+  installers?: readonly ('shell' | 'powershell' | 'publicKey')[];
+  standaloneCli?: 'all' | Readonly<{
+    archiveTargets?: readonly string[];
+    checksums?: boolean;
+    signature?: boolean;
+    notarizationTargets?: readonly ('darwin-x64' | 'darwin-arm64')[];
+  }>;
+}>;
+
+export function capturePackedAuthorCandidateArtifacts(
+  candidate: PackedAuthorCandidate,
+  options: Readonly<{
+    manifestPath: string;
+    destinationParent: string;
+    selection: 'all' | PackedAuthorCandidateArtifactCaptureSelection;
+    writeManifest?: boolean;
+    readFileImpl?: (path: string) => Promise<Uint8Array>;
+    lstatImpl?: typeof import('node:fs/promises').lstat;
+    realpathImpl?: typeof import('node:fs/promises').realpath;
+    chmodImpl?: typeof import('node:fs/promises').chmod;
+    rmImpl?: typeof import('node:fs/promises').rm;
+  }>,
+): Promise<Readonly<{
+  candidate: PackedAuthorCandidate;
+  cleanup: () => Promise<void>;
+  manifestPath: string | null;
+  root: string;
+}>>;
 
 export function loadPackedAuthorCandidateManifest(
   argv: readonly string[],
@@ -293,17 +376,78 @@ export function loadPackedAuthorNaturalArtifacts(
     createPackedAuthorCandidateImpl?: (input: Readonly<{
       runId: string;
       sdkTarballPath: string;
+      pluginUiTarballPath: string;
+      channelsProtocolTarballPath: string;
       cliTarballPath: string;
-    }>) => Promise<PackedAuthorCandidate>;
+    }>) => Promise<PackedAuthorDirectArtifactsSmoke>;
   }>,
-): Promise<PackedAuthorCandidate>;
+): Promise<PackedAuthorDirectArtifactsSmoke>;
 
-export function parseRunnerArgs(argv: readonly string[]): Readonly<{
-  scenario: 'vertical-a';
-  sdkTarballPath: string;
-  cliTarballPath: string;
-  packedNovelQaHandoffRoot?: string;
+export type PackedAuthorArtifactAdmission = Readonly<{
+  kind: 'canonical-candidate' | 'direct-artifacts-smoke';
+  runId: string;
+  sdk: Readonly<{
+    packageName: string;
+    version: string;
+    integrity: string;
+  }>;
+  pluginUi: Readonly<{
+    packageName: string;
+    version: string;
+    pluginSdkVersion: string;
+    integrity: string;
+  }>;
+  cli: Readonly<{
+    packageName: string;
+    version: string;
+    integrity: string;
+  }>;
 }>;
+
+export type PackedAuthorExternalAuthoringSource = Readonly<{
+  kind: 'canonical-candidate' | 'ephemeral-direct-artifacts';
+  sdk: PackedAuthorArtifactSet['sdk'];
+  pluginUi: PackedAuthorArtifactSet['pluginUi'];
+}>;
+
+export function createPackedAuthorExternalAuthoringSource(input: Readonly<{
+  candidate: PackedAuthorDirectArtifactsSmoke;
+  artifactAdmission: PackedAuthorArtifactAdmission;
+  sdkTarballPath: string;
+  pluginUiTarballPath: string;
+}>): PackedAuthorExternalAuthoringSource;
+
+export type PackedAuthorRunnerArgs =
+  | Readonly<{
+      scenario: 'vertical-a';
+      candidateManifestPath: string;
+      packedNovelQaHandoffRoot?: string;
+    }>
+  | Readonly<{
+      scenario: 'vertical-a';
+      sdkTarballPath: string;
+      pluginUiTarballPath: string;
+      cliTarballPath: string;
+      packedNovelQaHandoffRoot?: string;
+    }>;
+
+export function parseRunnerArgs(argv: readonly string[]): PackedAuthorRunnerArgs;
+
+export function loadPackedAuthorVerticalAArtifacts(
+  argv: readonly string[],
+  dependencies?: Readonly<{
+    loadCandidateManifestImpl?: (
+      argv: readonly string[],
+    ) => Promise<PackedAuthorCandidate>;
+    loadNaturalArtifactsImpl?: (
+      argv: readonly string[],
+    ) => Promise<PackedAuthorDirectArtifactsSmoke>;
+  }>,
+): Promise<Readonly<{
+  candidate: PackedAuthorCandidate | PackedAuthorDirectArtifactsSmoke;
+  admission: PackedAuthorArtifactAdmission;
+  runnerArgs: PackedAuthorRunnerArgs;
+}>>;
 
 export function parsePackedNovelConnectedAccountQaHandoff(
   raw: string,
@@ -317,8 +461,23 @@ export function loadPackedNovelConnectedAccountQaHandoff(
 export function createPackedNovelConnectedAccountQaHandoff(
   input: Readonly<{
     outputRoot: string;
-    candidate: PackedAuthorCandidate;
+    candidate: PackedAuthorDirectArtifactsSmoke;
     archiveBytes: Uint8Array;
+    publicAuthoringArtifact: Readonly<{
+      pluginId: 'examples.public-sdk-review-assistant';
+      version: '0.1.0';
+      archiveBytes: Uint8Array;
+      hostedWeb: Readonly<{
+        contributionId: 'review-web';
+        entry: string;
+        digest: string;
+        files: readonly Readonly<{
+          relativePath: string;
+          digest: string;
+          byteSize: number;
+        }>[];
+      }>;
+    }>;
     pluginArtifact: Readonly<{
       label: 'initial-v1';
       pluginId: 'acme.vertical-a';
@@ -340,9 +499,16 @@ export function cleanupPackedNovelConnectedAccountQaHandoff(
 export function assertPackedNovelConnectedAccountQaCandidate(
   input: Readonly<{
     handoff: PackedNovelConnectedAccountQaHandoff;
-    candidate: PackedAuthorCandidate;
+    candidate: PackedAuthorDirectArtifactsSmoke;
   }>,
 ): PackedNovelConnectedAccountQaHandoff;
+
+export function assertPackedPublicToolchainCompatibilityCandidate(
+  input: Readonly<{
+    packet: unknown;
+    candidate: Pick<PackedAuthorCandidate, 'sdk' | 'pluginUi' | 'cli'>;
+  }>,
+): unknown;
 
 export function startPackedNovelConnectedAccountAuthorizationServer():
 Promise<Readonly<{
@@ -422,9 +588,31 @@ export type VerticalAMarkerEvent = Readonly<{
 
 export function assertPackedPackageIdentity(
   packageManifest: unknown,
-  artifact: PackedAuthorCandidate['sdk'] | PackedAuthorCandidate['cli'],
+  artifact:
+    | PackedAuthorCandidate['sdk']
+    | PackedAuthorCandidate['pluginUi']
+    | NonNullable<PackedAuthorCandidate['channelsProtocol']>
+    | PackedAuthorCandidate['cli'],
   label: string,
 ): void;
+
+export function assertPackedPluginUiSdkDependency(
+  pluginUiPackageManifest: unknown,
+  sdkArtifact: PackedAuthorCandidate['sdk'],
+): string;
+
+export function attestPackedPublicAuthoringHostedWebGraph(input: Readonly<{
+  artifactRoot: string;
+}>): Promise<Readonly<{
+  contributionId: 'review-web';
+  entry: string;
+  digest: string;
+  files: readonly Readonly<{
+    relativePath: string;
+    digest: string;
+    byteSize: number;
+  }>[];
+}>>;
 
 export function assertPackedCliEntrypoint(
   packageManifest: unknown,
@@ -440,12 +628,19 @@ export function readPackedPackageManifest(
   extractionRoot: string,
 ): Promise<Record<string, unknown>>;
 
-export function startCandidateRegistry(params: Readonly<{
-  sdk: PackedAuthorCandidate['sdk'];
-  sdkBytes: Uint8Array;
+export type CandidateRegistryPackage = Readonly<{
+  packageName: string;
+  version: string;
+  integrity: string;
+  bytes: Uint8Array;
   packageManifest?: Record<string, unknown>;
+}>;
+
+export function startCandidateRegistry(params: Readonly<{
+  packages: readonly CandidateRegistryPackage[];
 }>): Promise<Readonly<{
   origin: string;
+  packages: readonly Readonly<{ packageName: string; version: string; integrity: string }>[];
   close(): Promise<void>;
 }>>;
 
@@ -464,6 +659,7 @@ export function configureDescriptorOnlyManifest(params: Readonly<{
 
 export function configureVerticalAPlugin(params: Readonly<{
   pluginRoot: string;
+  sdkPackageRoot: string;
   pluginId: string;
   version: string;
   packageName?: string;
@@ -582,6 +778,21 @@ export function sanitizePackedAuthorArtifactEnv(
   env: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv;
 
+export function prepareVerticalAChildEnvironment(params: Readonly<{
+  happyHomeDir: string;
+  markerPath: string;
+  baseEnv?: NodeJS.ProcessEnv;
+  prepareHome: (params: Readonly<{
+    happyHomeDir: string;
+  }>) => Promise<NodeJS.ProcessEnv>;
+}>): Promise<NodeJS.ProcessEnv>;
+
+export function buildVerticalADaemonRestartArgs(): readonly [
+  'daemon',
+  'restart',
+  '--json',
+];
+
 export function assertPackedDaemonRuntimeIdentity(params: Readonly<{
   installedCliPackageRoot: string;
   candidateVersion: string;
@@ -622,8 +833,9 @@ export function materializePackedCli(params: Readonly<{
 }>): Promise<string>;
 
 export function runVerticalA(
-  candidate: PackedAuthorCandidate,
+  candidate: PackedAuthorDirectArtifactsSmoke,
   options: Readonly<{
+    artifactAdmission?: PackedAuthorArtifactAdmission;
     captureLayerResultsOnFailure?: boolean;
     packedNovelQaHandoffRoot?: string;
     baseEnv: NodeJS.ProcessEnv;
@@ -646,12 +858,17 @@ export function runVerticalA(
       repository?: unknown;
     }>>;
     probeRetainedCapabilities: (params: Readonly<{
-      phase: 'installed' | 'uninstalled';
+      phase:
+        | 'installed'
+        | 'uninstalled'
+        | 'publicAuthoringInstalled'
+        | 'publicAuthoringUninstalled';
       happyHomeDir: string;
       pluginId: string;
+      actionId?: string | null;
+      actionInput?: unknown;
     }>) => Promise<Readonly<{
       projection: unknown;
-      structuredResolution: unknown;
       structuredAction?: unknown;
     }>>;
     probeConnectedAccounts: (params: Readonly<{
@@ -735,6 +952,54 @@ export function runVerticalA(
       tailCursor?: string;
       sessionId?: string;
     }>) => Promise<Record<string, unknown>>;
+    probeExternalTool: (params: Readonly<{
+      phase:
+        | 'installed'
+        | 'replaced'
+        | 'beforeDisable'
+        | 'disabled'
+        | 'beforeUninstall'
+        | 'uninstalled';
+      cliEntrypoint: string;
+      happyHomeDir: string;
+      pluginId: string;
+      toolName: string;
+      value: string;
+    }>) => Promise<Readonly<{
+      toolNames?: readonly string[];
+      invocation?: Readonly<{
+        isError: boolean;
+        errorCode: string | null;
+        pluginId: string | null;
+        version: string | null;
+        value: string | null;
+      }>;
+      staleInvocation?: Readonly<{
+        isError: boolean;
+        errorCode: string | null;
+        pluginId: string | null;
+        version: string | null;
+        value: string | null;
+      }>;
+      retiredInvocation?: Readonly<{
+        isError: boolean;
+        errorCode: string | null;
+        pluginId: string | null;
+        version: string | null;
+        value: string | null;
+      }>;
+      fresh?: Readonly<{
+        toolNames: readonly string[];
+        invocation: Readonly<{
+          isError: boolean;
+          errorCode: string | null;
+          pluginId: string | null;
+          version: string | null;
+          value: string | null;
+        }>;
+      }>;
+      freshToolNames?: readonly string[];
+    }>>;
     probeNotifications: (params: Readonly<{
       phase:
         | 'configure'

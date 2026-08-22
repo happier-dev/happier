@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+  deriveBoxPublicKeyFromSeed,
   openEncryptedDataKeyEnvelopeV1,
   sealEncryptedDataKeyEnvelopeV1,
   SessionContinueWithReplayRpcResultSchema,
@@ -15,7 +16,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createTestAuth } from '../../src/testkit/auth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient } from '../../src/testkit/syntheticAgent/rpcClient';
 import { encryptDataKeyBase64, decryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
@@ -188,18 +189,17 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const machineKey = Uint8Array.from(randomBytes(32));
-    const seeded = await seedCliDataKeyAuthForServer({
+    await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      machineKey,
+      auth,
+      mode: 'dataKey',
     });
 
     const sessionDekPlain = Uint8Array.from(randomBytes(32));
     const sealedDek = sealEncryptedDataKeyEnvelopeV1({
       dataKey: sessionDekPlain,
-      recipientPublicKey: seeded.publicKey,
+      recipientPublicKey: deriveBoxPublicKeyFromSeed(auth.accountMachineKey),
       randomBytes: (length) => Uint8Array.from(randomBytes(length)),
     });
     const { sessionId: previousSessionId } = await createSession(server.baseUrl, auth.token, {
@@ -209,7 +209,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
     const previous = await fetchSessionV2({ baseUrl: server.baseUrl, token: auth.token, sessionId: previousSessionId });
     const openedPrevDek = openEncryptedDataKeyEnvelopeV1({
       envelope: new Uint8Array(Buffer.from(previous.dataEncryptionKeyBase64, 'base64')),
-      recipientSecretKeyOrSeed: machineKey,
+      recipientSecretKeyOrSeed: auth.accountMachineKey,
     });
     if (!openedPrevDek || openedPrevDek.length !== 32) throw new Error('Failed to open previous session DEK');
 
@@ -305,7 +305,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
     const ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
     ui.connect();
     await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
-    const machineRpc = createDataKeyRpcClient(ui, machineKey);
+    const machineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
 
     let replayResult: unknown = null;
     await waitFor(async () => {
@@ -334,7 +334,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
     const childSession = await fetchSessionV2({ baseUrl: server.baseUrl, token: auth.token, sessionId: childSessionId });
     const openedChildDek = openEncryptedDataKeyEnvelopeV1({
       envelope: new Uint8Array(Buffer.from(childSession.dataEncryptionKeyBase64, 'base64')),
-      recipientSecretKeyOrSeed: machineKey,
+      recipientSecretKeyOrSeed: auth.accountMachineKey,
     });
     if (!openedChildDek || openedChildDek.length !== 32) throw new Error('Failed to open child session DEK');
 
@@ -406,7 +406,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
     const childSession2 = await fetchSessionV2({ baseUrl: server.baseUrl, token: auth.token, sessionId: childSessionId2 });
     const openedChildDek2 = openEncryptedDataKeyEnvelopeV1({
       envelope: new Uint8Array(Buffer.from(childSession2.dataEncryptionKeyBase64, 'base64')),
-      recipientSecretKeyOrSeed: machineKey,
+      recipientSecretKeyOrSeed: auth.accountMachineKey,
     });
     if (!openedChildDek2 || openedChildDek2.length !== 32) throw new Error('Failed to open child session DEK');
 

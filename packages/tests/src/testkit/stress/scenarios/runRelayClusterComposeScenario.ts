@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   createPeerTcpTunnelRelayAuthorizationSigningInputV2,
   PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+  redactBugReportSensitiveText,
   type PeerTcpTunnelRelayAuthorizationPayloadV2,
   type PeerTcpTunnelRelayEnvelope,
 } from '@happier-dev/protocol';
@@ -36,6 +37,11 @@ const stickyHeaderName = 'X-Happier-Relay-Sticky-Key';
 const relayPort = 3000;
 const socketPath = '/v1/updates/';
 const socketTimeoutMs = 30_000;
+const externalPartitionTerminalTimeoutMs = 45_000;
+
+export type RelayClusterComposeDisruption =
+  | 'rolling-restart'
+  | 'external-redis-partition';
 
 export function assertRelayClusterComposeConfig(config: StressConfig): void {
   if (config.targetMode !== 'full-compose') {
@@ -285,6 +291,462 @@ function terminalCount(
     && (envelope.frame.kind === 'abort' || envelope.frame.kind === 'close')
     && envelope.frame.reasonCode === reasonCode,
   ).length;
+}
+
+const externalPartitionForwardPayload = 'must-not-cross-external-partition';
+const externalPartitionReversePayload = 'must-not-reverse-cross-external-partition';
+
+export function assertExternalPartitionPayloadsRemainAbsent(input: Readonly<{
+  milestone: string;
+  tunnelId: string;
+  userFrames: readonly PeerTcpTunnelRelayEnvelope[];
+  machineFrames: readonly PeerTcpTunnelRelayEnvelope[];
+}>): void {
+  assert.equal(
+    dataPayloads(input.machineFrames, input.tunnelId).includes(externalPartitionForwardPayload),
+    false,
+    `${input.milestone}: partition-time forward payload crossed the relay`,
+  );
+  assert.equal(
+    dataPayloads(input.userFrames, input.tunnelId).includes(externalPartitionReversePayload),
+    false,
+    `${input.milestone}: partition-time reverse payload crossed the relay`,
+  );
+}
+
+export function assertExternalPartitionTerminalWindow(input: Readonly<{
+  tunnelId: string;
+  userFrames: readonly PeerTcpTunnelRelayEnvelope[];
+  machineFrames: readonly PeerTcpTunnelRelayEnvelope[];
+}>): Readonly<{ terminalEnvelopeCount: 1; reasonCodes: readonly ['relay_cap_exceeded'] }> {
+  const terminals = framesForTunnel(
+    [...input.userFrames, ...input.machineFrames],
+    input.tunnelId,
+  ).filter((envelope) =>
+    envelope.v === 1
+    && (envelope.frame.kind === 'abort' || envelope.frame.kind === 'close'));
+  assert.equal(
+    terminals.length,
+    1,
+    'External Redis partition requires exactly one public terminal envelope in the bounded terminal window',
+  );
+  const reasonCodes = terminals.map((envelope) =>
+    envelope.v === 1 && (envelope.frame.kind === 'abort' || envelope.frame.kind === 'close')
+      ? envelope.frame.reasonCode
+      : 'unexpected');
+  assert.deepEqual(reasonCodes, ['relay_cap_exceeded']);
+  return { terminalEnvelopeCount: 1, reasonCodes: ['relay_cap_exceeded'] };
+}
+
+const orderedDiagnosticFrameLimit = 12;
+const orderedDiagnosticErrorLimit = 4;
+const orderedDiagnosticAggregateLimit = 12;
+const orderedDiagnosticStringLimit = 256;
+
+type OrderedForwardDiagnosticClient = Readonly<{
+  socket: Readonly<{
+    id?: string;
+    connected: boolean;
+  }>;
+  frames: readonly PeerTcpTunnelRelayEnvelope[];
+  errors: readonly unknown[];
+}>;
+
+type OrderedForwardDiagnosticInput = Readonly<{
+  orderedTunnelId: string;
+  duplicateTunnelIds: Readonly<{
+    a: string;
+    b: string;
+  }>;
+  clients: Readonly<{
+    userA: OrderedForwardDiagnosticClient;
+    userB: OrderedForwardDiagnosticClient;
+    machineB: OrderedForwardDiagnosticClient;
+  }>;
+  placement: Readonly<{
+    userAContainerId: string;
+    userBContainerId: string;
+    machineBContainerId: string;
+  }>;
+}>;
+
+type OrderedForwardWaitInput = OrderedForwardDiagnosticInput & Readonly<{
+  timeoutMs?: number;
+  intervalMs?: number;
+}>;
+
+type FreshTunnelDiagnosticInput = Readonly<{
+  milestone: string;
+  tunnelId: string;
+  user: OrderedForwardDiagnosticClient;
+  machine: OrderedForwardDiagnosticClient;
+}>;
+
+type FreshTunnelWaitInput = FreshTunnelDiagnosticInput & Readonly<{
+  payload: string;
+  timeoutMs?: number;
+  intervalMs?: number;
+}>;
+
+type RelayAdapterReadinessProbe = Readonly<{
+  tunnelId: string;
+  grantId: string;
+  payload: string;
+}>;
+
+const relayAdapterReadinessMaxAttempts = 12;
+const relayAdapterReadinessProbeTimeoutMs = 1_000;
+const relayAdapterReadinessRetryIntervalMs = 250;
+
+function boundedDiagnosticString(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  const redacted = redactBugReportSensitiveText(value)
+    .replace(/\b(Bearer|Basic)\s+[^\s,;]+/gi, '$1 [REDACTED]');
+  return redacted.length <= orderedDiagnosticStringLimit
+    ? redacted
+    : `${redacted.slice(0, orderedDiagnosticStringLimit)}…`;
+}
+
+function summarizeRelaySocketError(value: unknown): Readonly<Record<string, string | boolean>> {
+  if (value instanceof Error) {
+    const redactedMessage = redactBugReportSensitiveText(value.message)
+      .replace(/\b(Bearer|Basic)\s+[^\s,;]+/gi, '$1 [REDACTED]');
+    return {
+      name: boundedDiagnosticString(value.name) ?? 'Error',
+      message: boundedDiagnosticString(redactedMessage) ?? '',
+      truncated: redactedMessage.length > orderedDiagnosticStringLimit,
+    };
+  }
+  if (typeof value === 'string') {
+    const redactedMessage = redactBugReportSensitiveText(value)
+      .replace(/\b(Bearer|Basic)\s+[^\s,;]+/gi, '$1 [REDACTED]');
+    return {
+      message: boundedDiagnosticString(redactedMessage) ?? '',
+      truncated: redactedMessage.length > orderedDiagnosticStringLimit,
+    };
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { kind: typeof value };
+  }
+  const record = value as Record<string, unknown>;
+  const fields = ['type', 'name', 'error', 'message', 'reasonCode'] as const;
+  return Object.fromEntries(fields.flatMap((field) => {
+    const bounded = boundedDiagnosticString(record[field]);
+    return bounded === undefined ? [] : [[field, bounded]];
+  }));
+}
+
+function summarizeRelayFrame(envelope: PeerTcpTunnelRelayEnvelope): Readonly<Record<string, unknown>> {
+  if (envelope.v === 2) {
+    return {
+      v: 2,
+      kind: 'binary',
+      payloadIdentity: {
+        decodedBytes: envelope.frame.byteLength,
+        sha256: createHash('sha256').update(envelope.frame).digest('hex'),
+      },
+    };
+  }
+  const frame = envelope.frame;
+  const tunnelId = frame.kind === 'open' ? frame.open.tunnelId : frame.tunnelId;
+  if (frame.kind !== 'data') {
+    return {
+      v: 1,
+      tunnelId,
+      kind: frame.kind,
+      ...('reasonCode' in frame && typeof frame.reasonCode === 'string'
+        ? { reasonCode: boundedDiagnosticString(frame.reasonCode) }
+        : {}),
+    };
+  }
+  const payload = Buffer.from(frame.payloadBase64, 'base64');
+  return {
+    v: 1,
+    tunnelId,
+    kind: frame.kind,
+    sequence: frame.sequence,
+    payloadIdentity: {
+      decodedBytes: payload.byteLength,
+      sha256: createHash('sha256').update(payload).digest('hex'),
+    },
+  };
+}
+
+function summarizeOrderedClient(
+  client: OrderedForwardDiagnosticClient,
+  orderedTunnelId: string,
+): Readonly<Record<string, unknown>> {
+  const orderedFrames = framesForTunnel(client.frames, orderedTunnelId);
+  return {
+    socketId: boundedDiagnosticString(client.socket.id) ?? null,
+    connected: client.socket.connected,
+    frames: orderedFrames.slice(0, orderedDiagnosticFrameLimit).map(summarizeRelayFrame),
+    omittedFrameCount: Math.max(0, orderedFrames.length - orderedDiagnosticFrameLimit),
+    errors: client.errors.slice(0, orderedDiagnosticErrorLimit).map(summarizeRelaySocketError),
+    omittedErrorCount: Math.max(0, client.errors.length - orderedDiagnosticErrorLimit),
+  };
+}
+
+export function buildOrderedForwardRelayDiagnostics(
+  input: OrderedForwardDiagnosticInput,
+): Readonly<Record<string, unknown>> & Readonly<{
+  ordered: Readonly<Record<string, unknown>> & Readonly<{ classification: string }>;
+}> {
+  const orderedMachineFrames = framesForTunnel(input.clients.machineB.frames, input.orderedTunnelId);
+  const orderedUserFrames = [
+    ...framesForTunnel(input.clients.userA.frames, input.orderedTunnelId),
+    ...framesForTunnel(input.clients.userB.frames, input.orderedTunnelId),
+  ];
+  let openCount = 0;
+  let dataCount = 0;
+  const dataSequences: number[] = [];
+  const seenDataSequences = new Set<number>();
+  const seenDuplicateSequences = new Set<number>();
+  const duplicateSequences: number[] = [];
+  let duplicateSequenceCount = 0;
+  for (const envelope of orderedMachineFrames) {
+    if (envelope.v !== 1) continue;
+    if (envelope.frame.kind === 'open') {
+      openCount += 1;
+      continue;
+    }
+    if (envelope.frame.kind !== 'data') continue;
+    dataCount += 1;
+    if (dataSequences.length < orderedDiagnosticAggregateLimit) {
+      dataSequences.push(envelope.frame.sequence);
+    }
+    if (seenDataSequences.has(envelope.frame.sequence)
+      && !seenDuplicateSequences.has(envelope.frame.sequence)) {
+      duplicateSequenceCount += 1;
+      seenDuplicateSequences.add(envelope.frame.sequence);
+      if (duplicateSequences.length < orderedDiagnosticAggregateLimit) {
+        duplicateSequences.push(envelope.frame.sequence);
+      }
+    }
+    seenDataSequences.add(envelope.frame.sequence);
+  }
+  const terminalReasons: string[] = [];
+  let terminalReasonCount = 0;
+  for (const envelope of [...orderedMachineFrames, ...orderedUserFrames]) {
+    if (envelope.v !== 1
+      || (envelope.frame.kind !== 'abort' && envelope.frame.kind !== 'close')) {
+      continue;
+    }
+    terminalReasonCount += 1;
+    if (terminalReasons.length < orderedDiagnosticAggregateLimit) {
+      terminalReasons.push(boundedDiagnosticString(envelope.frame.reasonCode) ?? '');
+    }
+  }
+  const socketErrorCount = Object.values(input.clients).reduce(
+    (count, client) => count + client.errors.length,
+    0,
+  );
+  const classification =
+    terminalReasonCount > 0 ? 'terminal'
+      : socketErrorCount > 0 ? 'socket_error'
+        : openCount === 0 ? 'open_absent'
+          : dataCount === 0 ? 'open_only'
+            : dataCount === 1 ? 'one_data'
+              : dataCount === 2 && duplicateSequenceCount === 0 ? 'complete'
+                : 'two_plus_or_duplicate_data';
+  const duplicateIds = [input.duplicateTunnelIds.a, input.duplicateTunnelIds.b];
+  const winnerTunnelIds = duplicateIds.filter((tunnelId) =>
+    framesForTunnel(input.clients.machineB.frames, tunnelId).some((envelope) =>
+      envelope.v === 1 && envelope.frame.kind === 'open',
+    ),
+  );
+  const rejectedTunnelIds = duplicateIds.filter((tunnelId) =>
+    [...input.clients.userA.frames, ...input.clients.userB.frames].some((envelope) =>
+      envelopeTunnelId(envelope) === tunnelId
+      && envelope.v === 1
+      && (envelope.frame.kind === 'abort' || envelope.frame.kind === 'close')
+      && envelope.frame.reasonCode === 'relay_authorization_invalid',
+    ),
+  );
+
+  return {
+    milestone: 'ordered_forward_relay_data',
+    orderedTunnelId: input.orderedTunnelId,
+    ordered: {
+      classification,
+      openCount,
+      dataCount,
+      dataSequences,
+      omittedDataSequenceCount: Math.max(0, dataCount - dataSequences.length),
+      duplicateSequences,
+      omittedDuplicateSequenceCount: Math.max(0, duplicateSequenceCount - duplicateSequences.length),
+      terminalReasons,
+      omittedTerminalReasonCount: Math.max(0, terminalReasonCount - terminalReasons.length),
+      socketErrorCount,
+    },
+    duplicateGrant: {
+      tunnelIds: input.duplicateTunnelIds,
+      winnerTunnelIds,
+      rejectedTunnelIds,
+    },
+    placement: input.placement,
+    clients: {
+      userA: summarizeOrderedClient(input.clients.userA, input.orderedTunnelId),
+      userB: summarizeOrderedClient(input.clients.userB, input.orderedTunnelId),
+      machineB: summarizeOrderedClient(input.clients.machineB, input.orderedTunnelId),
+    },
+  };
+}
+
+function freshTunnelTerminalReasons(input: FreshTunnelDiagnosticInput): string[] {
+  return [...input.user.frames, ...input.machine.frames].flatMap((envelope) => {
+    if (envelopeTunnelId(envelope) !== input.tunnelId
+      || envelope.v !== 1
+      || (envelope.frame.kind !== 'abort' && envelope.frame.kind !== 'close')) {
+      return [];
+    }
+    return [envelope.frame.reasonCode];
+  });
+}
+
+function classifyFreshTunnel(input: FreshTunnelWaitInput):
+  | 'ready'
+  | 'route_unavailable'
+  | 'terminal'
+  | 'pending' {
+  const terminalReasons = freshTunnelTerminalReasons(input);
+  if (terminalReasons.length > 0) {
+    return terminalReasons.every((reasonCode) => reasonCode === 'route_unavailable')
+      ? 'route_unavailable'
+      : 'terminal';
+  }
+  return dataPayloads(input.machine.frames, input.tunnelId).includes(input.payload)
+    ? 'ready'
+    : 'pending';
+}
+
+export function buildFreshTunnelRelayDiagnostics(
+  input: FreshTunnelDiagnosticInput,
+): Readonly<Record<string, unknown>> {
+  const terminalReasons = freshTunnelTerminalReasons(input);
+  return {
+    milestone: boundedDiagnosticString(input.milestone) ?? 'fresh_tunnel',
+    tunnelId: boundedDiagnosticString(input.tunnelId) ?? null,
+    terminalReasons: terminalReasons
+      .slice(0, orderedDiagnosticAggregateLimit)
+      .map((reasonCode) => boundedDiagnosticString(reasonCode) ?? ''),
+    omittedTerminalReasonCount: Math.max(0, terminalReasons.length - orderedDiagnosticAggregateLimit),
+    user: summarizeOrderedClient(input.user, input.tunnelId),
+    machine: summarizeOrderedClient(input.machine, input.tunnelId),
+  };
+}
+
+export async function waitForFreshTunnelRelayData(input: FreshTunnelWaitInput): Promise<void> {
+  try {
+    await waitFor(() => {
+      const classification = classifyFreshTunnel(input);
+      if (classification === 'route_unavailable' || classification === 'terminal') {
+        throw new Error(`Fresh relay tunnel terminated (${freshTunnelTerminalReasons(input).join(',')})`);
+      }
+      return classification === 'ready';
+    }, {
+      timeoutMs: input.timeoutMs ?? socketTimeoutMs,
+      intervalMs: input.intervalMs,
+      failFast: true,
+      context: input.milestone,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message}; diagnostics=${JSON.stringify(buildFreshTunnelRelayDiagnostics(input))}`, {
+      cause: error,
+    });
+  }
+}
+
+export async function waitForRelayAdapterReadiness(input: Readonly<{
+  milestone: string;
+  user: OrderedForwardDiagnosticClient;
+  machine: OrderedForwardDiagnosticClient;
+  sendProbe: (probe: RelayAdapterReadinessProbe) => void;
+  maxAttempts?: number;
+  probeTimeoutMs?: number;
+  intervalMs?: number;
+  retryIntervalMs?: number;
+}>): Promise<Readonly<{ attempts: number }>> {
+  const maxAttempts = input.maxAttempts ?? relayAdapterReadinessMaxAttempts;
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error('Relay adapter readiness requires at least one bounded probe attempt');
+  }
+  let lastDiagnostics: Readonly<Record<string, unknown>> | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const identity = randomUUID();
+    const probe: RelayAdapterReadinessProbe = {
+      tunnelId: `adapter-readiness-${identity}`,
+      grantId: `adapter-readiness-grant-${randomUUID()}`,
+      payload: `adapter-readiness-payload-${identity}`,
+    };
+    input.sendProbe(probe);
+    const waitInput: FreshTunnelWaitInput = {
+      milestone: input.milestone,
+      tunnelId: probe.tunnelId,
+      payload: probe.payload,
+      user: input.user,
+      machine: input.machine,
+      timeoutMs: input.probeTimeoutMs ?? relayAdapterReadinessProbeTimeoutMs,
+      intervalMs: input.intervalMs,
+    };
+
+    try {
+      await waitFor(() => {
+        const classification = classifyFreshTunnel(waitInput);
+        return classification !== 'pending';
+      }, {
+        timeoutMs: waitInput.timeoutMs,
+        intervalMs: waitInput.intervalMs,
+        context: `${input.milestone} probe ${attempt}`,
+      });
+    } catch {
+      // A no-response probe is transient readiness evidence until the bounded series is exhausted.
+    }
+
+    lastDiagnostics = buildFreshTunnelRelayDiagnostics(waitInput);
+    const classification = classifyFreshTunnel(waitInput);
+    if (classification === 'ready') {
+      return { attempts: attempt };
+    }
+    // The relay also emits a generic socket error for route_unavailable. The
+    // tunnel-scoped reason is the authoritative retry decision for that case.
+    // DATA sent immediately after a transiently unavailable OPEN can add the
+    // dependent tunnel_not_open terminal; that pair remains retryable only
+    // when route_unavailable is the originating reason.
+    const terminalReasons = freshTunnelTerminalReasons(waitInput);
+    const isTransientRouteUnavailability = terminalReasons.includes('route_unavailable')
+      && terminalReasons.every((reasonCode) =>
+        reasonCode === 'route_unavailable' || reasonCode === 'tunnel_not_open');
+    if (classification === 'terminal' && !isTransientRouteUnavailability) {
+      throw new Error(
+        `Relay adapter readiness failed on probe ${attempt}; diagnostics=${JSON.stringify(lastDiagnostics)}`,
+      );
+    }
+    if (attempt < maxAttempts) {
+      await sleep(input.retryIntervalMs ?? relayAdapterReadinessRetryIntervalMs);
+    }
+  }
+
+  throw new Error(
+    `Relay adapter readiness remained unavailable after ${maxAttempts} unique probes; diagnostics=${JSON.stringify(lastDiagnostics)}`,
+  );
+}
+
+export async function waitForOrderedForwardRelayData(input: OrderedForwardWaitInput): Promise<void> {
+  try {
+    await waitFor(() =>
+      dataPayloads(input.clients.machineB.frames, input.orderedTunnelId).length === 2,
+    {
+      timeoutMs: input.timeoutMs ?? socketTimeoutMs,
+      intervalMs: input.intervalMs,
+      context: 'ordered forward relay DATA',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message}; diagnostics=${JSON.stringify(buildOrderedForwardRelayDiagnostics(input))}`);
+  }
 }
 
 async function readReplicaConnectionCounts(
@@ -584,9 +1046,22 @@ async function executeRelayClusterComposeScenario(params: Readonly<{
       sequence: 1,
       payload: 'forward-1',
     }));
-    await waitFor(() => dataPayloads(machineB.frames, orderedTunnelId).length === 2, {
-      timeoutMs: socketTimeoutMs,
-      context: 'ordered forward relay DATA',
+    await waitForOrderedForwardRelayData({
+      orderedTunnelId,
+      duplicateTunnelIds: {
+        a: duplicateA,
+        b: duplicateB,
+      },
+      clients: {
+        userA,
+        userB,
+        machineB,
+      },
+      placement: {
+        userAContainerId: placement.first.containerId,
+        userBContainerId: placement.second.containerId,
+        machineBContainerId: placement.second.containerId,
+      },
     });
     assert.deepEqual(dataPayloads(machineB.frames, orderedTunnelId), ['forward-0', 'forward-1']);
     const orderedKinds = framesForTunnel(machineB.frames, orderedTunnelId).flatMap((envelope) =>
@@ -766,7 +1241,26 @@ async function executeRelayClusterComposeScenario(params: Readonly<{
     await sleep(500);
     assert.deepEqual(dataPayloads(userA.frames, beforeAKillTunnelId), []);
 
+    await waitForRelayAdapterReadiness({
+      milestone: 'API A distributed relay adapter readiness after restart',
+      user: userA,
+      machine: machineB,
+      sendProbe: ({ tunnelId, grantId, payload }) => {
+        emit(userA.socket, envelopeFactory.open({
+          tunnelId,
+          grantId,
+          relaySocketId: userA.socket.id!,
+        }));
+        emit(userA.socket, envelopeFactory.userData({
+          tunnelId,
+          sequence: 0,
+          payload,
+        }));
+      },
+    });
+
     const afterARestartTunnelId = `after-a-restart-${randomUUID()}`;
+    const afterARestartPayload = 'fresh-after-a-restart';
     emit(userA.socket, envelopeFactory.open({
       tunnelId: afterARestartTunnelId,
       grantId: `grant-${randomUUID()}`,
@@ -775,15 +1269,389 @@ async function executeRelayClusterComposeScenario(params: Readonly<{
     emit(userA.socket, envelopeFactory.userData({
       tunnelId: afterARestartTunnelId,
       sequence: 0,
-      payload: 'fresh-after-a-restart',
+      payload: afterARestartPayload,
     }));
-    await waitFor(() =>
-      dataPayloads(machineB.frames, afterARestartTunnelId).includes('fresh-after-a-restart'),
-    {
-      timeoutMs: socketTimeoutMs,
-      context: 'fresh cross-replica tunnel after rolling restart',
+    await waitForFreshTunnelRelayData({
+      milestone: 'fresh_after_api_restart',
+      tunnelId: afterARestartTunnelId,
+      payload: afterARestartPayload,
+      user: userA,
+      machine: machineB,
     });
   });
+}
+
+function requireExternalRedisPartitionAdmin(target: StartedStressTarget): Readonly<{
+  disconnectContainerFromNetwork: NonNullable<
+    NonNullable<StartedStressTarget['admin']>['disconnectContainerFromNetwork']
+  >;
+  connectContainerToNetwork: NonNullable<
+    NonNullable<StartedStressTarget['admin']>['connectContainerToNetwork']
+  >;
+}> {
+  const admin = requireFullComposeAdmin(target);
+  if (!admin?.disconnectContainerFromNetwork || !admin.connectContainerToNetwork) {
+    throw new Error(
+      'Relay cluster compose scenario requires canonical external Redis network partition support',
+    );
+  }
+  return {
+    disconnectContainerFromNetwork: admin.disconnectContainerFromNetwork,
+    connectContainerToNetwork: admin.connectContainerToNetwork,
+  };
+}
+
+function withForgedRelaySignature(envelope: PeerTcpTunnelRelayEnvelope): PeerTcpTunnelRelayEnvelope {
+  if (envelope.v !== 1 || envelope.frame.kind !== 'open') {
+    throw new Error('Expected a V1 relay OPEN envelope to forge');
+  }
+  const authorization = envelope.frame.open.relayAuthorization;
+  if (!authorization) {
+    throw new Error('Expected signed relay authorization to forge');
+  }
+  return {
+    ...envelope,
+    frame: {
+      ...envelope.frame,
+      open: {
+        ...envelope.frame.open,
+        relayAuthorization: {
+          ...authorization,
+          signature: {
+            ...authorization.signature,
+            valueBase64Url: Buffer.from(new Uint8Array(nacl.sign.signatureLength).fill(7))
+              .toString('base64url'),
+          },
+        },
+      },
+    },
+  };
+}
+
+async function executeRelayClusterExternalPartitionScenario(params: Readonly<{
+  run: RunDirs;
+  target: StartedStressTarget;
+  config: StressConfig;
+  auth: TestAuth;
+}>): Promise<void> {
+  void params.run;
+  assertRelayClusterComposeConfig(params.config);
+  if (params.target.topology.resolvedApiReplicas !== 2) {
+    throw new Error('Relay cluster compose scenario requires exactly two full-compose API replicas');
+  }
+  const partitionAdmin = requireExternalRedisPartitionAdmin(params.target);
+  const peerMediation = params.target.testRuntime?.peerMediation;
+  if (!peerMediation || !peerMediation.allowedPorts.includes(relayPort)) {
+    throw new Error(`Relay cluster compose topology must expose test-only signing metadata and port ${relayPort}`);
+  }
+
+  const composeProjectName = params.target.topology.composeProjectName;
+  if (!composeProjectName) {
+    throw new Error('Relay cluster external Redis partition requires an owned Compose project');
+  }
+  const composeNetworkName = `${composeProjectName}_default`;
+  const redisContainers = await params.target.admin?.listServiceContainers('redis') ?? [];
+  const redis = redisContainers[0];
+  const redisAttachment = redis?.networkAttachments?.[composeNetworkName];
+  if (!redis || redisContainers.length !== 1 || !redisAttachment?.ipv4Address) {
+    throw new Error(
+      `Relay cluster external Redis partition requires one Redis container attached to ${composeNetworkName}`,
+    );
+  }
+
+  const upstreamTargets = await resolveServiceUpstreamTargets(params.target, 'api', 53288);
+  const gatewayConfig = await writeScenarioGatewayConfig({
+    target: params.target,
+    fileName: 'nginx.relay-cluster-external-partition.conf',
+    contents: renderStressGatewayNginxConf({
+      upstreamApiTargets: upstreamTargets,
+      affinity: 'header-hash',
+      stickyHeaderName,
+      workerConnections: params.config.compose.gatewayWorkerConnections,
+      workerRlimitNoFile: params.config.compose.gatewayWorkerRlimitNoFile,
+    }),
+  });
+  await activateGatewayConfig(params.target, gatewayConfig);
+
+  const accountId = await fetchAccountId(params.target.baseUrl, params.auth.token);
+  const machineId = `relay-cluster-partition-machine-${randomUUID()}`;
+  await provisionMachine(params.target.baseUrl, params.auth.token, machineId);
+  const placement = await discoverDistinctStickyKeys({
+    target: params.target,
+    token: params.auth.token,
+  });
+  const envelopeFactory = createRelayClusterEnvelopeFactory({
+    accountId,
+    machineId,
+    signingKeyId: peerMediation.routeGrantSigning.keyId,
+    signingPrivateKeySeedBase64Url: peerMediation.routeGrantSigning.privateKeySeedBase64Url,
+  });
+
+  let redisPartitioned = false;
+  try {
+    await withRelayClientCleanup(async (retainClient) => {
+      const initialUserCounts = await readReplicaConnectionCounts(params.target, 'user-scoped');
+      const initialMachineCounts = await readReplicaConnectionCounts(params.target, 'machine-scoped');
+      const user = retainClient(await connectRawRelayClient({
+        baseUrl: params.target.baseUrl,
+        token: params.auth.token,
+        stickyKey: placement.first.stickyKey,
+        clientType: 'user-scoped',
+        machineId,
+      }));
+      const machine = retainClient(await connectRawRelayClient({
+        baseUrl: params.target.baseUrl,
+        token: params.auth.token,
+        stickyKey: placement.second.stickyKey,
+        clientType: 'machine-scoped',
+        machineId,
+      }));
+      await assertClientPlacement({
+        target: params.target,
+        clientType: 'user-scoped',
+        expectedContainerId: placement.first.containerId,
+        baseline: initialUserCounts,
+      });
+      await assertClientPlacement({
+        target: params.target,
+        clientType: 'machine-scoped',
+        expectedContainerId: placement.second.containerId,
+        baseline: initialMachineCounts,
+      });
+      assert.notEqual(placement.first.containerId, placement.second.containerId);
+      assert.ok(user.socket.id);
+      assert.ok(machine.socket.id);
+
+      const tunnelId = `external-partition-${randomUUID()}`;
+      emit(user.socket, envelopeFactory.open({
+        tunnelId,
+        grantId: `grant-${randomUUID()}`,
+        relaySocketId: user.socket.id,
+      }));
+      emit(user.socket, envelopeFactory.userData({
+        tunnelId,
+        sequence: 0,
+        payload: 'before-external-partition-forward',
+      }));
+      await waitFor(() =>
+        dataPayloads(machine.frames, tunnelId).includes('before-external-partition-forward'),
+      {
+        timeoutMs: socketTimeoutMs,
+        context: 'forward relay traffic before external Redis partition',
+      });
+      emit(machine.socket, envelopeFactory.machineData({
+        tunnelId,
+        userSocketId: user.socket.id,
+        sequence: 0,
+        payload: 'before-external-partition-reverse',
+      }));
+      await waitFor(() =>
+        dataPayloads(user.frames, tunnelId).includes('before-external-partition-reverse'),
+      {
+        timeoutMs: socketTimeoutMs,
+        context: 'reverse relay traffic before external Redis partition',
+      });
+
+      await partitionAdmin.disconnectContainerFromNetwork(redis.id, composeNetworkName);
+      redisPartitioned = true;
+      assert.equal(user.socket.connected, true);
+      assert.equal(machine.socket.connected, true);
+      emit(user.socket, envelopeFactory.userData({
+        tunnelId,
+        sequence: 1,
+        payload: externalPartitionForwardPayload,
+      }));
+      emit(machine.socket, envelopeFactory.machineData({
+        tunnelId,
+        userSocketId: user.socket.id,
+        sequence: 1,
+        payload: externalPartitionReversePayload,
+      }));
+      await sleep(1_500);
+      assertExternalPartitionPayloadsRemainAbsent({
+        milestone: 'during external Redis partition',
+        tunnelId,
+        userFrames: user.frames,
+        machineFrames: machine.frames,
+      });
+
+      await waitFor(() => terminalCount(user.frames, tunnelId, 'relay_cap_exceeded') === 1, {
+        timeoutMs: externalPartitionTerminalTimeoutMs,
+        intervalMs: 100,
+        context: 'bounded relay terminal during external Redis partition',
+      });
+      await sleep(500);
+      const partitionTerminalWindow = assertExternalPartitionTerminalWindow({
+        tunnelId,
+        userFrames: user.frames,
+        machineFrames: machine.frames,
+      });
+      assert.equal(user.socket.connected, true);
+      assert.equal(machine.socket.connected, true);
+
+      await partitionAdmin.connectContainerToNetwork(redis.id, composeNetworkName, {
+        aliases: redisAttachment.aliases,
+        ipv4Address: redisAttachment.ipv4Address,
+      });
+      redisPartitioned = false;
+      await waitForRedisServiceHealthy(params.target, 45_000);
+      await waitFor(() => user.socket.connected && machine.socket.connected, {
+        timeoutMs: 45_000,
+        intervalMs: 250,
+        context: 'relay clients remain connected after external Redis partition heal',
+      });
+      await waitForRelayAdapterReadiness({
+        milestone: 'distributed relay adapter readiness after external Redis partition heal',
+        user,
+        machine,
+        sendProbe: ({ tunnelId: probeTunnelId, grantId, payload }) => {
+          emit(user.socket, envelopeFactory.open({
+            tunnelId: probeTunnelId,
+            grantId,
+            relaySocketId: user.socket.id!,
+          }));
+          emit(user.socket, envelopeFactory.userData({
+            tunnelId: probeTunnelId,
+            sequence: 0,
+            payload,
+          }));
+        },
+      });
+      assertExternalPartitionPayloadsRemainAbsent({
+        milestone: 'after external Redis partition adapter readiness',
+        tunnelId,
+        userFrames: user.frames,
+        machineFrames: machine.frames,
+      });
+
+      emit(user.socket, envelopeFactory.userData({
+        tunnelId,
+        sequence: 2,
+        payload: 'must-not-resurrect-forward-after-heal',
+      }));
+      emit(machine.socket, envelopeFactory.machineData({
+        tunnelId,
+        userSocketId: user.socket.id,
+        sequence: 2,
+        payload: 'must-not-resurrect-reverse-after-heal',
+      }));
+      await sleep(1_000);
+      assert.equal(
+        dataPayloads(machine.frames, tunnelId).includes('must-not-resurrect-forward-after-heal'),
+        false,
+      );
+      assert.equal(
+        dataPayloads(user.frames, tunnelId).includes('must-not-resurrect-reverse-after-heal'),
+        false,
+      );
+      assertExternalPartitionPayloadsRemainAbsent({
+        milestone: 'after bounded external Redis partition heal settle',
+        tunnelId,
+        userFrames: user.frames,
+        machineFrames: machine.frames,
+      });
+      assert.deepEqual(assertExternalPartitionTerminalWindow({
+        tunnelId,
+        userFrames: user.frames,
+        machineFrames: machine.frames,
+      }), partitionTerminalWindow);
+
+      const forgedTunnelId = `forged-after-partition-${randomUUID()}`;
+      emit(user.socket, withForgedRelaySignature(envelopeFactory.open({
+        tunnelId: forgedTunnelId,
+        grantId: `grant-${randomUUID()}`,
+        relaySocketId: user.socket.id,
+      })));
+      await waitFor(() =>
+        terminalCount(user.frames, forgedTunnelId, 'relay_authorization_invalid') === 1,
+      {
+        timeoutMs: socketTimeoutMs,
+        context: 'forged relay grant rejected after external Redis partition heal',
+      });
+      assert.equal(
+        framesForTunnel(machine.frames, forgedTunnelId).some((envelope) =>
+          envelope.v === 1 && envelope.frame.kind === 'open',
+        ),
+        false,
+      );
+
+      const expiredTunnelId = `expired-after-partition-${randomUUID()}`;
+      const expiredEnvelope = envelopeFactory.open({
+        tunnelId: expiredTunnelId,
+        grantId: `grant-${randomUUID()}`,
+        relaySocketId: user.socket.id,
+        expiresAt: Date.now() + 250,
+      });
+      await sleep(500);
+      emit(user.socket, expiredEnvelope);
+      await waitFor(() =>
+        terminalCount(user.frames, expiredTunnelId, 'relay_authorization_invalid') === 1,
+      {
+        timeoutMs: socketTimeoutMs,
+        context: 'expired relay grant rejected after external Redis partition heal',
+      });
+      assert.equal(
+        framesForTunnel(machine.frames, expiredTunnelId).some((envelope) =>
+          envelope.v === 1 && envelope.frame.kind === 'open',
+        ),
+        false,
+      );
+
+      const recoveredTunnelId = `fresh-after-partition-${randomUUID()}`;
+      emit(user.socket, envelopeFactory.open({
+        tunnelId: recoveredTunnelId,
+        grantId: `grant-${randomUUID()}`,
+        relaySocketId: user.socket.id,
+      }));
+      emit(user.socket, envelopeFactory.userData({
+        tunnelId: recoveredTunnelId,
+        sequence: 0,
+        payload: 'fresh-forward-after-external-partition',
+      }));
+      await waitForFreshTunnelRelayData({
+        milestone: 'fresh_forward_after_external_partition',
+        tunnelId: recoveredTunnelId,
+        payload: 'fresh-forward-after-external-partition',
+        user,
+        machine,
+      });
+      emit(machine.socket, envelopeFactory.machineData({
+        tunnelId: recoveredTunnelId,
+        userSocketId: user.socket.id,
+        sequence: 0,
+        payload: 'fresh-reverse-after-external-partition',
+      }));
+      await waitFor(() =>
+        dataPayloads(user.frames, recoveredTunnelId).includes('fresh-reverse-after-external-partition'),
+      {
+        timeoutMs: socketTimeoutMs,
+        context: 'fresh reverse relay traffic after external Redis partition',
+      });
+
+      process.stdout.write(`${JSON.stringify({
+        relayExternalPartition: {
+          apiReplicas: 2,
+          workerReplicas: params.target.topology.resolvedWorkerReplicas,
+          clientsStayedConnected: true,
+          prePartitionBidirectional: true,
+          noTrafficCrossedPartition: true,
+          boundedPartitionTerminalEnvelopes: partitionTerminalWindow.terminalEnvelopeCount,
+          boundedPartitionTerminalReason: partitionTerminalWindow.reasonCodes[0],
+          noResurrectionAfterHeal: true,
+          forgedGrantRejected: true,
+          expiredGrantRejected: true,
+          freshBidirectionalRecovery: true,
+        },
+      })}\n`);
+    });
+  } finally {
+    if (redisPartitioned) {
+      await partitionAdmin.connectContainerToNetwork(redis.id, composeNetworkName, {
+        aliases: redisAttachment.aliases,
+        ipv4Address: redisAttachment.ipv4Address,
+      }).catch(() => undefined);
+    }
+  }
 }
 
 export async function runRelayClusterComposeScenario(params: Readonly<{
@@ -791,20 +1659,32 @@ export async function runRelayClusterComposeScenario(params: Readonly<{
   target: StartedStressTarget;
   config: StressConfig;
   auth: TestAuth;
+  disruption?: RelayClusterComposeDisruption;
 }>): Promise<void> {
-  const testDir = params.run.testDir('relay-cluster-compose');
+  const disruption = params.disruption ?? 'rolling-restart';
+  const testDir = params.run.testDir(
+    disruption === 'external-redis-partition'
+      ? 'relay-cluster-external-partition-compose'
+      : 'relay-cluster-compose',
+  );
   const startedAt = new Date().toISOString();
   let failure: unknown;
 
   try {
-    await executeRelayClusterComposeScenario(params);
+    if (disruption === 'external-redis-partition') {
+      await executeRelayClusterExternalPartitionScenario(params);
+    } else {
+      await executeRelayClusterComposeScenario(params);
+    }
   } catch (error) {
     failure = error;
   } finally {
     await finalizeStressScenario({
       run: params.run,
       testDir,
-      testName: 'relay.clusterCompose',
+      testName: disruption === 'external-redis-partition'
+        ? 'relay.clusterExternalPartitionCompose'
+        : 'relay.clusterCompose',
       target: params.target,
       config: params.config,
       startedAt,

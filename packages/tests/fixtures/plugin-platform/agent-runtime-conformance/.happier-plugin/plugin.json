@@ -101,6 +101,9 @@
         "surfaces": [
           "cli"
         ],
+        "execution": {
+          "target": "daemon"
+        },
         "placement": "primary",
         "dangerLevel": "safe",
         "hostAccess": [

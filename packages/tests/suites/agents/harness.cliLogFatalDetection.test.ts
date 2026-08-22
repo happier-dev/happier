@@ -33,6 +33,67 @@ describe('providers harness: cli log fatal error detection', () => {
     await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Out of credits');
   });
 
+  it('detects non-zero runner exits without disclosing the captured stderr tail', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const sessionExitDir = join(cliHome, 'logs', 'session-exit');
+    await mkdir(sessionExitDir, { recursive: true });
+    const reportPath = join(sessionExitDir, 'session-test-pid-12345.json');
+
+    await writeFile(
+      reportPath,
+      JSON.stringify({
+        sessionId: 'test',
+        pid: 12345,
+        observedAt: Date.now(),
+        observedBy: 'daemon',
+        reason: 'process-exited',
+        code: 0,
+        signal: null,
+      }),
+      'utf8',
+    );
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toBeNull();
+
+    await writeFile(
+      reportPath,
+      JSON.stringify({
+        sessionId: 'test',
+        pid: 12345,
+        observedAt: Date.now(),
+        observedBy: 'daemon',
+        reason: 'process-exited',
+        code: 1,
+        signal: null,
+        stderrTail: 'sensitive-provider-diagnostic',
+      }),
+      'utf8',
+    );
+
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toBe('Runner exited with code 1');
+  });
+
+  it('detects fatal runner signals without treating expected termination as fatal', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const sessionExitDir = join(cliHome, 'logs', 'session-exit');
+    await mkdir(sessionExitDir, { recursive: true });
+    const reportPath = join(sessionExitDir, 'session-test-pid-12345.json');
+    const report = {
+      sessionId: 'test',
+      pid: 12345,
+      observedAt: Date.now(),
+      observedBy: 'daemon',
+      reason: 'process-exited',
+      code: null,
+      stderrTail: 'sensitive-provider-diagnostic',
+    };
+
+    await writeFile(reportPath, JSON.stringify({ ...report, signal: 'SIGTERM' }), 'utf8');
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toBeNull();
+
+    await writeFile(reportPath, JSON.stringify({ ...report, signal: 'SIGKILL' }), 'utf8');
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toBe('Runner exited due to a fatal signal');
+  });
+
   it('returns null when no fatal error is present', async () => {
     const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
     const logsDir = join(cliHome, 'logs');

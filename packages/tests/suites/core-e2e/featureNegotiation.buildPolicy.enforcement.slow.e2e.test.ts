@@ -1,12 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { withTestDaemon } from '../../src/testkit/daemon/daemon';
 import { waitFor } from '../../src/testkit/timing';
 
@@ -30,8 +29,7 @@ describe('core e2e: build-policy enforcement', () => {
     await mkdir(cliHome, { recursive: true });
     await mkdir(daemonDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     await withTestDaemon({
       testDir: daemonDir,

@@ -20,7 +20,7 @@ import { yarnCommand } from '../../src/testkit/process/commands';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
 
 import { resolveAcpSdkTestRuntime } from "../../src/testkit/providers/acpSdkTestRuntime";
@@ -67,8 +67,8 @@ describe('core e2e: OpenCode ACP receives resolved Happier MCP servers', () => {
     await mkdir(cliHome, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const now = Date.now();
     const workspaceServerId = randomUUID();

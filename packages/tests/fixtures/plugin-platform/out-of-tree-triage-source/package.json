@@ -1,0 +1,30 @@
+{
+  "name": "happier-out-of-tree-triage-source",
+  "version": "1.0.0",
+  "description": "External-style public SDK fixture for the Triage sources V1 contract.",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0",
+    "@happier-dev/triage-protocol": ">=0.0.0 <1.0.0"
+  },
+  "files": [
+    ".happier-plugin/plugin.json",
+    "src"
+  ],
+  "scripts": {
+    "manifest": "node scripts/write-manifest.mjs",
+    "test": "npm run test:public && npm run test:runtime && npm run test:census && npm run test:installed",
+    "test:public": "node --test test/publicSurface.test.mjs",
+    "test:runtime": "node --test test/sourceAbiConformance.test.mjs",
+    "test:census": "node --test test/publicContractCensus.test.mjs",
+    "test:installed": "node --test test/installedTarballProof.test.mjs"
+  }
+}

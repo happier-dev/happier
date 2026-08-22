@@ -28,7 +28,7 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import {
   readFakeCodexAppServerRequestLog,
   writeFakeCodexAppServerScript,
@@ -662,12 +662,11 @@ describe('core e2e: provider account usage canonical flow', () => {
 
     const subjectId = `acct_daemon_${randomUUID()}`;
     await writeFile(join(codexHome, 'auth.json'), `${JSON.stringify({ account_id: subjectId })}\n`, 'utf8');
-    const secret = Uint8Array.from(Buffer.alloc(32, 7));
-    await seedCliAuthForServer({
+    await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: serverBaseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
 
     const requestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));

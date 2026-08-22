@@ -2,6 +2,12 @@ import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 import { sanitizeDaemonEnvForSpawn } from '../daemon/daemon';
 
+export type MobilePluginCandidateFakeClaudeFixture = Readonly<{
+  executablePath: string;
+  scenario: 'voice-current-ui-triage';
+  logPath: string;
+}>;
+
 type RecordLike = Readonly<Record<string, unknown>>;
 
 function asRecord(value: unknown, label: string): RecordLike {
@@ -24,6 +30,7 @@ export function buildMobilePluginCandidateDaemonEnv(input: Readonly<{
   happyHomeDir: string;
   serverUrl: string;
   webappUrl: string;
+  fakeClaude: MobilePluginCandidateFakeClaudeFixture;
 }>): NodeJS.ProcessEnv {
   return sanitizeDaemonEnvForSpawn({
     ...input.baseEnv,
@@ -32,6 +39,10 @@ export function buildMobilePluginCandidateDaemonEnv(input: Readonly<{
     HAPPIER_WEBAPP_URL: input.webappUrl,
     HAPPIER_DISABLE_CAFFEINATE: '1',
     HAPPIER_VARIANT: 'dev',
+    HAPPIER_CLAUDE_PATH: input.fakeClaude.executablePath,
+    HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: input.fakeClaude.scenario,
+    HAPPIER_E2E_FAKE_CLAUDE_LOG: input.fakeClaude.logPath,
+    HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
   });
 }
 

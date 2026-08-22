@@ -5,50 +5,50 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
+import { parseVoiceWavContainer } from '../../src/testkit/voice/voiceWavParser.mjs';
+
 const fixtureRoot = dirname(fileURLToPath(import.meta.url));
 
 function readPcm16MonoWavHeader(buffer) {
-  assert.equal(buffer.toString('ascii', 0, 4), 'RIFF');
-  assert.equal(buffer.toString('ascii', 8, 12), 'WAVE');
-  assert.equal(buffer.readUInt32LE(4), buffer.length - 8, 'RIFF size must match the checked-in bytes');
-
-  let offset = 12;
-  let format = null;
-  let dataBytes = null;
-  let dataOffset = null;
-  while (offset + 8 <= buffer.length) {
-    const chunkId = buffer.toString('ascii', offset, offset + 4);
-    const chunkBytes = buffer.readUInt32LE(offset + 4);
-    const payloadOffset = offset + 8;
-    assert.ok(payloadOffset + chunkBytes <= buffer.length, `${chunkId} chunk exceeds WAV bytes`);
-    if (chunkId === 'fmt ') {
-      assert.ok(chunkBytes >= 16, 'fmt chunk must contain the PCM base format');
-      format = {
-        audioFormat: buffer.readUInt16LE(payloadOffset),
-        channels: buffer.readUInt16LE(payloadOffset + 2),
-        sampleRate: buffer.readUInt32LE(payloadOffset + 4),
-        byteRate: buffer.readUInt32LE(payloadOffset + 8),
-        blockAlign: buffer.readUInt16LE(payloadOffset + 12),
-        bitsPerSample: buffer.readUInt16LE(payloadOffset + 14),
-      };
-    } else if (chunkId === 'data') {
-      assert.equal(dataBytes, null, 'fixture must contain exactly one data chunk');
-      dataBytes = chunkBytes;
-      dataOffset = payloadOffset;
-    }
-    offset = payloadOffset + chunkBytes + (chunkBytes % 2);
-  }
-
-  assert.ok(format, 'WAV must contain a fmt chunk');
-  assert.notEqual(dataBytes, null, 'WAV must contain a data chunk');
-  assert.equal(format.audioFormat, 1, 'fixture must use integer PCM');
-  assert.equal(format.channels, 1, 'fixture must be mono');
-  assert.equal(format.bitsPerSample, 16, 'fixture must use signed PCM16');
-  assert.equal(format.blockAlign, 2, 'PCM16 mono block alignment must be two bytes');
-  assert.equal(format.byteRate, format.sampleRate * format.blockAlign, 'PCM byte rate must match format');
-  assert.equal(dataBytes % format.blockAlign, 0, 'PCM data must contain whole samples');
-  return { ...format, dataBytes, dataOffset };
+  const container = parseVoiceWavContainer(buffer, 'manifest fixture');
+  return {
+    ...container.format,
+    channels: container.format.channelCount,
+    sampleRate: container.format.sampleRateHz,
+    dataBytes: container.dataBytes.byteLength,
+    dataOffset: container.dataOffset,
+  };
 }
+
+function createPcmWav({ fmtChunkBytes = 16, dataBytes = Buffer.alloc(32) } = {}) {
+  const fmtPayload = Buffer.alloc(fmtChunkBytes);
+  fmtPayload.writeUInt16LE(1, 0);
+  fmtPayload.writeUInt16LE(1, 2);
+  fmtPayload.writeUInt32LE(8_000, 4);
+  fmtPayload.writeUInt32LE(16_000, 8);
+  fmtPayload.writeUInt16LE(2, 12);
+  fmtPayload.writeUInt16LE(16, 14);
+  const paddedFmtBytes = fmtChunkBytes + (fmtChunkBytes % 2);
+  const paddedDataBytes = dataBytes.byteLength + (dataBytes.byteLength % 2);
+  const buffer = Buffer.alloc(12 + 8 + paddedFmtBytes + 8 + paddedDataBytes);
+  buffer.write('RIFF', 0, 'ascii');
+  buffer.writeUInt32LE(buffer.length - 8, 4);
+  buffer.write('WAVE', 8, 'ascii');
+  let offset = 12;
+  buffer.write('fmt ', offset, 'ascii');
+  buffer.writeUInt32LE(fmtChunkBytes, offset + 4);
+  fmtPayload.copy(buffer, offset + 8);
+  offset += 8 + paddedFmtBytes;
+  buffer.write('data', offset, 'ascii');
+  buffer.writeUInt32LE(dataBytes.byteLength, offset + 4);
+  dataBytes.copy(buffer, offset + 8);
+  return buffer;
+}
+
+test('manifest WAV parser rejects extended fmt and empty data containers', () => {
+  assert.throws(() => parseVoiceWavContainer(createPcmWav({ fmtChunkBytes: 18 }), 'manifest fixture'));
+  assert.throws(() => parseVoiceWavContainer(createPcmWav({ dataBytes: Buffer.alloc(0) }), 'manifest fixture'));
+});
 
 test('checked-in voice fixtures match their manifest and PCM contract', async () => {
   const manifest = JSON.parse(await readFile(join(fixtureRoot, 'manifest.json'), 'utf8'));

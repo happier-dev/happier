@@ -18,7 +18,7 @@ import { writeTestManifestForServer } from '../../src/testkit/manifestForServer'
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { hasToolCall, parseToolTraceJsonl } from '../../src/testkit/toolTraceJsonl';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -47,7 +47,7 @@ describe('core e2e: Codex local-control mirroring emits tool trace + session id'
     await mkdir(codexSessionsDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       { path: workspaceDir, host: 'e2e', name: 'codex-local-control', createdAt: Date.now() },

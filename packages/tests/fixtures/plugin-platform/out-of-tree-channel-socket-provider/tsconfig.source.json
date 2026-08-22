@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.public.json",
+  "compilerOptions": {
+    "paths": {
+      "@happier-dev/plugin-sdk/manifest": ["../../../../plugin-sdk/src/manifest.ts"],
+      "@happier-dev/plugin-sdk/protocol": ["../../../../plugin-sdk/src/protocol/index.ts"],
+      "@happier-dev/plugin-sdk/contributions": ["../../../../plugin-sdk/src/contributions/index.ts"],
+      "@happier-dev/plugin-sdk/sessions": ["../../../../plugin-sdk/src/services/sessions.ts"]
+    }
+  },
+  "include": ["test/sdk-projection-contract.ts"]
+}

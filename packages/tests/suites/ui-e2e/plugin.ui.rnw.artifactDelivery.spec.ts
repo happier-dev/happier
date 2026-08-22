@@ -1,12 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { appendFile, cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import tweetnacl from 'tweetnacl';
 
-import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
@@ -14,7 +13,7 @@ import {
     runPackedReviewedPluginInstall,
 } from '../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { reserveAvailablePort } from '../../src/testkit/network/reserveAvailablePort';
 import {
@@ -38,6 +37,7 @@ import {
     type PackedInspectorArtifactAttestation,
     type PreparedPackedCandidateBrowserQa,
 } from '../../src/testkit/pluginPlatform/packedCandidateBrowserQa';
+import { parseRnwArtifactDeliveryProjectionDescribeResponse } from '../../src/testkit/pluginPlatform/rnwArtifactDeliveryProjectionResponse';
 import { decideAuthenticatedPluginInstallReview } from '../../src/testkit/pluginPlatform/authenticatedInstallReview';
 import { repoRootDir } from '../../src/testkit/paths';
 import { buildAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/buildAuthBootstrapStorageSnapshot';
@@ -278,10 +278,30 @@ function externalInspectorManifest(version: string): Readonly<Record<string, unk
         entrypoints: { daemon: './dist/index.js' },
         hostAccess: { required: [], optional: [] },
         contributes: {
+            // The copied Inspector daemon entry registers this action during
+            // activation. Keep the external fixture's admitted manifest
+            // truthful so final-policy activation can apply the generation.
+            actions: [{
+                id: 'self-check',
+                title: 'Run Inspector self-check',
+                description: 'Verify the Inspector action bridge.',
+                scopes: ['global'],
+                surfaces: ['ui'],
+                placementBindings: ['toolbar'],
+                dangerLevel: 'safe',
+                execution: { target: 'daemon' },
+                resultSchema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: { ok: { type: 'boolean' } },
+                    required: ['ok'],
+                },
+            }],
             ui: {
                 views: [{
                     id: VIEW_ID,
-                    placement: 'app.rightSidebarTab',
+                    container: 'rightSidebarTab',
+                    target: { kind: 'app' },
                     renderer: RENDERER_ID,
                     title: 'Current RNW artifact',
                 }],
@@ -543,6 +563,8 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
         await daemon?.stop().catch(() => {});
         await ui?.stop().catch(() => {});
         await server?.stop().catch(() => {});
+        await candidate?.cleanup();
+        candidate = null;
     });
 
     test(`installs, ${routeProfile}-retrieves, replaces, rejects tamper, recovers, and uninstalls`, async ({ page }, testInfo) => {
@@ -592,22 +614,17 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
         });
 
         const auth = await createTestAuth(server.baseUrl);
-        const machineKey = Uint8Array.from(randomBytes(32));
-        const seeded = await seedCliDataKeyAuthForServer({
+        const machineKey = auth.accountMachineKey;
+        const seeded = await seedCliAuthForTestAccount({
             cliHome: cliHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey,
+            auth,
+            mode: 'dataKey',
         });
         await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
             serverUrl: server.baseUrl,
-            credentials: {
-                token: auth.token,
-                encryption: {
-                    publicKey: Buffer.from(seeded.publicKey).toString('base64'),
-                    machineKey: Buffer.from(machineKey).toString('base64'),
-                },
-            },
+            auth,
+            mode: 'dataKey',
             storageScope,
         }));
         const daemonEnv: NodeJS.ProcessEnv = {
@@ -729,7 +746,7 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
                     timeoutMs: 20_000,
                     context: 'external Inspector projection socket',
                 });
-                return DaemonContributionRegistryProjectionDescribeResponseSchema.parse(
+                return parseRnwArtifactDeliveryProjectionDescribeResponse(
                     unwrapDataKeyRpcResult(await createDataKeyRpcClient(socket, machineKey).call(
                     `${seeded.machineId}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`,
                     {
@@ -797,7 +814,8 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
         expect(targetBox?.height ?? 0).toBeGreaterThanOrEqual(44);
         const inspectorSurface = page.getByTestId('inspector-surface');
         await expect(inspectorSurface).toBeVisible({ timeout: 180_000 });
-        await expect(page.getByTestId(`inspector-plugin-${PLUGIN_ID}`)).toBeVisible();
+        const inspectorPlugin = page.getByTestId(`inspector-plugin-${PLUGIN_ID}`);
+        await expect(inspectorPlugin).toBeVisible();
         const interactionBoundary = page.getByTestId(
             `plugin-surface-interaction-boundary:surfacePlacement:${PLUGIN_ID}:${VIEW_ID}`,
         );
@@ -806,11 +824,11 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
             'enabled',
         );
         const initialMountLatencyMs = Date.now() - mountStartedAt;
-        const reloadAll = page.getByTestId('inspector-reload-all');
-        const accessibleReloadAll = page.getByRole('button', { name: 'Reload all plugins' });
-        await expect(accessibleReloadAll).toBeVisible();
-        await reloadAll.focus();
-        await expect(reloadAll).toBeFocused();
+        await inspectorPlugin.click();
+        const reloadSelected = page.getByTestId(`inspector-reload-selected-${PLUGIN_ID}`);
+        await expect(reloadSelected).toBeVisible();
+        await reloadSelected.focus();
+        await expect(reloadSelected).toBeFocused();
         await expect(page.getByTestId('inspector-last-reload')).toHaveCount(0);
         await page.waitForTimeout(1_000);
 
@@ -874,10 +892,16 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
         const reconnectedInteractionBoundary = page.getByTestId(
             `plugin-surface-interaction-boundary:surfacePlacement:${PLUGIN_ID}:${VIEW_ID}`,
         );
-        const reconnectedReloadAll = page.getByTestId('inspector-reload-all');
+        const reconnectedPlugin = page.getByTestId(`inspector-plugin-${PLUGIN_ID}`);
+        await expect(reconnectedPlugin).toBeVisible();
+        await reconnectedPlugin.click();
+        const reconnectedReloadSelected = page.getByTestId(
+            `inspector-reload-selected-${PLUGIN_ID}`,
+        );
+        await expect(reconnectedReloadSelected).toBeVisible();
         const lastReloadSummary = page.getByTestId('inspector-last-reload');
-        await reconnectedReloadAll.focus();
-        await expect(reconnectedReloadAll).toBeFocused();
+        await reconnectedReloadSelected.focus();
+        await expect(reconnectedReloadSelected).toBeFocused();
         await page.context().setOffline(true);
         await expect(page.getByTestId('inspector-surface')).toBeVisible();
         await expect(reconnectedInteractionBoundary).toHaveAttribute(
@@ -887,13 +911,12 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
         );
         await expect(reconnectedInteractionBoundary).toHaveAttribute('inert', '');
         await expect(reconnectedInteractionBoundary).toHaveAttribute('aria-hidden', 'true');
-        await expect(reconnectedReloadAll).not.toBeFocused();
-        await expect(page.getByRole('button', { name: 'Reload all plugins' })).toHaveCount(0);
+        await expect(reconnectedReloadSelected).not.toBeFocused();
         await expect(lastReloadSummary).toHaveCount(0);
-        await reconnectedReloadAll.dispatchEvent('click');
-        await reconnectedReloadAll.focus();
+        await reconnectedReloadSelected.dispatchEvent('click');
+        await reconnectedReloadSelected.focus();
         await page.keyboard.press('Enter');
-        await expect(reconnectedReloadAll).not.toBeFocused();
+        await expect(reconnectedReloadSelected).not.toBeFocused();
         await expect(lastReloadSummary).toHaveCount(0);
 
         await page.context().setOffline(false);
@@ -904,8 +927,8 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
         );
         await expect(reconnectedInteractionBoundary).not.toHaveAttribute('inert');
         await expect(reconnectedInteractionBoundary).not.toHaveAttribute('aria-hidden', 'true');
-        await expect(reconnectedReloadAll).toBeFocused();
-        await expect(page.getByRole('button', { name: 'Reload all plugins' })).toBeVisible();
+        await expect(reconnectedReloadSelected).toBeFocused();
+        await expect(reconnectedReloadSelected).toBeVisible();
         expect(attestExternalInspectorRuntime(await describeProjection())).toEqual(runtimeV3);
         await page.keyboard.press('Enter');
         await expect(lastReloadSummary).toContainText(

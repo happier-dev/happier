@@ -13,6 +13,9 @@ import type { StartedStressTarget } from '../../src/testkit/stress/targets/stres
 
 const run = createRunDirs({ runLabel: 'stress' });
 const config = readStressConfig();
+const disruption = process.env.HAPPIER_STRESS_RELAY_CLUSTER_DISRUPTION === 'external-redis-partition'
+  ? 'external-redis-partition'
+  : 'rolling-restart';
 
 describe('stress: relay cluster compose', () => {
   let target: StartedStressTarget | undefined;
@@ -31,7 +34,11 @@ describe('stress: relay cluster compose', () => {
     await stopStressTarget(target);
   });
 
-  it('keeps relay ownership replica-local while Redis coordinates admission across abrupt restarts', async () => {
+  it(
+    disruption === 'external-redis-partition'
+      ? 'fails closed across an external Redis partition and recovers only through a fresh tunnel'
+      : 'keeps relay ownership replica-local while Redis coordinates admission across abrupt restarts',
+    async () => {
     if (!target || !auth) {
       throw new Error('Relay cluster compose setup did not produce an attested target and auth');
     }
@@ -40,6 +47,8 @@ describe('stress: relay cluster compose', () => {
       target,
       config,
       auth,
+      disruption,
     });
-  });
+    },
+  );
 });

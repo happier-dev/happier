@@ -61,6 +61,7 @@ describe('readStressConfig', () => {
         HAPPIER_STRESS_COMPOSE_API_REPLICAS: '5',
         HAPPIER_STRESS_COMPOSE_WORKER_REPLICAS: '2',
         HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY: 'never',
+        HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT: '1111111111111111111111111111111111111111',
         HAPPIER_STRESS_COMPOSE_REUSE_RUNNING: '1',
         HAPPIER_STRESS_COMPOSE_FRONT_DOOR: 'api-direct',
         HAPPIER_STRESS_COMPOSE_GATEWAY_WORKER_CONNECTIONS: '32768',
@@ -111,6 +112,7 @@ describe('readStressConfig', () => {
         expect(config.compose.apiReplicas).toBe(5);
         expect(config.compose.workerReplicas).toBe(2);
         expect(config.compose.imageBuildStrategy).toBe('never');
+        expect(config.compose.imageFingerprint).toBe('1111111111111111111111111111111111111111');
         expect(config.compose.reuseRunningTopology).toBe(true);
         expect(config.compose.frontDoorMode).toBe('api-direct');
         expect(config.compose.gatewayWorkerConnections).toBe(32768);

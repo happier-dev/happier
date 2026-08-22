@@ -25,6 +25,19 @@ describe('localPackageFixture', () => {
         );
     });
 
+    it('rejects deferred public contribution families instead of treating a fixture as an authoring path', () => {
+        expect(() => createLocalExtensionPackageManifest({
+            pluginId: 'acme.deferred-public-families',
+            contributes: {
+                browserActions: [],
+                browserTargets: [],
+                requestInterceptors: [],
+            },
+        })).toThrow(
+            'Unsupported plugin contribution families: browserActions, browserTargets, requestInterceptors',
+        );
+    });
+
     it('normalizes schemaVersion 1 fixture inputs to final Plugin SDK v1 manifests on disk', async () => {
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-local-package-fixture-'));
 
@@ -250,6 +263,7 @@ describe('localPackageFixture', () => {
                                 id: 'acme.local.action',
                                 title: 'Action',
                                 surfaces: { [retiredAgentSurface]: true },
+                                execution: { target: 'daemon' },
                             },
                             createPluginActionContribution({ actionId: 'acme.local.helper-action' }),
                         ],

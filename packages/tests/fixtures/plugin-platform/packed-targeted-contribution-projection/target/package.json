@@ -1,0 +1,30 @@
+{
+  "name": "packed-targeted-projection-target",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "happier-plugin"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "happier plugins author build .",
+    "typecheck": "happier plugins author typecheck .",
+    "pack:plugin": "happier plugins pack ."
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.10",
+    "typescript": "5.9.3",
+    "@typescript/native": "npm:typescript@7.0.2"
+  }
+}

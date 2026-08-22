@@ -55,6 +55,7 @@ export type StressComposeConfig = Readonly<{
   apiReplicas: number;
   workerReplicas: number;
   imageBuildStrategy: StressComposeImageBuildStrategy;
+  imageFingerprint?: string;
   reuseRunningTopology: boolean;
   frontDoorMode?: StressComposeFrontDoorMode;
   loadGenerationMode?: StressComposeLoadGenerationMode;

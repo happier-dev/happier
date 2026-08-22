@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
@@ -148,12 +148,11 @@ describe('core e2e: daemon spawn account settings version hints', () => {
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({
+    await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
 
     const fakeClaudePath = fakeClaudeFixturePath();
@@ -199,12 +198,11 @@ describe('core e2e: daemon spawn account settings version hints', () => {
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({
+    await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
 
     const fakeClaudePath = fakeClaudeFixturePath();

@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 
 import { waitForComposeRpcGatewayReadiness } from './waitForComposeRpcGatewayReadiness';
+
+function createMockTestAuth() {
+  const accountSigningSeed = new Uint8Array(32);
+  return {
+    token: 'token-1',
+    publicKeyBase64: 'public-key',
+    accountSigningSeed,
+    accountMachineKey: deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed),
+  };
+}
 
 describe('waitForComposeRpcGatewayReadiness', () => {
   it('waits for the gateway rpc path and cleans up sockets on success', async () => {
@@ -29,11 +40,8 @@ describe('waitForComposeRpcGatewayReadiness', () => {
       waitForComposeRpcGatewayReadiness(
         { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000 },
         {
-          createTestAuth: vi.fn(async () => ({
-            token: 'token-1',
-            publicKeyBase64: 'public-key',
-            accountSigningSeed: new Uint8Array(32),
-          })),
+          waitForOkHealth: vi.fn(async () => {}),
+          createTestAuth: vi.fn(async () => createMockTestAuth()),
           createSession: vi.fn(async () => ({ sessionId: 'session-1', tag: 'session-1' })),
           createUserScopedSocketCollector: vi.fn(() => ui as never),
           createMachineBoundSessionScopedSocketCollector: vi.fn(async () => listener as never),
@@ -76,15 +84,14 @@ describe('waitForComposeRpcGatewayReadiness', () => {
       waitForComposeRpcGatewayReadiness(
         { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000 },
         {
-          createTestAuth: vi.fn(async () => ({
-            token: 'token-1',
-            publicKeyBase64: 'public-key',
-            accountSigningSeed: new Uint8Array(32),
-          })),
+          waitForOkHealth: vi.fn(async () => {}),
+          createTestAuth: vi.fn(async () => createMockTestAuth()),
           createSession: vi.fn(async () => ({ sessionId: 'session-1', tag: 'session-1' })),
           createUserScopedSocketCollector: vi.fn(() => ui as never),
           createMachineBoundSessionScopedSocketCollector: vi.fn(async () => listener as never),
-          waitFor: vi.fn(async () => {}),
+          waitFor: vi.fn(async (predicate: () => boolean | Promise<boolean>) => {
+            await predicate();
+          }),
           waitForRegisteredRpcMethod: vi.fn(async () => {
             throw new Error('gateway not ready');
           }),
@@ -143,15 +150,14 @@ describe('waitForComposeRpcGatewayReadiness', () => {
       waitForComposeRpcGatewayReadiness(
         { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000, attempts: 2, retryDelayMs: 0 },
         {
-          createTestAuth: vi.fn(async () => ({
-            token: 'token-1',
-            publicKeyBase64: 'public-key',
-            accountSigningSeed: new Uint8Array(32),
-          })),
+          waitForOkHealth: vi.fn(async () => {}),
+          createTestAuth: vi.fn(async () => createMockTestAuth()),
           createSession: vi.fn(async () => ({ sessionId: 'session-1', tag: 'session-1' })),
           createUserScopedSocketCollector,
           createMachineBoundSessionScopedSocketCollector,
-          waitFor: vi.fn(async () => {}),
+          waitFor: vi.fn(async (predicate: () => boolean | Promise<boolean>) => {
+            await predicate();
+          }),
           waitForRegisteredRpcMethod,
         },
       ),
@@ -183,21 +189,20 @@ describe('waitForComposeRpcGatewayReadiness', () => {
     };
     const createTestAuth = vi.fn()
       .mockRejectedValueOnce(new Error('gateway restarting'))
-      .mockResolvedValueOnce({
-        token: 'token-1',
-        publicKeyBase64: 'public-key',
-        accountSigningSeed: new Uint8Array(32),
-      });
+      .mockResolvedValueOnce(createMockTestAuth());
 
     await expect(
       waitForComposeRpcGatewayReadiness(
         { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000, attempts: 2, retryDelayMs: 0 },
         {
+          waitForOkHealth: vi.fn(async () => {}),
           createTestAuth,
           createSession: vi.fn(async () => ({ sessionId: 'session-1', tag: 'session-1' })),
           createUserScopedSocketCollector: vi.fn(() => ui as never),
           createMachineBoundSessionScopedSocketCollector: vi.fn(async () => listener as never),
-          waitFor: vi.fn(async () => {}),
+          waitFor: vi.fn(async (predicate: () => boolean | Promise<boolean>) => {
+            await predicate();
+          }),
           waitForRegisteredRpcMethod: vi.fn(async () => {}),
         },
       ),
@@ -206,5 +211,85 @@ describe('waitForComposeRpcGatewayReadiness', () => {
     expect(createTestAuth).toHaveBeenCalledTimes(2);
     expect(ui.close).toHaveBeenCalledTimes(1);
     expect(listener.socket.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for read-only gateway health before making one authenticated request', async () => {
+    const ui = {
+      connect: vi.fn(),
+      close: vi.fn(),
+      isConnected: vi.fn(() => true),
+      rpcCall: vi.fn(),
+    };
+    const listener = {
+      machineId: 'machine-1',
+      socket: {
+        connect: vi.fn(),
+        close: vi.fn(),
+        isConnected: vi.fn(() => true),
+        onRpcRequest: vi.fn(),
+        rpcRegister: vi.fn(async () => {}),
+      },
+    };
+    let gatewayReady = false;
+    const waitForOkHealth = vi.fn(async () => {
+      gatewayReady = true;
+    });
+    const createTestAuth = vi.fn(async () => {
+      if (!gatewayReady) {
+        throw new TypeError('fetch failed');
+      }
+      return createMockTestAuth();
+    });
+
+    await expect(
+      waitForComposeRpcGatewayReadiness(
+        { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000, attempts: 1 },
+        {
+          waitForOkHealth,
+          createTestAuth,
+          createSession: vi.fn(async () => ({ sessionId: 'session-1', tag: 'session-1' })),
+          createUserScopedSocketCollector: vi.fn(() => ui as never),
+          createMachineBoundSessionScopedSocketCollector: vi.fn(async () => listener as never),
+          waitFor: vi.fn(async (predicate: () => boolean | Promise<boolean>) => {
+            await predicate();
+          }),
+          waitForRegisteredRpcMethod: vi.fn(async () => {}),
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(waitForOkHealth).toHaveBeenCalledWith(
+      'http://127.0.0.1:43080',
+      { timeoutMs: 5_000 },
+    );
+    expect(waitForOkHealth.mock.invocationCallOrder[0]).toBeLessThan(
+      createTestAuth.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(createTestAuth).toHaveBeenCalledTimes(1);
+    expect(ui.close).toHaveBeenCalledTimes(1);
+    expect(listener.socket.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a permanent authenticated-request failure without polling it', async () => {
+    const createTestAuth = vi.fn(async () => {
+      throw new Error('Failed to create test auth token (status=403)');
+    });
+
+    await expect(
+      waitForComposeRpcGatewayReadiness(
+        { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000, attempts: 1 },
+        {
+          waitForOkHealth: vi.fn(async () => {}),
+          createTestAuth,
+          createSession: vi.fn(),
+          createUserScopedSocketCollector: vi.fn(),
+          createMachineBoundSessionScopedSocketCollector: vi.fn(),
+          waitFor: vi.fn(),
+          waitForRegisteredRpcMethod: vi.fn(),
+        },
+      ),
+    ).rejects.toThrow('Failed to create test auth token (status=403)');
+
+    expect(createTestAuth).toHaveBeenCalledTimes(1);
   });
 });

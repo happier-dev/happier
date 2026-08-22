@@ -1,0 +1,31 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/examples.packed-targeted-projection-contributor/packed-provider-page
+- extendedWaitUntil:
+    visible:
+      id: plugin-app-page-unavailable
+    timeout: 120000
+- assertNotVisible:
+    id: packed-targeted-provider-title
+- assertNotVisible:
+    id: packed-targeted-context-action
+- assertNotVisible:
+    id: packed-targeted-context-result
+- assertNotVisible:
+    id: packed-targeted-web-only-context-action
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-status:sidebar:disconnected
+    timeout: 120000
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/voice
+- extendedWaitUntil:
+    visible:
+      id: settings.voice.provider.off
+    timeout: 120000
+- assertNotVisible:
+    id: settings.voice.provider.examples.packed-targeted-projection-contributor%2Fpacked-conversation.default
+- takeScreenshot: plugin-platform-trust-revoked-${HAPPIER_E2E_MOBILE_PLATFORM}

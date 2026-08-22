@@ -1,4 +1,8 @@
 import { io, type Socket } from 'socket.io-client';
+import {
+  buildAccountStoredContentCompatibilitySocketAuthV1,
+  CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+} from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 import { attachSocketEventCollector, SocketEventCollector, type CapturedEvent } from './socketEventCollector';
@@ -201,7 +205,7 @@ export class SocketCollector {
     });
   }
 
-  async rpcCall<T = RpcResponseEnvelope>(method: string, params: string, timeoutMs = 30_000): Promise<T> {
+  async rpcCall<T = RpcResponseEnvelope>(method: string, params: unknown, timeoutMs = 30_000): Promise<T> {
     return await this.emitWithAck(
       SOCKET_RPC_EVENTS.CALL,
       { method, params, timeoutMs },
@@ -219,12 +223,21 @@ type SocketCollectorOptions = Readonly<{
   connectTimeoutMs?: number;
   autoReconnect?: boolean;
   captureEvents?: boolean;
+  declareCurrentAccountStoredContentCompatibility?: boolean;
 }>;
 
 export function createUserScopedSocketCollector(baseUrl: string, token: string, options?: SocketCollectorOptions): SocketCollector {
   const socket = io(baseUrl, {
     path: '/v1/updates/',
-    auth: { token, clientType: 'user-scoped' as const },
+    auth: {
+      token,
+      clientType: 'user-scoped' as const,
+      ...(options?.declareCurrentAccountStoredContentCompatibility
+        ? buildAccountStoredContentCompatibilitySocketAuthV1(
+            CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+          )
+        : {}),
+    },
     transports: [...(options?.transports ?? ['websocket'])],
     timeout: options?.connectTimeoutMs,
     reconnection: options?.autoReconnect ?? true,

@@ -3,16 +3,18 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 import ts from 'typescript';
 
+import { validateApiSurfaceInventory } from '../../plugin-sdk/scripts/apiSurface.mjs';
 import { resolveNpmCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
 const pluginSdkDir = join(repoRoot, 'packages', 'plugin-sdk');
 const rootNodeModules = join(repoRoot, 'node_modules');
-const sdkContractPath = join(pluginSdkDir, 'src', 'normalSurfaceContract.ts');
+const sdkInventoryPath = join(pluginSdkDir, 'api-surface.json');
 const consumerArg = process.argv.find((arg) => arg.startsWith('--consumer='));
 const tarballArg = process.argv.find((arg) => arg.startsWith('--tarball='));
 const requestedConsumers = new Set(
@@ -24,15 +26,15 @@ const suppliedTarballPath = tarballArg
 
 const REMOVED_PACKAGE_PATHS = [
   './acp',
+  './agent-runtime',
   './agent-runtime-v1',
-  './agents',
-  './events',
   './distribution',
   './internal/runtime/executionRun',
   './internal/runtime/session',
   './legacy',
   './manifest/agentSettings',
   './experimental/manifest/agentSettings',
+  './runtime',
   './runtime/session',
   './ui/artifacts',
   './ui/artifactIntegrity',
@@ -49,47 +51,31 @@ const REMOVED_PACKAGE_PATHS = [
   './ui/reactNativeWebBuild',
   './ui/reactNativeRepackStrictSafety',
   './account-usage',
-  './hooks',
-  './mcp',
-  './reviews',
-  './scm',
-  './sessions',
   './usage',
 ];
 
 const REMOVED_NORMAL_SYMBOL_IMPORTS = [
   ['.', 'PluginDistributionIdentityV1'],
+  ['.', 'PluginActivationApi'],
   ['./manifest', 'PluginAgentAcpTransport'],
   ['./manifest', 'PluginToolContributionV2'],
-  ['./runtime', 'PluginActivationApi'],
-  ['./runtime', 'PluginExternalSessionCandidate'],
-  ['./runtime', 'PluginExternalSessionRef'],
-  ['./runtime', 'PluginExternalSessionsService'],
-  ['./runtime', 'PluginExternalTranscriptFollowEvent'],
-  ['./runtime', 'PluginExternalTranscriptFollowResult'],
-  ['./runtime', 'PluginExternalTranscriptItem'],
-  ['./runtime', 'PluginLoopbackWebSocketClientSpec'],
-  ['./runtime', 'PluginLoopbackWebSocketHandshake'],
-  ['./runtime', 'PluginLoopbackWebSocketHeader'],
-  ['./runtime', 'PluginProjectsService'],
-  ['./runtime', 'PluginProtocolClientKind'],
-  ['./runtime', 'RuntimeCoreV1'],
-  ['./agent-runtime', 'AcpSessionRuntimeV1'],
-  ['./agent-runtime', 'AgentRuntimeV1'],
-  ['./agent-runtime', 'AgentAccountUsageService'],
-  ['./agent-runtime', 'AgentConfigurationScalar'],
-  ['./agent-runtime', 'AgentRuntimeRegistrationOptions'],
-  ['./agent-runtime', 'AgentRuntimeSurfaces'],
-  ['./agent-runtime', 'AgentSessionAuthService'],
-  ['./agent-runtime', 'AgentSessionMcpTransport'],
-  ['./agent-runtime', 'AgentTerminalLaunchRequest'],
+  ['./agents/runtime', 'RuntimeCoreV1'],
+  ['./agents/runtime', 'AcpSessionRuntimeV1'],
+  ['./agents/runtime', 'AgentRuntimeV1'],
+  ['./agents/runtime', 'AgentSessionAuthService'],
+  ['./sessions/external', 'PluginExternalSessionCandidate'],
+  ['./sessions/external', 'PluginExternalSessionRef'],
+  ['./sessions/external', 'PluginExternalSessionsService'],
+  ['./sessions/external', 'PluginExternalTranscriptFollowEvent'],
+  ['./sessions/external', 'PluginExternalTranscriptFollowResult'],
+  ['./sessions/external', 'PluginExternalTranscriptItem'],
+  ['./sessions/external', 'PluginProjectsService'],
   ['./ui', 'PluginHostedWebContributionV1'],
   ['./ui', 'PluginUiSurfaceModule'],
   ['./ui/client', 'CreatePluginUiHostApiClientOptions'],
   ['./ui/build', 'PluginUiArtifactPlatform'],
   ['./ui/build', 'PluginUiBuildConfig'],
   ['./ui/build', 'PluginUiBuildTarget'],
-  ['./ui/build', 'ReactNativeWebViteBuildPresetInput'],
   ['./ui/build', 'HostedWebViteBuildPresetInputV1'],
   ['./ui/build', 'defineHostedWebViteBuildPreset'],
   ['./testing', 'createPluginContextV1Fixture'],
@@ -98,9 +84,7 @@ const REMOVED_NORMAL_SYMBOL_IMPORTS = [
   ['./testing', 'PluginContextFixtureRecordsV1'],
   ['./testing', 'PluginContextFixtureServicesV1'],
   ['./testing', 'PluginContextFixtureV1'],
-  ['./testing', 'PluginTestkit'],
   ['./testing', 'PluginTestkitInvokeOptions'],
-  ['./testing', 'PluginTestkitRegistration'],
 ];
 
 const PACKED_GENERIC_TYPE_ARGUMENTS = new Map([
@@ -129,114 +113,51 @@ function assertOutOfWorkspace(path) {
   }
 }
 
-function unwrapExpression(expression) {
-  if (
-    ts.isAsExpression(expression)
-    || ts.isSatisfiesExpression(expression)
-    || ts.isParenthesizedExpression(expression)
-  ) {
-    return unwrapExpression(expression.expression);
+export async function readCanonicalAuthorSurfaceInventory(inventoryPath = sdkInventoryPath) {
+  let serializedInventory;
+  try {
+    serializedInventory = await readFile(inventoryPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new Error(
+        'EU-3 publication remains blocked: packages/plugin-sdk/api-surface.json has not been seeded',
+      );
+    }
+    throw error;
   }
-  return expression;
+
+  const inventory = validateApiSurfaceInventory(JSON.parse(serializedInventory));
+  return { inventory };
 }
 
-function readStringLiteralArray(expression, variableName) {
-  const value = unwrapExpression(expression);
-  if (!ts.isArrayLiteralExpression(value)) {
-    throw new Error(`${variableName} must be an array literal`);
-  }
-  return value.elements.map((element) => {
-    const literal = unwrapExpression(element);
-    if (!ts.isStringLiteral(literal)) {
-      throw new Error(`${variableName} must contain only string literals`);
-    }
-    return literal.text;
-  });
-}
-
-function readStringLiteralRecord(expression, variableName) {
-  const value = unwrapExpression(expression);
-  if (!ts.isObjectLiteralExpression(value)) {
-    throw new Error(`${variableName} must be an object literal`);
-  }
-  return Object.fromEntries(value.properties.map((property) => {
-    if (!ts.isPropertyAssignment(property)) {
-      throw new Error(`${variableName} must contain only property assignments`);
-    }
-    const key = property.name;
-    if (!ts.isStringLiteral(key) && !ts.isIdentifier(key)) {
-      throw new Error(`${variableName} contains a non-string key`);
-    }
-    return [key.text, readStringLiteralArray(property.initializer, variableName)];
-  }));
-}
-
-function readStringValueRecord(expression, variableName) {
-  const value = unwrapExpression(expression);
-  if (!ts.isObjectLiteralExpression(value)) {
-    throw new Error(`${variableName} must be an object literal`);
-  }
-  return Object.fromEntries(value.properties.map((property) => {
-    if (!ts.isPropertyAssignment(property)) {
-      throw new Error(`${variableName} must contain only property assignments`);
-    }
-    const key = property.name;
-    const literal = unwrapExpression(property.initializer);
-    if (
-      (!ts.isStringLiteral(key) && !ts.isIdentifier(key))
-      || !ts.isStringLiteral(literal)
-    ) {
-      throw new Error(`${variableName} must contain only string entries`);
-    }
-    return [key.text, literal.text];
-  }));
-}
-
-export async function readCanonicalNormalSurfaceContract() {
-  const sourceText = await readFile(sdkContractPath, 'utf8');
-  const sourceFile = ts.createSourceFile(
-    sdkContractPath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const declarations = new Map();
-  for (const statement of sourceFile.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      if (ts.isIdentifier(declaration.name) && declaration.initializer) {
-        declarations.set(declaration.name.text, declaration.initializer);
-      }
-    }
-  }
-  const allowlistInitializer = declarations.get('NORMAL_SURFACE_ALLOWLIST');
-  const entrypointsInitializer = declarations.get('NORMAL_ENTRYPOINTS');
-  if (!allowlistInitializer || !entrypointsInitializer) {
-    throw new Error('Canonical normal-surface contract declarations are missing');
-  }
-  const allowlist = readStringLiteralRecord(
-    allowlistInitializer,
-    'NORMAL_SURFACE_ALLOWLIST',
-  );
-  const entrypoints = Object.keys(readStringValueRecord(
-    entrypointsInitializer,
-    'NORMAL_ENTRYPOINTS',
-  ));
-  if (JSON.stringify(Object.keys(allowlist)) !== JSON.stringify(entrypoints)) {
-    throw new Error('Canonical normal-surface allowlist and entrypoints disagree');
-  }
-  return { allowlist };
-}
-
-export async function classifyPackedNormalSurface(packageRoot, allowlist) {
+export async function assertPackedPublishReadyPackageMetadata(packageRoot) {
   const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
-  const declarationPaths = Object.fromEntries(Object.keys(allowlist).map((entrypoint) => {
-    const target = packageJson.exports?.[entrypoint];
+  if (packageJson.version === '0.0.0') {
+    throw new Error('Packed SDK package must not use placeholder version 0.0.0 at publication readiness');
+  }
+  if (packageJson.private === true) {
+    throw new Error('Packed SDK package must not remain private at publication readiness');
+  }
+  return packageJson;
+}
+
+export async function classifyPackedNormalSurface(packageRoot, { inventory }) {
+  const packageJson = await assertPackedPublishReadyPackageMetadata(packageRoot);
+  const expectedPackageExports = Object.fromEntries(
+    inventory.entrypoints.map((entrypoint) => [
+      entrypoint.specifier,
+      entrypoint.conditions,
+    ]),
+  );
+  if (!isDeepStrictEqual(packageJson.exports, expectedPackageExports)) {
+    throw new Error('Packed SDK package export graph mismatch with canonical inventory');
+  }
+  const declarationPaths = Object.fromEntries(inventory.entrypoints.map((entrypoint) => {
+    const target = packageJson.exports?.[entrypoint.specifier];
     if (!target || typeof target.types !== 'string') {
-      throw new Error(`Packed SDK is missing a declaration target for ${entrypoint}`);
+      throw new Error(`Packed SDK is missing a declaration target for ${entrypoint.specifier}`);
     }
-    return [entrypoint, resolve(packageRoot, target.types)];
+    return [entrypoint.specifier, resolve(packageRoot, target.types)];
   }));
   const program = ts.createProgram({
     rootNames: Object.values(declarationPaths),
@@ -249,59 +170,102 @@ export async function classifyPackedNormalSurface(packageRoot, allowlist) {
     },
   });
   const checker = program.getTypeChecker();
-  return Object.fromEntries(Object.entries(allowlist).map(([entrypoint, names]) => {
-    const sourceFile = program.getSourceFile(declarationPaths[entrypoint]);
+  const symbolsByEntrypoint = new Map(
+    inventory.entrypoints.map((entrypoint) => [entrypoint.specifier, []]),
+  );
+  for (const symbol of inventory.symbols) {
+    symbolsByEntrypoint.get(symbol.specifier).push(symbol);
+  }
+  const authorSurface = {};
+  for (const entrypoint of inventory.entrypoints) {
+    const expectedSymbols = symbolsByEntrypoint.get(entrypoint.specifier);
+    const expectedSymbolsByName = new Map(
+      expectedSymbols.map((symbol) => [symbol.exportName, symbol]),
+    );
+    const sourceFile = program.getSourceFile(declarationPaths[entrypoint.specifier]);
     if (!sourceFile) {
-      throw new Error(`Packed SDK declaration is missing for ${entrypoint}`);
+      throw new Error(`Packed SDK declaration is missing for ${entrypoint.specifier}`);
     }
     const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
     if (!moduleSymbol) {
-      throw new Error(`Packed SDK declaration has no module symbol for ${entrypoint}`);
+      throw new Error(`Packed SDK declaration has no module symbol for ${entrypoint.specifier}`);
     }
     const exportsByName = new Map(
       checker.getExportsOfModule(moduleSymbol).map((symbol) => [symbol.name, symbol]),
     );
-    const expectedNames = [...names].sort();
+    const expectedNames = [...expectedSymbolsByName.keys()].sort();
     const actualNames = [...exportsByName.keys()].sort();
     const missing = expectedNames.filter((name) => !exportsByName.has(name));
     const extra = actualNames.filter((name) => !expectedNames.includes(name));
     if (missing.length > 0 || extra.length > 0) {
       throw new Error([
-        `Packed normal surface mismatch for ${entrypoint}:`,
+        `Packed normal surface mismatch for ${entrypoint.specifier}:`,
         missing.length > 0 ? `missing ${missing.join(', ')}` : '',
         extra.length > 0 ? `extra ${extra.join(', ')}` : '',
       ].filter(Boolean).join(' '));
     }
-    return [entrypoint, expectedNames.map((name) => {
+    const classifiedSymbols = expectedNames.map((name) => {
       const symbol = exportsByName.get(name);
       const target = symbol.flags & ts.SymbolFlags.Alias
         ? checker.getAliasedSymbol(symbol)
         : symbol;
       const runtime = Boolean(target.flags & ts.SymbolFlags.Value);
+      const expectedKind = expectedSymbolsByName.get(name).kind;
+      const actualKind = runtime ? 'value' : 'type';
+      if (actualKind !== expectedKind) {
+        throw new Error(
+          `Packed SDK export kind mismatch for ${entrypoint.specifier}:${name}: `
+          + `expected ${expectedKind}, received ${actualKind}`,
+        );
+      }
       const genericDeclaration = runtime
         ? undefined
         : target.declarations?.find((declaration) => declaration.typeParameters?.length);
+      const declaredTypeParameters = genericDeclaration?.typeParameters;
       const typeArguments = PACKED_GENERIC_TYPE_ARGUMENTS.get(name)
-        ?? genericDeclaration?.typeParameters?.map((parameter) => (
-          parameter.constraint
-            ? checker.typeToString(
-              checker.getTypeFromTypeNode(parameter.constraint),
-              undefined,
-              ts.TypeFormatFlags.NoTruncation,
-            )
-            : 'unknown'
-        )) ?? [];
+        ?? (
+          declaredTypeParameters?.every((parameter) => parameter.default)
+            ? []
+            : declaredTypeParameters?.map((parameter) => (
+              parameter.constraint
+                ? checker.typeToString(
+                  checker.getTypeFromTypeNode(parameter.constraint),
+                  undefined,
+                  ts.TypeFormatFlags.NoTruncation,
+                )
+                : 'unknown'
+            ))
+        ) ?? [];
       return {
         name,
         runtime,
         ...(typeArguments.length > 0 ? { typeArguments } : {}),
       };
-    })];
-  }));
+    });
+    if (entrypoint.visibility === 'author') {
+      authorSurface[entrypoint.specifier] = classifiedSymbols;
+    }
+  }
+  return authorSurface;
 }
 
-function renderRuntimeBehaviorConsumer(contractKey, reference, index) {
+export function renderRuntimeBehaviorConsumer(contractKey, reference, index) {
   switch (contractKey) {
+    case '@happier-dev/plugin-sdk:definePlugin':
+      return [
+        `const __definedPlugin${index} = ${reference}({`,
+        '  id: "com.example.packed-consumer",',
+        '  version: "1.0.0",',
+        '});',
+        `if (__definedPlugin${index}.manifest.schemaVersion !== 2`,
+        `  || __definedPlugin${index}.manifest.id !== "com.example.packed-consumer"`,
+        `  || __definedPlugin${index}.manifest.version !== "1.0.0"`,
+        `  || __definedPlugin${index}.manifest.displayName !== "com.example.packed-consumer"`,
+        `  || !Object.isFrozen(__definedPlugin${index})`,
+        `  || typeof __definedPlugin${index}.activate !== "function") {`,
+        '  throw new Error("definePlugin contract mismatch");',
+        '}',
+      ];
     case '@happier-dev/plugin-sdk:PluginError':
       return [
         `const __pluginError${index} = new ${reference}({`,
@@ -313,14 +277,51 @@ function renderRuntimeBehaviorConsumer(contractKey, reference, index) {
         '  throw new Error("PluginError contract mismatch");',
         '}',
       ];
-    case '@happier-dev/plugin-sdk/agent-runtime:AgentRuntimeJsonValueSchema':
+    case '@happier-dev/plugin-sdk/protocol:defineProtocolObject':
+      return [
+        `const __protocolObject${index} = ${reference}({}, { policy: "closed" });`,
+        `const __protocolObjectValue${index} = __protocolObject${index}.parse({});`,
+        `if (__protocolObject${index}.jsonSchema.type !== "object"`,
+        `  || __protocolObject${index}.jsonSchema.additionalProperties !== false`,
+        `  || typeof __protocolObjectValue${index} !== "object") {`,
+        '  throw new Error("defineProtocolObject contract mismatch");',
+        '}',
+      ];
+    case '@happier-dev/plugin-sdk/actions:getActionSpec':
+      return [
+        `const __actionSpec${index} = ${reference}("session.open");`,
+        `if (__actionSpec${index}.id !== "session.open" || __actionSpec${index}.surfaces.plugin !== true) {`,
+        '  throw new Error("getActionSpec contract mismatch");',
+        '}',
+      ];
+    case '@happier-dev/plugin-sdk/secrets:SecretStringV1Schema':
+      return [
+        `const __secret${index} = ${reference}.parse({`,
+        '  _isSecretValue: true,',
+        '  value: "packed-consumer-secret",',
+        '});',
+        `if (__secret${index}._isSecretValue !== true || __secret${index}.value !== "packed-consumer-secret") {`,
+        '  throw new Error("SecretStringV1Schema contract mismatch");',
+        '}',
+      ];
+    case '@happier-dev/plugin-sdk/sessions/external:ExternalSessionAgentIdSchema':
+      return [
+        `const __agentId${index} = ${reference}.safeParse("packed-consumer-agent");`,
+        `const __spacedAgentId${index} = ${reference}.safeParse(" packed-consumer-agent ");`,
+        `if (!__agentId${index}.success`,
+        `  || __agentId${index}.data !== "packed-consumer-agent"`,
+        `  || __spacedAgentId${index}.success) {`,
+        '  throw new Error("ExternalSessionAgentIdSchema contract mismatch");',
+        '}',
+      ];
+    case '@happier-dev/plugin-sdk/agents/runtime:AgentRuntimeJsonValueSchema':
       return [
         `const __jsonValue${index} = ${reference}.parse({ nested: ["value", 1, true, null] });`,
         `if (!__jsonValue${index} || typeof __jsonValue${index} !== "object" || Array.isArray(__jsonValue${index})) {`,
         '  throw new Error("AgentRuntimeJsonValueSchema contract mismatch");',
         '}',
       ];
-    case '@happier-dev/plugin-sdk/agent-runtime:AgentSessionRuntimeEventSchema':
+    case '@happier-dev/plugin-sdk/agents/runtime:AgentSessionRuntimeEventSchema':
       return [
         `const __runtimeEvent${index} = ${reference}.safeParse({`,
         '  kind: "turn-complete",',
@@ -341,11 +342,11 @@ function renderRuntimeBehaviorConsumer(contractKey, reference, index) {
         '  throw new Error("createPluginUiHostApiClient must fail closed without host bootstrap");',
         '}',
       ];
-    case '@happier-dev/plugin-sdk/ui/build:PLUGIN_UI_BUILD_CONFIG_BASENAMES':
+    case '@happier-dev/plugin-sdk/ui/build:BUILD_CONFIG_BASENAMES':
       return [
         `if (!Object.isFrozen(${reference})`,
         `  || !${reference}.includes("happier-plugin-ui.config.mjs")) {`,
-        '  throw new Error("PLUGIN_UI_BUILD_CONFIG_BASENAMES contract mismatch");',
+        '  throw new Error("BUILD_CONFIG_BASENAMES contract mismatch");',
         '}',
       ];
     case '@happier-dev/plugin-sdk/ui/build:createReactNativeRepackSharedModules':
@@ -368,45 +369,45 @@ function renderRuntimeBehaviorConsumer(contractKey, reference, index) {
         '  throw new Error("createReactNativeWebVitePlugins contract mismatch");',
         '}',
       ];
-    case '@happier-dev/plugin-sdk/ui/build:definePluginUiBuildConfig':
+    case '@happier-dev/plugin-sdk/ui/build:defineBuildConfig':
       return [
         `const __uiBuildConfig${index} = ${reference}({`,
         '  targets: [{',
         '    rendererId: "packed-consumer",',
         '    entry: "src/main.ts",',
         '    kind: "hostedWeb",',
-        '    platforms: ["web"],',
         '  }],',
         '});',
         `if (__uiBuildConfig${index}.targets[0]?.rendererId !== "packed-consumer") {`,
-        '  throw new Error("definePluginUiBuildConfig contract mismatch");',
+        '  throw new Error("defineBuildConfig contract mismatch");',
         '}',
       ];
     case '@happier-dev/plugin-sdk/ui/build:defineReactNativeWebViteBuildPreset':
       return [
+        `const __publicToolchain${index} = (await import("@happier-dev/plugin-sdk/browser")).PUBLIC_TOOLCHAIN_COMPATIBILITY_V1;`,
         `const __rnWebPreset${index} = ${reference}({`,
         '  contributionId: "packed-consumer",',
         '  sourceEntry: "ui/surface.tsx",',
-        '  viteVersion: "7.3.1",',
-        '  hostUiApiVersion: "1.0.0",',
-        '  compatibility: { reactVersion: "19.2.0", reactNativeVersion: "0.83.4" },',
+        `  viteVersion: __publicToolchain${index}.framework.vite,`,
+        `  hostUiApiVersion: __publicToolchain${index}.ui.hostApiVersion,`,
+        `  compatibility: { reactVersion: __publicToolchain${index}.framework.react, reactNativeVersion: __publicToolchain${index}.framework.reactNative },`,
         '});',
         `if (__rnWebPreset${index}.platform !== "web"`,
-        `  || __rnWebPreset${index}.output.entry !== "react-native-web/packed-consumer/entry.mjs"`,
+        `  || __rnWebPreset${index}.output.entry !== "react-native-web/packed-consumer/entry.mjs.bundle"`,
         `  || !Object.isFrozen(__rnWebPreset${index})) {`,
         '  throw new Error("defineReactNativeWebViteBuildPreset contract mismatch");',
         '}',
       ];
     case '@happier-dev/plugin-sdk/testing:createPluginTestkit':
       return [
+        `const __publicToolchain${index} = (await import("@happier-dev/plugin-sdk/browser")).PUBLIC_TOOLCHAIN_COMPATIBILITY_V1;`,
         `const __testkit${index} = await ${reference}({`,
         '  manifest: {',
         '    schemaVersion: 2,',
         '    id: "com.example.packed-consumer",',
         '    version: "1.0.0",',
         '    displayName: "Packed consumer",',
-        '    engines: { happier: "^0.2.0" },',
-        '    runtime: { apiVersion: 1 },',
+        `    runtime: { apiVersion: Number(__publicToolchain${index}.framework.runtime) },`,
         '    activation: { events: [{ kind: "startup" }] },',
         '    hostAccess: { required: [], optional: [] },',
         '    contributes: {},',
@@ -419,7 +420,11 @@ function renderRuntimeBehaviorConsumer(contractKey, reference, index) {
         `await __testkit${index}.dispose();`,
       ];
     default:
-      throw new Error(`Packed runtime export lacks a behavior consumer: ${contractKey}`);
+      return [
+        `if (${reference} === undefined) {`,
+        `  throw new Error(${JSON.stringify(`Packed runtime export failed to resolve: ${contractKey}`)});`,
+        '}',
+      ];
   }
 }
 
@@ -527,7 +532,7 @@ export function renderNegativeTypeProbeSource() {
   return lines.join('\n');
 }
 
-function renderNegativeRuntimeProbeSource() {
+export function renderNegativeRuntimeProbeSource() {
   return [
     `const removedSpecifiers = ${JSON.stringify(REMOVED_PACKAGE_PATHS.map(packageSpecifier))};`,
     'for (const specifier of removedSpecifiers) {',
@@ -695,8 +700,8 @@ async function runNodeNextConsumer(workDir, tarballPath) {
     '@happier-dev',
     'plugin-sdk',
   );
-  const { allowlist } = await readCanonicalNormalSurfaceContract();
-  const classifiedSurface = await classifyPackedNormalSurface(installedSdkRoot, allowlist);
+  const inventoryContract = await readCanonicalAuthorSurfaceInventory();
+  const classifiedSurface = await classifyPackedNormalSurface(installedSdkRoot, inventoryContract);
   await writeProjectFile(consumerDir, 'tsconfig.json', JSON.stringify(buildNodeNextTsconfig(), null, 2));
   await writeProjectFile(
     consumerDir,
@@ -750,14 +755,13 @@ async function runViteConsumer(workDir, tarballPath) {
   }, null, 2));
   await installConsumerDependency(consumerDir, tarballPath, 'vite');
   await writeProjectFile(consumerDir, 'vite.config.mjs', [
-    'import { definePluginUiBuildConfig } from "@happier-dev/plugin-sdk/ui/build";',
+    'import { defineBuildConfig } from "@happier-dev/plugin-sdk/ui/build";',
     '',
-    'const pluginUi = definePluginUiBuildConfig({',
+    'const pluginUi = defineBuildConfig({',
     '  targets: [{',
     '    rendererId: "consumer-vite",',
     '    entry: "src/main.ts",',
     '    kind: "hostedWeb",',
-    '    platforms: ["web"],',
     '  }],',
     '});',
     '',
@@ -776,10 +780,10 @@ async function runViteConsumer(workDir, tarballPath) {
     '',
   ].join('\n'));
   await writeProjectFile(consumerDir, 'src/main.ts', [
-    'import type { PluginUiRenderSurface } from "@happier-dev/plugin-sdk/ui";',
+    'import type { RenderSurface } from "@happier-dev/plugin-sdk/ui";',
     'import { createPluginUiHostApiClient } from "@happier-dev/plugin-sdk/ui/client";',
     '',
-    'const renderSurface: PluginUiRenderSurface = () => null;',
+    'const renderSurface: RenderSurface = () => null;',
     'console.log(`vite:${typeof createPluginUiHostApiClient}:${typeof renderSurface}`);',
     '',
   ].join('\n'));

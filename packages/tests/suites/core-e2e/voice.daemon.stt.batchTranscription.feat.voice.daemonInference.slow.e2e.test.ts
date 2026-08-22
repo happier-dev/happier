@@ -18,7 +18,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
@@ -158,12 +158,11 @@ describe('core e2e: daemon STT batch transcription', () => {
 
         server = await startServerLight({ testDir, dbProvider: 'sqlite' });
         const auth = await createTestAuth(server.baseUrl);
-        const machineKey = Uint8Array.from(randomBytes(32));
-        const seeded = await seedCliDataKeyAuthForServer({
+        const seeded = await seedCliAuthForTestAccount({
             cliHome: daemonHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey,
+            auth,
+            mode: 'dataKey',
         });
 
         const daemonEnv: NodeJS.ProcessEnv = {
@@ -197,7 +196,7 @@ describe('core e2e: daemon STT batch transcription', () => {
                 context: 'user-scoped socket for daemon STT core e2e',
             });
 
-            const machineRpc = createDataKeyRpcClient(ui, machineKey);
+            const machineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
 
             await waitFor(async () => {
                 const raw = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS}`, {}, 30_000);

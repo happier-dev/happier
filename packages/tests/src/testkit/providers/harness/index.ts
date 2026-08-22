@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 import { createRunDirs } from '../../runDir';
@@ -10,6 +10,11 @@ import { createTestAuth } from '../../auth';
 import { createSessionWithCiphertexts, fetchMessagesSince, fetchSessionV2 } from '../../sessions';
 import { envFlag } from '../../env';
 import { writeTestManifestForServer } from '../../manifestForServer';
+import type {
+  DaemonRunnerContinuityManifestEvidence,
+  DaemonRunnerLaunchEntrypointKind,
+  TestManifest,
+} from '../../manifest';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from '../../process/spawnProcess';
 import { repoRootDir } from '../../paths';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
@@ -19,18 +24,26 @@ import { sleep } from '../../timing';
 import { createUserScopedSocketCollector } from '../../socketClient';
 import { which, yarnCommand } from '../../process/commands';
 import { ensureCliDistBuilt, ensureCliSharedDepsBuilt } from '../../process/cliDist';
-import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint } from '../../process/cliLaunchSpec';
+import {
+  resolveCliTestLaunchSpec,
+  shouldUseCliSourceEntrypoint,
+  type CliTestLaunchSpec,
+} from '../../process/cliLaunchSpec';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../pendingQueueV2';
-import { seedCliAuthForServer } from '../../cliAuth';
+import { seedCliAuthForTestAccount } from '../../cliAuth';
 import {
   createRuntimeLimitMeasurementCaptureFromEnv,
   recordJsonlTraceMeasurements,
 } from '../../../../scripts/plugin-platform/runtime-limit-measurement.mjs';
 
 import { runWithFlakeRetry } from './flakeRetry';
-import { launchProviderHarnessSession } from './launchProviderHarnessSession';
+import {
+  launchProviderHarnessSession,
+  spawnProviderHarnessDirectProcessWithLaunchSpec,
+} from './launchProviderHarnessSession';
 import { providerTraceProtocolMatches } from './providerTraceProtocolMatcher';
 import { resolveProviderCliSpawnSpec } from './resolveProviderCliSpawnSpec';
+import { runDaemonRunnerContinuityAToBToC } from './daemonRunnerContinuity';
 
 import type {
   ProviderContractMatrixResult,
@@ -530,8 +543,12 @@ async function runOneScenario(params: {
   scenario: ProviderScenario;
   server: StartedServer;
   testDir: string;
+  cliLaunchSpec?: CliTestLaunchSpec;
+  launchEntrypointKind?: DaemonRunnerLaunchEntrypointKind;
 }): Promise<void> {
   const { provider, scenario, server, testDir } = params;
+  const candidateCliLaunchSpec = params.cliLaunchSpec;
+  const candidateLaunchEntrypointKind = params.launchEntrypointKind;
 
   const cliHome = resolve(join(testDir, 'cli-home'));
   const workspaceDir = resolve(join(testDir, 'workspace'));
@@ -555,6 +572,13 @@ async function runOneScenario(params: {
   const unregisterOpenCodeManagedServerCleanup = provider.id === 'opencode_server'
     ? registerOpenCodeManagedServerHomeForCleanup(cliHome)
     : null;
+  let daemonRunnerContinuityEvidence: DaemonRunnerContinuityManifestEvidence | undefined;
+  let scenarioManifestSessionIds: string[] = [];
+  let writeScenarioManifest: ((update: Readonly<{
+    status: NonNullable<TestManifest['results']>['status'];
+    endedAt?: string;
+    failureClassification?: NonNullable<TestManifest['results']>['failureClassification'];
+  }>) => void) | null = null;
 
   try {
   if (scenario.setup) {
@@ -566,11 +590,16 @@ async function runOneScenario(params: {
   const auth = await createTestAuth(server.baseUrl);
 
   // Legacy encryption is the simplest way to run real provider flows without requiring dataKey provisioning yet.
-  const secret = Uint8Array.from(randomBytes(32));
-  await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+  const secret = auth.accountSigningSeed;
+  await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
   const metadataCiphertextBase64 = encryptLegacyBase64(
-    { path: workspaceDir, host: 'e2e', name: `providers-${provider.id}`, createdAt: Date.now() },
+    {
+      path: workspaceDir,
+      host: 'e2e',
+      name: `providers-${provider.id}`,
+      flavor: provider.cli.subcommand,
+    },
     secret,
   );
 
@@ -589,21 +618,39 @@ async function runOneScenario(params: {
   const traceFilePhase1 = scenario.resume ? resolve(join(testDir, 'tooltrace.phase1.jsonl')) : traceFileMerged;
   const traceFilePhase2 = scenario.resume ? resolve(join(testDir, 'tooltrace.phase2.jsonl')) : null;
 
-  writeTestManifestForServer({
-    testDir,
-    server,
-    startedAt,
-    runId: run.runId,
-    testName: `${provider.id}.${scenario.id}`,
-    sessionIds: [sessionIdPhase1],
-    env: {
-      HAPPIER_E2E_PROVIDERS: process.env.HAPPIER_E2E_PROVIDERS ?? process.env.HAPPY_E2E_PROVIDERS,
-      [provider.enableEnvVar]: process.env[provider.enableEnvVar],
-      HAPPIER_E2E_PROVIDER_WAIT_MS: process.env.HAPPIER_E2E_PROVIDER_WAIT_MS ?? process.env.HAPPY_E2E_PROVIDER_WAIT_MS,
-      HAPPIER_E2E_PROVIDER_FLAKE_RETRY:
-        process.env.HAPPIER_E2E_PROVIDER_FLAKE_RETRY ?? process.env.HAPPY_E2E_PROVIDER_FLAKE_RETRY,
-    },
-  });
+  scenarioManifestSessionIds = [sessionIdPhase1];
+  const scenarioManifestEnv = {
+    HAPPIER_E2E_PROVIDERS: process.env.HAPPIER_E2E_PROVIDERS ?? process.env.HAPPY_E2E_PROVIDERS,
+    [provider.enableEnvVar]: process.env[provider.enableEnvVar],
+    HAPPIER_E2E_PROVIDER_WAIT_MS: process.env.HAPPIER_E2E_PROVIDER_WAIT_MS ?? process.env.HAPPY_E2E_PROVIDER_WAIT_MS,
+    HAPPIER_E2E_PROVIDER_FLAKE_RETRY:
+      process.env.HAPPIER_E2E_PROVIDER_FLAKE_RETRY ?? process.env.HAPPY_E2E_PROVIDER_FLAKE_RETRY,
+  };
+  writeScenarioManifest = (update) => {
+    writeTestManifestForServer({
+      testDir,
+      server,
+      startedAt,
+      runId: run.runId,
+      testName: `${provider.id}.${scenario.id}`,
+      sessionIds: scenarioManifestSessionIds,
+      env: scenarioManifestEnv,
+      manifest: {
+        results: {
+          status: update.status,
+          startedAt,
+          ...(update.endedAt !== undefined ? { endedAt: update.endedAt } : {}),
+          ...(update.failureClassification !== undefined
+            ? { failureClassification: update.failureClassification }
+            : {}),
+          ...(daemonRunnerContinuityEvidence !== undefined
+            ? { daemonRunnerContinuity: daemonRunnerContinuityEvidence }
+            : {}),
+        },
+      },
+    });
+  };
+  writeScenarioManifest({ status: 'running' });
 
   const baseCliEnvNoIsolation: NodeJS.ProcessEnv = {
     ...process.env,
@@ -744,7 +791,7 @@ async function runOneScenario(params: {
         },
       });
 
-      if (shouldPrepareProviderCliDist(cliEnv)) {
+      if (!candidateCliLaunchSpec && shouldPrepareProviderCliDist(cliEnv)) {
         // Built-entrypoint mode can start the daemon through spawnHappyCLI. Re-check dist before each
         // phase, but do not rebuild it here because that could invalidate imports in running daemons.
         await ensureCliDistBuilt(
@@ -762,21 +809,30 @@ async function runOneScenario(params: {
       }
 
       let daemon: StartedDaemon | null = null;
-	      if (
-	        shouldStartProviderDaemon({
-	          providerProtocol: provider.protocol,
-	          hasPostSatisfyRunHook: typeof scenario.postSatisfy?.run === 'function',
-	        })
-	      ) {
-	        const daemonDir = resolve(join(testDir, 'daemon'));
-	        await mkdir(daemonDir, { recursive: true });
-	        daemon = await startTestDaemon({ testDir: daemonDir, happyHomeDir: cliHome, env: cliEnv });
-	      }
+      let retainedContinuityDaemonA: StartedDaemon | null = null;
+      if (
+        shouldStartProviderDaemon({
+          providerProtocol: provider.protocol,
+          hasPostSatisfyRunHook: typeof scenario.postSatisfy?.run === 'function',
+          requiresDaemonRunnerContinuity: scenario.daemonRunnerContinuity !== undefined,
+        })
+      ) {
+        const daemonDir = resolve(join(testDir, 'daemon'));
+        await mkdir(daemonDir, { recursive: true });
+        daemon = await startTestDaemon({
+          testDir: daemonDir,
+          happyHomeDir: cliHome,
+          env: cliEnv,
+          ...(scenario.daemonRunnerContinuity ? { cleanupDescendantsOnExit: false } : {}),
+          ...(candidateCliLaunchSpec ? { cliLaunchSpec: candidateCliLaunchSpec } : {}),
+        });
+      }
 
       const launched = await launchProviderHarnessSession({
         providerId: String(provider.id),
         agentId: provider.cli.subcommand,
         providerProtocol: provider.protocol,
+        launchViaDaemon: scenario.daemonRunnerContinuity !== undefined,
         daemon,
         directory: workspaceDir,
         existingSessionId: params.sessionId,
@@ -786,18 +842,8 @@ async function runOneScenario(params: {
         ...(modelIdFromCliArgs ? { modelId: modelIdFromCliArgs } : {}),
         ...(modelUpdatedAtFromCliArgs !== undefined ? { modelUpdatedAt: modelUpdatedAtFromCliArgs } : {}),
         environmentVariables: cliEnv,
-        spawnDirect: async () => {
-          const providerCommandParams = {
-            providerSubcommand: provider.cli.subcommand,
-            sessionId: params.sessionId,
-            yoloCliArgs,
-            permissionCliArgs: cliPermissionArgs,
-            modelCliArgs,
-            extraCliArgs: params.extraCliArgs ?? [],
-            scenarioCliArgs,
-            providerCliExtraArgs: provider.cli.extraArgs ?? [],
-          } as const;
-          const sourceLaunchSpec = shouldUseCliSourceEntrypoint(cliEnv)
+        spawnDirect: async () => await spawnProviderHarnessDirectProcessWithLaunchSpec({
+          resolveLaunchSpec: async () => shouldUseCliSourceEntrypoint(cliEnv)
             ? await resolveCliTestLaunchSpec(
                 { testDir: resolve(testDir, 'provider-cli-source'), env: cliEnv },
                 {
@@ -807,31 +853,45 @@ async function runOneScenario(params: {
                   skipSourceFreshnessCheck: true,
                 },
               )
-            : null;
-          const baseCommand = sourceLaunchSpec?.command ?? yarnCommand();
-          const baseArgs = sourceLaunchSpec
-            ? [...sourceLaunchSpec.args, ...buildProviderCliCommandArgs(providerCommandParams)]
-            : buildProviderDevCommandArgs(providerCommandParams);
+            : null,
+          spawn: (sourceLaunchSpec) => {
+            const providerCommandParams = {
+              providerSubcommand: provider.cli.subcommand,
+              sessionId: params.sessionId,
+              yoloCliArgs,
+              permissionCliArgs: cliPermissionArgs,
+              modelCliArgs,
+              extraCliArgs: params.extraCliArgs ?? [],
+              scenarioCliArgs,
+              providerCliExtraArgs: provider.cli.extraArgs ?? [],
+            } as const;
+            const baseCommand = sourceLaunchSpec?.command ?? yarnCommand();
+            const baseArgs = sourceLaunchSpec
+              ? [...sourceLaunchSpec.args, ...buildProviderCliCommandArgs(providerCommandParams)]
+              : buildProviderDevCommandArgs(providerCommandParams);
 
-          return spawnLoggedProcess({
-            ...resolveProviderCliSpawnSpec({
-              platform: process.platform,
-              scriptPath: which('script'),
-              baseCommand,
-              baseArgs,
-              scenario,
-            }),
-            cwd: sourceLaunchSpec?.cwd ?? repoRootDir(),
-            env: { ...cliEnv, ...sourceLaunchSpec?.env },
-            stdoutPath: params.stdoutPath,
-            stderrPath: params.stderrPath,
-          });
-        },
+            return spawnLoggedProcess({
+              ...resolveProviderCliSpawnSpec({
+                platform: process.platform,
+                scriptPath: which('script'),
+                baseCommand,
+                baseArgs,
+                scenario,
+              }),
+              cwd: sourceLaunchSpec?.cwd ?? repoRootDir(),
+              env: { ...cliEnv, ...sourceLaunchSpec?.env },
+              stdoutPath: params.stdoutPath,
+              stderrPath: params.stderrPath,
+              cleanup: sourceLaunchSpec?.cleanup,
+            });
+          },
+        }),
       });
       const proc: SpawnedProcess | null = launched.process;
 
       let uiSocket: Awaited<ReturnType<typeof waitForPermissionRpcReady>>['socket'] | null = null;
-    try {
+      let phaseError: unknown = null;
+      try {
       // Wait for the provider client to be connected before posting the first prompt.
       // Even in YOLO scenarios, we may need to resolve *session-level* permission prompts
       // (e.g. ACP history import) to make resume flows deterministic.
@@ -1219,9 +1279,10 @@ async function runOneScenario(params: {
             scenarioSatisfiedByMessages({ decodedMessages: decodedMessagesSeen, socketEvents: uiSocket?.getEvents() ?? [] }, satisfactionScenario)
           ) {
             const postSatisfy = scenario.postSatisfy;
-            if (postSatisfy) {
+            const daemonRunnerContinuity = scenario.daemonRunnerContinuity;
+            if (postSatisfy || daemonRunnerContinuity) {
               await runPostSatisfyWithPermissionPump(async () => {
-                if (postSatisfy.run) {
+                if (postSatisfy?.run) {
                   await postSatisfy.run({
                     workspaceDir,
                     baseUrl: server.baseUrl,
@@ -1233,7 +1294,7 @@ async function runOneScenario(params: {
                   });
                 }
 
-                const toolName = postSatisfy.waitForAcpSidechainFromToolName;
+                const toolName = postSatisfy?.waitForAcpSidechainFromToolName;
                 if (typeof toolName === 'string' && toolName.trim().length > 0) {
                   const sidechainId = findFirstToolCallIdByName(relevant as any, toolName);
                   if (sidechainId) {
@@ -1243,9 +1304,75 @@ async function runOneScenario(params: {
                       sessionId: params.sessionId,
                       secret,
                       sidechainId,
-                      timeoutMs: postSatisfy.timeoutMs,
+                      timeoutMs: postSatisfy?.timeoutMs ?? 120_000,
                     });
                   }
+                }
+
+                if (daemonRunnerContinuity) {
+                  if (!daemon) {
+                    throw new Error(
+                      `Daemon runner continuity requires a running daemon (${provider.id}.${scenario.id})`,
+                    );
+                  }
+                  const [phaseB, phaseC] = daemonRunnerContinuity.phases;
+                  const retainedPluginLifecycle = daemonRunnerContinuity.retainedPluginLifecycle;
+                  retainedContinuityDaemonA = daemon;
+                  daemonRunnerContinuityEvidence = await runDaemonRunnerContinuityAToBToC({
+                    daemonA: daemon,
+                    testDir: resolve(join(testDir, 'daemon-continuity')),
+                    happyHomeDir: cliHome,
+                    daemonEnv: cliEnv,
+                    baseUrl: server.baseUrl,
+                    token: auth.token,
+                    sessionId: params.sessionId,
+                    secret,
+                    launchEntrypointKind: candidateLaunchEntrypointKind
+                      ?? (shouldUseCliSourceEntrypoint(cliEnv) ? 'source' : 'not_proven'),
+                    ...(candidateCliLaunchSpec ? { cliLaunchSpec: candidateCliLaunchSpec } : {}),
+                    phases: [
+                      {
+                        id: phaseB.id,
+                        prompt: phaseB.prompt({ workspaceDir }),
+                        requiredAssistantSubstring: phaseB.requiredAssistantSubstring,
+                        effect: phaseB.effect({ workspaceDir }),
+                      },
+                      {
+                        id: phaseC.id,
+                        prompt: phaseC.prompt({ workspaceDir }),
+                        requiredAssistantSubstring: phaseC.requiredAssistantSubstring,
+                        effect: phaseC.effect({ workspaceDir }),
+                      },
+                    ],
+                    ...(daemonRunnerContinuity.identityEvidence
+                      ? { identityEvidence: daemonRunnerContinuity.identityEvidence }
+                      : {}),
+                    ...(retainedPluginLifecycle
+                      ? {
+                          observeRetainedPluginLifecycle: async () => (
+                            await retainedPluginLifecycle.observe({
+                              workspaceDir,
+                              baseUrl: server.baseUrl,
+                              token: auth.token,
+                              sessionId: params.sessionId,
+                              secret,
+                              cliHome,
+                            })
+                          ),
+                        }
+                      : {}),
+                    ...(daemonRunnerContinuity.timeoutMs !== undefined
+                      ? { timeoutMs: daemonRunnerContinuity.timeoutMs }
+                      : {}),
+                    onReplacementDaemon: async (replacementDaemon) => {
+                      const retiredDaemon = daemon;
+                      daemon = replacementDaemon;
+                      if (retiredDaemon && retiredDaemon !== retainedContinuityDaemonA) {
+                        await retiredDaemon.proc.stop();
+                      }
+                    },
+                  });
+                  writeScenarioManifest?.({ status: 'running' });
                 }
               });
             }
@@ -1341,15 +1468,39 @@ async function runOneScenario(params: {
         });
 
         return { traceRaw: finalRaw, traceEvents: finalEvents, tokenTelemetryEntries };
+      } catch (error) {
+        phaseError = error;
+        throw error;
       } finally {
         try {
           uiSocket?.close();
         } catch {
           // ignore
         }
-        await daemon?.stop().catch(() => {});
-        await proc?.stop();
-        await stopDaemonFromHomeDir(cliHome).catch(() => {});
+        const cleanupErrors: Error[] = [];
+        const runCleanup = async (cleanup: () => void | Promise<void>) => {
+          try {
+            await cleanup();
+          } catch (error) {
+            cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+          }
+        };
+        if (daemon) await runCleanup(() => daemon!.stop());
+        if (retainedContinuityDaemonA && retainedContinuityDaemonA !== daemon) {
+          await runCleanup(() => retainedContinuityDaemonA!.proc.stop());
+        }
+        if (proc) await runCleanup(() => proc.stop());
+        await runCleanup(() => stopDaemonFromHomeDir(cliHome));
+        if (cleanupErrors.length > 0) {
+          const errors = phaseError === null
+            ? cleanupErrors
+            : [phaseError instanceof Error ? phaseError : new Error(String(phaseError)), ...cleanupErrors];
+          if (errors.length === 1) throw errors[0];
+          throw new AggregateError(
+            errors,
+            `Provider scenario execution and teardown failed: ${errors.map((error) => error.message).join('; ')}`,
+          );
+        }
       }
     }
 
@@ -1399,22 +1550,8 @@ async function runOneScenario(params: {
         agentStateCiphertextBase64: null,
       });
       sessionIdPhase2 = created.sessionId;
-      writeTestManifestForServer({
-        testDir,
-        server,
-        startedAt,
-        runId: run.runId,
-        testName: `${provider.id}.${scenario.id}`,
-        sessionIds: [sessionIdPhase1, sessionIdPhase2],
-        env: {
-          HAPPIER_E2E_PROVIDERS: process.env.HAPPIER_E2E_PROVIDERS ?? process.env.HAPPY_E2E_PROVIDERS,
-          [provider.enableEnvVar]: process.env[provider.enableEnvVar],
-          HAPPIER_E2E_PROVIDER_WAIT_MS:
-            process.env.HAPPIER_E2E_PROVIDER_WAIT_MS ?? process.env.HAPPY_E2E_PROVIDER_WAIT_MS,
-          HAPPIER_E2E_PROVIDER_FLAKE_RETRY:
-            process.env.HAPPIER_E2E_PROVIDER_FLAKE_RETRY ?? process.env.HAPPY_E2E_PROVIDER_FLAKE_RETRY,
-        },
-      });
+      scenarioManifestSessionIds = [sessionIdPhase1, sessionIdPhase2];
+      writeScenarioManifest?.({ status: 'running' });
     } else {
       sessionIdPhase2 = sessionIdPhase1;
     }
@@ -1595,6 +1732,18 @@ async function runOneScenario(params: {
   if (measurement) {
     await measurement.capture.writeArtifact({ artifactDir: measurement.artifactDir });
   }
+  writeScenarioManifest?.({
+    status: 'passed',
+    endedAt: new Date().toISOString(),
+    failureClassification: 'none',
+  });
+  } catch (error) {
+    writeScenarioManifest?.({
+      status: 'failed',
+      endedAt: new Date().toISOString(),
+      failureClassification: 'unknown',
+    });
+    throw error;
   } finally {
     // OpenCode server-native backend starts a detached managed `opencode serve` process.
     // Provider harness runs each scenario with its own isolated happy home; without cleanup,
@@ -1611,8 +1760,12 @@ async function runProviderWithRetry(params: {
   scenario: ProviderScenario;
   server: StartedServer;
   testDir: string;
+  cliLaunchSpec?: CliTestLaunchSpec;
+  launchEntrypointKind?: DaemonRunnerLaunchEntrypointKind;
+  allowFlakeRetry?: boolean;
 }): Promise<void> {
-  const allowFlakeRetry = envFlag('HAPPIER_E2E_PROVIDER_FLAKE_RETRY', false);
+  const allowFlakeRetry = params.allowFlakeRetry
+    ?? envFlag('HAPPIER_E2E_PROVIDER_FLAKE_RETRY', false);
   await runWithFlakeRetry({
     enabled: allowFlakeRetry,
     flakyErrorMessage: `FLAKY: provider scenario passed on retry (${params.provider.id}.${params.scenario.id})`,
@@ -1623,15 +1776,52 @@ async function runProviderWithRetry(params: {
   });
 }
 
-export async function runProviderContractMatrix(): Promise<ProviderContractMatrixResult> {
-  if (!envFlag('HAPPIER_E2E_PROVIDERS', false)) {
+export type ProviderContractMatrixOptions = Readonly<{
+  providerIds?: readonly string[];
+  scenarioIds?: readonly string[];
+  cliLaunchSpec?: CliTestLaunchSpec;
+  launchEntrypointKind?: DaemonRunnerLaunchEntrypointKind;
+  skipWorkspacePreparation?: boolean;
+  allowFlakeRetry?: boolean;
+}>;
+
+export async function runProviderContractMatrix(
+  options: ProviderContractMatrixOptions = {},
+): Promise<ProviderContractMatrixResult> {
+  if (!options.providerIds && !envFlag('HAPPIER_E2E_PROVIDERS', false)) {
     return { ok: true, skipped: { reason: 'providers disabled (set HAPPIER_E2E_PROVIDERS=1)' } };
   }
 
   await resetProviderFailureReport();
 
   const catalog = await loadProvidersFromCliSpecs();
-  const enabledProviders = catalog.filter((p) => envFlag(p.enableEnvVar, false));
+  const requestedProviderIds = options.providerIds;
+  if (requestedProviderIds?.length === 0) {
+    return { ok: false, error: 'provider_contract_matrix_requested_providers_empty' };
+  }
+  if (requestedProviderIds) {
+    const seen = new Set<string>();
+    for (const providerId of requestedProviderIds) {
+      if (seen.has(providerId)) {
+        return {
+          ok: false,
+          error: `provider_contract_matrix_requested_provider_duplicate:${providerId}`,
+        };
+      }
+      seen.add(providerId);
+    }
+  }
+  const providersById = new Map(catalog.map((provider) => [provider.id, provider]));
+  const missingProviderId = requestedProviderIds?.find((providerId) => !providersById.has(providerId));
+  if (missingProviderId) {
+    return {
+      ok: false,
+      error: `provider_contract_matrix_requested_provider_missing:${missingProviderId}`,
+    };
+  }
+  const enabledProviders = requestedProviderIds
+    ? requestedProviderIds.map((providerId) => providersById.get(providerId)!)
+    : catalog.filter((provider) => envFlag(provider.enableEnvVar, false));
   if (enabledProviders.length === 0) {
     return { ok: true, skipped: { reason: 'no providers enabled (set HAPPIER_E2E_PROVIDER_*=1)' } };
   }
@@ -1642,8 +1832,10 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
     // Provider runs execute the CLI in dev mode (tsx). Ensure shared workspace packages are built so
     // `@happier-dev/*` ESM exports are up-to-date before starting provider processes.
     const setupDir = run.testDir('setup');
-    await ensureCliSharedDepsBuilt({ testDir: setupDir, env: process.env });
-    if (shouldPrepareProviderCliDist(process.env)) {
+    if (!options.skipWorkspacePreparation) {
+      await ensureCliSharedDepsBuilt({ testDir: setupDir, env: process.env });
+    }
+    if (!options.cliLaunchSpec && shouldPrepareProviderCliDist(process.env)) {
       await ensureCliDistBuilt(
         { testDir: setupDir, env: process.env },
         {
@@ -1715,7 +1907,9 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
       const providerStartedAt = Date.now();
       let scenarios: ProviderScenario[];
 
-      if (filter.ids) {
+      if (options.scenarioIds) {
+        scenarios = options.scenarioIds.map((id) => resolveScenarioById({ provider, id }));
+      } else if (filter.ids) {
         const ids = [...filter.ids];
         scenarios = ids.map((id) => resolveScenarioById({ provider, id }));
       } else if (filter.tier) {
@@ -1743,7 +1937,19 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
             // eslint-disable-next-line no-console
             console.log(`[providers] start ${provider.id}.${scenario.id}`);
           }
-          await runProviderWithRetry({ provider, scenario, server, testDir });
+          await runProviderWithRetry({
+            provider,
+            scenario,
+            server,
+            testDir,
+            ...(options.cliLaunchSpec ? { cliLaunchSpec: options.cliLaunchSpec } : {}),
+            ...(options.launchEntrypointKind
+              ? { launchEntrypointKind: options.launchEntrypointKind }
+              : {}),
+            ...(options.allowFlakeRetry === undefined
+              ? {}
+              : { allowFlakeRetry: options.allowFlakeRetry }),
+          });
           if (shouldLogProviderProgress) {
             // eslint-disable-next-line no-console
             console.log(

@@ -8,7 +8,6 @@ import {
   mkdtemp,
   readFile,
   readdir,
-  readlink,
   realpath,
   rm,
   unlink,
@@ -20,8 +19,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   exportPackSandboxTarball,
-  resolvePackSandboxSourceRelDirs,
-  shouldIncludePackSandboxSourcePath,
 } from '../../../../apps/stack/scripts/pack.mjs';
 import {
   resolveCliDistBuildLockPath,
@@ -31,11 +28,19 @@ import {
   createPackedAuthorCandidate,
 } from './create-packed-author-candidate.mjs';
 import {
+  assertCandidateChecksumSignature,
   assertPackedAuthorCandidateManifestArtifacts,
 } from './run-packed-author-ui-compat.mjs';
 import {
   parseArtifactFilename,
 } from '../../../../scripts/pipeline/release/lib/manifests.mjs';
+import {
+  normalizeRollingBaseVersion,
+  validateExactRollingPublishVersion,
+} from '../../../../scripts/pipeline/release/lib/rolling-version-allocation.mjs';
+import {
+  normalizePublicReleaseChannel,
+} from '../../../../scripts/pipeline/release/lib/public-release-rings.mjs';
 import {
   parseArtifactChecksums,
 } from '../../../../scripts/pipeline/release/lib/artifact-checksums.mjs';
@@ -46,37 +51,12 @@ import {
   extractArchivePayloadToDirectory,
 } from '@happier-dev/release-runtime/archiveExtraction';
 import {
+  DEFAULT_MINISIGN_PUBLIC_KEY,
+  verifyMinisign,
+} from '@happier-dev/release-runtime/minisign';
+import {
   verifyDarwinPayloadNotarizationEvidence,
 } from '../../../../scripts/pipeline/release/notarize-standalone-binary.mjs';
-
-const DEFAULT_CANDIDATE_BASIS_PATHS = Object.freeze([
-  'package.json',
-  'yarn.lock',
-  'apps/stack/scripts/pack.mjs',
-  'apps/stack/scripts/utils',
-  'apps/ui/package.json',
-  'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts',
-  'apps/ui/sources/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides.ts',
-  'apps/ui/sources/agents/registry/generatedBundledPluginEntries.sessionAgentBehaviors.ts',
-  'apps/ui/sources/agents/registry/generatedBundledPluginEntries.agentSettings.ts',
-  'apps/ui/sources/agents/registry/generatedBundledPluginEntries.visibleMessageResolvers.ts',
-  'apps/ui/sources/text/bundledPluginTranslations.generated.ts',
-  'apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts',
-  'apps/server/package.json',
-  'apps/website/public/happier-release.pub',
-  'apps/website/public/install-dev.ps1',
-  'apps/website/public/install-dev.sh',
-  'packages/tests/scripts/plugin-platform/build-packed-author-candidate.mjs',
-  'packages/tests/scripts/plugin-platform/create-packed-author-candidate.mjs',
-  'packages/tests/scripts/plugin-platform/packed-author-artifact-boundary.mjs',
-  'packages/tests/scripts/plugin-platform/run-packed-author-ui-compat.mjs',
-  'scripts/ensureCliCommonDistModule.mjs',
-  'scripts/pipeline/release/build-cli-binaries.mjs',
-  'scripts/pipeline/release/lib',
-  'scripts/pipeline/release/notarize-standalone-binary.mjs',
-  'scripts/pipeline/release/verify-artifacts.mjs',
-  'scripts/migrations/extensions',
-]);
 
 const NATIVE_TARGETS = Object.freeze([
   'linux-x64',
@@ -97,23 +77,32 @@ const NATIVE_TARGET_SET = new Set([
   'windows-x64',
 ]);
 const CANDIDATE_RELEASE_CHANNEL = 'dev';
-const PACKED_AUTHOR_NPM_ARTIFACTS = Object.freeze([
+const PACKED_AUTHOR_NPM_PACKAGES = Object.freeze([
   Object.freeze({
     field: 'sdk',
     packageRelDir: 'packages/plugin-sdk',
     packageName: '@happier-dev/plugin-sdk',
-    version: '0.0.0',
-    tarballName: 'happier-dev-plugin-sdk-0.0.0.tgz',
+    tarballPrefix: 'happier-dev-plugin-sdk',
+  }),
+  Object.freeze({
+    field: 'pluginUi',
+    packageRelDir: 'packages/plugin-ui',
+    packageName: '@happier-dev/plugin-ui',
+    tarballPrefix: 'happier-dev-plugin-ui',
+  }),
+  Object.freeze({
+    field: 'channelsProtocol',
+    packageRelDir: 'packages/channels-protocol',
+    packageName: '@happier-dev/channels-protocol',
+    tarballPrefix: 'happier-dev-channels-protocol',
   }),
   Object.freeze({
     field: 'cli',
     packageRelDir: 'apps/cli',
     packageName: '@happier-dev/cli',
-    version: '0.2.10',
-    tarballName: 'happier-dev-cli-0.2.10.tgz',
+    tarballPrefix: 'happier-dev-cli',
   }),
 ]);
-
 function fail(message) {
   throw new Error(message);
 }
@@ -151,6 +140,53 @@ function validateNativeTarget(nativeTarget) {
   return normalized;
 }
 
+export async function resolveOwnedStandaloneCliMatrixVersion(sourceDir) {
+  const resolvedSourceDir = resolve(String(sourceDir ?? ''));
+  const sourceStats = await lstat(resolvedSourceDir);
+  if (sourceStats.isSymbolicLink() || !sourceStats.isDirectory()) {
+    fail('Supplied native artifacts root must be a real directory');
+  }
+  const archiveEntries = (await readdir(resolvedSourceDir))
+    .filter((entry) => entry.endsWith('.tar.gz'));
+  const parsedArchiveIdentities = archiveEntries
+    .map((entry) => parseArtifactFilename(entry));
+  const archiveIdentities = parsedArchiveIdentities
+    .filter((identity) => identity?.product === 'happier');
+  const identitiesByTarget = new Map(
+    archiveIdentities.map((identity) => [
+      `${identity.os}-${identity.arch}`,
+      identity,
+    ]),
+  );
+  const versions = new Set(
+    NATIVE_TARGETS.map((target) => identitiesByTarget.get(target)?.version),
+  );
+  if (
+    archiveEntries.length !== NATIVE_TARGETS.length
+    || archiveIdentities.length !== archiveEntries.length
+    || identitiesByTarget.size !== NATIVE_TARGETS.length
+    || NATIVE_TARGETS.some((target) => !identitiesByTarget.has(target))
+    || versions.size !== 1
+  ) {
+    fail('Supplied native matrix must contain all five release archives at one exact version');
+  }
+  const [version] = versions;
+  try {
+    const baseVersion = normalizeRollingBaseVersion(version);
+    if (version !== baseVersion) {
+      validateExactRollingPublishVersion({
+        productId: 'cli',
+        channel: normalizePublicReleaseChannel(CANDIDATE_RELEASE_CHANNEL),
+        baseVersion,
+        version,
+      });
+    }
+  } catch {
+    fail('Supplied native matrix version must be an exact stable or allocated dev CLI version');
+  }
+  return version;
+}
+
 export function parsePackedAuthorCandidateBuilderArgs(
   argv,
   { cwd = process.cwd() } = {},
@@ -162,18 +198,13 @@ export function parsePackedAuthorCandidateBuilderArgs(
   }
   const runId = validateRunId(readFlag(argv, '--run-id'));
   const outputRoot = resolve(cwd, readFlag(argv, '--output-root'));
-  const nativeTarget = validateNativeTarget(readOptionalFlag(argv, '--native-target'));
-  const nativeArtifactsDirArgument = readOptionalFlag(argv, '--native-artifacts-dir');
-  if (Boolean(nativeTarget) !== Boolean(nativeArtifactsDirArgument)) {
-    fail('--native-target and --native-artifacts-dir must be provided together');
-  }
+  const nativeTarget = validateNativeTarget(readFlag(argv, '--native-target'));
+  const nativeArtifactsDirArgument = readFlag(argv, '--native-artifacts-dir');
   return {
     runId,
     outputRoot,
     nativeTarget,
-    nativeArtifactsDir: nativeArtifactsDirArgument === null
-      ? null
-      : resolve(cwd, nativeArtifactsDirArgument),
+    nativeArtifactsDir: resolve(cwd, nativeArtifactsDirArgument),
   };
 }
 
@@ -186,172 +217,12 @@ export function parsePackedAuthorNaturalBuilderArgs(
     || argv.includes('--native-artifacts-dir')
     || argv.includes('--standalone-cli-artifact')
   ) {
-    fail('Natural artifact mode accepts only the SDK and CLI npm pair');
+    fail('Natural artifact mode accepts only the SDK, Plugin UI, Channels protocol, and CLI npm set');
   }
   return {
     runId: validateRunId(readFlag(argv, '--run-id')),
     outputRoot: resolve(cwd, readFlag(argv, '--output-root')),
   };
-}
-
-function shouldIgnoreCandidateBasisEntry(name, relativePath, isDirectory) {
-  void name;
-  void isDirectory;
-  return !shouldIncludePackSandboxSourcePath(relativePath);
-}
-
-async function collectCandidateBasisEntries({
-  monorepoRoot,
-  relativePath,
-}) {
-  const absolutePath = resolve(monorepoRoot, relativePath);
-  const stats = await lstat(absolutePath).catch((error) => {
-    if (error?.code === 'ENOENT') return null;
-    throw error;
-  });
-  if (!stats) {
-    return [{ kind: 'missing', relativePath }];
-  }
-  if (stats.isSymbolicLink()) {
-    return [{
-      kind: 'symlink',
-      relativePath,
-      target: await readlink(absolutePath),
-    }];
-  }
-  if (stats.isFile()) {
-    return [{ kind: 'file', relativePath, absolutePath }];
-  }
-  if (!stats.isDirectory()) {
-    fail(`Candidate basis contains an unsupported filesystem entry: ${relativePath}`);
-  }
-
-  const result = [{ kind: 'directory', relativePath }];
-  const pendingDirectories = [{ absolutePath, relativePath }];
-  while (pendingDirectories.length > 0) {
-    const batch = pendingDirectories.splice(0, 32);
-    const listings = await Promise.all(batch.map(async (directory) => ({
-      directory,
-      entries: await readdir(directory.absolutePath, { withFileTypes: true }),
-    })));
-    for (const { directory, entries } of listings) {
-      entries.sort((left, right) => left.name.localeCompare(right.name));
-      for (const entry of entries) {
-        const childRelativePath = directory.relativePath
-          ? `${directory.relativePath}/${entry.name}`
-          : entry.name;
-        if (
-          shouldIgnoreCandidateBasisEntry(
-            entry.name,
-            childRelativePath,
-            entry.isDirectory(),
-          )
-        ) {
-          continue;
-        }
-        const childAbsolutePath = join(directory.absolutePath, entry.name);
-        if (entry.isDirectory()) {
-          result.push({ kind: 'directory', relativePath: childRelativePath });
-          pendingDirectories.push({
-            absolutePath: childAbsolutePath,
-            relativePath: childRelativePath,
-          });
-        } else if (entry.isFile()) {
-          result.push({
-            kind: 'file',
-            relativePath: childRelativePath,
-            absolutePath: childAbsolutePath,
-          });
-        } else if (entry.isSymbolicLink()) {
-          result.push({
-            kind: 'symlink',
-            relativePath: childRelativePath,
-            target: await readlink(childAbsolutePath),
-          });
-        } else {
-          fail(`Candidate basis contains an unsupported filesystem entry: ${childRelativePath}`);
-        }
-      }
-    }
-  }
-  return result;
-}
-
-function normalizeCandidateBuildBasisPaths(basisPaths) {
-  const normalizedBasisPaths = new Set();
-  for (const relativePath of basisPaths) {
-    const normalizedRelativePath = String(relativePath ?? '').trim().replaceAll('\\', '/');
-    if (
-      !normalizedRelativePath
-      || isAbsolute(normalizedRelativePath)
-      || normalizedRelativePath.split('/').some((segment) => segment === '..')
-    ) {
-      fail(`Candidate basis path must stay inside the monorepo: ${relativePath}`);
-    }
-    normalizedBasisPaths.add(normalizedRelativePath);
-  }
-  return [...normalizedBasisPaths].sort((left, right) => left.localeCompare(right));
-}
-
-export async function resolveCandidateBuildBasisPaths({
-  monorepoRoot,
-}) {
-  return normalizeCandidateBuildBasisPaths([
-    ...DEFAULT_CANDIDATE_BASIS_PATHS,
-    ...await resolvePackSandboxSourceRelDirs({
-      monorepoRoot,
-      packageRelDir: 'packages/plugin-sdk',
-    }),
-    ...await resolvePackSandboxSourceRelDirs({
-      monorepoRoot,
-      packageRelDir: 'apps/cli',
-    }),
-  ]);
-}
-
-export async function captureCandidateBuildBasis({
-  monorepoRoot,
-  basisPaths = null,
-}) {
-  const normalizedBasisPaths = normalizeCandidateBuildBasisPaths(
-    basisPaths ?? await resolveCandidateBuildBasisPaths({ monorepoRoot }),
-  );
-
-  const collectedEntries = [];
-  const pendingBasisPaths = [...normalizedBasisPaths];
-  while (pendingBasisPaths.length > 0) {
-    const batch = pendingBasisPaths.splice(0, 24);
-    const batchEntries = await Promise.all(batch.map(async (relativePath) => (
-      await collectCandidateBasisEntries({ monorepoRoot, relativePath })
-    )));
-    collectedEntries.push(...batchEntries.flat());
-  }
-
-  const entriesByIdentity = new Map();
-  for (const entry of collectedEntries) {
-    entriesByIdentity.set(`${entry.kind}\0${entry.relativePath}`, entry);
-  }
-  const entries = [...entriesByIdentity.values()].sort((left, right) => (
-    left.relativePath.localeCompare(right.relativePath)
-    || left.kind.localeCompare(right.kind)
-  ));
-  const hash = createHash('sha256');
-  for (let offset = 0; offset < entries.length; offset += 128) {
-    const batch = entries.slice(offset, offset + 128);
-    const fileBytes = await Promise.all(batch.map((entry) => (
-      entry.kind === 'file' ? readFile(entry.absolutePath) : Promise.resolve(null)
-    )));
-    for (const [index, entry] of batch.entries()) {
-      hash.update(`${entry.kind}\0${entry.relativePath}\0`);
-      if (entry.kind === 'file') {
-        hash.update(fileBytes[index]);
-      } else if (entry.kind === 'symlink') {
-        hash.update(entry.target);
-      }
-      hash.update('\0');
-    }
-  }
-  return hash.digest('hex');
 }
 
 function pathIsInside(rootPath, candidatePath) {
@@ -428,6 +299,8 @@ export async function importOwnedStandaloneCliMatrix(
     verifyReleaseArchiveAdmissionImpl = verifyReleaseArchiveAdmission,
     verifyDarwinNotarizationEvidenceImpl =
       verifyDarwinNotarizationEvidenceAgainstArchive,
+    trustedMinisignPublicKey = DEFAULT_MINISIGN_PUBLIC_KEY,
+    verifyMinisignImpl = verifyMinisign,
   } = {},
 ) {
   const resolvedSourceDir = resolve(String(sourceDir ?? ''));
@@ -475,10 +348,11 @@ export async function importOwnedStandaloneCliMatrix(
   if (
     missingArchives.length > 0
     || !actualEntries.includes(expectedChecksumsFileName)
+    || !actualEntries.includes(expectedSignatureFileName)
     || missingDarwinEvidence.length > 0
   ) {
     fail(
-      'Supplied native matrix must contain all five release archives, their checksum file, and both Darwin notarization evidence files',
+      'Supplied native matrix must contain all five release archives, their checksum and signature files, and both Darwin notarization evidence files',
     );
   }
 
@@ -525,34 +399,8 @@ export async function importOwnedStandaloneCliMatrix(
     });
   }
 
-  const importedChecksums = await importRegularFile(expectedChecksumsFileName);
-  const checksumsPath = importedChecksums.destinationPath;
-  const checksumsBytes = importedChecksums.bytes;
-  const checksumEntries = parseArtifactChecksums(checksumsBytes.toString('utf8'));
-  const checksumsByName = new Map(
-    checksumEntries.map((entry) => [entry.name, entry.sha256]),
-  );
-  if (
-    checksumEntries.length !== importedArchives.length
-    || importedArchives.some((artifact) => (
-      checksumsByName.get(basename(artifact.archivePath)) !== artifact.sha256
-    ))
-  ) {
-    fail('Native checksums artifact does not bind the exact five-archive matrix');
-  }
-
-  let signature = null;
-  if (actualEntries.includes(expectedSignatureFileName)) {
-    const importedSignature = await importRegularFile(expectedSignatureFileName);
-    signature = createBoundFileRecord({
-      kind: 'minisign-signature',
-      fileName: expectedSignatureFileName,
-      filePath: importedSignature.destinationPath,
-      bytes: importedSignature.bytes,
-    });
-  }
-
   const notarization = [];
+  const importedDarwinEvidence = [];
   for (const expected of expectedDarwinEvidence) {
     const imported = await importRegularFile(expected.fileName);
     const archive = importedArchives.find(
@@ -577,7 +425,50 @@ export async function importOwnedStandaloneCliMatrix(
         bytes: imported.bytes,
       }),
     });
+    importedDarwinEvidence.push({
+      fileName: expected.fileName,
+      sha256: createHash('sha256').update(imported.bytes).digest('hex'),
+    });
   }
+
+  const importedChecksums = await importRegularFile(expectedChecksumsFileName);
+  const checksumsPath = importedChecksums.destinationPath;
+  const checksumsBytes = importedChecksums.bytes;
+  const checksumEntries = parseArtifactChecksums(checksumsBytes.toString('utf8'));
+  const checksumsByName = new Map(
+    checksumEntries.map((entry) => [entry.name, entry.sha256]),
+  );
+  const checksumBoundArtifacts = [
+    ...importedArchives.map((artifact) => ({
+      fileName: basename(artifact.archivePath),
+      sha256: artifact.sha256,
+    })),
+    ...importedDarwinEvidence,
+  ];
+  if (
+    checksumEntries.length !== checksumBoundArtifacts.length
+    || checksumsByName.size !== checksumEntries.length
+    || checksumBoundArtifacts.some((artifact) => (
+      checksumsByName.get(artifact.fileName) !== artifact.sha256
+    ))
+  ) {
+    fail('Native checksums artifact does not bind the exact seven-artifact release envelope');
+  }
+
+  const importedSignature = await importRegularFile(expectedSignatureFileName);
+  assertCandidateChecksumSignature({
+    checksumsBytes,
+    signatureBytes: importedSignature.bytes,
+  }, {
+    trustedMinisignPublicKey,
+    verifyMinisignImpl,
+  });
+  const signature = createBoundFileRecord({
+    kind: 'minisign-signature',
+    fileName: expectedSignatureFileName,
+    filePath: importedSignature.destinationPath,
+    bytes: importedSignature.bytes,
+  });
 
   const [selectedOs, selectedArch] = target.split('-');
   const selectedArchive = importedArchives.find(
@@ -748,6 +639,8 @@ function assertCurrentRunCandidate({
   }
   const artifactPaths = [
     candidate?.sdk?.tarballPath,
+    candidate?.pluginUi?.tarballPath,
+    candidate?.channelsProtocol?.tarballPath,
     candidate?.cli?.tarballPath,
     ...(candidate?.standaloneCli?.archives
       ? candidate.standaloneCli.archives.map((artifact) => artifact.archivePath)
@@ -818,6 +711,14 @@ function createPortableCandidateManifest(candidate, runRoot) {
       ...candidate.sdk,
       tarballPath: portablePath(candidate.sdk.tarballPath),
     },
+    pluginUi: {
+      ...candidate.pluginUi,
+      tarballPath: portablePath(candidate.pluginUi.tarballPath),
+    },
+    channelsProtocol: {
+      ...candidate.channelsProtocol,
+      tarballPath: portablePath(candidate.channelsProtocol.tarballPath),
+    },
     cli: {
       ...candidate.cli,
       tarballPath: portablePath(candidate.cli.tarballPath),
@@ -838,9 +739,7 @@ function createPortableCandidateManifest(candidate, runRoot) {
               archivePath: portablePath(artifact.archivePath),
             })),
             checksums: portableBoundFile(candidate.standaloneCli.checksums),
-            signature: candidate.standaloneCli.signature
-              ? portableBoundFile(candidate.standaloneCli.signature)
-              : null,
+            signature: portableBoundFile(candidate.standaloneCli.signature),
             notarization: candidate.standaloneCli.notarization.map((record) => ({
               target: record.target,
               evidence: portableBoundFile(record.evidence),
@@ -866,29 +765,41 @@ function resolveExportedTarballPath(destinationDir, metadata) {
 async function exportPackedAuthorNpmArtifactsUnderLease({
   monorepoRoot,
   npmOutputDir,
+  cliVersion = null,
   env,
   exportPackSandboxTarballImpl,
 }) {
   const paths = {};
-  for (const artifact of PACKED_AUTHOR_NPM_ARTIFACTS) {
+  const fileNames = [];
+  for (const artifact of PACKED_AUTHOR_NPM_PACKAGES) {
+    const expectedVersion = artifact.field === 'cli' ? cliVersion : null;
     const metadata = await exportPackSandboxTarballImpl({
       monorepoRoot,
       packageRelDir: artifact.packageRelDir,
       destinationDir: npmOutputDir,
+      ...(expectedVersion ? { packageVersion: expectedVersion } : {}),
       env,
     });
+    const actualVersion = String(metadata?.package?.version ?? '').trim();
+    const expectedTarballName = `${artifact.tarballPrefix}-${actualVersion}.tgz`;
     if (
       metadata?.package?.name !== artifact.packageName
-      || metadata?.package?.version !== artifact.version
-      || metadata?.tarball?.name !== artifact.tarballName
+      || !actualVersion
+      || actualVersion.length > 128
+      || (expectedVersion !== null && actualVersion !== expectedVersion)
+      || metadata?.tarball?.name !== expectedTarballName
     ) {
       fail(
         `Canonical pack export returned the wrong ${artifact.field.toUpperCase()} artifact identity`,
       );
     }
     paths[artifact.field] = resolveExportedTarballPath(npmOutputDir, metadata);
+    fileNames.push(expectedTarballName);
   }
-  return Object.freeze(paths);
+  return Object.freeze({
+    paths: Object.freeze(paths),
+    fileNames: Object.freeze(fileNames),
+  });
 }
 
 export async function buildPackedAuthorNaturalArtifacts(
@@ -930,7 +841,7 @@ export async function buildPackedAuthorNaturalArtifacts(
     const npmOutputDir = join(runRoot, 'npm');
     await mkdir(npmOutputDir);
     const lockPath = resolveCliDistBuildLockPath(resolvedMonorepoRoot);
-    const artifacts = await withCliDistBuildLockImpl(
+    const exported = await withCliDistBuildLockImpl(
       async ({ heldLockValue }) => await exportPackedAuthorNpmArtifactsUnderLease({
         monorepoRoot: resolvedMonorepoRoot,
         npmOutputDir,
@@ -947,19 +858,20 @@ export async function buildPackedAuthorNaturalArtifacts(
     );
     const actualNpmEntries = (await readdir(npmOutputDir))
       .sort((left, right) => left.localeCompare(right));
-    const expectedNpmEntries = PACKED_AUTHOR_NPM_ARTIFACTS
-      .map((artifact) => artifact.tarballName)
+    const expectedNpmEntries = [...exported.fileNames]
       .sort((left, right) => left.localeCompare(right));
     if (
       actualNpmEntries.length !== expectedNpmEntries.length
       || actualNpmEntries.some((entry, index) => entry !== expectedNpmEntries[index])
     ) {
-      fail('Natural artifact output must contain exactly the SDK and CLI npm tarballs');
+      fail('Natural artifact output must contain exactly the SDK, Plugin UI, Channels protocol, and CLI npm tarballs');
     }
     return {
       runId: normalizedRunId,
-      sdkTarballPath: artifacts.sdk,
-      cliTarballPath: artifacts.cli,
+      sdkTarballPath: exported.paths.sdk,
+      pluginUiTarballPath: exported.paths.pluginUi,
+      channelsProtocolTarballPath: exported.paths.channelsProtocol,
+      cliTarballPath: exported.paths.cli,
     };
   } catch (error) {
     if (ownsRunRoot) {
@@ -979,7 +891,6 @@ export async function buildPackedAuthorCandidate(
     standaloneCliArtifactPath = null,
   },
   {
-    captureCandidateBuildBasisImpl = captureCandidateBuildBasis,
     createPackedAuthorCandidateImpl = createPackedAuthorCandidate,
     createCandidateInstallerArtifactsImpl = createCandidateInstallerArtifacts,
     exportPackSandboxTarballImpl = exportPackSandboxTarball,
@@ -987,6 +898,8 @@ export async function buildPackedAuthorCandidate(
     verifyReleaseArchiveAdmissionImpl = verifyReleaseArchiveAdmission,
     verifyDarwinNotarizationEvidenceImpl =
       verifyDarwinNotarizationEvidenceAgainstArchive,
+    trustedMinisignPublicKey = DEFAULT_MINISIGN_PUBLIC_KEY,
+    verifyMinisignImpl = verifyMinisign,
     withCliDistBuildLockImpl = withCliDistBuildLock,
   } = {},
 ) {
@@ -1004,10 +917,10 @@ export async function buildPackedAuthorCandidate(
   const resolvedNativeArtifactsDir = nativeArtifactsDir
     ? resolve(String(nativeArtifactsDir))
     : null;
-  if (Boolean(normalizedNativeTarget) !== Boolean(resolvedNativeArtifactsDir)) {
-    fail('Native target and complete native artifacts directory must be provided together');
+  if (!normalizedNativeTarget || !resolvedNativeArtifactsDir) {
+    fail('Candidate assembly requires a selected native target and the complete native matrix');
   }
-  if (resolvedNativeArtifactsDir && typeof importOwnedStandaloneCliMatrixImpl !== 'function') {
+  if (typeof importOwnedStandaloneCliMatrixImpl !== 'function') {
     fail('Native matrix requires the exact supplied-artifact import owner');
   }
 
@@ -1037,62 +950,56 @@ export async function buildPackedAuthorCandidate(
     const lockPath = resolveCliDistBuildLockPath(resolvedMonorepoRoot);
     return await withCliDistBuildLockImpl(
       async ({ heldLockValue }) => {
-        const basisBefore = await captureCandidateBuildBasisImpl({
-          monorepoRoot: resolvedMonorepoRoot,
-        });
-        if (!/^[a-f0-9]{64}$/u.test(basisBefore)) {
-          fail('Candidate source basis must be a sha256 digest');
-        }
         const inheritedEnv = {
           ...process.env,
           HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
         };
+        const standaloneCliVersion = await resolveOwnedStandaloneCliMatrixVersion(
+          resolvedNativeArtifactsDir,
+        );
         const npmArtifacts = await exportPackedAuthorNpmArtifactsUnderLease({
           monorepoRoot: resolvedMonorepoRoot,
           npmOutputDir,
+          cliVersion: standaloneCliVersion,
           env: inheritedEnv,
           exportPackSandboxTarballImpl,
         });
-        const sdkTarballPath = npmArtifacts.sdk;
-        const cliTarballPath = npmArtifacts.cli;
+        const sdkTarballPath = npmArtifacts.paths.sdk;
+        const pluginUiTarballPath = npmArtifacts.paths.pluginUi;
+        const channelsProtocolTarballPath = npmArtifacts.paths.channelsProtocol;
+        const cliTarballPath = npmArtifacts.paths.cli;
 
-        let ownedStandaloneCliArtifactPath = null;
-        let ownedStandaloneCliMatrix = null;
-        if (normalizedNativeTarget) {
-          const cliPackageJson = JSON.parse(
-            await readFile(join(resolvedMonorepoRoot, 'apps', 'cli', 'package.json'), 'utf8'),
-          );
-          const version = String(cliPackageJson?.version ?? '').trim();
-          if (!version) fail('Current CLI package version is required for native matrix custody');
-          ownedStandaloneCliMatrix = await importOwnedStandaloneCliMatrixImpl({
-            sourceDir: resolvedNativeArtifactsDir,
-            destinationDir: nativeOutputDir,
-            version,
-            target: normalizedNativeTarget,
-          }, {
-            verifyReleaseArchiveAdmissionImpl,
-            verifyDarwinNotarizationEvidenceImpl,
-          });
-          ownedStandaloneCliArtifactPath = resolve(
-            String(ownedStandaloneCliMatrix?.archivePath ?? ''),
-          );
-          if (
-            !pathIsInside(nativeOutputDir, ownedStandaloneCliArtifactPath)
-            || ownedStandaloneCliArtifactPath === resolve(nativeOutputDir)
-          ) {
-            fail('Native owner returned an archive outside the current run native output');
-          }
-          await ensureRegularOwnedArchive({
-            archivePath: ownedStandaloneCliArtifactPath,
-            ownedRoot: nativeOutputDir,
-          });
+        const ownedStandaloneCliMatrix = await importOwnedStandaloneCliMatrixImpl({
+          sourceDir: resolvedNativeArtifactsDir,
+          destinationDir: nativeOutputDir,
+          version: standaloneCliVersion,
+          target: normalizedNativeTarget,
+        }, {
+          verifyReleaseArchiveAdmissionImpl,
+          verifyDarwinNotarizationEvidenceImpl,
+          trustedMinisignPublicKey,
+          verifyMinisignImpl,
+        });
+        const ownedStandaloneCliArtifactPath = resolve(
+          String(ownedStandaloneCliMatrix?.archivePath ?? ''),
+        );
+        if (
+          !pathIsInside(nativeOutputDir, ownedStandaloneCliArtifactPath)
+          || ownedStandaloneCliArtifactPath === resolve(nativeOutputDir)
+        ) {
+          fail('Native owner returned an archive outside the current run native output');
         }
+        await ensureRegularOwnedArchive({
+          archivePath: ownedStandaloneCliArtifactPath,
+          ownedRoot: nativeOutputDir,
+        });
 
         const attestedCandidate = await createPackedAuthorCandidateImpl({
           runId: normalizedRunId,
           sdkTarballPath,
+          pluginUiTarballPath,
+          channelsProtocolTarballPath,
           cliTarballPath,
-          standaloneCliArtifactPath: ownedStandaloneCliArtifactPath,
         });
         const installers = await createCandidateInstallerArtifactsImpl({
           monorepoRoot: resolvedMonorepoRoot,
@@ -1104,36 +1011,28 @@ export async function buildPackedAuthorCandidate(
           runRoot,
         });
 
-        const basisAfter = await captureCandidateBuildBasisImpl({
-          monorepoRoot: resolvedMonorepoRoot,
-        });
-        if (basisAfter !== basisBefore) {
-          fail('Candidate source/generated/dist basis changed during the assigned build');
-        }
         const candidate = {
           ...attestedCandidate,
-          ...(ownedStandaloneCliMatrix
-            ? {
-                standaloneCli: {
-                  ...attestedCandidate.standaloneCli,
-                  archives: ownedStandaloneCliMatrix.archives,
-                  checksums: ownedStandaloneCliMatrix.checksums,
-                  signature: ownedStandaloneCliMatrix.signature ?? null,
-                  notarization: ownedStandaloneCliMatrix.notarization,
-                },
-              }
-            : {}),
-          installers,
-          sourceBasis: {
-            algorithm: 'sha256',
-            digest: basisBefore,
+          schemaVersion: 1,
+          runId: normalizedRunId,
+          standaloneCli: {
+            ...ownedStandaloneCliMatrix.archives.find(
+              (artifact) => resolve(artifact.archivePath)
+                === ownedStandaloneCliArtifactPath,
+            ),
+            archivePath: ownedStandaloneCliArtifactPath,
+            archives: ownedStandaloneCliMatrix.archives,
+            checksums: ownedStandaloneCliMatrix.checksums,
+            signature: ownedStandaloneCliMatrix.signature,
+            notarization: ownedStandaloneCliMatrix.notarization,
           },
+          installers,
         };
         assertCurrentRunCandidate({
           candidate,
           runId: normalizedRunId,
           runRoot,
-          expectsStandaloneCli: ownedStandaloneCliArtifactPath !== null,
+          expectsStandaloneCli: true,
           nativeTarget: normalizedNativeTarget,
           ownedStandaloneCliArtifactPath,
         });
@@ -1141,6 +1040,8 @@ export async function buildPackedAuthorCandidate(
         const manifestPath = join(runRoot, 'candidate.json');
         await assertPackedAuthorCandidateManifestArtifacts(candidate, {
           manifestPath,
+          trustedMinisignPublicKey,
+          verifyMinisignImpl,
         });
         const portableCandidate = createPortableCandidateManifest(candidate, runRoot);
         await writeFileAtomicallyWithoutOverwrite(

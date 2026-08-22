@@ -10,17 +10,10 @@ describe('normalizeRuntimeModeParitySnapshot', () => {
       runtimeMode: 'remote',
       emittedAtMs: 1_781_111_222_333,
       updatedAtMs: 1_781_111_222_444,
-      event: {
-        kind: 'runtime-status-change',
-        sessionId: '57f7fd51-5e91-42ca-b457-e077e8ac8944',
-        emittedAtMs: 1_781_111_222_555,
-        detail: {
-          kind: 'runtime-mode-change',
-          from: 'terminal',
-          to: 'remote',
-          reason: 'user_request',
-          resumeId: 'codex-provider-session-1',
-        },
+      transition: {
+        from: 'terminal',
+        to: 'remote',
+        reason: 'user_request',
       },
     });
 
@@ -30,14 +23,10 @@ describe('normalizeRuntimeModeParitySnapshot', () => {
       runtimeMode: 'remote',
       emittedAtMs: 0,
       updatedAtMs: 0,
-      event: {
-        sessionId: '<uuid>',
-        emittedAtMs: 0,
-        detail: {
-          from: 'terminal',
-          to: 'remote',
-          resumeId: 'codex-provider-session-1',
-        },
+      transition: {
+        from: 'terminal',
+        to: 'remote',
+        reason: 'user_request',
       },
     });
   });

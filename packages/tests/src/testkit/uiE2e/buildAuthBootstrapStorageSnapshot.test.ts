@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
+import {
+    deriveAccountMachineKeyFromRecoverySecret,
+} from '@happier-dev/protocol';
+import tweetnacl from 'tweetnacl';
 
+import type { TestAuth } from '../auth';
 import { buildAuthBootstrapStorageSnapshot } from './buildAuthBootstrapStorageSnapshot';
 
 function hashScope(raw: string): string {
@@ -8,11 +13,25 @@ function hashScope(raw: string): string {
 }
 
 describe('buildAuthBootstrapStorageSnapshot', () => {
+    const accountSigningSeed = new Uint8Array(32).fill(0x51);
+    const auth: TestAuth = {
+        token: 'stack-token',
+        publicKeyBase64: 'unused-by-browser-auth-bootstrap',
+        accountSigningSeed,
+        accountMachineKey: deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed),
+    };
+
     it('builds a scoped browser auth snapshot that matches the app bootstrap contract', () => {
         const snapshot = buildAuthBootstrapStorageSnapshot({
             serverUrl: 'http://happier-provider-backend-unification-qa-20260412a.localhost:24530',
-            credentials: { token: 'stack-token', secret: 'stack-token' },
+            auth,
+            mode: 'legacy',
             storageScope: 'e2e-qa-browser-auth',
+        });
+
+        const credentialPayload = JSON.stringify({
+            token: auth.token,
+            secret: Buffer.from(auth.accountSigningSeed).toString('base64'),
         });
 
         expect(snapshot.sessionStorage).toEqual({
@@ -28,58 +47,53 @@ describe('buildAuthBootstrapStorageSnapshot', () => {
         expect(snapshot.localStorage['server-profiles__e2e-qa-browser-auth:server-state-v1']).toBe(
             snapshot.localStorage['server-profiles:server-state-v1'],
         );
-        expect(snapshot.localStorage.auth_credentials).toBe(JSON.stringify({ token: 'stack-token', secret: 'stack-token' }));
+        expect(snapshot.localStorage.auth_credentials).toBe(credentialPayload);
         expect(snapshot.localStorage['auth_credentials__srv_localhost-24530']).toBe(
-            JSON.stringify({ token: 'stack-token', secret: 'stack-token' }),
+            credentialPayload,
         );
         expect(
             snapshot.localStorage['auth_credentials__srv_localhost-24530__e2e-qa-browser-auth'],
-        ).toBe(JSON.stringify({ token: 'stack-token', secret: 'stack-token' }));
+        ).toBe(credentialPayload);
     });
 
     it('builds a scoped browser auth snapshot for encryption-backed access keys', () => {
         const snapshot = buildAuthBootstrapStorageSnapshot({
             serverUrl: 'http://happier-provider-backend-unification-qa-20260412a.localhost:24530',
-            credentials: {
-                token: 'stack-token',
-                encryption: {
-                    publicKey: 'stack-public-key',
-                    machineKey: 'stack-machine-key',
-                },
-            },
+            auth,
+            mode: 'dataKey',
             storageScope: 'e2e-qa-browser-auth',
         });
 
+        const credentialPayload = JSON.stringify({
+            token: auth.token,
+            encryption: {
+                publicKey: Buffer.from(
+                    tweetnacl.box.keyPair.fromSecretKey(
+                        auth.accountMachineKey,
+                    ).publicKey,
+                ).toString('base64'),
+                machineKey: Buffer.from(auth.accountMachineKey).toString('base64'),
+            },
+        });
         expect(snapshot.localStorage.auth_credentials).toBe(
-            JSON.stringify({
-                token: 'stack-token',
-                encryption: {
-                    publicKey: 'stack-public-key',
-                    machineKey: 'stack-machine-key',
-                },
-            }),
+            credentialPayload,
         );
         expect(snapshot.localStorage['auth_credentials__srv_localhost-24530']).toBe(
-            JSON.stringify({
-                token: 'stack-token',
-                encryption: {
-                    publicKey: 'stack-public-key',
-                    machineKey: 'stack-machine-key',
-                },
-            }),
+            credentialPayload,
         );
     });
 
-    it('seeds identity and URL-hash credential scopes used by current token storage', () => {
+    it('seeds token-only auth into identity and URL-hash credential scopes', () => {
         const snapshot = buildAuthBootstrapStorageSnapshot({
             serverUrl: 'http://127.0.0.1:53288/',
-            credentials: { token: 'stack-token', secret: 'stack-token' },
+            auth,
+            mode: 'tokenOnly',
             storageScope: 'repo-dev-a1cc5e0671',
             serverIdentityId: 'srv_niq4j8b2',
             legacyServerIds: ['legacy-relay'],
         });
 
-        const credentialPayload = JSON.stringify({ token: 'stack-token', secret: 'stack-token' });
+        const credentialPayload = JSON.stringify({ token: auth.token });
         const canonicalHash = hashScope('http://localhost:53288');
         const loopbackHash = hashScope('http://127.0.0.1:53288');
 

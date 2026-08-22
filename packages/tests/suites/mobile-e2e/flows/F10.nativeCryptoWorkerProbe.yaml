@@ -4,14 +4,11 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     clearState: true
     clearKeychain: true
 
+# Force-load this run's managed Metro URL on both native platforms. A plain
+# launch can resume an older Dev Client bundle, which is not sufficient for a
+# loaded-runtime module probe.
 - runFlow:
-    when:
-      platform: IOS
-    commands:
-      # Force-load this run's managed Metro URL. iOS Dev Client can otherwise
-      # resume an older loaded bundle and miss F10's current JS bundle.
-      - runFlow:
-          file: _shared/connectUsingLaunchUrl.yaml
+    file: _shared/connectUsingLaunchUrl.yaml
 
 - runFlow:
     file: _shared/connectDevClientIfNeeded.yaml

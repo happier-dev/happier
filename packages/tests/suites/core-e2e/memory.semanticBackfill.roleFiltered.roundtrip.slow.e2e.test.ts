@@ -15,7 +15,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import {
@@ -251,7 +251,7 @@ describe('core e2e: memory semantic backfill role-filtered roundtrip', () => {
     await mkdir(daemonHomeDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    const seeded = await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+    const seeded = await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));

@@ -30,13 +30,13 @@ import {
 } from './externalSessionLiveLifecycleFixture';
 
 describe('external-session live lifecycle fixture', () => {
-  it('uses existing source-entrypoint and skip-build controls without changing caller overrides', () => {
+  it('uses the admitted source-entrypoint snapshot controls for External Sessions composition', async () => {
     expect(buildPreAttestedExternalSessionLiveEnv({
       HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'plaintext_only',
     })).toEqual({
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
-      HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
+      HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
       HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
       HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
       HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1',
@@ -46,6 +46,20 @@ describe('external-session live lifecycle fixture', () => {
     expect(buildPreAttestedExternalSessionLiveEnv({
       HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy',
     }).HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE).toBe('copy');
+
+    const lostAckHarnessSource = await readFile(
+      new URL(
+        '../../suites/core-e2e/externalSessions.operationProgressProjectionLostAck.slow.e2e.test.ts',
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    expect(lostAckHarnessSource).toContain(
+      '...buildPreAttestedExternalSessionLiveEnv()',
+    );
+    expect(lostAckHarnessSource).not.toContain(
+      "HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink'",
+    );
   });
 
   it('links and persists background follow through canonical machine RPC methods', async () => {
@@ -71,6 +85,57 @@ describe('external-session live lifecycle fixture', () => {
       `machine-live-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`,
       `machine-live-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET}`,
     ]);
+  });
+
+  it('waits for both idempotent External Sessions RPCs to become routable', async () => {
+    let linkAttempts = 0;
+    let followAttempts = 0;
+    const call = vi.fn(async (method: string) => {
+      if (method.endsWith(RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE)) {
+        linkAttempts += 1;
+        if (linkAttempts === 1) {
+          return { ok: false, errorCode: 'RPC_METHOD_NOT_AVAILABLE' };
+        }
+        return { ok: true, result: { ok: true, created: true, sessionId: 'session-live-1' } };
+      }
+      if (method.endsWith(RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET)) {
+        followAttempts += 1;
+        if (followAttempts === 1) {
+          return { ok: false, errorCode: 'RPC_METHOD_NOT_AVAILABLE' };
+        }
+        return { ok: true, result: { ok: true, enabled: true } };
+      }
+      throw new Error(`Unexpected RPC method: ${method}`);
+    });
+
+    await expect(ensureLinkedPassiveExternalSession({
+      machineId: 'machine-live-1',
+      agentId: 'fixture-agent',
+      remoteSessionId: 'remote-live-1',
+      source: { kind: 'fixtureLive' },
+      call,
+    })).resolves.toEqual({ sessionId: 'session-live-1', created: true });
+
+    expect(call.mock.calls.map(([method]) => method)).toEqual([
+      `machine-live-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`,
+      `machine-live-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`,
+      `machine-live-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET}`,
+      `machine-live-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET}`,
+    ]);
+  });
+
+  it('does not retry a routed External Sessions RPC failure', async () => {
+    const call = vi.fn(async () => ({ ok: false, errorCode: 'INVALID_PARAMS' }));
+
+    await expect(ensureLinkedPassiveExternalSession({
+      machineId: 'machine-live-1',
+      agentId: 'fixture-agent',
+      remoteSessionId: 'remote-live-1',
+      source: { kind: 'fixtureLive' },
+      call,
+    })).rejects.toThrow('External Session link RPC failed (INVALID_PARAMS)');
+
+    expect(call).toHaveBeenCalledTimes(1);
   });
 
   it('reports observer, follower, and refresh counts from test-only markers', () => {
@@ -472,11 +537,13 @@ describe('external-session live lifecycle fixture', () => {
       }
       return {
         status: 200,
-        data: {
-          kind: 'committed',
-          pluginId: 'acme.external-session-live',
-          generation: 2,
-        },
+          data: {
+            kind: 'committed',
+            pluginId: 'acme.external-session-live',
+            desiredGeneration: 'generation-two',
+            appliedGeneration: 'generation-two',
+            pendingSurfaces: [],
+          },
       };
     });
 
@@ -566,6 +633,30 @@ describe('external-session live lifecycle fixture', () => {
       'Local plugin installation decision did not commit '
       + '(status=200, kind=failed, code=plugin_install_failed, '
       + 'message=candidate activation failed)',
+    );
+  });
+
+  it('does not treat a committed-but-unapplied development generation as a completed reload', async () => {
+    const postJson = vi.fn(async () => ({
+      status: 200,
+      data: {
+        kind: 'committed',
+        pluginId: 'acme.external-session-live',
+        desiredGeneration: 'generation-two',
+        appliedGeneration: 'generation-one',
+        pendingSurfaces: ['reconciliation'],
+      },
+    }));
+
+    await expect(reloadTrustedLocalPluginFixture({
+      daemonPort: 32123,
+      controlToken: 'control-live',
+      pluginRoot: '/tmp/external-session-live-plugin',
+      pluginId: 'acme.external-session-live',
+      changedPaths: ['daemon.mjs'],
+      postJson,
+    })).rejects.toThrow(
+      'Local plugin development reload committed without applying its desired generation',
     );
   });
 

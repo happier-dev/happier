@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
@@ -40,12 +40,11 @@ describe('core e2e: manual connected-service auth switch', () => {
     const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
     await mkdir(daemonHomeDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    const { serverId } = await seedCliAuthForServer({
+    const { serverId } = await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
     writeTestManifestForServer({
       testDir,

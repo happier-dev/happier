@@ -14,6 +14,7 @@ const cliLaunchSpecMock = vi.hoisted(() => ({
 }));
 
 const repoRootDirMock = vi.hoisted(() => vi.fn());
+const reserveAvailablePortMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../process/cliLaunchSpec', async () => {
   const actual = await vi.importActual<typeof import('../process/cliLaunchSpec')>('../process/cliLaunchSpec');
@@ -32,10 +33,20 @@ vi.mock('../paths', async () => {
   };
 });
 
+vi.mock('../network/reserveAvailablePort', async () => {
+  const actual = await vi.importActual<typeof import('../network/reserveAvailablePort')>('../network/reserveAvailablePort');
+  reserveAvailablePortMock.mockImplementation(actual.reserveAvailablePort);
+  return {
+    ...actual,
+    reserveAvailablePort: reserveAvailablePortMock,
+  };
+});
+
 import {
   replaceTestDaemonWithoutStoppingSessions,
   resolveTestDaemonOwnershipLeasesDir,
   startTestDaemon,
+  type StartedDaemon,
 } from './daemon';
 import { spawnDetachedTestProcess } from '../process/testSpawn';
 import { seedCliAuthForServer } from '../cliAuth';
@@ -51,6 +62,8 @@ afterEach(() => {
 beforeEach(async () => {
   const actual = await vi.importActual<typeof import('../paths')>('../paths');
   repoRootDirMock.mockImplementation(actual.repoRootDir);
+  const network = await vi.importActual<typeof import('../network/reserveAvailablePort')>('../network/reserveAvailablePort');
+  reserveAvailablePortMock.mockImplementation(network.reserveAvailablePort);
 });
 
 async function writeHoldingDaemonScript(scriptPath: string, opts: { writesState: boolean; httpPort?: number }): Promise<void> {
@@ -122,7 +135,7 @@ async function writeReplacementDaemonScript(scriptPath: string, opts: { serverId
 }
 
 describe('startTestDaemon', () => {
-  it('creates a nested test directory before opening daemon log streams', async () => {
+  it('starts daemon A through the exact explicit candidate launch spec', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'happier-daemon-nested-log-dir-'));
     const testDir = resolve(rootDir, 'nested', 'daemon-runtime');
     const homeDir = resolve(rootDir, 'home');
@@ -133,20 +146,24 @@ describe('startTestDaemon', () => {
       await mkdir(homeDir, { recursive: true });
       await writeHoldingDaemonScript(resolve(fakeScriptDir, 'index.mjs'), { writesState: true });
 
-      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+      const candidateLaunchSpec = Object.freeze({
         command: process.execPath,
         args: [resolve(fakeScriptDir, 'index.mjs')],
         cwd: rootDir,
         env: {},
       });
+      const resolverCallCountBefore = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls.length;
 
       const daemon = await startTestDaemon({
         testDir,
         happyHomeDir: homeDir,
         env: {},
         startupTimeoutMs: 15_000,
+        cliLaunchSpec: candidateLaunchSpec,
       });
 
+      expect(cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls.length)
+        .toBe(resolverCallCountBefore);
       expect(await readFile(resolve(testDir, 'daemon.stdout.log'), 'utf8')).toBe('');
       expect(await readFile(resolve(testDir, 'daemon.stderr.log'), 'utf8')).toBe('');
 
@@ -186,6 +203,275 @@ describe('startTestDaemon', () => {
       expect(String((result as Error).message)).toContain(`happyHomeDir=${homeDir}`);
       expect(String((result as Error).message)).toContain(resolve(testDir, 'daemon.stdout.log'));
       expect(String((result as Error).message)).toContain(resolve(testDir, 'daemon.stderr.log'));
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('cleans a launch spec that publishes after its startup phase has timed out', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-late-launch-spec-'));
+    const homeDir = resolve(testDir, 'home');
+    let publishLaunchSpec!: () => void;
+    let cleanupCalls = 0;
+
+    try {
+      await mkdir(homeDir, { recursive: true });
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockImplementationOnce(async () => (
+        await new Promise((resolveLaunchSpec) => {
+          publishLaunchSpec = () => resolveLaunchSpec({
+            command: process.execPath,
+            args: ['-e', 'setInterval(() => {}, 1000)'],
+            cwd: testDir,
+            env: {},
+            cleanup: async () => {
+              cleanupCalls += 1;
+            },
+          });
+        })
+      ));
+
+      await expect(startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 25,
+      })).rejects.toThrow('phase=resolveCliTestLaunchSpec');
+
+      expect(cleanupCalls).toBe(0);
+      publishLaunchSpec();
+      await vi.waitFor(() => {
+        expect(cleanupCalls).toBe(1);
+      }, { timeout: 5_000, interval: 10 });
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a privacy-safe diagnostic when late launch-spec cleanup rejects after timeout', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-late-launch-spec-cleanup-failure-'));
+    const homeDir = resolve(testDir, 'home');
+    let publishLaunchSpec!: () => void;
+    const warningSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+
+    try {
+      await mkdir(homeDir, { recursive: true });
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockImplementationOnce(async () => (
+        await new Promise((resolveLaunchSpec) => {
+          publishLaunchSpec = () => resolveLaunchSpec({
+            command: process.execPath,
+            args: ['-e', 'setInterval(() => {}, 1000)'],
+            cwd: testDir,
+            env: {},
+            cleanup: async () => {
+              throw new Error(`sensitive cleanup detail ${testDir}`);
+            },
+          });
+        })
+      ));
+
+      await expect(startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 25,
+      })).rejects.toThrow('phase=resolveCliTestLaunchSpec');
+
+      publishLaunchSpec();
+      await vi.waitFor(() => {
+        expect(warningSpy).toHaveBeenCalledOnce();
+      }, { timeout: 5_000, interval: 10 });
+      expect(warningSpy).toHaveBeenCalledWith(
+        expect.stringContaining('phase=resolveCliTestLaunchSpec'),
+        expect.objectContaining({ code: 'HAPPIER_TEST_DAEMON_LATE_CLEANUP_FAILED' }),
+      );
+      expect(String(warningSpy.mock.calls[0]?.[0])).not.toContain(testDir);
+      expect(String(warningSpy.mock.calls[0]?.[0])).not.toContain('sensitive cleanup detail');
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('cleans a resolved launch spec when daemon setup fails before spawn ownership transfers', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-pre-spawn-cleanup-'));
+    const homeDir = resolve(testDir, 'home');
+    let cleanupCalls = 0;
+
+    try {
+      await mkdir(homeDir, { recursive: true });
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        cwd: testDir,
+        env: {},
+        cleanup: async () => {
+          cleanupCalls += 1;
+        },
+      });
+      reserveAvailablePortMock.mockRejectedValueOnce(new Error('synthetic port reservation failure'));
+
+      await expect(startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+      })).rejects.toThrow('synthetic port reservation failure');
+      expect(cleanupCalls).toBe(1);
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces a cached launch-spec cleanup failure from daemon teardown without retrying it', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-stop-cleanup-failure-'));
+    const homeDir = resolve(testDir, 'home');
+    let cleanupCalls = 0;
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+      await writeHoldingDaemonScript(resolve(fakeScriptDir, 'index.mjs'), { writesState: true });
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: testDir,
+        env: {},
+        cleanup: async () => {
+          cleanupCalls += 1;
+          throw new Error('synthetic daemon snapshot cleanup failure');
+        },
+      });
+
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 15_000,
+      });
+
+      await expect(daemon.stop()).rejects.toThrow('synthetic daemon snapshot cleanup failure');
+      await expect(daemon.stop()).rejects.toThrow('synthetic daemon snapshot cleanup failure');
+      expect(cleanupCalls).toBe(1);
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('aggregates logical daemon cleanup and cached process snapshot cleanup failures', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-stop-cleanup-aggregate-'));
+    const homeDir = resolve(testDir, 'home');
+    const scriptPath = resolve(testDir, 'fake-daemon', 'dist', 'index.mjs');
+    let cleanupCalls = 0;
+
+    try {
+      await mkdir(resolve(scriptPath, '..'), { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+      await writeFile(scriptPath, [
+        "import { writeFileSync } from 'node:fs';",
+        "import { resolve } from 'node:path';",
+        "const homeDir = process.env.HAPPIER_HOME_DIR;",
+        "if (!homeDir) throw new Error('Missing HAPPIER_HOME_DIR');",
+        "writeFileSync(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: process.ppid, httpPort: 32991, controlToken: 'invalid-owner-token' }), 'utf8');",
+        "process.on('SIGTERM', () => process.exit(0));",
+        "setInterval(() => {}, 1000);",
+      ].join('\n'), 'utf8');
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [scriptPath],
+        cwd: testDir,
+        env: {},
+        cleanup: async () => {
+          cleanupCalls += 1;
+          throw new Error('synthetic daemon snapshot cleanup failure');
+        },
+      });
+
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 15_000,
+      });
+      await writeFile(
+        resolve(homeDir, 'daemon.state.json'),
+        JSON.stringify({ pid: process.pid, httpPort: 0, controlToken: 'invalid-owner-token' }),
+        'utf8',
+      );
+
+      const error = await daemon.stop().then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors.map(String)).toEqual(expect.arrayContaining([
+        expect.stringContaining('refusing to hard-kill'),
+        expect.stringContaining('synthetic daemon snapshot cleanup failure'),
+      ]));
+      expect(cleanupCalls).toBe(1);
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves the startup failure while aggregating logical daemon and process snapshot cleanup failures', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-start-cleanup-aggregate-'));
+    const homeDir = resolve(testDir, 'home');
+    const scriptPath = resolve(testDir, 'fake-daemon', 'dist', 'index.mjs');
+    let cleanupCalls = 0;
+
+    try {
+      await mkdir(resolve(scriptPath, '..'), { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+      await writeFile(scriptPath, [
+        "import { writeFileSync } from 'node:fs';",
+        "import { resolve } from 'node:path';",
+        "const homeDir = process.env.HAPPIER_HOME_DIR;",
+        "if (!homeDir) throw new Error('Missing HAPPIER_HOME_DIR');",
+        "writeFileSync(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: process.ppid, httpPort: 0, controlToken: 'invalid-owner-token' }), 'utf8');",
+        "process.on('SIGTERM', () => process.exit(0));",
+        "setInterval(() => {}, 1000);",
+      ].join('\n'), 'utf8');
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [scriptPath],
+        cwd: testDir,
+        env: {},
+        cleanup: async () => {
+          cleanupCalls += 1;
+          throw new Error('synthetic daemon snapshot cleanup failure');
+        },
+      });
+
+      const error = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 250,
+      }).then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors.map(String)).toEqual(expect.arrayContaining([
+        expect.stringContaining('waitForDaemonState'),
+        expect.stringContaining('refusing to hard-kill'),
+        expect.stringContaining('synthetic daemon snapshot cleanup failure'),
+      ]));
+      expect((error as AggregateError).errors[0]).toEqual(expect.objectContaining({
+        message: expect.stringContaining('waitForDaemonState'),
+      }));
+      expect(cleanupCalls).toBe(1);
     } finally {
       await rm(testDir, { recursive: true, force: true });
     }
@@ -232,6 +518,45 @@ describe('startTestDaemon', () => {
       expect(String((result as Error).message)).toContain('daemonStateEverRemoved=no');
       expect(String((result as Error).message)).toContain('internalDaemonLogTail=');
       expect(String((result as Error).message)).toContain('last internal line');
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves daemon startup and launch-spec cleanup failures together', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-startup-cleanup-aggregate-'));
+    const homeDir = resolve(testDir, 'home');
+    let cleanupCalls = 0;
+
+    try {
+      await mkdir(homeDir, { recursive: true });
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: ['-e', 'process.exit(7)'],
+        cwd: testDir,
+        env: {},
+        cleanup: async () => {
+          cleanupCalls += 1;
+          throw new Error('synthetic startup snapshot cleanup failure');
+        },
+      });
+
+      const error = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 250,
+      }).then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors.map(String)).toEqual(expect.arrayContaining([
+        expect.stringContaining('phase=waitForDaemonState'),
+        expect.stringContaining('synthetic startup snapshot cleanup failure'),
+      ]));
+      expect(cleanupCalls).toBe(1);
     } finally {
       await rm(testDir, { recursive: true, force: true });
     }
@@ -376,7 +701,7 @@ describe('startTestDaemon', () => {
   it('propagates a tsx-fallback subprocess contract when the daemon launches from a source snapshot', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-source-subprocess-'));
     const homeDir = resolve(testDir, 'home');
-    const snapshotDir = resolve(testDir, 'cli-source-snapshot');
+    const snapshotDir = resolve(testDir, '.project', 'tmp', 'cli-source-snapshot');
     const observedEnvPath = resolve(testDir, 'observed-env.json');
     const tsxHookPath = resolveTsxImportHookPath();
 
@@ -461,7 +786,7 @@ describe('startTestDaemon', () => {
   it('enables daemon child stdio diagnostics for no-dev source-snapshot launches', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-source-diagnostics-'));
     const homeDir = resolve(testDir, 'home');
-    const snapshotDir = resolve(testDir, 'cli-source-snapshot');
+    const snapshotDir = resolve(testDir, '.project', 'tmp', 'cli-source-snapshot');
     const observedEnvPath = resolve(testDir, 'observed-env.json');
     const tsxHookPath = resolveTsxImportHookPath();
 
@@ -1113,7 +1438,7 @@ describe('startTestDaemon', () => {
     }
   }, 20_000);
 
-  it('starts replacement daemons through start-sync takeover and reads active-server daemon state', async () => {
+  it('starts a replacement daemon through the exact explicit candidate launch spec', async () => {
     if (process.platform === 'win32') {
       return;
     }
@@ -1122,6 +1447,7 @@ describe('startTestDaemon', () => {
     const homeDir = resolve(testDir, 'home');
     let originalPid: number | null = null;
     let replacementPid: number | null = null;
+    let replacementDaemon: StartedDaemon | null = null;
 
     try {
       const replacementScriptDir = resolve(testDir, 'replacement-daemon', 'dist');
@@ -1161,37 +1487,38 @@ describe('startTestDaemon', () => {
         stateWriteDelayMs: 500,
       });
 
-      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+      const candidateLaunchSpec = Object.freeze({
         command: process.execPath,
         args: [resolve(replacementScriptDir, 'index.mjs')],
         cwd: testDir,
         env: {},
       });
+      const resolverCallCountBefore = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls.length;
 
-      const state = await replaceTestDaemonWithoutStoppingSessions({
+      replacementDaemon = await replaceTestDaemonWithoutStoppingSessions({
         testDir,
         happyHomeDir: homeDir,
         env: {},
         snapshotDir: resolve(testDir, 'cli-update-to'),
         stdoutPath: resolve(testDir, 'replacement.stdout.log'),
         stderrPath: resolve(testDir, 'replacement.stderr.log'),
+        cliLaunchSpec: candidateLaunchSpec,
       });
 
-      const launchOptions = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls[0]?.[1] as
-        | Readonly<{ snapshotDir?: string }>
-        | undefined;
-      expect(launchOptions?.snapshotDir).toBe(resolve(testDir, 'cli-update-to'));
+      expect(cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls.length)
+        .toBe(resolverCallCountBefore);
 
-      replacementPid = state.pid;
-      expect(state).toEqual(expect.objectContaining({
+      replacementPid = replacementDaemon.state.pid;
+      expect(replacementDaemon.state).toEqual(expect.objectContaining({
         httpPort: 32_227,
         controlToken: 'replacement-control-token',
       }));
       expect(replacementPid).not.toBe(originalPid);
       expect(isProcessAlive(originalPid!)).toBe(false);
-      expect(isProcessAlive(replacementPid)).toBe(true);
+      expect(isProcessAlive(replacementPid!)).toBe(true);
     } finally {
-      if (replacementPid) await terminateProcessTreeByPid(replacementPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
+      await replacementDaemon?.stop().catch(() => {});
+      if (!replacementDaemon && replacementPid) await terminateProcessTreeByPid(replacementPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
       if (originalPid) await terminateProcessTreeByPid(originalPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
       await rm(testDir, { recursive: true, force: true });
     }
@@ -1213,6 +1540,8 @@ describe('startTestDaemon', () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-replacement-phase-timeout-'));
     const homeDir = resolve(testDir, 'home');
     let originalPid: number | null = null;
+    let publishLaunchSpec!: () => void;
+    let cleanupCalls = 0;
 
     try {
       await mkdir(homeDir, { recursive: true });
@@ -1236,23 +1565,32 @@ describe('startTestDaemon', () => {
         'utf8',
       );
 
-      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockImplementationOnce(async () => {
-        await new Promise(() => {});
-        throw new Error('unreachable');
-      });
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockImplementationOnce(async () => (
+        await new Promise((resolveLaunchSpec) => {
+          publishLaunchSpec = () => resolveLaunchSpec({
+            command: process.execPath,
+            args: ['-e', 'setInterval(() => {}, 1000)'],
+            cwd: testDir,
+            env: {},
+            cleanup: async () => {
+              cleanupCalls += 1;
+            },
+          });
+        })
+      ));
 
       const result = await Promise.race([
         replaceTestDaemonWithoutStoppingSessions({
           testDir,
           happyHomeDir: homeDir,
           env: {
-            HAPPIER_E2E_DAEMON_STARTUP_PHASE_TIMEOUT_MS: '25',
+            HAPPIER_E2E_DAEMON_STARTUP_PHASE_TIMEOUT_MS: '1000',
           },
         }).then(
           () => 'replaced',
           (error: unknown) => error,
         ),
-        new Promise<'still-pending'>((resolvePending) => setTimeout(() => resolvePending('still-pending'), 250)),
+        new Promise<'still-pending'>((resolvePending) => setTimeout(() => resolvePending('still-pending'), 5_000)),
       ]);
 
       expect(result).toBeInstanceOf(Error);
@@ -1261,6 +1599,65 @@ describe('startTestDaemon', () => {
       expect(String((result as Error).message)).toContain(`happyHomeDir=${homeDir}`);
       expect(String((result as Error).message)).toContain(resolve(testDir, 'daemon.replace.stdout.log'));
       expect(String((result as Error).message)).toContain(resolve(testDir, 'daemon.replace.stderr.log'));
+      publishLaunchSpec();
+      await vi.waitFor(() => {
+        expect(cleanupCalls).toBe(1);
+      }, { timeout: 5_000, interval: 10 });
+    } finally {
+      if (originalPid) await terminateProcessTreeByPid(originalPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('cleans a resolved replacement launch spec when setup fails before spawn ownership transfers', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-replacement-pre-spawn-cleanup-'));
+    const homeDir = resolve(testDir, 'home');
+    let originalPid: number | null = null;
+    let cleanupCalls = 0;
+
+    try {
+      await mkdir(homeDir, { recursive: true });
+      const original = spawnDetachedTestProcess(process.execPath, ['-e', "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);"], {
+        stdio: 'ignore',
+      });
+      originalPid = original.pid ?? null;
+      if (originalPid == null) {
+        throw new Error('Expected original daemon pid');
+      }
+
+      await writeFile(
+        resolve(homeDir, 'daemon.state.json'),
+        JSON.stringify({
+          pid: originalPid,
+          httpPort: 32_247,
+          controlToken: 'original-control-token',
+        }),
+        'utf8',
+      );
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        cwd: testDir,
+        env: {},
+        cleanup: async () => {
+          cleanupCalls += 1;
+        },
+      });
+      reserveAvailablePortMock.mockRejectedValueOnce(new Error('synthetic replacement port reservation failure'));
+
+      await expect(replaceTestDaemonWithoutStoppingSessions({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {
+          HAPPIER_E2E_DAEMON_STARTUP_PHASE_TIMEOUT_MS: '1000',
+        },
+      })).rejects.toThrow('synthetic replacement port reservation failure');
+      expect(cleanupCalls).toBe(1);
     } finally {
       if (originalPid) await terminateProcessTreeByPid(originalPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
       await rm(testDir, { recursive: true, force: true });
@@ -1276,6 +1673,8 @@ describe('startTestDaemon', () => {
     const homeDir = resolve(testDir, 'home');
     let originalPid: number | null = null;
     let replacementPid: number | null = null;
+    let replacementDaemon: StartedDaemon | null = null;
+    let cleanupCalls = 0;
 
     try {
       const replacementScriptDir = resolve(testDir, 'replacement-daemon', 'dist');
@@ -1316,6 +1715,9 @@ describe('startTestDaemon', () => {
         args: [resolve(replacementScriptDir, 'index.mjs')],
         cwd: testDir,
         env: {},
+        cleanup: async () => {
+          cleanupCalls += 1;
+        },
       });
 
       const assuredOriginalPid = originalPid;
@@ -1352,11 +1754,20 @@ describe('startTestDaemon', () => {
 
       expect(result).not.toBe('still-pending');
       expect(result).not.toBeInstanceOf(Error);
-      replacementPid = (result as { pid: number }).pid;
+      replacementDaemon = result as StartedDaemon;
+      replacementPid = replacementDaemon.state.pid;
       expect(replacementPid).not.toBe(originalPid);
-      expect(isProcessAlive(replacementPid)).toBe(true);
+      expect(isProcessAlive(replacementPid!)).toBe(true);
+      await replacementDaemon.stop();
+      replacementDaemon = null;
+      replacementPid = null;
+      expect(cleanupCalls).toBe(1);
     } finally {
-      if (replacementPid) await terminateProcessTreeByPid(replacementPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
+      if (replacementDaemon) {
+        await replacementDaemon.stop();
+      } else if (replacementPid) {
+        await terminateProcessTreeByPid(replacementPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
+      }
       if (originalPid) await terminateProcessTreeByPid(originalPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
       await rm(testDir, { recursive: true, force: true });
     }
@@ -1371,6 +1782,7 @@ describe('startTestDaemon', () => {
     const homeDir = resolve(testDir, 'home');
     let originalPid: number | null = null;
     let replacementPid: number | null = null;
+    let replacementDaemon: StartedDaemon | null = null;
 
     try {
       const replacementScriptDir = resolve(testDir, 'replacement-daemon', 'dist');
@@ -1413,7 +1825,7 @@ describe('startTestDaemon', () => {
         env: {},
       });
 
-      const state = await replaceTestDaemonWithoutStoppingSessions({
+      replacementDaemon = await replaceTestDaemonWithoutStoppingSessions({
         testDir,
         happyHomeDir: homeDir,
         env: {},
@@ -1425,12 +1837,13 @@ describe('startTestDaemon', () => {
       expect(launchOptions?.snapshotDir).toBe(resolve(repoRootDir(), '.project', 'tmp', 'cli-dist-snapshot'));
       expect(launchOptions?.skipSourceFreshnessCheck).toBe(true);
 
-      replacementPid = state.pid;
+      replacementPid = replacementDaemon.state.pid;
       expect(replacementPid).not.toBe(originalPid);
       expect(isProcessAlive(originalPid!)).toBe(false);
-      expect(isProcessAlive(replacementPid)).toBe(true);
+      expect(isProcessAlive(replacementPid!)).toBe(true);
     } finally {
-      if (replacementPid) await terminateProcessTreeByPid(replacementPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
+      await replacementDaemon?.stop().catch(() => {});
+      if (!replacementDaemon && replacementPid) await terminateProcessTreeByPid(replacementPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
       if (originalPid) await terminateProcessTreeByPid(originalPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
       await rm(testDir, { recursive: true, force: true });
     }

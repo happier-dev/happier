@@ -106,6 +106,27 @@ export type ProviderUnderTest = {
   };
 };
 
+export type RetainedPluginLifecycleObservations = Readonly<{
+  agent: Readonly<{
+    generations: Readonly<{
+      retainedSessionBeforeUpdate: string;
+      retainedSessionAfterUpdate: string;
+      newSessionAfterUpdate: string;
+    }>;
+    retainedLaterTurn: 'completed';
+    newSessionFirstTurn: 'completed';
+  }>;
+  provider: Readonly<{
+    generations: Readonly<{
+      retainedHandleBeforeUpdate: string;
+      retainedHandleAfterUpdate: string;
+      newClaimAfterUpdate: string;
+    }>;
+    retainedHandleUse: 'continued';
+    newClaim: 'admitted';
+  }>;
+}>;
+
 export type ProviderScenario = {
   id: string;
   title: string;
@@ -228,6 +249,58 @@ export type ProviderScenario = {
      */
     waitForAcpSidechainFromToolName?: string;
     timeoutMs: number;
+  };
+  /**
+   * Opts this scenario into the shared daemon-runner A-to-B-to-C continuity flow.
+   *
+   * The harness owns daemon replacement and evidence collection. Scenario factories only provide
+   * the active A-to-B turn, the later post-C prompt, and their bounded effect markers.
+   */
+  daemonRunnerContinuity?: {
+    phases: [
+      {
+        id: 'b';
+        prompt: (ctx: { workspaceDir: string }) => string;
+        requiredAssistantSubstring: string;
+        effect: (ctx: { workspaceDir: string }) => Readonly<{ path: string; marker: string }>;
+      },
+      {
+        id: 'c';
+        prompt: (ctx: { workspaceDir: string }) => string;
+        requiredAssistantSubstring: string;
+        effect: (ctx: { workspaceDir: string }) => Readonly<{ path: string; marker: string }>;
+      },
+    ];
+    identityEvidence?: Readonly<{
+      /** Existing Agent-published metadata key; the raw value is fingerprinted before manifest output. */
+      vendorSessionMetadataKey?: string;
+      /**
+       * Optional Agent-specific process observer. Keep unsupported Agents unknown; never infer a
+       * provider child from an undifferentiated descendant list.
+       */
+      observeAgentChildProcess?: (params: Readonly<{ runnerPid: number }>) => Promise<Readonly<{
+        pid: number;
+        processStartTimeMs?: number;
+        processCommandHash?: string;
+      }> | null>;
+    }>;
+    /**
+     * Explicit observational opt-in for retained G-to-H/P-to-Q evidence.
+     *
+     * The continuity harness does not mutate plugins or manufacture lifecycle facts. A scenario-owned
+     * lifecycle flow must supply complete observations; incomplete or same-generation observations fail.
+     */
+    retainedPluginLifecycle?: Readonly<{
+      observe: (ctx: Readonly<{
+        workspaceDir: string;
+        baseUrl: string;
+        token: string;
+        sessionId: string;
+        secret: Uint8Array;
+        cliHome: string;
+      }>) => Promise<RetainedPluginLifecycleObservations>;
+    }>;
+    timeoutMs?: number;
   };
   // Optional extra validations using the workspace + extracted fixtures.
   // Optional second-phase run to validate ACP resume flows (attach to the same Happier session twice).

@@ -93,7 +93,8 @@ test.describe('ui e2e: usage dashboard', () => {
     const auth = await createTestAuth(server.baseUrl);
     await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
       serverUrl: server.baseUrl,
-      credentials: { token: auth.token, secret: auth.token },
+      auth,
+      mode: 'legacy',
       storageScope: `e2e-usage-dashboard-${run.runId}`,
     }));
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings?happier_hmr=0`, 420_000);

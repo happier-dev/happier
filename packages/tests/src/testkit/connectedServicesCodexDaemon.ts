@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import { buildConnectedServiceCredentialRecord, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 import { createTestAuth, type TestAuth } from './auth';
-import { seedCliAuthForServer, seedCliDataKeyAuthForServer } from './cliAuth';
+import { seedCliAuthForTestAccount } from './cliAuth';
 import { daemonControlPostJson } from './daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from './daemon/daemon';
 import { fetchJson } from './http';
@@ -111,26 +111,14 @@ export async function startConnectedServicesCodexDaemon(params: Readonly<{
   await mkdir(workspaceDir, { recursive: true });
 
   const authMode = params.authMode ?? 'legacy';
-  const secret = Uint8Array.from(randomBytes(32));
-  let machineKey: Uint8Array | null = null;
-  const seeded = await (async () => {
-    if (authMode === 'dataKey') {
-      machineKey = Uint8Array.from(randomBytes(32));
-      return await seedCliDataKeyAuthForServer({
-        cliHome: daemonHomeDir,
-        serverUrl: daemonServerBaseUrl,
-        token: auth.token,
-        machineKey,
-      });
-    }
-
-    return await seedCliAuthForServer({
-      cliHome: daemonHomeDir,
-      serverUrl: daemonServerBaseUrl,
-      token: auth.token,
-      secret,
-    });
-  })();
+  const secret = auth.accountSigningSeed;
+  const machineKey = authMode === 'dataKey' ? auth.accountMachineKey : null;
+  const seeded = await seedCliAuthForTestAccount({
+    cliHome: daemonHomeDir,
+    serverUrl: daemonServerBaseUrl,
+    auth,
+    mode: authMode,
+  });
   const { serverId, machineId } = seeded;
 
   writeTestManifestForServer({

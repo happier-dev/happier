@@ -8,7 +8,7 @@ import { buildConnectedServiceCredentialRecord, sealAccountScopedBlobCiphertext 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { fetchJson } from '../../src/testkit/http';
@@ -42,11 +42,11 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    const { serverId } = await seedCliAuthForServer({
+    const { serverId } = await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: serverBaseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
 
     writeTestManifestForServer({

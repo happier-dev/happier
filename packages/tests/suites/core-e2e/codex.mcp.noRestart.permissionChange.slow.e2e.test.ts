@@ -18,7 +18,7 @@ import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -63,7 +63,7 @@ describe('core e2e: Codex MCP permission metadata updates do not restart MCP ses
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

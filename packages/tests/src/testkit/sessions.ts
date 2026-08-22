@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  buildAccountStoredContentCompatibilityHttpHeadersV1,
+  CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+  SessionMetadataOwnerPatchV1Schema,
   SessionRuntimeIssueV1Schema,
   type PrimaryTurnStatusV1,
+  type SessionMetadataOwnerPatchV1,
   type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
 
@@ -123,6 +127,36 @@ export async function patchSessionMetadataWithRetry(params: {
     }
 
     expectedVersion = currentVersion;
+  }
+}
+
+export async function patchSessionMetadataEnvelopeTupleV1(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  patch: SessionMetadataOwnerPatchV1;
+}>): Promise<void> {
+  const patch = SessionMetadataOwnerPatchV1Schema.parse(params.patch);
+  const endpoint = `${params.baseUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}`;
+  const res = await fetchJson<Record<string, unknown>>(endpoint, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+      ...buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+      ),
+    },
+    body: JSON.stringify(patch),
+    timeoutMs: 20_000,
+  });
+
+  if (
+    res.status !== 200
+    || res.data?.success !== true
+    || res.data?.metadataLayoutVersion !== 1
+  ) {
+    throw new Error(`Failed to patch Session metadata envelope tuple (status=${res.status})`);
   }
 }
 
@@ -473,7 +507,12 @@ export async function fetchSessionsV2(baseUrl: string, token: string, opts?: { c
   if (typeof opts?.limit === 'number' && Number.isFinite(opts.limit)) url.searchParams.set('limit', String(opts.limit));
 
   const res = await fetchJson<SessionsV2Response>(url.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+      ),
+    },
     timeoutMs: 20_000,
   });
   const sessions = res.data?.sessions;
@@ -491,7 +530,12 @@ export async function fetchSessionsV2(baseUrl: string, token: string, opts?: { c
 export async function fetchSessionV2(baseUrl: string, token: string, sessionId: string): Promise<SessionV2ById> {
   const endpoint = `${baseUrl}/v2/sessions/${sessionId}`;
   const res = await fetchJson<{ session?: unknown }>(endpoint, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+      ),
+    },
     timeoutMs: 15_000,
   });
   const s = res.data?.session;

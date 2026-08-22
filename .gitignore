@@ -70,6 +70,7 @@ __pycache__/
 **/.restore.*/
 **/.backup.*/
 **/.runner-snapshots/
+/packages/tests/.packed-targeted-manifest-*/
 # `prepareManagedPluginUiBuildOperation` mkdtemps this operation root inside the
 # plugin project and removes it on completion; a killed build leaves it behind.
 **/.happier-plugin-ui-build-*/

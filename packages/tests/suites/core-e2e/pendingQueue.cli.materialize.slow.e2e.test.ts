@@ -17,7 +17,7 @@ import { waitFor } from '../../src/testkit/timing';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForServer, seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { waitForRegexInFile } from '../../src/testkit/waitForRegexInFile';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -51,8 +51,8 @@ describe('core e2e: CLI materializes server pending queue v2', () => {
     await mkdir(cliHome, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

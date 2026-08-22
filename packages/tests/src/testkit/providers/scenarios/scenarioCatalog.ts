@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -21,6 +21,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { applyAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { withCapabilityProbeRetry } from '../harness/capabilityRetry';
 import { enrichCapabilityProbeError } from '../harness/capabilityProbeFailure';
+import { observeExactCodexAcpChildProcess } from '../identity/codexAcpChildProcess';
 import {
   callSessionScopedRpc,
   enqueueSessionPromptForScenario,
@@ -226,6 +227,107 @@ function withAgentSdkRemoteMeta(
 }
 
 export const scenarioCatalog: Record<string, ScenarioFactory> = {
+  daemon_runner_continuity_a_to_b_to_c: (provider) => {
+    if (
+      provider.id !== 'opencode'
+      && provider.id !== 'pi'
+      && provider.id !== 'claude'
+      && provider.id !== 'codex'
+    ) {
+      throw new Error(`daemon_runner_continuity_a_to_b_to_c does not support ${provider.id}`);
+    }
+
+    const base = scenarioCatalog.read_known_file(provider);
+    const phaseBMarker = `DAEMON_RUNNER_CONTINUITY_B_${randomUUID()}`;
+    const phaseCMarker = `DAEMON_RUNNER_CONTINUITY_C_${randomUUID()}`;
+    const phaseBEffectFile = 'e2e-daemon-runner-continuity-b.effects';
+    const phaseCEffectFile = 'e2e-daemon-runner-continuity-c.effects';
+    const phaseBScript = process.platform === 'win32'
+      ? 'e2e-daemon-runner-continuity-b.cmd'
+      : 'e2e-daemon-runner-continuity-b.sh';
+    const phaseCScript = process.platform === 'win32'
+      ? 'e2e-daemon-runner-continuity-c.cmd'
+      : 'e2e-daemon-runner-continuity-c.sh';
+    const vendorSessionMetadataKey = provider.id === 'claude'
+      ? 'claudeSessionId'
+      : provider.id === 'codex'
+        ? 'codexSessionId'
+        : provider.id === 'pi'
+          ? 'piSessionId'
+          : 'opencodeSessionId';
+    const quotePosix = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+    const scriptContents = (path: string, marker: string, delaySeconds: number): string => (
+      process.platform === 'win32'
+        ? [
+            '@echo off',
+            `>>"${path.replaceAll('"', '""')}" echo ${marker}`,
+            ...(delaySeconds > 0 ? [`ping -n ${delaySeconds + 1} 127.0.0.1 >nul`] : []),
+            '',
+          ].join('\r\n')
+        : [
+            '#!/bin/sh',
+            `printf '%s\\n' ${quotePosix(marker)} >> ${quotePosix(path)}`,
+            ...(delaySeconds > 0 ? [`sleep ${delaySeconds}`] : []),
+            '',
+          ].join('\n')
+    );
+    const executePrompt = (workspaceDir: string, script: string, marker: string): string => [
+      'This is an automated continuity test. Use the execute tool exactly once.',
+      `Run this prepared executable: ${JSON.stringify(join(workspaceDir, script))}`,
+      `Then reply with exactly this marker and no other text: ${marker}`,
+    ].join('\n');
+
+    return {
+      ...base,
+      id: 'daemon_runner_continuity_a_to_b_to_c',
+      title: 'daemon runner continuity: active A-to-B turn and later post-C prompt stay exactly once',
+      tier: 'extended',
+      setup: async (ctx) => {
+        await base.setup?.(ctx);
+        const phaseBEffectPath = join(ctx.workspaceDir, phaseBEffectFile);
+        const phaseCEffectPath = join(ctx.workspaceDir, phaseCEffectFile);
+        const phaseBScriptPath = join(ctx.workspaceDir, phaseBScript);
+        const phaseCScriptPath = join(ctx.workspaceDir, phaseCScript);
+        await Promise.all([
+          writeFile(phaseBEffectPath, '', 'utf8'),
+          writeFile(phaseCEffectPath, '', 'utf8'),
+          writeFile(phaseBScriptPath, scriptContents(phaseBEffectPath, phaseBMarker, 20), 'utf8'),
+          writeFile(phaseCScriptPath, scriptContents(phaseCEffectPath, phaseCMarker, 0), 'utf8'),
+        ]);
+        if (process.platform !== 'win32') {
+          await Promise.all([chmod(phaseBScriptPath, 0o755), chmod(phaseCScriptPath, 0o755)]);
+        }
+      },
+      daemonRunnerContinuity: {
+        phases: [
+          {
+            id: 'b',
+            prompt: ({ workspaceDir }) => executePrompt(workspaceDir, phaseBScript, phaseBMarker),
+            requiredAssistantSubstring: phaseBMarker,
+            effect: ({ workspaceDir }) => ({
+              path: join(workspaceDir, phaseBEffectFile),
+              marker: phaseBMarker,
+            }),
+          },
+          {
+            id: 'c',
+            prompt: ({ workspaceDir }) => executePrompt(workspaceDir, phaseCScript, phaseCMarker),
+            requiredAssistantSubstring: phaseCMarker,
+            effect: ({ workspaceDir }) => ({
+              path: join(workspaceDir, phaseCEffectFile),
+              marker: phaseCMarker,
+            }),
+          },
+        ],
+        identityEvidence: {
+          vendorSessionMetadataKey,
+          ...(provider.id === 'codex'
+            ? { observeAgentChildProcess: observeExactCodexAcpChildProcess }
+            : {}),
+        },
+      },
+    } satisfies ProviderScenario;
+  },
   cursor_acp_stub_captured_lifecycle_replay: (provider) => {
     if (provider.protocol !== 'acp' || provider.cli.subcommand !== 'cursor') {
       throw new Error('cursor_acp_stub_captured_lifecycle_replay requires the Cursor ACP backend');

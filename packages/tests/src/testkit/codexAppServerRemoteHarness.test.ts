@@ -6,9 +6,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
+
+import type { TestAuth } from './auth';
+
 const events: string[] = [];
 let spawned = false;
 let fetchCount = 0;
+let createdAuth: TestAuth | null = null;
+let seededAuth: TestAuth | null = null;
+let seededAuthMode: 'legacy' | 'dataKey' | 'tokenOnly' | null = null;
+let metadataEncryptionSecret: Uint8Array | null = null;
 
 function encodeMetadata(value: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
@@ -17,13 +25,25 @@ function encodeMetadata(value: Record<string, unknown>): string {
 vi.mock('./auth', () => ({
   createTestAuth: async () => {
     events.push('create-auth');
-    return { token: 'token-1', publicKeyBase64: 'pk-1' };
+    const accountSigningSeed = new Uint8Array(32).fill(1);
+    createdAuth = {
+      token: 'token-1',
+      publicKeyBase64: 'pk-1',
+      accountSigningSeed,
+      accountMachineKey: deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed),
+    };
+    return createdAuth;
   },
 }));
 
 vi.mock('./cliAuth', () => ({
-  seedCliAuthForServer: async () => {
+  seedCliAuthForTestAccount: async (params: {
+    auth: TestAuth;
+    mode: 'legacy' | 'dataKey' | 'tokenOnly';
+  }) => {
     events.push('seed-auth');
+    seededAuth = params.auth;
+    seededAuthMode = params.mode;
   },
 }));
 
@@ -47,7 +67,10 @@ vi.mock('./manifestForServer', () => ({
 }));
 
 vi.mock('./messageCrypto', () => ({
-  encryptLegacyBase64: (value: unknown) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64'),
+  encryptLegacyBase64: (value: unknown, secret: Uint8Array) => {
+    metadataEncryptionSecret = secret;
+    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
+  },
 }));
 
 vi.mock('./decryptLegacyBase64Normalized', () => ({
@@ -122,6 +145,10 @@ describe('startCodexAppServerRemoteHarness', () => {
     events.length = 0;
     spawned = false;
     fetchCount = 0;
+    createdAuth = null;
+    seededAuth = null;
+    seededAuthMode = null;
+    metadataEncryptionSecret = null;
   });
 
   it('captures the pre-spawn session baseline before launching the CLI', async () => {
@@ -135,6 +162,9 @@ describe('startCodexAppServerRemoteHarness', () => {
     });
 
     try {
+      expect(seededAuth).toBe(createdAuth);
+      expect(seededAuthMode).toBe('legacy');
+      expect(metadataEncryptionSecret).toBe(createdAuth?.accountSigningSeed);
       expect(events).not.toContain('wait-for');
       expect(events).not.toContain('fetch-1-before-spawn');
       expect(events.indexOf('spawn')).toBeLessThan(events.indexOf('fetch-1-after-spawn'));

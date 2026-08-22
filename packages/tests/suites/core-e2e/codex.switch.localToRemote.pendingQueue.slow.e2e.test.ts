@@ -19,7 +19,7 @@ import { yarnCommand } from '../../src/testkit/process/commands';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import {
   readFakeCodexAppServerRequestLog,
@@ -101,7 +101,7 @@ async function runLocalToRemotePendingSwitchScenario(params: Readonly<{
     await mkdir(codexSessionsDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

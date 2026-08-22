@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -9,7 +9,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 
@@ -44,8 +44,7 @@ describe('core e2e: Claude fast-start', () => {
     await mkdir(cliHome, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeLog = resolve(join(testDir, 'fake-claude.jsonl'));

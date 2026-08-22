@@ -2,14 +2,13 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { randomBytes } from 'node:crypto';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import {
   replaceTestDaemonWithoutStoppingSessions,
   startTestDaemon,
@@ -25,6 +24,7 @@ const run = createRunDirs({ runLabel: 'core' });
 describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
   let appServer: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
+  let retiredDaemon: StartedDaemon | null = null;
   let fakeOpenCodeServer: Server | null = null;
   let fakeOpenCodeBaseUrl = '';
   const daemonStartupTimeoutMs = 90_000;
@@ -55,8 +55,15 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
   };
 
   afterEach(async () => {
-    await daemon?.stop().catch(() => {});
+    const cleanupErrors: Error[] = [];
+    await daemon?.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
     daemon = null;
+    await retiredDaemon?.proc.stop().catch((error: unknown) => {
+      cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+    });
+    retiredDaemon = null;
     await closeFakeOpenCodeServer().catch(() => {});
     fakeOpenCodeBaseUrl = '';
     openCodeMessages.length = 0;
@@ -67,10 +74,13 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
     holdNextOpenCodeMessageRead = null;
     await appServer?.stop().catch(() => {});
     appServer = null;
+    if (cleanupErrors.length === 1) throw cleanupErrors[0];
+    if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'OpenCode restart teardown failed');
   });
 
   afterAll(async () => {
     await daemon?.stop().catch(() => {});
+    await retiredDaemon?.proc.stop().catch(() => {});
     await appServer?.stop().catch(() => {});
     await closeFakeOpenCodeServer().catch(() => {});
   });
@@ -167,12 +177,11 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
     });
     const auth = await createTestAuth(appServer.baseUrl);
 
-    const machineKey = Uint8Array.from(randomBytes(32));
-    const seeded = await seedCliDataKeyAuthForServer({
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: appServer.baseUrl,
-      token: auth.token,
-      machineKey,
+      auth,
+      mode: 'dataKey',
     });
 
     daemon = await startTestDaemon({
@@ -195,7 +204,7 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
     ui.connect();
     await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for direct OpenCode sessions e2e' });
 
-    const machineRpc = createDataKeyRpcClient(ui, machineKey);
+    const machineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
 
     let candidatesResult: any = null;
     await waitFor(
@@ -411,12 +420,11 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
       },
     });
     const auth = await createTestAuth(appServer.baseUrl);
-    const machineKey = Uint8Array.from(randomBytes(32));
-    const seeded = await seedCliDataKeyAuthForServer({
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: appServer.baseUrl,
-      token: auth.token,
-      machineKey,
+      auth,
+      mode: 'dataKey',
     });
     const daemonEnv = {
       ...process.env,
@@ -440,7 +448,7 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
 
     try {
       await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'OpenCode observation socket connected' });
-      const machineRpc = createDataKeyRpcClient(ui, machineKey);
+      const machineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
       const route = (method: string) => `${seeded.machineId}:${method}`;
       const source = { kind: 'opencodeServer', baseUrl: null, directory: null } as const;
       const link = unwrapDataKeyRpcResult(await machineRpc.call(route(RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE), {
@@ -498,7 +506,9 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
         env: daemonEnv,
         originalDaemon: daemon,
       });
-      expect(replacement.pid).not.toBe(originalDaemonPid);
+      retiredDaemon = daemon;
+      daemon = replacement;
+      expect(replacement.state.pid).not.toBe(originalDaemonPid);
       releaseOldRead?.();
 
       await waitFor(() => openCodeObserverConnectionCount === 2 && openCodeSseClients.size === 1, {
@@ -528,7 +538,7 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
         baseUrl: appServer.baseUrl,
         token: auth.token,
         sessionId: link.sessionId,
-        machineKeys: [machineKey],
+        machineKeys: [auth.accountMachineKey],
       });
       const metadataBeforeCurrentEventJson = JSON.stringify(metadataBeforeCurrentEvent);
       expect(metadataBeforeCurrentEventJson).not.toContain('must not apply after restart');
@@ -552,7 +562,7 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
           baseUrl: appServer!.baseUrl,
           token: auth.token,
           sessionId: link.sessionId,
-          machineKeys: [machineKey],
+          machineKeys: [auth.accountMachineKey],
         });
         return JSON.stringify(metadata).includes('1753437602000');
       }, { timeoutMs: 30_000, context: 'current bounded read advances only current observation progress' });

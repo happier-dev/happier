@@ -46,6 +46,30 @@ describe('uiDevClientMetro launch spec', () => {
     });
   });
 
+  it('uses Expo no-dev mode when a loaded native row requires Fast Refresh to stay off', async () => {
+    const rootDir = resolve(
+      tmpdir(),
+      `happier-ui-dev-client-metro-no-dev-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const uiWorkspaceDir = resolve(rootDir, 'apps', 'ui');
+    const workspaceExpoCli = resolve(uiWorkspaceDir, 'node_modules', 'expo', 'bin', 'cli');
+    await mkdir(resolve(workspaceExpoCli, '..'), { recursive: true });
+    await writeFile(workspaceExpoCli, '#!/usr/bin/env node\n', 'utf8');
+
+    expect(
+      resolveUiDevClientMetroLaunchSpec({
+        rootDir,
+        uiWorkspaceDir,
+        port: 19_082,
+        host: 'localhost',
+        clearCache: true,
+        noDev: true,
+      }),
+    ).toMatchObject({
+      args: expect.arrayContaining(['--dev-client', '--no-dev', '--clear']),
+    });
+  });
+
   it('probes the same localhost name passed to Expo so IPv6-only localhost binds are reachable', () => {
     expect(resolveUiDevClientMetroProbeBaseUrl({ host: 'localhost', port: 19_081 }))
       .toBe('http://localhost:19081');

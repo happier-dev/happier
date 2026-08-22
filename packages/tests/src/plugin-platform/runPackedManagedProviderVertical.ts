@@ -16,6 +16,7 @@ import {
 import {
   assertPackedAuthorCandidateManifestArtifacts,
   assertPackedCliEntrypoint,
+  assertPackedPluginUiSdkDependency,
   assertPackedPackageIdentity,
   parseCandidateManifest,
   readPackedPackageManifest,
@@ -26,13 +27,18 @@ import {
   assertPackedManagedStandaloneCliArchiveIdentity,
   parsePackedManagedProviderArgs,
   resolvePackedManagedWrapperExecutable,
+  runPackedChannelProviderVertical,
   runPackedManagedProviderVertical,
+  type PackedChannelProviderLifecycleEvidence,
+  type PackedChannelProviderVerticalResult,
   type PackedManagedProviderPreparation,
+  type PackedManagedProviderPreparedInput,
   type PackedManagedProviderRunInput,
   type PackedManagedProviderScenarioDependencies,
   type PackedManagedProviderVerticalResult,
 } from '../../scripts/plugin-platform/run-packed-managed-provider.mjs';
 import { reserveAvailablePort as reserveCanonicalAvailablePort } from '../testkit/network/reserveAvailablePort';
+import type { CliTestLaunchSpec } from '../testkit/process/cliLaunchSpec';
 import {
   createPackedManagedProviderLiveScenario,
 } from './packedManagedProviderLiveScenario';
@@ -45,12 +51,16 @@ const CANDIDATE_DAEMON_CONTROL_READINESS_TIMEOUT_PREFIX =
 
 type CandidateArchiveCensus = Readonly<{
   sdk: Readonly<{ entryCount: number }>;
+  pluginUi: Readonly<{ entryCount: number }>;
+  channelsProtocol?: Readonly<{ entryCount: number }>;
   cli: Readonly<{ entryCount: number }>;
 }>;
 
 export type PackedManagedProviderArtifactOwners = Readonly<{
   assertCandidateArchivesSafe(params: Readonly<{
     sdkTarballPath: string;
+    pluginUiTarballPath: string;
+    channelsProtocolTarballPath?: string;
     cliTarballPath: string;
   }>): Promise<CandidateArchiveCensus>;
   readPackedPackageManifest(
@@ -70,7 +80,7 @@ export type PackedManagedProviderArtifactOwners = Readonly<{
 type IsolatedPorts = Readonly<{
   server: number;
   daemon: number;
-  wrapper: number;
+  upstreamProxy: number | null;
 }>;
 
 export type PackedManagedProviderHarnessEvidence = Readonly<{
@@ -168,9 +178,31 @@ type MutableHarnessState = {
   cleanup: PackedManagedProviderHarnessEvidence['cleanup'];
 };
 
+function createMutableHarnessState(): MutableHarnessState {
+  return {
+    workRoot: null,
+    ownsWorkRoot: false,
+    candidateFrozen: false,
+    standaloneCliFrozen: false,
+    candidateArchiveCensus: null,
+    standaloneCliArchiveEntryCount: null,
+    happyHomeDir: null,
+    databasePath: null,
+    workspaceDir: null,
+    openCodeStateDir: null,
+    ports: null,
+    stockCliProxyApiTouched: null,
+    failureDiagnostics: null,
+    cleanup: { disposition: 'not_applicable' },
+  };
+}
+
 export type PackedManagedProviderEntrypointDependencies = Readonly<{
   scenario: PackedManagedProviderScenarioDependencies;
   artifactOwners?: PackedManagedProviderArtifactOwners;
+  candidateArtifactVerification?: Readonly<{
+    trustedMinisignPublicKey: string;
+  }>;
   reserveAvailablePort?: () => Promise<number>;
   platform?: NodeJS.Platform;
   arch?: string;
@@ -357,7 +389,7 @@ async function reserveIsolatedPorts(params: Readonly<{
   evidence: () => PackedManagedProviderHarnessEvidence;
 }>): Promise<IsolatedPorts> {
   const values: number[] = [];
-  while (values.length < 3) {
+  while (values.length < 2) {
     assertNotAborted(params.signal, params.evidence());
     const port = await params.reserveAvailablePort();
     if (
@@ -373,19 +405,37 @@ async function reserveIsolatedPorts(params: Readonly<{
   return {
     server: values[0]!,
     daemon: values[1]!,
-    wrapper: values[2]!,
+    upstreamProxy: null,
   };
 }
 
 function assertCandidateIntegrity(
   candidate: PackedAuthorCandidate,
-  sdkBytes: Uint8Array,
-  cliBytes: Uint8Array,
+  artifacts: Readonly<{
+    sdk: Uint8Array;
+    pluginUi: Uint8Array;
+    channelsProtocol?: Uint8Array;
+    cli: Uint8Array;
+  }>,
 ): void {
-  if (sha512Sri(sdkBytes) !== candidate.sdk.integrity) {
+  if (sha512Sri(artifacts.sdk) !== candidate.sdk.integrity) {
     throw new Error('packed_managed_provider_candidate_sdk_integrity_mismatch');
   }
-  if (sha512Sri(cliBytes) !== candidate.cli.integrity) {
+  if (sha512Sri(artifacts.pluginUi) !== candidate.pluginUi.integrity) {
+    throw new Error('packed_managed_provider_candidate_plugin_ui_integrity_mismatch');
+  }
+  if (candidate.channelsProtocol) {
+    if (
+      !artifacts.channelsProtocol
+      || sha512Sri(artifacts.channelsProtocol)
+        !== candidate.channelsProtocol.integrity
+    ) {
+      throw new Error(
+        'packed_managed_provider_candidate_channels_protocol_integrity_mismatch',
+      );
+    }
+  }
+  if (sha512Sri(artifacts.cli) !== candidate.cli.integrity) {
     throw new Error('packed_managed_provider_candidate_cli_integrity_mismatch');
   }
 }
@@ -394,6 +444,9 @@ async function prepareCandidate(params: Readonly<{
   input: PackedManagedProviderRunInput;
   state: MutableHarnessState;
   owners: PackedManagedProviderArtifactOwners;
+  candidateArtifactVerification?: Readonly<{
+    trustedMinisignPublicKey: string;
+  }>;
   reserveAvailablePort: () => Promise<number>;
   platform: NodeJS.Platform;
   arch: string;
@@ -408,6 +461,7 @@ async function prepareCandidate(params: Readonly<{
   );
   await assertPackedAuthorCandidateManifestArtifacts(candidate, {
     manifestPath,
+    ...(params.candidateArtifactVerification ?? {}),
   });
   const expectedStandalone = candidate.standaloneCli?.archives.find(
     (artifact) => (
@@ -421,12 +475,23 @@ async function prepareCandidate(params: Readonly<{
     );
   }
   const standaloneSourcePath = resolve(expectedStandalone.archivePath);
-  const [sdkBytes, cliBytes, standaloneBytes] = await Promise.all([
+  const [sdkBytes, pluginUiBytes, cliBytes, standaloneBytes, channelsProtocolBytes] = await Promise.all([
     readFile(candidate.sdk.tarballPath),
+    readFile(candidate.pluginUi.tarballPath),
     readFile(candidate.cli.tarballPath),
     readFile(standaloneSourcePath),
+    ...(candidate.channelsProtocol
+      ? [readFile(candidate.channelsProtocol.tarballPath)]
+      : []),
   ]);
-  assertCandidateIntegrity(candidate, sdkBytes, cliBytes);
+  assertCandidateIntegrity(candidate, {
+    sdk: sdkBytes,
+    pluginUi: pluginUiBytes,
+    ...(candidate.channelsProtocol
+      ? { channelsProtocol: channelsProtocolBytes }
+      : {}),
+    cli: cliBytes,
+  });
   const standaloneDigest = createHash('sha256')
     .update(standaloneBytes)
     .digest('hex');
@@ -470,6 +535,11 @@ async function prepareCandidate(params: Readonly<{
   params.state.openCodeStateDir = openCodeStateDir;
 
   const sdkAttestedPath = join(archivesDir, 'sdk-attested.tgz');
+  const pluginUiAttestedPath = join(archivesDir, 'plugin-ui-attested.tgz');
+  const channelsProtocolAttestedPath = join(
+    archivesDir,
+    'channels-protocol-attested.tgz',
+  );
   const cliAttestedPath = join(archivesDir, 'cli-attested.tgz');
   const standaloneAttestedPath = join(
     archivesDir,
@@ -478,6 +548,10 @@ async function prepareCandidate(params: Readonly<{
   const manifestAttestedPath = join(archivesDir, 'candidate-attested.json');
   await Promise.all([
     writeFrozenFile(sdkAttestedPath, sdkBytes),
+    writeFrozenFile(pluginUiAttestedPath, pluginUiBytes),
+    ...(candidate.channelsProtocol
+      ? [writeFrozenFile(channelsProtocolAttestedPath, channelsProtocolBytes)]
+      : []),
     writeFrozenFile(cliAttestedPath, cliBytes),
     writeFrozenFile(standaloneAttestedPath, standaloneBytes),
     writeFrozenFile(manifestAttestedPath, manifestBytes),
@@ -488,20 +562,47 @@ async function prepareCandidate(params: Readonly<{
 
   const candidateArchiveCensus = await params.owners.assertCandidateArchivesSafe({
     sdkTarballPath: sdkAttestedPath,
+    pluginUiTarballPath: pluginUiAttestedPath,
+    ...(candidate.channelsProtocol
+      ? { channelsProtocolTarballPath: channelsProtocolAttestedPath }
+      : {}),
     cliTarballPath: cliAttestedPath,
   });
   params.state.candidateArchiveCensus = candidateArchiveCensus;
-  const [sdkManifest, cliManifest] = await Promise.all([
+  const [sdkManifest, pluginUiManifest, channelsProtocolManifest, cliManifest] = await Promise.all([
     params.owners.readPackedPackageManifest(
       sdkAttestedPath,
       join(manifestsDir, 'sdk'),
     ),
+    params.owners.readPackedPackageManifest(
+      pluginUiAttestedPath,
+      join(manifestsDir, 'plugin-ui'),
+    ),
+    candidate.channelsProtocol
+      ? params.owners.readPackedPackageManifest(
+          channelsProtocolAttestedPath,
+          join(manifestsDir, 'channels-protocol'),
+        )
+      : Promise.resolve(undefined),
     params.owners.readPackedPackageManifest(
       cliAttestedPath,
       join(manifestsDir, 'cli'),
     ),
   ]);
   assertPackedPackageIdentity(sdkManifest, candidate.sdk, 'Packed SDK');
+  assertPackedPackageIdentity(
+    pluginUiManifest,
+    candidate.pluginUi,
+    'Packed Plugin UI',
+  );
+  assertPackedPluginUiSdkDependency(pluginUiManifest, candidate.sdk);
+  if (candidate.channelsProtocol) {
+    assertPackedPackageIdentity(
+      channelsProtocolManifest,
+      candidate.channelsProtocol,
+      'Packed Channels protocol',
+    );
+  }
   assertPackedPackageIdentity(cliManifest, candidate.cli, 'Packed CLI');
   assertPackedCliEntrypoint(cliManifest, candidate.cli);
   assertNotAborted(params.input.signal, evidence());
@@ -585,6 +686,18 @@ async function prepareCandidate(params: Readonly<{
       ...candidate.sdk,
       tarballPath: sdkAttestedPath,
     },
+    pluginUi: {
+      ...candidate.pluginUi,
+      tarballPath: pluginUiAttestedPath,
+    },
+    ...(candidate.channelsProtocol
+      ? {
+          channelsProtocol: {
+            ...candidate.channelsProtocol,
+            tarballPath: channelsProtocolAttestedPath,
+          },
+        }
+      : {}),
     cli: {
       ...candidate.cli,
       tarballPath: cliAttestedPath,
@@ -611,11 +724,10 @@ async function prepareCandidate(params: Readonly<{
         CI: '1',
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_FEATURE_PROVIDERS__ENABLED: '1',
-        HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED: '1',
+        HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED: '0',
         HAPPIER_HOME_DIR: happyHomeDir,
         HAPPIER_PACKED_MANAGED_SERVER_PORT: String(params.state.ports.server),
         HAPPIER_PACKED_MANAGED_DAEMON_PORT: String(params.state.ports.daemon),
-        HAPPIER_PACKED_MANAGED_WRAPPER_PORT: String(params.state.ports.wrapper),
         HAPPIER_PACKED_MANAGED_DATABASE_PATH: params.state.databasePath,
         XDG_CONFIG_HOME: join(openCodeStateDir, 'config'),
         XDG_DATA_HOME: join(openCodeStateDir, 'data'),
@@ -631,28 +743,135 @@ async function prepareCandidate(params: Readonly<{
   };
 }
 
+export type CandidateBoundCliLaunchPreparation = Readonly<{
+  prepared: PackedManagedProviderPreparation;
+  candidate: PackedAuthorCandidate;
+  standaloneCliArtifact: PackedManagedProviderPreparation['standaloneCliArtifact'];
+  cliLaunchSpec: CliTestLaunchSpec;
+  evidence: PackedManagedProviderHarnessEvidence;
+  dispose: () => Promise<void>;
+}>;
+
+export async function prepareCandidateBoundCliLaunchSpec(params: Readonly<{
+  candidateManifestPath: string;
+  workRoot?: string;
+  signal?: AbortSignal;
+  artifactOwners?: PackedManagedProviderArtifactOwners;
+  candidateArtifactVerification?: Readonly<{
+    trustedMinisignPublicKey: string;
+  }>;
+  reserveAvailablePort?: () => Promise<number>;
+  platform?: NodeJS.Platform;
+  arch?: string;
+}>): Promise<CandidateBoundCliLaunchPreparation> {
+  const platform = params.platform ?? process.platform;
+  const arch = params.arch ?? process.arch;
+  const state = createMutableHarnessState();
+  const input: PackedManagedProviderRunInput = {
+    candidateManifestPath: params.candidateManifestPath,
+    enableOpenCodeLive: false,
+    ...(params.workRoot ? { workRoot: params.workRoot } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
+  };
+  try {
+    state.workRoot = await createPrivateWorkRoot({
+      requestedRoot: params.workRoot,
+      platform,
+      arch,
+    });
+    state.ownsWorkRoot = true;
+    const prepared = await prepareCandidate({
+      input,
+      state,
+      owners: params.artifactOwners ?? canonicalArtifactOwners,
+      candidateArtifactVerification: params.candidateArtifactVerification,
+      reserveAvailablePort:
+        params.reserveAvailablePort ?? reserveCanonicalAvailablePort,
+      platform,
+      arch,
+    });
+    const cliLaunchSpec = {
+      command: prepared.cliLaunchSpec.command,
+      args: [...prepared.cliLaunchSpec.args],
+      cwd: prepared.cliLaunchSpec.cwd,
+      ...(prepared.cliLaunchSpec.env
+        ? { env: Object.freeze({ ...prepared.cliLaunchSpec.env }) }
+        : {}),
+    } satisfies CliTestLaunchSpec;
+    Object.freeze(cliLaunchSpec.args);
+    Object.freeze(cliLaunchSpec);
+    const preparedForLaunch: PackedManagedProviderPreparation = Object.freeze({
+      ...prepared,
+      cliLaunchSpec,
+    });
+    let disposed = false;
+    return Object.freeze({
+      prepared: preparedForLaunch,
+      candidate: preparedForLaunch.candidate,
+      standaloneCliArtifact: preparedForLaunch.standaloneCliArtifact,
+      cliLaunchSpec,
+      evidence: snapshotEvidence(state, platform, arch),
+      dispose: async () => {
+        if (disposed || !state.workRoot) return;
+        disposed = true;
+        await rm(state.workRoot, { recursive: true, force: true });
+      },
+    });
+  } catch (error) {
+    if (state.ownsWorkRoot && state.workRoot) {
+      await rm(state.workRoot, { recursive: true, force: true }).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+export type PackedChannelProviderEntrypointDependencies = Readonly<{
+  runPackedChannelProviderLifecycle(
+    input: PackedManagedProviderPreparedInput,
+  ): Promise<PackedChannelProviderLifecycleEvidence>;
+  artifactOwners?: PackedManagedProviderArtifactOwners;
+  candidateArtifactVerification?: Readonly<{
+    trustedMinisignPublicKey: string;
+  }>;
+  reserveAvailablePort?: () => Promise<number>;
+  platform?: NodeJS.Platform;
+  arch?: string;
+}>;
+
+export async function runPackedChannelProviderEntrypoint(
+  input: PackedManagedProviderRunInput,
+  deps: PackedChannelProviderEntrypointDependencies,
+): Promise<PackedChannelProviderVerticalResult> {
+  const preparation = await prepareCandidateBoundCliLaunchSpec({
+    candidateManifestPath: input.candidateManifestPath,
+    ...(input.workRoot ? { workRoot: input.workRoot } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
+    artifactOwners: deps.artifactOwners,
+    candidateArtifactVerification: deps.candidateArtifactVerification,
+    reserveAvailablePort: deps.reserveAvailablePort,
+    platform: deps.platform,
+    arch: deps.arch,
+  });
+  return await runPackedChannelProviderVertical(input, {
+    prepareCandidate: async () => {
+      assertNotAborted(input.signal, preparation.evidence);
+      return preparation.prepared;
+    },
+    runPackedChannelProviderLifecycle: async (lifecycleInput) => {
+      assertNotAborted(input.signal, preparation.evidence);
+      return await deps.runPackedChannelProviderLifecycle(lifecycleInput);
+    },
+    cleanup: async () => await preparation.dispose(),
+  });
+}
+
 export async function runPackedManagedProviderEntrypoint(
   input: PackedManagedProviderRunInput,
   deps: PackedManagedProviderEntrypointDependencies,
 ): Promise<PackedManagedProviderEntrypointResult> {
   const platform = deps.platform ?? process.platform;
   const arch = deps.arch ?? process.arch;
-  const state: MutableHarnessState = {
-    workRoot: null,
-    ownsWorkRoot: false,
-    candidateFrozen: false,
-    standaloneCliFrozen: false,
-    candidateArchiveCensus: null,
-    standaloneCliArchiveEntryCount: null,
-    happyHomeDir: null,
-    databasePath: null,
-    workspaceDir: null,
-    openCodeStateDir: null,
-    ports: null,
-    stockCliProxyApiTouched: null,
-    failureDiagnostics: null,
-    cleanup: { disposition: 'not_applicable' },
-  };
+  const state = createMutableHarnessState();
   const evidence = () => snapshotEvidence(state, platform, arch);
 
   try {
@@ -667,6 +886,7 @@ export async function runPackedManagedProviderEntrypoint(
         input,
         state,
         owners: deps.artifactOwners ?? canonicalArtifactOwners,
+        candidateArtifactVerification: deps.candidateArtifactVerification,
         reserveAvailablePort:
           deps.reserveAvailablePort ?? reserveCanonicalAvailablePort,
         platform,
@@ -688,7 +908,7 @@ export async function runPackedManagedProviderEntrypoint(
         state.ports = {
           server: observed.observedPorts.server,
           daemon: observed.observedPorts.daemon,
-          wrapper: observed.observedPorts.wrapper,
+          upstreamProxy: observed.observedPorts.upstreamProxy,
         };
         return observed;
       },
@@ -751,6 +971,9 @@ export async function runPackedManagedProviderEntrypoint(
 
 export type PackedManagedProviderCommandDependencies = Readonly<{
   artifactOwners?: PackedManagedProviderArtifactOwners;
+  candidateArtifactVerification?: Readonly<{
+    trustedMinisignPublicKey: string;
+  }>;
   reserveAvailablePort?: () => Promise<number>;
   nowIso?: () => string;
   writeStdout?: (line: string) => void;
@@ -783,6 +1006,8 @@ export async function main(
     const result = await runPackedManagedProviderEntrypoint(parsed, {
       scenario,
       artifactOwners: dependencies.artifactOwners,
+      candidateArtifactVerification:
+        dependencies.candidateArtifactVerification,
       reserveAvailablePort: dependencies.reserveAvailablePort,
     });
     writeStdout(`${JSON.stringify({

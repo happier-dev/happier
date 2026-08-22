@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
@@ -88,12 +88,12 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
       mkdir(pluginRoot, { recursive: true }),
     ]);
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({
       cliHome: cliHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret,
+      auth,
+      mode: 'legacy',
     });
 
     await writeLocalPathPluginFixture({

@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -19,7 +18,7 @@ import { createUserScopedSocketCollector } from '../testkit/socketClient';
 import { encryptLegacyBase64, decryptLegacyBase64 } from '../testkit/messageCrypto';
 import { startTestDaemon } from '../testkit/daemon/daemon';
 import { waitFor } from '../testkit/timing';
-import { seedCliAuthForServer } from '../testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../testkit/cliAuth';
 import { fetchJson } from '../testkit/http';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../testkit/rpcCrypto';
 import { unwrapSerializedJsonValue } from '../testkit/unwrapSerializedJsonValue';
@@ -35,8 +34,8 @@ async function main(): Promise<void> {
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const secret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     await writeFile(join(workspaceDir, 'README.md'), '# SCM e2e\n', 'utf8');
     execFileSync('git', ['init'], { cwd: workspaceDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });

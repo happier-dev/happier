@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -81,6 +81,59 @@ function createTarget(overrides?: Partial<StartedStressTarget>): StartedStressTa
 }
 
 describe('finalizeStressScenario', () => {
+  it('collects configured success diagnostics before publishing their manifest paths', async () => {
+    const runDir = mkdtempSync(join(tmpdir(), 'happier-relay-cluster-finalize-'));
+    const testDir = join(runDir, 'relay-cluster-compose');
+    mkdirSync(testDir, { recursive: true });
+    const dockerLogsFile = join(runDir, 'docker-compose.logs.txt');
+    const dockerPsFile = join(runDir, 'docker-compose.ps.txt');
+    const collectDiagnostics = vi.fn(async () => {
+      writeFileSync(dockerLogsFile, 'compose logs\n', 'utf8');
+      writeFileSync(dockerPsFile, 'compose ps\n', 'utf8');
+    });
+    const target = createTarget({
+      artifacts: {
+        dockerLogsFile,
+        dockerPsFile,
+      },
+      collectDiagnostics,
+    });
+
+    const result = await finalizeStressScenario({
+      run: {
+        runId: 'relay-cluster-run',
+        runDir,
+        testDir: () => testDir,
+      },
+      testDir,
+      testName: 'relay.clusterCompose',
+      target,
+      config: {
+        ...baseConfig,
+        artifacts: {
+          ...baseConfig.artifacts,
+          saveArtifactsOnSuccess: true,
+        },
+      },
+      startedAt: '2026-07-29T23:00:00.000Z',
+      endedAt: '2026-07-29T23:00:01.000Z',
+      status: 'passed',
+      counts: {
+        scenarioRuns: 1,
+      },
+    });
+
+    const manifest = JSON.parse(readFileSync(result.manifestFile, 'utf8')) as {
+      artifacts: {
+        dockerLogsFile: string;
+        dockerPsFile: string;
+      };
+    };
+    expect(collectDiagnostics).toHaveBeenCalledTimes(1);
+    expect(existsSync(manifest.artifacts.dockerLogsFile)).toBe(true);
+    expect(existsSync(manifest.artifacts.dockerPsFile)).toBe(true);
+  });
+
   it('writes canonical failure artifacts and preserves the topology when configured', async () => {
     const runDir = mkdtempSync(join(tmpdir(), 'happier-stress-finalize-'));
     const testDir = join(runDir, 'rpc-multi-replica');
@@ -131,6 +184,37 @@ describe('finalizeStressScenario', () => {
       results: {
         status: 'failed',
         endedAt: '2026-04-18T12:00:04.000Z',
+        failureClassification: 'unknown',
+      },
+    });
+  });
+
+  it('labels only explicitly evidenced deterministic failures as deterministic', async () => {
+    const runDir = mkdtempSync(join(tmpdir(), 'happier-stress-classification-'));
+    const testDir = join(runDir, 'classified');
+    mkdirSync(testDir, { recursive: true });
+    const target = createTarget();
+
+    const result = await finalizeStressScenario({
+      run: {
+        runId: 'classified-run',
+        runDir,
+        testDir: () => testDir,
+      },
+      testDir,
+      testName: 'classified.scenario',
+      target,
+      config: baseConfig,
+      startedAt: '2026-04-18T12:00:00.000Z',
+      endedAt: '2026-04-18T12:00:01.000Z',
+      status: 'failed',
+      error: new Error('DETERMINISTIC: reproduced owner invariant'),
+      counts: {},
+    });
+
+    expect(JSON.parse(readFileSync(result.manifestFile, 'utf8'))).toMatchObject({
+      results: {
+        failureClassification: 'deterministic',
       },
     });
   });

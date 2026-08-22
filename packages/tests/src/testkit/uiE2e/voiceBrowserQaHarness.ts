@@ -19,7 +19,7 @@ import tweetnacl from 'tweetnacl';
 
 import { createTestAuth } from '../auth';
 import { upsertEncryptedAccountSettingsV2 } from '../accountSettings';
-import { seedCliAuthForServer, seedCliDataKeyAuthForServer } from '../cliAuth';
+import { seedCliAuthForTestAccount } from '../cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../daemon/daemon';
 import { repoRootDir } from '../paths';
 import { ensureCliSharedDepsBuilt } from '../process/cliDist';
@@ -43,6 +43,8 @@ import {
   resolveVoiceBrowserQaUiWebMode,
   type VoiceBrowserQaRouteProfile,
 } from './voiceBrowserQaRouteProfile';
+
+const OPENAI_COMPAT_STT_PROVIDER_ID = 'happier.voice.openai-compat/stt';
 export {
   observeVoiceRelaySocketTraffic,
   type VoiceRelaySocketTrafficObservation,
@@ -315,41 +317,23 @@ export async function startVoiceBrowserQaStack(params: Readonly<{
   try {
     const auth = await createTestAuth(server.baseUrl);
     const accountMode = params.accountMode ?? 'legacy';
+    const authMode = accountMode === 'data_key' ? 'dataKey' : 'legacy';
     const accountMachineKey = accountMode === 'data_key'
-      ? Uint8Array.from(randomBytes(32))
+      ? auth.accountMachineKey
       : null;
-    const dataKeySeeded = accountMachineKey
-      ? await seedCliDataKeyAuthForServer({
-          cliHome: daemonHomeDir,
-          serverUrl: server.baseUrl,
-          token: auth.token,
-          machineKey: accountMachineKey,
-        })
-      : null;
-    const seeded = dataKeySeeded ?? await seedCliAuthForServer({
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret: auth.accountSigningSeed,
+      auth,
+      mode: authMode,
     });
     const accountSettingsMaterial: AccountScopedCryptoMaterial = accountMachineKey
       ? { type: 'dataKey', machineKey: accountMachineKey }
       : { type: 'legacy', secret: auth.accountSigningSeed };
-    const authBootstrapCredentials = dataKeySeeded && accountMachineKey
-      ? {
-          token: auth.token,
-          encryption: {
-            publicKey: Buffer.from(dataKeySeeded.publicKey).toString('base64'),
-            machineKey: Buffer.from(accountMachineKey).toString('base64'),
-          },
-        }
-      : {
-          token: auth.token,
-          secret: Buffer.from(auth.accountSigningSeed).toString('base64'),
-        };
     const authBootstrapSnapshot = buildAuthBootstrapStorageSnapshot({
       serverUrl: server.baseUrl,
-      credentials: authBootstrapCredentials,
+      auth,
+      mode: authMode,
       storageScope: params.storageScope,
     });
     const daemonEnv: NodeJS.ProcessEnv = {
@@ -485,6 +469,16 @@ export function resolveVoiceBrowserQaBeforeAllTimeoutMs(): number {
   });
 }
 
+export function matchesVoiceMediaCaptureIdentity(params: Readonly<{
+  callsBeforeCapture: number;
+  capturedAdmissionAtMs: number;
+  currentCalls: number;
+  observedAdmissionAtMs: number | null;
+}>): boolean {
+  return params.currentCalls === params.callsBeforeCapture + 1
+    && params.observedAdmissionAtMs === params.capturedAdmissionAtMs;
+}
+
 export function installVoiceMediaInstrumentation(page: Page): Promise<void> {
   return page.addInitScript(() => {
     type QaState = {
@@ -492,9 +486,14 @@ export function installVoiceMediaInstrumentation(page: Page): Promise<void> {
       stoppedTracks: number;
       maxInputLevel: number;
       activeTracks: number;
+      lastGetUserMediaAdmissionAtMs: number | null;
+      lastCaptureFirstTrackStopAtMs: number | null;
       constraints: unknown[];
       recordingBlobs: Array<{ size: number; type: string }>;
       blobFetches: Array<{ ok: boolean; size: number | null; type: string | null }>;
+      objectUrlCreates: number;
+      objectUrlRevokes: number;
+      activeObjectUrls: number;
       getUserMediaErrors: Array<{ name: string; message: string }>;
       instrumentationErrors: Array<{ stage: string }>;
     };
@@ -504,38 +503,66 @@ export function installVoiceMediaInstrumentation(page: Page): Promise<void> {
       stoppedTracks: 0,
       maxInputLevel: 0,
       activeTracks: 0,
+      lastGetUserMediaAdmissionAtMs: null,
+      lastCaptureFirstTrackStopAtMs: null,
       constraints: [],
       recordingBlobs: [],
       blobFetches: [],
+      objectUrlCreates: 0,
+      objectUrlRevokes: 0,
+      activeObjectUrls: 0,
       getUserMediaErrors: [],
       instrumentationErrors: [],
     };
     globalWithQa.__happierVoiceMediaQa = qa;
+    let currentCaptureToken: symbol | null = null;
+    const ownedObjectUrls = new Set<string>();
     const originalCreateObjectUrl = URL.createObjectURL.bind(URL);
+    const originalRevokeObjectUrl = URL.revokeObjectURL.bind(URL);
     URL.createObjectURL = (object: Blob | MediaSource) => {
+      const objectUrl = originalCreateObjectUrl(object);
+      ownedObjectUrls.add(objectUrl);
+      qa.objectUrlCreates += 1;
+      qa.activeObjectUrls = ownedObjectUrls.size;
       if (object instanceof Blob) {
         qa.recordingBlobs.push({ size: object.size, type: object.type });
       }
-      return originalCreateObjectUrl(object);
+      return objectUrl;
+    };
+    URL.revokeObjectURL = (objectUrl: string) => {
+      originalRevokeObjectUrl(objectUrl);
+      if (ownedObjectUrls.delete(objectUrl)) {
+        qa.objectUrlRevokes += 1;
+        qa.activeObjectUrls = ownedObjectUrls.size;
+      }
     };
     const originalFetch = window.fetch.bind(window);
-    const instrumentedFetch = async (...args: Parameters<typeof window.fetch>) => {
+    const instrumentedFetch = (...args: Parameters<typeof window.fetch>) => {
       const requestUrl = typeof args[0] === 'string'
         ? args[0]
         : args[0] instanceof URL
           ? args[0].toString()
           : args[0].url;
-      if (!requestUrl.startsWith('blob:')) return await originalFetch(...args);
-      try {
-        const response = await originalFetch(...args);
-        const clone = response.clone();
-        const blob = await clone.blob();
-        qa.blobFetches.push({ ok: response.ok, size: blob.size, type: blob.type });
-        return response;
-      } catch (error) {
-        qa.blobFetches.push({ ok: false, size: null, type: null });
-        throw error;
-      }
+      if (!requestUrl.startsWith('blob:')) return originalFetch(...args);
+      return originalFetch(...args).then(
+        (response) => {
+          // Observation must not delay or reject the real recording fetch. The
+          // clone is diagnostic-only and its entire failure path is consumed.
+          void Promise.resolve()
+            .then(() => response.clone().blob())
+            .then((blob) => {
+              qa.blobFetches.push({ ok: response.ok, size: blob.size, type: blob.type });
+            })
+            .catch(() => {
+              qa.blobFetches.push({ ok: false, size: null, type: null });
+            });
+          return response;
+        },
+        (error) => {
+          qa.blobFetches.push({ ok: false, size: null, type: null });
+          throw error;
+        },
+      );
     };
     // `window.fetch` is augmented by both DOM and React Native test types in
     // this package. Define the runtime property directly so this browser-only
@@ -565,12 +592,19 @@ export function installVoiceMediaInstrumentation(page: Page): Promise<void> {
         });
         throw error;
       }
+      qa.lastGetUserMediaAdmissionAtMs = performance.now();
+      qa.lastCaptureFirstTrackStopAtMs = null;
+      const captureToken = Symbol('voice-media-capture');
+      currentCaptureToken = captureToken;
       const tracks = stream.getAudioTracks();
       qa.activeTracks += tracks.filter((track) => track.readyState === 'live').length;
       for (const track of tracks) {
         const originalStop = track.stop.bind(track);
         track.stop = () => {
           if (track.readyState === 'live') {
+            if (currentCaptureToken === captureToken && qa.lastCaptureFirstTrackStopAtMs === null) {
+              qa.lastCaptureFirstTrackStopAtMs = performance.now();
+            }
             qa.stoppedTracks += 1;
             qa.activeTracks = Math.max(0, qa.activeTracks - 1);
           }
@@ -651,15 +685,30 @@ async function installLocalMediaSettings(params: Readonly<{
   accountSettingsMaterial: AccountScopedCryptoMaterial;
   sttBaseUrl?: string | null;
   daemonSttModelPackId?: string | null;
-  openAiCompatCanary?: VoiceOpenAiCompatCanarySettings | null;
+  conversationMode?: 'direct_session' | 'agent';
 }>): Promise<void> {
   const daemonSttModelPackId = params.daemonSttModelPackId?.trim() || null;
-  const canary = params.openAiCompatCanary ?? null;
-  const canaryOrigin = canary ? new URL(canary.baseUrl).origin : null;
-  const openAiCompatBaseUrl = canary?.baseUrl ?? params.sttBaseUrl ?? '';
+  const openAiCompatBaseUrl = params.sttBaseUrl ?? '';
+  const conversationMode = params.conversationMode ?? 'direct_session';
   const nextVoice = {
     providerId: 'local_conversation',
     assistantLanguage: 'en',
+    ...(daemonSttModelPackId
+      ? {
+          dictation: {
+            sttBinding: 'explicit',
+            language: 'en',
+            stt: {
+              provider: 'local_neural',
+              localNeural: {
+                assetId: daemonSttModelPackId,
+                language: 'en',
+                execution: 'daemon',
+              },
+            },
+          },
+        }
+      : {}),
     executionMachine: {
       mode: 'fixed',
       machineId: params.machineId,
@@ -669,18 +718,10 @@ async function installLocalMediaSettings(params: Readonly<{
       local_conversation: {
         schemaVersion: 1,
         config: {
-          conversationMode: canary ? 'agent' : 'direct_session',
+          conversationMode,
           handsFree: { enabled: false },
           stt: {
-            provider: daemonSttModelPackId ? 'local_neural' : 'openai_compat',
-            openaiCompat: {
-              baseUrl: openAiCompatBaseUrl,
-              insecureLocalOriginConsent: canaryOrigin
-                ?? (params.sttBaseUrl ? new URL(params.sttBaseUrl).origin : null),
-              insecureLocalConsentMachineId: params.machineId,
-              apiKey: null,
-              model: 'whisper-1',
-            },
+            provider: daemonSttModelPackId ? 'local_neural' : OPENAI_COMPAT_STT_PROVIDER_ID,
             localNeural: {
               assetId: daemonSttModelPackId,
               language: 'en',
@@ -688,43 +729,38 @@ async function installLocalMediaSettings(params: Readonly<{
             },
           },
           tts: {
-            provider: canary ? 'openai_compat' : 'device',
-            autoSpeakReplies: canary !== null,
+            provider: 'device',
+            autoSpeakReplies: false,
             bargeInEnabled: true,
-            openaiCompat: {
-              baseUrl: canary?.baseUrl ?? null,
-              insecureLocalOriginConsent: canaryOrigin,
-              insecureLocalConsentMachineId: canary ? params.machineId : null,
-              apiKey: null,
-              model: 'voice-qa-tts',
-              voice: 'alloy',
-              format: 'wav',
-            },
           },
           agent: {
-            backend: canary ? 'openai_compat' : 'daemon',
+            ...(conversationMode === 'agent'
+              ? {
+                  agentSource: 'agent' as const,
+                  agentId: 'claude',
+                  prewarmOnConnect: false,
+                }
+              : {}),
             chatModelSource: 'custom',
             chatModelId: 'voice-qa-chat',
             commitModelSource: 'chat',
             commitModelId: 'voice-qa-chat',
-            openaiCompat: {
-              chatBaseUrl: canary?.baseUrl ?? null,
-              insecureLocalOriginConsent: canaryOrigin,
-              insecureLocalConsentMachineId: canary ? params.machineId : null,
-              chatApiKey: null,
-              chatModel: 'voice-qa-chat',
-              commitModel: 'voice-qa-chat',
-              temperature: 0,
-              maxTokens: 128,
-            },
+            providerChat: null,
           },
+        },
+      },
+      [OPENAI_COMPAT_STT_PROVIDER_ID]: {
+        schemaVersion: 2,
+        config: {
+          baseUrl: openAiCompatBaseUrl,
+          insecureLocalOriginConsent: params.sttBaseUrl ? new URL(params.sttBaseUrl).origin : '',
+          insecureLocalConsentMachineId: params.machineId,
+          model: 'whisper-1',
+          language: 'en',
         },
       },
     },
   };
-  const credentialSlots = ['stt_api_key', 'chat_api_key', 'tts_api_key'] as const;
-  const accountSecretId = (slot: typeof credentialSlots[number]) => `voice-qa-account-${slot}`;
-  const machineSecretId = (slot: typeof credentialSlots[number]) => `voice-qa-machine-${slot}`;
   await upsertEncryptedAccountSettingsV2({
     baseUrl: params.baseUrl,
     token: params.authToken,
@@ -737,57 +773,33 @@ async function installLocalMediaSettings(params: Readonly<{
         'voice.daemonInference': true,
         'execution.runs': true,
       },
-      ...(canary
-        ? {
-            secrets: credentialSlots.flatMap((slot) => [
-              {
-                id: accountSecretId(slot),
-                name: `Voice QA account ${slot}`,
-                kind: 'apiKey',
-                encryptedValue: { _isSecretValue: true, value: canary.accountCredentials[slot] },
-                createdAt: 1,
-                updatedAt: 1,
-              },
-              {
-                id: machineSecretId(slot),
-                name: `Voice QA machine ${slot}`,
-                kind: 'apiKey',
-                encryptedValue: { _isSecretValue: true, value: canary.machineCredentials[slot] },
-                createdAt: 1,
-                updatedAt: 1,
-              },
-            ]),
-          }
-        : {}),
-      voice: canary
-        ? {
-            ...nextVoice,
-            credentialBindings: [
-              {
-                providerId: 'openai_compat',
-                credentialBindings: {
-                  account: Object.fromEntries(
-                    credentialSlots.map((slot) => [slot, accountSecretId(slot)]),
-                  ),
-                  byMachineId: {
-                    [params.machineId]: Object.fromEntries(
-                      credentialSlots.map((slot) => [slot, machineSecretId(slot)]),
-                    ),
-                  },
-                },
-              },
-            ],
-          }
-        : nextVoice,
+      voice: nextVoice,
     },
   });
 }
 
-export type VoiceOpenAiCompatCanarySettings = Readonly<{
+/**
+ * Test-only account-settings setup for a normal Local Agent Voice attempt.
+ *
+ * It deliberately reuses the same encrypted settings writer and OpenAI-compatible
+ * STT boundary as the media harness; callers still drive capture through the
+ * real Voice surface rather than the `/dev/voice-qa` screen.
+ */
+export async function installLocalAgentVoiceSettings(params: Readonly<{
+  authToken: string;
   baseUrl: string;
-  accountCredentials: Readonly<Record<'stt_api_key' | 'chat_api_key' | 'tts_api_key', string>>;
-  machineCredentials: Readonly<Record<'stt_api_key' | 'chat_api_key' | 'tts_api_key', string>>;
-}>;
+  machineId: string;
+  accountSettingsMaterial: AccountScopedCryptoMaterial;
+  sttBaseUrl: string;
+}>): Promise<void> {
+  if (!params.sttBaseUrl.trim()) {
+    throw new Error('voice_local_agent_stt_base_url_required');
+  }
+  await installLocalMediaSettings({
+    ...params,
+    conversationMode: 'agent',
+  });
+}
 
 export async function prepareVoiceBrowserQaPage(params: Readonly<{
   page: Page;
@@ -795,7 +807,6 @@ export async function prepareVoiceBrowserQaPage(params: Readonly<{
   routeQuery: Readonly<Record<string, string>>;
   sttBaseUrl?: string | null;
   daemonSttModelPackId?: string | null;
-  openAiCompatCanary?: VoiceOpenAiCompatCanarySettings | null;
 }>): Promise<Readonly<{ sessionId: string }>> {
   const sessionId = await params.stack.createRunnableSession();
   // Seed the authoritative encrypted account settings before browser sync
@@ -808,7 +819,6 @@ export async function prepareVoiceBrowserQaPage(params: Readonly<{
     accountSettingsMaterial: params.stack.accountSettingsMaterial,
     sttBaseUrl: params.sttBaseUrl,
     daemonSttModelPackId: params.daemonSttModelPackId,
-    openAiCompatCanary: params.openAiCompatCanary,
   });
   await installAuthBootstrapStorageSnapshot(
     params.page,
@@ -859,11 +869,11 @@ export async function prepareVoiceBrowserQaPage(params: Readonly<{
   }).toMatchObject({
     configuredProviderId: 'local_conversation',
     executionMachineId: params.stack.machineId,
-    localSttProvider: params.daemonSttModelPackId ? 'local_neural' : 'openai_compat',
+    localSttProvider: params.daemonSttModelPackId ? 'local_neural' : OPENAI_COMPAT_STT_PROVIDER_ID,
     localSttModelPackId: params.daemonSttModelPackId ?? null,
     localSttBaseUrlConfigured: params.daemonSttModelPackId
       ? false
-      : Boolean(params.openAiCompatCanary?.baseUrl ?? params.sttBaseUrl),
+      : Boolean(params.sttBaseUrl),
     machineControlPortAuthorized: true,
     ...(params.stack.routeProfile === 'direct'
       ? { directLoopbackEndpointReady: true }
@@ -907,10 +917,23 @@ export type VoiceQaBoundaryRequest = Readonly<{
 
 export async function startVoiceQaBoundaryServer(params: Readonly<{
   requiredAuthorization?: Partial<Record<VoiceQaBoundaryRequest['operation'], string>>;
+  /**
+   * Per-capture STT replies for a deterministic browser scenario. This is fixed
+   * at server construction; there is intentionally no mutable test endpoint.
+   */
+  transcriptionTexts?: readonly string[];
 }> = {}): Promise<VoiceQaBoundaryServer> {
   const fixture = await readFile(
     resolve(repoRootDir(), 'packages/tests/fixtures/voice/phrases/short-command.24k.wav'),
   );
+  const transcriptionTexts = params.transcriptionTexts === undefined
+    ? ['check repository status']
+    : params.transcriptionTexts
+      .map((text) => text.trim())
+      .filter((text) => text.length > 0);
+  if (transcriptionTexts.length === 0) {
+    throw new Error('voice_qa_boundary_transcription_text_required');
+  }
   let transcriptionRequests = 0;
   const requests: VoiceQaBoundaryRequest[] = [];
   let lastTranscriptionRequest: Readonly<{
@@ -990,7 +1013,9 @@ export async function startVoiceQaBoundaryServer(params: Readonly<{
           };
           response.statusCode = 200;
           response.setHeader('content-type', 'application/json');
-          response.end(JSON.stringify({ text: 'check repository status' }));
+          response.end(JSON.stringify({
+            text: transcriptionTexts[Math.min(transcriptionRequests - 1, transcriptionTexts.length - 1)],
+          }));
           return;
         }
         if (operation === 'chat') {

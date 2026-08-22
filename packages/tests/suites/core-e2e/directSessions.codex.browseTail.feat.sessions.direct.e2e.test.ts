@@ -1,14 +1,13 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { randomBytes } from 'node:crypto';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
@@ -83,12 +82,11 @@ describe('core e2e: direct Codex sessions browse/link/tail', () => {
     });
     const auth = await createTestAuth(server.baseUrl);
 
-    const machineKey = Uint8Array.from(randomBytes(32));
-    const seeded = await seedCliDataKeyAuthForServer({
+    const seeded = await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      machineKey,
+      auth,
+      mode: 'dataKey',
     });
 
     daemon = await startTestDaemon({
@@ -112,7 +110,7 @@ describe('core e2e: direct Codex sessions browse/link/tail', () => {
     ui.connect();
     await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for codex direct sessions e2e' });
 
-    const machineRpc = createDataKeyRpcClient(ui, machineKey);
+    const machineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
 
     let candidatesResult: any = null;
     await waitFor(

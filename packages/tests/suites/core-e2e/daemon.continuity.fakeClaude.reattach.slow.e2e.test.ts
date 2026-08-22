@@ -8,7 +8,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createTestAuth } from '../../src/testkit/auth';
 import { readDaemonState, replaceTestDaemonWithoutStoppingSessions, startTestDaemon, stopDaemonFromHomeDir, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { waitFor } from '../../src/testkit/timing';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
@@ -67,17 +67,27 @@ function expectPidAlive(pid: number): void {
 describe('core e2e: daemon continuity reattaches the existing fake Claude session without provider restart', () => {
     let server: StartedServer | null = null;
     let daemon: StartedDaemon | null = null;
+    let retiredDaemon: StartedDaemon | null = null;
     let daemonHomeDir: string | null = null;
 
     afterEach(async () => {
+        const cleanupErrors: Error[] = [];
+        await daemon?.stop().catch((error: unknown) => {
+            cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+        });
+        daemon = null;
+        await retiredDaemon?.proc.stop().catch((error: unknown) => {
+            cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+        });
+        retiredDaemon = null;
         if (daemonHomeDir) {
             await stopDaemonFromHomeDir(daemonHomeDir).catch(() => {});
             daemonHomeDir = null;
         }
-        await daemon?.stop().catch(() => {});
-        daemon = null;
         await server?.stop().catch(() => {});
         server = null;
+        if (cleanupErrors.length === 1) throw cleanupErrors[0];
+        if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'Daemon reattach teardown failed');
     });
 
     afterAll(async () => {
@@ -85,6 +95,7 @@ describe('core e2e: daemon continuity reattaches the existing fake Claude sessio
             await stopDaemonFromHomeDir(daemonHomeDir).catch(() => {});
         }
         await daemon?.stop().catch(() => {});
+        await retiredDaemon?.proc.stop().catch(() => {});
         await server?.stop().catch(() => {});
     });
 
@@ -99,7 +110,7 @@ describe('core e2e: daemon continuity reattaches the existing fake Claude sessio
         await mkdir(workspaceDir, { recursive: true });
 
         const secret = Uint8Array.from(randomBytes(32));
-        await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+        await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
         const fakeClaudePath = fakeClaudeFixturePath();
         const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
@@ -200,17 +211,19 @@ describe('core e2e: daemon continuity reattaches the existing fake Claude sessio
             env: daemonEnv,
             originalDaemon: daemon,
         });
-        expect(restartedDaemonState.pid).not.toBe(originalDaemonPid);
+        retiredDaemon = daemon;
+        daemon = restartedDaemonState;
+        expect(restartedDaemonState.state.pid).not.toBe(originalDaemonPid);
         expect(await readDaemonState(daemonHomeDir)).toEqual(expect.objectContaining({
-            pid: restartedDaemonState.pid,
-            httpPort: restartedDaemonState.httpPort,
+            pid: restartedDaemonState.state.pid,
+            httpPort: restartedDaemonState.state.httpPort,
         }));
 
         await waitFor(async () => {
             const listed = await daemonControlPostJson({
-                port: restartedDaemonState.httpPort,
+                port: restartedDaemonState.state.httpPort,
                 path: '/list',
-                controlToken: restartedDaemonState.controlToken,
+                controlToken: restartedDaemonState.state.controlToken,
             });
             expect(listed.status).toBe(200);
             expect(Array.isArray(listed.data.children)).toBe(true);

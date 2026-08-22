@@ -1,10 +1,10 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createTestAuth, type TestAuth } from './auth';
-import { seedCliAuthForServer } from './cliAuth';
+import { seedCliAuthForTestAccount } from './cliAuth';
 import { writeCliSessionAttachFile } from './cliAttachFile';
 import { stopDaemonFromHomeDir } from './daemon/daemon';
 import { writeTestManifestForServer } from './manifestForServer';
@@ -431,8 +431,8 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
   await mkdir(cliHome, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
 
-  const secret = Uint8Array.from(randomBytes(32));
-  await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
+  const secret = auth.accountSigningSeed;
+  await seedCliAuthForTestAccount({ cliHome, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
   const metadataCiphertextBase64 = encryptLegacyBase64(
     {

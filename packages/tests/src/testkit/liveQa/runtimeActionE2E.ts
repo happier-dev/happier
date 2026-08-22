@@ -7,10 +7,9 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { callLegacyEncryptedSessionRpc } from '../sessionRpc';
 import type { SocketCollector } from '../socketClient';
-import {
-  buildAuthBootstrapStorageSnapshot,
-  type AuthBootstrapCredentials,
-} from '../uiE2e/buildAuthBootstrapStorageSnapshot';
+import type { TestAuth } from '../auth';
+import type { TestAccountCliAuthMode } from '../cliAuth';
+import { buildAuthBootstrapStorageSnapshot } from '../uiE2e/buildAuthBootstrapStorageSnapshot';
 import type { AuthBootstrapStorageSnapshot } from '../uiE2e/readLegacyAuthSecretFromLocalStorage';
 
 export type DispatchRuntimeActionE2EContext = Readonly<{
@@ -23,7 +22,8 @@ export type DispatchRuntimeActionE2EContext = Readonly<{
 
 export type RuntimeActionAuthBootstrapParams = Readonly<{
   serverUrl: string;
-  credentials: AuthBootstrapCredentials;
+  auth: TestAuth;
+  mode: TestAccountCliAuthMode;
   storageScope: string;
   serverIdentityId?: string | null;
   legacyServerIds?: readonly string[];

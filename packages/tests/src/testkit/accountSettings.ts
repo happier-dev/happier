@@ -125,6 +125,11 @@ export async function upsertEncryptedAccountSettingsV2(params: Readonly<{
     throw new Error('Failed to parse encrypted account settings update response');
   }
   if (!parsed.data.success) {
+    if (parsed.data.error === 'invalid') {
+      throw new Error(
+        `Failed to update encrypted account settings due to invalid content (${parsed.data.reason})`,
+      );
+    }
     throw new Error(
       `Failed to update encrypted account settings due to version mismatch (expected=${expectedVersion}, current=${parsed.data.currentVersion})`,
     );

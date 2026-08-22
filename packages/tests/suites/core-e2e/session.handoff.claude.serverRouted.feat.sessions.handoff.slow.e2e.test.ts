@@ -1,12 +1,11 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { randomBytes } from 'node:crypto';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { normalizeSpawnSessionRequestBody } from '../../src/testkit/daemon/normalizeSpawnSessionRequestBody';
@@ -24,7 +23,6 @@ import { createUserScopedSocketCollector, type SocketCollector } from '../../src
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
 import { activateLinkedDirectSession } from '../../src/testkit/directSessions/activateLinkedDirectSession';
-// @ts-expect-error - This CJS helper is consumed directly by the runtime test fixture.
 import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
 import { waitForDaemonSessionWebhookMarker } from '../../src/testkit/daemon/waitForDaemonSessionWebhookMarker';
 
@@ -450,19 +448,17 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         });
         const auth = await createTestAuth(server.baseUrl);
 
-        const sourceMachineKey = Uint8Array.from(randomBytes(32));
-        const targetMachineKey = Uint8Array.from(randomBytes(32));
-        const sourceSeed = await seedCliDataKeyAuthForServer({
+        const sourceSeed = await seedCliAuthForTestAccount({
             cliHome: sourceHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey: sourceMachineKey,
+            auth,
+            mode: 'dataKey',
         });
-        const targetSeed = await seedCliDataKeyAuthForServer({
+        const targetSeed = await seedCliAuthForTestAccount({
             cliHome: targetHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey: targetMachineKey,
+            auth,
+            mode: 'dataKey',
         });
 
         sourceDaemon = await startTestDaemon({
@@ -510,8 +506,8 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             context: 'user-scoped socket connected for server-routed handoff e2e',
         });
 
-        const sourceMachineRpc = createDataKeyRpcClient(ui, sourceMachineKey);
-        const targetMachineRpc = createDataKeyRpcClient(ui, targetMachineKey);
+        const sourceMachineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
+        const targetMachineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
 
         const machineIds = await waitForMachineIds({
             baseUrl: server.baseUrl,
@@ -703,7 +699,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             baseUrl: server.baseUrl,
             token: auth.token,
             sessionId,
-            machineKeys: [targetMachineKey, sourceMachineKey],
+            machineKeys: [auth.accountMachineKey],
             providerId: 'claude',
             sourceMachineId: sourceSeed.machineId,
             targetMachineId: targetSeed.machineId,
@@ -717,7 +713,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             baseUrl: server.baseUrl,
             token: auth.token,
             sessionId,
-            machineKeys: [targetMachineKey, sourceMachineKey],
+            machineKeys: [auth.accountMachineKey],
         });
         expect(patchedMetadata).toEqual(expect.objectContaining({
             machineId: targetSeed.machineId,
@@ -970,19 +966,17 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         });
         const auth = await createTestAuth(server.baseUrl);
 
-        const sourceMachineKey = Uint8Array.from(randomBytes(32));
-        const targetMachineKey = Uint8Array.from(randomBytes(32));
-        const sourceSeed = await seedCliDataKeyAuthForServer({
+        const sourceSeed = await seedCliAuthForTestAccount({
             cliHome: sourceHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey: sourceMachineKey,
+            auth,
+            mode: 'dataKey',
         });
-        const targetSeed = await seedCliDataKeyAuthForServer({
+        const targetSeed = await seedCliAuthForTestAccount({
             cliHome: targetHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey: targetMachineKey,
+            auth,
+            mode: 'dataKey',
         });
 
         sourceDaemon = await startTestDaemon({
@@ -1030,8 +1024,8 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             context: 'user-scoped socket connected for server-routed handoff abort e2e',
         });
 
-        const sourceMachineRpc = createDataKeyRpcClient(ui, sourceMachineKey);
-        const targetMachineRpc = createDataKeyRpcClient(ui, targetMachineKey);
+        const sourceMachineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
+        const targetMachineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
 
         const machineIds = await waitForMachineIds({
             baseUrl: server.baseUrl,
@@ -1205,19 +1199,17 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         });
         const auth = await createTestAuth(server.baseUrl);
 
-        const sourceMachineKey = Uint8Array.from(randomBytes(32));
-        const targetMachineKey = Uint8Array.from(randomBytes(32));
-        const sourceSeed = await seedCliDataKeyAuthForServer({
+        const sourceSeed = await seedCliAuthForTestAccount({
             cliHome: sourceHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey: sourceMachineKey,
+            auth,
+            mode: 'dataKey',
         });
-        const targetSeed = await seedCliDataKeyAuthForServer({
+        const targetSeed = await seedCliAuthForTestAccount({
             cliHome: targetHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey: targetMachineKey,
+            auth,
+            mode: 'dataKey',
         });
 
         sourceDaemon = await startTestDaemon({
@@ -1266,8 +1258,8 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             context: 'user-scoped socket connected for server-routed late cutover proof',
         });
 
-        const sourceMachineRpc = createDataKeyRpcClient(ui, sourceMachineKey);
-        const targetMachineRpc = createDataKeyRpcClient(ui, targetMachineKey);
+        const sourceMachineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
+        const targetMachineRpc = createDataKeyRpcClient(ui, auth.accountMachineKey);
 
         const machineIds = await waitForMachineIds({
             baseUrl: server.baseUrl,

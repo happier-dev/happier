@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join, resolve } from 'node:path';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
@@ -311,8 +311,8 @@ async function startWakeHarness(params: { testDir: string }): Promise<RunningWak
   await mkdir(workspaceDir, { recursive: true });
   await mkdir(fakeBinDir, { recursive: true });
 
-  const secret = Uint8Array.from(randomBytes(32));
-  await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+  const secret = auth.accountSigningSeed;
+  await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
   const fakeClaudePath = fakeClaudeFixturePath();
   const fakeClaudeLogPath = resolve(join(params.testDir, 'fake-claude.jsonl'));

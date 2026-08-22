@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 
 import {
   installVoiceMediaInstrumentation,
+  matchesVoiceMediaCaptureIdentity,
   readVoiceBrowserQaDaemonSttManifestEvidence,
   startVoiceQaBoundaryServer,
 } from './voiceBrowserQaHarness';
@@ -13,6 +14,27 @@ import {
 describe('installVoiceMediaInstrumentation', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('rejects a delayed second capture when validating a Dictation capture identity', () => {
+    expect(matchesVoiceMediaCaptureIdentity({
+      callsBeforeCapture: 7,
+      capturedAdmissionAtMs: 1_000,
+      currentCalls: 8,
+      observedAdmissionAtMs: 1_000,
+    })).toBe(true);
+    expect(matchesVoiceMediaCaptureIdentity({
+      callsBeforeCapture: 7,
+      capturedAdmissionAtMs: 1_000,
+      currentCalls: 9,
+      observedAdmissionAtMs: 1_000,
+    })).toBe(false);
+    expect(matchesVoiceMediaCaptureIdentity({
+      callsBeforeCapture: 7,
+      capturedAdmissionAtMs: 1_000,
+      currentCalls: 8,
+      observedAdmissionAtMs: 2_000,
+    })).toBe(false);
   });
 
   it('never lets best-effort level instrumentation reject a valid production media stream', async () => {
@@ -23,7 +45,10 @@ describe('installVoiceMediaInstrumentation', () => {
     const stream = {
       getAudioTracks: () => [track],
     } as unknown as MediaStream;
-    const originalGetUserMedia = vi.fn(async () => stream);
+    let admitStream: (value: MediaStream) => void;
+    const originalGetUserMedia = vi.fn(() => new Promise<MediaStream>((resolve) => {
+      admitStream = resolve;
+    }));
 
     class FailingDiagnosticAudioContext {
       state = 'suspended';
@@ -38,6 +63,7 @@ describe('installVoiceMediaInstrumentation', () => {
       AudioContext: FailingDiagnosticAudioContext,
     };
     vi.stubGlobal('window', windowLike);
+    vi.stubGlobal('performance', { now: vi.fn(() => 12_345) });
     vi.stubGlobal('navigator', {
       mediaDevices: {
         getUserMedia: originalGetUserMedia,
@@ -55,7 +81,15 @@ describe('installVoiceMediaInstrumentation', () => {
     expect(initScripts).toHaveLength(1);
     initScripts[0]?.();
 
-    await expect(navigator.mediaDevices.getUserMedia({ audio: true })).resolves.toBe(stream);
+    const requestedStream = navigator.mediaDevices.getUserMedia({ audio: true });
+    expect((windowLike as typeof windowLike & {
+      __happierVoiceMediaQa?: { lastGetUserMediaAdmissionAtMs: number | null };
+    }).__happierVoiceMediaQa?.lastGetUserMediaAdmissionAtMs).toBeNull();
+    admitStream!(stream);
+    await expect(requestedStream).resolves.toBe(stream);
+    expect((windowLike as typeof windowLike & {
+      __happierVoiceMediaQa?: { lastGetUserMediaAdmissionAtMs: number | null };
+    }).__happierVoiceMediaQa?.lastGetUserMediaAdmissionAtMs).toBe(12_345);
     await vi.waitFor(() => {
       expect((windowLike as typeof windowLike & {
         __happierVoiceMediaQa?: { instrumentationErrors?: Array<{ stage: string }> };
@@ -101,6 +135,200 @@ describe('installVoiceMediaInstrumentation', () => {
       message: 'requested device not found',
     }]);
   });
+
+  it('records the first stopped track timestamp for the most recently admitted capture', async () => {
+    const track = {
+      readyState: 'live',
+      stop: vi.fn(() => {
+        track.readyState = 'ended';
+      }),
+    };
+    const stream = {
+      getAudioTracks: () => [track],
+    } as unknown as MediaStream;
+    const windowLike = {
+      fetch: vi.fn(),
+      AudioContext: undefined,
+    };
+    vi.stubGlobal('window', windowLike);
+    vi.stubGlobal('performance', { now: vi.fn(() => 12_345) });
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: vi.fn(async () => stream),
+      },
+    });
+
+    const initScripts: Array<() => void> = [];
+    const page = {
+      addInitScript: vi.fn(async (script: () => void) => {
+        initScripts.push(script);
+      }),
+    } as unknown as Page; // Genuine Playwright boundary fixture; the init script itself remains real.
+
+    await installVoiceMediaInstrumentation(page);
+    initScripts[0]?.();
+
+    await expect(navigator.mediaDevices.getUserMedia({ audio: true })).resolves.toBe(stream);
+    track.stop();
+
+    expect((windowLike as typeof windowLike & {
+      __happierVoiceMediaQa?: {
+        lastGetUserMediaAdmissionAtMs: number | null;
+        lastCaptureFirstTrackStopAtMs: number | null;
+      };
+    }).__happierVoiceMediaQa).toMatchObject({
+      lastGetUserMediaAdmissionAtMs: 12_345,
+      lastCaptureFirstTrackStopAtMs: 12_345,
+    });
+  });
+
+  it('does not attribute a stale capture stop to the current capture boundary', async () => {
+    const createTrack = () => {
+      const track = {
+        readyState: 'live',
+        stop: vi.fn(() => {
+          track.readyState = 'ended';
+        }),
+      };
+      return track;
+    };
+    const firstTrack = createTrack();
+    const secondTrack = createTrack();
+    const firstStream = { getAudioTracks: () => [firstTrack] } as unknown as MediaStream;
+    const secondStream = { getAudioTracks: () => [secondTrack] } as unknown as MediaStream;
+    const windowLike = {
+      fetch: vi.fn(),
+      AudioContext: undefined,
+    };
+    vi.stubGlobal('window', windowLike);
+    vi.stubGlobal('performance', {
+      now: vi.fn()
+        .mockReturnValueOnce(1_000)
+        .mockReturnValueOnce(2_000)
+        .mockReturnValueOnce(3_000),
+    });
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: vi.fn()
+          .mockResolvedValueOnce(firstStream)
+          .mockResolvedValueOnce(secondStream),
+      },
+    });
+
+    const initScripts: Array<() => void> = [];
+    const page = {
+      addInitScript: vi.fn(async (script: () => void) => {
+        initScripts.push(script);
+      }),
+    } as unknown as Page; // Genuine Playwright boundary fixture; the init script itself remains real.
+
+    await installVoiceMediaInstrumentation(page);
+    initScripts[0]?.();
+
+    await navigator.mediaDevices.getUserMedia({ audio: true });
+    await navigator.mediaDevices.getUserMedia({ audio: true });
+    firstTrack.stop();
+    expect((windowLike as typeof windowLike & {
+      __happierVoiceMediaQa?: { lastCaptureFirstTrackStopAtMs: number | null };
+    }).__happierVoiceMediaQa?.lastCaptureFirstTrackStopAtMs).toBeNull();
+
+    secondTrack.stop();
+    expect((windowLike as typeof windowLike & {
+      __happierVoiceMediaQa?: { lastCaptureFirstTrackStopAtMs: number | null };
+    }).__happierVoiceMediaQa?.lastCaptureFirstTrackStopAtMs).toBe(3_000);
+  });
+
+  it('returns a blob-fetch response before best-effort clone diagnostics settle', async () => {
+    let rejectDiagnosticBlob: ((reason: unknown) => void) | null = null;
+    const diagnosticBlob = new Promise<Blob>((_resolve, reject) => {
+      rejectDiagnosticBlob = reject;
+    });
+    const response = {
+      ok: true,
+      clone: vi.fn(() => ({
+        blob: vi.fn(() => diagnosticBlob),
+      })),
+    } as unknown as Response;
+    const windowLike = {
+      fetch: vi.fn(async () => response),
+      AudioContext: undefined,
+    };
+    vi.stubGlobal('window', windowLike);
+    vi.stubGlobal('navigator', { mediaDevices: undefined });
+
+    const initScripts: Array<() => void> = [];
+    const page = {
+      addInitScript: vi.fn(async (script: () => void) => {
+        initScripts.push(script);
+      }),
+    } as unknown as Page; // Genuine Playwright boundary fixture; the init script itself remains real.
+
+    await installVoiceMediaInstrumentation(page);
+    initScripts[0]?.();
+
+    let returnedResponse: Response | null = null;
+    const wrappedFetch = window.fetch('blob:voice-qa-recording').then((received) => {
+      returnedResponse = received;
+      return received;
+    });
+    await vi.waitFor(() => {
+      expect(returnedResponse).toBe(response);
+    });
+    // The Promise executor runs synchronously and installs this boundary hook.
+    rejectDiagnosticBlob!(new Error('diagnostic blob read failed'));
+    await expect(wrappedFetch).resolves.toBe(response);
+    await vi.waitFor(() => {
+      expect((windowLike as typeof windowLike & {
+        __happierVoiceMediaQa?: {
+          blobFetches: Array<{ ok: boolean; size: number | null; type: string | null }>;
+        };
+      }).__happierVoiceMediaQa?.blobFetches).toEqual([{
+        ok: false,
+        size: null,
+        type: null,
+      }]);
+    });
+  });
+
+  it('tracks create, revoke, and active counts for object URLs it owns', async () => {
+    const ownedUrl = 'blob:voice-qa-recording';
+    const createObjectURL = vi.fn(() => ownedUrl);
+    const revokeObjectURL = vi.fn();
+    const windowLike = { fetch: vi.fn() };
+    vi.stubGlobal('window', windowLike);
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+    vi.stubGlobal('navigator', { mediaDevices: undefined });
+
+    const initScripts: Array<() => void> = [];
+    const page = {
+      addInitScript: vi.fn(async (script: () => void) => {
+        initScripts.push(script);
+      }),
+    } as unknown as Page; // Genuine Playwright boundary fixture; the init script itself remains real.
+
+    await installVoiceMediaInstrumentation(page);
+    initScripts[0]?.();
+
+    URL.createObjectURL(new Blob(['fixture-audio']));
+    URL.revokeObjectURL('blob:not-owned-by-voice-qa');
+    URL.revokeObjectURL(ownedUrl);
+    URL.revokeObjectURL(ownedUrl);
+
+    expect((windowLike as typeof windowLike & {
+      __happierVoiceMediaQa?: {
+        objectUrlCreates: number;
+        objectUrlRevokes: number;
+        activeObjectUrls: number;
+      };
+    }).__happierVoiceMediaQa).toMatchObject({
+      objectUrlCreates: 1,
+      objectUrlRevokes: 1,
+      activeObjectUrls: 0,
+    });
+    expect(revokeObjectURL).toHaveBeenNthCalledWith(1, 'blob:not-owned-by-voice-qa');
+    expect(revokeObjectURL).toHaveBeenNthCalledWith(2, ownedUrl);
+    expect(revokeObjectURL).toHaveBeenNthCalledWith(3, ownedUrl);
+  });
 });
 
 describe('readVoiceBrowserQaDaemonSttManifestEvidence', () => {
@@ -142,6 +370,26 @@ describe('readVoiceBrowserQaDaemonSttManifestEvidence', () => {
 });
 
 describe('startVoiceQaBoundaryServer', () => {
+  it('returns an explicit deterministic transcription sequence without a runtime control endpoint', async () => {
+    const server = await startVoiceQaBoundaryServer({
+      transcriptionTexts: ['UCX_VOICE_OFF', 'UCX_VOICE_READ_A'],
+    });
+    try {
+      const transcribe = async () => await fetch(`${server.baseUrl}/v1/audio/transcriptions`, {
+        method: 'POST',
+        headers: { 'content-type': 'multipart/form-data; boundary=voice-qa' },
+        body: '--voice-qa\r\nfixture-audio\r\n--voice-qa--\r\n',
+      });
+
+      await expect((await transcribe()).json()).resolves.toEqual({ text: 'UCX_VOICE_OFF' });
+      await expect((await transcribe()).json()).resolves.toEqual({ text: 'UCX_VOICE_READ_A' });
+      // A capture retry stays deterministic without adding a mutable test route.
+      await expect((await transcribe()).json()).resolves.toEqual({ text: 'UCX_VOICE_READ_A' });
+    } finally {
+      await server.stop();
+    }
+  });
+
   it('serves bounded STT, chat, and generated-WAV TTS operations with request evidence', async () => {
     const auth = {
       stt: 'Bearer machine-stt-key',

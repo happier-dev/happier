@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect as connectTcp, type Socket } from 'node:net';
@@ -17,7 +17,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fetchJson } from '../../src/testkit/http';
@@ -360,12 +360,11 @@ describe('core e2e: local service preview over production PMS relay', () => {
       context: 'user relay probe socket connected before preview data-plane request',
     });
 
-    const cliSecret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({
+    await seedCliAuthForTestAccount({
       cliHome: daemonHomeDir,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret: cliSecret,
+      auth,
+      mode: 'legacy',
     });
 
     daemon = await startTestDaemon({

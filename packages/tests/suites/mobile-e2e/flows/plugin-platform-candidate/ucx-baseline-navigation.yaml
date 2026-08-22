@@ -1,0 +1,103 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# Shared UCX navigation coverage for the connected native candidate. This
+# recipe deliberately uses only app-owned selectors and the exact packed
+# contributor already installed by the targeted lifecycle setup.
+- launchApp:
+    clearState: false
+    clearKeychain: false
+
+- runFlow:
+    file: ../_shared/connectDevClientIfNeeded.yaml
+
+# Home → new Session → actual Session → Back exercises the current app route,
+# a provider-backed Session destination, and the native Back path. The
+# candidate runner already supplies the isolated connected machine and
+# fake-Claude daemon used by the existing session smoke flows.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///
+- extendedWaitUntil:
+    visible:
+      id: main-header-start-new-session
+    timeout: 120000
+- runFlow:
+    file: ../_shared/gotoNewSessionComposer.yaml
+- tapOn:
+    id: new-session-composer-input
+- inputText: "UCX_NATIVE_SESSION_DESTINATION"
+- assertVisible:
+    id: new-session-composer-send
+- tapOn:
+    id: new-session-composer-send
+- extendedWaitUntil:
+    visible:
+      id: transcript-chat-list
+    timeout: 240000
+- extendedWaitUntil:
+    visible:
+      id: session-composer-input
+    timeout: 240000
+
+# Maestro's `focused` selector attests the platform text-input focus state.
+# It does not claim VoiceOver/TalkBack accessibility-cursor focus; that needs
+# a loaded platform accessibility inspection path before it can close §7.4.
+- tapOn:
+    id: session-composer-input
+- assertVisible:
+    id: session-composer-input
+    focused: true
+- hideKeyboard
+- back
+- extendedWaitUntil:
+    visible:
+      id: "session-list-item-.*"
+    timeout: 240000
+
+# Settings and the real privacy picker prove the three supported setting
+# values can be selected. Restore the product default before later Voice
+# fixture coverage; this does not claim provider read/invoke behavior.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings
+- extendedWaitUntil:
+    visible:
+      id: settings-connect-terminal-scan
+    timeout: 120000
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/voice/privacy
+- extendedWaitUntil:
+    visible:
+      id: settings.voice.privacy.currentUiContextMode
+    timeout: 120000
+- tapOn:
+    id: settings.voice.privacy.currentUiContextMode
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-off
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-off
+- tapOn:
+    id: settings.voice.privacy.currentUiContextMode
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-automatic
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-automatic
+- tapOn:
+    id: settings.voice.privacy.currentUiContextMode
+- extendedWaitUntil:
+    visible:
+      id: dropdown-option-on_demand
+    timeout: 120000
+- tapOn:
+    id: dropdown-option-on_demand
+
+# The public packed contributor is the only current native plugin-page handoff
+# in this harness. Normal Triage and built-in Voice remain separate loaded
+# prerequisites because this candidate has neither their real input nor a
+# deterministic provider interaction.
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/examples.packed-targeted-projection-contributor/packed-provider-page
+- extendedWaitUntil:
+    visible:
+      id: packed-targeted-provider-title
+    timeout: 120000
+- assertVisible:
+    id: packed-targeted-context-action

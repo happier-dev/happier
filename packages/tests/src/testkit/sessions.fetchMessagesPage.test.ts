@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  buildAccountStoredContentCompatibilityHttpHeadersV1,
+  CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+} from '@happier-dev/protocol';
 
-import { fetchMessagesPage, fetchSessionV2 } from './sessions';
+import { fetchMessagesPage, fetchSessionsV2, fetchSessionV2 } from './sessions';
 
 function createFakeResponse(body: unknown, opts?: { status?: number }) {
   const status = opts?.status ?? 200;
@@ -188,5 +192,29 @@ describe('fetchSessionV2', () => {
     })) as any;
 
     await expect(fetchSessionV2('http://localhost:1234', 'token', 'ses_1')).rejects.toThrow('/v2/sessions/ses_1');
+  });
+});
+
+describe('fetchSessionsV2', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('declares current stored-content compatibility before reading layout-one rows', async () => {
+    const fetchSpy = vi.fn(async (_url: string, init?: RequestInit) => {
+      return createFakeResponse({ sessions: [], nextCursor: null, hasNext: false });
+    });
+    globalThis.fetch = fetchSpy as typeof globalThis.fetch;
+
+    await fetchSessionsV2('http://localhost:1234', 'token');
+
+    const request = fetchSpy.mock.calls[0]?.[1];
+    expect(request?.headers).toEqual(expect.objectContaining(
+      buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+      ),
+    ));
   });
 });

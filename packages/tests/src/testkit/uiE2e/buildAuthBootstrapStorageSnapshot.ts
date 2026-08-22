@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 
+import type { TestAuth } from '../auth';
+import {
+    buildTestAccountCliAuthCredentials,
+    type TestAccountCliAuthMode,
+} from '../cliAuth';
 import type { AuthBootstrapStorageSnapshot } from './readLegacyAuthSecretFromLocalStorage';
 import {
     canonicalizeServerUrlForUiWeb,
@@ -7,19 +12,6 @@ import {
     scopedUiStorageId,
     uniqueNonEmptyStrings,
 } from './uiWebStorageContract';
-
-export type AuthBootstrapCredentials =
-    | Readonly<{
-        token: string;
-        secret: string;
-    }>
-    | Readonly<{
-        token: string;
-        encryption: Readonly<{
-            publicKey: string;
-            machineKey: string;
-        }>;
-    }>;
 
 function sanitizeScopeToken(raw: string): string {
     const token = String(raw ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_');
@@ -86,7 +78,8 @@ function defaultServerNameFromUrl(serverUrl: string): string {
 
 export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
     serverUrl: string;
-    credentials: AuthBootstrapCredentials;
+    auth: TestAuth;
+    mode: TestAccountCliAuthMode;
     storageScope: string;
     serverIdentityId?: string | null;
     legacyServerIds?: readonly string[];
@@ -94,7 +87,10 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
     const now = Date.now();
     const canonicalServerUrl = canonicalizeServerUrlForUiWeb(params.serverUrl);
     const serverId = deriveUiServerIdFromUrl(canonicalServerUrl);
-    const credentialPayload = JSON.stringify(params.credentials);
+    const credentialPayload = JSON.stringify(buildTestAccountCliAuthCredentials({
+        auth: params.auth,
+        mode: params.mode,
+    }));
     const legacyServerIds = uniqueNonEmptyStrings([
         ...(params.legacyServerIds ?? []),
         params.serverIdentityId ? serverId : null,

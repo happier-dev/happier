@@ -20,7 +20,7 @@ import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpe
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { hasToolCall, parseToolTraceJsonl } from '../../src/testkit/toolTraceJsonl';
 import {
   startCodexAppServerRemoteHarness,
@@ -169,7 +169,7 @@ async function runRemoteToLocalMirroringScenario(): Promise<void> {
     cliHomeForCleanup = cliHome;
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForTestAccount({ cliHome, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       {

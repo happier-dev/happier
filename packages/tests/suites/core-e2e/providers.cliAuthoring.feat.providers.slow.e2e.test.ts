@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { createTestAuth } from '../../src/testkit/auth';
-import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fetchJson } from '../../src/testkit/http';
@@ -108,12 +108,12 @@ describe('core e2e: terminal-only Provider authoring', () => {
     const cliHome = resolve(join(testDir, 'cli-home'));
     await mkdir(cliHome, { recursive: true });
 
-    const accountSecret = Uint8Array.from(randomBytes(32));
-    const { machineId } = await seedCliAuthForServer({
+    const accountSecret = auth.accountSigningSeed;
+    const { machineId } = await seedCliAuthForTestAccount({
       cliHome,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret: accountSecret,
+      auth,
+      mode: 'legacy',
     });
 
     const savedSecretId = `secret_${randomUUID()}`;
@@ -318,12 +318,12 @@ describe('core e2e: terminal-only Provider authoring', () => {
     const cliHome = resolve(join(testDir, 'cli-home'));
     await mkdir(cliHome, { recursive: true });
 
-    const accountSecret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({
+    const accountSecret = auth.accountSigningSeed;
+    await seedCliAuthForTestAccount({
       cliHome,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret: accountSecret,
+      auth,
+      mode: 'legacy',
     });
     const savedSecretId = `secret_${randomUUID()}`;
     const plaintextSecret = `provider-e2e-secret-${randomUUID()}`;
@@ -417,12 +417,12 @@ describe('core e2e: terminal-only Provider authoring', () => {
     const workspace = resolve(join(testDir, 'workspace'));
     await Promise.all([mkdir(daemonHome, { recursive: true }), mkdir(workspace, { recursive: true })]);
 
-    const accountSecret = Uint8Array.from(randomBytes(32));
-    const { machineId } = await seedCliAuthForServer({
+    const accountSecret = auth.accountSigningSeed;
+    const { machineId } = await seedCliAuthForTestAccount({
       cliHome: daemonHome,
       serverUrl: server.baseUrl,
-      token: auth.token,
-      secret: accountSecret,
+      auth,
+      mode: 'legacy',
     });
     await upsertEncryptedAccountSettingsV2({
       baseUrl: server.baseUrl,

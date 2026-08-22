@@ -140,11 +140,15 @@ describe('stressComposeCli', () => {
       if (composeProjectName === 'compose-first') {
         return {
           down: firstDown,
+          imageExists: vi.fn(async () => false),
+          inspectImage: vi.fn(async () => null),
         };
       }
       if (composeProjectName === 'compose-second') {
         return {
           down: secondDown,
+          imageExists: vi.fn(async () => false),
+          inspectImage: vi.fn(async () => null),
         };
       }
       throw new Error(`Unexpected compose project ${composeProjectName}`);
@@ -202,6 +206,65 @@ describe('stressComposeCli', () => {
     });
   });
 
+  it('does not stop the previous topology when the replacement has an invalid frozen-image pin', async () => {
+    const mod = await loadStressComposeCliModule();
+    expect(typeof mod.createStressComposeCli).toBe('function');
+    if (typeof mod.createStressComposeCli !== 'function') return;
+
+    const scratchDir = mkdtempSync(join(tmpdir(), 'happier-stress-compose-cli-'));
+    const statePath = join(scratchDir, 'latest-full-compose.json');
+    writeFileSync(
+      statePath,
+      `${JSON.stringify({
+        baseUrl: 'http://127.0.0.1:43080',
+        composeProjectName: 'compose-running',
+        composeFilePath: '/tmp/compose-running.yml',
+        repoRootDir: '/repo/root',
+        status: 'running',
+        preserved: false,
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const previousDown = vi.fn(async () => {});
+    const startFullComposeStressTarget = vi.fn(async () => {
+      throw new Error('HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT is invalid');
+    });
+    const cli = mod.createStressComposeCli({
+      latestComposeStatePath: () => statePath,
+      readStressConfig: () => ({
+        ...baseConfig,
+        compose: {
+          ...baseConfig.compose,
+          imageBuildStrategy: 'never',
+          imageFingerprint: 'not-a-sha1-fingerprint',
+        },
+      }),
+      createRunDirs: () => ({
+        runId: 'stress-run',
+        runDir: scratchDir,
+        testDir: () => join(scratchDir, 'compose-topology'),
+      }),
+      startFullComposeStressTarget,
+      createComposeRuntime: vi.fn(() => ({
+        down: previousDown,
+        imageExists: vi.fn(async () => false),
+        inspectImage: vi.fn(async () => null),
+      })),
+      repoRootDir: () => '/repo/root',
+    });
+
+    await expect(cli.up()).rejects.toThrow('HAPPIER_STRESS_COMPOSE_IMAGE_FINGERPRINT');
+
+    expect(previousDown).not.toHaveBeenCalled();
+    expect(startFullComposeStressTarget).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({
+      composeProjectName: 'compose-running',
+      status: 'running',
+      preserved: false,
+    });
+  });
+
   it('does not tear down a preserved previous compose project during a replacement up', async () => {
     const mod = await loadStressComposeCliModule();
     expect(typeof mod.createStressComposeCli).toBe('function');
@@ -230,6 +293,8 @@ describe('stressComposeCli', () => {
     const previousDown = vi.fn(async () => {});
     const createComposeRuntime = vi.fn(() => ({
       down: previousDown,
+      imageExists: vi.fn(async () => false),
+      inspectImage: vi.fn(async () => null),
     }));
 
     const cli = mod.createStressComposeCli({
@@ -283,6 +348,8 @@ describe('stressComposeCli', () => {
       ),
       createComposeRuntime: vi.fn(() => ({
         down,
+        imageExists: vi.fn(async () => false),
+        inspectImage: vi.fn(async () => null),
       })),
       repoRootDir: () => '/repo/root',
     });

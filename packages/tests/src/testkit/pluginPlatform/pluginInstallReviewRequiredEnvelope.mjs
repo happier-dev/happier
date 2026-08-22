@@ -8,6 +8,11 @@ function readNonEmptyString(value) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function readBoundedNonEmptyString(value, maximum) {
+  const result = readNonEmptyString(value);
+  return result && result.length <= maximum ? result : null;
+}
+
 function hasOnlyKeys(value, keys) {
   const allowed = new Set(keys);
   return Object.keys(value).every((key) => allowed.has(key));
@@ -56,6 +61,154 @@ function parseStringList(value, maximum = 64) {
   if (!Array.isArray(value) || value.length > maximum) return null;
   const entries = value.map(readNonEmptyString);
   return entries.some((entry) => entry === null) || new Set(entries).size !== entries.length ? null : entries;
+}
+
+function parsePluginContributionLocalId(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 256
+    && /^[a-z0-9]+(?:[-/][a-z0-9]+)*$/u.test(value)
+    ? value
+    : null;
+}
+
+function parsePluginContributionIdentity(value) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['pluginId', 'localId'])) return null;
+  const pluginId = typeof value.pluginId === 'string'
+    && value.pluginId.length >= 3
+    && value.pluginId.length <= 256
+    && /^(?!.*(?:^|\.)(?:__proto__|constructor|prototype)(?:\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/u.test(value.pluginId)
+    ? value.pluginId
+    : null;
+  const localId = parsePluginContributionLocalId(value.localId);
+  return pluginId && localId ? { pluginId, localId } : null;
+}
+
+function parseCanonicalRecordKey(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 128
+    && value === value.trim()
+    && !/[\u0000-\u001f\u007f]/u.test(value)
+    && value !== '__proto__'
+    && value !== 'prototype'
+    && value !== 'constructor'
+    ? value
+    : null;
+}
+
+function parseCanonicalRecordKeyList(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32) return null;
+  const entries = value.map(parseCanonicalRecordKey);
+  return entries.some((entry) => entry === null) || new Set(entries).size !== entries.length ? null : entries;
+}
+
+function parseHttpHeaderNames(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32) return null;
+  const entries = value.map((entry) => {
+    const headerName = readBoundedNonEmptyString(entry, 128);
+    return headerName && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(headerName)
+      ? headerName.toLowerCase()
+      : null;
+  });
+  return entries.some((entry) => entry === null) || new Set(entries).size !== entries.length ? null : entries;
+}
+
+function parseRawCredentialRequest(value) {
+  if (!isRecord(value)) return null;
+  if (value.kind === 'httpHeaders') {
+    const origin = readBoundedNonEmptyString(value.origin, 2_048);
+    const headerNames = parseHttpHeaderNames(value.headerNames);
+    if (!hasOnlyKeys(value, ['kind', 'origin', 'headerNames']) || !origin || !headerNames) return null;
+    try {
+      const url = new URL(origin);
+      return url.protocol === 'https:'
+        && !url.username
+        && !url.password
+        && url.pathname === '/'
+        && !url.search
+        && !url.hash
+        && url.origin === origin
+        ? { kind: 'httpHeaders', origin, headerNames }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  if (value.kind === 'environment') {
+    const keys = parseCanonicalRecordKeyList(value.keys);
+    return hasOnlyKeys(value, ['kind', 'keys']) && keys
+      ? { kind: 'environment', keys }
+      : null;
+  }
+  if (value.kind === 'files') {
+    const fileIds = parseCanonicalRecordKeyList(value.fileIds);
+    return hasOnlyKeys(value, ['kind', 'fileIds']) && fileIds
+      ? { kind: 'files', fileIds }
+      : null;
+  }
+  return null;
+}
+
+function parseRawCredentialSourceClass(value) {
+  if (!isRecord(value)) return null;
+  if (value.kind === 'savedSecret') {
+    if (!hasOnlyKeys(value, ['kind', 'secretKinds']) || !Array.isArray(value.secretKinds)) return null;
+    const secretKinds = value.secretKinds.filter((kind) => (
+      kind === 'apiKey' || kind === 'token' || kind === 'password' || kind === 'other'
+    ));
+    return secretKinds.length === value.secretKinds.length
+      && secretKinds.length > 0
+      && secretKinds.length <= 4
+      && new Set(secretKinds).size === secretKinds.length
+      ? { kind: 'savedSecret', secretKinds }
+      : null;
+  }
+  if (value.kind !== 'connectedAccount' || !hasOnlyKeys(value, ['kind', 'service'])) return null;
+  const service = parsePluginContributionIdentity(value.service);
+  return service ? { kind: 'connectedAccount', service } : null;
+}
+
+function parseRawCredentialAccess(value) {
+  if (!Array.isArray(value)) return null;
+  const access = [];
+  for (const entry of value) {
+    if (
+      !isRecord(entry)
+      || !hasOnlyKeys(entry, [
+        'accessMode', 'contribution', 'credentialSlot', 'sourceClass', 'realm', 'phase', 'request',
+      ])
+      || entry.accessMode !== 'raw'
+    ) return null;
+    const contribution = parsePluginContributionIdentity(entry.contribution);
+    const credentialSlot = entry.credentialSlot;
+    if (!contribution || !isRecord(credentialSlot) || !hasOnlyKeys(credentialSlot, ['id', 'title', 'purpose'])) return null;
+    const id = parseCanonicalRecordKey(credentialSlot.id);
+    const title = readBoundedNonEmptyString(credentialSlot.title, 32_768);
+    const purpose = readBoundedNonEmptyString(credentialSlot.purpose, 128);
+    const sourceClass = parseRawCredentialSourceClass(entry.sourceClass);
+    const request = parseRawCredentialRequest(entry.request);
+    if (
+      !id
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(id)
+      || !title
+      || !purpose
+      || !sourceClass
+      || !request
+      || (entry.realm !== 'web' && entry.realm !== 'ios' && entry.realm !== 'android' && entry.realm !== 'daemon')
+      || (entry.phase !== 'settings' && entry.phase !== 'prepare' && entry.phase !== 'connection' && entry.phase !== 'speech')
+    ) return null;
+    access.push({
+      accessMode: 'raw',
+      contribution,
+      credentialSlot: { id, title, purpose },
+      sourceClass,
+      realm: entry.realm,
+      phase: entry.phase,
+      request,
+    });
+  }
+  return access;
 }
 
 function parsePublisher(value) {
@@ -107,6 +260,23 @@ function parseUpdateChannel(value) {
     : null;
 }
 
+function parseReviewSource(value) {
+  if (!isRecord(value)) return null;
+  const locator = readNonEmptyString(value.locator);
+  if (!locator) return null;
+  if (value.kind === 'path') {
+    return hasOnlyKeys(value, ['kind', 'locator'])
+      ? { kind: 'path', locator }
+      : null;
+  }
+  if (value.kind !== 'archive' && value.kind !== 'npm') return null;
+  const integrity = value.integrity === undefined ? undefined : readNonEmptyString(value.integrity);
+  return hasOnlyKeys(value, ['kind', 'locator', 'integrity'])
+    && (value.integrity === undefined || integrity)
+    ? { kind: value.kind, locator, ...(integrity ? { integrity } : {}) }
+    : null;
+}
+
 function parseSignature(value) {
   if (!isRecord(value)) return null;
   if (value.status === 'notProvided' && hasOnlyKeys(value, ['status'])) return { status: 'notProvided' };
@@ -150,24 +320,121 @@ function parseCuration(value) {
     : null;
 }
 
+function readBoundedReviewString(value) {
+  return readBoundedNonEmptyString(value, 32_768);
+}
+
+function parseReviewCompatibility(value) {
+  if (
+    !isRecord(value)
+    || !hasOnlyKeys(value, ['happier', 'runtimeApiVersion', 'blockedNewerVersions'])
+    || value.runtimeApiVersion !== 1
+  ) return null;
+  const happier = value.happier === undefined ? undefined : readBoundedReviewString(value.happier);
+  if (value.happier !== undefined && !happier) return null;
+  if (value.blockedNewerVersions === undefined) {
+    return { ...(happier ? { happier } : {}), runtimeApiVersion: 1 };
+  }
+  if (!Array.isArray(value.blockedNewerVersions) || value.blockedNewerVersions.length > 32) return null;
+  const blockedNewerVersions = value.blockedNewerVersions.flatMap((blocked) => {
+    if (
+      !isRecord(blocked)
+      || !hasOnlyKeys(blocked, ['version', 'diagnostics'])
+      || !Array.isArray(blocked.diagnostics)
+      || blocked.diagnostics.length === 0
+      || blocked.diagnostics.length > 4
+    ) return [];
+    const version = readBoundedReviewString(blocked.version);
+    const diagnostics = blocked.diagnostics.flatMap((diagnostic) => {
+      if (!isRecord(diagnostic) || !hasOnlyKeys(diagnostic, ['code', 'message'])) return [];
+      const code = readBoundedReviewString(diagnostic.code);
+      const message = readBoundedReviewString(diagnostic.message);
+      return code && message ? [{ code, message }] : [];
+    });
+    return version && diagnostics.length === blocked.diagnostics.length
+      ? [{ version, diagnostics }]
+      : [];
+  });
+  if (blockedNewerVersions.length !== value.blockedNewerVersions.length) return null;
+  return {
+    ...(happier ? { happier } : {}),
+    runtimeApiVersion: 1,
+    blockedNewerVersions,
+  };
+}
+
+function parseRequestInterceptorOrigin(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && !url.username
+      && !url.password
+      && url.origin === value
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseRequestInterceptor(value) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['id', 'origins', 'methods', 'priority'])) return null;
+  const id = parsePluginContributionLocalId(value.id);
+  const origins = Array.isArray(value.origins)
+    ? value.origins.map(parseRequestInterceptorOrigin)
+    : null;
+  const methods = value.methods === undefined
+    ? undefined
+    : Array.isArray(value.methods)
+      ? value.methods.map((method) => (
+        method === 'GET'
+        || method === 'POST'
+        || method === 'PUT'
+        || method === 'PATCH'
+        || method === 'DELETE'
+        || method === 'HEAD'
+        || method === 'OPTIONS'
+          ? method
+          : null
+      ))
+      : null;
+  return id
+    && origins
+    && origins.length > 0
+    && !origins.some((origin) => origin === null)
+    && methods !== null
+    && !methods?.some((method) => method === null)
+    && Number.isInteger(value.priority)
+    ? {
+        id,
+        origins,
+        ...(methods === undefined ? {} : { methods }),
+        priority: value.priority,
+      }
+    : null;
+}
+
+function parseRequestInterceptors(value) {
+  if (!Array.isArray(value)) return null;
+  const entries = value.map(parseRequestInterceptor);
+  return entries.some((entry) => entry === null) ? null : entries;
+}
+
 function parseReviewFacts(value) {
   if (
     !isRecord(value)
     || !hasOnlyKeys(value, [
       'pluginId', 'displayName', 'version', 'packageIdentity', 'publisherIdentity', 'source',
-      'updateChannel', 'integrity', 'signature', 'provenance', 'curation', 'executableRealms',
-      'contributions', 'uiArtifacts', 'requiredHostAccess', 'optionalHostAccess',
-      'compatibility', 'updatePolicy',
+      'updateChannel', 'signature', 'provenance', 'curation', 'executableRealms',
+      'contributions', 'requestInterceptors', 'uiArtifacts', 'requiredHostAccess', 'optionalHostAccess',
+      'rawCredentialAccess', 'compatibility', 'updatePolicy',
     ])
   ) return null;
   const pluginId = readNonEmptyString(value.pluginId);
   const displayName = readNonEmptyString(value.displayName);
   const version = readNonEmptyString(value.version);
-  const sourceKind = isRecord(value.source) ? value.source.kind : null;
-  const sourceLocator = isRecord(value.source) ? readNonEmptyString(value.source.locator) : null;
-  const sourceIntegrity = isRecord(value.source) && value.source.integrity !== undefined
-    ? readNonEmptyString(value.source.integrity)
-    : undefined;
+  const source = parseReviewSource(value.source);
   const executableRealms = Array.isArray(value.executableRealms)
     && value.executableRealms.every((realm) => realm === 'daemon' || realm === 'reactNative')
     && new Set(value.executableRealms).size === value.executableRealms.length
@@ -180,13 +447,6 @@ function parseReviewFacts(value) {
   const packageVersion = readNonEmptyString(packageIdentity?.version);
   const publisherIdentity = parsePublisher(value.publisherIdentity);
   const updateChannel = parseUpdateChannel(value.updateChannel);
-  const integrity = isRecord(value.integrity) && hasOnlyKeys(value.integrity, ['packageDigest', 'manifestDigest', 'uiArtifactDigest'])
-    ? value.integrity
-    : null;
-  const digestPattern = /^sha256:[a-f0-9]{64}$/u;
-  const packageDigest = readNonEmptyString(integrity?.packageDigest);
-  const manifestDigest = readNonEmptyString(integrity?.manifestDigest);
-  const uiArtifactDigest = readNonEmptyString(integrity?.uiArtifactDigest);
   const signature = parseSignature(value.signature);
   const provenance = parseProvenance(value.provenance);
   const curation = parseCuration(value.curation);
@@ -196,6 +456,7 @@ function parseReviewFacts(value) {
       return family && Number.isSafeInteger(entry.count) && entry.count > 0 ? [{ family, count: entry.count }] : [];
     })
     : null;
+  const requestInterceptors = parseRequestInterceptors(value.requestInterceptors);
   const uiArtifacts = isRecord(value.uiArtifacts) && hasOnlyKeys(value.uiArtifacts, ['status', 'contributionIds'])
     ? value.uiArtifacts
     : null;
@@ -203,31 +464,19 @@ function parseReviewFacts(value) {
   const uiArtifactStatus = uiArtifacts?.status;
   const requiredHostAccess = parseHostAccessList(value.requiredHostAccess, false);
   const optionalHostAccess = parseHostAccessList(value.optionalHostAccess, true);
-  const compatibility = isRecord(value.compatibility) && hasOnlyKeys(value.compatibility, ['happier', 'runtimeApiVersion'])
-    ? value.compatibility
-    : null;
-  const happier = readNonEmptyString(compatibility?.happier);
+  const rawCredentialAccess = parseRawCredentialAccess(value.rawCredentialAccess);
+  const compatibility = parseReviewCompatibility(value.compatibility);
   if (
     !pluginId
     || !displayName
     || !version
-    || (sourceKind !== 'path' && sourceKind !== 'archive' && sourceKind !== 'npm')
-    || !sourceLocator
-    || (isRecord(value.source) && value.source.integrity !== undefined && !sourceIntegrity)
-    || !isRecord(value.source)
-    || !hasOnlyKeys(value.source, ['kind', 'locator', 'integrity'])
+    || !source
     || !packageIdentity
     || (packageIdentity.name !== null && !packageName)
     || !packageVersion
     || packageVersion !== version
     || !publisherIdentity
     || !updateChannel
-    || !packageDigest
-    || !manifestDigest
-    || !uiArtifactDigest
-    || !digestPattern.test(packageDigest)
-    || !digestPattern.test(manifestDigest)
-    || !digestPattern.test(uiArtifactDigest)
     || !signature
     || !provenance
     || !curation
@@ -235,14 +484,15 @@ function parseReviewFacts(value) {
     || !contributions
     || contributions.length !== value.contributions.length
     || new Set(contributions.map((entry) => entry.family)).size !== contributions.length
+    || !requestInterceptors
     || !uiArtifactIds
     || (uiArtifactStatus !== 'verified' && uiArtifactStatus !== 'none' && uiArtifactStatus !== 'unavailable')
     || (uiArtifactStatus === 'none' && uiArtifactIds.length !== 0)
     || (uiArtifactStatus !== 'none' && uiArtifactIds.length === 0)
     || !requiredHostAccess
     || !optionalHostAccess
-    || !happier
-    || compatibility.runtimeApiVersion !== 1
+    || !rawCredentialAccess
+    || !compatibility
     || (value.updatePolicy !== 'automatic' && value.updatePolicy !== 'manual' && value.updatePolicy !== 'pinned')
   ) {
     return null;
@@ -253,46 +503,36 @@ function parseReviewFacts(value) {
     version,
     packageIdentity: { name: packageName, version: packageVersion },
     publisherIdentity,
-    source: {
-      kind: sourceKind,
-      locator: sourceLocator,
-      ...(sourceIntegrity ? { integrity: sourceIntegrity } : {}),
-    },
+    source,
     updateChannel,
-    integrity: { packageDigest, manifestDigest, uiArtifactDigest },
     signature,
     provenance,
     curation,
     executableRealms,
     contributions,
+    requestInterceptors,
     uiArtifacts: { status: uiArtifactStatus, contributionIds: uiArtifactIds },
     requiredHostAccess,
     optionalHostAccess,
-    compatibility: { happier, runtimeApiVersion: 1 },
+    rawCredentialAccess,
+    compatibility,
     updatePolicy: value.updatePolicy,
   };
 }
 
 function diagnoseReviewFacts(value) {
-  const digestPattern = /^sha256:[a-f0-9]{64}$/u;
   if (!isRecord(value)) return 'review: not_object';
   if (!hasOnlyKeys(value, [
     'pluginId', 'displayName', 'version', 'packageIdentity', 'publisherIdentity', 'source',
-    'updateChannel', 'integrity', 'signature', 'provenance', 'curation', 'executableRealms',
-    'contributions', 'uiArtifacts', 'requiredHostAccess', 'optionalHostAccess',
-    'compatibility', 'updatePolicy',
+    'updateChannel', 'signature', 'provenance', 'curation', 'executableRealms',
+    'contributions', 'requestInterceptors', 'uiArtifacts', 'requiredHostAccess', 'optionalHostAccess',
+    'rawCredentialAccess', 'compatibility', 'updatePolicy',
   ])) return 'review: unexpected_field';
   if (!readNonEmptyString(value.pluginId)) return 'review.pluginId: invalid';
   if (!readNonEmptyString(value.displayName)) return 'review.displayName: invalid';
   const version = readNonEmptyString(value.version);
   if (!version) return 'review.version: invalid';
-  if (
-    !isRecord(value.source)
-    || !hasOnlyKeys(value.source, ['kind', 'locator', 'integrity'])
-    || (value.source.kind !== 'path' && value.source.kind !== 'archive' && value.source.kind !== 'npm')
-    || !readNonEmptyString(value.source.locator)
-    || (value.source.integrity !== undefined && !readNonEmptyString(value.source.integrity))
-  ) return 'review.source: invalid';
+  if (!parseReviewSource(value.source)) return 'review.source: invalid';
   if (
     !isRecord(value.packageIdentity)
     || !hasOnlyKeys(value.packageIdentity, ['name', 'version'])
@@ -301,13 +541,6 @@ function diagnoseReviewFacts(value) {
   ) return 'review.packageIdentity: invalid';
   if (!parsePublisher(value.publisherIdentity)) return 'review.publisherIdentity: invalid';
   if (!parseUpdateChannel(value.updateChannel)) return 'review.updateChannel: invalid';
-  if (
-    !isRecord(value.integrity)
-    || !hasOnlyKeys(value.integrity, ['packageDigest', 'manifestDigest', 'uiArtifactDigest'])
-    || !digestPattern.test(readNonEmptyString(value.integrity.packageDigest) ?? '')
-    || !digestPattern.test(readNonEmptyString(value.integrity.manifestDigest) ?? '')
-    || !digestPattern.test(readNonEmptyString(value.integrity.uiArtifactDigest) ?? '')
-  ) return 'review.integrity: invalid';
   if (!parseSignature(value.signature)) return 'review.signature: invalid';
   if (!parseProvenance(value.provenance)) return 'review.provenance: invalid';
   if (!parseCuration(value.curation)) return 'review.curation: invalid';
@@ -332,6 +565,7 @@ function diagnoseReviewFacts(value) {
     contributionFamilies.some((family) => family === null)
     || new Set(contributionFamilies).size !== contributionFamilies.length
   ) return 'review.contributions: invalid';
+  if (!parseRequestInterceptors(value.requestInterceptors)) return 'review.requestInterceptors: invalid';
   if (
     !isRecord(value.uiArtifacts)
     || !hasOnlyKeys(value.uiArtifacts, ['status', 'contributionIds'])
@@ -349,12 +583,8 @@ function diagnoseReviewFacts(value) {
   ) return 'review.uiArtifacts: invalid';
   if (!parseHostAccessList(value.requiredHostAccess, false)) return 'review.requiredHostAccess: invalid';
   if (!parseHostAccessList(value.optionalHostAccess, true)) return 'review.optionalHostAccess: invalid';
-  if (
-    !isRecord(value.compatibility)
-    || !hasOnlyKeys(value.compatibility, ['happier', 'runtimeApiVersion'])
-    || !readNonEmptyString(value.compatibility.happier)
-    || value.compatibility.runtimeApiVersion !== 1
-  ) return 'review.compatibility: invalid';
+  if (!parseRawCredentialAccess(value.rawCredentialAccess)) return 'review.rawCredentialAccess: invalid';
+  if (!parseReviewCompatibility(value.compatibility)) return 'review.compatibility: invalid';
   if (
     value.updatePolicy !== 'automatic'
     && value.updatePolicy !== 'manual'

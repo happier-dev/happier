@@ -32,17 +32,19 @@ type PluginReloadToolProbeEnvelope = Readonly<{
     first?: Readonly<{
         ok?: boolean;
         result?: Readonly<{
-            pluginId?: string;
-            activeGenerationId?: string;
-            changedPluginIds?: readonly string[];
+            ok?: boolean;
+            kind?: string;
+            desiredGeneration?: string | null;
+            appliedGeneration?: string | null;
         }>;
     }>;
     second?: Readonly<{
         ok?: boolean;
         result?: Readonly<{
-            pluginId?: string;
-            activeGenerationId?: string;
-            changedPluginIds?: readonly string[];
+            ok?: boolean;
+            kind?: string;
+            desiredGeneration?: string | null;
+            appliedGeneration?: string | null;
         }>;
     }>;
 }>;
@@ -807,6 +809,15 @@ describe('core e2e: plugin extension reload', () => {
                 'happierTools',
                 'listBuiltInHappierTools.ts',
             )).href;
+            const pluginDevLoopActionsUrl = pathToFileURL(join(
+                repoRootDir(),
+                'apps',
+                'cli',
+                'src',
+                'plugins',
+                'devLoop',
+                'actions.ts',
+            )).href;
             const cliTsconfigPath = join(repoRootDir(), 'apps', 'cli', 'tsconfig.json');
             const tsxCliPath = join(repoRootDir(), 'node_modules', 'tsx', 'dist', 'cli.cjs');
 
@@ -817,17 +828,20 @@ describe('core e2e: plugin extension reload', () => {
                     '',
                     'const dispatchToolUrl = process.env.DISPATCH_TOOL_URL;',
                     'const listToolsUrl = process.env.LIST_TOOLS_URL;',
+                    'const pluginDevLoopActionsUrl = process.env.PLUGIN_DEV_LOOP_ACTIONS_URL;',
                     'const pluginId = process.env.PLUGIN_ID;',
                     'const daemonEntryPath = process.env.PLUGIN_DAEMON_ENTRY_PATH;',
                     'const generationTwoModule = process.env.PLUGIN_GENERATION_TWO_MODULE;',
                     'if (!dispatchToolUrl) throw new Error("Missing DISPATCH_TOOL_URL");',
                     'if (!listToolsUrl) throw new Error("Missing LIST_TOOLS_URL");',
+                    'if (!pluginDevLoopActionsUrl) throw new Error("Missing PLUGIN_DEV_LOOP_ACTIONS_URL");',
                     'if (!pluginId) throw new Error("Missing PLUGIN_ID");',
                     'if (!daemonEntryPath) throw new Error("Missing PLUGIN_DAEMON_ENTRY_PATH");',
                     'if (!generationTwoModule) throw new Error("Missing PLUGIN_GENERATION_TWO_MODULE");',
                     '',
                     'const { dispatchBuiltInHappierTool } = await import(dispatchToolUrl);',
                     'const { listBuiltInHappierTools } = await import(listToolsUrl);',
+                    'const { executePluginDevLoopAction } = await import(pluginDevLoopActionsUrl);',
                     'const toolNames = listBuiltInHappierTools({ surface: "agent" }).map((tool) => tool.name);',
                     'if (!toolNames.includes("plugins_reload")) {',
                     '  throw new Error("plugins_reload was not exposed to the agent tool catalog");',
@@ -835,7 +849,15 @@ describe('core e2e: plugin extension reload', () => {
                     '',
                     'const deps = {',
                     '  changeTitle: async () => ({ success: true }),',
-                    '  executeActionByToolName: async () => ({ ok: false, errorCode: "unsupported", error: "unsupported" }),',
+                    '  executeActionByToolName: async (toolName, input) => {',
+                    '    if (toolName !== "plugins_reload") {',
+                    '      return { ok: false, errorCode: "unsupported", error: "unsupported" };',
+                    '    }',
+                    '    return {',
+                    '      ok: true,',
+                    '      result: await executePluginDevLoopAction({ actionId: "plugins.reload", input }),',
+                    '    };',
+                    '  },',
                     '};',
                     'const first = await dispatchBuiltInHappierTool({',
                     '  toolName: "plugins_reload",',
@@ -864,6 +886,7 @@ describe('core e2e: plugin extension reload', () => {
                     HAPPIER_HOME_DIR: happyHomeDir,
                     DISPATCH_TOOL_URL: dispatchToolUrl,
                     LIST_TOOLS_URL: listToolsUrl,
+                    PLUGIN_DEV_LOOP_ACTIONS_URL: pluginDevLoopActionsUrl,
                     PLUGIN_ID: pluginId,
                     PLUGIN_DAEMON_ENTRY_PATH: daemonEntryPath,
                     PLUGIN_GENERATION_TWO_MODULE: createReloadableDaemonModule({
@@ -883,15 +906,19 @@ describe('core e2e: plugin extension reload', () => {
             expect(parsed.first).toMatchObject({
                 ok: true,
                 result: {
-                    pluginId,
-                    changedPluginIds: [pluginId],
+                    ok: true,
+                    kind: 'plugins_reload',
+                    desiredGeneration: expect.any(String),
+                    appliedGeneration: expect.any(String),
                 },
             });
             expect(parsed.second).toMatchObject({
                 ok: true,
                 result: {
-                    pluginId,
-                    changedPluginIds: [pluginId],
+                    ok: true,
+                    kind: 'plugins_reload',
+                    desiredGeneration: expect.any(String),
+                    appliedGeneration: expect.any(String),
                 },
             });
             expect(await readFile(activationMarkerPath, 'utf8')).toContain('activate:one\n');

@@ -1,5 +1,7 @@
 import { resolve } from 'node:path';
 
+import { resolveWorkspaceBundleLockPath } from '@happier-dev/cli-common/workspaceBundleLock';
+
 export type VitestGlobalSetupLane = 'core-fast' | 'core-slow';
 
 export type VitestGlobalSetupPaths = {
@@ -24,13 +26,13 @@ export function resolveVitestGlobalSetupPaths(params: {
     return {
       setupDir,
       snapshotDir: resolve(setupDir, 'cli-dist-snapshot'),
-      lockPath: resolve(setupDir, 'cli-dist-build.lock'),
+      lockPath: resolveWorkspaceBundleLockPath(params.rootDir),
     };
   }
 
   return {
     setupDir: resolve(params.rootDir, '.project', 'tmp', 'vitest-global-setup', params.lane),
     snapshotDir: resolve(params.rootDir, '.project', 'tmp', 'cli-dist-snapshot'),
-    lockPath: resolve(params.rootDir, '.project', 'tmp', 'cli-dist-build.lock'),
+    lockPath: resolveWorkspaceBundleLockPath(params.rootDir),
   };
 }

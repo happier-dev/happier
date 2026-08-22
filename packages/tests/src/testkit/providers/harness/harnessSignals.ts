@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { open, readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -65,6 +65,9 @@ const providerUnavailabilityErrorSubstrings = [
   'error during prompt',
 ];
 
+const maxSessionExitReportsToInspect = 16;
+const maxSessionExitReportBytes = 16_384;
+
 export function resolveResumeSessionMode(resume: ProviderScenario['resume'] | undefined): 'same' | 'fresh' {
   return resume && resume.freshSession === true ? 'fresh' : 'same';
 }
@@ -72,8 +75,9 @@ export function resolveResumeSessionMode(resume: ProviderScenario['resume'] | un
 export function shouldStartProviderDaemon(params: {
   providerProtocol: string;
   hasPostSatisfyRunHook: boolean;
+  requiresDaemonRunnerContinuity?: boolean;
 }): boolean {
-  return params.providerProtocol === 'acp';
+  return params.providerProtocol === 'acp' || params.requiresDaemonRunnerContinuity === true;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -86,6 +90,33 @@ export type ProviderTerminalFailure = Readonly<{
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as UnknownRecord;
+}
+
+async function readBoundedJsonRecord(filePath: string): Promise<UnknownRecord | null> {
+  const handle = await open(filePath, 'r').catch(() => null);
+  if (!handle) return null;
+
+  try {
+    const buffer = Buffer.alloc(maxSessionExitReportBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead === 0 || bytesRead > maxSessionExitReportBytes) return null;
+    return asRecord(JSON.parse(buffer.toString('utf8', 0, bytesRead)));
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+function formatFatalRunnerExit(report: UnknownRecord): string | null {
+  if (typeof report.code === 'number' && Number.isSafeInteger(report.code) && report.code !== 0) {
+    return `Runner exited with code ${report.code}`;
+  }
+
+  if (typeof report.signal !== 'string') return null;
+  const signal = report.signal.trim().toUpperCase();
+  if (!signal || signal === 'SIGTERM' || signal === 'SIGINT') return null;
+  return 'Runner exited due to a fatal signal';
 }
 
 export function extractProviderTerminalFailure(params: Readonly<{
@@ -276,6 +307,23 @@ export async function readFatalProviderErrorFromCliLogs(params: {
   extraLogPaths?: string[];
 }): Promise<string | null> {
   const logsDir = join(params.cliHome, 'logs');
+  const sessionExitDir = join(logsDir, 'session-exit');
+  if (existsSync(sessionExitDir)) {
+    const entries = await readdir(sessionExitDir, { withFileTypes: true }).catch(() => []);
+    const candidates = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map((entry) => join(sessionExitDir, entry.name))
+      .sort()
+      .slice(-maxSessionExitReportsToInspect)
+      .reverse();
+    for (const filePath of candidates) {
+      const report = await readBoundedJsonRecord(filePath);
+      if (!report) continue;
+      const fatal = formatFatalRunnerExit(report);
+      if (fatal) return fatal;
+    }
+  }
+
   const candidateSet = new Set<string>();
   if (existsSync(logsDir)) {
     const entries = await readdir(logsDir, { withFileTypes: true }).catch(() => []);

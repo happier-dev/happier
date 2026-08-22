@@ -22,7 +22,6 @@ import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 import { createRunDirs } from '../../src/testkit/runDir';
-import { createMachineBoundSessionScopedSocketCollector } from '../../src/testkit/sessionSocketBinding';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
 import { createUserScopedSocketCollector, type CapturedEvent } from '../../src/testkit/socketClient';
 import { waitFor } from '../../src/testkit/timing';
@@ -150,7 +149,14 @@ async function createCarrierSession(params: Readonly<{
   if (params.mode === 'e2ee' && params.encryptedDataKeyEnvelope === null) {
     throw new Error('E2EE carrier session requires a sealed data-key envelope');
   }
-  const tag = `voice-agent-transcript-${params.mode}-${randomUUID()}`;
+  const tag = 'system:voice-transcript-history:v1';
+  const metadata = {
+    systemSessionV1: {
+      v: 1,
+      key: 'voice_transcript_history',
+      hidden: true,
+    },
+  };
   const response = await fetchJson<{
     session?: Readonly<{ id?: unknown; encryptionMode?: unknown }>;
   }>(`${params.baseUrl}/v1/sessions`, {
@@ -163,8 +169,8 @@ async function createCarrierSession(params: Readonly<{
       tag,
       encryptionMode: params.mode,
       metadata: params.mode === 'plain'
-        ? JSON.stringify({ v: 1, tag })
-        : Buffer.from(JSON.stringify({ v: 1, tag }), 'utf8').toString('base64'),
+        ? JSON.stringify(metadata)
+        : Buffer.from(JSON.stringify(metadata), 'utf8').toString('base64'),
       agentState: null,
       dataEncryptionKey: params.mode === 'plain'
         ? null
@@ -196,7 +202,7 @@ async function fetchStoredTranscriptRows(params: Readonly<{
   return parseStoredTranscriptRows(response.data).sort((left, right) => left.seq - right.seq);
 }
 
-describe('core e2e: Agent-backed Voice transcript canonical persistence', () => {
+describe('core e2e: inactive Voice History transcript canonical persistence', () => {
   let server: StartedServer | null = null;
 
   afterAll(async () => {
@@ -204,7 +210,7 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
   });
 
   it.each<SessionEncryptionMode>(['plain', 'e2ee'])(
-    'persists, ACKs, reloads, indexes, corrects, and deletes %s Voice finals through canonical owners',
+    'persists, ACKs, reloads, corrects, and deletes %s Voice finals while the hidden carrier stays inactive',
     async (mode) => {
       if (!server) {
         server = await startServerLight({
@@ -221,7 +227,7 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
       const encryptedDataKeyEnvelope = mode === 'e2ee'
         ? sealEncryptedDataKeyEnvelopeV1({
             dataKey,
-            recipientPublicKey: deriveBoxPublicKeyFromSeed(auth.accountSigningSeed),
+            recipientPublicKey: deriveBoxPublicKeyFromSeed(auth.accountMachineKey),
             randomBytes: (length) => new Uint8Array(randomBytes(length)),
           })
         : null;
@@ -232,6 +238,7 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
         encryptedDataKeyEnvelope,
       });
       const ownerSession = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+      expect(ownerSession.active).toBe(false);
       if (mode === 'e2ee') {
         const storedEnvelopeBase64 = ownerSession.dataEncryptionKey;
         expect(typeof storedEnvelopeBase64).toBe('string');
@@ -239,11 +246,11 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
         expect(storedEnvelope).toEqual(encryptedDataKeyEnvelope);
         expect(openEncryptedDataKeyEnvelopeV1({
           envelope: storedEnvelope,
-          recipientSecretKeyOrSeed: auth.accountSigningSeed,
+          recipientSecretKeyOrSeed: auth.accountMachineKey,
         })).toEqual(dataKey);
         expect(openEncryptedDataKeyEnvelopeV1({
           envelope: storedEnvelope,
-          recipientSecretKeyOrSeed: otherAuth.accountSigningSeed,
+          recipientSecretKeyOrSeed: otherAuth.accountMachineKey,
         })).toBeNull();
       } else {
         expect(ownerSession.dataEncryptionKey).toBeNull();
@@ -256,11 +263,6 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
         },
       );
       expect(otherAccountSession.status).toBe(404);
-      const { socket: agentSocket } = await createMachineBoundSessionScopedSocketCollector({
-        baseUrl: server.baseUrl,
-        token: auth.token,
-        sessionId,
-      });
       const socket = createUserScopedSocketCollector(server.baseUrl, auth.token);
       const persistInvocations: PersistInvocation[] = [];
 
@@ -287,23 +289,18 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
           return result;
         },
       });
+      let transcriptAttempt: ReturnType<
+        typeof projector.beginCanonicalAttempt
+      > | null = null;
 
       try {
-        agentSocket.connect();
-        await waitFor(() => agentSocket.isConnected(), { timeoutMs: 20_000 });
-        agentSocket.emit('session-alive', {
-          sid: sessionId,
-          time: Date.now(),
-          thinking: false,
-        });
-        await waitFor(async () => {
-          const session = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
-          return session.active === true;
-        }, { timeoutMs: 20_000, context: `Agent-backed ${mode} Voice carrier active` });
-
         socket.connect();
         await waitFor(() => socket.isConnected(), { timeoutMs: 20_000 });
-        expect(projector.beginCanonicalAttempt(sessionId)).toBe(1);
+        transcriptAttempt = projector.beginCanonicalAttempt(sessionId);
+        expect(transcriptAttempt).toMatchObject({
+          epoch: 1,
+          attemptIdentity: expect.any(String),
+        });
 
         expect(projector.projectCanonicalEvent({
           conversationSessionId: sessionId,
@@ -380,7 +377,12 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
           }),
         }).status).toBe('applied');
 
-        await waitFor(() => persistInvocations.length === 3, { timeoutMs: 20_000 });
+        expect(persistInvocations).toHaveLength(3);
+        await expect(projector.releaseCanonicalConversation(
+          sessionId,
+          transcriptAttempt.attemptIdentity,
+        )).resolves.toBe(true);
+        transcriptAttempt = null;
         const correctedUserWrite = await persistInvocations[2]!.result;
         expect(persistInvocations[2]!.input.localId).toBe(userLocalId);
         expect(correctedUserWrite).toMatchObject({
@@ -403,6 +405,11 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
           token: auth.token,
           sessionId,
         });
+        const persistedCarrier = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+        expect(persistedCarrier.active).toBe(false);
+        expect(persistedCarrier.lastViewedSessionSeq).toBe(
+          initialAssistantWrite.message.seq,
+        );
         expect(storedRows).toHaveLength(2);
         expect(storedRows.map((row) => row.localId)).toEqual([userLocalId, assistantLocalId]);
         expect(storedRows.map((row) => row.seq)).toEqual([
@@ -489,20 +496,9 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
             encryptionVariant: mode === 'e2ee' ? 'dataKey' : 'legacy',
           },
         }));
-        expect(searchableItems).toEqual([
-          expect.objectContaining({
-            id: initialUserWrite.message.id,
-            seq: initialUserWrite.message.seq,
-            role: 'user',
-            text: 'corrected spoken orchard question',
-          }),
-          expect.objectContaining({
-            id: initialAssistantWrite.message.id,
-            seq: initialAssistantWrite.message.seq,
-            role: 'assistant',
-            text: 'the orchard answer',
-          }),
-        ]);
+        // Voice-origin turns remain available to Voice History/export, but do not
+        // become coding-agent memory inputs.
+        expect(searchableItems).toEqual([null, null]);
 
         expect(decryptTranscriptReplayCore({
           rows: storedRows,
@@ -534,8 +530,12 @@ describe('core e2e: Agent-backed Voice transcript canonical persistence', () => 
         );
         expect(deletedTranscriptResponse.status).toBe(404);
       } finally {
-        projector.releaseCanonicalConversation(sessionId);
-        agentSocket.close();
+        if (transcriptAttempt) {
+          await projector.releaseCanonicalConversation(
+            sessionId,
+            transcriptAttempt.attemptIdentity,
+          );
+        }
         socket.close();
       }
     },

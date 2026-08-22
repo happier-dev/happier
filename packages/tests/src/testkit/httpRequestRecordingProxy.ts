@@ -2,6 +2,8 @@ import { once } from 'node:events';
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect, type Socket } from 'node:net';
 
+export const RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES = 256 * 1024;
+
 export type RecordedHttpProxyRequest = Readonly<{
   id: number;
   method: string;
@@ -12,6 +14,12 @@ export type RecordedHttpProxyRequest = Readonly<{
   statusCode: number | null;
   upgraded: boolean;
   error: string | null;
+  body: Readonly<{
+    text: string;
+    byteLength: number;
+    truncated: boolean;
+    complete: boolean;
+  }> | null;
 }>;
 
 export type HttpRequestRecordingProxy = Readonly<{
@@ -33,6 +41,12 @@ type MutableRecordedHttpProxyRequest = {
   statusCode: number | null;
   upgraded: boolean;
   error: string | null;
+  body: {
+    text: string;
+    byteLength: number;
+    truncated: boolean;
+    complete: boolean;
+  } | null;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -66,6 +80,7 @@ function headerLinesFromRawHeaders(rawHeaders: readonly string[]): string {
 export async function startHttpRequestRecordingProxy(params: Readonly<{
   targetBaseUrl: string;
   delayRequestMs?: (request: RecordedHttpProxyRequest) => number | Promise<number>;
+  captureRequestBody?: boolean | ((request: RecordedHttpProxyRequest) => boolean);
   beforeForwardResponse?: (
     request: RecordedHttpProxyRequest,
   ) => void | Promise<void>;
@@ -97,11 +112,52 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
       statusCode: null,
       upgraded,
       error: null,
+      body: null,
     };
     nextId += 1;
     entries.push(entry);
     return entry;
   };
+
+  const observeRequestBody = (
+    req: IncomingMessage,
+    entry: MutableRecordedHttpProxyRequest,
+  ): void => {
+    const body = {
+      text: '',
+      byteLength: 0,
+      truncated: false,
+      complete: false,
+    };
+    entry.body = body;
+    const bodyChunks: Buffer[] = [];
+    let recordedBodyByteLength = 0;
+    req.on('data', (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      body.byteLength += bytes.byteLength;
+      const remaining = RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES
+        - recordedBodyByteLength;
+      if (remaining > 0) {
+        const recorded = bytes.subarray(0, remaining);
+        bodyChunks.push(recorded);
+        recordedBodyByteLength += recorded.byteLength;
+      }
+      body.truncated =
+        body.byteLength > RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES;
+    });
+    req.once('end', () => {
+      body.text = Buffer.concat(bodyChunks).toString('utf8');
+      body.complete = true;
+    });
+  };
+
+  const snapshot = (
+    entry: MutableRecordedHttpProxyRequest,
+  ): RecordedHttpProxyRequest => ({
+    ...entry,
+    headers: { ...entry.headers },
+    body: entry.body ? { ...entry.body } : null,
+  });
 
   const finish = (entry: ReturnType<typeof begin>, patch?: { statusCode?: number | null; error?: string | null }) => {
     if (entry.endedAtMs !== null) return;
@@ -112,9 +168,15 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const entry = begin(req, false);
+    let captureRequestBody = false;
     try {
       const delayMs = normalizeDelayMs(await params.delayRequestMs?.(entry));
       if (delayMs > 0) await sleep(delayMs);
+      captureRequestBody = params.captureRequestBody === true
+        || (
+          typeof params.captureRequestBody === 'function'
+          && params.captureRequestBody(snapshot(entry))
+        );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       res.statusCode = 502;
@@ -137,10 +199,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
       upstreamRes.pause();
       void (async () => {
         try {
-          await params.beforeForwardResponse?.({
-            ...entry,
-            headers: { ...entry.headers },
-          });
+          await params.beforeForwardResponse?.(snapshot(entry));
           if (res.destroyed) {
             upstreamRes.destroy();
             finish(entry, { statusCode });
@@ -170,6 +229,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
       finish(entry, { statusCode: res.statusCode, error: error.message });
     });
     res.once('close', () => finish(entry, { statusCode: res.statusCode || null }));
+    if (captureRequestBody) observeRequestBody(req, entry);
     req.pipe(upstream);
   });
 
@@ -212,7 +272,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
 
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
-    entries: () => entries.map((entry) => ({ ...entry, headers: { ...entry.headers } })),
+    entries: () => entries.map(snapshot),
     clear: () => {
       entries.length = 0;
     },

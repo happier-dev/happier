@@ -49,7 +49,7 @@ async function listPrivateAudioFiles(root: string): Promise<readonly string[]> {
 
 async function gotoVoiceSettings(page: Page): Promise<void> {
   const currentPathname = new URL(page.url()).pathname;
-  if (currentPathname !== '/settings/voice') {
+  if (currentPathname !== '/settings/voice' && currentPathname !== '/settings/voice/advanced') {
     if (currentPathname !== '/dev/voice-qa') {
       throw new Error(`voice_g6_3_unexpected_settings_origin:${currentPathname}`);
     }
@@ -71,9 +71,24 @@ async function gotoVoiceSettings(page: Page): Promise<void> {
     await voiceSettingsNavigation.click();
   }
 
+  if (new URL(page.url()).pathname !== '/settings/voice/advanced') {
+    await waitForAuthenticatedRouteUi({
+      page,
+      expectedPathname: '/settings/voice',
+      requiredTestIds: [
+        'settings.voice.intents',
+        'settings.voice.intent.advanced',
+      ],
+      blockedTestIds: ['welcome-create-account'],
+      timeoutMs: 300_000,
+      reloadOnFailure: false,
+    });
+    await page.getByTestId('settings.voice.intent.advanced').click();
+  }
+
   await waitForAuthenticatedRouteUi({
     page,
-    expectedPathname: '/settings/voice',
+    expectedPathname: '/settings/voice/advanced',
     requiredTestIds: [
       'settings-voice-diagnostics-enabled',
       'settings-voice-diagnostics-delete-all',

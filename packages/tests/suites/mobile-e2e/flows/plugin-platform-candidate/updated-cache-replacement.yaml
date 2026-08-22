@@ -1,7 +1,20 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
+# The v1 Action was deliberately left pending and the app backgrounded by the
+# online phase. The daemon has installed v2, so foregrounding the app must
+# surface the known-generation retirement before the fresh v2 page mounts.
 - launchApp:
     clearState: false
+    clearKeychain: false
+- extendedWaitUntil:
+    visible: retired
+    timeout: 120000
+- assertVisible:
+    id: packed-targeted-context-result
+- extendedWaitUntil:
+    visible:
+      id: voice-surface-status:sidebar:disconnected
+    timeout: 120000
 - openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/plugins
 - extendedWaitUntil:
     visible:
@@ -26,3 +39,28 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
       id: inspector-plugin-${HAPPIER_E2E_PLUGIN_ID}
     timeout: 120000
 - takeScreenshot: plugin-platform-updated-cache-${HAPPIER_E2E_MOBILE_PLATFORM}
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/examples.packed-targeted-projection-contributor/packed-provider-page
+- extendedWaitUntil:
+    visible:
+      id: packed-targeted-provider-title
+    timeout: 120000
+- extendedWaitUntil:
+    visible: "Packed provider detail 1.0.1"
+    timeout: 120000
+- assertVisible:
+    id: packed-targeted-context-action
+- assertVisible:
+    id: packed-targeted-context-result
+- assertVisible:
+    id: packed-targeted-web-only-context-action
+- tapOn:
+    id: packed-targeted-web-only-context-action
+- extendedWaitUntil:
+    visible: "platform-unavailable"
+    timeout: 120000
+- tapOn:
+    id: packed-targeted-context-action
+- extendedWaitUntil:
+    visible: "page:ui"
+    timeout: 120000

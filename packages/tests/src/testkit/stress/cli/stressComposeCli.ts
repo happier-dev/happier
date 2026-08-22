@@ -5,7 +5,10 @@ import { createRunDirs, type RunDirs } from '../../runDir';
 import { repoRootDir } from '../../paths';
 import { readStressConfig } from '../config/readStressConfig';
 import { createComposeRuntime, type ComposeRuntime } from '../docker/composeRuntime';
-import { startFullComposeStressTarget } from '../targets/startFullComposeStressTarget';
+import {
+  preflightFullComposeFrozenImage,
+  startFullComposeStressTarget,
+} from '../targets/startFullComposeStressTarget';
 import type { StartedStressTarget, StartStressTargetParams } from '../targets/stressTargetTypes';
 import {
   latestComposeStatePath,
@@ -33,12 +36,13 @@ type StressComposeCliDeps = Readonly<{
   createRunDirs: (opts?: { runLabel?: string; logsDir?: string }) => RunDirs;
   latestComposeStatePath: () => string;
   readStressConfig: () => ReturnType<typeof readStressConfig>;
+  preflightFullComposeFrozenImage: typeof preflightFullComposeFrozenImage;
   startFullComposeStressTarget: (params: StartStressTargetParams) => Promise<StartedStressTarget>;
   createComposeRuntime: (params: {
     composeFilePath: string;
     composeProjectName: string;
     cwd: string;
-  }) => Pick<ComposeRuntime, 'down'>;
+  }) => Pick<ComposeRuntime, 'down' | 'imageExists' | 'inspectImage'>;
   repoRootDir: () => string;
   now: () => string;
 }>;
@@ -47,6 +51,7 @@ const defaultDeps: StressComposeCliDeps = {
   createRunDirs,
   latestComposeStatePath,
   readStressConfig,
+  preflightFullComposeFrozenImage,
   startFullComposeStressTarget,
   createComposeRuntime,
   repoRootDir,
@@ -91,14 +96,24 @@ export function createStressComposeCli(overrides: Partial<StressComposeCliDeps> 
 
   return {
     up: async () => {
+      const config = deps.readStressConfig();
       const statePath = deps.latestComposeStatePath();
       const previousState = readLatestComposeStateIfExists(statePath);
       if (previousState && previousState.status === 'running' && !previousState.preserved) {
-        await stopComposeProject(previousState, deps);
+        const previousRuntime = deps.createComposeRuntime({
+          composeFilePath: previousState.composeFilePath,
+          composeProjectName: previousState.composeProjectName,
+          cwd: previousState.repoRootDir,
+        });
+        await deps.preflightFullComposeFrozenImage({
+          config,
+          repoRootDir: deps.repoRootDir(),
+          runtime: previousRuntime,
+        });
+        await previousRuntime.down();
         writeLatestComposeState(statePath, markComposeStateStopped(previousState, deps.now()));
       }
 
-      const config = deps.readStressConfig();
       const run = deps.createRunDirs({ runLabel: 'stress' });
       const target = await deps.startFullComposeStressTarget({
         config: {

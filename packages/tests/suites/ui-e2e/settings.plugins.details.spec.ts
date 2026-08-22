@@ -9,7 +9,7 @@ import { dirname, basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import {
     renderPrismaCompatibleSqliteDatabaseUrl,
 } from '@happier-dev/cli-common/firstPartyRuntime';
@@ -24,7 +24,7 @@ import {
 } from '../../src/testkit/process/uiWeb';
 import { resolveUiWebSourceFingerprint } from '../../src/testkit/process/uiWebSourceFingerprint';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { writeRuntimeProjectionPluginFixture } from '../../src/testkit/extensions/localPackageFixture';
 import { repoRootDir } from '../../src/testkit/paths';
 import { createSessionWithCiphertexts, fetchSessionV2 } from '../../src/testkit/sessions';
@@ -47,6 +47,7 @@ import {
 import { installAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
 import {
     attestCandidateInspectorRuntime,
+    attestPackedPublicAuthoringHostedWebRuntime,
     preparePackedCandidateBrowserQa,
     preparePackedNovelConnectedAccountBrowserQa,
     resolvePackedCandidateBrowserQaBeforeAllTimeoutMs,
@@ -98,7 +99,8 @@ type StartedPackedVoiceProviderServer = Readonly<{
 
 const execFileAsync = promisify(execFile);
 const PACKED_VOICE_PLUGIN_ID = 'acme.packed-voice';
-const PACKED_VOICE_PROVIDER_ID = `${PACKED_VOICE_PLUGIN_ID}/conversation`;
+const PACKED_VOICE_PROVIDER_LOCAL_ID = 'conversation-mediated';
+const PACKED_VOICE_PROVIDER_ID = `${PACKED_VOICE_PLUGIN_ID}/${PACKED_VOICE_PROVIDER_LOCAL_ID}`;
 const PACKED_VOICE_PROVIDER_TITLE = 'Packed Conversation';
 const PACKED_VOICE_FIXTURE_EVENTS_KEY = '__HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__';
 const PACKED_VOICE_PROVIDER_ROW_TEST_ID = `settings.voice.provider.${encodeURIComponent(PACKED_VOICE_PROVIDER_ID)}.default`;
@@ -106,6 +108,17 @@ const PACKED_VOICE_CREDENTIAL_TEST_ID = `settings.voice.externalCredential.${enc
 const PACKED_VOICE_PROVISIONING_SETTING_TEST_ID =
     `settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.settings.${PACKED_VOICE_PROVIDER_ID}.enableProvisioning`;
 const PACKED_VOICE_CANONICAL_ORIGIN = 'https://voice.example.test';
+const PACKED_CONNECTED_ACCOUNT_COLLISION_FIXTURES = [{
+    pluginId: 'acme.connected-accounts-conformance-producer',
+    localId: 'vault',
+    sourceDirectory: 'connectedAccountsConformanceProducer',
+    serviceTitle: 'Acme Vault conformance account',
+}, {
+    pluginId: 'acme.connected-accounts-collision-peer',
+    localId: 'vault',
+    sourceDirectory: 'connectedAccountsCollisionPeer',
+    serviceTitle: 'Collision Peer Vault account',
+}] as const;
 
 function buildServerScopedUiUrl(uiBaseUrl: string, serverBaseUrl: string, path: string = '/'): string {
     const url = new URL(path, uiBaseUrl.endsWith('/') ? uiBaseUrl : `${uiBaseUrl}/`);
@@ -576,6 +589,9 @@ test.describe('ui e2e: plugin settings reload', () => {
                     HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
                     HAPPIER_FEATURE_VOICE__ENABLED: '1',
                     HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: '0',
+                    HAPPIER_FEATURE_PROVIDERS__ENABLED: '1',
+                    HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: '1',
+                    HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED: '1',
                     ...(packedNovelConnectedAccount ? {
                         DATABASE_URL:
                             renderPrismaCompatibleSqliteDatabaseUrl({
@@ -636,6 +652,8 @@ test.describe('ui e2e: plugin settings reload', () => {
         packedNovelConnectedAccount = null;
         await ui?.stop().catch(() => {});
         await server?.stop().catch(() => {});
+        await packedCandidate?.cleanup();
+        packedCandidate = null;
     });
 
     test('installs an archive-backed plugin through the real daemon capability, suppresses mismatched-source updates, and reloads it from the detail route', async ({ page }) => {
@@ -684,23 +702,17 @@ test.describe('ui e2e: plugin settings reload', () => {
 
         try {
             const auth = await createTestAuth(server.baseUrl);
-            const machineKey = Uint8Array.from(randomBytes(32));
-            const seeded = await seedCliDataKeyAuthForServer({
+            const seeded = await seedCliAuthForTestAccount({
                 cliHome: cliHomeDir,
                 serverUrl: server.baseUrl,
-                token: auth.token,
-                machineKey,
+                auth,
+                mode: 'dataKey',
             });
 
             await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
                 serverUrl: server.baseUrl,
-                credentials: {
-                    token: auth.token,
-                    encryption: {
-                        publicKey: Buffer.from(seeded.publicKey).toString('base64'),
-                        machineKey: Buffer.from(machineKey).toString('base64'),
-                    },
-                },
+                auth,
+                mode: 'dataKey',
                 storageScope: `e2e-settings-plugins-details-${run.runId}`,
             }));
 
@@ -913,22 +925,18 @@ test.describe('ui e2e: plugin settings reload', () => {
         });
 
         const auth = await createTestAuth(server.baseUrl);
-        const machineKey = Uint8Array.from(randomBytes(32));
-        const seeded = await seedCliDataKeyAuthForServer({
+        const machineKey = auth.accountMachineKey;
+        const accountPublicKey = deriveBoxPublicKeyFromSeed(machineKey);
+        const seeded = await seedCliAuthForTestAccount({
             cliHome: cliHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey,
+            auth,
+            mode: 'dataKey',
         });
         await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
             serverUrl: server.baseUrl,
-            credentials: {
-                token: auth.token,
-                encryption: {
-                    publicKey: Buffer.from(seeded.publicKey).toString('base64'),
-                    machineKey: Buffer.from(machineKey).toString('base64'),
-                },
-            },
+            auth,
+            mode: 'dataKey',
             storageScope: `e2e-settings-plugins-details-${run.runId}`,
         }));
 
@@ -1065,7 +1073,7 @@ test.describe('ui e2e: plugin settings reload', () => {
                 'familiesById',
                 'pluginUi',
                 'entriesById',
-                `reactNativeBundle:${PACKED_VOICE_PLUGIN_ID}:conversation`,
+                `reactNativeBundle:${PACKED_VOICE_PLUGIN_ID}:${PACKED_VOICE_PROVIDER_LOCAL_ID}`,
             ]);
             expect(bundleEntry).not.toBeNull();
             expect(readRecordPath(bundleEntry, ['runtime', 'decision'])?.state).toBe('load');
@@ -1075,10 +1083,10 @@ test.describe('ui e2e: plugin settings reload', () => {
 
         await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/?happier_hmr=0'), 180_000);
         await waitForAuthenticatedHomeUi({ page, timeoutMs: 180_000 });
-        await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice?happier_hmr=0'), 180_000);
+        await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice/conversations?happier_hmr=0'), 180_000);
         await waitForAuthenticatedRouteUi({
             page,
-            expectedPathname: '/settings/voice',
+            expectedPathname: '/settings/voice/conversations',
             requiredTestIds: ['settings.voice.provider.off'],
             timeoutMs: 180_000,
         });
@@ -1099,6 +1107,20 @@ test.describe('ui e2e: plugin settings reload', () => {
         const credentialItem = page.getByTestId(PACKED_VOICE_CREDENTIAL_TEST_ID);
         await expect(credentialItem).toHaveCount(1, { timeout: 120_000 });
         const missingCredentialItemText = await credentialItem.textContent();
+        await gotoDomContentLoadedWithRetries(
+            page,
+            buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice/advanced?happier_hmr=0'),
+            180_000,
+        );
+        await waitForAuthenticatedRouteUi({
+            page,
+            expectedPathname: '/settings/voice/advanced',
+            requiredTestIds: [
+                'settings.voice.ui.activityFeedEnabled',
+                'settings.voice.ui.surfaceLocation',
+            ],
+            timeoutMs: 180_000,
+        });
         const activityFeedSwitch = page.getByTestId('settings.voice.ui.activityFeedEnabled');
         await expect(activityFeedSwitch).toHaveAttribute('aria-checked', 'false', { timeout: 120_000 });
         await activityFeedSwitch.click();
@@ -1113,7 +1135,7 @@ test.describe('ui e2e: plugin settings reload', () => {
         const targetSessionDataKey = Uint8Array.from(randomBytes(32));
         const targetSessionDataKeyEnvelope = sealEncryptedDataKeyEnvelopeV1({
             dataKey: targetSessionDataKey,
-            recipientPublicKey: seeded.publicKey,
+            recipientPublicKey: accountPublicKey,
             randomBytes: (length) => Uint8Array.from(randomBytes(length)),
         });
         const targetSession = await createSessionWithCiphertexts({
@@ -1128,7 +1150,7 @@ test.describe('ui e2e: plugin settings reload', () => {
         const conversationSessionDataKey = Uint8Array.from(randomBytes(32));
         const conversationSessionDataKeyEnvelope = sealEncryptedDataKeyEnvelopeV1({
             dataKey: conversationSessionDataKey,
-            recipientPublicKey: seeded.publicKey,
+            recipientPublicKey: accountPublicKey,
             randomBytes: (length) => Uint8Array.from(randomBytes(length)),
         });
         const conversationSession = await createSessionWithCiphertexts({
@@ -1202,12 +1224,12 @@ test.describe('ui e2e: plugin settings reload', () => {
 
         await gotoDomContentLoadedWithRetries(
             page,
-            buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice?happier_hmr=0'),
+            buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice/conversations?happier_hmr=0'),
             180_000,
         );
         await waitForAuthenticatedRouteUi({
             page,
-            expectedPathname: '/settings/voice',
+            expectedPathname: '/settings/voice/conversations',
             requiredTestIds: [
                 PACKED_VOICE_PROVIDER_ROW_TEST_ID,
                 PACKED_VOICE_CREDENTIAL_TEST_ID,
@@ -1227,6 +1249,34 @@ test.describe('ui e2e: plugin settings reload', () => {
             credentialTestId: PACKED_VOICE_CREDENTIAL_TEST_ID,
             value: activeSourceSecret,
         });
+
+        const settingsActionRequestsBefore = voiceProviderServer.requests.length;
+        const settingsAction = page.getByTestId('voice-settings-action-provision-voice');
+        await expect(settingsAction).toBeEnabled({ timeout: 120_000 });
+        await settingsAction.click();
+        const settingsActionConfirm = page.getByTestId('web-modal-confirm');
+        await expect(settingsActionConfirm).toBeEnabled({ timeout: 30_000 });
+        await settingsActionConfirm.click();
+        await expect.poll(() => voiceProviderServer.requests.length, { timeout: 120_000 })
+            .toBe(settingsActionRequestsBefore + 1);
+        expect(voiceProviderServer.requests.slice(settingsActionRequestsBefore)).toEqual([
+            expect.objectContaining({
+                method: 'PATCH',
+                pathname: '/v1/voices/packed-voice-primary',
+                authorizationMatched: true,
+                body: { profile: 'balanced' },
+            }),
+        ]);
+        await expect.poll(async () => (
+            (await readPackedVoiceFixtureEvents(page)).filter((event) => event.kind === 'provisioned')
+        ), { timeout: 120_000 }).toEqual([
+            expect.objectContaining({
+                selectedVoiceId: 'packed-voice-primary',
+                profile: 'balanced',
+            }),
+        ]);
+        await expect(page.getByTestId('voice-realtime-field-profile'))
+            .toContainText('expressive', { timeout: 120_000 });
 
         await gotoDomContentLoadedWithRetries(
             page,
@@ -1443,12 +1493,12 @@ test.describe('ui e2e: plugin settings reload', () => {
 
         await gotoDomContentLoadedWithRetries(
             page,
-            buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice?happier_hmr=0'),
+            buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice/conversations?happier_hmr=0'),
             180_000,
         );
         await waitForAuthenticatedRouteUi({
             page,
-            expectedPathname: '/settings/voice',
+            expectedPathname: '/settings/voice/conversations',
             requiredTestIds: [
                 PACKED_VOICE_PROVIDER_ROW_TEST_ID,
                 PACKED_VOICE_CREDENTIAL_TEST_ID,
@@ -1497,7 +1547,7 @@ test.describe('ui e2e: plugin settings reload', () => {
         await deletedCredentialRecovery.click();
         await waitForAuthenticatedRouteUi({
             page,
-            expectedPathname: '/settings/voice',
+            expectedPathname: '/settings/voice/conversations',
             requiredTestIds: [
                 PACKED_VOICE_PROVIDER_ROW_TEST_ID,
                 PACKED_VOICE_CREDENTIAL_TEST_ID,
@@ -1529,10 +1579,10 @@ test.describe('ui e2e: plugin settings reload', () => {
         const authorityRemovedBeforeReload = await liveVoiceSurface.count() === 0;
         expect(authorityRemovedBeforeReload).toBe(true);
 
-        await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice?happier_hmr=0'), 180_000);
+        await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/voice/conversations?happier_hmr=0'), 180_000);
         await waitForAuthenticatedRouteUi({
             page,
-            expectedPathname: '/settings/voice',
+            expectedPathname: '/settings/voice/conversations',
             requiredTestIds: ['settings.voice.provider.off'],
             timeoutMs: 180_000,
         });
@@ -1625,6 +1675,8 @@ test.describe('ui e2e: plugin settings reload', () => {
                 providerSelected: true,
                 initialCredentialMissing: true,
                 credentialSaveChangeDeleteCompleted: true,
+                settingsActionGestureConfirmed: true,
+                settingsActionCasPatchApplied: true,
                 providerRequestsObserved: voiceProviderServer.requests.length,
                 catalogNormalized: firstRunFixtureEventsJson.includes('packed-voice-primary'),
                 clientAuthArtifactBounded: true,
@@ -1695,22 +1747,17 @@ test.describe('ui e2e: plugin settings reload', () => {
         await page.setViewportSize({ width: 1440, height: 900 });
 
         const auth = await createTestAuth(server.baseUrl);
-        const machineKey = Uint8Array.from(randomBytes(32));
-        const seeded = await seedCliDataKeyAuthForServer({
+        const machineKey = auth.accountMachineKey;
+        const seeded = await seedCliAuthForTestAccount({
             cliHome: cliHomeDir,
             serverUrl: server.baseUrl,
-            token: auth.token,
-            machineKey,
+            auth,
+            mode: 'dataKey',
         });
         await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
             serverUrl: server.baseUrl,
-            credentials: {
-                token: auth.token,
-                encryption: {
-                    publicKey: Buffer.from(seeded.publicKey).toString('base64'),
-                    machineKey: Buffer.from(machineKey).toString('base64'),
-                },
-            },
+            auth,
+            mode: 'dataKey',
             storageScope: `e2e-settings-plugins-details-${run.runId}`,
         }));
 
@@ -1774,11 +1821,127 @@ test.describe('ui e2e: plugin settings reload', () => {
             pluginId: 'acme.vertical-a',
         });
 
+        const publicAuthoring = packedNovelConnectedAccount.publicAuthoring;
+        expect(publicAuthoring).toMatchObject({
+            pluginId: 'examples.public-sdk-review-assistant',
+            version: '0.1.0',
+            archive: {
+                integrity: expect.stringMatching(/^sha512-[A-Za-z0-9+/]+={0,2}$/u),
+                sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            },
+            hostedWeb: {
+                contributionId: 'review-web',
+                digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+            },
+        });
+        const publicAuthoringInstallEnvelope = await runCliJson({
+            testDir,
+            cliHomeDir,
+            serverUrl: server.baseUrl,
+            webappUrl: uiBaseUrl,
+            env: candidateCliEnv,
+            label: 'packed-public-authoring-install',
+            args: [
+                'plugins',
+                'install',
+                publicAuthoring.archivePath,
+                '--json',
+            ],
+            timeoutMs: 240_000,
+            cliLaunchSpec: packedCandidate.cliLaunchSpec,
+        });
+        const publicAuthoringInstallReview =
+            readPluginInstallReviewRequiredEnvelope(publicAuthoringInstallEnvelope);
+        expect(publicAuthoringInstallReview.review.pluginId).toBe(
+            publicAuthoring.pluginId,
+        );
+        const publicAuthoringInstallOutcome =
+            await decideAuthenticatedPluginInstallReview({
+                cliHomeDir,
+                serverUrl: server.baseUrl,
+                pendingChangeId: publicAuthoringInstallReview.pendingChangeId,
+                optionalSelections:
+                    publicAuthoringInstallReview.review.optionalHostAccess.map(
+                        (entry) => ({
+                            accessId: entry.id,
+                            selected: false,
+                        }),
+                    ),
+                confirmPresentUser: async () => true,
+            });
+        expect(publicAuthoringInstallOutcome).toMatchObject({
+            kind: 'committed',
+            pluginId: publicAuthoring.pluginId,
+        });
+
+        for (const fixture of PACKED_CONNECTED_ACCOUNT_COLLISION_FIXTURES) {
+            const sourceRoot = resolve(
+                repoRootDir(),
+                'apps/cli/src/plugins/authoring/fixtures',
+                fixture.sourceDirectory,
+            );
+            const archivePath = resolve(
+                join(testDir, `${fixture.pluginId}.tgz`),
+            );
+            await runCliJson({
+                testDir,
+                cliHomeDir,
+                serverUrl: server.baseUrl,
+                webappUrl: uiBaseUrl,
+                env: candidateCliEnv,
+                label: `${fixture.pluginId}-pack`,
+                args: [
+                    'plugins',
+                    'pack',
+                    sourceRoot,
+                    '--out',
+                    archivePath,
+                    '--json',
+                ],
+                timeoutMs: 240_000,
+                cliLaunchSpec: packedCandidate.cliLaunchSpec,
+            });
+            const installEnvelope = await runCliJson({
+                testDir,
+                cliHomeDir,
+                serverUrl: server.baseUrl,
+                webappUrl: uiBaseUrl,
+                env: candidateCliEnv,
+                label: `${fixture.pluginId}-install`,
+                args: ['plugins', 'install', archivePath, '--json'],
+                timeoutMs: 240_000,
+                cliLaunchSpec: packedCandidate.cliLaunchSpec,
+            });
+            const installReview =
+                readPluginInstallReviewRequiredEnvelope(installEnvelope);
+            expect(installReview.review.pluginId).toBe(fixture.pluginId);
+            const installOutcome =
+                await decideAuthenticatedPluginInstallReview({
+                    cliHomeDir,
+                    serverUrl: server.baseUrl,
+                    pendingChangeId: installReview.pendingChangeId,
+                    optionalSelections:
+                        installReview.review.optionalHostAccess.map(
+                            (entry) => ({
+                                accessId: entry.id,
+                                selected: false,
+                            }),
+                        ),
+                    confirmPresentUser: async () => true,
+                });
+            expect(installOutcome).toMatchObject({
+                kind: 'committed',
+                pluginId: fixture.pluginId,
+            });
+        }
+
         const projectionSocket = createUserScopedSocketCollector(server.baseUrl, auth.token, {
             captureEvents: false,
         });
         projectionSocket.connect();
         let runtimeAttestation: ReturnType<typeof attestCandidateInspectorRuntime>;
+        let publicAuthoringRuntimeAttestation:
+            ReturnType<typeof attestPackedPublicAuthoringHostedWebRuntime>;
         try {
             const projectionResponse = unwrapDataKeyRpcResult(await createDataKeyRpcClient(
                 projectionSocket,
@@ -1801,6 +1964,11 @@ test.describe('ui e2e: plugin settings reload', () => {
                 daemonState: daemon.state,
                 projectionResponse,
             });
+            publicAuthoringRuntimeAttestation =
+                attestPackedPublicAuthoringHostedWebRuntime({
+                    publicAuthoring,
+                    projectionResponse,
+                });
         } finally {
             projectionSocket.close();
         }
@@ -1935,6 +2103,192 @@ test.describe('ui e2e: plugin settings reload', () => {
             packedNovelConnectedAccountProviderServer.requestCount(),
         ).toBeGreaterThanOrEqual(2);
 
+        for (const account of [{
+            token: 'token-a',
+            accountId: 'account-a',
+            label: 'Novel account-a',
+        }, {
+            token: 'token-b',
+            accountId: 'account-b',
+            label: 'Novel account-b',
+        }]) {
+            await page.getByTestId('connected-account-mode:manual').click();
+            if (account.accountId === 'account-a') {
+                const manualConfigurationOrigin = page.getByTestId(
+                    'connected-account-configuration:api-origin',
+                );
+                await expect(manualConfigurationOrigin)
+                    .toBeVisible({ timeout: 120_000 });
+                await manualConfigurationOrigin.fill(
+                    packedNovelConnectedAccountProviderServer.origin,
+                );
+                await page.getByTestId(
+                    'connected-account-configuration:save',
+                ).click();
+            }
+            const manualToken = page.getByTestId(
+                'connected-account-manual:token',
+            );
+            await expect(manualToken).toBeVisible({ timeout: 120_000 });
+            await manualToken.fill(account.token);
+            await page.getByTestId('connected-account-manual:submit').click();
+            await expect(page.getByTestId(`connected-account:${account.accountId}`))
+                .toContainText(account.label, { timeout: 120_000 });
+        }
+
+        await page.getByTestId(
+            'connected-services-detail-shell:segment:pools',
+        ).click();
+        await page.getByTestId('connected-services-pool-action:create').click();
+        await page.getByTestId('web-prompt-input')
+            .fill('Packed fallback accounts');
+        await page.getByTestId('web-prompt-confirm').click();
+        await expect(page.getByTestId('connected-services-pool-detail'))
+            .toBeVisible({ timeout: 120_000 });
+        const membersSelect = page.getByTestId(
+            'connected-services-pool-detail:members-select',
+        );
+        await membersSelect.click();
+        await page.getByTestId(
+            'qualified-connected-account-group:members:option:account-a',
+        ).click();
+        await page.getByTestId(
+            'qualified-connected-account-group:members:option:account-b',
+        ).click();
+        await membersSelect.click();
+        await expect(page.getByTestId(
+            'connected-services-pool-detail:member:account-a',
+        )).toContainText('Novel account-a', { timeout: 120_000 });
+        await expect(page.getByTestId(
+            'connected-services-pool-detail:member:account-b',
+        )).toContainText('Novel account-b', { timeout: 120_000 });
+
+        const connectedServicesIndexUrl = buildServerScopedUiUrl(
+            uiBaseUrl,
+            server.baseUrl,
+            '/settings/connected-services?happier_hmr=0',
+        );
+        await gotoDomContentLoadedWithRetries(
+            page,
+            connectedServicesIndexUrl,
+            180_000,
+        );
+        for (const fixture of PACKED_CONNECTED_ACCOUNT_COLLISION_FIXTURES) {
+            await expect(page.getByText(fixture.serviceTitle, { exact: true }).first())
+                .toBeVisible({ timeout: 120_000 });
+        }
+        for (const fixture of PACKED_CONNECTED_ACCOUNT_COLLISION_FIXTURES) {
+            await page.getByText(fixture.serviceTitle, { exact: true }).click();
+            await expect.poll(() => {
+                const url = new URL(page.url());
+                return {
+                    pathname: url.pathname,
+                    pluginId: url.searchParams.get('pluginId'),
+                    localId: url.searchParams.get('localId'),
+                };
+            }, { timeout: 120_000 }).toEqual({
+                pathname: '/settings/connected-services/account',
+                pluginId: fixture.pluginId,
+                localId: fixture.localId,
+            });
+            await page.getByTestId('connected-account-mode:manual').click();
+            const manualToken = page.getByTestId(
+                'connected-account-manual:token',
+            );
+            await expect(manualToken).toBeVisible({ timeout: 120_000 });
+            await manualToken.fill('packed-test-token');
+            await page.getByTestId('connected-account-manual:submit').click();
+            await expect(page.getByText(fixture.serviceTitle, { exact: true }).first())
+                .toBeVisible({ timeout: 120_000 });
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await expect.poll(() => {
+                const url = new URL(page.url());
+                return {
+                    pluginId: url.searchParams.get('pluginId'),
+                    localId: url.searchParams.get('localId'),
+                };
+            }, { timeout: 120_000 }).toEqual({
+                pluginId: fixture.pluginId,
+                localId: fixture.localId,
+            });
+            await expect(page.getByText(fixture.serviceTitle, { exact: true }).first())
+                .toBeVisible({ timeout: 120_000 });
+            await gotoDomContentLoadedWithRetries(
+                page,
+                connectedServicesIndexUrl,
+                180_000,
+            );
+            for (const peer of PACKED_CONNECTED_ACCOUNT_COLLISION_FIXTURES) {
+                await expect(page.getByText(peer.serviceTitle, { exact: true }).first())
+                    .toBeVisible({ timeout: 120_000 });
+            }
+        }
+
+        await gotoDomContentLoadedWithRetries(
+            page,
+            buildServerScopedUiUrl(
+                uiBaseUrl,
+                server.baseUrl,
+                '/settings/providers?happier_hmr=0',
+            ),
+            180_000,
+        );
+        const packedProviderContributionKey =
+            'acme.vertical-a/packed-managed-provider';
+        const packedProvider = page.getByTestId(
+            `settings-provider-available:${packedProviderContributionKey}`,
+        );
+        await expect(packedProvider).toBeVisible({ timeout: 120_000 });
+        await packedProvider.click();
+        await expect(page.getByTestId('settings-provider-authoring-built-in'))
+            .toBeVisible({ timeout: 120_000 });
+        const connectProvider = page.getByTestId(
+            'settings-provider-authoring-connect',
+        );
+        await expect(connectProvider).toBeEnabled({ timeout: 120_000 });
+        await connectProvider.click();
+        await expect.poll(() => new URL(page.url()).pathname, {
+            timeout: 120_000,
+        }).toMatch(/^\/settings\/providers\/pc_/u);
+        const configureManagedProvider = page.getByTestId(
+            'provider-connection-managed-configure',
+        );
+        await expect(configureManagedProvider)
+            .toBeVisible({ timeout: 120_000 });
+        await configureManagedProvider.click();
+        const purposeChooser = page.getByTestId(
+            'provider-connection-managed-purpose-chooser:upstream',
+        );
+        await purposeChooser.click();
+        for (const label of [
+            'Novel account-a',
+            'Novel account-b',
+            'Packed fallback accounts',
+        ]) {
+            await expect(page.getByText(label, { exact: true }).last())
+                .toBeVisible({ timeout: 120_000 });
+        }
+        await page.getByText('Packed fallback accounts', { exact: true }).last()
+            .click();
+        await expect(purposeChooser).toContainText('Packed fallback accounts');
+        await page.getByTestId(
+            'provider-connection-managed-purpose-chooser:upstream:reload',
+        ).click();
+        await purposeChooser.click();
+        for (const label of [
+            'Novel account-a',
+            'Novel account-b',
+            'Packed fallback accounts',
+        ]) {
+            await expect(page.getByText(label, { exact: true }).last())
+                .toBeVisible({ timeout: 120_000 });
+        }
+        expect(await page.locator('body').innerText()).not.toContain(
+            'packed-test-token',
+        );
+        expect(await page.locator('body').innerText()).not.toContain('token-a');
+        expect(await page.locator('body').innerText()).not.toContain('token-b');
+
         await gotoDomContentLoadedWithRetries(
             page,
             buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/settings/plugins/panels?happier_hmr=0'),
@@ -1961,11 +2315,14 @@ test.describe('ui e2e: plugin settings reload', () => {
         expect(tabBox?.height ?? 0).toBeGreaterThanOrEqual(44);
 
         const inspectorSurface = page.getByTestId('inspector-surface');
-        const reloadAll = page.getByTestId('inspector-reload-all');
+        const inspectorPlugin = page.getByTestId('inspector-plugin-happier.inspector');
         await expect(inspectorSurface).toBeVisible();
-        await expect(page.getByTestId('inspector-plugin-happier.inspector')).toBeVisible();
-        await reloadAll.focus();
-        await expect(reloadAll).toBeFocused();
+        await expect(inspectorPlugin).toBeVisible();
+        await inspectorPlugin.click();
+        const reloadSelected = page.getByTestId('inspector-reload-selected-happier.inspector');
+        await expect(reloadSelected).toBeVisible();
+        await reloadSelected.focus();
+        await expect(reloadSelected).toBeFocused();
         await page.keyboard.press('Enter');
         await expect(page.getByTestId('inspector-last-reload')).toContainText(
             'Last reload succeeded',
@@ -1975,7 +2332,7 @@ test.describe('ui e2e: plugin settings reload', () => {
         await expect(inspectorSurface).toBeVisible();
 
         await page.emulateMedia({ reducedMotion: 'reduce' });
-        await reloadAll.click();
+        await reloadSelected.click();
         await expect(page.getByTestId('inspector-last-reload')).toBeVisible({
             timeout: 120_000,
         });
@@ -2046,6 +2403,14 @@ test.describe('ui e2e: plugin settings reload', () => {
                 inspectorPlatforms: JSON.stringify(
                     packedCandidate.attestation.inspectorPlatforms,
                 ),
+                publicAuthoringPluginId: publicAuthoring.pluginId,
+                publicAuthoringVersion: publicAuthoring.version,
+                publicAuthoringArchiveIntegrity:
+                    publicAuthoring.archive.integrity,
+                publicAuthoringHostedWebDigest:
+                    publicAuthoringRuntimeAttestation.hostedWebDigest,
+                publicAuthoringProjectionGeneration:
+                    publicAuthoringRuntimeAttestation.projectionGeneration,
                 projectionGeneration: runtimeAttestation.projectionGeneration,
                 artifactMounted: true,
                 keyboardFocusVerified: true,

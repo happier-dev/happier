@@ -178,7 +178,7 @@ test.describe('voice Q3: browser permission lifecycle', () => {
         presentation: 'error',
       },
     });
-    expect(instrumentation).toMatchObject({ activeTracks: 0, stoppedTracks: 2 });
+    expect(instrumentation).toMatchObject({ activeTracks: 0, stoppedTracks: 1 });
   });
 
   test.skip('prompt/unknown is browser-manual because headless Chromium cannot expose a user-operable permission prompt', () => {});

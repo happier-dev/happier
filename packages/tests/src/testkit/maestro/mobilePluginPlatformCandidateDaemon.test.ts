@@ -18,6 +18,11 @@ describe('mobile Plugin Platform candidate daemon isolation', () => {
       happyHomeDir: '/tmp/isolated-home',
       serverUrl: 'http://127.0.0.1:41001',
       webappUrl: 'http://127.0.0.1:41001',
+      fakeClaude: {
+        executablePath: '/fixtures/fake-claude-code-cli.js',
+        scenario: 'voice-current-ui-triage',
+        logPath: '/tmp/isolated-home/fake-claude-triage-voice.jsonl',
+      },
     });
     expect(env).toMatchObject({
       HAPPIER_HOME_DIR: '/tmp/isolated-home',
@@ -26,6 +31,10 @@ describe('mobile Plugin Platform candidate daemon isolation', () => {
       HAPPIER_VARIANT: 'dev',
       HAPPIER_DISABLE_CAFFEINATE: '1',
       HAPPIER_E2E_PASSTHROUGH: 'preserved',
+      HAPPIER_CLAUDE_PATH: '/fixtures/fake-claude-code-cli.js',
+      HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'voice-current-ui-triage',
+      HAPPIER_E2E_FAKE_CLAUDE_LOG: '/tmp/isolated-home/fake-claude-triage-voice.jsonl',
+      HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
     });
     expect(env).not.toHaveProperty('HAPPIER_STACK_STACK');
     expect(env).not.toHaveProperty('HAPPY_STACK_REPO_DIR');

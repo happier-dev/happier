@@ -1,4 +1,5 @@
 const { createHash } = require('node:crypto');
+const { realpathSync } = require('node:fs');
 const path = require('node:path');
 
 const CLAUDE_PROJECT_ID_MAX_LENGTH = 120;
@@ -17,7 +18,13 @@ function resolveShortClaudeProjectId(resolvedWorkingDirectory) {
 }
 
 function resolveClaudeProjectId(workingDirectory) {
-  const resolvedWorkingDirectory = path.resolve(String(workingDirectory ?? ''));
+  const absoluteWorkingDirectory = path.resolve(String(workingDirectory ?? ''));
+  let resolvedWorkingDirectory = absoluteWorkingDirectory;
+  try {
+    resolvedWorkingDirectory = realpathSync(absoluteWorkingDirectory);
+  } catch {
+    // Match the production owner: nonexistent paths retain their absolute spelling.
+  }
   const projectId = sanitizeClaudeProjectId(resolvedWorkingDirectory);
   if (projectId.length <= CLAUDE_PROJECT_ID_MAX_LENGTH) {
     return projectId;
@@ -28,4 +35,3 @@ function resolveClaudeProjectId(workingDirectory) {
 module.exports = {
   resolveClaudeProjectId,
 };
-

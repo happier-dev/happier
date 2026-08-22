@@ -110,7 +110,8 @@ test.describe('ui e2e: actions settings detail approval modes', () => {
         const auth = await createTestAuth(server.baseUrl);
         await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({
             serverUrl: server.baseUrl,
-            credentials: { token: auth.token, secret: auth.token },
+            auth,
+            mode: 'legacy',
             storageScope: `e2e-settings-actions-${run.runId}`,
         }));
 
