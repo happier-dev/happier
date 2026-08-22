@@ -1,9 +1,14 @@
 import { z } from 'zod';
 
-import { AgentProviderIdV1Schema } from '../../generated/providers/agentProviderIdsV1.js';
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import { McpServerBindingV1Schema, McpServerCatalogEntryTransportV1Schema, McpServerCatalogEntryV1Schema } from './settingsV1.js';
 
-export const McpDetectedProviderV1Schema = AgentProviderIdV1Schema;
+/**
+ * The Agent a detected MCP server was discovered for. Detection identity is
+ * Agent identity, so it stays open: any installed Agent — bundled or
+ * externally contributed — can own an MCP discovery source.
+ */
+export const McpDetectedProviderV1Schema = AgentIdV1Schema;
 export type McpDetectedProviderV1 = z.infer<typeof McpDetectedProviderV1Schema>;
 
 export const DetectedMcpServerV1Schema = z
@@ -51,8 +56,14 @@ export const DetectedMcpServerV1Schema = z
 
 export type DetectedMcpServerV1 = z.infer<typeof DetectedMcpServerV1Schema>;
 
+/**
+ * `provider` is absent when the warning cannot be attributed to an Agent at
+ * all — a discovery source that declares no resolvable Agent id, or a
+ * detection request naming one. Such a source must stay visible as an
+ * explicit incompleteness rather than collapsing into an empty result.
+ */
 export const DaemonMcpServersDetectWarningV1Schema = z.object({
-  provider: McpDetectedProviderV1Schema,
+  provider: McpDetectedProviderV1Schema.optional(),
   code: z.enum(['read_failed', 'parse_failed', 'unsupported']),
   path: z.string().min(1).optional(),
   detail: z.string().min(1).optional(),

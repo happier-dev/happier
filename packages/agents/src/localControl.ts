@@ -1,9 +1,9 @@
 import type {
-  AgentCore,
   AgentId,
   AgentLocalControlAttachStrategy,
   AgentLocalControlTopology,
 } from './types.js';
+import { localControlDeclarationHostsTerminal } from './definitions/agentCapabilityProjection.js';
 import { getAgentCore } from './manifest.js';
 
 export type AgentLocalControlCapability = Readonly<{
@@ -14,8 +14,7 @@ export type AgentLocalControlCapability = Readonly<{
 }>;
 
 export function getAgentLocalControlCapability(agentId: AgentId): AgentLocalControlCapability | null {
-  const agent = getAgentCore(agentId) as AgentCore;
-  const localControl = agent.localControl;
+  const localControl = getAgentCore(agentId)?.localControl;
   if (!localControl || localControl.supported !== true) return null;
   return {
     supported: true,
@@ -29,6 +28,11 @@ export function usesProviderAttachForLocalControl(agentId: AgentId): boolean {
   return getAgentLocalControlCapability(agentId)?.attachStrategy === 'provider_attach';
 }
 
+/**
+ * Reads the terminal-hosting rule from the one owner that a packaged Agent
+ * manifest is also projected through, so this Agent-keyed answer and the
+ * `terminal` capability surface it ships can never disagree.
+ */
 export function usesTerminalHostedLocalControl(agentId: AgentId): boolean {
-  return getAgentLocalControlCapability(agentId)?.attachStrategy === 'terminal_host';
+  return localControlDeclarationHostsTerminal(getAgentCore(agentId)?.localControl);
 }

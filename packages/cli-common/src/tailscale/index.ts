@@ -1,10 +1,12 @@
 export {
+  classifyTailscaleServeRootSlot,
   parseTailscaleServeHttpsBaseUrlForPort,
   extractTailscaleServeHttpsUrl,
   tailscaleServeHttpsUrlForOwnedConfigFromStatus,
   tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
   tailscaleServeStatusMatchesInternalServerUrl,
 } from './serveStatus.js';
+export type { TailscaleServeRootSlot } from './serveStatus.js';
 export {
   extractTailscaleInstallerDownloadUrl,
   resolveTailscaleInstallStrategy,
@@ -35,8 +37,10 @@ export {
   type RunTailscaleServeEnableResult,
 } from './commandRunner.js';
 export {
+  isTailscaleDaemonUnreachableOutput,
   parseTailscaleStatusJson,
   parseTailscaleStatusSnapshot,
+  tailscaleStatusSnapshotForUnreachableDaemon,
   type TailscaleStatusSnapshot,
 } from './statusSnapshot.js';
 export { resolveTailscaleMachineHttpsUrlFromStatusSnapshot } from './publicUrl.js';

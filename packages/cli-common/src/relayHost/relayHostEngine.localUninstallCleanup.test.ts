@@ -157,4 +157,97 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
       vi.clearAllMocks();
     }
   });
+
+  it('uninstalls the legacy unsuffixed scheduled task when the preview lane still owns that install root', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+
+    const invoked: string[] = [];
+    const installRoot = 'C:\\Users\\tester\\.happier\\self-host-preview';
+
+    try {
+      vi.doMock('node:os', async () => {
+        const actual = await vi.importActual<typeof import('node:os')>('node:os');
+        return {
+          ...actual,
+          homedir: () => 'C:\\Users\\tester',
+        };
+      });
+
+      vi.doMock('node:child_process', async () => {
+        const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+        return {
+          ...actual,
+          spawnSync: (cmd: string, args?: readonly string[]) => {
+            invoked.push([cmd, ...(Array.isArray(args) ? args : [])].join(' '));
+            if (cmd === 'powershell.exe') {
+              const script = String(args?.at(-1) ?? '');
+              if (script.includes('$taskName = "happier-server-preview"')) {
+                return { status: 0, stdout: '{"exists":false}', stderr: '' };
+              }
+              if (script.includes('$taskName = "happier-server"')) {
+                return { status: 0, stdout: '{"exists":true,"enabled":true,"active":true}', stderr: '' };
+              }
+            }
+            return { status: 0, stdout: '', stderr: '' };
+          },
+        };
+      });
+
+      vi.doMock('node:fs', async () => {
+        const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+        return {
+          ...actual,
+          existsSync: (path: string) => path.endsWith('happier-server.ps1'),
+        };
+      });
+
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        return {
+          ...actual,
+          readFile: async (path: string) => {
+            if (path.endsWith('happier-server.ps1')) {
+              return `$ErrorActionPreference = "Stop"\nSet-Location -LiteralPath "${installRoot}"\n`;
+            }
+            return '';
+          },
+          rm: async () => undefined,
+        };
+      });
+
+      const { createRelayHostEngine } = await import('./relayHostEngine.js');
+      const engine = createRelayHostEngine({
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        copyLocalDirectoryToRemote: async () => {},
+        installRemoteComponent: async () => ({
+          binaryPath: '%USERPROFILE%\\.happier\\self-host\\current\\happier-server.exe',
+          versionId: 'preview-1',
+        }),
+      });
+
+      await engine.control({
+        target: { kind: 'local' },
+        mode: 'user',
+        channel: 'preview',
+        action: 'uninstall',
+      });
+
+      expect(invoked.some((cmd) =>
+        cmd.includes('powershell.exe')
+        && cmd.includes('Stop-ScheduledTask')
+        && cmd.includes('$taskName = "happier-server"'),
+      ), invoked.join('\n')).toBe(true);
+      expect(invoked.some((cmd) =>
+        cmd.includes('powershell.exe')
+        && cmd.includes('Unregister-ScheduledTask')
+        && cmd.includes('$taskName = "happier-server"'),
+      )).toBe(true);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+      vi.resetModules();
+      vi.clearAllMocks();
+    }
+  }, 60_000);
 });

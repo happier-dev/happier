@@ -2,6 +2,7 @@ export * from './artifactCompatibility.js';
 export * from './artifactArchive.js';
 export * from './artifactIntegrity.js';
 export * from './composer.js';
+export * from './currentUiContext.js';
 export * from './hostApi.js';
 export * from './hostApiRequests.js';
 export * from './selectedActionInput.js';

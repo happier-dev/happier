@@ -1,0 +1,10 @@
+# N-API symbols (`napi_*`) are supplied by the host process (Node or Electron) at
+# runtime, not by a library at link time. `napi_build::setup()` only adds the
+# flat-namespace lookup to the cdylib link line, so the `cargo test` harness -- an
+# ordinary executable -- would otherwise fail to link. These rustflags extend the
+# same lookup to every host-target artifact so the headless unit tests build.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-args=-Wl,-undefined,dynamic_lookup"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-args=-Wl,-undefined,dynamic_lookup"]

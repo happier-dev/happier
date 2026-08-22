@@ -1,4 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2';
+import { bytesToHex } from '@noble/hashes/utils';
 
 import { encodeBase64 } from './base64.js';
 
@@ -26,4 +27,15 @@ export function computeCanonicalDomainSeparatedDigest(
     parts: readonly (string | Uint8Array)[],
 ): string {
     return encodeBase64(sha256(encodeCanonicalLengthDelimited([domain, ...parts])), 'base64url');
+}
+
+/**
+ * Same canonical domain separation as the portable base64url digest, encoded
+ * as lowercase hex for incumbent persisted fingerprint seams.
+ */
+export function computeCanonicalDomainSeparatedHexDigest(
+    domain: string,
+    parts: readonly (string | Uint8Array)[],
+): string {
+    return bytesToHex(sha256(encodeCanonicalLengthDelimited([domain, ...parts])));
 }

@@ -1,0 +1,42 @@
+[package]
+name = "happier-desktop-native"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "happier_desktop_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+napi = { version = "3.12.1", default-features = false, features = ["napi8"] }
+napi-derive = "3.6.3"
+
+[target."cfg(target_os = \"macos\")".dependencies]
+# Pinned to the exact versions `apps/ui/src-tauri` resolves, so this code can be
+# moved between the two crates verbatim.
+objc2 = "0.6.2"
+objc2-app-kit = { version = "=0.3.1", features = [
+  "NSApplication",
+  "NSColor",
+  "NSGraphics",
+  "NSPanel",
+  "NSResponder",
+  "NSScreen",
+  "NSView",
+  "NSWindow",
+] }
+objc2-core-graphics = "=0.3.1"
+objc2-foundation = { version = "=0.3.1", features = [
+  "NSArray",
+  "NSDictionary",
+  "NSEnumerator",
+  "NSGeometry",
+  "NSObject",
+  "NSString",
+  "NSValue",
+] }
+
+[build-dependencies]
+napi-build = "2.4.1"

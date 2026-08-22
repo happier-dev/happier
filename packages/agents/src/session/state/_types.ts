@@ -1,5 +1,4 @@
 import type {
-  AgentNativeContinuityProofV1,
   SessionMetadata,
   SessionStateCapabilitiesV1,
   SessionStateFieldClass,
@@ -86,18 +85,25 @@ export type SessionStateFieldWriteValue<F extends SessionStateFieldId> =
     : F extends 'identity.providerSessionId'
       ? SessionStateFieldValue<F> | Readonly<{
         value: SessionStateFieldValue<F>;
-        metadataKey: string;
         /**
-         * Matched continuity proof for the id in `value`, written to the target
-         * Agent's catalog-declared proof key in the same metadata update.
+         * The Agent's catalog-declared flat `<vendor>SessionId` slot, when it
+         * has one. `null` — the normal case for a contributed Agent, which has
+         * no generated slot — routes the id to the agent-agnostic
+         * runtime-descriptor slot instead of discarding it.
+         */
+        metadataKey: string | null;
+        /**
+         * Where the Agent keeps its own session log for the id in `value`,
+         * written to the target Agent's catalog-declared log-path key in the
+         * same metadata update. MACHINE-LOCAL.
          *
          * It travels inside this envelope rather than as its own field so a
-         * proof can never be published independently of the id it proves
-         * (`REQ-STATE-01`). Omitting it, or passing `null`, CLEARS any existing
-         * proof: a proof only proves the exact id it was produced with, so an
-         * id write with no proof must not inherit the previous one.
+         * path can never be published independently of the id whose
+         * conversation it names. Omitting it, or passing `null`, CLEARS any
+         * existing path: an id write with no path must not inherit the previous
+         * id's log.
          */
-        continuityProof?: AgentNativeContinuityProofV1 | null;
+        nativeSessionLogPath?: string | null;
       }>
     : F extends 'intent.model'
       ? SessionModelSelectionIntentV1

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import {
   AutomationAccountCurrentnessWitnessV1Schema,
-} from '../../automations/automationEventV1.js';
+} from '../../automations/automationAccountCurrentnessV1.js';
 import {
   AutomationSessionStartRequestEnvelopeV1Schema,
   validateAutomationSessionStartRequestEnvelopeOuterForModeV1,

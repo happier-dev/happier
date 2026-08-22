@@ -27,6 +27,21 @@ const eventOccurrence = {
   payload: { action: 'opened', issue: { number: 42 } },
 } as const;
 
+const conversationOccurrence = {
+  v: 1,
+  kind: 'conversation',
+  bindingId: 'binding-1',
+  occurrenceId: 'slack:event:1',
+  occurredAt: 1_714_000_000_000,
+  caller: {
+    pluginId: 'com.acme.slack-bridge',
+    contributionLocalId: 'slack/observation-ingest-v1',
+    machineId: 'machine-1',
+  },
+  input: { sender: { id: 'U-1' }, text: 'Summarize the latest change.' },
+  replyContextIdentity: 'reply-context-1',
+} as const;
+
 describe('Automation occurrence V1', () => {
   it('normalizes and bounds the shared manual idempotency contract by UTF-8 bytes', () => {
     expect(AutomationManualIdempotencyKeyV1Schema.parse('  ci-build-42  '))
@@ -35,6 +50,28 @@ describe('Automation occurrence V1', () => {
       .toBe(false);
     expect(AutomationManualIdempotencyKeyV1Schema.safeParse('e\u0301').success)
       .toBe(false);
+  });
+
+  it('namespaces a Conversation occurrence by its owning plugin, mirroring Plugin Events', () => {
+    const own = deriveAutomationOccurrenceKeyV1(conversationOccurrence);
+    // Two plugins observing the same binding and occurrence id must not
+    // collide onto one Run, exactly as two Event plugins do not.
+    const otherPlugin = deriveAutomationOccurrenceKeyV1({
+      ...conversationOccurrence,
+      caller: { ...conversationOccurrence.caller, pluginId: 'com.acme.teams-bridge' },
+    });
+    expect(own).not.toBe(otherPlugin);
+    // Rejoin identity still excludes the facts that legitimately move: the
+    // admitting machine, the admitting contribution, and the reply context.
+    expect(deriveAutomationOccurrenceKeyV1({
+      ...conversationOccurrence,
+      caller: { ...conversationOccurrence.caller, machineId: 'machine-2' },
+      replyContextIdentity: 'reply-context-2',
+    })).toBe(own);
+    expect(deriveAutomationOccurrenceKeyV1({
+      ...conversationOccurrence,
+      bindingId: 'binding-2',
+    })).not.toBe(own);
   });
 
   it('derives stable, automation-scoped identities for retried manual occurrences', () => {

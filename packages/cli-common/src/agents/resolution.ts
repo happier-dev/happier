@@ -6,6 +6,7 @@ import {
   getAgentCliRuntimeSpec,
   legacyCustomAcpCompat,
   type AgentId,
+  type BundledAgentId,
   type AgentCliRuntimeSpec,
   type AgentCliManagedInstallSpec,
   type AgentCliSourcePreference,
@@ -39,7 +40,13 @@ type RuntimeResolutionOptions = Readonly<{
 }>;
 
 export type AgentCliJavaScriptRuntimeKind = 'none' | 'node' | 'bun';
-type AgentCliLookupId = AgentId | (typeof legacyCustomAcpCompat.LEGACY_COMPAT_AGENT_IDS)[number];
+/**
+ * Lookup ids answered from the generated bundled CLI runtime table.
+ *
+ * An externally installed Agent carries its own CLI descriptor from its plugin
+ * manifest and resolves through the `*ForRuntime` family instead.
+ */
+type AgentCliLookupId = BundledAgentId | (typeof legacyCustomAcpCompat.LEGACY_COMPAT_AGENT_IDS)[number];
 
 const AGENT_CLI_SOURCE_OVERRIDE_FILE_EXTENSIONS = /\.(?:[cm]?[jt]sx?)$/i;
 const AGENT_CLI_SHEBANG_RUNTIME_FILE_EXTENSIONS = /\.(?:[cm]?tsx?|jsx)$/i;

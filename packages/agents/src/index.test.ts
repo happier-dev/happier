@@ -45,6 +45,7 @@ import {
   type RuntimeTranscriptSourceFacet,
   type SessionStateFacet,
   type AgentId,
+  type BundledAgentId,
   type AgentAuthProbeConfig,
   type AgentLocalCliConfig,
   type CanonicalAgentId,
@@ -332,14 +333,12 @@ describe('agents package exports', () => {
   });
 
   it('re-exports canonical aggregates while keeping customAcp compat root exports narrowly scoped', () => {
-    expectTypeOf<AgentId>().toEqualTypeOf<CanonicalAgentId>();
-    expectTypeOf<AgentId>().toEqualTypeOf<CanonicalAgentId>();
+    expectTypeOf<BundledAgentId>().toEqualTypeOf<CanonicalAgentId>();
     expectTypeOf<(typeof agents.AGENT_IDS)[number]>().toEqualTypeOf<CanonicalAgentId>();
-    expectTypeOf<(typeof agents.AGENT_IDS)[number]>().toEqualTypeOf<AgentId>();
+    expectTypeOf<BundledAgentId>().toExtend<AgentId>();
     expect(agents.AGENT_IDS).toEqual(agents.CANONICAL_AGENT_IDS);
-    expect(agents.AGENT_IDS).toEqual(agents.CANONICAL_AGENT_IDS);
-    expect(agents.isAgentId('claude')).toBe(true);
-    expect(agents.isAgentId('customAcp')).toBe(false);
+    expect(agents.isBundledAgentId('claude')).toBe(true);
+    expect(agents.isBundledAgentId('customAcp')).toBe(false);
     expect(agents.AGENT_IDS).not.toContain('customAcp');
     expect(AGENTS_CORE).not.toHaveProperty('customAcp');
     expect(AGENT_MODEL_CONFIG).not.toHaveProperty('customAcp');

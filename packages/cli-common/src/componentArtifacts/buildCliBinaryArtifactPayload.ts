@@ -542,16 +542,13 @@ async function prepareCliDistSnapshot({
     bundles: workspaceBundles.map(({ packageName, srcDir }) => ({ packageName, srcDir })),
     ensureWorkspacePackagesBuiltByName,
   });
-  await withWorkspaceBundleLock(
-    () => syncCliBundledWorkspacePackagesForCompile(repoRoot, cliDir, workspaceBundles),
-    { lockPath: resolveCliSharedDepsBuildLockPath(repoRoot) },
-  );
-  const prepared = await withCliDistBuildLock<{
-    snapshotDistDir: string;
-    workspaceRuntimeIdentity: string;
-    workspaceRuntimePackages: readonly string[];
-  }>(
-    async ({ heldLockValue }) => {
+  const prepared = await withWorkspaceBundleLock(() => {
+    syncCliBundledWorkspacePackagesForCompile(repoRoot, cliDir, workspaceBundles);
+    return withCliDistBuildLock<{
+      snapshotDistDir: string;
+      workspaceRuntimeIdentity: string;
+      workspaceRuntimePackages: readonly string[];
+    }>(async ({ heldLockValue }) => {
       const runCommandWithHeldDistLock: RunCommand = (cmd, args, options = {}) => runCommand(cmd, args, {
         ...options,
         env: createWorkspaceChildBuildEnv({
@@ -606,9 +603,13 @@ async function prepareCliDistSnapshot({
         workspaceRuntimeIdentity: workspaceRuntime.fingerprint,
         workspaceRuntimePackages: workspaceRuntime.packageNames,
       };
-    },
-    { lockPath },
-  );
+    }, { lockPath });
+  }, {
+    // pkgroll consumes the installed workspace closure below apps/cli/node_modules.
+    // Keep the existing publication lock through that read so a source-dev refresh
+    // cannot replace the closure halfway through a multi-minute bundle.
+    lockPath: resolveCliSharedDepsBuildLockPath(repoRoot),
+  });
   return { ...prepared, yarn };
 }
 
@@ -840,22 +841,18 @@ export async function buildCliBinaryArtifactSupportPayload({
   workspaceRuntimeIdentity: string;
   runtimeAssetRelativePath: string;
 }>> {
-  const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
-  return await withCliDistBuildLock(
-    async () => await stageCliBinaryArtifactSupportPayload({
-      repoRoot,
-      payloadDir,
-      target,
-      runCommand,
-      commandProbe,
-      cliProxyApiManagedRuntimeExecutablePath,
-      expectedWorkspaceRuntimeIdentity,
-      supportArtifactFingerprint,
-      goVersion,
-      preserveCompilePayloadAssets,
-    }),
-    { lockPath },
-  );
+  return await stageCliBinaryArtifactSupportPayload({
+    repoRoot,
+    payloadDir,
+    target,
+    runCommand,
+    commandProbe,
+    cliProxyApiManagedRuntimeExecutablePath,
+    expectedWorkspaceRuntimeIdentity,
+    supportArtifactFingerprint,
+    goVersion,
+    preserveCompilePayloadAssets,
+  });
 }
 
 /**
@@ -899,19 +896,22 @@ export async function buildCliBinaryArtifactPayload({
     ensureWorkspacePackagesBuiltByName,
     requiredCliDistInputFingerprint,
   });
-  const support = await buildCliBinaryArtifactSupportPayload({
-    repoRoot,
-    payloadDir,
-    target,
-    runCommand,
-    commandProbe,
-    cliProxyApiManagedRuntimeExecutablePath,
-    expectedWorkspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
-    // The release payload preserves legitimate assets emitted alongside the
-    // Bun executable (for example its managed JS runtime). New immutable
-    // daemon support artifacts stage into an empty payload instead.
-    preserveCompilePayloadAssets: true,
-  });
+  const support = await withCliDistBuildLock(
+    async () => await buildCliBinaryArtifactSupportPayload({
+      repoRoot,
+      payloadDir,
+      target,
+      runCommand,
+      commandProbe,
+      cliProxyApiManagedRuntimeExecutablePath,
+      expectedWorkspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
+      // The release payload preserves legitimate assets emitted alongside the
+      // Bun executable (for example its managed JS runtime). New immutable
+      // daemon support artifacts stage into an empty payload instead.
+      preserveCompilePayloadAssets: true,
+    }),
+    { lockPath: join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock') },
+  );
   writeCliBinaryArtifactRuntimeAssetBuildManifest({
     payloadDir,
     relativePath: support.runtimeAssetRelativePath,

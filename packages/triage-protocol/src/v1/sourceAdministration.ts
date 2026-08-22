@@ -1,5 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-
 import {
     defineProtocolLiteral,
     defineProtocolObject,
@@ -60,8 +58,6 @@ export const TriageSourceAdministrationActionInputV1Schema = defineProtocolUnion
 export type TriageSourceAdministrationActionInputV1 = ReturnType<
     typeof TriageSourceAdministrationActionInputV1Schema.parse
 >;
-export const TriageSourceAdministrationActionInputV1JsonSchema: PluginJsonSchema =
-    TriageSourceAdministrationActionInputV1Schema.jsonSchema;
 
 /**
  * Every success arm exposes only the canonical `sourceInstanceId`: it never
@@ -113,5 +109,3 @@ export const TriageSourceAdministrationActionResultV1Schema = defineProtocolUnio
 export type TriageSourceAdministrationActionResultV1 = ReturnType<
     typeof TriageSourceAdministrationActionResultV1Schema.parse
 >;
-export const TriageSourceAdministrationActionResultV1JsonSchema: PluginJsonSchema =
-    TriageSourceAdministrationActionResultV1Schema.jsonSchema;

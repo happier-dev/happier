@@ -38,7 +38,16 @@ function tokenize(value: unknown): string[] {
     .filter(Boolean);
 }
 
-function actionSearchText(spec: ActionSpec): string {
+type SearchableActionDefinition = Readonly<{
+  id: string;
+  title: string;
+  description?: string | null;
+  bindings?: ActionSpec['bindings'] | ActionDefinitionSummaryV1['bindings'];
+  slash?: ActionSpec['slash'] | ActionDefinitionSummaryV1['slash'];
+  inputHints?: ActionSpec['inputHints'] | ActionDefinitionSummaryV1['inputHints'];
+}>;
+
+function actionSearchText(spec: SearchableActionDefinition): string {
   const fieldText = Array.isArray(spec.inputHints?.fields)
     ? spec.inputHints.fields
         .flatMap((field) => [
@@ -67,7 +76,9 @@ function actionSearchText(spec: ActionSpec): string {
     spec.bindings?.mcpToolName ?? '',
     spec.bindings?.sdkMethod ?? '',
     spec.bindings?.rpcMethod ?? '',
-    ...(spec.bindings?.rpcMethodAliases ?? []),
+    ...(Array.isArray(spec.bindings?.rpcMethodAliases)
+      ? spec.bindings.rpcMethodAliases.filter((alias): alias is string => typeof alias === 'string')
+      : []),
     ...(spec.slash?.tokens ?? []),
     fieldText,
   ]
@@ -75,7 +86,7 @@ function actionSearchText(spec: ActionSpec): string {
     .toLowerCase();
 }
 
-function actionSearchScore(spec: ActionSpec, query: string): number {
+function actionSearchScore(spec: SearchableActionDefinition, query: string): number {
   const haystack = actionSearchText(spec);
   const normalizedQuery = normalizeText(query);
   if (!normalizedQuery) return 1;
@@ -144,6 +155,29 @@ export function searchSerializedActionSpecs(
   return ranked;
 }
 
+function actionDefinitionToSummary(definition: ActionDefinitionV1): ActionDefinitionSummaryV1 {
+  const { kindVersion: _kindVersion, inputSchema: _inputSchema, ...summary } = definition;
+  return summary;
+}
+
+export function searchActionDefinitionSummaries(
+  definitions: readonly ActionDefinitionSummaryV1[],
+  params?: Readonly<{ query?: string | null; limit?: number | null }>,
+): readonly ActionDefinitionSummaryV1[] {
+  const query = typeof params?.query === 'string' ? params.query.trim() : '';
+  const limitRaw = typeof params?.limit === 'number' && Number.isFinite(params.limit) ? Math.floor(params.limit) : 20;
+  const limit = Math.max(1, Math.min(100, limitRaw));
+  return definitions
+    .map((definition) => ({ definition, score: actionSearchScore(definition, query) }))
+    .filter((entry) => (query ? entry.score > 0 : true))
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return left.definition.title.localeCompare(right.definition.title);
+    })
+    .slice(0, limit)
+    .map((entry) => entry.definition);
+}
+
 export function listActionSpecsForCatalogSurface(params: Readonly<{
   surface?: keyof ActionSurfaces | null;
   isActionEnabled?: (id: ActionId) => boolean;
@@ -157,8 +191,17 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
   query?: string | null;
   limit?: number | null;
   isActionEnabled?: (id: ActionId) => boolean;
+  additionalDefinitions?: readonly ActionDefinitionV1[];
 }>): readonly SerializedActionSpec[] {
-  return searchSerializedActionSpecs(listActionSpecsForCatalogSurface(params), {
+  const hostDefinitions = listActionSpecsForCatalogSurface(params).map(serializeActionSpec);
+  const hostIds = new Set(hostDefinitions.map((definition) => definition.id));
+  const additionalDefinitions = (params.additionalDefinitions ?? [])
+    .filter((definition) => (
+      !hostIds.has(definition.id)
+      && (!params.surface || definition.surfaces[params.surface] === true)
+    ))
+    .map(actionDefinitionToSummary);
+  return searchActionDefinitionSummaries([...hostDefinitions, ...additionalDefinitions], {
     query: params.query,
     limit: params.limit,
   });
@@ -202,7 +245,12 @@ export function getActionDefinitionForCatalogSurface(params: Readonly<{
   return spec ? actionSpecToActionDefinitionV1(spec) : null;
 }
 
-export function findActionInputFieldHint(spec: ActionSpec, fieldPath: string): ActionInputFieldHint | null {
+export function findActionInputFieldHint(
+  spec: Readonly<{
+    inputHints?: ActionSpec['inputHints'] | ActionDefinitionSummaryV1['inputHints'];
+  }>,
+  fieldPath: string,
+): ActionInputFieldHint | null {
   const normalizedFieldPath = typeof fieldPath === 'string' ? fieldPath.trim() : '';
   if (!normalizedFieldPath) return null;
   const fields = Array.isArray(spec.inputHints?.fields) ? spec.inputHints.fields : [];

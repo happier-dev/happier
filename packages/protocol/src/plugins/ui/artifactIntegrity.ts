@@ -46,6 +46,26 @@ export function computePluginUiArtifactSha256DigestV1(bytes: Uint8Array): Plugin
   return `sha256:${bytesToHex(sha256(bytes))}`;
 }
 
+/**
+ * Hermes bytecode files open with the 64-bit magic `0x1F1903C103BC1FC6`,
+ * serialized little-endian. Such an artifact is Hermes VM machine code, not
+ * loadable JavaScript, so every host boundary that turns artifact bytes into an
+ * executable module refuses it here rather than handing it to a JS evaluator.
+ *
+ * The check is byte-based on purpose: a Re.Pack build with Hermes enabled emits
+ * bytecode under whatever entry name the author configured, so an entry-path
+ * suffix heuristic misses the realistic case.
+ */
+const HERMES_BYTECODE_MAGIC_LITTLE_ENDIAN_V1 = Object.freeze([
+  0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1f,
+] as const);
+
+export function isPluginUiHermesBytecodeArtifactV1(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < HERMES_BYTECODE_MAGIC_LITTLE_ENDIAN_V1.length) return false;
+  return HERMES_BYTECODE_MAGIC_LITTLE_ENDIAN_V1
+    .every((byte, index) => bytes[index] === byte);
+}
+
 export type PluginUiArtifactFileSetEntryV1 = Readonly<{
   relativePath: string;
   bytes: Uint8Array;

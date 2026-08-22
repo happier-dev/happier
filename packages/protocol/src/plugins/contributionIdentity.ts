@@ -4,7 +4,7 @@ import {
   defineProtocolObject,
   defineProtocolString,
   type ProtocolComposableSchema,
-} from './actions/jsonSchemaValidation.js';
+} from './actions/protocolComposableSchema.js';
 import type { PluginJsonSchemaV2 } from './contributions/publicTypes.js';
 import {
   MAX_PLUGIN_IDENTIFIER_BYTES,

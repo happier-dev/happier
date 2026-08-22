@@ -28,4 +28,10 @@ describe('normalizeStrictJsonValue', () => {
     }
     expect(terminal).toBe('leaf');
   });
+
+  it('does not apply the Agent Runtime byte ceiling to generic strict JSON', () => {
+    const value = 'x'.repeat(1_024 * 1_024);
+
+    expect(normalizeStrictJsonValue(value)).toBe(value);
+  });
 });

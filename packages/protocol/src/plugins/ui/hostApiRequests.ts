@@ -37,12 +37,13 @@ import {
   normalizePluginUiSubPathV1,
 } from './semanticCommands.js';
 import { PluginUiSurfaceContextV1Schema } from './surfaceContext.js';
+import { PluginUiContextEnrichmentV1Schema } from './currentUiContext.js';
+import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import {
     PluginTargetedContributionSelectionV1Schema,
     PluginUiTargetedContributionOperationV1Schema,
 } from './targetedContributions.js';
 import { SessionServerStartSpawnDraftV1Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
-import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 export {
   PLUGIN_UI_INSTANCE_KEY_MAX_UTF8_BYTES_V1,
@@ -85,13 +86,38 @@ export const PluginUiHostApiErrorCodeV1Schema = z.enum([
 export type PluginUiHostApiErrorCodeV1 =
   z.infer<typeof PluginUiHostApiErrorCodeV1Schema>;
 
+/**
+ * A typed mounted-host failure. This is distinct from an Action result: plugin
+ * Action JSON is allowed to carry a `code` member with the same spelling.
+ */
+export const PluginUiHostApiErrorPayloadV1Schema = z.object({
+  code: PluginUiHostApiErrorCodeV1Schema,
+  message: z.string().trim().min(1).optional(),
+  diagnostics: z.array(z.string().trim().min(1)).default([]),
+}).strict();
+export type PluginUiHostApiErrorPayloadV1 =
+  z.infer<typeof PluginUiHostApiErrorPayloadV1Schema>;
+
+/**
+ * One mount-bound replacement or clear of the caller's semantic current-UI
+ * enrichment. The mounted host owns identity binding and opaque command-handle
+ * allocation; the author can only send closed semantic data or clear it.
+ */
+export const PluginUiPublishCurrentUiContextRequestV1Schema = z.object({
+  enrichment: PluginUiContextEnrichmentV1Schema.nullable(),
+}).strict();
+export type PluginUiPublishCurrentUiContextRequestV1 =
+  z.infer<typeof PluginUiPublishCurrentUiContextRequestV1Schema>;
+
+const ComposerRefV1ZodSchema = asProtocolZod(ComposerRefV1Schema);
+
 /** `activeComposer` has no request payload; an absent focused composer is null. */
-export const PluginUiActiveComposerResultV1Schema = ComposerRefV1Schema.nullable();
+export const PluginUiActiveComposerResultV1Schema = ComposerRefV1ZodSchema.nullable();
 export type PluginUiActiveComposerResultV1 =
   z.infer<typeof PluginUiActiveComposerResultV1Schema>;
 
 export const PluginUiReadComposerRequestV1Schema = z.object({
-  ref: ComposerRefV1Schema,
+  ref: ComposerRefV1ZodSchema,
 }).strict();
 export type PluginUiReadComposerRequestV1 =
   z.infer<typeof PluginUiReadComposerRequestV1Schema>;
@@ -108,7 +134,7 @@ export type PluginUiWatchComposerEventV1 =
   z.infer<typeof PluginUiWatchComposerEventV1Schema>;
 
 export const PluginUiApplyComposerRequestV1Schema = z.object({
-  ref: ComposerRefV1Schema,
+  ref: ComposerRefV1ZodSchema,
   transaction: ComposerTransactionV1Schema,
 }).strict();
 export type PluginUiApplyComposerRequestV1 =
@@ -125,7 +151,7 @@ export type PluginUiFocusComposerResultV1 =
   z.infer<typeof PluginUiFocusComposerResultV1Schema>;
 
 export const PluginUiSetComposerDecorationsRequestV1Schema = z.object({
-  ref: ComposerRefV1Schema,
+  ref: ComposerRefV1ZodSchema,
   key: z.string().trim().min(1),
   decorations: ComposerDecorationSetV1Schema.nullable(),
 }).strict();
@@ -136,7 +162,7 @@ export type PluginUiSetComposerDecorationsResultV1 =
   z.infer<typeof PluginUiSetComposerDecorationsResultV1Schema>;
 
 export const PluginUiAcquireComposerInputLockRequestV1Schema = z.object({
-  ref: ComposerRefV1Schema,
+  ref: ComposerRefV1ZodSchema,
   request: ComposerInputLockRequestV1Schema,
 }).strict();
 export type PluginUiAcquireComposerInputLockRequestV1 =
@@ -144,7 +170,7 @@ export type PluginUiAcquireComposerInputLockRequestV1 =
 
 /** Selection is host-bound to the exact Composer and mounted contribution. */
 export const PluginUiPickComposerMediaRequestV1Schema = z.object({
-  ref: ComposerRefV1Schema,
+  ref: ComposerRefV1ZodSchema,
   request: ComposerContentPickMediaRequestV1Schema,
 }).strict();
 export type PluginUiPickComposerMediaRequestV1 =
@@ -229,33 +255,6 @@ export const PluginUiHostApiOpenExternalLinkRequestV1Schema = z.object({
 }).strict();
 export type PluginUiHostApiOpenExternalLinkRequestV1 =
   z.infer<typeof PluginUiHostApiOpenExternalLinkRequestV1Schema>;
-
-/**
- * Recognize a host-API failure payload inside a `PluginUiJsonValueV1` result.
- *
- * A mounted host answers `handleRequest` with a plain JSON value, so a failure
- * is carried as `{ code, diagnostics }` rather than a thrown error. Every
- * transport (hosted-web bridge, React Native adapter) must reject on that shape
- * instead of resolving it as a successful action result (UI-D08); this is the
- * single owner of that recognition so a transport cannot carry its own copy of
- * the error-code list and drift.
- *
- * Recognition is deliberately keyed on `code` alone and tolerates additional
- * fields: a host may attach diagnostics-adjacent detail, and a value whose
- * `code` is a host-API error code is never a legitimate action result.
- */
-export function readPluginUiHostApiErrorPayload(
-  value: unknown,
-): Readonly<{ code: PluginUiHostApiErrorCodeV1; diagnostics: readonly string[] }> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Readonly<Record<string, unknown>>;
-  const code = PluginUiHostApiErrorCodeV1Schema.safeParse(record.code);
-  if (!code.success) return null;
-  const diagnostics = Array.isArray(record.diagnostics)
-    ? record.diagnostics.filter((entry): entry is string => typeof entry === 'string')
-    : [];
-  return Object.freeze({ code: code.data, diagnostics: Object.freeze(diagnostics) });
-}
 
 /**
  * A destination is always an exact qualified contribution reference. The caller
@@ -511,3 +510,37 @@ export const PluginUiHostApiRequestEnvelopeV1Schema = z.object({
 }).strict();
 export type PluginUiHostApiRequestEnvelopeV1 =
   z.infer<typeof PluginUiHostApiRequestEnvelopeV1Schema>;
+
+/**
+ * The one response boundary between a mounted host and its physical
+ * transports. `kind`, rather than a member of author-controlled JSON, decides
+ * whether a request succeeded or failed.
+ */
+export const PluginUiHostApiResponseEnvelopeV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    version: z.literal(1),
+    requestId: z.string().trim().min(1),
+    surface: PluginUiSurfaceContextV1Schema,
+    method: PluginUiHostApiRequestMethodV1Schema,
+    kind: z.literal('result'),
+    payload: PluginUiJsonValueV1Schema,
+  }).strict(),
+  z.object({
+    version: z.literal(1),
+    requestId: z.string().trim().min(1),
+    surface: PluginUiSurfaceContextV1Schema,
+    method: PluginUiHostApiRequestMethodV1Schema,
+    kind: z.literal('error'),
+    payload: PluginUiHostApiErrorPayloadV1Schema,
+  }).strict(),
+  z.object({
+    version: z.literal(1),
+    requestId: z.string().trim().min(1),
+    surface: PluginUiSurfaceContextV1Schema,
+    method: PluginUiHostApiRequestMethodV1Schema,
+    kind: z.literal('ack'),
+    payload: PluginUiJsonValueV1Schema.optional(),
+  }).strict(),
+]);
+export type PluginUiHostApiResponseEnvelopeV1 =
+  z.infer<typeof PluginUiHostApiResponseEnvelopeV1Schema>;

@@ -143,3 +143,41 @@ test('buildConfigureServerLinks keeps loopback server URL for local webapp links
   assert.equal(out.webUrl, 'http://127.0.0.1:8082/?server=http%3A%2F%2F127.0.0.1%3A3010');
   assert.equal(out.mobileUrl, 'happier://server');
 });
+
+test('mobile links omit a relay address no other device can reach', () => {
+  const webappUrl = 'https://app.happier.dev';
+  const publicKeyB64Url = 'abcDEF_123-zzz';
+
+  // Every form of "this machine". The bracketed IPv6 literal is the one that
+  // regressed: `new URL('http://[::1]:3005').hostname` is "[::1]", so a raw
+  // `=== '::1'` comparison let it through into a QR code that cannot work.
+  const unreachable = [
+    'http://127.0.0.1:3005',
+    'http://127.0.0.2:3005',
+    'http://[::1]:3005',
+    'http://localhost:3005',
+    'http://localhost.:3005',
+    'http://relay.localhost:3005',
+    'http://0.0.0.0:3005',
+  ];
+
+  for (const serverUrl of unreachable) {
+    const out = buildTerminalConnectLinks({ webappUrl, serverUrl, publicKeyB64Url });
+    assert.equal(
+      out.mobileUrl,
+      `happier://terminal?key=${publicKeyB64Url}`,
+      `expected no server param for ${serverUrl}`,
+    );
+    assert.ok(!out.mobileUrl.includes('server='), `leaked server param for ${serverUrl}`);
+  }
+});
+
+test('mobile links keep a relay address other devices can reach', () => {
+  const webappUrl = 'https://app.happier.dev';
+  const publicKeyB64Url = 'abcDEF_123-zzz';
+
+  for (const serverUrl of ['https://studio.example.ts.net', 'http://192.168.1.9:3005']) {
+    const out = buildTerminalConnectLinks({ webappUrl, serverUrl, publicKeyB64Url });
+    assert.ok(out.mobileUrl.includes('server='), `dropped a usable server param for ${serverUrl}`);
+  }
+});

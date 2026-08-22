@@ -1,8 +1,26 @@
 import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
 import {
+  PluginDiagnosticDataV1Schema,
+  PluginDiagnosticRemediationV1Schema,
+  type PluginDiagnosticDataV1,
+  type PluginDiagnosticRemediationV1,
+} from '../../daemon/pluginContributionIntrospection.js';
+import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
+import { z } from 'zod';
+import { isPluginError } from '../errors.js';
+import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
 } from './jsonSchemaValidation.js';
+import {
+  evaluatePluginActionPolicy,
+  type PluginActionPolicyInput,
+} from './policy.js';
+import type {
+  PluginActionConfirmationV2,
+  PluginActionDangerLevelV2,
+} from './v2.js';
 
 type StrictJsonValue =
   | null
@@ -15,11 +33,53 @@ type StrictJsonValue =
 export type PluginActionInvocationResult = Readonly<
   | { status: 'executed'; value: StrictJsonValue | null }
   | {
-    status: 'unavailable' | 'invalid' | 'failed';
+    status: 'unavailable';
+    code: string;
+    message: string;
+    /** Present only when canonical admission proves the handler did not begin. */
+    actionHandlerInvocation?: 'notStarted';
+  }
+  | {
+    status: 'invalid';
     code: string;
     message: string;
   }
+  | {
+    status: 'failed';
+    code: string;
+    message: string;
+    /** Present only for a proven canonical PluginError. */
+    retryable?: boolean;
+    /**
+     * The target's own published PluginError contract payload. Plugins are
+     * trusted code, so an author's structured failure detail reaches the
+     * caller instead of being reduced to a bare code. It is absent when the
+     * payload is not JSON-safe or exceeds the shared Action JSON byte bound.
+     */
+    data?: StrictJsonValue;
+  }
 >;
+
+/** Canonical terminal code when cancellation races an already-started Action. */
+export const PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE = 'plugin_action_outcome_unknown';
+
+/**
+ * Projects only an unavailable cancellation/retirement outcome. A proved
+ * non-start remains ordinary unavailable; absence of that proof after one of
+ * these terminal signals means the handler may have effected before it settled.
+ */
+export function projectPluginActionUnavailableOutcomeCode(
+  code: string,
+  actionHandlerInvocation: 'notStarted' | undefined,
+): string {
+  if (
+    actionHandlerInvocation === undefined
+    && (code === 'plugin_action_aborted' || code === 'plugin_action_generation_retired')
+  ) {
+    return PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE;
+  }
+  return code;
+}
 
 export type PluginActionInvocationHandlerInput = Readonly<{
   input: StrictJsonValue;
@@ -54,6 +114,15 @@ function invalidResult(message: string): PluginActionInvocationResult {
 
 function unavailable(code: string, message: string): PluginActionInvocationResult {
   return Object.freeze({ status: 'unavailable', code, message });
+}
+
+function unavailableBeforeHandler(code: string, message: string): PluginActionInvocationResult {
+  return Object.freeze({
+    status: 'unavailable',
+    code,
+    message,
+    actionHandlerInvocation: 'notStarted',
+  });
 }
 
 function readPreDispatchUnavailableResult(
@@ -210,11 +279,374 @@ function awaitPluginActionHandlerSettlementOrAbort(
   });
 }
 
-function readPluginError(error: unknown): Readonly<{ code: string; message: string }> | null {
-  if (!(error instanceof Error) || error.name !== 'PluginError') return null;
-  const code = Object.getOwnPropertyDescriptor(error, 'code');
-  if (!code || !('value' in code) || typeof code.value !== 'string') return null;
-  return Object.freeze({ code: code.value, message: error.message });
+/**
+ * Only a proven canonical PluginError may publish an author-chosen failure
+ * code, `retryable` signal and contract payload. Plugins are trusted code, so
+ * the author's own structured detail is the failure a caller receives rather
+ * than a bare taxonomy code.
+ *
+ * `data` is the SDK-published contract representation, so it is the one thing
+ * projected: `cause` is an Error rather than contract data and never becomes a
+ * JSON payload. The payload passes the same JSON-safety and aggregate byte
+ * bound every Action input and result already passes - no second bound exists
+ * for this path - and only that field is dropped when it does not.
+ */
+function readPluginError(error: unknown): Readonly<{
+  code: string;
+  message: string;
+  retryable: boolean;
+  data?: StrictJsonValue;
+}> | null {
+  if (!isPluginError(error)) return null;
+  const data = AgentRuntimeJsonValueV1Schema.safeParse(error.data);
+  return Object.freeze({
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    ...(data.success ? { data: data.data } : {}),
+  });
+}
+
+/**
+ * The author vocabulary a canonical PluginError publishes alongside its code.
+ * Protocol owns the wire decision so the daemon Action host and the SDK test
+ * host read one payload the same way instead of each inventing a reader.
+ */
+export type PluginActionFailureAuthorPayloadV1 = Readonly<{
+  details?: StrictJsonValue;
+  remediation?: PluginDiagnosticRemediationV1;
+  diagnostics?: readonly PluginDiagnosticDataV1[];
+}>;
+
+const PluginActionFailureDiagnosticsV1Schema = z.array(PluginDiagnosticDataV1Schema);
+
+/**
+ * Reads the author vocabulary out of a projected failure `data` payload. Each
+ * field is admitted independently, so one field a target published in a shape
+ * this version does not model cannot suppress the rest. Identity and
+ * consistency fields are deliberately not read here: `code`, `message` and
+ * `retryable` are already carried as proven top-level projection facts.
+ */
+export function readPluginActionFailureAuthorPayload(
+  data: StrictJsonValue | undefined,
+): PluginActionFailureAuthorPayloadV1 {
+  if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) {
+    return Object.freeze({});
+  }
+  const record = data as Readonly<Record<string, StrictJsonValue | undefined>>;
+  const remediation = record.remediation === undefined
+    ? undefined
+    : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation);
+  const diagnostics = record.diagnostics === undefined
+    ? undefined
+    : PluginActionFailureDiagnosticsV1Schema.safeParse(record.diagnostics);
+  return Object.freeze({
+    ...(record.details === undefined ? {} : { details: record.details }),
+    ...(remediation?.success ? { remediation: remediation.data } : {}),
+    ...(diagnostics?.success ? { diagnostics: Object.freeze(diagnostics.data) } : {}),
+  });
+}
+
+const PluginActionPresentUserAuthorizationScopeSchema = z.object({
+  accountId: z.string().optional(),
+  projectId: z.string().optional(),
+  workspaceId: z.string().optional(),
+  machineId: z.string().optional(),
+  actorId: z.string().optional(),
+}).strict();
+
+const PluginActionPresentUserAuthorizationRequirementSchema = z.object({
+  id: z.string(),
+  required: z.boolean(),
+  status: z.enum(['available', 'denied', 'unavailable', 'notApplicable']),
+  code: z.string().optional(),
+}).strict();
+
+/**
+ * The one wire-safe form of the canonical final-policy facts used by Action
+ * admission. It deliberately excludes availability and confirmation because
+ * those remain Action-present-user gate inputs rather than authorization facts.
+ */
+export const PluginActionPresentUserAuthorizationFactsSchema = z.object({
+  packageTrust: z.object({
+    packageIdentity: z.string(),
+    reviewedPackageIdentity: z.string().nullable(),
+  }).strict(),
+  generation: z.object({
+    targetGeneration: z.string(),
+    desiredGeneration: z.string().nullable(),
+    appliedGeneration: z.string().nullable(),
+    targetGenerationMode: z.enum(['current', 'retained']).optional(),
+  }).strict(),
+  resourceSelections: z.array(z.object({
+    id: z.string(),
+    required: z.boolean(),
+    requestedResourceId: z.string().optional(),
+    selectedResourceId: z.string().optional(),
+  }).strict()),
+  scopedGrants: z.array(z.object({
+    id: z.string(),
+    required: z.boolean(),
+    status: z.enum(['active', 'missing', 'revoked']),
+    requiredScope: PluginActionPresentUserAuthorizationScopeSchema,
+    grantedScope: PluginActionPresentUserAuthorizationScopeSchema.optional(),
+  }).strict()),
+  serviceAvailability: z.array(PluginActionPresentUserAuthorizationRequirementSchema),
+  operatingSystemAuthorization: z.array(PluginActionPresentUserAuthorizationRequirementSchema),
+}).strict();
+
+export type PluginActionPresentUserAuthorizationFacts = Readonly<
+  Omit<PluginActionPolicyInput, 'availability' | 'confirmation'>
+>;
+
+/**
+ * Normalized Action facts that participate in one present-user admission.
+ * The caller resolves these from its own realm, but the shared gate owns their
+ * surface/scope/policy decision and the resulting current-intent fingerprint.
+ */
+export type PluginActionPresentUserGatePolicy = Readonly<{
+  qualifiedId: string;
+  generation: string;
+  dangerLevel: PluginActionDangerLevelV2;
+  scopes: readonly string[];
+  surfaces: readonly string[];
+  confirmation?: PluginActionConfirmationV2;
+  availability?: PluginActionPolicyInput['availability'];
+  authorization: PluginActionPresentUserAuthorizationFacts;
+  /** Exact realm-owned facts not otherwise represented in the policy evaluator. */
+  fingerprintContext?: unknown;
+}>;
+
+export type PluginActionPresentUserGateResolved<TAction> = Readonly<{
+  status: 'resolved';
+  action: TAction;
+  policy: PluginActionPresentUserGatePolicy;
+  /** A realm may retire a selection while consent is on screen. */
+  isCurrent?: () => boolean;
+}>;
+
+export type PluginActionPresentUserGateResolution<TAction> =
+  | PluginActionPresentUserGateResolved<TAction>
+  | Readonly<{ status: 'unavailable'; code: string; message?: string }>
+  | Readonly<{ status: 'failed'; code: string; message: string }>;
+
+export type PluginActionCurrentIntentRequest<TAction> = Readonly<{
+  action: TAction;
+  fingerprint: string;
+  /** Declared Action capability surface. */
+  surface: string;
+  /** Actual invoking host surface that the approval binds. */
+  invocationSurface: string;
+  signal?: AbortSignal;
+}>;
+
+export type PluginActionCurrentIntentResult = Readonly<
+  | { status: 'approved'; fingerprint: string }
+  | { status: 'rejected' | 'unavailable'; code: string }
+>;
+
+export type PluginActionPresentUserGateResult<TAction> = Readonly<
+  | { status: 'admitted'; action: TAction }
+  | { status: 'unavailable' | 'failed'; code: string; message: string }
+>;
+
+function presentUserUnavailable(code: string, message = code): PluginActionPresentUserGateResult<never> {
+  return Object.freeze({ status: 'unavailable', code, message });
+}
+
+function presentUserFailed(code: string, message: string): PluginActionPresentUserGateResult<never> {
+  return Object.freeze({ status: 'failed', code, message });
+}
+
+function isPresentUserResolutionCurrent<TAction>(
+  resolution: PluginActionPresentUserGateResolved<TAction>,
+): boolean {
+  try {
+    return resolution.isCurrent?.() !== false;
+  } catch {
+    return false;
+  }
+}
+
+function requiresPresentUserIntent(
+  policy: PluginActionPresentUserGatePolicy,
+  invocationSurface: string,
+): boolean {
+  // Plugin/background execution has no present user to ask. Every other
+  // execution realm must bind a non-safe Action to one live decision.
+  return invocationSurface !== 'plugin'
+    && invocationSurface !== 'background'
+    && (policy.dangerLevel !== 'safe' || policy.confirmation !== undefined);
+}
+
+function evaluatePresentUserPolicy(
+  policy: PluginActionPresentUserGatePolicy,
+  args: Readonly<{ surface: string; invocationSurface: string; sessionId?: string }>,
+): Readonly<{ outcome: 'visible' | 'disabled' | 'denied' | 'unavailable'; code: string; requiresCurrentIntent: boolean }> {
+  const requiresCurrentIntent = requiresPresentUserIntent(policy, args.invocationSurface);
+  if (!policy.surfaces.includes(args.surface)) {
+    return Object.freeze({
+      outcome: 'unavailable',
+      code: 'plugin_action_surface_unavailable',
+      requiresCurrentIntent,
+    });
+  }
+  if (policy.scopes.includes('session') && !args.sessionId) {
+    return Object.freeze({
+      outcome: 'unavailable',
+      code: 'plugin_action_session_required',
+      requiresCurrentIntent,
+    });
+  }
+  return evaluatePluginActionPolicy({
+    ...policy.authorization,
+    ...(policy.availability === undefined ? {} : { availability: policy.availability }),
+    confirmation: requiresCurrentIntent ? 'currentIntentRequired' : 'notRequired',
+  });
+}
+
+export function fingerprintPluginActionCurrentIntent(params: Readonly<{
+  policy: PluginActionPresentUserGatePolicy;
+  input: unknown;
+  surface: string;
+  invocationSurface: string;
+  sessionId?: string;
+}>): string {
+  return computeCanonicalDomainSeparatedHexDigest(
+    'happier.plugin-action.current-intent.v1',
+    [createCanonicalJsonSigningInput({
+      qualifiedId: params.policy.qualifiedId,
+      generation: params.policy.generation,
+      inputPresent: params.input !== undefined,
+      ...(params.input === undefined ? {} : { input: params.input }),
+      surface: params.surface,
+      invocationSurface: params.invocationSurface,
+      ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
+      dangerLevel: params.policy.dangerLevel,
+      scopes: params.policy.scopes,
+      surfaces: params.policy.surfaces,
+      ...(params.policy.confirmation === undefined
+        ? {}
+        : { confirmation: params.policy.confirmation }),
+      ...(params.policy.availability === undefined
+        ? {}
+        : { availability: params.policy.availability }),
+      authorization: params.policy.authorization,
+      ...(params.policy.fingerprintContext === undefined
+        ? {}
+        : { fingerprintContext: params.policy.fingerprintContext }),
+    })],
+  );
+}
+
+/**
+ * One realm-neutral current-intent gate for Action execution. It owns policy
+ * admission, consent binding, cancellation, and the mandatory fresh resolve /
+ * policy / fingerprint pass after approval; leaves own only realm-specific
+ * selection and execution.
+ */
+export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
+  resolve: () => PluginActionPresentUserGateResolution<TAction> | Promise<PluginActionPresentUserGateResolution<TAction>>;
+  requestCurrentIntent?: (request: PluginActionCurrentIntentRequest<TAction>) => Promise<PluginActionCurrentIntentResult>;
+}>): Readonly<{
+  admit(args: Readonly<{
+    input: unknown;
+    surface: string;
+    invocationSurface: string;
+    sessionId?: string;
+    signal?: AbortSignal;
+  }>): Promise<PluginActionPresentUserGateResult<TAction>>;
+}> {
+  const resolve = async (): Promise<PluginActionPresentUserGateResolution<TAction>> => {
+    try {
+      return await deps.resolve();
+    } catch {
+      return Object.freeze({
+        status: 'unavailable' as const,
+        code: 'plugin_action_selection_unavailable',
+      });
+    }
+  };
+  const readResolved = async (): Promise<PluginActionPresentUserGateResolved<TAction> | PluginActionPresentUserGateResult<TAction>> => {
+    const resolution = await resolve();
+    if (resolution.status === 'failed') return presentUserFailed(resolution.code, resolution.message);
+    if (resolution.status === 'unavailable') return presentUserUnavailable(resolution.code, resolution.message);
+    if (!isPresentUserResolutionCurrent(resolution)) {
+      return presentUserUnavailable('plugin_action_generation_retired');
+    }
+    return resolution;
+  };
+
+  return Object.freeze({
+    async admit(args) {
+      if (args.signal?.aborted) return presentUserUnavailable('plugin_action_aborted');
+      const initial = await readResolved();
+      if ('status' in initial && initial.status !== 'resolved') return initial;
+      const initialPolicy = evaluatePresentUserPolicy(initial.policy, args);
+      if (initialPolicy.outcome !== 'visible') return presentUserUnavailable(initialPolicy.code);
+      if (!initialPolicy.requiresCurrentIntent) {
+        return Object.freeze({ status: 'admitted' as const, action: initial.action });
+      }
+
+      const requestCurrentIntent = deps.requestCurrentIntent;
+      if (!requestCurrentIntent) return presentUserUnavailable('plugin_action_current_intent_unavailable');
+      let fingerprint: string;
+      try {
+        fingerprint = fingerprintPluginActionCurrentIntent({
+          policy: initial.policy,
+          input: args.input,
+          surface: args.surface,
+          invocationSurface: args.invocationSurface,
+          ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
+        });
+      } catch {
+        return presentUserUnavailable('plugin_action_current_intent_unavailable');
+      }
+      let intent: PluginActionCurrentIntentResult;
+      try {
+        intent = await requestCurrentIntent({
+          action: initial.action,
+          fingerprint,
+          surface: args.surface,
+          invocationSurface: args.invocationSurface,
+          ...(args.signal === undefined ? {} : { signal: args.signal }),
+        });
+      } catch {
+        return args.signal?.aborted
+          ? presentUserUnavailable('plugin_action_aborted')
+          : presentUserUnavailable('plugin_action_current_intent_unavailable');
+      }
+      if (args.signal?.aborted) return presentUserUnavailable('plugin_action_aborted');
+      if (!isPresentUserResolutionCurrent(initial)) {
+        return presentUserUnavailable('plugin_action_generation_retired');
+      }
+      if (intent.status !== 'approved') return presentUserUnavailable(intent.code);
+      if (intent.fingerprint !== fingerprint) {
+        return presentUserUnavailable('plugin_action_current_intent_mismatch');
+      }
+
+      const current = await readResolved();
+      if ('status' in current && current.status !== 'resolved') return current;
+      const currentPolicy = evaluatePresentUserPolicy(current.policy, args);
+      if (currentPolicy.outcome !== 'visible') return presentUserUnavailable(currentPolicy.code);
+      let currentFingerprint: string;
+      try {
+        currentFingerprint = fingerprintPluginActionCurrentIntent({
+          policy: current.policy,
+          input: args.input,
+          surface: args.surface,
+          invocationSurface: args.invocationSurface,
+          ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
+        });
+      } catch {
+        return presentUserUnavailable('plugin_action_current_intent_unavailable');
+      }
+      if (currentFingerprint !== fingerprint) {
+        return presentUserUnavailable('plugin_action_current_intent_mismatch');
+      }
+      return Object.freeze({ status: 'admitted' as const, action: current.action });
+    },
+  });
 }
 
 export function createPluginActionInvocation(params: Readonly<{
@@ -245,10 +677,10 @@ export function createPluginActionInvocation(params: Readonly<{
     qualifiedId,
     async invoke(input, options) {
       if (!params.isCurrent() || params.generationSignal.aborted) {
-        return unavailable('plugin_action_generation_retired', 'Plugin action generation is no longer current');
+        return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action generation is no longer current');
       }
       if (options.signal?.aborted) {
-        return unavailable('plugin_action_aborted', 'Plugin action invocation was aborted');
+        return unavailableBeforeHandler('plugin_action_aborted', 'Plugin action invocation was aborted');
       }
       const parsedInput = AgentRuntimeJsonValueV1Schema.safeParse(input);
       if (!parsedInput.success || !validates(inputValidator, parsedInput.data)) return invalidInput;
@@ -269,62 +701,70 @@ export function createPluginActionInvocation(params: Readonly<{
           if (settlement.kind === 'aborted') {
             const abortSource = linked.abortSource();
             if (abortSource === 'caller') {
-              return unavailable('plugin_action_aborted', 'Plugin action invocation was aborted');
+              return unavailableBeforeHandler('plugin_action_aborted', 'Plugin action invocation was aborted');
             }
             if (abortSource === 'generation' || !params.isCurrent() || params.generationSignal.aborted) {
-              return unavailable('plugin_action_generation_retired', 'Plugin action generation retired before dispatch');
+              return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action generation retired before dispatch');
             }
-            return unavailable('plugin_action_aborted', 'Plugin action invocation was aborted');
+            return unavailableBeforeHandler('plugin_action_aborted', 'Plugin action invocation was aborted');
           }
           if (settlement.kind === 'rejected') {
             if (!params.isCurrent() || params.generationSignal.aborted) {
-              return unavailable('plugin_action_generation_retired', 'Plugin action generation retired before dispatch');
+              return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action generation retired before dispatch');
             }
             if (linked.signal.aborted) {
-              return unavailable('plugin_action_aborted', 'Plugin action invocation was aborted');
+              return unavailableBeforeHandler('plugin_action_aborted', 'Plugin action invocation was aborted');
             }
-            return unavailable(
+            return unavailableBeforeHandler(
               'plugin_action_pre_dispatch_unavailable',
               'Plugin action invocation could not be admitted',
             );
           }
           if (!params.isCurrent() || params.generationSignal.aborted) {
-            return unavailable('plugin_action_generation_retired', 'Plugin action generation retired before dispatch');
+            return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action generation retired before dispatch');
           }
           const result = readPreDispatchUnavailableResult(settlement.value);
-          if (result) return result;
+          if (result) return unavailableBeforeHandler(result.code, result.message);
           if (settlement.value !== null) {
-            return unavailable(
+            return unavailableBeforeHandler(
               'plugin_action_pre_dispatch_unavailable',
               'Plugin action invocation could not be admitted',
             );
           }
         }
+        let actionHandlerStarted = false;
         const settlement = await awaitPluginActionHandlerSettlementOrAbort(
           linked.signal,
-          () => options.handler(handlerInput),
+          () => {
+            actionHandlerStarted = true;
+            return options.handler(handlerInput);
+          },
         );
         if (settlement.kind === 'aborted') {
+          const unavailableAfterCancellation = actionHandlerStarted
+            ? unavailable
+            : unavailableBeforeHandler;
           const abortSource = linked.abortSource();
           if (abortSource === 'caller') {
-            return unavailable('plugin_action_aborted', 'Plugin action invocation was aborted');
+            return unavailableAfterCancellation('plugin_action_aborted', 'Plugin action invocation was aborted');
           }
           if (abortSource === 'generation' || !params.isCurrent() || params.generationSignal.aborted) {
-            return unavailable('plugin_action_generation_retired', 'Plugin action generation retired during execution');
+            return unavailableAfterCancellation('plugin_action_generation_retired', 'Plugin action generation retired during execution');
           }
-          return unavailable('plugin_action_aborted', 'Plugin action invocation was aborted');
+          return unavailableAfterCancellation('plugin_action_aborted', 'Plugin action invocation was aborted');
         }
         if (settlement.kind === 'rejected') {
           const error = settlement.error;
-          if (!params.isCurrent() || params.generationSignal.aborted) {
-            return unavailable('plugin_action_generation_retired', 'Plugin action generation retired during execution');
-          }
+          // A rejected handler settlement also already won the cancellation race.
+          // Retirement afterwards cannot erase a known canonical failure.
           const pluginError = readPluginError(error);
           if (pluginError) {
             return Object.freeze({
               status: 'failed',
               code: pluginError.code,
               message: pluginError.message,
+              retryable: pluginError.retryable,
+              ...(pluginError.data === undefined ? {} : { data: pluginError.data }),
             });
           }
           return Object.freeze({
@@ -334,12 +774,9 @@ export function createPluginActionInvocation(params: Readonly<{
           });
         }
         const value = settlement.value;
-        if (!params.isCurrent() || params.generationSignal.aborted) {
-          return unavailable(
-            'plugin_action_generation_retired',
-            'Plugin action generation retired before its result could be admitted',
-          );
-        }
+        // A fulfilled handler settlement already won the cancellation race.
+        // Retirement afterwards cannot rewrite that known effect as unavailable,
+        // or callers may blindly retry a mutation that already ran.
         const rawResult = value === undefined ? null : value;
         const parsedResult = AgentRuntimeJsonValueV1Schema.safeParse(rawResult);
         if (!parsedResult.success) return invalidResult('Plugin action result must be JSON-safe');

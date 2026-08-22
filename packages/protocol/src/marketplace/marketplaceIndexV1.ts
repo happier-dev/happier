@@ -2,6 +2,8 @@ import { z } from 'zod';
 import semver from 'semver';
 
 import { PluginDiagnosticTextV1Schema } from '../daemon/pluginContributionIntrospection.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import type { PluginCompatibilityProjectionV1 } from '../plugins/availability/v1.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { NpmRegistryOriginV1Schema } from '../rpc/npmRegistryProfiles.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
@@ -67,6 +69,96 @@ export const MarketplaceIndexEntryV1Schema = z.object({
   }).strict(),
 }).strict();
 export type MarketplaceIndexEntryV1 = z.infer<typeof MarketplaceIndexEntryV1Schema>;
+
+/**
+ * The generated, pre-install package metadata a community npm listing needs.
+ * npm owns the selected package coordinate and SRI; compatibility remains in
+ * its existing generated projection rather than being copied here.
+ */
+export const MarketplaceNpmDiscoveryProjectionV1Schema = z.object({
+  version: z.literal(1),
+  pluginId: asProtocolZod(PluginIdSchema),
+  manifestDigest: ManifestDigest,
+  display: MarketplaceIndexEntryV1Schema.shape.display,
+  summary: MarketplaceIndexEntryV1Schema.shape.summary,
+}).strict();
+export type MarketplaceNpmDiscoveryProjectionV1 = z.infer<typeof MarketplaceNpmDiscoveryProjectionV1Schema>;
+
+function localizedFallback(value: string | Readonly<{ fallback: string }>): string {
+  return typeof value === 'string' ? value : value.fallback;
+}
+
+function containsContributions(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (!value || typeof value !== 'object') return false;
+  return Object.values(value).some((entry) => containsContributions(entry));
+}
+
+/**
+ * One canonical listing projection from the compatibility evidence emitted by
+ * pack/stage owners. This keeps package metadata from becoming an independent
+ * manifest or compatibility authority.
+ */
+export function createMarketplaceNpmDiscoveryProjectionV1(input: Readonly<{
+  compatibility: PluginCompatibilityProjectionV1;
+  manifestDigest: string;
+}>): MarketplaceNpmDiscoveryProjectionV1 {
+  const { manifest, uiArtifacts } = input.compatibility;
+  const executableRealms = new Set<'daemon' | 'client' | 'hosted-web'>();
+  if (manifest.entrypoints?.daemon) executableRealms.add('daemon');
+  for (const artifact of uiArtifacts.entries) {
+    if (artifact.tier === 'reactNative') executableRealms.add('client');
+    if (artifact.tier === 'hostedWeb') executableRealms.add('hosted-web');
+  }
+  const executableRealmOrder: readonly ('daemon' | 'client' | 'hosted-web')[] = [
+    'daemon',
+    'client',
+    'hosted-web',
+  ];
+  return MarketplaceNpmDiscoveryProjectionV1Schema.parse({
+    version: 1,
+    pluginId: manifest.id,
+    manifestDigest: input.manifestDigest,
+    display: {
+      title: localizedFallback(manifest.displayName),
+      description: manifest.description === undefined ? null : localizedFallback(manifest.description),
+    },
+    summary: {
+      contributions: Object.entries(manifest.contributes)
+        .filter(([, declaration]) => containsContributions(declaration))
+        .map(([family]) => family),
+      requiredHostAccess: manifest.hostAccess.required.map((request) => request.id),
+      optionalHostAccess: manifest.hostAccess.optional.map((request) => request.id),
+      executableRealms: executableRealmOrder.filter((realm) => executableRealms.has(realm)),
+    },
+  });
+}
+
+export function marketplaceNpmDiscoveryProjectionEqualV1(left: unknown, right: unknown): boolean {
+  return createCanonicalJsonSigningInput(MarketplaceNpmDiscoveryProjectionV1Schema.parse(left))
+    === createCanonicalJsonSigningInput(MarketplaceNpmDiscoveryProjectionV1Schema.parse(right));
+}
+
+/** Platform availability comes from the generated compatibility inventory, not npm search metadata. */
+export function deriveMarketplaceNpmCompatibilityPlatformsV1(
+  compatibility: PluginCompatibilityProjectionV1,
+): readonly ('darwin' | 'linux' | 'windows' | 'web' | 'ios' | 'android')[] {
+  const supported = new Set<'darwin' | 'linux' | 'windows' | 'web' | 'ios' | 'android'>();
+  for (const artifact of compatibility.uiArtifacts.entries) {
+    if (artifact.platform === 'web') supported.add('web');
+    if (artifact.platform === 'ios') supported.add('ios');
+    if (artifact.platform === 'android') supported.add('android');
+  }
+  const platformOrder: readonly ('darwin' | 'linux' | 'windows' | 'web' | 'ios' | 'android')[] = [
+    'darwin',
+    'linux',
+    'windows',
+    'web',
+    'ios',
+    'android',
+  ];
+  return platformOrder.filter((platform) => supported.has(platform));
+}
 
 export const MarketplaceIndexSourceSnapshotV1Schema = z.object({
   source: z.object({ id: OpaqueId, title: BoundedText, kind: MarketplaceIndexSourceKindV1Schema, sourceUrl: HttpsUrl }).strict(),

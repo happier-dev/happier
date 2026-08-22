@@ -40,14 +40,13 @@ describe('createActionExecutor plugin caller policy', () => {
     expect(nonSafePluginActions.filter((spec) => (
       spec.pluginCallerPolicy?.kind === 'caller'
     ))).toHaveLength(48);
-    expect(nonSafePluginActions.every((spec) => spec.pluginCallerPolicy?.kind === 'caller'
-      || spec.pluginCallerPolicy?.kind === 'self_or_inspector_admin')).toBe(true);
-    expect(nonSafePluginActions.filter((spec) => spec.id !== 'plugins.reload').every((spec) => (
-      spec.pluginCallerPolicy?.kind === 'caller'
-    ))).toBe(true);
-    expect(getActionSpec('plugins.reload').pluginCallerPolicy).toMatchObject({
+    expect(getActionSpec('plugins.reload').pluginCallerPolicy).toEqual({
       kind: 'self_or_inspector_admin',
       targetPluginIdField: 'pluginId',
+      administrativeCallers: [{
+        pluginId: 'happier.inspector',
+        contributionLocalId: 'inspector-app',
+      }],
     });
   });
 
@@ -74,13 +73,64 @@ describe('createActionExecutor plugin caller policy', () => {
     });
   });
 
-  it('refuses a plugin-target spoof, including one introduced by an Action interceptor', async () => {
+  it('still refuses reload from a caller the host never stamped', async () => {
     const pluginsDevLoopAction = vi.fn(async () => ({ ok: true }));
-    const interceptActionExecution = vi.fn(async () => ({
-      status: 'continue' as const,
-      input: { pluginId: 'acme.other' },
-    }));
-    const executor = createExecutor({ pluginsDevLoopAction, interceptActionExecution });
+    const executor = createExecutor({ pluginsDevLoopAction });
+
+    await expect(executor.execute('plugins.reload', { pluginId: 'acme.author' }, {
+      surface: 'plugin',
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'plugin_action_caller_required',
+      error: 'plugin_action_caller_required',
+    });
+
+    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
+  });
+
+  it('admits cross-plugin reload only from the exact Inspector administrative surface', async () => {
+    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ pluginsDevLoopAction });
+
+    await expect(executor.execute('plugins.reload', { pluginId: 'acme.target' }, {
+      surface: 'plugin',
+      actionCaller: pluginCaller('happier.inspector', 'inspector-app'),
+    })).resolves.toEqual({ ok: true, result: { ok: true } });
+    expect(pluginsDevLoopAction).toHaveBeenCalledTimes(1);
+
+    pluginsDevLoopAction.mockClear();
+    for (const caller of [
+      // An Inspector clone reusing the administrative contribution local id.
+      pluginCaller('acme.inspector-clone', 'inspector-app'),
+      // The real Inspector calling from a contribution surface that is not the
+      // administrative one.
+      pluginCaller('happier.inspector', 'some-other-surface'),
+      // An arbitrary peer plugin.
+      pluginCaller('acme.author', 'surface'),
+    ]) {
+      await expect(executor.execute('plugins.reload', { pluginId: 'acme.target' }, {
+        surface: 'plugin',
+        actionCaller: caller,
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'plugin_action_caller_forbidden',
+        error: 'plugin_action_caller_forbidden',
+      });
+    }
+
+    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a target rewritten to a peer plugin after Action interception', async () => {
+    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({
+      pluginsDevLoopAction,
+      interceptActionExecution: async () => ({
+        status: 'continue',
+        input: { pluginId: 'acme.victim' },
+      }),
+    });
 
     await expect(executor.execute('plugins.reload', { pluginId: 'acme.author' }, {
       surface: 'plugin',
@@ -92,25 +142,6 @@ describe('createActionExecutor plugin caller policy', () => {
     });
 
     expect(pluginsDevLoopAction).not.toHaveBeenCalled();
-  });
-
-  it('admits Inspector cross-plugin reload only from its declared administrative surface', async () => {
-    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true }));
-    const executor = createExecutor({ pluginsDevLoopAction });
-
-    await expect(executor.execute('plugins.reload', { pluginId: 'acme.target' }, {
-      surface: 'plugin',
-      actionCaller: pluginCaller('happier.inspector', 'inspector-app'),
-    })).resolves.toEqual({ ok: true, result: { ok: true } });
-
-    await expect(executor.execute('plugins.reload', { pluginId: 'acme.target' }, {
-      surface: 'plugin',
-      actionCaller: pluginCaller('happier.inspector', 'other-surface'),
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'plugin_action_caller_forbidden',
-      error: 'plugin_action_caller_forbidden',
-    });
   });
 
   it('retains the incumbent plugin binding as the authority against caller identity supplied in input', async () => {

@@ -168,7 +168,12 @@ export const PluginBackendExternalSessionSourceInstanceV1Schema = z.discriminate
     settingId: z.string().trim().min(1),
     byServerIdSettingId: z.string().trim().min(1).optional(),
     field: z.string().trim().min(1),
-    normalization: z.literal('configuredPath'),
+    // Whether a configured source REPLACES the paired default is independent of
+    // how its raw setting value is normalized: a declared server endpoint
+    // replaces a managed default for the same reason a declared agent directory
+    // replaces an ambient one. Both normalizations are already materialized
+    // identically by the shared instance owner.
+    normalization: z.enum(['httpOrigin', 'configuredPath']),
     constants: z.record(z.string().trim().min(1), PluginBackendExternalSessionSourceInstanceConstantV1Schema).default({}),
   }).strict(),
 ]);

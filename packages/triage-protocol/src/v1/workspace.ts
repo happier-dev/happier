@@ -1,5 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-
 import {
     defineProtocolLiteral,
     defineProtocolNumber,
@@ -34,8 +32,6 @@ export const TriageSelectedWorkspaceScopeV1Schema = defineProtocolObject({
 export type TriageSelectedWorkspaceScopeV1 = ReturnType<
     typeof TriageSelectedWorkspaceScopeV1Schema.parse
 >;
-export const TriageSelectedWorkspaceScopeV1JsonSchema: PluginJsonSchema =
-    TriageSelectedWorkspaceScopeV1Schema.jsonSchema;
 
 /**
  * The target-stamped provider revision this preparation was asked to match.
@@ -52,8 +48,6 @@ export const TriageReviewWorkspaceObservedRevisionV1Schema = defineProtocolObjec
 export type TriageReviewWorkspaceObservedRevisionV1 = ReturnType<
     typeof TriageReviewWorkspaceObservedRevisionV1Schema.parse
 >;
-export const TriageReviewWorkspaceObservedRevisionV1JsonSchema: PluginJsonSchema =
-    TriageReviewWorkspaceObservedRevisionV1Schema.jsonSchema;
 
 /**
  * Emitted only after the source resolves the prepared local HEAD. Triage may
@@ -86,8 +80,6 @@ export const TriageReviewWorkspaceCurrentnessV1Schema = defineProtocolUnion([
 export type TriageReviewWorkspaceCurrentnessV1 = ReturnType<
     typeof TriageReviewWorkspaceCurrentnessV1Schema.parse
 >;
-export const TriageReviewWorkspaceCurrentnessV1JsonSchema: PluginJsonSchema =
-    TriageReviewWorkspaceCurrentnessV1Schema.jsonSchema;
 
 /**
  * The optional source-owned preparation request. `workspace: null` means no
@@ -105,8 +97,6 @@ export const TriagePrepareReviewWorkspaceInputV1Schema = defineProtocolObject({
 export type TriagePrepareReviewWorkspaceInputV1 = ReturnType<
     typeof TriagePrepareReviewWorkspaceInputV1Schema.parse
 >;
-export const TriagePrepareReviewWorkspaceInputV1JsonSchema: PluginJsonSchema =
-    TriagePrepareReviewWorkspaceInputV1Schema.jsonSchema;
 
 /**
  * Only `prepared` reaches Session composition. `created` is the sole rollback
@@ -153,5 +143,3 @@ export const TriagePrepareReviewWorkspaceResultV1Schema = defineProtocolUnion([
 export type TriagePrepareReviewWorkspaceResultV1 = ReturnType<
     typeof TriagePrepareReviewWorkspaceResultV1Schema.parse
 >;
-export const TriagePrepareReviewWorkspaceResultV1JsonSchema: PluginJsonSchema =
-    TriagePrepareReviewWorkspaceResultV1Schema.jsonSchema;

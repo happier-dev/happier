@@ -5,8 +5,22 @@ import { PluginBackendExternalSessionSourceDeclarationV1Schema } from '../backen
 import { PluginAgentContributionV2Schema } from './v2.js';
 import {
   MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES,
+  MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_DEPTH,
+  MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES,
   PluginAgentExternalSessionLinkDataSchema,
 } from './agentExternalSessions.js';
+
+function nestedLinkData(depth: number): unknown {
+  let value: unknown = true;
+  for (let index = 0; index < depth; index += 1) {
+    value = { nested: value };
+  }
+  return value;
+}
+
+function serializedUtf8Bytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
 
 function source(index: number) {
   const sourceKind = `source-${index}`;
@@ -165,6 +179,34 @@ describe('Agent External Sessions contribution limits', () => {
     }).success).toBe(false);
   });
 
+  it('enforces inclusive linkData depth, entry, and byte limits', () => {
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse(
+      nestedLinkData(MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_DEPTH),
+    ).success).toBe(true);
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse(
+      nestedLinkData(MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_DEPTH + 1),
+    ).success).toBe(false);
+
+    const atEntryLimit = Object.fromEntries(Array.from(
+      { length: MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES },
+      (_, index) => [`key-${index}`, index],
+    ));
+    const overEntryLimit = Object.fromEntries(Array.from(
+      { length: MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES + 1 },
+      (_, index) => [`key-${index}`, index],
+    ));
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse(atEntryLimit).success).toBe(true);
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse(overEntryLimit).success).toBe(false);
+
+    const emptyValueBytes = serializedUtf8Bytes({ value: '' });
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse({
+      value: 'x'.repeat(MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES - emptyValueBytes),
+    }).success).toBe(true);
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse({
+      value: 'x'.repeat(MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES - emptyValueBytes + 1),
+    }).success).toBe(false);
+  });
+
   it('rejects accessor, toJSON, symbol, and decorated-array carriers without invoking them', () => {
     let getterCalls = 0;
     const accessor = {} as Record<string, unknown>;
@@ -187,6 +229,11 @@ describe('Agent External Sessions contribution limits', () => {
     const symbolArray = ['demo'] as unknown[] & Record<PropertyKey, unknown>;
     symbolArray[Symbol('hidden')] = 'hidden';
     expect(PluginAgentExternalSessionLinkDataSchema.safeParse({ values: symbolArray }).success).toBe(false);
+
+    class ExtendedArray extends Array<unknown> {}
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse({ values: new ExtendedArray('demo') }).success)
+      .toBe(false);
+    expect(PluginAgentExternalSessionLinkDataSchema.safeParse({ value: '\uD800' }).success).toBe(true);
   });
 
   it('caps manifest-declared transcript-bearing sources at the canonical contribution ceiling', () => {

@@ -2,7 +2,7 @@ import type { z } from 'zod';
 
 import {
   defineProtocolString,
-} from '../plugins/actions/jsonSchemaValidation.js';
+} from '../plugins/actions/protocolComposableSchema.js';
 
 const HOST_IDENTIFIER_V1_PATTERN = /^(?!\s)[\s\S]*\S$(?![\s\S])/u;
 

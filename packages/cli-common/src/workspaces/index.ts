@@ -69,6 +69,22 @@ function stripInternalBundledWorkspaceDependencies(value: any): any {
   return out;
 }
 
+function isPrepublicationAuthorPackage(rawPackageJson: any): boolean {
+  const happier = rawPackageJson?.happier;
+  const publicSdkRelease = happier?.publicSdkRelease;
+  return (
+    !!happier
+    && typeof happier === 'object'
+    && !Array.isArray(happier)
+    && Object.keys(happier).length === 1
+    && Object.prototype.hasOwnProperty.call(happier, 'publicSdkRelease')
+    && !!publicSdkRelease
+    && typeof publicSdkRelease === 'object'
+    && !Array.isArray(publicSdkRelease)
+    && publicSdkRelease.posture === 'prepublish_hold'
+  );
+}
+
 function sleepSync(ms: number): void {
   if (!ms || ms <= 0) return;
   const buf = new SharedArrayBuffer(4);
@@ -111,12 +127,25 @@ export function sanitizeBundledPackageJson(raw: any): any {
     module,
     types,
     exports,
+    bin,
     dependencies,
     peerDependencies,
     optionalDependencies,
     engines,
   } = raw ?? {};
+  const preservesPrepublicationAuthoringMetadata = isPrepublicationAuthorPackage(raw);
+  const prepublicationAuthoringFiles = preservesPrepublicationAuthoringMetadata
+    ? collectPrepublicationAuthoringFileEntries(raw)
+    : undefined;
 
+  // `bin` is runtime input, not source-only package metadata: a bundled
+  // workspace package whose executable entrypoint ships inside `dist` is
+  // undiscoverable without it, and the Plugin SDK's `happier-plugin-build-ui`
+  // builder is exactly that. Package scripts and dev dependencies stay removed.
+  // Public-SDK prepublication roots are the narrow exception for internal runtime
+  // edges: their manifest is the canonical declaration used later to materialize
+  // a temporary independently-installable author tree. The published host itself
+  // remains flat; this metadata does not place any closure bytes below the root.
   return {
     name,
     version,
@@ -126,10 +155,22 @@ export function sanitizeBundledPackageJson(raw: any): any {
     module,
     types,
     exports,
-    dependencies: stripInternalBundledWorkspaceDependencies(dependencies),
+    ...(bin === undefined ? {} : { bin }),
+    dependencies: preservesPrepublicationAuthoringMetadata
+      ? dependencies
+      : stripInternalBundledWorkspaceDependencies(dependencies),
     peerDependencies,
-    optionalDependencies: stripInternalBundledWorkspaceDependencies(optionalDependencies),
+    optionalDependencies: preservesPrepublicationAuthoringMetadata
+      ? optionalDependencies
+      : stripInternalBundledWorkspaceDependencies(optionalDependencies),
     engines,
+    ...(preservesPrepublicationAuthoringMetadata
+      ? {
+          happier: { publicSdkRelease: raw.happier.publicSdkRelease },
+          bundledDependencies: readBundledDependencyNames(raw),
+          ...(prepublicationAuthoringFiles === undefined ? {} : { files: prepublicationAuthoringFiles }),
+        }
+      : {}),
   };
 }
 
@@ -580,6 +621,17 @@ function collectWorkspacePackageDeclaredFileEntries(rawPackageJson: any): string
   });
 }
 
+function collectPrepublicationAuthoringFileEntries(rawPackageJson: any): string[] | undefined {
+  if (rawPackageJson?.files === undefined) return undefined;
+
+  // The workspace copier already owns the exact relative-path validation for
+  // declared package files. Keep the complete canonical inventory here (rather
+  // than its copy-only subset) because npm still needs dist/package.json entries
+  // when this flattened package is later materialized for external authors.
+  collectWorkspacePackageDeclaredFileEntries(rawPackageJson);
+  return [...new Set(rawPackageJson.files as string[])];
+}
+
 function copyBundledWorkspacePackageContents(params: Readonly<{
   srcDir: string;
   tempDir: string;
@@ -640,6 +692,10 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
   dereferenceRootDir?: string;
   preserveDestinationPath?: boolean;
   pruneStale?: boolean;
+  validatePreparedPackage?: (context: Readonly<{
+    packageName: string;
+    packageDir: string;
+  }>) => void;
 }>): void {
   const packageDetails = readWorkspacePackageDetails(params);
   const referencedFiles = collectWorkspacePackageReferencedFiles(packageDetails.rawPackageJson);
@@ -667,6 +723,10 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
       if (existsSync(destNodeModulesDir) && readdirSync(destNodeModulesDir).length === 0) {
         rmSync(destNodeModulesDir, { recursive: true });
       }
+      params.validatePreparedPackage?.({
+        packageName: params.packageName,
+        packageDir: tempDir,
+      });
     },
   });
 
@@ -701,6 +761,210 @@ export function bundleWorkspacePackagesWithRuntimeDependencies(params: Readonly<
       // remains valid. Exact artifact publication runs in a packaging context and prunes those
       // compatibility targets so obsolete generations cannot enter a tarball.
       pruneStale: publicationMode === 'artifact',
+    });
+  }
+}
+
+type WorkspacePackageBundle = Readonly<{
+  packageName: string;
+  srcDir: string;
+  destDir: string;
+  includeFiles?: string[];
+  resolveFromPackageJsonPath?: string;
+  dereferenceRootDir?: string;
+}>;
+
+function readWorkspacePackageVersion(bundle: WorkspacePackageBundle): string {
+  const rawPackageJson = readJson(resolve(bundle.srcDir, 'package.json'));
+  if (rawPackageJson?.name !== bundle.packageName) {
+    throw new Error(`Bundled workspace package manifest does not match '${bundle.packageName}'`);
+  }
+  if (typeof rawPackageJson?.version !== 'string' || rawPackageJson.version.trim().length === 0) {
+    throw new Error(`Bundled workspace package '${bundle.packageName}' has no non-empty version`);
+  }
+  return rawPackageJson.version.trim();
+}
+
+function readPreparedPackageDependencies(rawPackageJson: any, packageName: string): Record<string, string> {
+  if (rawPackageJson?.dependencies === undefined) return {};
+  if (
+    !rawPackageJson.dependencies
+    || typeof rawPackageJson.dependencies !== 'object'
+    || Array.isArray(rawPackageJson.dependencies)
+  ) {
+    throw new Error(`Materialized '${packageName}' manifest has an invalid dependencies field`);
+  }
+
+  const dependencies: Record<string, string> = {};
+  for (const [dependencyName, specifier] of Object.entries(rawPackageJson.dependencies)) {
+    if (typeof specifier !== 'string' || specifier.trim().length === 0) {
+      throw new Error(`Materialized '${packageName}' manifest has an invalid dependency '${dependencyName}'`);
+    }
+    dependencies[dependencyName] = specifier.trim();
+  }
+  return dependencies;
+}
+
+function readPrepublicationWorkspacePackageManifest(bundle: WorkspacePackageBundle): any {
+  const rawPackageJson = readJson(resolve(bundle.srcDir, 'package.json'));
+  if (rawPackageJson?.name !== bundle.packageName) {
+    throw new Error(`Bundled workspace package manifest does not match '${bundle.packageName}'`);
+  }
+  return rawPackageJson;
+}
+
+function readDeclaredPrepublicationWorkspaceClosureNames(
+  rawPackageJson: any,
+  packageName: string,
+): string[] {
+  const names = readBundledWorkspacePackageNames(rawPackageJson);
+  if (new Set(names).size !== names.length) {
+    throw new Error(`Prepublication workspace package '${packageName}' declares duplicate bundled dependencies`);
+  }
+  return names;
+}
+
+function assertMaterializedPrepublicationWorkspaceClosure(params: Readonly<{
+  packageName: string;
+  packageDir: string;
+  nestedBundles: ReadonlyArray<WorkspacePackageBundle>;
+}>): void {
+  const packageJson = readJson(resolve(params.packageDir, 'package.json'));
+  if (packageJson?.name !== params.packageName) {
+    throw new Error(`Materialized prepublication package does not match '${params.packageName}'`);
+  }
+
+  const expectedNames = params.nestedBundles.map((bundle) => bundle.packageName);
+  const declaredNames = readDeclaredPrepublicationWorkspaceClosureNames(packageJson, params.packageName);
+  if (
+    declaredNames.length !== expectedNames.length
+    || declaredNames.some((packageName, index) => packageName !== expectedNames[index])
+  ) {
+    throw new Error(`Materialized prepublication package '${params.packageName}' has a mismatched bundled dependency declaration`);
+  }
+
+  const physicalPackageDir = realpathSync(params.packageDir);
+  for (const nestedBundle of params.nestedBundles) {
+    const nestedPackageDir = resolve(physicalPackageDir, 'node_modules', ...nestedBundle.packageName.split('/'));
+    let nestedPackageManifest: any;
+    try {
+      const nestedStats = lstatSync(nestedPackageDir);
+      if (!nestedStats.isDirectory() || nestedStats.isSymbolicLink()) {
+        throw new Error('not a physical directory');
+      }
+      const physicalNestedPackageDir = realpathSync(nestedPackageDir);
+      const relativeNestedPackageDir = relative(physicalPackageDir, physicalNestedPackageDir);
+      if (
+        relativeNestedPackageDir === '..'
+        || relativeNestedPackageDir.startsWith(`..${sep}`)
+        || isAbsolute(relativeNestedPackageDir)
+      ) {
+        throw new Error('escapes the materialized root');
+      }
+      nestedPackageManifest = readJson(resolve(physicalNestedPackageDir, 'package.json'));
+    } catch {
+      throw new Error(
+        `Materialized prepublication package '${params.packageName}' is missing physical bundled dependency '${nestedBundle.packageName}'`,
+      );
+    }
+    if (nestedPackageManifest?.name !== nestedBundle.packageName) {
+      throw new Error(
+        `Materialized prepublication package '${params.packageName}' has an invalid bundled dependency '${nestedBundle.packageName}'`,
+      );
+    }
+  }
+}
+
+/**
+ * Materialize marked, flattened prepublication packages into caller-selected
+ * transient author roots. Their preserved package manifests declare the internal
+ * closure; the host publisher never performs this nesting in its own tree.
+ */
+export function materializePrepublicationWorkspacePackageRoots(params: Readonly<{
+  bundles: ReadonlyArray<WorkspacePackageBundle>;
+}>): void {
+  const bundlesByPackageName = new Map(params.bundles.map((bundle) => [bundle.packageName, bundle] as const));
+  if (bundlesByPackageName.size !== params.bundles.length) {
+    throw new Error('Prepublication materialization received duplicate workspace package bundles');
+  }
+  const prepublicationRoots = params.bundles
+    .map((bundle) => ({ bundle, rawPackageJson: readPrepublicationWorkspacePackageManifest(bundle) }))
+    .filter(({ rawPackageJson }) => isPrepublicationAuthorPackage(rawPackageJson))
+    .sort((left, right) => left.bundle.packageName.localeCompare(right.bundle.packageName));
+  if (prepublicationRoots.length === 0) return;
+
+  const rootNames = new Set(prepublicationRoots.map(({ bundle }) => bundle.packageName));
+  const assignedPackageNames = new Set(rootNames);
+  for (const { bundle: rootBundle, rawPackageJson } of prepublicationRoots) {
+    const declaredClosureNames = readDeclaredPrepublicationWorkspaceClosureNames(
+      rawPackageJson,
+      rootBundle.packageName,
+    );
+    for (const packageName of declaredClosureNames) {
+      if (!bundlesByPackageName.has(packageName)) {
+        throw new Error(
+          `Bundled host is missing prepublication runtime dependency '${packageName}' for '${rootBundle.packageName}'`,
+        );
+      }
+    }
+    const nestedBundles = declaredClosureNames
+      .filter((packageName) => !assignedPackageNames.has(packageName))
+      .map((packageName) => {
+        const bundle = bundlesByPackageName.get(packageName);
+        if (!bundle) {
+          throw new Error(
+            `Bundled host is missing prepublication runtime dependency '${packageName}' for '${rootBundle.packageName}'`,
+          );
+        }
+        return bundle;
+      });
+    for (const nestedBundle of nestedBundles) assignedPackageNames.add(nestedBundle.packageName);
+    const siblingRootNames = collectInternalRuntimeWorkspaceDepNames(rawPackageJson).filter((packageName) => (
+      packageName !== rootBundle.packageName && rootNames.has(packageName)
+    ));
+
+    bundleWorkspacePackageWithRuntimeDependencies({
+      ...rootBundle,
+      preserveDestinationPath: true,
+      pruneStale: true,
+      validatePreparedPackage: ({ packageDir }) => {
+        for (const nestedBundle of nestedBundles) {
+          bundleWorkspacePackageWithRuntimeDependencies({
+            ...nestedBundle,
+            destDir: resolve(packageDir, 'node_modules', ...nestedBundle.packageName.split('/')),
+            pruneStale: true,
+          });
+        }
+
+        const packageJsonPath = resolve(packageDir, 'package.json');
+        const packageJson = readJson(packageJsonPath);
+        if (packageJson?.name !== rootBundle.packageName) {
+          throw new Error(`Materialized prepublication package does not match '${rootBundle.packageName}'`);
+        }
+        const dependencies = readPreparedPackageDependencies(packageJson, rootBundle.packageName);
+        for (const nestedBundle of nestedBundles) {
+          dependencies[nestedBundle.packageName] = readWorkspacePackageVersion(nestedBundle);
+        }
+        for (const siblingRootName of siblingRootNames) {
+          const siblingBundle = bundlesByPackageName.get(siblingRootName);
+          if (!siblingBundle) {
+            throw new Error(
+              `Bundled host is missing sibling prepublication package '${siblingRootName}' for '${rootBundle.packageName}'`,
+            );
+          }
+          dependencies[siblingRootName] = readWorkspacePackageVersion(siblingBundle);
+        }
+        writeJson(packageJsonPath, {
+          ...packageJson,
+          dependencies,
+          bundledDependencies: nestedBundles.map((bundle) => bundle.packageName),
+        });
+        assertMaterializedPrepublicationWorkspaceClosure({
+          packageName: rootBundle.packageName,
+          packageDir,
+          nestedBundles,
+        });
+      },
     });
   }
 }

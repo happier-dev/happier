@@ -2,6 +2,7 @@ import {
     parsePluginManifest,
     type ParsedPluginManifest,
 } from '@happier-dev/plugin-sdk/manifest';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -10,41 +11,11 @@ import {
 import { TriageSourcesContributionProtocolV1 } from '../../v1/contribution.js';
 import { TriageSourceDescriptorV1Schema } from '../../v1/descriptor.js';
 
-/** The canonical parsed Action fields relevant to a Triage source binding. */
-export type TriageSourceActionDeclarationV1 = Readonly<{
-    id: string;
-    inputSchema?: unknown;
-    resultSchema?: unknown;
-    surfaces: readonly string[];
-    dangerLevel: string;
-}>;
-
-/** The canonical parsed contribution fields relevant to Triage sources V1. */
-export type TriageSourceContributionV1 = Readonly<{
-    target: Readonly<{
-        pluginId: string;
-        pointId: string;
-    }>;
-    protocol: Readonly<{
-        id: string;
-        version: number;
-    }>;
-    descriptor?: unknown;
-    operations: Readonly<Record<string, string>>;
-    surfaces?: unknown;
-}>;
-
-type TriageSourceContributesV1 = Readonly<{
-    actions: readonly TriageSourceActionDeclarationV1[];
-    targetedPluginContributions: readonly TriageSourceContributionV1[];
-}>;
-
 /** The non-runtime result of checking one source manifest against Triage sources V1. */
 export type TriageSourceConformanceResultV1 =
     | Readonly<{
         ok: true;
         manifest: ParsedPluginManifest;
-        contribution: TriageSourceContributionV1;
     }>
     | Readonly<{
         ok: false;
@@ -53,27 +24,6 @@ export type TriageSourceConformanceResultV1 =
 
 const sourceOperations = TriageSourcesContributionProtocolV1.operations;
 const sourceSurfaces = TriageSourcesContributionProtocolV1.surfaces;
-
-function isJsonEqual(left: unknown, right: unknown): boolean {
-    if (Object.is(left, right)) return true;
-    if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
-        return false;
-    }
-    if (Array.isArray(left) || Array.isArray(right)) {
-        return Array.isArray(left)
-            && Array.isArray(right)
-            && left.length === right.length
-            && left.every((entry, index) => isJsonEqual(entry, right[index]));
-    }
-    const leftRecord = left as Readonly<Record<string, unknown>>;
-    const rightRecord = right as Readonly<Record<string, unknown>>;
-    const leftKeys = Object.keys(leftRecord).sort();
-    const rightKeys = Object.keys(rightRecord).sort();
-    return leftKeys.length === rightKeys.length
-        && leftKeys.every((key, index) => (
-            key === rightKeys[index] && isJsonEqual(leftRecord[key], rightRecord[key])
-        ));
-}
 
 function includesRequiredStrings(
     actual: readonly string[],
@@ -150,10 +100,12 @@ export function checkTriageSourceContributionV1(
         });
     }
     const parsedManifest = parsed.manifest;
-    // The public SDK parser is the structural authority. Its declaration-safe
-    // projection names the generic envelope facts this feature conformance
-    // reader consumes without importing a private Protocol parser.
-    const contributes: TriageSourceContributesV1 = parsedManifest.contributes;
+    // The public SDK parser is the structural authority, and its
+    // declaration-safe projection already names every generic envelope fact
+    // this reader consumes. Restating those field layouts locally would be a
+    // second declaration of one shape, drifting silently the moment the parser
+    // widens one.
+    const contributes = parsedManifest.contributes;
 
     const contributions = contributes.targetedPluginContributions.filter((contribution) => (
         contribution.target.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1
@@ -211,12 +163,12 @@ export function checkTriageSourceContributionV1(
         if (action.dangerLevel !== declaration.dangerLevel) {
             errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible danger level.`);
         }
-        if (!isJsonEqual(action.resultSchema, declaration.resultSchema.jsonSchema)) {
+        if (!pluginJsonValuesEqual(action.resultSchema, declaration.resultSchema.jsonSchema)) {
             errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible result schema.`);
         }
         // Every V1 role is `protocolDefined`, so the exact published input
         // JSON Schema is the only admissible declaration.
-        if (!isJsonEqual(action.inputSchema, declaration.input.schema.jsonSchema)) {
+        if (!pluginJsonValuesEqual(action.inputSchema, declaration.input.schema.jsonSchema)) {
             errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible input schema.`);
         }
     }
@@ -224,6 +176,6 @@ export function checkTriageSourceContributionV1(
     collectSurfaceErrors(contribution.surfaces, errors);
 
     return errors.length === 0
-        ? Object.freeze({ ok: true, manifest: parsedManifest, contribution })
+        ? Object.freeze({ ok: true, manifest: parsedManifest })
         : Object.freeze({ ok: false, errors: Object.freeze(errors) });
 }

@@ -27,7 +27,11 @@ describe('createActionExecutor (plugin permission grants)', () => {
     await expect(executor.execute('plugins.permissions.grants.list', {}, context))
       .resolves.toEqual({ ok: true, result: { grants: [], pendingRequests: [] } });
     await expect(executor.execute('plugins.permissions.grants.request', {
-      capability: 'network',
+      // `network` used to be a member of PLUGIN_ENFORCED_PERMISSION_CAPABILITIES_V1, but that list
+      // now carries only the capabilities a grant reader actually resolves. Manifest-declared host
+      // access (`network`, `filesystem`, `process`, `environment`, ...) is a separate vocabulary
+      // owned by PluginHostAccessRequestV2, not by the user-approved grant enum.
+      capability: 'credentials.materialize.raw',
       targetScope: { kind: 'account' },
       subject: { kind: 'general' },
       reason: 'Reach the declared service',
@@ -66,18 +70,35 @@ describe('createActionExecutor (plugin permission grants)', () => {
       caller: { kind: 'plugin', pluginId: 'acme.voice' },
     });
 
-    await expect(executor.execute('plugins.permissions.grants.request', {
-      pluginId: 'spoofed.plugin',
-      capability: 'network',
-      targetScope: { kind: 'account' },
-      subject: { kind: 'general' },
+    const spoofableRequest = {
+      capability: 'credentials.materialize.raw',
+      targetScope: { kind: 'account' as const },
+      subject: { kind: 'general' as const },
       reason: 'Spoof identity',
+    };
+    await expect(executor.execute('plugins.permissions.grants.request', {
+      ...spoofableRequest,
+      pluginId: 'spoofed.plugin',
     }, context)).resolves.toEqual({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
     });
     expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(1);
+
+    // Positive control: the identical request without the caller-supplied `pluginId` is accepted, so
+    // the rejection above is attributable to the spoofed identity field alone rather than to any
+    // other invalid member of the payload. The host then stamps its own caller identity.
+    await expect(executor.execute('plugins.permissions.grants.request', spoofableRequest, context))
+      .resolves.toMatchObject({ ok: true });
+    expect(pluginPermissionGrantAction).toHaveBeenNthCalledWith(2, {
+      actionId: 'plugins.permissions.grants.request',
+      input: expect.objectContaining({
+        pluginId: 'acme.voice',
+        requester: { kind: 'plugin', pluginId: 'acme.voice' },
+      }),
+      caller: { kind: 'plugin', pluginId: 'acme.voice' },
+    });
   });
 
   it('preserves host-stamped plugin identity through blocking approval replay', async () => {

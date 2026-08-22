@@ -200,6 +200,12 @@ correspondence evidence for the generic Webhook endpoint owner, not a
 another plugin, or claims durable push without the required reference is
 invalid before endpoint creation or persistence.
 
+The current V1 connection create and transfer contracts can select only
+`checkpointedPull` or `socket`; Account-endpoint `durablePush` creation remains
+held at the generic Webhook ensure/correspondence boundary. `connection/prepare-v1`
+therefore projects only those selectable transports and rejects a
+durable-push-only setup result before a later create-input parse could fail.
+
 ## V1 role contract
 
 Every role is an ordinary Action. The contribution protocol owns the role map;

@@ -13,7 +13,12 @@ import {
   tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
   tailscaleServeHttpsUrlForOwnedConfigFromStatus,
 } from './serveStatus.js';
-import { parseTailscaleStatusJson, type TailscaleStatusSnapshot } from './statusSnapshot.js';
+import {
+  isTailscaleDaemonUnreachableOutput,
+  parseTailscaleStatusJson,
+  tailscaleStatusSnapshotForUnreachableDaemon,
+  type TailscaleStatusSnapshot,
+} from './statusSnapshot.js';
 
 export type TailscaleCommandResult = Readonly<{
   command: string;
@@ -357,7 +362,24 @@ export async function runTailscaleStatusJson(
   params: RunTailscaleParams = {},
   deps: RunTailscaleDeps = {},
 ): Promise<TailscaleStatusSnapshot> {
-  const raw = await runTextCommand({ ...params, args: ['status', '--json'] }, deps);
+  let raw: string;
+  try {
+    raw = await runTextCommand({ ...params, args: ['status', '--json'] }, deps);
+  } catch (error) {
+    // A stopped tailscaled makes `tailscale status --json` exit non-zero with no
+    // JSON at all. That is a state the caller must render, not an exception it
+    // must catch. Anything else — a missing binary above all — still throws, so
+    // "not installed" stays distinguishable from "installed but not running".
+    const output = error instanceof TailscaleCommandError
+      ? collectOutput(error.result) || error.message
+      : error instanceof Error
+        ? error.message
+        : String(error ?? '');
+    if (isTailscaleDaemonUnreachableOutput(output)) {
+      return tailscaleStatusSnapshotForUnreachableDaemon();
+    }
+    throw error;
+  }
   return parseTailscaleStatusJson(raw);
 }
 

@@ -64,6 +64,8 @@ export const PublicToolchainCompatibilityV1Schema = z.object({
     reactNativeCommunityCli: AuthoringDependencySchema,
     rspack: AuthoringDependencySchema,
     swcHelpers: AuthoringDependencySchema,
+    /** Project-local TypeScript 5 compiler API used to load TypeScript build configuration. */
+    typescript: AuthoringDependencySchema,
     typescriptNative: AuthoringDependencySchema,
     viteReactPlugin: AuthoringDependencySchema,
   }).strict(),

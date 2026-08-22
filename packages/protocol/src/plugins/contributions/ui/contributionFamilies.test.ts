@@ -12,6 +12,7 @@ describe('plugin UI contribution families', () => {
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
+        execution: { target: 'daemon' },
       }],
       tools: [{
         id: 'roundtrip-tool',
@@ -32,7 +33,7 @@ describe('plugin UI contribution families', () => {
       sessionHeaderActions: [{
         id: 'roundtrip-header',
         title: 'Run roundtrip',
-        command: { kind: 'executeAction', action: 'roundtrip' },
+        action: { kind: 'executeAction', action: 'roundtrip' },
         order: 10,
       }],
       ui: {
@@ -72,7 +73,7 @@ describe('plugin UI contribution families', () => {
     });
     expect(parsed.sessionHeaderActions[0]).toMatchObject({
       id: 'roundtrip-header',
-      command: { kind: 'executeAction', action: 'roundtrip' },
+      action: { kind: 'executeAction', action: 'roundtrip' },
     });
     expect(parsed.ui.renderers).toEqual([
       expect.objectContaining({

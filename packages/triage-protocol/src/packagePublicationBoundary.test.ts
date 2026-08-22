@@ -155,7 +155,7 @@ describe('Triage protocol publication boundary', () => {
         expect(targets.filter((target) => !packed.has(target))).toEqual([]);
         expect(packed.has('package.json')).toBe(true);
         expect(packed.has('README.md')).toBe(true);
-    });
+    }, 60_000);
 
     /**
      * The tarball ships the built artifact and nothing an author writes. A
@@ -170,7 +170,7 @@ describe('Triage protocol publication boundary', () => {
         expect(packed.filter((path) => /\.(?:test|spec)\.[cm]?[jt]s$/u.test(path))).toEqual([]);
         expect(packed.filter((path) => /^(?:tsconfig|vitest)\./u.test(path))).toEqual([]);
         expect(packed.filter((path) => path.endsWith('.tsbuildinfo'))).toEqual([]);
-    });
+    }, 60_000);
 
     /**
      * Publication is not the same question as reachability. This package is

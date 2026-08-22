@@ -1,5 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -55,8 +53,6 @@ export const TriageReadConfiguredSourceInstancesInputV1Schema = defineProtocolOb
 export type TriageReadConfiguredSourceInstancesInputV1 = ReturnType<
     typeof TriageReadConfiguredSourceInstancesInputV1Schema.parse
 >;
-export const TriageReadConfiguredSourceInstancesInputV1JsonSchema: PluginJsonSchema =
-    TriageReadConfiguredSourceInstancesInputV1Schema.jsonSchema;
 
 /**
  * One configured instance of the calling source, with the one lifecycle fact
@@ -85,8 +81,6 @@ export const TriageConfiguredSourceInstanceRecordV1Schema = defineProtocolObject
 export type TriageConfiguredSourceInstanceRecordV1 = ReturnType<
     typeof TriageConfiguredSourceInstanceRecordV1Schema.parse
 >;
-export const TriageConfiguredSourceInstanceRecordV1JsonSchema: PluginJsonSchema =
-    TriageConfiguredSourceInstanceRecordV1Schema.jsonSchema;
 
 /**
  * `complete` means every instance this caller owns is named. `truncated` means
@@ -127,5 +121,3 @@ export const TriageReadConfiguredSourceInstancesResultV1Schema = defineProtocolU
 export type TriageReadConfiguredSourceInstancesResultV1 = ReturnType<
     typeof TriageReadConfiguredSourceInstancesResultV1Schema.parse
 >;
-export const TriageReadConfiguredSourceInstancesResultV1JsonSchema: PluginJsonSchema =
-    TriageReadConfiguredSourceInstancesResultV1Schema.jsonSchema;

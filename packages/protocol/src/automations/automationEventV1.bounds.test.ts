@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { AUTOMATION_INT_COLUMN_MAX } from './automationColumnBoundsV1.js';
+import { AutomationEventPositiveSafeIntegerV1Schema } from './automationEventDeclarationV1.js';
+import { AutomationV3PluginEventTriggerSchema } from './automationApiV3.js';
+
 import { compilePluginJsonSchema } from '../plugins/actions/jsonSchemaValidation.js';
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 import {
@@ -24,6 +28,7 @@ import {
   AutomationRunResultStoredV1Schema,
   AutomationRunResultV1Schema,
   AutomationStoredContentEnvelopeV1Schema,
+  MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_EVENT_FILTER_CLAUSES,
   MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_ACTION,
   MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL,
@@ -160,8 +165,15 @@ describe('Automation event V1 exact bounds', () => {
       sourceConfig: `${configAtMax}x`,
     }).success).toBe(false);
 
-    const senderAtMax = 'x'.repeat(MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES - 2);
-    const textAtMax = 'x'.repeat(MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES);
+    // Pinned to the literal ceilings rather than re-derived from the constants
+    // under test: a guard built from the value it asserts cannot catch the
+    // constant moving. The sender identity is a resolution input (2 KiB); the
+    // conversation body is a Conversation ingress message (64 KiB).
+    expect(MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES).toBe(2048);
+    expect(MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES).toBe(65536);
+
+    const senderAtMax = 'x'.repeat(2048 - 2);
+    const textAtMax = 'x'.repeat(65536);
     const conversation = {
       automationId: 'automation-1',
       bindingId: 'binding-1',
@@ -185,6 +197,40 @@ describe('Automation event V1 exact bounds', () => {
       ...conversation,
       text: `${textAtMax}x`,
     }).success).toBe(false);
+  });
+
+  it('admits an ordinary long conversation message past the sender-resolution ceiling', () => {
+    // Regression: the admit body reused the sender-resolution ceiling, so every
+    // channel message over 2 KiB — an ordinary long Telegram/Discord message —
+    // failed admission for its whole retry budget and burned into blocked
+    // attention. The body's real boundary is the Conversation ingress message.
+    const conversation = (text: string) => ({
+      automationId: 'automation-1',
+      bindingId: 'binding-1',
+      templateVersion: 1,
+      occurrenceId: 'occurrence-1',
+      occurredAt: 1,
+      sender: { principalId: 'user-1', kind: 'human', isIntegrationSelf: false },
+      text,
+      resultDelivery: { kind: 'none' },
+    });
+
+    for (const bytes of [2048, 2049, 8192, 65536]) {
+      const parsed = AutomationConversationAdmitInputV1Schema.safeParse(
+        conversation('x'.repeat(bytes)),
+      );
+      expect(parsed.success, `${bytes} UTF-8 bytes`).toBe(true);
+    }
+    expect(AutomationConversationAdmitInputV1Schema.safeParse(
+      conversation('x'.repeat(65537)),
+    ).success).toBe(false);
+    // Multi-byte code points are measured in UTF-8 bytes, not code units.
+    expect(AutomationConversationAdmitInputV1Schema.safeParse(
+      conversation('é'.repeat(32768)),
+    ).success).toBe(true);
+    expect(AutomationConversationAdmitInputV1Schema.safeParse(
+      conversation('é'.repeat(32769)),
+    ).success).toBe(false);
   });
 
   it('distinguishes NFC code-point limits from UTF-8 byte limits', () => {
@@ -270,6 +316,12 @@ describe('Automation event V1 exact bounds', () => {
     expect(AutomationEventAdmitInputV1Schema.safeParse(admitInput(wideJson)).success).toBe(true);
   });
 
+  // Ceiling-sized case: it materializes maximum-bound payloads and measures
+  // their canonical UTF-8 transport length. Unloaded on an M-series host the
+  // three ceiling cases run 632 ms / 759 ms / 647 ms, but a concurrently
+  // loaded fleet measured 4226 ms for this file's slowest case against
+  // Vitest's 5 s default. The budget is sized from that ceiling work, not the
+  // default, so contention cannot turn a passing bound into a red suite.
   it('keeps source pages, public aggregates, and private admission calls independently bounded', () => {
     const definitionsAtMax = Array.from(
       { length: MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE },
@@ -360,7 +412,7 @@ describe('Automation event V1 exact bounds', () => {
       results: [...callResultsAtMax, actionResultsAtMax[15]],
       continuation: readyContinuation,
     }).success).toBe(false);
-  });
+  }, 30_000);
 
   it('accepts exact result/reply/stored-envelope/retry maxima and rejects max-plus-one', () => {
     const resultTextAtMax = 'x'.repeat(MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES);
@@ -599,7 +651,7 @@ describe('Automation event V1 exact bounds', () => {
       .toBe(MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES + 1);
     // This is a transport-size measurement only. E3 must partition the
     // complete logical aggregate before the private E2 schema boundary.
-  });
+  }, 30_000);
 
   it('retains the approved 500-definition encrypted Event batch as a logical request when every definition is individually within its stored-content bound', () => {
     const eventRef = { pluginId: 'com.acme.github', localId: 'repository-event' } as const;
@@ -672,5 +724,33 @@ describe('Automation event V1 exact bounds', () => {
     // private E2 admission call must reject this oversized logical request.
     // E3 owns deterministic complete-call partitioning before transport.
     expect(admit.safeParse(request).success).toBe(false);
+  }, 30_000);
+});
+
+describe('automation integer column bounds', () => {
+  it('rejects a source contract version the Automation integer column cannot hold', () => {
+    expect(AutomationEventPositiveSafeIntegerV1Schema.safeParse(AUTOMATION_INT_COLUMN_MAX).success)
+      .toBe(true);
+    expect(AutomationEventPositiveSafeIntegerV1Schema.safeParse(AUTOMATION_INT_COLUMN_MAX + 1).success)
+      .toBe(false);
+  });
+
+  it('admits the Event source contract version through the one bounded owner', () => {
+    const trigger = {
+      kind: 'pluginEvent' as const,
+      eventRef: { pluginId: 'com.acme.event-writer', localId: 'repository-event' },
+      sourceSelectorId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+      sourceContractVersion: AUTOMATION_INT_COLUMN_MAX + 1,
+      observation: {
+        kind: 'durablePush' as const,
+        webhookEndpointId: 'endpoint-1',
+        observationStartsAt: 0,
+      },
+    };
+    expect(AutomationV3PluginEventTriggerSchema.safeParse(trigger).success).toBe(false);
+    expect(AutomationV3PluginEventTriggerSchema.safeParse({
+      ...trigger,
+      sourceContractVersion: AUTOMATION_INT_COLUMN_MAX,
+    }).success).toBe(true);
   });
 });

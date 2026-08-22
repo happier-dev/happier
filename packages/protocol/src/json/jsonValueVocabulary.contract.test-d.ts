@@ -8,7 +8,7 @@
  * pins exactly what may be passed where so a fifth spelling cannot accumulate
  * unnoticed.
  */
-import type { ProtocolJsonValue } from '../plugins/actions/jsonSchemaValidation.js';
+import type { ProtocolJsonValue } from '../plugins/actions/protocolComposableSchema.js';
 import type { PluginJsonValueV2 } from '../plugins/contributions/jsonSchema.js';
 import type { JsonValue, normalizeStrictJsonValue } from './strictJsonValue.js';
 

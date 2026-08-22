@@ -8,6 +8,7 @@ const webhookAction = {
   scopes: ['global'],
   surfaces: ['plugin'],
   dangerLevel: 'safe',
+  execution: { target: 'daemon' },
 } as const;
 
 describe('plugin webhook contributions', () => {

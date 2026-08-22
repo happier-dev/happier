@@ -10,6 +10,10 @@ import { ConnectedServiceBindingsV1Schema } from '../../connect/connectedService
 import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metadataOverridesV1.js';
 import { hasLegacyCustomAcpConcreteBackendId, isLegacyCustomAcpId } from '../../backends/targets/compat/customAcp.js';
 import { HappierReplayStrategySchema } from '../../sessions/continueWithReplay.js';
+import {
+  HappierReplayRecentMessagesCountSchema,
+  HappierReplayWireMaxSeedCharsSchema,
+} from '../../sessions/replaySeedBudget.js';
 import { LlmTaskRunnerConfigV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
 import {
   ScmDiffSummaryGenerateInputSchema,
@@ -203,8 +207,8 @@ export const ExecutionRunReplaySeedRequestSchema = z.discriminatedUnion('kind', 
     previousSessionId: z.string().min(1),
     transcriptEpoch: z.number().int().min(0),
     strategy: HappierReplayStrategySchema.optional(),
-    recentMessagesCount: z.number().int().min(1).max(500).optional(),
-    maxSeedChars: z.number().int().min(200).max(200_000).optional(),
+    recentMessagesCount: HappierReplayRecentMessagesCountSchema.optional(),
+    maxSeedChars: HappierReplayWireMaxSeedCharsSchema.optional(),
     summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
   }).passthrough(),
 ]);

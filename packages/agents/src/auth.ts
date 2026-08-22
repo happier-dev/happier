@@ -1,5 +1,5 @@
-import type { AgentId, CanonicalAgentId } from './types.js';
-import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
+import type { AgentId, BundledAgentId, CanonicalAgentId } from './types.js';
+import { mergeAuthoredWithGeneratedAgentFacts, readBundledAgentFact } from './definitions/generatedFacts.js';
 import { getAgentLocalCliConfig } from './localCli.js';
 import { getAgentCliBinaryNames } from './cli/runtime.js';
 import type { ProviderAuthAdapter } from './runtime/adjunctAdapters/types.js';
@@ -20,7 +20,7 @@ export type AgentAuthProbeParser =
 export type AgentAuthProbeBackgroundChecks = 'safe' | 'manual_only';
 
 export type AgentAuthProbeConfig = Readonly<{
-  agentId: AgentId;
+  agentId: BundledAgentId;
   binaryNames: ReadonlyArray<string>;
   statusCommand: ReadonlyArray<string> | null;
   parser: AgentAuthProbeParser;
@@ -36,8 +36,8 @@ export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId
   mergeAuthoredWithGeneratedAgentFacts<AgentAuthProbeConfig>({
     authored: AUTHORED_AGENT_AUTH_PROBE_CONFIG,
     label: 'auth probe config',
-    readGenerated: (definition) => ({
-      agentId: definition.id as AgentId,
+    readGenerated: (definition, agentId) => ({
+      agentId,
       binaryNames: [
         definition.cli.executable.binaryName,
         ...(definition.cli.executable.alternativeBinaryNames ?? []),
@@ -55,19 +55,35 @@ export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId
 export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId, AgentAuthProbeConfig>> = CANONICAL_AGENT_AUTH_PROBE_CONFIG;
 
 export function getAgentAuthProbeConfig(
+  agentId: BundledAgentId,
+  processEnv?: Readonly<Record<string, string | undefined>>,
+): AgentAuthProbeConfig;
+export function getAgentAuthProbeConfig(
+  agentId: AgentId,
+  processEnv?: Readonly<Record<string, string | undefined>>,
+): AgentAuthProbeConfig | null;
+export function getAgentAuthProbeConfig(
   agentId: AgentId,
   processEnv: Readonly<Record<string, string | undefined>> = process.env,
-): AgentAuthProbeConfig {
-  const config = AGENT_AUTH_PROBE_CONFIG[agentId];
+): AgentAuthProbeConfig | null {
+  const config = readBundledAgentFact(AGENT_AUTH_PROBE_CONFIG, agentId);
+  if (config == null) {
+    return null;
+  }
   return {
     ...config,
     binaryNames: getAgentCliBinaryNames(agentId, processEnv),
   };
 }
 
-export function getProviderAuthAdapter(agentId: AgentId): ProviderAuthAdapter {
+export function getProviderAuthAdapter(agentId: BundledAgentId): ProviderAuthAdapter;
+export function getProviderAuthAdapter(agentId: AgentId): ProviderAuthAdapter | null;
+export function getProviderAuthAdapter(agentId: AgentId): ProviderAuthAdapter | null {
   const localCli = getAgentLocalCliConfig(agentId);
   const localCliAuth = getAgentAuthProbeConfig(agentId);
+  if (localCli == null || localCliAuth == null) {
+    return null;
+  }
 
   return {
     supportKind: localCli.supportKind,
@@ -77,5 +93,5 @@ export function getProviderAuthAdapter(agentId: AgentId): ProviderAuthAdapter {
 }
 
 export function isAgentAuthProbeSafeForBackgroundChecks(agentId: AgentId): boolean {
-  return getAgentAuthProbeConfig(agentId).backgroundChecks === 'safe';
+  return getAgentAuthProbeConfig(agentId)?.backgroundChecks === 'safe';
 }

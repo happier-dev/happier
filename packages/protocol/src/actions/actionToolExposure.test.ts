@@ -26,8 +26,8 @@ describe('actionToolExposure', () => {
     }
   });
 
-  it('keeps agent action discovery bootstrap specs directly exposed', () => {
-    for (const id of ['action.spec.search', 'action.spec.get', 'action.options.resolve'] as const) {
+  it('keeps agent action discovery and reload specs directly exposed', () => {
+    for (const id of ['action.spec.search', 'action.spec.get', 'action.options.resolve', 'plugins.reload'] as const) {
       const spec = getActionSpec(id);
 
       expect(resolveActionToolExposureMode(spec, 'agent')).toBe('direct');

@@ -138,6 +138,35 @@ describe('releaseAssetBundle', () => {
         }
     });
 
+    it('extracts the payload root from a tar.xz archive with multiple top-level directories', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'first-party-runtime-release-bundle-tar-xz-'));
+        try {
+            const stem = 'happier-v9.9.13-preview.1-linux-x64';
+            const artifactDir = join(root, stem);
+            mkdirSync(join(artifactDir, 'package-dist'), { recursive: true });
+            mkdirSync(join(root, 'docs'), { recursive: true });
+            writeFileSync(join(artifactDir, 'happier'), 'new-binary\n', 'utf8');
+            writeFileSync(join(artifactDir, 'package-dist', 'index.mjs'), 'export default "ok";\n', 'utf8');
+            writeFileSync(join(root, 'docs', 'README.md'), 'extra\n', 'utf8');
+
+            const archiveName = `${stem}.tar.xz`;
+            const archivePath = join(root, archiveName);
+            const tarRes = spawnSync('tar', ['-cJf', archivePath, '-C', root, stem, 'docs'], { encoding: 'utf8' });
+            expect(tarRes.status).toBe(0);
+
+            const extractedRoot = await extractReleasePayloadRootFromArchive({
+                archivePath,
+                archiveName,
+                extractDir: join(root, 'extract'),
+            });
+
+            expect(readFileSync(join(extractedRoot, 'happier'), 'utf8')).toBe('new-binary\n');
+            expect(readFileSync(join(extractedRoot, 'package-dist', 'index.mjs'), 'utf8')).toBe('export default "ok";\n');
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it('extracts successfully without relying on tar being available on PATH', async () => {
         const root = mkdtempSync(join(tmpdir(), 'first-party-runtime-release-bundle-noisy-extract-'));
         const previousPath = process.env.PATH;

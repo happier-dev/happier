@@ -1,5 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-
 import {
     defineProtocolLiteral,
     defineProtocolNumber,
@@ -32,6 +30,11 @@ export const TriageSourceFailureClassV1ProtocolSchema = defineProtocolUnion([
  * scan page has no place to express a retry deadline, which is why the field
  * lives on the failure rather than on a result envelope. `detail` is bounded
  * non-secret text; `code` is the source's own stable local id.
+ *
+ * A source reports what its provider said and applies no horizon of its own: how
+ * far ahead a stated deadline may push a refresh is one pacing policy owned by
+ * the aggregate that honours it, so a skewed or rewritten header is bounded once
+ * for every source rather than in each of them, differently.
  */
 export const TriageSourceFailureV1Schema = defineProtocolObject({
     class: TriageSourceFailureClassV1ProtocolSchema,
@@ -40,5 +43,3 @@ export const TriageSourceFailureV1Schema = defineProtocolObject({
     retryNotBeforeMs: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
 }, { policy: 'closed' });
 export type TriageSourceFailureV1 = ReturnType<typeof TriageSourceFailureV1Schema.parse>;
-export const TriageSourceFailureV1JsonSchema: PluginJsonSchema =
-    TriageSourceFailureV1Schema.jsonSchema;

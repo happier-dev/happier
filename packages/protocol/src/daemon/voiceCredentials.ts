@@ -6,6 +6,7 @@ import {
   VoiceCredentialAccessPhaseSchema,
 } from '../plugins/contributions/voiceProviders.js';
 import {
+  PluginPermissionGrantAuthoritySourceV1Schema,
   PluginPermissionGrantRequestV1Schema,
   PluginPermissionSubjectV1Schema,
 } from '../plugins/permissions/grants.js';
@@ -119,6 +120,12 @@ export const DaemonVoiceClientRawCredentialAuthorizationV1Schema = z.object({
   capability: PluginPermissionCapabilityV1Schema,
   targetScope: z.object({ kind: z.literal('account') }).strict(),
   subject: PluginPermissionSubjectV1Schema,
+  /**
+   * The machine installation this authorization belongs to. Grants and pending
+   * requests are Account-scoped, so a client deciding or reading one has to
+   * know which installation's approval it is looking at.
+   */
+  authoritySource: PluginPermissionGrantAuthoritySourceV1Schema,
   disclosures: z.array(DaemonVoiceClientRawCredentialDisclosureV1Schema),
 }).strict();
 export type DaemonVoiceClientRawCredentialAuthorizationV1 = z.infer<

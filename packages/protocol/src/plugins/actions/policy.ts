@@ -8,7 +8,7 @@ export type PluginFinalPolicyScope = Readonly<{
   actorId?: string;
 }>;
 
-export type PluginFinalPolicyRequirementStatus = 'available' | 'denied' | 'unavailable';
+export type PluginFinalPolicyRequirementStatus = 'available' | 'denied' | 'unavailable' | 'notApplicable';
 export type PluginFinalPolicyTargetGenerationMode = 'current' | 'retained';
 
 export type PluginFinalPolicyInput = Readonly<{
@@ -134,7 +134,7 @@ export function evaluatePluginFinalPolicy(input: PluginFinalPolicyInput): Plugin
   }
 
   const blockedService = input.serviceAvailability.find((service) => (
-    service.required && service.status !== 'available'
+    service.required && service.status !== 'available' && service.status !== 'notApplicable'
   ));
   if (blockedService) {
     return decision(
@@ -145,7 +145,9 @@ export function evaluatePluginFinalPolicy(input: PluginFinalPolicyInput): Plugin
   }
 
   const blockedOsAuthorization = input.operatingSystemAuthorization.find((authorization) => (
-    authorization.required && authorization.status !== 'available'
+    authorization.required
+      && authorization.status !== 'available'
+      && authorization.status !== 'notApplicable'
   ));
   if (blockedOsAuthorization) {
     return decision(

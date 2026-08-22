@@ -9,9 +9,11 @@ import {
   type StructuredImageInputV1,
 } from './imageInputV1.js';
 import {
+  ComposerAttachmentDraftV1Schema,
   ComposerAttachmentInputV1Schema,
   MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
   ResolvedComposerAttachmentDispatchV1Schema,
+  type ComposerAttachmentDraftV1,
   type ComposerAttachmentInputV1,
   type ResolvedComposerAttachmentDispatchV1,
 } from './composerAttachmentV1.js';
@@ -380,6 +382,30 @@ export const HappierStructuredInputV1Schema = HappierStructuredInputV1ObjectSche
   .superRefine(rejectOversizedComposerAttachmentEnvelope);
 
 export type HappierStructuredInputV1 = z.infer<typeof HappierStructuredInputV1Schema>;
+
+/**
+ * The raw Message-ingress envelope. It is the canonical envelope in every
+ * respect except that a Composer attachment may still carry the transfer-owned
+ * staged-media claim that the daemon's SessionMedia finalizer has not yet
+ * replaced with a durable reference. Persisted structured input stays
+ * finalized-only: admission parses ingress with this schema, runs the
+ * finalizer, and writes `HappierStructuredInputV1Schema`. The instance cap and
+ * the aggregate encoded attachment budget are the same refinement, so ingress
+ * cannot bypass the bound the persisted envelope enforces.
+ */
+export const RawIngressStructuredInputV1Schema = HappierStructuredInputV1ObjectSchema
+  .omit({ composerAttachments: true })
+  .extend({
+    composerAttachments: z.array(ComposerAttachmentDraftV1Schema)
+      .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)
+      .optional(),
+  })
+  .superRefine(rejectOversizedComposerAttachmentEnvelope);
+export type RawIngressStructuredInputV1 = Readonly<
+  Omit<HappierStructuredInputV1, 'composerAttachments'> & Readonly<{
+    composerAttachments?: readonly ComposerAttachmentDraftV1[];
+  }>
+>;
 
 /**
  * A Message-admitted envelope has already crossed the raw ingress trust

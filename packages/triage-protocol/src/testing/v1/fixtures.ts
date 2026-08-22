@@ -145,10 +145,13 @@ const PRESENT_OBSERVATION = Object.freeze({
  * silently teaching consumers an invalid shape. Provider execution, credential
  * materialization, and target persistence stay outside this test-only helper.
  *
- * The `CONTRACT.md` §9 `composerOriginDetailInput` variant is deliberately
- * absent: the optional `originComposer` field it exercises awaits the canonical
- * Composer/SDK composable projection under blocker `COMPOSER-COMPOSABLE-REF`,
- * and a Triage-local mirror is forbidden.
+ * `detailInput` carries no Composer-origin field, because the envelope has
+ * none: the `originComposer` address travels in exactly one carrier, Triage's
+ * own closed private launch input (PEP `03d1` §17.8), and never crosses this
+ * source-facing protocol. There is therefore no `composerOriginDetailInput`
+ * variant to build here; the executable admission of every host arm is covered
+ * where the field lives, at
+ * `packages/plugins/triage/src/composer/entryDetailLaunchInput.test.ts`.
  */
 export function createTriageSourceV1Fixture(): TriageSourceV1Fixture {
     return Object.freeze({

@@ -7,6 +7,7 @@ export const ProviderErrorCodeV1Schema = z.enum([
   'provider_account_grant_stale', 'provider_not_enabled_on_machine', 'provider_machine_grant_stale',
   'provider_incompatible_with_agent', 'provider_compatibility_unverified', 'provider_secret_missing',
   'provider_credential_transport_unavailable', 'provider_endpoint_unreachable', 'provider_endpoint_unavailable',
+  'provider_probe_capacity_exhausted',
   'provider_rpc_response_invalid', 'provider_rpc_mutation_outcome_unknown',
   'provider_endpoint_rate_limited', 'provider_endpoint_auth_required', 'provider_endpoint_unauthorized',
   'provider_probe_response_invalid', 'provider_model_not_found', 'provider_model_unloaded',
@@ -43,6 +44,9 @@ const ERROR_DEFAULTS = {
   provider_credential_transport_unavailable: [false, 'review_credential_transport'],
   provider_endpoint_unreachable: [true, 'retry'],
   provider_endpoint_unavailable: [true, 'retry'],
+  // Host-side probe admission was full, so no endpoint request was attempted.
+  // Reporting an endpoint outage here would send users to check a healthy service.
+  provider_probe_capacity_exhausted: [true, 'retry'],
   provider_rpc_response_invalid: [true, 'retry'],
   provider_rpc_mutation_outcome_unknown: [false, 'review_current_state'],
   provider_endpoint_rate_limited: [true, 'retry'],

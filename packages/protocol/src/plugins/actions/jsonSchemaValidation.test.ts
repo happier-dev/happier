@@ -17,6 +17,8 @@ import {
   defineProtocolLiteral,
   defineProtocolNumber,
   defineProtocolObject,
+  defineProtocolString,
+  defineProtocolUniqueArray,
   isValidPluginJsonSchemaValue,
   normalizePluginJsonSchema,
   preparePluginJsonSchema,
@@ -278,6 +280,77 @@ describe('protocol composable schema kernel', () => {
     assertNeutralSurface(schema);
     assertNeutralSurface(schema.optional());
     assertNeutralSurface(schema.nullable());
+  });
+
+  it('composes a mutable structural schema across copies without an identity gate', () => {
+    const copy = <TInput, TOutput>(
+      source: ProtocolComposableSchema<TInput, TOutput>,
+    ): ProtocolComposableSchema<TInput, TOutput> => ({
+      jsonSchema: structuredClone(source.jsonSchema),
+      parse(value: unknown): TOutput {
+        return source.parse(value);
+      },
+      safeParse(value: unknown) {
+        return source.safeParse(value);
+      },
+      optional() {
+        return copy(source.optional());
+      },
+      nullable() {
+        return copy(source.nullable());
+      },
+    });
+    const copiedString = copy(defineProtocolString({ minLength: 2 }));
+    const schema = defineProtocolObject({
+      optionalLabel: copiedString.optional(),
+      nullableLabel: copiedString.nullable(),
+    }, { policy: 'closed' });
+    const validates = compilePluginJsonSchema(schema.jsonSchema);
+
+    expect(Object.isFrozen(copiedString)).toBe(false);
+    expect(Object.isFrozen(copiedString.jsonSchema)).toBe(false);
+    expect(Object.getOwnPropertySymbols(copiedString)).toEqual([]);
+    for (const value of [
+      { nullableLabel: null },
+      { optionalLabel: 'ok', nullableLabel: 'also ok' },
+    ]) {
+      expect(schema.safeParse(value).success).toBe(true);
+      expect(isValidPluginJsonSchemaValue(validates, value)).toBe(true);
+    }
+    for (const value of [
+      { nullableLabel: undefined },
+      { optionalLabel: 'x', nullableLabel: null },
+      { nullableLabel: 1 },
+    ]) {
+      expect(schema.safeParse(value).success).toBe(false);
+      expect(isValidPluginJsonSchemaValue(validates, value)).toBe(false);
+    }
+  });
+
+  it('keeps unique-array input acceptance aligned with emitted JSON Schema before child normalization', () => {
+    const schema = defineProtocolUniqueArray(defineProtocolObject({
+      kind: defineProtocolLiteral('ready'),
+    }, { policy: 'additive-open/drop' }));
+    const validates = compilePluginJsonSchema(schema.jsonSchema);
+    const distinctInput = [
+      { kind: 'ready', localOnly: 'first' },
+      { kind: 'ready', localOnly: 'second' },
+    ];
+    const duplicateInput = [
+      { kind: 'ready', localOnly: 'same' },
+      { kind: 'ready', localOnly: 'same' },
+    ];
+
+    // JSON Schema's `uniqueItems` compares the admitted input. The open/drop
+    // child normalizes both distinct items to the same output, which must not
+    // turn a schema-valid input into a parser rejection.
+    expect(validates(distinctInput)).toBe(true);
+    expect(schema.safeParse(distinctInput)).toEqual({
+      success: true,
+      data: [{ kind: 'ready' }, { kind: 'ready' }],
+    });
+    expect(validates(duplicateInput)).toBe(false);
+    expect(schema.safeParse(duplicateInput).success).toBe(false);
   });
 
   it('takes one input snapshot for an untransformed JSON leaf', () => {

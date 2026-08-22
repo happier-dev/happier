@@ -1,4 +1,5 @@
 import {
+    conversationBindingPolicyForOmittedFieldsV1,
     ConversationBindingCreateInputV1Schema,
     ConversationBindingCreateResultV1Schema,
     ConversationBindingDeleteInputV1Schema,
@@ -52,6 +53,7 @@ import type {
 } from '../actionDeclarations.js';
 
 export {
+    conversationBindingPolicyForOmittedFieldsV1,
     ConversationAutomationTargetNotVerifiedResultV1JsonSchema,
     ConversationAutomationTargetNotVerifiedResultV1Schema,
     ConversationBindingCreateInputV1JsonSchema,
@@ -104,6 +106,7 @@ export type {
     ConversationBindingUpdateResultV1,
 } from './bindings.js';
 export {
+    CONVERSATION_CONNECTION_SELECTABLE_TRANSPORTS_V1,
     ConversationConnectionCreateInputV1JsonSchema,
     ConversationConnectionCreateInputV1Schema,
     ConversationConnectionCreateResultV1JsonSchema,
@@ -122,6 +125,7 @@ export {
     ConversationConnectionUpdateInputV1Schema,
     ConversationConnectionUpdateResultV1JsonSchema,
     ConversationConnectionUpdateResultV1Schema,
+    isConversationConnectionSelectableTransportV1,
 } from './connections.js';
 export type {
     ConversationConnectionCreateInputV1,

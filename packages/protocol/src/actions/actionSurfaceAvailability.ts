@@ -14,6 +14,7 @@ export const AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST = [
   'action.spec.search',
   'action.spec.get',
   'action.options.resolve',
+  'plugins.reload',
 ] as const satisfies readonly ActionId[];
 
 const AGENT_DIRECT_ACTION_TOOL_ALLOW_SET = new Set<ActionId>(AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST);

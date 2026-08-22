@@ -1,4 +1,4 @@
-import type { CanonicalAgentId } from './types.js';
+import type { BundledAgentId } from './types.js';
 import { AGENT_IDS } from './types.js';
 import { AGENTS_CORE } from './manifest.js';
 import { resolveLegacyConfiguredBackendCompatAgentIdFromFlavor } from './compat/legacyConfiguredBackend.js';
@@ -11,7 +11,7 @@ function normalizeFlavor(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-export function resolveCanonicalAgentIdFromFlavor(flavor: unknown): CanonicalAgentId | null {
+export function resolveCanonicalAgentIdFromFlavor(flavor: unknown): BundledAgentId | null {
   const normalized = normalizeFlavor(flavor);
   if (!normalized) {
     return null;
@@ -38,7 +38,7 @@ export function resolveCanonicalAgentIdFromFlavor(flavor: unknown): CanonicalAge
   return null;
 }
 
-export function resolveAgentIdFromFlavor(flavor: unknown): CanonicalAgentId | null {
+export function resolveAgentIdFromFlavor(flavor: unknown): BundledAgentId | null {
   const normalized = normalizeFlavor(flavor);
   if (!normalized) {
     return null;

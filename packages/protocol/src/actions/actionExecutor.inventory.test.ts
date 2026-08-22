@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
 import { SPAWN_SESSION_ERROR_CODES } from '../sessions/spawnSession.js';
 
 function createDeps(): ActionExecutorDeps {
@@ -861,6 +862,120 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'workspaces.list_recent')).toBe(false);
   });
 
+  it('discovers current contributed Action definitions through the shared catalog operations', async () => {
+    const contributedAction: ActionDefinitionV1 = {
+      kindVersion: 1,
+      id: 'acme.triage/refresh-issue',
+      title: 'Refresh issue',
+      description: 'Refresh the selected issue.',
+      safety: 'safe',
+      approval: { result: 'none' },
+      placements: [],
+      slash: null,
+      bindings: null,
+      examples: null,
+      surfaces: {
+        ui: false,
+        voice: true,
+        agent: false,
+        mcp: false,
+        cli: false,
+        rpc: false,
+        sdk: false,
+        plugin: false,
+      },
+      inputHints: {
+        title: 'Refresh issue',
+        fields: [{
+          path: 'depth',
+          title: 'Depth',
+          widget: 'select',
+          options: [
+            { value: 'summary', label: 'Summary' },
+            { value: 'full', label: 'Full' },
+          ],
+          }, {
+            path: 'assignee',
+            title: 'Assignee',
+            widget: 'select',
+            optionsSourceId: 'acme.triage/assignees',
+          }],
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          depth: { type: 'string', enum: ['summary', 'full'] },
+          schemaOnly: { type: 'string', enum: ['one', 'two'] },
+        },
+        required: ['depth'],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: 'object',
+        properties: { refreshed: { type: 'boolean' } },
+        required: ['refreshed'],
+        additionalProperties: false,
+      },
+    };
+    const executor = createActionExecutor({
+      ...createDeps(),
+      listContributedActionDefinitions: () => [contributedAction],
+    } as ActionExecutorDeps);
+
+    await expect(executor.execute(
+      'action.spec.search',
+      { query: 'refresh issue', limit: 5 },
+      { surface: 'voice' },
+    )).resolves.toMatchObject({
+      ok: true,
+      result: {
+        actionSpecs: [expect.objectContaining({
+          id: contributedAction.id,
+          title: contributedAction.title,
+        })],
+      },
+    });
+    await expect(executor.execute(
+      'action.spec.get',
+      { id: contributedAction.id },
+      { surface: 'voice' },
+    )).resolves.toEqual({
+      ok: true,
+      result: { actionSpec: contributedAction },
+    });
+    await expect(executor.execute(
+      'action.options.resolve',
+      { actionId: contributedAction.id, fieldPath: 'depth', query: 'full' },
+      { surface: 'voice' },
+    )).resolves.toEqual({
+      ok: true,
+      result: {
+        actionId: contributedAction.id,
+        fieldPath: 'depth',
+        optionsSourceId: null,
+        options: [{ value: 'full', label: 'Full' }],
+      },
+    });
+    await expect(executor.execute(
+      'action.options.resolve',
+      { actionId: contributedAction.id, fieldPath: 'assignee' },
+      { surface: 'voice' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'unavailable',
+      error: 'unavailable',
+    });
+    await expect(executor.execute(
+      'action.options.resolve',
+      { actionId: contributedAction.id, fieldPath: 'schemaOnly' },
+      { surface: 'voice' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'unavailable',
+      error: 'unavailable',
+    });
+  });
+
   it('filters action.spec.search by surfaced availability for the current surface', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -1213,6 +1328,75 @@ describe('createActionExecutor (inventory/discovery)', () => {
       error: 'invalid_parameters',
     });
     expect(deps.sessionModeSet).not.toHaveBeenCalled();
+  });
+
+  it('returns canonical input schemas when agents discover Action specs', async () => {
+    const executor = createActionExecutor(createDeps());
+
+    const planResult = await executor.execute('action.spec.get', {
+      id: 'subagents.plan.start',
+    }, { surface: 'agent' });
+
+    expect(planResult).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({
+        actionSpec: expect.objectContaining({
+          kindVersion: 1,
+          inputSchema: expect.objectContaining({
+            type: 'object',
+            properties: expect.objectContaining({
+              backendTargetKeys: expect.objectContaining({
+                type: 'array',
+                minItems: 1,
+                items: expect.objectContaining({
+                  anyOf: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: 'string',
+                      pattern: '^(agent|acpBackend):.+$',
+                    }),
+                  ]),
+                }),
+              }),
+              permissionMode: expect.objectContaining({
+                description: expect.any(String),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+
+    const spawnResult = await executor.execute('action.spec.get', {
+      id: 'session.spawn_new',
+    }, { surface: 'agent' });
+
+    expect(spawnResult).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({
+        actionSpec: expect.objectContaining({
+          kindVersion: 1,
+          inputSchema: expect.objectContaining({
+            properties: expect.objectContaining({
+              executionTarget: expect.objectContaining({
+                properties: expect.objectContaining({
+                  serverId: expect.objectContaining({ minLength: 1, maxLength: 191 }),
+                }),
+              }),
+              organizationPlacement: expect.objectContaining({
+                properties: expect.objectContaining({
+                  tagIds: expect.objectContaining({ type: 'array', maxItems: 500 }),
+                }),
+              }),
+              agentSessionStartupInstructionsV1: expect.objectContaining({
+                properties: expect.objectContaining({
+                  revision: expect.objectContaining({ exclusiveMinimum: 0, maximum: 2_147_483_647 }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
   });
 
   it('rejects action.spec.get for actions that are not surfaced on the current surface', async () => {

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { CONVERSATION_ENDPOINT_KINDS_V1 } from '../bounds.js';
 import {
     ConversationEndpointDisplayLabelV1ProtocolSchema,
+    ConversationEndpointIdentityV1Schema,
     ConversationEndpointResolveInputV1Schema,
     ConversationEndpointResolveResultV1JsonSchema,
     ConversationEndpointResolveResultV1Schema,
@@ -94,6 +96,34 @@ describe('Channels V1 provider resolution results', () => {
             ...direct,
             id: '\u00e9'.repeat(257),
         }).success).toBe(false);
+
+        // `CONVERSATION_ENDPOINT_KINDS_V1` is the single endpoint-kind
+        // enumeration. The two closed unions correlate each kind with its
+        // audience by hand, so this is what keeps them from silently drifting
+        // away from the enumeration the exported `ConversationEndpointKindV1`
+        // type and the resolve-kinds selector are derived from.
+        for (const kind of CONVERSATION_ENDPOINT_KINDS_V1) {
+            const audiences = ['direct', 'shared'] as const;
+            expect(audiences.some((audience) => (
+                ConversationResolvedEndpointV1Schema.safeParse({ kind, audience, id: 'endpoint-1' }).success
+            ))).toBe(true);
+            expect(audiences.some((audience) => (
+                ConversationEndpointIdentityV1Schema.safeParse({ kind, audience, id: 'endpoint-1' }).success
+            ))).toBe(true);
+        }
+        expect(ConversationEndpointResolveInputV1Schema.safeParse({
+            v: 1,
+            connectionId: 'connection-1',
+            providerConnectionKey: 'provider:connection-1',
+            providerConfigVersion: 1,
+            providerConfig: { installation: 'installation-1' },
+            credentialRef: {
+                service: { pluginId: 'happier.channel.example', localId: 'account' },
+                accountId: 'account-1',
+            },
+            query: 'incident room',
+            kinds: [...CONVERSATION_ENDPOINT_KINDS_V1],
+        }).success).toBe(true);
     });
 
     it('keeps candidate result schemas structural while result admission owns ordering and keyed identity', () => {

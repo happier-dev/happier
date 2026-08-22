@@ -2,6 +2,32 @@ import { z } from 'zod';
 
 import { PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 } from '../plugins/settingsAdministration.js';
 
+/**
+ * The closed host Action vocabulary for the public plugin-authoring journey.
+ * These operations project existing CLI/daemon owners; they do not make
+ * plugin authoring a second command dispatcher.
+ */
+export const PLUGIN_DEV_LOOP_ACTION_IDS_V1 = [
+  'plugins.scaffold',
+  'plugins.install',
+  'plugins.uninstall',
+  'plugins.dev',
+  'plugins.author.install',
+  'plugins.author.typecheck',
+  'plugins.author.build',
+  'plugins.author.test',
+  'plugins.doctor',
+  'plugins.pack',
+  'plugins.reload',
+  'plugins.list',
+  'plugins.change.status',
+] as const;
+export type PluginDevLoopActionIdV1 = typeof PLUGIN_DEV_LOOP_ACTION_IDS_V1[number];
+
+export function isPluginDevLoopActionIdV1(value: string): value is PluginDevLoopActionIdV1 {
+  return (PLUGIN_DEV_LOOP_ACTION_IDS_V1 as readonly string[]).includes(value);
+}
+
 // B8 closure note:
 // Action ids remain protocol-owned and closed in this wave.
 // Plugin/runtime unification must not imply plugin-defined action-id authoring parity yet.
@@ -10,6 +36,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'action.spec.search',
     'action.spec.get',
     'action.options.resolve',
+    'action.invoke',
   ],
   session_lifecycle: [
     'session.open',
@@ -154,6 +181,10 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   voice_controls: [
     'ui.voice_global.reset',
     'ui.voice_agent.teleport',
+  ],
+  current_ui_context: [
+    'ui.current_context.read',
+    'ui.current_context.command.invoke',
   ],
   companion_controls: [
     'ui.pet.choose',
@@ -319,11 +350,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'approval.request.decide',
   ],
   plugin_dev_loop: [
-    'plugins.scaffold',
-    'plugins.install',
-    'plugins.uninstall',
-    'plugins.reload',
-    'plugins.list',
+    ...PLUGIN_DEV_LOOP_ACTION_IDS_V1,
     'plugins.sessionHooks.status.get',
     'plugins.sessionHooks.install',
     'plugins.sessionHooks.disable',
@@ -398,6 +425,7 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.session_permissions,
   ...ACTION_ID_FAMILIES_V1.external_sessions,
   ...ACTION_ID_FAMILIES_V1.voice_controls,
+  ...ACTION_ID_FAMILIES_V1.current_ui_context,
   ...ACTION_ID_FAMILIES_V1.companion_controls,
   ...ACTION_ID_FAMILIES_V1.memory,
   ...ACTION_ID_FAMILIES_V1.prompt_library,

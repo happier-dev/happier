@@ -1,12 +1,6 @@
 import { z } from 'zod';
 
 export const PLUGIN_ENFORCED_PERMISSION_CAPABILITIES_V1 = [
-  'filesystem.read',
-  'filesystem.write',
-  'env',
-  'network',
-  'network.intercept',
-  'process.spawn',
   'reviews.comments.write.direct',
   'credentials.materialize.raw',
 ] as const;

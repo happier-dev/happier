@@ -36,8 +36,6 @@ export const TriageSourceInstanceIdV1Schema = defineProtocolString({
     pattern: TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
 });
 export type TriageSourceInstanceIdV1 = ReturnType<typeof TriageSourceInstanceIdV1Schema.parse>;
-export const TriageSourceInstanceIdV1JsonSchema: PluginJsonSchema =
-    TriageSourceInstanceIdV1Schema.jsonSchema;
 
 /** @internal Relative-only bounded provider/source identifier component. */
 export const TriageIdentifierV1ProtocolSchema = defineTriageSingleLineStringV1(
@@ -81,8 +79,6 @@ export const TriageSourceWorkflowSubjectV1Schema = defineProtocolUnion([
 export type TriageSourceWorkflowSubjectV1 = ReturnType<
     typeof TriageSourceWorkflowSubjectV1Schema.parse
 >;
-export const TriageSourceWorkflowSubjectV1JsonSchema: PluginJsonSchema =
-    TriageSourceWorkflowSubjectV1Schema.jsonSchema;
 
 /**
  * The source-local entry reference. `CONTRACT.md` §6 publishes only this
@@ -97,8 +93,6 @@ export const TriageSourceEntryLocalRefV1Schema = defineProtocolObject({
 export type TriageSourceEntryLocalRefV1 = ReturnType<
     typeof TriageSourceEntryLocalRefV1Schema.parse
 >;
-export const TriageSourceEntryLocalRefV1JsonSchema: PluginJsonSchema =
-    TriageSourceEntryLocalRefV1Schema.jsonSchema;
 
 /**
  * The canonical target-qualified entry reference. It carries the admitted
@@ -124,8 +118,6 @@ export const TriageSourceInstanceRefV1Schema = defineProtocolObject({
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
 }, { policy: 'closed' });
 export type TriageSourceInstanceRefV1 = ReturnType<typeof TriageSourceInstanceRefV1Schema.parse>;
-export const TriageSourceInstanceRefV1JsonSchema: PluginJsonSchema =
-    TriageSourceInstanceRefV1Schema.jsonSchema;
 
 /**
  * Mutable presentation and routing for one observed entry. Every member is
@@ -141,5 +133,3 @@ export const TriageEntryLocatorV1Schema = defineProtocolObject({
     ).optional(),
 }, { policy: 'closed' });
 export type TriageEntryLocatorV1 = ReturnType<typeof TriageEntryLocatorV1Schema.parse>;
-export const TriageEntryLocatorV1JsonSchema: PluginJsonSchema =
-    TriageEntryLocatorV1Schema.jsonSchema;

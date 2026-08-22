@@ -1,4 +1,4 @@
-import { defineProtocolString } from './actions/jsonSchemaValidation.js';
+import { defineProtocolString } from './actions/protocolComposableSchema.js';
 import type { PluginJsonSchemaV2 } from './contributions/publicTypes.js';
 
 const RESERVED_HAPPIER_PLUGIN_NAMESPACE = 'happier.';

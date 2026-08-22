@@ -265,6 +265,12 @@ export const RPC_METHODS = {
   SESSION_AGENT_TRANSITION: 'session.agentTransition',
   /** Read-only live continuation eligibility on an exact machine. */
   SESSION_CONTINUATION_INSPECT: 'session.continuation.inspect',
+  /**
+   * Read-only rebuild of the activation brief one transition divider stands
+   * for. Runs the same bounded context pass the transition ran, bounded by the
+   * divider's recorded cutoff.
+   */
+  SESSION_AGENT_TRANSITION_BRIEF_PREVIEW: 'session.agentTransition.briefPreview',
   SESSION_PERMISSION_RESPOND: 'session.permission.respond',
   SESSION_USER_ACTION_ANSWER: 'session.user_action.answer',
   SESSION_PERMISSION_MODE_SET: 'session.permission_mode.set',

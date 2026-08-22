@@ -7,6 +7,7 @@ import { expect, it } from 'vitest';
 import {
   compareCliNodeRuntimePayloadEntryNames,
   copyCliNodeRuntimePayload,
+  copyCliNodeWorkspaceRuntimePackages,
   copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot,
   readCliNodeWorkspaceRuntimeIdentity,
 } from './copyCliNodeRuntimePayload.js';
@@ -76,7 +77,7 @@ it('rejects workspace package bytes that do not match the admitted runtime ident
   }
 });
 
-it('preserves hidden workspace runtime files when pinning an admitted runtime root', () => {
+it('preserves the exact admitted workspace package tree when pinning a runtime root', () => {
   const root = mkdtempSync(join(tmpdir(), 'happier-cli-runtime-hidden-file-'));
   try {
     const packageName = '@happier-dev/plugins-example';
@@ -99,6 +100,10 @@ it('preserves hidden workspace runtime files when pinning an admitted runtime ro
       '{"id":"happier.example"}\n',
       'utf8',
     );
+    mkdirSync(join(packageRoot, 'assets'), { recursive: true });
+    writeFileSync(join(packageRoot, 'assets', 'brand.txt'), 'brand bytes\n', 'utf8');
+    mkdirSync(join(packageRoot, 'resources'), { recursive: true });
+    writeFileSync(join(packageRoot, 'resources', 'prompt.md'), '# Prompt\n', 'utf8');
 
     const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({
       repoRoot: root,
@@ -119,6 +124,83 @@ it('preserves hidden workspace runtime files when pinning an admitted runtime ro
       'plugins-example',
       '.happier-plugin',
       'plugin.json',
+    ))).toBe(true);
+    expect(existsSync(join(
+      payloadDir,
+      'node_modules',
+      '@happier-dev',
+      'plugins-example',
+      'assets',
+      'brand.txt',
+    ))).toBe(true);
+    expect(existsSync(join(
+      payloadDir,
+      'node_modules',
+      '@happier-dev',
+      'plugins-example',
+      'resources',
+      'prompt.md',
+    ))).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('preserves the exact installed workspace package tree when pinning a source runtime', () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-cli-source-runtime-hidden-file-'));
+  try {
+    const packageName = '@happier-dev/plugins-example';
+    const hostRoot = join(root, 'apps', 'cli');
+    const packageRoot = join(hostRoot, 'node_modules', '@happier-dev', 'plugins-example');
+    mkdirSync(hostRoot, { recursive: true });
+    writeFileSync(join(hostRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli',
+      dependencies: { [packageName]: 'workspace:*' },
+      bundledDependencies: [packageName],
+    }), 'utf8');
+    writeWorkspacePackage(
+      join(root, 'packages', 'plugins', 'example'),
+      'export const generation = "source";\n',
+      packageName,
+    );
+    writeWorkspacePackage(
+      packageRoot,
+      'export const generation = "admitted";\n',
+      packageName,
+    );
+    mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
+    writeFileSync(
+      join(packageRoot, '.happier-plugin', 'plugin.json'),
+      '{"id":"happier.example"}\n',
+      'utf8',
+    );
+    mkdirSync(join(packageRoot, 'resources'), { recursive: true });
+    writeFileSync(join(packageRoot, 'resources', 'prompt.md'), '# Prompt\n', 'utf8');
+
+    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root });
+    const payloadDir = join(root, 'pinned-runner');
+    const staged = copyCliNodeWorkspaceRuntimePackages({
+      repoRoot: root,
+      payloadDir,
+      expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
+    });
+
+    expect(staged).toEqual(admittedIdentity);
+    expect(existsSync(join(
+      payloadDir,
+      'node_modules',
+      '@happier-dev',
+      'plugins-example',
+      '.happier-plugin',
+      'plugin.json',
+    ))).toBe(true);
+    expect(existsSync(join(
+      payloadDir,
+      'node_modules',
+      '@happier-dev',
+      'plugins-example',
+      'resources',
+      'prompt.md',
     ))).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });

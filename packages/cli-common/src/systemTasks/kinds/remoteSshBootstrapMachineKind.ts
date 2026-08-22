@@ -1,4 +1,8 @@
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
+import {
+  isLoopbackHostname,
+  normalizeHostnameForLoopbackCheck,
+} from '@happier-dev/protocol';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';
@@ -38,20 +42,11 @@ export type RemoteSshBootstrapHappierJsonExecutor = Readonly<{
   runHappierJson: (params: Readonly<{ args: readonly string[] }>) => Promise<RemoteCommandResult>;
 }>;
 
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = String(hostname ?? '').trim().toLowerCase();
-  if (!normalized) return false;
-  if (normalized === 'localhost') return true;
-  if (normalized === '127.0.0.1') return true;
-  if (normalized === '0.0.0.0') return true;
-  if (normalized === '::1') return true;
-  return false;
-}
-
 function isLoopbackRelayUrl(url: string): boolean {
   try {
-    const parsed = new URL(url);
-    return isLoopbackHostname(parsed.hostname);
+    const hostname = new URL(url).hostname;
+    return isLoopbackHostname(hostname)
+      || normalizeHostnameForLoopbackCheck(hostname) === '0.0.0.0';
   } catch {
     return false;
   }

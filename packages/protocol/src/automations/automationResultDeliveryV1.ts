@@ -2,6 +2,11 @@ import { z } from 'zod';
 
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 import {
+  PluginContributionIdentityV1JsonSchema,
+  PluginContributionIdentityV1Schema,
+  type PluginContributionIdentityV1,
+} from '../plugins/contributionIdentity.js';
+import {
   AutomationHostIdentifierV1JsonSchema as HOST_ID_JSON_SCHEMA,
   AutomationIdV1Schema,
 } from './automationIdV1.js';
@@ -17,6 +22,17 @@ export { AutomationIdV1Schema };
 export type { AutomationIdV1 } from './automationIdV1.js';
 
 export const MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES = 2 * 1024;
+/**
+ * The Conversation admission body is a channel message, not a resolution query.
+ * Its boundary is the Conversation ingress message ceiling every channel provider
+ * already admits (`MAX_CONVERSATION_INGRESS_TEXT_UTF8_BYTES`, 64 KiB in
+ * `@happier-dev/channels-protocol/v1`), restated here because the protocol package
+ * sits below channels-protocol and cannot import it. Borrowing the 2 KiB
+ * resolution-input ceiling made every ordinary long channel message fail admission
+ * permanently. Downstream Automation persistence stays well above this: a
+ * materialized input holds 256 KiB and a stored envelope 512 KiB.
+ */
+export const MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES = 64 * 1024;
 export const MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS = 86_400_000;
 export const MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES = 256 * 1024;
 
@@ -38,7 +54,7 @@ export type AutomationRunResultV1 = z.infer<typeof AutomationRunResultV1Schema>;
 
 /**
  * Immutable Automation facts carried from Conversation admission through the
- * daemon and into the Channels custody owner. Correspondence remains separate
+ * daemon and into the receiving plugin's custody owner. Correspondence stays separate
  * so the server can route without opening the sealed source payload.
  */
 export const AutomationResultDeliverySourceV1Schema = z.object({
@@ -52,22 +68,24 @@ export const AutomationResultDeliverySourceV1Schema = z.object({
 export type AutomationResultDeliverySourceV1 = z.infer<typeof AutomationResultDeliverySourceV1Schema>;
 
 /**
- * The one result Action accepted for a Conversation Automation handoff. The
- * server freezes this reference during admission; neither a Channel plugin nor
- * a daemon caller may substitute a different target Action at delivery time.
+ * The one result Action accepted for a Conversation Automation handoff is the
+ * receiving plugin's own declared Action contribution, expressed as the
+ * canonical qualified contribution identity. No plugin id is named here: any
+ * plugin that declares this contract may receive the Automation reply for a
+ * Conversation it admitted. The server freezes this reference during admission,
+ * so neither the admitting plugin nor a daemon caller may substitute a
+ * different target Action at delivery time, and
+ * `isAutomationConversationResultDeliveryOwnedByCallerV1` keeps the frozen
+ * target inside the admitting plugin.
  */
-export const AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1 = Object.freeze({
-  pluginId: 'happier.channels',
-  localId: 'automation/result-deliver-v1',
-} as const);
+export const AutomationResultDeliveryActionRefV1Schema = asProtocolZod(
+  PluginContributionIdentityV1Schema,
+);
+export type AutomationResultDeliveryActionRefV1 = PluginContributionIdentityV1;
 
-export const AutomationResultDeliveryActionRefV1Schema = z.object({
-  pluginId: z.literal(AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1.pluginId),
-  localId: z.literal(AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1.localId),
-}).strict();
-export type AutomationResultDeliveryActionRefV1 = z.infer<
-  typeof AutomationResultDeliveryActionRefV1Schema
->;
+/** Portable projection so a plugin can declare the same ref in its manifest. */
+export const AutomationResultDeliveryActionRefV1JsonSchema: PluginJsonSchemaV2 =
+  PluginContributionIdentityV1JsonSchema;
 
 export const AutomationConversationResultDeliveryV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }).strict(),
@@ -81,6 +99,22 @@ export type AutomationConversationResultDeliveryV1 = z.infer<
   typeof AutomationConversationResultDeliveryV1Schema
 >;
 
+/**
+ * A Conversation Automation reply is delivered back to the plugin that admitted
+ * the Conversation. Any plugin may participate; none may name another plugin's
+ * contribution as the recipient of a user's reply, which would misroute that
+ * reply out of its owning plugin. This is the single owner of that rule for the
+ * admission wire contract and for the server admission writer that freezes the
+ * target.
+ */
+export function isAutomationConversationResultDeliveryOwnedByCallerV1(params: Readonly<{
+  callerPluginId: string;
+  resultDelivery: AutomationConversationResultDeliveryV1;
+}>): boolean {
+  return params.resultDelivery.kind !== 'finalResult'
+    || params.resultDelivery.actionRef.pluginId === params.callerPluginId;
+}
+
 export const AutomationConversationAdmitInputV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   bindingId: asProtocolZod(AutomationIdV1Schema),
@@ -91,7 +125,7 @@ export const AutomationConversationAdmitInputV1Schema = z.object({
     MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
   )),
   text: z.string().superRefine((value, context) => {
-    if (UTF8_ENCODER.encode(value).byteLength > MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES) {
+    if (UTF8_ENCODER.encode(value).byteLength > MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'Conversation text exceeds its UTF-8 byte limit' });
     }
   }),
@@ -131,8 +165,9 @@ export const AutomationResultDeliveryResultV1Schema = z.discriminatedUnion('kind
 export type AutomationResultDeliveryResultV1 = z.infer<typeof AutomationResultDeliveryResultV1Schema>;
 
 /**
- * JSON Schema projections for the one Action contract. Channels consumes these
- * exact Protocol-owned values rather than maintaining a second DTO/schema.
+ * JSON Schema projections for the one Action contract. A receiving plugin
+ * declares these exact Protocol-owned values rather than maintaining a second
+ * DTO/schema.
  */
 export const AutomationRunResultV1JsonSchema: PluginJsonSchemaV2 = {
   type: 'object',

@@ -153,6 +153,48 @@ export function readMentionRefOpaqueForKindV1(kind: BuiltInMentionKindV1, ref: s
 }
 
 /**
+ * Whether the rendered `token` alone still names what the user picked.
+ *
+ * Some persistence keeps only the rendered prompt program and never this array — an
+ * Automation template stores the message a later run will send. A writer with that
+ * shape must refuse exactly the references whose identity the token cannot express,
+ * and must NOT refuse the ones it can: a `@docs/README.md` file mention is text the
+ * agent already acts on correctly, and refusing it removes a working flow.
+ *
+ * The per-kind verdict is derived from what each kind's `<opaque>` holds against what
+ * its composer token renders:
+ *
+ * - `happier.file` — opaque is the workspace path; the token is that same path behind
+ *   the `@` trigger (quoted when it contains a token boundary). **Survives**, and the
+ *   containment check below proves it for the instance at hand rather than assuming it.
+ * - `happier.skill` — opaque is the catalog identity (`vendor:codex:review`); the token
+ *   is the bare display name. Send time reconstructs the skill's `path` from that
+ *   identity (D-3/INV-9), which the name cannot recover. **Refused.**
+ * - `happier.vendorPlugin` — opaque is the marketplace ref; the token is the plugin
+ *   name. **Refused.**
+ * - `happier.session` — opaque is the session id; the token is a title slug plus a
+ *   short id tail, so `sessionReferenceBlock` has nothing to resolve. **Refused.**
+ * - `happier.composerReference` — opaque is a provider-defined candidate id and the
+ *   contributing plugin identity rides alongside it; the token is the candidate label.
+ *   **Refused.**
+ * - any other `kind` — `kind` is deliberately open, so a later or plugin-contributed
+ *   kind is unknown here. **Refused**: fail closed is the safe default of a narrowing.
+ *
+ * `reference.insert` lets a caller supply `token` itself, so a file-kind reference is
+ * not self-describing by construction — the token must actually contain the path.
+ * Containment, not the composer's token grammar: recognising a token boundary here
+ * would put a second copy of that grammar in the protocol, and the only reference this
+ * admits beyond an exact composer token is one that names its own path anyway.
+ */
+export function mentionRefV1SurvivesRenderedTokenAlone(
+  mention: Readonly<Pick<MentionRefV1, 'kind' | 'ref' | 'token'>>,
+): boolean {
+  if (mention.kind !== MENTION_KIND_V1.file) return false;
+  const path = readMentionRefOpaqueForKindV1(MENTION_KIND_V1.file, mention.ref);
+  return path !== null && mention.token.includes(path);
+}
+
+/**
  * Element-wise sanitization (INV-4). A failing element is dropped **individually**; its
  * siblings survive.
  *

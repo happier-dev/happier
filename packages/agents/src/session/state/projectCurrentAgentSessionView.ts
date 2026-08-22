@@ -27,9 +27,9 @@ export type ProjectCurrentAgentSessionViewParamsV1 = Readonly<{
   /** The Agent this Session's current view must declare. */
   agentId: AgentId;
   /**
-   * Matched native resume identity for the target, or `null`/omitted for a
-   * fresh target. The proof is nested inside the pair so an id can never be
-   * written without discarding a proof that belonged to a different id.
+   * Native resume identity for the target, or `null`/omitted for a fresh
+   * target. The target's own runtime republishes its session-log path on its
+   * next established turn, so the projection writes the id alone.
    */
   nativeResumeIdentity?: AgentNativeResumeIdentityV1 | null;
   /** Target runtime descriptor, or `null`/omitted to leave the view without one. */
@@ -64,6 +64,22 @@ const AGENT_SCOPED_CURRENT_METADATA_KEYS: readonly string[] = Object.freeze([
   // Current work headlines derived from the source runtime's activity.
   'sessionWorkflowActivityHeadlineV1',
   'sessionAgentActivityHeadlineV1',
+  // The connected-service auth binding and the materialized credential home
+  // that carries it. These are Agent-scoped, not Session-global: a binding
+  // names a `serviceId` the SOURCE Agent's catalog declares, and every reader
+  // resolves it against the Session's CURRENT Agent. Left in place, the Session
+  // declares the target while still bound to a service the target cannot apply
+  // — observed live in the predecessor tree as `openai-codex`/`codex6`
+  // surviving a switch to `claude`: the daemon spawn-preflighted the wrong
+  // service's credential, the target's runtime registration reconciled to
+  // `generation_application_scope_service_unsupported`, and `/session-started`
+  // answered 503 until the freshly started target died. The target's own
+  // binding is written by the caller from the canonical spawn-defaulting owner,
+  // because it comes from the account's per-Agent stored default and this
+  // projector is pure.
+  'connectedServices',
+  'connectedServicesUpdatedAt',
+  'connectedServiceMaterializationIdentityV1',
 ]);
 
 /**
@@ -102,24 +118,25 @@ export function projectCurrentAgentSessionView<TMetadata extends SessionMetadata
   metadata: TMetadata,
   params: ProjectCurrentAgentSessionViewParamsV1,
 ): TMetadata {
-  // Clearing the field drops every Agent's flat resume key AND its catalog-declared
-  // continuity proof, so the target's key below is the only one that can remain.
+  // Clearing the field drops every Agent's flat resume key AND its
+  // catalog-declared native session-log path, so the target's key below is the
+  // only one that can remain.
   let next = clearSessionStateFieldFromMetadata(
     { ...metadata, flavor: params.agentId } as SessionMetadata,
     'identity.providerSessionId',
   ) as Record<string, unknown>;
 
-  const vendorResumeIdMetadataKey = getAgentResumeConfig(params.agentId).vendorResumeIdField ?? null;
+  const vendorResumeIdMetadataKey = getAgentResumeConfig(params.agentId)?.vendorResumeIdField ?? null;
   const nativeResumeIdentity = params.nativeResumeIdentity ?? null;
   if (vendorResumeIdMetadataKey && nativeResumeIdentity) {
-    // The id/proof pair goes through the one vendor-resume writer, which owns
-    // the atomic "write the id, rewrite its proof slot" rule. An Agent whose
-    // catalog declares no proof field simply has no slot, so a proof handed to
-    // the wrong Agent is dropped rather than left as an unowned local path.
+    // Through the one vendor-resume writer, which also rewrites the Agent's
+    // session-log-path slot. No path is supplied here: the projection restores
+    // an id the target is about to resume, and only the target's own runtime
+    // knows where that conversation's log now lives. It republishes the path on
+    // its next established turn.
     next = writeProviderSessionIdSessionState(next, {
       metadataKey: vendorResumeIdMetadataKey,
       value: nativeResumeIdentity.vendorResumeId,
-      continuityProof: nativeResumeIdentity.continuityProof,
     });
   }
 

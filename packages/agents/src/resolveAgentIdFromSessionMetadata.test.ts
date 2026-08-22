@@ -94,4 +94,21 @@ describe('resolveAgentIdFromSessionMetadata', () => {
       claudeSessionId: 'stale-claude',
     })).toBe('codex');
   });
+
+  it('preserves an installed external Agent declared by the runtime descriptor', () => {
+    const identity = resolveSessionMetadataAgentIdentity({
+      runtimeDescriptorV1: runtimeDescriptor('acme.agent'),
+      flavor: 'claude',
+      claudeSessionId: 'stale-claude',
+    });
+
+    expect(identity).toMatchObject({
+      agentId: 'acme.agent',
+      basis: 'declared',
+      ambiguousVendorResumeKeys: false,
+    });
+    expect(resolveAgentIdFromSessionMetadata({
+      runtimeDescriptorV1: runtimeDescriptor('acme.agent'),
+    })).toBe('acme.agent');
+  });
 });

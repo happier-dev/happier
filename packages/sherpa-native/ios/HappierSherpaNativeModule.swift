@@ -10,8 +10,6 @@ public class HappierSherpaNativeModule: Module {
   // cancel until synthesis finished, making cancellation a no-op.
   private let synthQueue = DispatchQueue(label: "dev.happier.sherpa.synthesis", qos: .userInitiated)
   private var engines: [String: HappierSherpaOfflineTtsEngine] = [:]
-  private var asrEngines: [String: HappierSherpaOnlineAsrEngine] = [:]
-  private var asrStreams: [String: HappierSherpaOnlineAsrStream] = [:]
   private lazy var vadDetectors = FrameFedVadDetectorRegistry { sampleRate, minSpeechSec, minSilenceSec in
     let modelPath = try VadModelResolver.resolveSileroVadModelPath()
     return try SileroVadDetector(
@@ -23,6 +21,9 @@ public class HappierSherpaNativeModule: Module {
   }
 
   private func handleModuleDestroy() {
+    // Streaming ASR recognizers and streams are owned by the process-wide native
+    // registry, so they are released here rather than dying with this module.
+    HappierSherpaOnlineAsrEngine.releaseAll()
     vadDetectors.cancelAll()
   }
 
@@ -33,16 +34,6 @@ public class HappierSherpaNativeModule: Module {
 
     let engine = try HappierSherpaOfflineTtsEngine(assetsDir: assetsDir)
     engines[assetsDir] = engine
-    return engine
-  }
-
-  private func getAsrEngine(assetsDir: String, language: String?) throws -> HappierSherpaOnlineAsrEngine {
-    let langKey = (language ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    let key = "\(assetsDir)|\(langKey)"
-    if let cached = asrEngines[key] { return cached }
-
-    let engine = try HappierSherpaOnlineAsrEngine(assetsDir: assetsDir, sampleRate: 16000, language: langKey.isEmpty ? nil : langKey)
-    asrEngines[key] = engine
     return engine
   }
 
@@ -113,13 +104,12 @@ public class HappierSherpaNativeModule: Module {
     AsyncFunction("cancel") { (params: [String: Any]) in
       let jobId = (params["jobId"] as? String) ?? ""
       if jobId.isEmpty { return }
+      // The ASR registry owns its own locking, so the mark lands immediately
+      // instead of queueing behind the TTS engine dictionary.
+      HappierSherpaOnlineAsrEngine.cancelJob(jobId)
       self.queue.async {
         for (_, engine) in self.engines {
           engine.cancelJob(jobId)
-        }
-        if let stream = self.asrStreams[jobId] {
-          stream.cancel()
-          self.asrStreams.removeValue(forKey: jobId)
         }
       }
     }
@@ -127,16 +117,11 @@ public class HappierSherpaNativeModule: Module {
     AsyncFunction("createStreamingRecognizer") { (params: [String: Any]) in
       let jobId = (params["jobId"] as? String) ?? ""
       let assetsDir = (params["assetsDir"] as? String) ?? ""
-      let language = (params["language"] as? String)
 
       if jobId.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 301, userInfo: [NSLocalizedDescriptionKey: "jobId is required"]) }
       if assetsDir.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 302, userInfo: [NSLocalizedDescriptionKey: "assetsDir is required"]) }
 
-      try self.queue.sync {
-        let engine = try self.getAsrEngine(assetsDir: assetsDir, language: language)
-        let stream = try engine.createStream()
-        self.asrStreams[jobId] = stream
-      }
+      try HappierSherpaOnlineAsrEngine.createStream(forJob: jobId, assetsDir: assetsDir)
     }
 
     AsyncFunction("pushAudioFrame") { (params: [String: Any]) -> [String: Any] in
@@ -147,33 +132,28 @@ public class HappierSherpaNativeModule: Module {
 
       if jobId.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 304, userInfo: [NSLocalizedDescriptionKey: "jobId is required"]) }
 
-      return try self.queue.sync {
-        guard let stream = self.asrStreams[jobId] else {
-          throw NSError(domain: "HappierSherpaNative", code: 305, userInfo: [NSLocalizedDescriptionKey: "ASR stream not found"])
-        }
-        guard let data = Data(base64Encoded: pcm16leBase64) else {
-          return ["text": "", "isEndpoint": false]
-        }
-        var err: NSError?
-        let result = stream.pushPcm16Data(data, sampleRate: Int32(sampleRate), channels: Int32(channels), error: &err)
-        if let err { throw err }
-        return result as? [String: Any] ?? ["text": "", "isEndpoint": false]
+      guard let data = Data(base64Encoded: pcm16leBase64) else {
+        return ["text": "", "isEndpoint": false]
       }
+      var err: NSError?
+      let result = HappierSherpaOnlineAsrEngine.pushPcm16Data(data, forJob: jobId, sampleRate: Int32(sampleRate), channels: Int32(channels), error: &err)
+      if let err { throw err }
+      return result as? [String: Any] ?? ["text": "", "isEndpoint": false]
     }
 
     AsyncFunction("finishStreaming") { (params: [String: Any]) -> [String: Any] in
       let jobId = (params["jobId"] as? String) ?? ""
       if jobId.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 306, userInfo: [NSLocalizedDescriptionKey: "jobId is required"]) }
 
-      return try self.queue.sync {
-        guard let stream = self.asrStreams.removeValue(forKey: jobId) else {
-          return ["text": ""]
-        }
-        var err: NSError?
-        let text = stream.finishWithError(&err)
-        if let err { throw err }
-        return ["text": text]
-      }
+      return ["text": HappierSherpaOnlineAsrEngine.finishJob(jobId)]
+    }
+
+    AsyncFunction("releaseStreamingAssetsDir") { (params: [String: Any]) -> [String: Any] in
+      let assetsDir = (params["assetsDir"] as? String) ?? ""
+      if assetsDir.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 307, userInfo: [NSLocalizedDescriptionKey: "assetsDir is required"]) }
+
+      let cancelledJobs = HappierSherpaOnlineAsrEngine.releaseAssetsDir(assetsDir)
+      return ["cancelledJobs": Int(cancelledJobs)]
     }
 
     AsyncFunction("createVadDetector") { (params: [String: Any]) in

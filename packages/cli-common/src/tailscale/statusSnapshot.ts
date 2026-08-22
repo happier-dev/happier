@@ -34,6 +34,26 @@ export type TailscaleStatusSnapshot = Readonly<{
   tailnetName: string | null;
   tailscaleIps: readonly string[];
   loggedIn: boolean;
+  /**
+   * Whether the local backend is actually up and carrying traffic.
+   *
+   * `loggedIn` cannot answer this. `tailscale status --json` exits 0 for every
+   * backend state, so `Stopped` and `NeedsMachineAuth` arrive as ordinary data
+   * — and because both retain node identity, both report `loggedIn: true`.
+   * A caller asking "can this machine reach its tailnet right now?" wants
+   * `running`; a caller asking "has this machine ever been signed in?" wants
+   * `loggedIn`.
+   */
+  running: boolean;
+  /**
+   * Whether `tailscale status` actually reached the local tailscaled backend.
+   *
+   * False only when the CLI ran but could not talk to the daemon at all, so no
+   * backend state exists to report. It separates "installed, signed in, daemon
+   * down" from "needs login" — both of which otherwise look like
+   * `loggedIn: false, running: false`.
+   */
+  daemonReachable: boolean;
 }>;
 
 export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSnapshot {
@@ -50,6 +70,11 @@ export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSna
   const explicitLoginRequired = authUrl !== null || Boolean(backendState && /login/i.test(backendState));
   const hasLoggedInEvidence = haveNodeKey || dnsName !== null || tailnetName !== null || tailscaleIps.length > 0;
 
+  // Tailscale's BackendState is one of NoState, InUseOtherUser, NeedsLogin,
+  // NeedsMachineAuth, Stopped, Starting, Running. Only the last one means
+  // traffic can flow.
+  const running = backendState !== null && backendState.toLowerCase() === 'running';
+
   return {
     backendState,
     authUrl,
@@ -57,7 +82,48 @@ export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSna
     tailnetName,
     tailscaleIps,
     loggedIn: hasLoggedInEvidence && !explicitLoginRequired,
+    running,
+    daemonReachable: true,
   };
+}
+
+/**
+ * The snapshot for a machine whose tailscaled never answered.
+ *
+ * `tailscale status --json` exits non-zero and prints no JSON in this case, so
+ * there is nothing to parse — but "the daemon is down" is a state callers must
+ * render, not an exception they must catch.
+ */
+export function tailscaleStatusSnapshotForUnreachableDaemon(): TailscaleStatusSnapshot {
+  return {
+    backendState: null,
+    authUrl: null,
+    dnsName: null,
+    tailnetName: null,
+    tailscaleIps: [],
+    loggedIn: false,
+    running: false,
+    daemonReachable: false,
+  };
+}
+
+// Tailscale reports an unreachable local backend through its CLI output rather
+// than a distinct exit code, and the wording differs per platform. These stay
+// deliberately narrow so a missing binary keeps surfacing as a thrown error —
+// "not installed" and "installed but stopped" are different user problems.
+const DAEMON_UNREACHABLE_PATTERNS: readonly RegExp[] = [
+  /failed to connect to local (?:tailscaled|backend)/i,
+  /(?:doesn't|does not) appear to be running/i,
+  /is (?:the )?tailscaled? (?:service )?running\?/i,
+  /unable to connect to the tailscale service/i,
+];
+
+export function isTailscaleDaemonUnreachableOutput(text: string): boolean {
+  const normalized = String(text ?? '').trim();
+  if (!normalized) {
+    return false;
+  }
+  return DAEMON_UNREACHABLE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function parseTailscaleStatusJson(text: string): TailscaleStatusSnapshot {

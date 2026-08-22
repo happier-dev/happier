@@ -1141,18 +1141,25 @@ function readRuntimeAuthRecoveryStatusFromLocalId(
   return null;
 }
 
-export function agentEventAttentionImpact(event: unknown): SessionMessageAttentionImpact {
+export function agentEventAttentionImpact(
+  event: unknown,
+  localId?: unknown,
+): SessionMessageAttentionImpact {
   const type = readAgentEventType(event);
   // The same-Session transition divider is a boundary marker, not news. It rides
   // the passthrough `message` arm, whose type-keyed default is attention-bearing
   // and must stay that way for every other passthrough event, so the exemption is
-  // conditioned on the strict `sessionAgentTransitionV1` sidecar instead. This is
+  // conditioned on the divider's full identity instead — the reserved outer
+  // localId AND the strict `sessionAgentTransitionV1` sidecar, both answered by
+  // the canonical reader. Callers that have a stored row forward its localId;
+  // a compatibility caller that does not has no trusted divider and therefore
+  // takes the conservative attention-bearing path. This is
   // the single attention decision: `attentionImpact` is not a persisted column, so
   // both re-read resolvers (server `resolveMessageAttentionImpact`, client
   // `messageAttentionImpact` / `storedSessionMessageContentAttentionImpactOrNull`)
   // inherit it by already delegating here. A malformed or unknown-version sidecar
   // does not parse and therefore is NOT silenced.
-  if (readSessionAgentTransitionDividerV1(event) !== null) {
+  if (readSessionAgentTransitionDividerV1({ localId, event }) !== null) {
     return SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT;
   }
   if (type === 'connected-service-runtime-auth-recovery') {
@@ -1173,9 +1180,9 @@ export function agentEventLocalIdAttentionImpact(localId: string | null | undefi
     return agentEventAttentionImpact({
       type,
       status: readRuntimeAuthRecoveryStatusFromLocalId(localId),
-    });
+    }, localId);
   }
-  return agentEventAttentionImpact({ type });
+  return agentEventAttentionImpact({ type }, localId);
 }
 
 export const TranscriptRawAgentContentV1Schema = RawAgentContentSchema;

@@ -28,6 +28,7 @@ export { PluginIdJsonSchema, PluginIdSchema, type PluginId } from '../pluginId.j
 export {
   PLUGIN_CONTRIBUTION_CATALOG_V2,
   derivePluginDaemonContributionRegistrationRights,
+  readContributedProviderCatalogParserIds,
   type PluginContributionCatalogEntryV2,
 } from '../contributions/catalog.js';
 export {

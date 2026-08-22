@@ -121,6 +121,46 @@ describe('public voice executable contribution boundary', () => {
     })]);
   });
 
+  it('defaults effectful client tools closed and admits only declared stable call identities', () => {
+    const base = {
+      id: 'conversation',
+      title: 'Conversation',
+      kind: 'conversation',
+      roles: ['realtime_conversation'],
+      platforms: ['web'],
+      capabilities: {
+        turn: { cancelResponse: false, bargeIn: false },
+      },
+      client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
+    } as const;
+
+    expect(PluginContributesV2Schema.parse({
+      voiceProviders: [base],
+    }).voiceProviders[0]!.capabilities).toMatchObject({
+      tools: { effectCalls: 'none' },
+    });
+    expect(PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...base,
+        capabilities: {
+          ...base.capabilities,
+          tools: { effectCalls: 'stable_ids' },
+        },
+      }],
+    }).voiceProviders[0]!.capabilities).toMatchObject({
+      tools: { effectCalls: 'stable_ids' },
+    });
+    expect(PluginContributesV2Schema.safeParse({
+      voiceProviders: [{
+        ...base,
+        capabilities: {
+          ...base.capabilities,
+          tools: { effectCalls: 'arrival_order' },
+        },
+      }],
+    }).success).toBe(false);
+  });
+
   it('catalogs the declaration as one required Voice registration right', () => {
     const catalog = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'voiceProviders');
     expect(catalog).toMatchObject({
@@ -314,6 +354,7 @@ describe('public voice executable contribution boundary', () => {
           exportName: 'activate',
           platforms: ['web'],
         },
+        voiceProviderDeclaration: contributes.voiceProviders[0],
       },
     ]);
     expect(protocol.derivePluginDaemonContributionRegistrationRights(contributes)).toEqual([]);
@@ -323,7 +364,11 @@ describe('public voice executable contribution boundary', () => {
       exportName: 'activate',
       platform: 'web',
     })).toEqual([
-      expect.objectContaining({ family: 'voiceProviders', localId: 'conversation' }),
+      expect.objectContaining({
+        family: 'voiceProviders',
+        localId: 'conversation',
+        voiceProviderDeclaration: contributes.voiceProviders[0],
+      }),
     ]);
     expect(protocol.derivePluginClientContributionRegistrationRights(contributes, {
       artifactId: 'voice-runtime-web',
@@ -361,10 +406,20 @@ describe('public voice executable contribution boundary', () => {
     });
 
     expect(protocol.derivePluginContributionRegistrationRights(contributes)).toEqual([
-      { family: 'voiceProviders', localId: 'speech', target: { realm: 'daemon' } },
+      {
+        family: 'voiceProviders',
+        localId: 'speech',
+        target: { realm: 'daemon' },
+        voiceProviderDeclaration: contributes.voiceProviders[0],
+      },
     ]);
     expect(protocol.derivePluginDaemonContributionRegistrationRights(contributes)).toEqual([
-      { family: 'voiceProviders', localId: 'speech', target: { realm: 'daemon' } },
+      {
+        family: 'voiceProviders',
+        localId: 'speech',
+        target: { realm: 'daemon' },
+        voiceProviderDeclaration: contributes.voiceProviders[0],
+      },
     ]);
   });
 

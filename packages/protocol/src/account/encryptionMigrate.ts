@@ -268,9 +268,36 @@ const AccountEncryptionMigratePredecessorConnectedServicesDirectiveSchema =
       .strict(),
   ]);
 
+/**
+ * The one declaration of how large each retained Automation private-content
+ * field may be. Every reader of the same persisted field binds here — the
+ * migrate wire below, and the Account transition's durable staging rows, which
+ * re-parse these exact fields out of their own stored JSON. A second local
+ * ceiling would make a validly persisted envelope unmigratable.
+ */
+export const ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS = {
+  templateCiphertext: z.string().min(1).max(220_000),
+  triggerDefinitionEnvelope: z.string()
+    .min(1)
+    .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
+  triggerEvidenceEnvelope: z.string().min(1).max(220_000),
+  occurrenceEvidenceEqualityTag: AutomationOccurrenceEvidenceEqualityTagV1Schema,
+  executionInputEnvelope: z.string().min(1).max(220_512),
+  resultEnvelope: z.string()
+    .min(1)
+    .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
+  replyContextEnvelope: z.string()
+    .min(1)
+    .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
+  replyHandoffReceiptEnvelope: z.string()
+    .min(1)
+    .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
+  summaryCiphertext: z.string().min(1).max(220_000),
+} as const;
+
 const AutomationsMigrationItemShape = {
   automationId: z.string().min(1).max(256),
-  templateCiphertext: z.string().min(1).max(220_000),
+  templateCiphertext: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
 } as const;
 
 const AccountEncryptionMigratePredecessorAutomationsMigrationItemSchema = z
@@ -284,11 +311,10 @@ const AutomationsMigrationItemSchema = z
     // Additive current-wire member. Schedule definitions have no retained
     // trigger content and may omit it; the Automation owner rejects omission
     // for Event/Conversation rows before the Account transition can write.
-    triggerDefinitionEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable()
-      .optional(),
+    triggerDefinitionEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerDefinitionEnvelope
+        .nullable()
+        .optional(),
   })
   .strict();
 
@@ -302,22 +328,18 @@ const AutomationRunMigrationItemSchema = z
   .object({
     runId: z.string().min(1).max(256),
     expectedRunRevision: NonNegativeSafeIntegerSchema,
-    triggerEvidenceEnvelope: z.string().min(1).max(220_000).nullable(),
+    triggerEvidenceEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerEvidenceEnvelope.nullable(),
     occurrenceEvidenceEqualityTag:
-      AutomationOccurrenceEvidenceEqualityTagV1Schema.nullable(),
-    executionInputEnvelope: z.string().min(1).max(220_512).nullable(),
-    resultEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
-    replyContextEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
-    replyHandoffReceiptEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.occurrenceEvidenceEqualityTag.nullable(),
+    executionInputEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.executionInputEnvelope.nullable(),
+    resultEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope.nullable(),
+    replyContextEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyContextEnvelope.nullable(),
+    replyHandoffReceiptEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyHandoffReceiptEnvelope.nullable(),
   })
   .strict();
 
@@ -1850,6 +1872,7 @@ export const AccountEncryptionMigrateBadRequestResponseSchema =
     z.object({ error: z.literal('review_comments_not_empty') }).strict(),
     z.object({ error: z.literal('session_organization_not_empty') }).strict(),
     z.object({ error: z.literal('pets_not_empty') }).strict(),
+    z.object({ error: z.literal('plugin_collections_not_empty') }).strict(),
     z.object({ error: z.literal('migration_too_large') }).strict(),
     z.object({
       error: z.literal('metadata_privacy_upgrade_required'),

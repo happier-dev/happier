@@ -26,6 +26,10 @@
       "types": "./dist/providers/claudeModelOptions.d.ts",
       "default": "./dist/providers/claudeModelOptions.js"
     },
+    "./definitions/agent-capabilities": {
+      "types": "./dist/definitions/agentCapabilityProjection.d.ts",
+      "default": "./dist/definitions/agentCapabilityProjection.js"
+    },
     "./session/controls/checkpoints": {
       "types": "./dist/session/controls/checkpoints.d.ts",
       "default": "./dist/session/controls/checkpoints.js"

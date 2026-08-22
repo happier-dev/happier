@@ -59,7 +59,34 @@ describe('ProviderDetectionDescriptorV1Schema', () => {
     value.catalogFallback.endpointEnvName = 'OLLAMA_HOST=evil';
     expect(ProviderDetectionDescriptorV1Schema.safeParse(value).success).toBe(false);
     value.catalogFallback.endpointEnvName = 'OLLAMA_HOST';
-    value.catalogFallback.parser = 'arbitrary-command-output';
+    // The command grammar stays bounded; the output *format* is not part of it.
+    value.catalogFallback.fixedArgs = ['list; rm -rf /'];
+    expect(ProviderDetectionDescriptorV1Schema.safeParse(value).success).toBe(false);
+  });
+
+  it('accepts a Provider-contributed command-output format while keeping the id grammar bounded', () => {
+    const value = structuredClone(descriptor()) as any;
+    value.catalogFallback = {
+      endpointTemplateId: 'native',
+      lookupNames: ['acme'],
+      fixedArgs: ['models', '--plain'],
+      parser: 'acme-list-v1',
+    };
+    expect(ProviderDetectionDescriptorV1Schema.safeParse(value).success).toBe(true);
+
+    value.catalogFallback.parser = 'acme list v1';
+    expect(ProviderDetectionDescriptorV1Schema.safeParse(value).success).toBe(false);
+  });
+
+  it('keeps the local-readiness shortcut vocabulary closed to the two host-implemented criteria', () => {
+    // Unlike the catalog formats, `presenceCheck` names a host-implemented
+    // criterion with no plugin-supplied implementation behind it. It refines a
+    // discovery status label; readiness itself is decided by the required,
+    // open-format `availabilityProbe`.
+    const value = structuredClone(descriptor()) as any;
+    value.presenceCheck = { lookupNames: ['lms'], fixedArgs: ['daemon', 'status'], parser: 'exit-zero-running' };
+    expect(ProviderDetectionDescriptorV1Schema.safeParse(value).success).toBe(true);
+    value.presenceCheck.parser = 'acme-status-json';
     expect(ProviderDetectionDescriptorV1Schema.safeParse(value).success).toBe(false);
   });
 });

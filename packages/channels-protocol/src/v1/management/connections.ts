@@ -33,10 +33,29 @@ const protocolBoolean = defineProtocolUnion([
     defineProtocolLiteral(true),
     defineProtocolLiteral(false),
 ]);
-const selectableTransportV1 = defineProtocolUnion([
-    defineProtocolLiteral('checkpointedPull'),
-    defineProtocolLiteral('socket'),
+/**
+ * The one V1 transport selector shared by connection creation, transfer, and
+ * preparation. Durable push requires the separately held endpoint lifecycle,
+ * so a current caller cannot select it through these mutations.
+ */
+export const CONVERSATION_CONNECTION_SELECTABLE_TRANSPORTS_V1 = [
+    'checkpointedPull',
+    'socket',
+] as const;
+export const ConversationConnectionSelectableTransportV1ProtocolSchema = defineProtocolUnion([
+    defineProtocolLiteral(CONVERSATION_CONNECTION_SELECTABLE_TRANSPORTS_V1[0]),
+    defineProtocolLiteral(CONVERSATION_CONNECTION_SELECTABLE_TRANSPORTS_V1[1]),
 ]);
+export type ConversationConnectionSelectableTransportV1 = ReturnType<
+    typeof ConversationConnectionSelectableTransportV1ProtocolSchema.parse
+>;
+
+export function isConversationConnectionSelectableTransportV1(
+    value: unknown,
+): value is ConversationConnectionSelectableTransportV1 {
+    return CONVERSATION_CONNECTION_SELECTABLE_TRANSPORTS_V1.some((transport) => transport === value);
+}
+
 const targetedContributionSelectionV1 = PluginTargetedContributionSelectionV1Schema;
 
 const conversationConnectionMutationResultV1 = defineProtocolObject({
@@ -97,7 +116,7 @@ const conversationConnectionCreateInputV1 = defineProtocolObject({
     providerSelection: targetedContributionSelectionV1,
     providerSetupInput: ConversationJsonValueV1ProtocolSchema,
     credentialRef: ConversationQualifiedConnectedAccountRefV1ProtocolSchema.nullable(),
-    selectedTransport: selectableTransportV1,
+    selectedTransport: ConversationConnectionSelectableTransportV1ProtocolSchema,
     maximumObservationAgeMs: observationAgeV1,
 }, { policy: 'closed' });
 
@@ -123,7 +142,7 @@ export const ConversationConnectionTransferInputV1Schema = defineProtocolObject(
     providerSelection: targetedContributionSelectionV1,
     providerSetupInput: ConversationJsonValueV1ProtocolSchema,
     credentialRef: ConversationQualifiedConnectedAccountRefV1ProtocolSchema.nullable(),
-    selectedTransport: selectableTransportV1,
+    selectedTransport: ConversationConnectionSelectableTransportV1ProtocolSchema,
 }, { policy: 'closed' });
 export type ConversationConnectionTransferInputV1 = ReturnType<
     typeof ConversationConnectionTransferInputV1Schema.parse

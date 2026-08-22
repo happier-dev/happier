@@ -26,7 +26,7 @@ export const UNSUPPORTED_AGENT_SESSION_CAPABILITIES: AgentSessionCapabilities = 
 });
 
 export function getAgentSessionCapabilities(agentId: AgentId): AgentSessionCapabilities {
-  return getAgentCore(agentId).sessionCapabilities ?? UNSUPPORTED_AGENT_SESSION_CAPABILITIES;
+  return getAgentCore(agentId)?.sessionCapabilities ?? UNSUPPORTED_AGENT_SESSION_CAPABILITIES;
 }
 
 export function getAgentSessionCapability(agentId: AgentId, capability: AgentSessionCapabilityKey): AgentSessionCapabilitySupportLevel {
@@ -58,7 +58,7 @@ export function evaluateAgentSessionCapabilitySupport(params: Readonly<{
   const effectiveRuntimeControlSurface = resolveAgentRuntimeControlSurfaceForSession(params);
 
   const baseSupport = effectiveRuntimeControlSurface
-    ? readCapabilityFromSurface(effectiveRuntimeControlSurface.sessionCapabilities, params.capability)
+    ? readAgentSessionCapabilityFromSurface(effectiveRuntimeControlSurface.sessionCapabilities, params.capability)
     : getAgentSessionCapability(params.agentId, params.capability);
   if (baseSupport === 'unsupported') {
     return baseSupport;
@@ -84,7 +84,14 @@ export function readRuntimeCapabilitiesForSession(params: Readonly<{
   });
 }
 
-function readCapabilityFromSurface(capabilities: AgentSessionCapabilities, capability: AgentSessionCapabilityKey): AgentSessionCapabilitySupportLevel {
+/**
+ * Reads one declared capability out of an already-resolved control surface.
+ *
+ * This is the single place the surface's per-capability shape is decoded, so a
+ * caller that already holds the Session's effective surface reads it here
+ * instead of re-resolving the surface once per question.
+ */
+export function readAgentSessionCapabilityFromSurface(capabilities: AgentSessionCapabilities, capability: AgentSessionCapabilityKey): AgentSessionCapabilitySupportLevel {
   switch (capability) {
     case 'sessionListing':
       return capabilities.sessionListing;

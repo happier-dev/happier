@@ -37,7 +37,13 @@ export function resolvePermissionModeGroupForSessionModeDescriptor(
 }
 
 export function resolvePermissionModeGroupForAgent(agentId: AgentId): PermissionModeGroupId {
-    return resolvePermissionModeGroupForSessionModeDescriptor(getAgentSessionModeDescriptor(agentId));
+    const descriptor = getAgentSessionModeDescriptor(agentId);
+    // A non-bundled Agent contributes no bundled session-mode descriptor. The generic
+    // group is the correct reading of "not provider-native"; it is not a substitution
+    // of another Agent's facts.
+    return descriptor == null
+        ? 'codexLike'
+        : resolvePermissionModeGroupForSessionModeDescriptor(descriptor);
 }
 
 export function normalizePermissionModeForAgent(params: { agentId: AgentId; mode: PermissionMode }): PermissionMode {

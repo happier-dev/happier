@@ -45,6 +45,7 @@ describe('Automation conversation admission ActionSpec', () => {
       safety: 'safe',
       sideEffectClass: 'read',
       approval: { result: 'none' },
+      pluginCallerPolicy: { kind: 'caller' },
     }));
     expect(spec.surfaces).toEqual({
       ui: false,
@@ -128,6 +129,7 @@ describe('Automation conversation admission ActionSpec', () => {
       sideEffectClass: 'read',
       surfaces: expect.objectContaining({ plugin: true }),
       approval: { result: 'none' },
+      pluginCallerPolicy: { kind: 'caller' },
     }));
     expect(spec.surfaces).toEqual(expect.objectContaining({
       ui: false,
@@ -142,12 +144,28 @@ describe('Automation conversation admission ActionSpec', () => {
 
   it('admits only the exact bounded target verification input and nondisclosing result union', () => {
     const spec = getActionSpec('automation.conversation.target.verify');
-    const input = { automationId: 'automation-1', expectedTemplateVersion: 3 } as const;
+    const input = {
+      automationId: 'automation-1',
+      expectedTemplateVersion: 3,
+    } as const;
 
     expect(spec.inputSchema.parse(input)).toEqual(input);
     expect(spec.inputSchema.safeParse({ ...input, expectedTemplateVersion: -1 }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, expectedTemplateVersion: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, templateVersion: 3 }).success).toBe(false);
+    // A conversation is an additional invocation source, so several bindings
+    // may name one target and the verifier asks no per-binding question.
+    expect(spec.inputSchema.safeParse({ ...input, bindingId: 'binding-1' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({
+      ...input,
+      binding: { kind: 'exact', bindingId: 'binding-1' },
+    }).success).toBe(false);
+    expect(spec.outputSchema.safeParse({ kind: 'notVerified', reason: 'bindingMismatch' }).success)
+      .toBe(false);
+    expect(spec.outputSchema.safeParse({ kind: 'notVerified', reason: 'notConversation' }).success)
+      .toBe(false);
+    expect(spec.outputSchema.parse({ kind: 'notVerified', reason: 'resultDeliveryUnsupported' }))
+      .toEqual({ kind: 'notVerified', reason: 'resultDeliveryUnsupported' });
     expect(spec.outputSchema.parse({ kind: 'verified', templateVersion: 3 })).toEqual({
       kind: 'verified',
       templateVersion: 3,
@@ -186,6 +204,7 @@ describe('Automation conversation admission ActionSpec', () => {
       plugin: true,
     }));
     expect(spec.approval).toEqual({ result: 'none' });
+    expect(spec.pluginCallerPolicy).toEqual({ kind: 'caller' });
   });
 
   it('rejects mutable caller or machine authority before the Automation owner', () => {

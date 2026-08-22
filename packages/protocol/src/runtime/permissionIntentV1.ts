@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import {
   defineProtocolLiteral,
   defineProtocolUnion,
-} from '../plugins/actions/jsonSchemaValidation.js';
+} from '../plugins/actions/protocolComposableSchema.js';
 import { parseSessionPermissionModeAlias } from '../sessions/metadata/sessionPermissionModes.js';
 
 /**

@@ -80,8 +80,8 @@ export {
 } from './bindings/usageLimitRecovery.js';
 export {
   getLegacyProviderSessionIdMetadataKeys,
-  getVendorResumeContinuityProofMetadataKey,
-  getVendorResumeContinuityProofMetadataKeys,
+  getAgentNativeSessionLogPathMetadataKey,
+  getAgentNativeSessionLogPathMetadataKeys,
   readProviderSessionIdSessionState,
   writeProviderSessionIdSessionState,
   type ProviderSessionIdMetadataKey,

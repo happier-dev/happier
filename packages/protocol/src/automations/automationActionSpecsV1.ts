@@ -270,6 +270,12 @@ export const AutomationEventAdmitHttpResultV1Schema = z.object({
 }).strict();
 export type AutomationEventAdmitHttpResultV1 = z.infer<typeof AutomationEventAdmitHttpResultV1Schema>;
 
+/**
+ * A conversation binding is an additional invocation source for an Automation
+ * the Account already owns, never a replacement for its schedule, manual, or
+ * Plugin Event trigger. Verification therefore asks only whether the caller is
+ * naming a current target, and several bindings may name the same one.
+ */
 export const AutomationConversationTargetVerifyInputV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   expectedTemplateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
@@ -293,7 +299,6 @@ export const AutomationConversationTargetVerifyResultV1Schema = z.discriminatedU
     kind: z.literal('notVerified'),
     reason: z.enum([
       'notFound',
-      'notConversation',
       'templateVersionMismatch',
       'resultDeliveryUnsupported',
     ]),

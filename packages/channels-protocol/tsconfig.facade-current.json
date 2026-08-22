@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": "../..",
+    "paths": {
+      "@happier-dev/plugin-sdk/contributions": [
+        "../plugin-sdk/src/contributions/index.ts"
+      ],
+      "@happier-dev/protocol/plugins/actions/json-schema-validation": [
+        "../plugin-sdk/protocolFacade.protocol-current.d.ts"
+      ]
+    }
+  }
+}

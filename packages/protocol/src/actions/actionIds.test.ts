@@ -24,6 +24,9 @@ describe('ActionIdSchema', () => {
 
   it('accepts known action ids', () => {
     expect(ActionIdSchema.parse('review.start')).toBe('review.start');
+    expect(ActionIdSchema.parse('action.invoke')).toBe('action.invoke');
+    expect(ActionIdSchema.parse('ui.current_context.read')).toBe('ui.current_context.read');
+    expect(ActionIdSchema.parse('ui.current_context.command.invoke')).toBe('ui.current_context.command.invoke');
     expect(ActionIdSchema.parse('subagents.delegate.start')).toBe('subagents.delegate.start');
     expect(ActionIdSchema.parse('session.open')).toBe('session.open');
     expect(ActionIdSchema.parse('execution.run.start')).toBe('execution.run.start');
@@ -78,6 +81,7 @@ describe('ActionIdSchema', () => {
         'action.spec.search',
         'action.spec.get',
         'action.options.resolve',
+        'action.invoke',
       ],
       session_lifecycle: [
         'session.open',
@@ -222,6 +226,10 @@ describe('ActionIdSchema', () => {
       voice_controls: [
         'ui.voice_global.reset',
         'ui.voice_agent.teleport',
+      ],
+      current_ui_context: [
+        'ui.current_context.read',
+        'ui.current_context.command.invoke',
       ],
       companion_controls: [
         'ui.pet.choose',
@@ -390,8 +398,16 @@ describe('ActionIdSchema', () => {
         'plugins.scaffold',
         'plugins.install',
         'plugins.uninstall',
+        'plugins.dev',
+        'plugins.author.install',
+        'plugins.author.typecheck',
+        'plugins.author.build',
+        'plugins.author.test',
+        'plugins.doctor',
+        'plugins.pack',
         'plugins.reload',
         'plugins.list',
+        'plugins.change.status',
         'plugins.sessionHooks.status.get',
         'plugins.sessionHooks.install',
         'plugins.sessionHooks.disable',
@@ -436,7 +452,7 @@ describe('ActionIdSchema', () => {
       ],
       automation_conversation: [
         'automation.conversation.targets.list',
-        'automation.conversation.target.verify',
+          'automation.conversation.target.verify',
         'automation.conversation.admit',
       ],
       scm_pull_request: [
@@ -466,6 +482,7 @@ describe('ActionIdSchema', () => {
       'action.spec.search',
       'action.spec.get',
       'action.options.resolve',
+      'action.invoke',
       'session.open',
       'session.fork',
       'session.continue_with_replay',
@@ -584,6 +601,8 @@ describe('ActionIdSchema', () => {
       'sessions.external.operation.discard',
       'ui.voice_global.reset',
       'ui.voice_agent.teleport',
+      'ui.current_context.read',
+      'ui.current_context.command.invoke',
       'ui.pet.choose',
       'memory.search',
       'memory.get_window',
@@ -716,8 +735,16 @@ describe('ActionIdSchema', () => {
       'plugins.scaffold',
       'plugins.install',
       'plugins.uninstall',
+      'plugins.dev',
+      'plugins.author.install',
+      'plugins.author.typecheck',
+      'plugins.author.build',
+      'plugins.author.test',
+      'plugins.doctor',
+      'plugins.pack',
       'plugins.reload',
       'plugins.list',
+      'plugins.change.status',
       'plugins.sessionHooks.status.get',
       'plugins.sessionHooks.install',
       'plugins.sessionHooks.disable',

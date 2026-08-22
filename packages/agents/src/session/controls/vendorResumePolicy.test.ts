@@ -6,6 +6,7 @@ import { AGENTS_CORE } from '../../manifest.js';
 import {
   evaluateVendorResumeEligibility,
   resolveAgentNativeResumeIdentityFromSessionMetadata,
+  resolveAgentNativeTranscriptPathFromSessionMetadata,
   resolveVendorResumeIdFromSessionMetadata,
 } from './vendorResumePolicy.js';
 
@@ -41,6 +42,10 @@ describe('vendorResumePolicy', () => {
 
   it('exposes claudeSessionId as the Claude vendor resume id field', () => {
     expect(AGENTS_CORE.claude.resume.vendorResumeIdField).toBe('claudeSessionId');
+    // The same catalog slot, now read ONLY as the Agent's own session-log
+    // pointer for the handoff brief — it gates nothing (`AM-24`). The key name
+    // is predecessor vocabulary held by a generated projection; see
+    // `AgentResumeConfig`.
     expect(AGENTS_CORE.claude.resume.vendorResumeContinuityProofField).toBe('claudeTranscriptPath');
   });
 
@@ -55,28 +60,22 @@ describe('vendorResumePolicy', () => {
       .toBe('grok-session-1');
   });
 
-  it('requires Claude transcript continuity proof before derived resume is eligible', () => {
-    expect(
-      evaluateVendorResumeEligibility({
-        agentId: 'claude',
-        metadata: { claudeSessionId: 'c1' },
-        accountSettings: {},
-      }),
-    ).toEqual({ eligible: false, reasonCode: 'vendor_resume_continuity_proof_missing' });
-    expect(
-      evaluateVendorResumeEligibility({
-        agentId: 'claude',
-        metadata: { claudeSessionId: 'c1', claudeTranscriptPath: '   ' },
-        accountSettings: {},
-      }),
-    ).toEqual({ eligible: false, reasonCode: 'vendor_resume_continuity_proof_missing' });
-    expect(
-      evaluateVendorResumeEligibility({
-        agentId: 'claude',
-        metadata: { claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
-        accountSettings: {},
-      }),
-    ).toEqual({ eligible: true, vendorResumeId: 'c1' });
+  it('resumes Claude from its recorded id with no continuity proof of any kind', () => {
+    // `AM-24`. The proof gate is gone: a recorded id is either still resumable,
+    // which resuming answers, or it is not — and Claude raises
+    // `ClaudeAgentSdkResumeIdentityMismatchError` when it is not, so there was
+    // never a silent-zero-context path for a pre-check to prevent. It was also
+    // never general: 15 Agents declare vendor resume and exactly one declared a
+    // proof field, so the canonical Codex→Claude→Codex round trip had no gate.
+    for (const metadata of [
+      { claudeSessionId: 'c1' },
+      { claudeSessionId: 'c1', claudeTranscriptPath: '   ' },
+      { claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+    ]) {
+      expect(
+        evaluateVendorResumeEligibility({ agentId: 'claude', metadata, accountSettings: {} }),
+      ).toEqual({ eligible: true, vendorResumeId: 'c1' });
+    }
   });
 
   it('does not impose Claude transcript proof on other provider resume policy', () => {
@@ -456,51 +455,121 @@ describe('vendorResumePolicy', () => {
 });
 
 describe('resolveAgentNativeResumeIdentityFromSessionMetadata', () => {
-  /**
-   * The read side of the atomic id+proof write. It exists so no caller has to
-   * read two metadata slots and re-match them — the way a proof belonging to a
-   * previous id gets resurrected (`REQ-STATE-01`).
-   */
-  it('returns the matched pair from the Agent’s catalog-declared slots', () => {
+  it('returns the id from the Agent’s catalog-declared slot and nothing else', () => {
     expect(
       resolveAgentNativeResumeIdentityFromSessionMetadata('claude', {
         claudeSessionId: 'claude-1',
         claudeTranscriptPath: '/home/u/.claude/p/claude-1.jsonl',
       }),
-    ).toEqual({
-      v: 1,
-      vendorResumeId: 'claude-1',
-      continuityProof: { kind: 'transcriptPath', value: '/home/u/.claude/p/claude-1.jsonl' },
-    });
+    ).toEqual({ v: 1, vendorResumeId: 'claude-1' });
   });
 
-  it('returns a proofless pair when the Agent declares a proof field and none is stored', () => {
-    // Distinguishable from "no id at all", because a bare id is still usable for
-    // an Agent that needs no proof and never usable to claim native return.
+  it('returns the id whether or not the Agent’s log path is stored', () => {
     expect(
       resolveAgentNativeResumeIdentityFromSessionMetadata('claude', { claudeSessionId: 'claude-1' }),
-    ).toEqual({ v: 1, vendorResumeId: 'claude-1', continuityProof: null });
-  });
-
-  it('reads an unusable proof as no proof rather than passing it through', () => {
-    expect(
-      resolveAgentNativeResumeIdentityFromSessionMetadata('claude', {
-        claudeSessionId: 'claude-1',
-        claudeTranscriptPath: 'x'.repeat(5_000),
-      })?.continuityProof,
-    ).toBeNull();
-  });
-
-  it('never pairs one Agent’s id with another Agent’s proof', () => {
-    expect(
-      resolveAgentNativeResumeIdentityFromSessionMetadata('codex', {
-        codexSessionId: 'codex-1',
-        claudeTranscriptPath: '/home/u/.claude/p/claude-1.jsonl',
-      }),
-    ).toEqual({ v: 1, vendorResumeId: 'codex-1', continuityProof: null });
+    ).toEqual({ v: 1, vendorResumeId: 'claude-1' });
   });
 
   it('returns null when the Agent has no recorded id', () => {
     expect(resolveAgentNativeResumeIdentityFromSessionMetadata('claude', { codexSessionId: 'c' })).toBeNull();
+  });
+});
+
+describe('resolveAgentNativeTranscriptPathFromSessionMetadata', () => {
+  /**
+   * The successor-facing POINTER, and the one surviving reader of the
+   * catalog-declared log-path slot. Its whole job is to hand the incoming Agent
+   * somewhere to read; it decides nothing about resuming (`AM-24`).
+   */
+  it('reads the declaring Agent’s own log path', () => {
+    expect(
+      resolveAgentNativeTranscriptPathFromSessionMetadata('claude', {
+        claudeSessionId: 'claude-1',
+        claudeTranscriptPath: ' /home/u/.claude/p/claude-1.jsonl ',
+      }),
+    ).toBe('/home/u/.claude/p/claude-1.jsonl');
+  });
+
+  it('never hands one Agent another Agent’s log', () => {
+    // Codex declares no log-path slot; borrowing Claude's key would point the
+    // reader at a conversation that is not the one being handed over.
+    expect(
+      resolveAgentNativeTranscriptPathFromSessionMetadata('codex', {
+        codexSessionId: 'codex-1',
+        claudeTranscriptPath: '/home/u/.claude/p/claude-1.jsonl',
+      }),
+    ).toBeNull();
+  });
+
+  it('reads a blank or non-string slot as no log', () => {
+    expect(
+      resolveAgentNativeTranscriptPathFromSessionMetadata('claude', { claudeTranscriptPath: '   ' }),
+    ).toBeNull();
+    expect(
+      resolveAgentNativeTranscriptPathFromSessionMetadata('claude', { claudeTranscriptPath: 7 }),
+    ).toBeNull();
+  });
+});
+
+/**
+ * An external (manifest-contributed) Agent has no generated `<vendor>SessionId`
+ * slot and no generated session-control adapter. Its native conversation id
+ * lives in the one open, agent-agnostic carrier — the runtime descriptor — and
+ * the canonical resume-id owner must read it there, or the daemon derives no
+ * resume id and silently respawns a FRESH provider session.
+ */
+describe('resolveVendorResumeIdFromSessionMetadata — external Agent runtime descriptor', () => {
+  const externalDescriptorMetadata = (providerSessionId: string, agentId = 'acme') => ({
+    runtimeDescriptorV1: {
+      v: 1,
+      agentId,
+      agent: {
+        backendMode: 'custom',
+        providerSessionId,
+      },
+    },
+  });
+
+  it('reads an external Agent’s native session id from the runtime descriptor', () => {
+    expect(
+      resolveVendorResumeIdFromSessionMetadata('acme', externalDescriptorMetadata(' acme-native-1 ')),
+    ).toBe('acme-native-1');
+  });
+
+  it('never hands one Agent another Agent’s descriptor session id', () => {
+    expect(
+      resolveVendorResumeIdFromSessionMetadata('acme', externalDescriptorMetadata('other-native-1', 'other')),
+    ).toBeNull();
+  });
+
+  it('keeps the generated adapter authoritative for a bundled Agent', () => {
+    // Pi's adapter prefers its absolute session-file path over the descriptor's
+    // bare providerSessionId. A generic descriptor tier must not overtake it.
+    expect(
+      resolveVendorResumeIdFromSessionMetadata('pi', {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'pi',
+          agent: {
+            backendMode: 'rpc',
+            providerSessionId: 'pi-bare-id',
+            sessionFile: '/home/u/.pi/sessions/pi-1.json',
+          },
+        },
+      }),
+    ).toBe('/home/u/.pi/sessions/pi-1.json');
+  });
+
+  it('keeps the catalog-declared flat field authoritative for a bundled Agent', () => {
+    expect(
+      resolveVendorResumeIdFromSessionMetadata('claude', {
+        claudeSessionId: 'claude-flat-1',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'claude',
+          agent: { backendMode: 'sdk', providerSessionId: 'claude-descriptor-1' },
+        },
+      }),
+    ).toBe('claude-flat-1');
   });
 });

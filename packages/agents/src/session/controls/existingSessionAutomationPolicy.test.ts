@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { evaluateExistingSessionAutomationEligibility } from './existingSessionAutomationPolicy.js';
 
 describe('evaluateExistingSessionAutomationEligibility', () => {
-  it('requires Claude transcript continuity proof before vendor resume automation', () => {
+  it('accepts Claude sessions on the recorded id alone, with or without a transcript path', () => {
+    // `AM-24`: the transcript path is a successor-facing pointer, not a resume
+    // gate. Automation resumes from the persisted id like every other Agent.
     expect(
       evaluateExistingSessionAutomationEligibility({
         metadata: {
@@ -12,8 +14,9 @@ describe('evaluateExistingSessionAutomationEligibility', () => {
         },
       }),
     ).toEqual({
-      eligible: false,
-      reasonCode: 'vendor_resume_continuity_proof_missing',
+      eligible: true,
+      agentId: 'claude',
+      strategy: 'vendor_resume',
     });
 
     expect(

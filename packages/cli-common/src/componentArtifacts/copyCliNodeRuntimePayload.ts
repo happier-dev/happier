@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { cp } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
   bundleWorkspacePackage,
@@ -173,6 +173,47 @@ function stageCliNodeRuntimeWorkspaceBundles(
   }
 }
 
+function stageAdmittedCliNodeRuntimeWorkspaceBundles(
+  workspaceBundles: ReadonlyArray<CliNodeRuntimeWorkspaceBundle>,
+): void {
+  for (const { srcDir, destDir } of workspaceBundles) {
+    cpSync(srcDir, destDir, {
+      recursive: true,
+      force: true,
+      filter: (sourcePath) => (
+        sourcePath === srcDir || basename(sourcePath) !== 'node_modules'
+      ),
+    });
+  }
+}
+
+function copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
+  workspaceBundles: ReadonlyArray<CliNodeRuntimeWorkspaceBundle>,
+  expectedWorkspaceRuntimeIdentity: string,
+): CliNodeWorkspaceRuntimeIdentity {
+  const before = readCliNodeWorkspaceRuntimeIdentityFromBundles(workspaceBundles);
+  if (before.fingerprint !== expectedWorkspaceRuntimeIdentity) {
+    throw new Error(
+      `CLI workspace runtime does not match its dist publication `
+      + `(expected ${expectedWorkspaceRuntimeIdentity}, found ${before.fingerprint})`,
+    );
+  }
+  stageAdmittedCliNodeRuntimeWorkspaceBundles(workspaceBundles);
+  const staged = readCliNodeWorkspaceRuntimeIdentityFromBundles(
+    workspaceBundles.map((bundle) => ({
+      ...bundle,
+      srcDir: bundle.destDir,
+    })),
+  );
+  if (staged.fingerprint !== before.fingerprint) {
+    throw new Error(
+      `CLI admitted workspace runtime was not staged exactly `
+      + `(expected ${before.fingerprint}, found ${staged.fingerprint})`,
+    );
+  }
+  return before;
+}
+
 function stageInstalledCliNodeRuntimeWorkspaceBundles(
   repoRoot: string,
   payloadDir: string,
@@ -236,10 +277,13 @@ export function copyCliNodeWorkspaceRuntimePackages({
   payloadDir: string;
   expectedWorkspaceRuntimeIdentity?: string;
 }>): CliNodeWorkspaceRuntimeIdentity {
-  return stageInstalledCliNodeRuntimeWorkspaceBundles(repoRoot, payloadDir, {
-    includeRuntimeDependencies: false,
-    expectedIdentity: expectedWorkspaceRuntimeIdentity,
-  });
+  const sourceBundles = resolveInstalledCliNodeRuntimeWorkspaceBundles(repoRoot).map((bundle) => ({
+    ...bundle,
+    destDir: join(payloadDir, 'node_modules', ...bundle.packageName.split('/')),
+  }));
+  const admittedIdentity = expectedWorkspaceRuntimeIdentity
+    ?? readCliNodeWorkspaceRuntimeIdentityFromBundles(sourceBundles).fingerprint;
+  return copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(sourceBundles, admittedIdentity);
 }
 
 export function copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
@@ -258,29 +302,14 @@ export function copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
     payloadDir,
     packageNames,
   );
-  const before = readCliNodeWorkspaceRuntimeIdentityFromBundles(sourceBundles);
-  if (before.fingerprint !== expectedWorkspaceRuntimeIdentity) {
-    throw new Error(
-      `CLI artifact workspace runtime does not match its dist publication `
-      + `(expected ${expectedWorkspaceRuntimeIdentity}, found ${before.fingerprint})`,
-    );
-  }
-  stageCliNodeRuntimeWorkspaceBundles(payloadDir, sourceBundles, {
-    includeRuntimeDependencies: false,
-  });
-  const staged = readCliNodeWorkspaceRuntimeIdentityFromBundles(
-    sourceBundles.map((bundle) => ({
-      ...bundle,
-      srcDir: bundle.destDir,
-    })),
+  // runtimeRoot already contains the admitted, content-identified package
+  // publication. Preserve that tree instead of applying source-package
+  // publication rules a second time: its sanitized package.json intentionally
+  // no longer carries the source `files` list used to select static resources.
+  return copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
+    sourceBundles,
+    expectedWorkspaceRuntimeIdentity,
   );
-  if (staged.fingerprint !== before.fingerprint) {
-    throw new Error(
-      `CLI artifact workspace runtime was not staged exactly `
-      + `(expected ${before.fingerprint}, found ${staged.fingerprint})`,
-    );
-  }
-  return before;
 }
 
 export async function copyCliNodeRuntimePayload({

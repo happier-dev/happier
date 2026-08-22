@@ -1,0 +1,32 @@
+{
+  "name": "@happier-dev/desktop-native",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "src",
+    "native",
+    "rust/happier-desktop-native/.cargo",
+    "rust/happier-desktop-native/Cargo.toml",
+    "rust/happier-desktop-native/Cargo.lock",
+    "rust/happier-desktop-native/build.rs",
+    "rust/happier-desktop-native/src",
+    "scripts",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build:native": "node scripts/build-native.mjs",
+    "verify:native": "node scripts/verify-node-load.mjs",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

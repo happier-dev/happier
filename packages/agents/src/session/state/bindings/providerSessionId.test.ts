@@ -118,7 +118,7 @@ describe('providerSessionId session-state binding', () => {
     });
   });
 
-  it('rejects arbitrary structured metadata keys outside manifest-declared vendor resume fields', () => {
+  it('never writes a metadata key no Agent catalog declares', () => {
     const metadata = { path: '/tmp/project' };
     const next = providerSessionIdBinding.write(metadata, {
       value: {
@@ -127,7 +127,10 @@ describe('providerSessionId session-state binding', () => {
       },
     });
 
-    expect(next).toBe(metadata);
+    // No descriptor to carry the id and no declared slot to write: the caller
+    // must not be able to name an arbitrary metadata field.
+    expect(next).not.toHaveProperty('notARegisteredResumeField');
+    expect(next).toEqual(metadata);
   });
 
   it('derives generic provider resume marker keys from the agent manifest', () => {
@@ -150,22 +153,22 @@ describe('providerSessionId session-state binding', () => {
   });
 });
 
-describe('providerSessionId matched continuity proof', () => {
-  const PROOF = { kind: 'transcriptPath', value: '/home/u/.claude/x/claude-1.jsonl' } as const;
+describe('providerSessionId matched native session-log path', () => {
+  const LOG_PATH = '/home/u/.claude/x/claude-1.jsonl';
 
-  it('writes the id and its catalog-declared proof in one metadata update', () => {
+  it('writes the id and its catalog-declared log path in one metadata update', () => {
     expect(providerSessionIdBinding.write({}, {
-      value: { metadataKey: 'claudeSessionId', value: 'claude-1', continuityProof: PROOF },
+      value: { metadataKey: 'claudeSessionId', value: 'claude-1', nativeSessionLogPath: LOG_PATH },
     })).toEqual({
       claudeSessionId: 'claude-1',
       claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
     });
   });
 
-  it('clears a stale proof when the same key is rewritten without one', () => {
-    // `REQ-STATE-01`: a proof proves exactly one id. A proofless id write must
-    // not inherit the previous id's proof, or a resume would target the wrong
-    // native conversation.
+  it('clears a stale log path when the same key is rewritten without one', () => {
+    // The path names exactly one conversation. An id write with no path must not
+    // inherit the previous id's log, or a successor Agent would be pointed at
+    // the wrong transcript.
     expect(providerSessionIdBinding.write({
       claudeSessionId: 'claude-1',
       claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
@@ -174,7 +177,7 @@ describe('providerSessionId matched continuity proof', () => {
     })).toEqual({ claudeSessionId: 'claude-2' });
   });
 
-  it('clears the proof when a bare-string id write replaces a proven id', () => {
+  it('clears the log path when a bare-string id write replaces a path-bearing id', () => {
     expect(providerSessionIdBinding.write({
       claudeSessionId: 'claude-1',
       claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
@@ -183,7 +186,7 @@ describe('providerSessionId matched continuity proof', () => {
     })).toEqual({ claudeSessionId: 'claude-2' });
   });
 
-  it('treats an unparseable proof as no proof rather than trusting it', () => {
+  it('treats a non-string log path as no path rather than trusting it', () => {
     expect(providerSessionIdBinding.write({
       claudeSessionId: 'claude-1',
       claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
@@ -191,18 +194,18 @@ describe('providerSessionId matched continuity proof', () => {
       value: {
         metadataKey: 'claudeSessionId',
         value: 'claude-2',
-        continuityProof: { kind: 'sessionFile', value: '/tmp/x' } as never,
+        nativeSessionLogPath: { kind: 'sessionFile', value: '/tmp/x' } as never,
       },
     })).toEqual({ claudeSessionId: 'claude-2' });
   });
 
-  it('drops a proof for an Agent whose catalog declares no proof field', () => {
+  it('drops a log path for an Agent whose catalog declares no slot for one', () => {
     expect(providerSessionIdBinding.write({}, {
-      value: { metadataKey: 'codexSessionId', value: 'codex-1', continuityProof: PROOF },
+      value: { metadataKey: 'codexSessionId', value: 'codex-1', nativeSessionLogPath: LOG_PATH },
     })).toEqual({ codexSessionId: 'codex-1' });
   });
 
-  it('leaves the proof untouched when the id write is a no-op', () => {
+  it('leaves the log path untouched when the id write is a no-op', () => {
     const metadata = {
       claudeSessionId: 'claude-1',
       claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
@@ -211,5 +214,61 @@ describe('providerSessionId matched continuity proof', () => {
       metadataKey: 'claudeSessionId',
       value: '   ',
     })).toBe(metadata);
+  });
+});
+
+/**
+ * An external (manifest-contributed) Agent has no generated `<vendor>SessionId`
+ * slot. Its native conversation id belongs in the one agent-agnostic carrier —
+ * the runtime descriptor — or the id is discarded and its Session silently
+ * respawns as a FRESH provider conversation.
+ */
+describe('providerSessionId binding — external Agent with no catalog-declared slot', () => {
+  const externalDescriptorMetadata = () => ({
+    path: '/tmp/project',
+    runtimeDescriptorV1: {
+      v: 1,
+      agentId: 'acme',
+      agent: { backendMode: 'custom' },
+    },
+  });
+
+  it('routes a bare-string id into the descriptor slot the Agent actually has', () => {
+    const next = providerSessionIdBinding.write(externalDescriptorMetadata(), {
+      value: 'acme-native-1',
+    }) as Record<string, unknown>;
+
+    expect(next.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'acme',
+      agent: { backendMode: 'custom', providerSessionId: 'acme-native-1' },
+    });
+    expect(readProviderSessionIdSessionState(next as never).value).toBe('acme-native-1');
+  });
+
+  it('routes a structured id whose named key no catalog declares into the descriptor slot', () => {
+    const next = providerSessionIdBinding.write(externalDescriptorMetadata(), {
+      value: { metadataKey: 'acmeSessionId', value: 'acme-native-2' },
+    }) as Record<string, unknown>;
+
+    expect(next).not.toHaveProperty('acmeSessionId');
+    expect(readProviderSessionIdSessionState(next as never).value).toBe('acme-native-2');
+  });
+
+  it('replaces a stale descriptor id rather than keeping the previous conversation', () => {
+    const next = providerSessionIdBinding.write({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'acme',
+        agent: { backendMode: 'custom', providerSessionId: 'acme-native-1' },
+      },
+    }, { value: 'acme-native-2' }) as Record<string, unknown>;
+
+    expect(readProviderSessionIdSessionState(next as never).value).toBe('acme-native-2');
+  });
+
+  it('leaves the descriptor untouched for a blank id', () => {
+    const metadata = externalDescriptorMetadata();
+    expect(providerSessionIdBinding.write(metadata, { value: '   ' })).toBe(metadata);
   });
 });

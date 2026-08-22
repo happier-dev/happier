@@ -22,7 +22,10 @@ import {
   AutomationEventSourceCatalogStatusStateV1Schema,
   UNSIGNED_DECIMAL_BIGINT_SCHEMA,
 } from './automationActionSpecsV1.js';
-import { AutomationRunExecutionRecipeV1Schema } from './automationRunExecutionRecipeV1.js';
+import {
+  AutomationRunExecutionRecipeV1Schema,
+  AutomationStoredDefinitionExecutionRecipeV1Schema,
+} from './automationRunExecutionRecipeV1.js';
 import { ExecutionRunWaitResultSchema } from '../execution/runs/index.js';
 
 const PREDECESSOR_TIMESTAMP_SCHEMA = z.number().int();
@@ -194,19 +197,11 @@ export type AutomationV3ManualTrigger = z.infer<typeof AutomationV3ManualTrigger
  * A schedule definition has no immutable occurrence evidence yet. The same
  * strict Run recipe becomes frozen on each scheduled/manual Run, while Event
  * and Conversation admission later replace this null arm with their one
- * authoritative occurrence-evidence envelope.
+ * authoritative occurrence-evidence envelope. The rule itself belongs to the
+ * recipe owner so every definition-authoring surface shares it.
  */
-const AutomationV3DefinitionExecutionRecipeSchema = AutomationRunExecutionRecipeV1Schema.superRefine(
-  (value, context) => {
-    if (value.triggerEvidence !== null) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['triggerEvidence'],
-        message: 'A stored Automation definition cannot carry Run occurrence evidence',
-      });
-    }
-  },
-);
+const AutomationV3DefinitionExecutionRecipeSchema =
+  AutomationStoredDefinitionExecutionRecipeV1Schema;
 
 export const AutomationV3ScheduleDefinitionCreateRequestSchema = z.object({
   name: z.string().trim().min(1).max(128),
@@ -329,7 +324,7 @@ export const AutomationV3PluginEventTriggerSchema = z.object({
   kind: z.literal('pluginEvent'),
   eventRef: AutomationV3PluginEventRefSchema,
   sourceSelectorId: IDENTIFIER_SCHEMA,
-  sourceContractVersion: z.number().int().positive().safe(),
+  sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
   observation: z.union([
     AutomationV3CheckpointedPullObservationSchema,
     AutomationV3DurablePushObservationSchema,
@@ -348,6 +343,13 @@ const AutomationV3DefinitionBaseSchema = z.object({
   description: z.string().nullable(),
   enabled: z.boolean(),
   targetType: AutomationTargetTypeV3Schema,
+  /**
+   * Bounded existing-Session association projected by the definition owner
+   * from the current strict recipe. It is `null` for every other target and
+   * for a retained predecessor template, whose association is only readable
+   * by a client that can open the template.
+   */
+  existingSessionId: IDENTIFIER_SCHEMA.nullable(),
   templateVersion: z.number().int().nonnegative().safe(),
   nextRunAt: TIMESTAMP_SCHEMA.nullable(),
   lastRunAt: TIMESTAMP_SCHEMA.nullable(),

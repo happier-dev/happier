@@ -14,8 +14,8 @@ import {
     QualifiedConnectedAccountRefSchema,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
-    QualifiedConnectedAccountRef,
-} from '@happier-dev/plugin-sdk/connected-accounts';
+    PluginContributionIdentity,
+} from '@happier-dev/plugin-sdk/manifest';
 
 import {
     CONVERSATION_TRANSPORT_KINDS_V1,
@@ -28,9 +28,26 @@ import {
     ConversationProviderConfigV1ProtocolSchema,
 } from '../json.js';
 
+/**
+ * The account reference every connection-bearing role carries.
+ *
+ * The canonical runtime schema stays the host's `QualifiedConnectedAccountRefSchema`;
+ * only its declaration-facing name is restated here in public SDK vocabulary. The
+ * SDK's own `QualifiedConnectedAccountRef` alias still resolves to a private
+ * host-Protocol type name, and TypeScript reproduces that name inside every
+ * inferred schema this module composes — which would make this package's published
+ * declarations unusable without that private dependency. `sdkSchemaClosure.test.ts`
+ * enforces the closure.
+ */
+export type ConversationQualifiedConnectedAccountRefV1 = Readonly<{
+    service: PluginContributionIdentity;
+    accountId: string;
+}>;
+
 /** @internal Canonical structural account reference used by every connection operation. */
 export const ConversationQualifiedConnectedAccountRefV1ProtocolSchema:
-    ProtocolComposableSchema<QualifiedConnectedAccountRef> = QualifiedConnectedAccountRefSchema;
+    ProtocolComposableSchema<ConversationQualifiedConnectedAccountRefV1> =
+        QualifiedConnectedAccountRefSchema;
 
 /** @internal Relative-only provider identity shared by connection-bearing roles. */
 export const ConversationProviderConnectionKeyV1ProtocolSchema = defineProtocolUtf8String({

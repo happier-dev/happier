@@ -24,6 +24,8 @@ describe('tailscaleServeRelayAccessProvider', () => {
       tailnetName: null,
       tailscaleIps: [],
       loggedIn: false,
+      running: false,
+      daemonReachable: true,
     });
 
     await expect(
@@ -37,6 +39,48 @@ describe('tailscaleServeRelayAccessProvider', () => {
     });
   });
 
+  it('does not report enabled while the machine is signed in but tailscaled is stopped', async () => {
+    // Serve config survives `tailscale down`, so `tailscale serve status` keeps
+    // printing the HTTPS URL. Reporting that as enabled tells the user their
+    // relay is reachable from another device while nothing is listening.
+    const { runTailscaleStatusJson, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
+    vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      backendState: 'Stopped',
+      authUrl: null,
+      dnsName: 'machine.tailnet.ts.net',
+      tailnetName: 'tailnet.ts.net',
+      tailscaleIps: ['100.64.0.10'],
+      loggedIn: true,
+      running: false,
+      daemonReachable: true,
+    });
+    vi.mocked(runTailscaleServeStatus).mockResolvedValue('https://machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005');
+
+    const res = await tailscaleServeRelayAccessProvider.status({ config: { providerId: 'tailscaleServe' }, ctx: { env: process.env, upstreamUrl: null } });
+
+    expect(res.state).toBe('disabled');
+    expect(res.shareUrl).toBeUndefined();
+  });
+
+  it('does not ask for re-authentication when tailscaled never answered', async () => {
+    const { runTailscaleStatusJson } = await import('../../../tailscale/index.js');
+    vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      backendState: null,
+      authUrl: null,
+      dnsName: null,
+      tailnetName: null,
+      tailscaleIps: [],
+      loggedIn: false,
+      running: false,
+      daemonReachable: false,
+    });
+
+    const res = await tailscaleServeRelayAccessProvider.status({ config: { providerId: 'tailscaleServe' }, ctx: { env: process.env, upstreamUrl: null } });
+
+    expect(res.state).toBe('disabled');
+    expect(res.shareUrl).toBeUndefined();
+  });
+
   it('returns enabled with the serve https url when serve is configured', async () => {
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
@@ -46,6 +90,8 @@ describe('tailscaleServeRelayAccessProvider', () => {
       tailnetName: 'tailnet.ts.net',
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleServeStatus).mockResolvedValue('https://machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005');
 
@@ -65,6 +111,8 @@ describe('tailscaleServeRelayAccessProvider', () => {
       tailnetName: 'tailnet.ts.net',
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleServeStatus).mockResolvedValue([
       'https://other.tailnet.ts.net',
@@ -94,6 +142,8 @@ describe('tailscaleServeRelayAccessProvider', () => {
       tailnetName: 'tailnet.ts.net',
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleServeStatus).mockResolvedValue('No serve config');
 
@@ -105,7 +155,8 @@ describe('tailscaleServeRelayAccessProvider', () => {
   });
 
   it('configures tailscale serve for the upstream url', async () => {
-    const { runTailscaleServeEnable } = await import('../../../tailscale/index.js');
+    const { runTailscaleServeEnable, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
+    vi.mocked(runTailscaleServeStatus).mockResolvedValue('No serve config');
     vi.mocked(runTailscaleServeEnable).mockResolvedValue({
       approvalUrl: null,
       httpsUrl: 'https://machine.tailnet.ts.net',
@@ -118,6 +169,32 @@ describe('tailscaleServeRelayAccessProvider', () => {
     expect(res).toEqual({
       state: 'enabled',
       shareUrl: 'https://machine.tailnet.ts.net',
+    });
+  });
+
+  it('does not overwrite an unrelated Tailscale Funnel root route', async () => {
+    const { runTailscaleServeEnable, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
+    vi.mocked(runTailscaleServeEnable).mockClear();
+    vi.mocked(runTailscaleServeStatus).mockClear();
+    vi.mocked(runTailscaleServeStatus).mockResolvedValue([
+      '# Funnel on:',
+      'https://machine.tailnet.ts.net',
+      '|-- / proxy http://127.0.0.1:9999',
+    ].join('\n'));
+
+    const result = await tailscaleServeRelayAccessProvider.configure?.({
+      config: { providerId: 'tailscaleServe' },
+      ctx: { env: process.env, upstreamUrl: 'http://127.0.0.1:3005' },
+    });
+
+    expect(runTailscaleServeEnable).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      state: 'error',
+      details: {
+        reason: 'tailscale_root_slot_conflict',
+        exposure: 'funnel',
+        shareUrl: 'https://machine.tailnet.ts.net',
+      },
     });
   });
 

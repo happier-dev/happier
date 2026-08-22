@@ -15,7 +15,7 @@ export {
 export {
     AGENT_IDS,
     CANONICAL_AGENT_IDS,
-    isAgentId,
+    isBundledAgentId,
     PERMISSION_INTENTS,
     PERMISSION_MODES,
 } from './types.js';
@@ -24,6 +24,7 @@ export type {
     AgentCoreRuntimeControlSurface,
     AgentHandoffConfig,
     AgentId,
+    BundledAgentId,
     CanonicalAgentId,
     AgentLocalControlConfig,
     AgentLocalControlAttachStrategy,
@@ -84,6 +85,9 @@ export {
   supportsAgentInFlightSteer,
   supportsAgentTerminalPromptInjection,
 } from './runtimeInput.js';
+export {
+  isConnectedServiceUsageProviderCompatible,
+} from './connectedServices/usageProviderOwnership.js';
 export {
   isConnectedServiceAccountGroupConfigurationSupported,
   isConnectedServiceRuntimeFallbackSupported,
@@ -176,11 +180,11 @@ export type {
 } from './runtime/terminal/control.js';
 export { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
 export {
-  inferAgentIdFromSessionMetadata,
   resolveAgentIdFromSessionMetadata,
   resolveDeclaredAgentIdFromSessionMetadata,
   resolveSessionMetadataAgentIdentity,
   type SessionMetadataAgentIdentityBasis,
+  type SessionMetadataAgentId,
   type SessionMetadataAgentIdentityV1,
 } from './resolveAgentIdFromSessionMetadata.js';
 export {
@@ -305,8 +309,8 @@ export {
   readRuntimeDescriptorSessionState,
   readExternalSessionOperationState,
   getLegacyProviderSessionIdMetadataKeys,
-  getVendorResumeContinuityProofMetadataKey,
-  getVendorResumeContinuityProofMetadataKeys,
+  getAgentNativeSessionLogPathMetadataKey,
+  getAgentNativeSessionLogPathMetadataKeys,
   projectCurrentAgentSessionView,
   readProviderSessionIdSessionState,
   readAcpConfigOptionIntentFromMetadata,
@@ -372,6 +376,7 @@ export {
   getAgentSessionCapabilities,
   getAgentSessionCapability,
   isAgentSessionCapabilitySupported,
+  readAgentSessionCapabilityFromSurface,
   readRuntimeCapabilitiesForSession,
   type AgentSessionCapabilityKey,
 } from './session/controls/sessionCapabilities.js';
@@ -440,7 +445,7 @@ export {
 export {
   resolveVendorResumeIdFromSessionMetadata,
   resolveAgentNativeResumeIdentityFromSessionMetadata,
-  resolveObservedVendorResumeIdForResume,
+  resolveAgentNativeTranscriptPathFromSessionMetadata,
   evaluateVendorResumeEligibility,
   isLinkedVendorResumeIdentityCurrent,
   type VendorResumeEligibility,
@@ -463,8 +468,14 @@ export {
 export {
   buildHappierReplayPromptFromDialog,
   fitHappierReplaySeedWithinTotalBudget,
+  measureHappierReplayDialogLineChars,
+  planHappierReplayTranscriptCharBudget,
+  HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS,
   type HappierReplayContinuity,
   type HappierReplayDialogItem,
+  type HappierReplayFrameParams,
+  type HappierReplayInlinedTranscriptRangeV1,
+  type HappierReplayRetrievalPointerV1,
   type HappierReplayStrategy,
 } from './sessions/replay/happierReplayPrompt.js';
 export { normalizeVoiceAgentTurnTranscriptText } from './voice/normalizeVoiceAgentTurnTranscriptText.js';

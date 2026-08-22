@@ -191,7 +191,7 @@ const PluginAgentGoalsV2Schema = z.object({
   inactive: PluginAgentGoalControlModeV2Schema.optional(),
   source: z.string().trim().min(1),
 }).strict().refine((value) => value.active !== undefined || value.inactive !== undefined, 'At least one activity capability is required.');
-const PluginAgentSessionCapabilitiesV2Schema = z.object({
+export const PluginAgentSessionCapabilitiesV2Schema = z.object({
   open: z.array(z.enum(['create', 'resume', 'fork'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.'),
   delivery: z.array(z.enum(['newTurn', 'steer', 'followUp'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.'),
   cancel: z.boolean(), configuration: z.boolean().optional(),
@@ -207,10 +207,83 @@ const PluginAgentSessionCapabilitiesV2Schema = z.object({
     versions: z.tuple([z.literal(1)]),
   }).strict().optional(),
 }).strict();
-const PluginAgentExecutionRunCapabilitiesV2Schema = z.object({
+export type PluginAgentSessionCapabilitiesV2 = z.infer<typeof PluginAgentSessionCapabilitiesV2Schema>;
+
+export const PluginAgentExecutionRunCapabilitiesV2Schema = z.object({
   open: z.array(z.enum(['create', 'resume', 'fork'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.'), checkpoint: z.boolean(), stop: z.boolean(),
 }).strict();
-const auxiliary = { surfaces: z.array(z.enum(['terminal', 'externalSessions'])).refine((values) => new Set(values).size === values.length, 'Entries must be unique.').optional() };
+export type PluginAgentExecutionRunCapabilitiesV2 = z.infer<typeof PluginAgentExecutionRunCapabilitiesV2Schema>;
+
+export const PluginAgentCapabilitySurfaceV2Schema = z.enum(['terminal', 'externalSessions']);
+export type PluginAgentCapabilitySurfaceV2 = z.infer<typeof PluginAgentCapabilitySurfaceV2Schema>;
+
+export const PluginAgentCapabilitySurfacesV2Schema = z.array(PluginAgentCapabilitySurfaceV2Schema)
+  .refine((values) => new Set(values).size === values.length, 'Entries must be unique.');
+export type PluginAgentCapabilitySurfacesV2 = z.infer<typeof PluginAgentCapabilitySurfacesV2Schema>;
+
+const PluginAgentCapabilitiesV2Shape = {
+  surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
+  sessions: PluginAgentSessionCapabilitiesV2Schema.optional(),
+  executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema.optional(),
+};
+
+/**
+ * The normalized lifecycle declaration is the one capability contract shared
+ * by manifest parsing and the daemon projection. Consumers never reconstruct
+ * this shape from Agent presentation metadata.
+ */
+export const PluginAgentCapabilitiesV2Schema = z.object(PluginAgentCapabilitiesV2Shape).strict()
+  .refine(
+    (value) => value.surfaces !== undefined || value.sessions !== undefined || value.executionRuns !== undefined,
+    'At least one Agent capability declaration is required.',
+  );
+export type PluginAgentCapabilitiesV2 = z.infer<typeof PluginAgentCapabilitiesV2Schema>;
+
+export const PluginAgentVendorResumeSupportV2Schema = z.enum(['supported', 'unsupported', 'experimental']);
+export type PluginAgentVendorResumeSupportV2 = z.infer<typeof PluginAgentVendorResumeSupportV2Schema>;
+
+/**
+ * The client UI-behavior descriptor an Agent contributes: the data-only
+ * `plugin.ui.v1` behavior surface (permission-footer handling, transcript
+ * storage modes, composer/new-session facts, declarative component slots).
+ *
+ * It is carried, not re-declared. The client owns the one fail-closed
+ * descriptor interpreter, so restating that vocabulary here would create a
+ * second owner of the same projection. Without this field an installed Agent
+ * has no runtime channel to the client's behavior projection at all and is
+ * degraded to the neutral unknown behavior; bundled Agents reach the same
+ * interpreter through their build-time projection.
+ */
+export const PluginAgentUiBehaviorContributionV2Schema = z.object({
+  behavior: PluginLooseJsonObjectSchema.optional(),
+  message: PluginLooseJsonObjectSchema.optional(),
+  components: PluginLooseJsonObjectSchema.optional(),
+}).strict();
+export type PluginAgentUiBehaviorContributionV2 = z.infer<typeof PluginAgentUiBehaviorContributionV2Schema>;
+
+/**
+ * Declarative Agent catalog-entry facts.
+ *
+ * Bundled Agents carry these facts in the host's own Agent tables; a contributed
+ * Agent has no such table, so the manifest is where it declares them. The host
+ * projects this block through the single Agent catalog-entry hook owner, so a
+ * contributed Agent and a bundled one reach the same catalog contract.
+ */
+export const PluginAgentCatalogV2Schema = z.object({
+  /**
+   * Native (vendor-owned) Session resume. Absent means the host infers the level
+   * from the declared `capabilities.sessions.open` list, which cannot express
+   * `experimental`.
+   */
+  vendorResume: z.object({
+    support: PluginAgentVendorResumeSupportV2Schema,
+  }).strict().optional(),
+}).strict().refine(
+  (value) => value.vendorResume !== undefined,
+  'At least one Agent catalog declaration is required.',
+);
+export type PluginAgentCatalogV2 = z.infer<typeof PluginAgentCatalogV2Schema>;
+
 const PluginAgentDisplayV2Shape = {
   id: asProtocolZod(PluginContributionLocalIdSchema), title: PluginLocalizedStringV2Schema, description: PluginLocalizedStringV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
@@ -228,14 +301,16 @@ const PluginAgentDisplayV2Shape = {
     }).strict(),
   }).strict().optional(),
   cli: PluginAgentCliMetadataSchema.optional(),
+  catalog: PluginAgentCatalogV2Schema.optional(),
+  ui: PluginAgentUiBehaviorContributionV2Schema.optional(),
 };
 const PluginAgentSessionPrimaryShape = {
   primary: z.literal('sessions'),
-  capabilities: z.object({ ...auxiliary, sessions: PluginAgentSessionCapabilitiesV2Schema, executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema.optional() }).strict(),
+  capabilities: z.object({ ...PluginAgentCapabilitiesV2Shape, sessions: PluginAgentSessionCapabilitiesV2Schema }).strict(),
 };
 const PluginAgentExecutionPrimaryShape = {
   primary: z.literal('executionRuns'),
-  capabilities: z.object({ ...auxiliary, executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema, sessions: PluginAgentSessionCapabilitiesV2Schema.optional() }).strict(),
+  capabilities: z.object({ ...PluginAgentCapabilitiesV2Shape, executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema }).strict(),
 };
 const PluginAgentPrimaryContributionV2Schema = z.union([
   z.object({ ...PluginAgentDisplayV2Shape, runtime: PluginAgentRuntimeAcpV2Schema, ...PluginAgentSessionPrimaryShape }).strict(),
@@ -245,9 +320,7 @@ const PluginAgentPrimaryContributionV2Schema = z.union([
 const PluginAgentExternalSessionsAuxiliaryV2Schema = z.object({
   ...PluginAgentDisplayV2Shape,
   capabilities: z.object({
-    surfaces: z.array(z.enum(['terminal', 'externalSessions']))
-      .min(1)
-      .refine((values) => new Set(values).size === values.length, 'Entries must be unique.')
+    surfaces: PluginAgentCapabilitySurfacesV2Schema
       .refine((values) => values.includes('externalSessions'), 'An auxiliary-only Agent must declare the externalSessions surface.'),
   }).strict(),
 }).strict();

@@ -10,24 +10,35 @@ import {
   deriveAutomationOccurrenceKeyV1,
 } from './automationOccurrenceV1.js';
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationEventDeclarationV1.js';
+import { AutomationAccountCurrentnessWitnessV1Schema } from './automationAccountCurrentnessV1.js';
 import {
-  AutomationAccountCurrentnessWitnessV1Schema,
   AutomationEventPayloadV1Schema,
   AutomationEventSourceInstanceIdV1Schema,
+} from './automationEventJsonBoundsV1.js';
+import {
   AutomationStoredContentEnvelopeV1Schema,
   MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
-} from './automationEventV1.js';
+} from './automationStoredContentEnvelopeV1.js';
 import {
   ExecutionRunDetachedStartRequestV1Schema,
   ExecutionRunStartRequestSchema,
   type ExecutionRunStartRequest,
 } from '../execution/runs/startRequest.js';
+import {
+  MENTION_BOUNDS,
+  MentionRefV1Schema,
+  admitMentionRefsV1ForText,
+  type MentionRefV1,
+} from '../runtime/input/mentionRefV1.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
+// Imported from the draft owner rather than the session-start module: the
+// latter reaches Account-scoped crypto, which the browser-realm Action catalog
+// closure must not pull in through this recipe.
 import {
   SessionServerStartSpawnDraftV1Schema,
   type SessionServerStartSpawnDraftV1,
-} from '../sessions/creation/sessionServerStartV1.js';
+} from '../sessions/creation/sessionSpawnNewInputV2.js';
 import {
   SessionSpawnNewInputV2Schema,
   type SessionSpawnNewInputV2,
@@ -63,6 +74,14 @@ export const AutomationRunTemplateV1Schema = z.object({
       message: 'Automation template prompt exceeds its UTF-8 byte limit',
     });
   }),
+  /**
+   * The composer references this program carries, in the one canonical
+   * identity-only shape every other send path persists (`MentionRefV1`). It is
+   * additive and optional: a template authored before this field, or by a
+   * surface with no reference picker, parses unchanged. Nothing here is
+   * provider context — that is still reconstructed at dispatch (D-3/INV-9).
+   */
+  mentions: z.array(MentionRefV1Schema).max(MENTION_BOUNDS.maxPerMessage).optional(),
 }).strict();
 export type AutomationRunTemplateV1 = z.infer<typeof AutomationRunTemplateV1Schema>;
 
@@ -102,9 +121,21 @@ export type AutomationRunTriggerEvidenceV1 = z.infer<
   typeof AutomationRunTriggerEvidenceV1Schema
 >;
 
+/**
+ * Why one frozen prompt program could not be materialized. Execution surfaces
+ * this as the Run failure detail, so the offending token travels with the
+ * refusal instead of being re-derived by a second parser.
+ */
+export type AutomationRunPromptMaterializationRefusalV1 =
+  | Readonly<{ reason: 'templateInvalid' }>
+  | Readonly<{ reason: 'triggerEvidenceInvalid' }>
+  | Readonly<{ reason: 'malformedToken' }>
+  | Readonly<{ reason: 'unsupportedToken'; token: string }>
+  | Readonly<{ reason: 'materializedInputTooLarge' }>;
+
 export type AutomationRunPromptMaterializationResultV1 =
-  | Readonly<{ kind: 'available'; prompt: string }>
-  | Readonly<{ kind: 'contentInvalid' }>;
+  | Readonly<{ kind: 'available'; prompt: string; mentions: readonly MentionRefV1[] }>
+  | (Readonly<{ kind: 'contentInvalid' }> & AutomationRunPromptMaterializationRefusalV1);
 
 function encodeAutomationInputData(value: string): string {
   return value
@@ -157,12 +188,12 @@ function renderAutomationInput(evidence: AutomationRunTriggerEvidenceV1 | null):
     : renderConversationInput(evidence);
 }
 
-type ParsedTemplateProgram = Readonly<{
-  inputTokenCount: number;
-  literalUtf8Bytes: number;
-}>;
+type ParsedTemplateProgram =
+  | Readonly<{ kind: 'parsed'; inputTokenCount: number; literalUtf8Bytes: number }>
+  | Readonly<{ kind: 'malformedToken' }>
+  | Readonly<{ kind: 'unsupportedToken'; token: string }>;
 
-function parseTemplateProgram(prompt: string): ParsedTemplateProgram | null {
+function parseTemplateProgram(prompt: string): ParsedTemplateProgram {
   let cursor = 0;
   let inputTokenCount = 0;
   let literalUtf8Bytes = 0;
@@ -170,7 +201,9 @@ function parseTemplateProgram(prompt: string): ParsedTemplateProgram | null {
   while (cursor < prompt.length) {
     const opening = prompt.indexOf('{{', cursor);
     const closing = prompt.indexOf('}}', cursor);
-    if (closing !== -1 && (opening === -1 || closing < opening)) return null;
+    if (closing !== -1 && (opening === -1 || closing < opening)) {
+      return { kind: 'malformedToken' };
+    }
     if (opening === -1) {
       literalUtf8Bytes += UTF8_ENCODER.encode(prompt.slice(cursor)).byteLength;
       break;
@@ -178,13 +211,14 @@ function parseTemplateProgram(prompt: string): ParsedTemplateProgram | null {
 
     literalUtf8Bytes += UTF8_ENCODER.encode(prompt.slice(cursor, opening)).byteLength;
     const tokenClosing = prompt.indexOf('}}', opening + 2);
-    if (tokenClosing === -1) return null;
-    if (prompt.slice(opening, tokenClosing + 2) !== '{{input}}') return null;
+    if (tokenClosing === -1) return { kind: 'malformedToken' };
+    const token = prompt.slice(opening, tokenClosing + 2);
+    if (token !== '{{input}}') return { kind: 'unsupportedToken', token };
     inputTokenCount += 1;
     cursor = tokenClosing + 2;
   }
 
-  return { inputTokenCount, literalUtf8Bytes };
+  return { kind: 'parsed', inputTokenCount, literalUtf8Bytes };
 }
 
 function renderTemplateProgram(params: Readonly<{
@@ -205,18 +239,23 @@ export function materializeAutomationRunPromptV1(params: Readonly<{
   triggerEvidence: unknown | null;
 }>): AutomationRunPromptMaterializationResultV1 {
   const template = AutomationRunTemplateV1Schema.safeParse(params.template);
-  if (!template.success) return { kind: 'contentInvalid' };
+  if (!template.success) return { kind: 'contentInvalid', reason: 'templateInvalid' };
 
   const triggerEvidence = params.triggerEvidence === null
     ? null
     : AutomationRunTriggerEvidenceV1Schema.safeParse(params.triggerEvidence);
   if (triggerEvidence !== null && !triggerEvidence.success) {
-    return { kind: 'contentInvalid' };
+    return { kind: 'contentInvalid', reason: 'triggerEvidenceInvalid' };
   }
 
   const input = renderAutomationInput(triggerEvidence?.data ?? null);
   const program = parseTemplateProgram(template.data.prompt);
-  if (program === null) return { kind: 'contentInvalid' };
+  if (program.kind === 'malformedToken') {
+    return { kind: 'contentInvalid', reason: 'malformedToken' };
+  }
+  if (program.kind === 'unsupportedToken') {
+    return { kind: 'contentInvalid', reason: 'unsupportedToken', token: program.token };
+  }
 
   const inputUtf8Bytes = UTF8_ENCODER.encode(input).byteLength;
   const appendInput = input.length > 0 && program.inputTokenCount === 0;
@@ -224,7 +263,7 @@ export function materializeAutomationRunPromptV1(params: Readonly<{
     + (program.inputTokenCount * inputUtf8Bytes)
     + (appendInput ? inputUtf8Bytes + 2 : 0);
   if (outputUtf8Bytes > MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES) {
-    return { kind: 'contentInvalid' };
+    return { kind: 'contentInvalid', reason: 'materializedInputTooLarge' };
   }
 
   const rendered = renderTemplateProgram({ prompt: template.data.prompt, input });
@@ -232,9 +271,17 @@ export function materializeAutomationRunPromptV1(params: Readonly<{
     ? (rendered.length > 0 ? `${rendered}\n\n${input}` : input)
     : rendered;
   if (UTF8_ENCODER.encode(prompt).byteLength > MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES) {
-    return { kind: 'contentInvalid' };
+    return { kind: 'contentInvalid', reason: 'materializedInputTooLarge' };
   }
-  return { kind: 'available', prompt };
+  // The same composed admission step every other send path uses: a reference
+  // whose token the rendered program no longer contains is dropped, and its
+  // siblings survive. Token substitution is a text transform like any other,
+  // so this owner must not re-implement the rule.
+  return {
+    kind: 'available',
+    prompt,
+    mentions: admitMentionRefsV1ForText(prompt, template.data.mentions ?? []),
+  };
 }
 
 /**
@@ -284,6 +331,25 @@ export const AutomationRunExecutionTargetV1Schema = z.discriminatedUnion('kind',
 export type AutomationRunExecutionTargetV1 = z.infer<typeof AutomationRunExecutionTargetV1Schema>;
 
 /**
+ * Whether a target hands the Run's composer references to its dispatch owner.
+ *
+ * Only the existing-Session target reaches a structured-input seam: its effect
+ * is a Session message, which already carries `happierStructuredInputV1` beside
+ * the text. The new-Session spawn draft and the detached execution-Run request
+ * carry a bare instruction string and have no reference field, so a reference
+ * stored for them would be persisted and then dropped.
+ *
+ * Authoring surfaces read this instead of restating the target list, so a
+ * writer's refusal cannot drift from what
+ * `materializeAutomationRunExecutionRecipeV1` actually delivers.
+ */
+export function automationRunExecutionTargetDeliversComposerReferencesV1(
+  kind: AutomationRunExecutionTargetV1['kind'],
+): boolean {
+  return kind === 'existingSession';
+}
+
+/**
  * The sole current durable execution-input shape. Account currentness stays
  * beside this recipe because claim/start publication advances Account.seq;
  * the pair of private envelopes remains mode-checked against that witness at
@@ -307,6 +373,26 @@ export const AutomationRunExecutionRecipeV1Schema = z.object({
   });
 });
 export type AutomationRunExecutionRecipeV1 = z.infer<typeof AutomationRunExecutionRecipeV1Schema>;
+
+/**
+ * The one stored-definition projection of the current recipe. A definition
+ * carries no occurrence evidence: admission freezes that onto the Run. Every
+ * definition authoring surface — the account-owner V3 route and the plugin
+ * Conversation target Action — parses through this single owner.
+ */
+export const AutomationStoredDefinitionExecutionRecipeV1Schema =
+  AutomationRunExecutionRecipeV1Schema.superRefine((value, context) => {
+    if (value.triggerEvidence !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['triggerEvidence'],
+        message: 'A stored Automation definition cannot carry Run occurrence evidence',
+      });
+    }
+  });
+export type AutomationStoredDefinitionExecutionRecipeV1 = z.infer<
+  typeof AutomationStoredDefinitionExecutionRecipeV1Schema
+>;
 
 export type AutomationRunExecutionRecipeSerializedV1Result =
   | Readonly<{
@@ -548,7 +634,12 @@ export type AutomationRunExecutionRecipeMaterializationResultV1 =
   | Readonly<{
     kind: 'available';
     target:
-      | Readonly<{ kind: 'existingSession'; sessionId: string; prompt: string }>
+      | Readonly<{
+        kind: 'existingSession';
+        sessionId: string;
+        prompt: string;
+        mentions: readonly MentionRefV1[];
+      }>
       | Readonly<{ kind: 'newSession'; spawn: SessionSpawnNewInputV2 }>
       | Readonly<{ kind: 'executionRun'; request: ExecutionRunStartRequest }>;
   }>
@@ -596,7 +687,7 @@ export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
     template: template.data,
     triggerEvidence: parsedEvidence,
   });
-  if (prompt.kind !== 'available') return prompt;
+  if (prompt.kind !== 'available') return { kind: 'contentInvalid' };
 
   switch (outer.recipe.target.kind) {
     case 'existingSession':
@@ -606,6 +697,7 @@ export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
           kind: 'existingSession',
           sessionId: outer.recipe.target.sessionId,
           prompt: prompt.prompt,
+          mentions: prompt.mentions,
         },
       };
     case 'newSession': {

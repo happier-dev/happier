@@ -14,6 +14,11 @@ import {
     MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
     MAX_CONVERSATION_INBOUND_DEBOUNCE_MS,
 } from '../bounds.js';
+import type {
+    ConversationBindingInputModeV1,
+    ConversationDeliveryLinkPreviewPolicyV1,
+    ConversationEndpointAudienceV1,
+} from '../bounds.js';
 import { ConversationProviderFailureV1ProtocolSchema } from '../diagnostics.js';
 import {
     ConversationBindingIdV1ProtocolSchema,
@@ -65,6 +70,39 @@ const mutableBindingPolicyFieldsV1 = {
     ]),
     enabled: protocolBoolean,
 } as const;
+
+/**
+ * What an omitted binding-policy field means at create time.
+ *
+ * The create writer, the pairing writer, and the surface that previews the
+ * binding before it exists all need the same answer, so this is one owner
+ * rather than three copies of the same literals: a surface that showed a
+ * different default from the one the writer persists is a lie about the
+ * binding the person is about to create.
+ *
+ * A shared endpoint defaults to mentions-only because everyone in it would
+ * otherwise address the agent by speaking; a direct endpoint has no such
+ * ambiguity.
+ */
+export function conversationBindingPolicyForOmittedFieldsV1(
+    audience: ConversationEndpointAudienceV1,
+): Readonly<{
+    allowBotSenders: false;
+    inputMode: ConversationBindingInputModeV1;
+    inboundDebounceMs: number;
+    linkPreviewPolicy: ConversationDeliveryLinkPreviewPolicyV1;
+    senderFeedback: 'off';
+    enabled: false;
+}> {
+    return {
+        allowBotSenders: false,
+        inputMode: audience === 'direct' ? 'allAllowedMessages' : 'directMentionsOnly',
+        inboundDebounceMs: 750,
+        linkPreviewPolicy: 'suppress',
+        senderFeedback: 'off',
+        enabled: false,
+    };
+}
 
 const conversationBindingEndpointSelectionV1 = defineProtocolObject({
     query: ConversationResolutionQueryV1ProtocolSchema,
@@ -297,7 +335,6 @@ export const ConversationAutomationTargetNotVerifiedResultV1ProtocolSchema = def
     kind: defineProtocolLiteral('notVerified'),
     reason: defineProtocolUnion([
         defineProtocolLiteral('notFound'),
-        defineProtocolLiteral('notConversation'),
         defineProtocolLiteral('templateVersionMismatch'),
         defineProtocolLiteral('resultDeliveryUnsupported'),
     ]),

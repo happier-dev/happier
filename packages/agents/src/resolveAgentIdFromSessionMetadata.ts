@@ -1,11 +1,12 @@
 import {
   readLinkedExternalSessionV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
+  type ExternalSessionAgentId,
 } from '@happier-dev/protocol';
-import type { AgentId } from './types.js';
-import { AGENT_IDS, isAgentId } from './types.js';
+import type { BundledAgentId } from './types.js';
+import { AGENT_IDS } from './types.js';
 import { isLegacyConfiguredBackendSentinelId } from './compat/legacyConfiguredBackend.js';
-import { DEFAULT_AGENT_ID, getAgentResumeConfig } from './manifest.js';
+import { getAgentResumeConfig } from './manifest.js';
 import { resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -19,7 +20,16 @@ function hasNonEmptyStringField(metadata: Record<string, unknown>, key: string):
   return raw.trim().length > 0;
 }
 
-function normalizeResolvedAgentId(value: unknown): AgentId | null {
+/**
+ * A declared Session identity is an open Agent contribution identity.
+ *
+ * Bundled Agent facts remain keyed by `BundledAgentId`; this type is the
+ * metadata boundary, where a current installed contribution may legitimately
+ * have an id outside that closed generated set.
+ */
+export type SessionMetadataAgentId = ExternalSessionAgentId;
+
+function normalizeResolvedAgentId(value: unknown): SessionMetadataAgentId | null {
   if (isLegacyConfiguredBackendSentinelId(value)) {
     return null;
   }
@@ -28,10 +38,13 @@ function normalizeResolvedAgentId(value: unknown): AgentId | null {
     return null;
   }
 
-  return isAgentId(value) ? value : null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
-export function resolveDeclaredAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {
+export function resolveDeclaredAgentIdFromSessionMetadata(
+  metadata: unknown,
+): SessionMetadataAgentId | null {
   const record = asRecord(metadata);
   if (!record) return null;
 
@@ -70,16 +83,16 @@ export type SessionMetadataAgentIdentityBasis = 'declared' | 'flavor' | 'vendorR
  */
 export type SessionMetadataAgentIdentityV1 = Readonly<{
   /** Authoritative Agent, or `null` when identity is unknown or ambiguous. */
-  agentId: AgentId | null;
+  agentId: SessionMetadataAgentId | null;
   basis: SessionMetadataAgentIdentityBasis;
-  /** Every Agent whose flat vendor resume key is non-empty, in catalog order. */
-  vendorResumeKeyAgentIds: readonly AgentId[];
+  /** Every bundled Agent whose flat vendor resume key is non-empty, in catalog order. */
+  vendorResumeKeyAgentIds: readonly BundledAgentId[];
   /** True when no higher-authority identity exists and several flat keys do. */
   ambiguousVendorResumeKeys: boolean;
 }>;
 
-function readVendorResumeKeyAgentIds(record: Record<string, unknown>): readonly AgentId[] {
-  const agentIds: AgentId[] = [];
+function readVendorResumeKeyAgentIds(record: Record<string, unknown>): readonly BundledAgentId[] {
+  const agentIds: BundledAgentId[] = [];
   for (const id of AGENT_IDS) {
     const resume = getAgentResumeConfig(id);
     const field = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
@@ -134,10 +147,15 @@ export function resolveSessionMetadataAgentIdentity(metadata: unknown): SessionM
   };
 }
 
-export function resolveAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {
+/**
+ * The Agent a Session declares, or `null` when identity is unknown or ambiguous.
+ *
+ * This is the only Agent-identity reading of Session metadata. Callers own the
+ * unknown case explicitly; nothing here substitutes a default Agent, because a
+ * substituted identity is indistinguishable from a declared one downstream.
+ */
+export function resolveAgentIdFromSessionMetadata(
+  metadata: unknown,
+): SessionMetadataAgentId | null {
   return resolveSessionMetadataAgentIdentity(metadata).agentId;
-}
-
-export function inferAgentIdFromSessionMetadata(metadata: unknown, fallback: AgentId = DEFAULT_AGENT_ID): AgentId {
-  return resolveAgentIdFromSessionMetadata(metadata) ?? fallback;
 }

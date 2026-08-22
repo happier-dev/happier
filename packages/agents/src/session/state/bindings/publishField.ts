@@ -22,7 +22,7 @@ import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
 import { summaryTextBinding } from './summaryText.js';
 import {
   getLegacyProviderSessionIdMetadataKeys,
-  getVendorResumeContinuityProofMetadataKeys,
+  getAgentNativeSessionLogPathMetadataKeys,
   providerSessionIdBinding,
 } from './providerSessionId.js';
 
@@ -88,10 +88,10 @@ export function clearSessionStateFieldFromMetadata(
       for (const key of getLegacyProviderSessionIdMetadataKeys()) {
         delete next[key];
       }
-      // A continuity proof only proves the id it was produced with, so clearing
-      // the id must clear the proof (`REQ-STATE-01`); leaving one behind would
-      // let a later id inherit a foreign proof.
-      for (const key of getVendorResumeContinuityProofMetadataKeys()) {
+      // A native session-log path names the conversation of the id it was
+      // published with, so clearing the id must clear the path; leaving one
+      // behind would point a later reader at a foreign Agent's log.
+      for (const key of getAgentNativeSessionLogPathMetadataKeys()) {
         delete next[key];
       }
       break;

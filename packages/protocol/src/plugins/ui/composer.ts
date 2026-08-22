@@ -9,8 +9,6 @@ import {
 } from '../../runtime/input/composerAttachmentV1.js';
 import { ComposerStagedMediaContentV1Schema } from '../../runtime/input/composerContentV1.js';
 import { MentionRefV1Schema } from '../../runtime/input/mentionRefV1.js';
-import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
-import { SessionIdSchema } from '../../sessions/idsV1.js';
 import {
   PluginContributionIdentityV1Schema,
   PluginContributionLocalIdSchema,
@@ -19,6 +17,7 @@ import { PluginJsonValueV2Schema } from '../contributions/publicTypes.js';
 import { PLUGIN_UI_MAX_RENDERER_CHAIN_LENGTH } from '../contributions/ui/rendererChainBinding.js';
 import { PluginUiIconTokenV1Schema } from '../contributions/ui/tokens.js';
 import { PluginUiInstanceKeyV1Schema } from './semanticCommands.js';
+import { ComposerRefV1Schema, type ComposerRefV1 } from './composerRef.js';
 import { PluginUiImmutableGenerationIdV1Schema } from './targetedContributions.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -35,38 +34,14 @@ export const MAX_COMPOSER_DECORATIONS_V1 = 64;
 export const MAX_COMPOSER_INPUT_LOCK_REASONS_V1 = 16;
 
 const ComposerTextV1Schema = z.string().max(MAX_COMPOSER_TEXT_CODE_UNITS_V1);
-const ComposerOpaqueLiveInstanceIdV1Schema = ComposerInstanceIdSchema;
-
+const ComposerRefV1ZodSchema = asProtocolZod(ComposerRefV1Schema);
 /**
- * One exact host-owned composer scope. The live instance arms are opaque
- * identities, never Session IDs or author-controlled routing fields.
+ * The composer-scope grammar lives in its own leaf because it is the one
+ * Composer value projected onto the browser-safe public authoring surface;
+ * this module keeps publishing it so every incumbent consumer is unchanged.
  */
-export const ComposerRefV1Schema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('session'),
-    sessionId: asProtocolZod(SessionIdSchema),
-  }).strict(),
-  z.object({
-    kind: z.literal('newSession'),
-    instanceId: ComposerOpaqueLiveInstanceIdV1Schema,
-  }).strict(),
-  z.object({
-    kind: z.literal('pendingMessage'),
-    sessionId: asProtocolZod(SessionIdSchema),
-    localId: PendingLocalIdSchema,
-  }).strict(),
-  z.object({
-    kind: z.literal('participantMessage'),
-    sessionId: asProtocolZod(SessionIdSchema),
-    instanceId: ComposerOpaqueLiveInstanceIdV1Schema,
-  }).strict(),
-  z.object({
-    kind: z.literal('automationAuthoring'),
-    sessionId: asProtocolZod(SessionIdSchema),
-    instanceId: ComposerOpaqueLiveInstanceIdV1Schema,
-  }).strict(),
-]);
-export type ComposerRefV1 = DeepReadonly<z.infer<typeof ComposerRefV1Schema>>;
+export { ComposerRefV1Schema } from './composerRef.js';
+export type { ComposerRefV1 } from './composerRef.js';
 
 export const ComposerScopeKindV1Schema = z.enum([
   'session',
@@ -144,7 +119,7 @@ export type ComposerSnapshotStateV1 = DeepReadonly<z.infer<typeof ComposerSnapsh
 /** Immutable semantic snapshot produced by the one Composer document owner. */
 export const ComposerSnapshotV1Schema = z.object({
   revision: z.number().int().nonnegative(),
-  ref: ComposerRefV1Schema,
+  ref: ComposerRefV1ZodSchema,
   text: ComposerTextV1Schema,
   selection: ComposerTextRangeV1Schema.optional(),
   references: z.array(ComposerMentionRefV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
@@ -322,7 +297,7 @@ export type ComposerSurfaceRoleV1 = z.infer<typeof ComposerSurfaceRoleV1Schema>;
 const ComposerControlSurfaceInputV1Schema = z.object({
   v: z.literal(1),
   role: z.enum(['controlCompact', 'controlInteraction']),
-  composer: ComposerRefV1Schema,
+  composer: ComposerRefV1ZodSchema,
   controlLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   state: ComposerControlStateV1Schema,
 }).strict();
@@ -330,7 +305,7 @@ const ComposerControlSurfaceInputV1Schema = z.object({
 const ComposerAttachmentPickerSurfaceInputV1Schema = z.object({
   v: z.literal(1),
   role: z.literal('attachmentPicker'),
-  composer: ComposerRefV1Schema,
+  composer: ComposerRefV1ZodSchema,
   attachmentLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   instances: z.array(ComposerAttachmentViewV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
 }).strict();
@@ -338,7 +313,7 @@ const ComposerAttachmentPickerSurfaceInputV1Schema = z.object({
 const ComposerAttachmentDisplaySurfaceInputV1Schema = z.object({
   v: z.literal(1),
   role: z.enum(['attachmentDisplay', 'attachmentPreview']),
-  composer: ComposerRefV1Schema,
+  composer: ComposerRefV1ZodSchema,
   attachmentLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   instance: ComposerAttachmentViewV1Schema,
 }).strict();
@@ -346,7 +321,7 @@ const ComposerAttachmentDisplaySurfaceInputV1Schema = z.object({
 const ComposerRegionSurfaceInputV1Schema = z.object({
   v: z.literal(1),
   role: z.literal('region'),
-  composer: ComposerRefV1Schema,
+  composer: ComposerRefV1ZodSchema,
   regionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
 }).strict();
 
@@ -396,7 +371,7 @@ export const ComposerSurfaceMountBindingV1Schema = z.object({
   role: ComposerSurfaceRoleV1Schema,
   selectedRenderer: asProtocolZod(PluginContributionIdentityV1Schema),
   rendererChain: z.array(asProtocolZod(PluginContributionIdentityV1Schema)).min(1).max(PLUGIN_UI_MAX_RENDERER_CHAIN_LENGTH),
-  composer: ComposerRefV1Schema,
+  composer: ComposerRefV1ZodSchema,
   instanceKey: PluginUiInstanceKeyV1Schema,
   input: ComposerSurfaceInputV1Schema,
 }).strict().superRefine((mount, context) => {

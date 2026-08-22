@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as bindingContracts from './bindings.js';
 import {
+    conversationBindingPolicyForOmittedFieldsV1,
     ConversationAutomationTargetNotVerifiedResultV1Schema,
     ConversationBindingCreateInputV1JsonSchema,
     ConversationBindingCreateInputV1Schema,
@@ -304,8 +305,8 @@ describe('Channels V1 binding management mutation contracts', () => {
         })).toEqual({ kind: 'notReady', reason: 'network' });
         expect(mutationResultSchema.parse({
             kind: 'notVerified',
-            reason: 'notConversation',
-        })).toEqual({ kind: 'notVerified', reason: 'notConversation' });
+            reason: 'templateVersionMismatch',
+        })).toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
         expect(ConversationBindingTargetMutationResultV1Schema.safeParse({ kind: 'stale' }).success).toBe(false);
         expect(mutationResultSchema.safeParse({
             kind: 'stale',
@@ -355,5 +356,50 @@ describe('Channels V1 binding management mutation contracts', () => {
             kind: 'unavailable',
             reason: 'principalResolveUnsupported',
         })).toEqual({ kind: 'unavailable', reason: 'principalResolveUnsupported' });
+    });
+});
+
+describe('Channels V1 binding policy defaults', () => {
+    it('derives the one omitted-field policy the writer persists for each audience', () => {
+        expect(conversationBindingPolicyForOmittedFieldsV1('direct')).toEqual({
+            allowBotSenders: false,
+            inputMode: 'allAllowedMessages',
+            inboundDebounceMs: 750,
+            linkPreviewPolicy: 'suppress',
+            senderFeedback: 'off',
+            enabled: false,
+        });
+        expect(conversationBindingPolicyForOmittedFieldsV1('shared')).toEqual({
+            allowBotSenders: false,
+            inputMode: 'directMentionsOnly',
+            inboundDebounceMs: 750,
+            linkPreviewPolicy: 'suppress',
+            senderFeedback: 'off',
+            enabled: false,
+        });
+    });
+
+    it('produces a policy the create contract admits verbatim', () => {
+        for (const audience of ['direct', 'shared'] as const) {
+            expect(ConversationBindingCreateInputV1Schema.safeParse({
+                connectionId: 'connection-1',
+                expectedConnectionRevision: 7,
+                endpointSelection: {
+                    query: 'endpoint-1',
+                    selected: { kind: audience, audience, id: 'endpoint-1' },
+                },
+                principalSelection: {
+                    query: 'principal-a',
+                    selected: [{ id: 'principal-a', kind: 'human' }],
+                },
+                target: {
+                    kind: 'automation',
+                    automationId: 'automation-1',
+                    expectedTemplateVersion: 1,
+                    policy: { resultDelivery: 'finalResult' },
+                },
+                ...conversationBindingPolicyForOmittedFieldsV1(audience),
+            }).success).toBe(true);
+        }
     });
 });

@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
-  AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
   AutomationReplyHandoffDispatchRequestV1Schema,
   AutomationReplyHandoffDispatchResultV1Schema,
 } from './automationEventV1.js';
+
+/** A synthetic out-of-tree bridge, so no first-party id is load-bearing here. */
+const thirdPartyDeliveryActionRef = {
+  pluginId: 'acme.slack-bridge',
+  localId: 'automation/reply-deliver-v1',
+} as const;
 
 const request = {
   v: 1,
@@ -15,7 +20,7 @@ const request = {
     machineId: 'machine-1',
     machineInstallationId: 'installation-1',
     materializationId: 'materialization-1',
-    actionRef: AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
+    actionRef: thirdPartyDeliveryActionRef,
   },
   handoff: {
     handoffId: 'handoff-1',
@@ -122,14 +127,21 @@ describe('Automation reply-handoff daemon RPC contract', () => {
       ...request,
       target: { ...request.target, machineId: 'caller-selected-machine' },
     }).success).toBe(true);
+    // The target ref stays a bounded qualified contribution identity, but it
+    // names no plugin: the daemon fences a substituted target by resolving the
+    // frozen materialization for that exact plugin, not by a wire literal.
     expect(AutomationReplyHandoffDispatchRequestV1Schema.safeParse({
       ...request,
       target: {
         ...request.target,
-        actionRef: {
-          pluginId: 'happier.channels',
-          localId: 'caller-selected-action',
-        },
+        actionRef: { pluginId: 'Not A Plugin Id', localId: 'automation/reply-deliver-v1' },
+      },
+    }).success).toBe(false);
+    expect(AutomationReplyHandoffDispatchRequestV1Schema.safeParse({
+      ...request,
+      target: {
+        ...request.target,
+        actionRef: { pluginId: 'acme.slack-bridge', localId: 'Caller Selected Action' },
       },
     }).success).toBe(false);
     expect(AutomationReplyHandoffDispatchResultV1Schema.safeParse({

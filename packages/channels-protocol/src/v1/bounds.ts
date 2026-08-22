@@ -3,6 +3,9 @@ export const CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1 = 'providers';
 export const CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1 = 'happier.channels/providers';
 export const CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1 = 1;
 
+/** Canonical Channels plugin identity for its own qualified contribution refs. */
+export const CONVERSATION_CORE_PLUGIN_ID_V1 = 'happier.channels';
+
 /** Stable Channels core Action ids for provider callers. */
 export const CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1 = Object.freeze({
     observationIngest: 'provider/observation-ingest-v1',
@@ -10,6 +13,17 @@ export const CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1 = Object.freeze({
     connectionRead: 'provider/connection-read-v1',
     transportFactReport: 'provider/transport-fact-report-v1',
     automationResultDeliver: 'automation/result-deliver-v1',
+});
+
+/**
+ * Channels' own Automation result-delivery target. The host accepts any
+ * plugin's own declared Action contribution as the reply recipient, so this is
+ * one plugin's binding, not a platform-wide pin: a third-party bridge freezes
+ * its own qualified contribution here instead.
+ */
+export const CONVERSATION_AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1 = Object.freeze({
+    pluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
+    localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.automationResultDeliver,
 });
 
 /** Stable present-user/core management Action ids. */
@@ -65,6 +79,17 @@ export const MAX_CONVERSATION_RETRY_AFTER_MS = 86_400_000;
 export const MAX_CONVERSATION_INBOUND_DEBOUNCE_MS = 5_000;
 export const MIN_CONVERSATION_OBSERVATION_AGE_MS = 60_000;
 export const MAX_CONVERSATION_OBSERVATION_AGE_MS = 30 * 86_400_000;
+
+/**
+ * `occurredAt` is minted by the provider's clock and compared against this
+ * host's clock, so a provider timestamp may legitimately lead local time. This
+ * is the same cross-host boundary the Account freshness proofs already allow
+ * 60s for, and it is exactly `MIN_CONVERSATION_OBSERVATION_AGE_MS`, so the
+ * forward allowance can never exceed the tightest window an operator can
+ * configure. Beyond it a timestamp is not skew, and admitting it would pin the
+ * occurrence's retained message body past every retention horizon.
+ */
+export const MAX_CONVERSATION_OBSERVATION_CLOCK_SKEW_MS = 60_000;
 
 export const CONVERSATION_TRANSPORT_KINDS_V1 = [
     'checkpointedPull',

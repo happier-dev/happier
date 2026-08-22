@@ -19,9 +19,12 @@ import {
   SessionOrganizationAccountEncryptionMigrationInventorySchema,
   SessionOrganizationFolderSchema,
   SessionOrganizationLabelSchema,
+  SessionAttentionStandingSchema,
   SessionOrganizationSnapshotRequestSchema,
   SessionOrganizationSnapshotResponseSchema,
   SessionOrganizationTagSchema,
+  SetSessionAttentionStandingRequestSchema,
+  SetSessionAttentionStandingResponseSchema,
   SetSessionFolderAssignmentRequestSchema,
   SetSessionPinRequestSchema,
   SetSessionTagAssignmentsRequestSchema,
@@ -247,6 +250,44 @@ describe('session organization protocol contracts', () => {
     expect(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: { ...baseSnapshot, version: 1 } }).snapshot.version).toBe(1);
     expect(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: { ...baseSnapshot, version: 12 } }).snapshot.version).toBe(12);
     expect(SessionOrganizationSnapshotResponseSchema.safeParse({ snapshot: { ...baseSnapshot, schemaVersion: 2, version: 1 } }).success).toBe(false);
+  });
+
+  it('carries attention standings through the snapshot and its set mutation', () => {
+    expect(SessionOrganizationSnapshotRequestSchema.parse({}).includeAttentionStandings).toBe(false);
+    expect(SessionOrganizationSnapshotRequestSchema.parse({ includeAttentionStandings: true }).includeAttentionStandings).toBe(true);
+
+    const standing = SessionAttentionStandingSchema.parse({ sessionId: 'session_1', standing: true, updatedAt: 10 });
+    expect(standing).toEqual({ sessionId: 'session_1', standing: true, updatedAt: 10 });
+
+    const baseSnapshot = {
+      schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION,
+      version: 4,
+      pins: [],
+      folders: [],
+      folderAssignments: [],
+      tags: [],
+      tagAssignments: [],
+      orderEntries: [],
+      labels: [],
+    };
+
+    // The field is optional on the wire so a snapshot fetched without the include flag stays
+    // parseable, and its absence stays distinguishable from "the account has none".
+    expect(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: baseSnapshot }).snapshot.attentionStandings)
+      .toBeUndefined();
+    expect(
+      SessionOrganizationSnapshotResponseSchema
+        .parse({ snapshot: { ...baseSnapshot, attentionStandings: [standing] } })
+        .snapshot.attentionStandings,
+    ).toEqual([standing]);
+
+    // "Remove from Needs attention" against a true account default is an explicit false, not a
+    // missing row, so the mutation is a real tri-state.
+    expect(SetSessionAttentionStandingRequestSchema.parse({ standing: false })).toEqual({ standing: false });
+    expect(SetSessionAttentionStandingRequestSchema.parse({ standing: null })).toEqual({ standing: null });
+    expect(SetSessionAttentionStandingResponseSchema.parse({ standing: null })).toEqual({ standing: null });
+    expect(SetSessionAttentionStandingResponseSchema.parse({ standing }).standing).toEqual(standing);
+    expect(SetSessionAttentionStandingRequestSchema.safeParse({}).success).toBe(false);
   });
 
   it('defines mutations for pins, folder delete defaults, tags, assignments, and ordering', () => {

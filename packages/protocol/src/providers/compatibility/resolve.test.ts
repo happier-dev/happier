@@ -135,6 +135,69 @@ describe('resolveProviderBindingCompatibilityWithFingerprintV1', () => {
     expect(result).toEqual({ status: 'incompatible', reasons: ['no_compatible_protocol'] });
   });
 
+  it('matches an external Provider and an external Agent on a protocol the host does not bundle', () => {
+    // A wire protocol is a rendezvous key between two independently installed
+    // plugins. The resolver matches the two declarations; it never consults the
+    // bundled protocol vocabulary, so a contributed protocol binds exactly like
+    // a bundled one.
+    const contributed = 'acme-wire-v1';
+    const result = resolve({
+      agentTargetKey: 'agent:acme.shell/acme',
+      adapterVersion: 1,
+      endpoints: [{ ...baseEndpoint, id: 'acme', protocol: contributed }],
+      credential: undefined,
+      agent: {
+        ...baseRequirements,
+        acceptsProtocols: [contributed],
+        required: { streaming: true },
+        credentialSupport: {
+          supportsNoAuth: true,
+          apiKeyTransports: [{
+            protocol: contributed,
+            destination: { kind: 'httpHeader', names: ['Authorization'], formats: ['bearer'] },
+          }],
+        },
+      },
+      compatibilityOverrides: [{
+        agentTargetKey: 'agent:acme.shell/acme',
+        protocol: contributed,
+        status: 'verified',
+        reason: 'Verified against the Acme wire conformance suite',
+        evidence,
+      }],
+    });
+    expect(result.status).toBe('verified');
+    expect(result.selectedProtocol).toBe(contributed);
+
+    // Without an override the pair still binds. A protocol the host does not
+    // bundle carries no compatibility evidence, which is `experimental` — the
+    // same answer a bundled protocol without evidence gets — and never
+    // `incompatible`, which would make the bundled vocabulary a gate.
+    const unattested = resolve({
+      agentTargetKey: 'agent:acme.shell/acme',
+      adapterVersion: 1,
+      endpoints: [{ ...baseEndpoint, id: 'acme', protocol: contributed }],
+      credential: undefined,
+      agent: {
+        ...baseRequirements,
+        acceptsProtocols: [contributed],
+        required: { streaming: true },
+        credentialSupport: {
+          supportsNoAuth: true,
+          apiKeyTransports: [{
+            protocol: contributed,
+            destination: { kind: 'httpHeader', names: ['Authorization'], formats: ['bearer'] },
+          }],
+        },
+      },
+    });
+    expect(unattested).toMatchObject({
+      status: 'experimental',
+      selectedProtocol: contributed,
+      reasons: ['compatibility_evidence_missing'],
+    });
+  });
+
   it('treats endpoint-level model capability rejection as model-independent', () => {
     const endpoint = {
       ...baseEndpoint,

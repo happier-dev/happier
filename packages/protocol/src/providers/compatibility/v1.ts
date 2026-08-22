@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 import { ConnectedServiceIdSchema } from '../../connect/connectedServiceBindings.js';
 import { ProviderCredentialFormatKindV1Schema } from '../credentials/v1.js';
-import { ProviderCompatibilityEvidenceV1Schema, ProviderWireProtocolSchema } from '../capabilities/v1.js';
+import {
+  PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
+  ProviderCompatibilityEvidenceV1Schema,
+  ProviderWireProtocolSchema,
+} from '../capabilities/v1.js';
 import {
   normalizeProviderCredentialHeaderName,
   normalizeProviderQueryParameterName,
@@ -57,7 +61,7 @@ export const AgentCredentialTransportSupportV1Schema = z.object({
 export type AgentCredentialTransportSupportV1 = z.infer<typeof AgentCredentialTransportSupportV1Schema>;
 
 export const AgentProviderRequirementsV1Schema = z.object({
-  acceptsProtocols: z.array(ProviderWireProtocolSchema).min(1).max(4),
+  acceptsProtocols: z.array(ProviderWireProtocolSchema).min(1).max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
   required: z.object({
     streaming: z.literal(true).optional(),
     toolRoundTrips: z.literal(true).optional(),

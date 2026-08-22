@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { deriveAutomationOccurrenceKeyV1 } from './automationOccurrenceV1.js';
 import {
   AutomationRunExecutionRecipeV1Schema,
+  AutomationRunTemplateV1Schema,
+  automationRunExecutionTargetDeliversComposerReferencesV1,
   freezeAutomationRunPluginEventExecutionRecipeV1,
   materializeAutomationRunExecutionRecipeV1,
   materializeAutomationRunPromptV1,
@@ -46,7 +48,18 @@ describe('materializeAutomationRunPromptV1', () => {
     expect(materializeAutomationRunPromptV1({
       template: { v: 1, prompt: '{{unknown}}' },
       triggerEvidence: pluginEventEvidence,
-    })).toEqual({ kind: 'contentInvalid' });
+    })).toEqual({
+      kind: 'contentInvalid',
+      reason: 'unsupportedToken',
+      token: '{{unknown}}',
+    });
+  });
+
+  it('names a malformed token separately from an unsupported one', () => {
+    expect(materializeAutomationRunPromptV1({
+      template: { v: 1, prompt: 'closing }} first' },
+      triggerEvidence: null,
+    })).toEqual({ kind: 'contentInvalid', reason: 'malformedToken' });
   });
 
   it('rejects repeated input expansion above the output byte ceiling before materializing it', () => {
@@ -58,7 +71,21 @@ describe('materializeAutomationRunPromptV1', () => {
       },
     });
 
-    expect(materialized).toEqual({ kind: 'contentInvalid' });
+    expect(materialized).toEqual({
+      kind: 'contentInvalid',
+      reason: 'materializedInputTooLarge',
+    });
+  });
+
+  it('names an invalid template separately from an invalid trigger evidence', () => {
+    expect(materializeAutomationRunPromptV1({
+      template: { v: 1, prompt: 42 },
+      triggerEvidence: null,
+    })).toEqual({ kind: 'contentInvalid', reason: 'templateInvalid' });
+    expect(materializeAutomationRunPromptV1({
+      template: { v: 1, prompt: 'ok' },
+      triggerEvidence: { kind: 'pluginEvent' },
+    })).toEqual({ kind: 'contentInvalid', reason: 'triggerEvidenceInvalid' });
   });
 });
 
@@ -332,5 +359,128 @@ describe('AutomationRunExecutionRecipeV1', () => {
       accountCurrentness: plainCurrentness,
       runId: 'run-conversation',
     })).toEqual({ kind: 'contentInvalid' });
+  });
+});
+
+describe('Automation Run template composer references', () => {
+  const sessionMention = {
+    kind: 'happier.session',
+    ref: 'session:sess-42',
+    token: '@Nightly%20review',
+    label: 'Nightly review',
+  } as const;
+
+  it('materializes the admitted references beside the rendered existing-session prompt', () => {
+    const materialized = materializeAutomationRunExecutionRecipeV1({
+      recipe: {
+        v: 1,
+        templateVersion: 2,
+        template: {
+          t: 'plain',
+          v: {
+            v: 1,
+            prompt: 'Continue @Nightly%20review with {{input}}',
+            mentions: [sessionMention],
+          },
+        },
+        triggerEvidence: null,
+        target: { kind: 'existingSession', sessionId: 'sess-target' },
+      },
+      origin: { kind: 'manual', invokedAt: 5 },
+      accountCurrentness: { mode: 'plain', version: 3, contentKeyFingerprint: null },
+      runId: 'run-1',
+    });
+
+    expect(materialized).toMatchObject({
+      kind: 'available',
+      target: { kind: 'existingSession', sessionId: 'sess-target', mentions: [sessionMention] },
+    });
+  });
+
+  it('drops a reference whose token the rendered program no longer contains', () => {
+    const materialized = materializeAutomationRunPromptV1({
+      template: {
+        v: 1,
+        prompt: 'The picked token was deleted.',
+        mentions: [sessionMention],
+      },
+      triggerEvidence: null,
+    });
+
+    expect(materialized).toMatchObject({ kind: 'available', mentions: [] });
+  });
+
+  it('keeps the template strict while accepting the additive reference list', () => {
+    expect(AutomationRunTemplateV1Schema.safeParse({
+      v: 1,
+      prompt: 'ok',
+      mentions: [sessionMention],
+    }).success).toBe(true);
+    expect(AutomationRunTemplateV1Schema.safeParse({
+      v: 1,
+      prompt: 'ok',
+      mentions: [{ ...sessionMention, ref: 'not-a-reference-grammar' }],
+    }).success).toBe(false);
+    expect(AutomationRunTemplateV1Schema.safeParse({
+      v: 1,
+      prompt: 'ok',
+      unknownField: 1,
+    }).success).toBe(false);
+  });
+
+  it('advertises reference delivery for exactly the targets that materialize them', () => {
+    const prompt = 'Continue @Nightly%20review now.';
+    const targets = [
+      { kind: 'existingSession', sessionId: 'sess-target' },
+      {
+        kind: 'newSession',
+        spawn: {
+          executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+          directory: '/work/project',
+          agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' },
+          },
+        },
+      },
+      {
+        kind: 'executionRun',
+        request: {
+          intent: 'task',
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'bounded',
+          ioMode: 'request_response',
+        },
+      },
+    ] as const;
+
+    for (const target of targets) {
+      const materialized = materializeAutomationRunExecutionRecipeV1({
+        recipe: {
+          v: 1,
+          templateVersion: 2,
+          template: { t: 'plain', v: { v: 1, prompt, mentions: [sessionMention] } },
+          triggerEvidence: null,
+          target,
+        },
+        origin: { kind: 'manual', invokedAt: 5 },
+        accountCurrentness: { mode: 'plain', version: 3, contentKeyFingerprint: null },
+        runId: 'run-1',
+      });
+      if (materialized.kind !== 'available') {
+        throw new Error(`fixture ${target.kind} target must materialize`);
+      }
+      // The predicate an authoring surface reads must agree with what dispatch
+      // is actually handed, so a stored reference can never be silently dropped.
+      expect([
+        target.kind,
+        'mentions' in materialized.target && materialized.target.mentions.length > 0,
+      ]).toEqual([
+        target.kind,
+        automationRunExecutionTargetDeliversComposerReferencesV1(target.kind),
+      ]);
+    }
   });
 });

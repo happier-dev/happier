@@ -206,9 +206,13 @@ function occurrenceKeyParts(
       evidence.occurrenceId,
     ];
   }
+  // Mirrors the Plugin Event branch: an occurrence identity is namespaced by
+  // the plugin that owns the trigger, so two plugins observing the same
+  // conversation binding and occurrence id never collide on one Run.
   return [
     '1',
     evidence.kind,
+    evidence.caller.pluginId,
     evidence.bindingId,
     evidence.occurrenceId,
   ];

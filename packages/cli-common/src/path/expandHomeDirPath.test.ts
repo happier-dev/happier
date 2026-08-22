@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canonicalAbsolutePathsEqual,
   expandHomeDirPath,
+  isCanonicalAbsolutePathInsideRoot,
+  resolveCanonicalAbsolutePath,
   resolveHomeDirFromEnvironment,
 } from './expandHomeDirPath.js';
 
@@ -46,5 +49,46 @@ describe('expandHomeDirPath', () => {
     expect(expandHomeDirPath('C:\\Users\\alice2\\project', {}, 'win32')).toBe(
       'C:\\Users\\alice2\\project',
     );
+  });
+
+  it('keeps dot-prefixed child names and home-like sibling prefixes distinct', () => {
+    const env = { HOME: '/Users/alice' };
+
+    expect(expandHomeDirPath('~/..build/projects', env, 'linux')).toBe(
+      '/Users/alice/..build/projects',
+    );
+    expect(expandHomeDirPath('~alice/projects', env, 'linux')).toBe('~alice/projects');
+  });
+
+  it('contains mixed-separator Windows children without rejecting dot-prefixed names or accepting siblings', () => {
+    const root = 'C:\\Users\\Alice\\project';
+
+    expect(isCanonicalAbsolutePathInsideRoot(
+      root,
+      'c:/users/alice/project\\build/output.js',
+    )).toBe(true);
+    expect(isCanonicalAbsolutePathInsideRoot(
+      root,
+      'C:\\Users\\Alice\\project\\..build\\output.js',
+    )).toBe(true);
+    expect(isCanonicalAbsolutePathInsideRoot(
+      root,
+      'C:\\Users\\Alice\\project-other\\output.js',
+    )).toBe(false);
+  });
+
+  it('normalizes Windows identity without weakening POSIX case-sensitive identity', () => {
+    expect(resolveCanonicalAbsolutePath(
+      '~\\projects/mixed/../acme',
+      { env: { USERPROFILE: 'C:\\Users\\Alice' }, platform: 'win32' },
+    )).toEqual({
+      path: 'C:\\Users\\Alice\\projects\\acme',
+      comparisonKey: 'c:\\users\\alice\\projects\\acme',
+    });
+    expect(canonicalAbsolutePathsEqual(
+      'C:\\Users\\Alice\\projects\\acme',
+      'c:/users/alice/PROJECTS/ACME',
+    )).toBe(true);
+    expect(canonicalAbsolutePathsEqual('/Users/Alice/acme', '/users/alice/acme')).toBe(false);
   });
 });

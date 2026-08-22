@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   defineProtocolObject,
   defineProtocolUnion,
-} from '../actions/jsonSchemaValidation.js';
+} from '../actions/protocolComposableSchema.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginIdSchema } from '../pluginId.js';
 import {

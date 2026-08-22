@@ -65,9 +65,51 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     });
   });
 
+  it('admits a current host-stamped external plugin caller through the generic admission policy', async () => {
+    const externalMaterialization = {
+      ...callerMaterialization,
+      pluginId: 'com.acme.other',
+    } as const;
+    const automationConversationAction = vi.fn(async () => ({
+      kind: 'admitted' as const,
+      runId: 'run-1',
+      checkpointSafe: true as const,
+    }));
+    const executor = createActionExecutor({
+      automationConversationAction,
+      isActionApprovalRequired: () => false,
+    } as ActionExecutorDeps);
+
+    await expect(executor.execute('automation.conversation.admit', conversationAdmitInput, {
+      surface: 'plugin',
+      actionCaller: {
+        kind: 'plugin',
+        pluginId: 'com.acme.other',
+        contributionLocalId: 'observation-ingest-v1',
+        materialization: externalMaterialization,
+      },
+    })).resolves.toEqual({
+      ok: true,
+      result: { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
+    });
+    expect(automationConversationAction).toHaveBeenCalledWith({
+      actionId: 'automation.conversation.admit',
+      input: conversationAdmitInput,
+      caller: {
+        kind: 'plugin',
+        pluginId: 'com.acme.other',
+        contributionLocalId: 'observation-ingest-v1',
+        materialization: externalMaterialization,
+      },
+    });
+  });
+
   it('routes target verification through the same exact host-stamped caller and cancellation boundary', async () => {
     const controller = new AbortController();
-    const input = { automationId: 'automation-1', expectedTemplateVersion: 3 } as const;
+    const input = {
+      automationId: 'automation-1',
+      expectedTemplateVersion: 3,
+    } as const;
     const automationConversationAction = vi.fn(async () => ({
       kind: 'verified' as const,
       templateVersion: 3,
@@ -182,36 +224,112 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     expect(automationConversationAction).not.toHaveBeenCalled();
   });
 
-  it('rejects a non-Channels or materialization-less verifier caller before the Automation owner', async () => {
+  it('rejects an unstamped verifier caller before the Automation owner', async () => {
     const automationConversationAction = vi.fn(async () => ({}));
     const executor = createActionExecutor({
       automationConversationAction,
       isActionApprovalRequired: () => false,
     } as ActionExecutorDeps);
-    const input = { automationId: 'automation-1', expectedTemplateVersion: 3 } as const;
+    const input = {
+      automationId: 'automation-1',
+      expectedTemplateVersion: 3,
+    } as const;
 
-    for (const actionCaller of [
-      {
-        kind: 'plugin' as const,
-        pluginId: 'com.acme.other',
-        contributionLocalId: 'binding/create-v1',
-        materialization: { ...callerMaterialization, pluginId: 'com.acme.other' },
-      },
-      {
-        kind: 'plugin' as const,
+    await expect(executor.execute('automation.conversation.target.verify', input, {
+      surface: 'plugin',
+      actionCaller: {
+        kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
       },
-    ]) {
-      await expect(executor.execute('automation.conversation.target.verify', input, {
-        surface: 'plugin',
-        actionCaller,
-      })).resolves.toEqual({
-        ok: false,
-        errorCode: 'plugin_action_caller_required',
-        error: 'plugin_action_caller_required',
-      });
-    }
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'plugin_action_caller_required',
+      error: 'plugin_action_caller_required',
+    });
     expect(automationConversationAction).not.toHaveBeenCalled();
+  });
+
+  it('drives the whole conversation flow for a third-party plugin that is not Channels', async () => {
+    const thirdPartyMaterialization = {
+      pluginId: 'acme.slack-bridge',
+      machineId: 'machine-1',
+      materializationId: 'materialization-slack-1',
+    } as const;
+    const thirdPartyCaller = {
+      kind: 'plugin',
+      pluginId: 'acme.slack-bridge',
+      contributionLocalId: 'slack/binding-v1',
+      materialization: thirdPartyMaterialization,
+    } as const;
+    const results: Record<string, unknown> = {
+      'automation.conversation.targets.list': {
+        items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' }],
+        nextCursor: null,
+      },
+      'automation.conversation.target.verify': { kind: 'verified', templateVersion: 3 },
+      'automation.conversation.admit': { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
+    };
+    const automationConversationAction = vi.fn(async (args: Readonly<{ actionId: string }>) => (
+      results[args.actionId]
+    ));
+    const executor = createActionExecutor({
+      automationConversationAction,
+      isActionApprovalRequired: () => false,
+    } as ActionExecutorDeps);
+
+    // The bridge lists the Account's existing Automations, binds one, and
+    // admits into it: identical capability with no create arm of its own.
+    await expect(executor.execute('automation.conversation.targets.list', { limit: 2 }, {
+      surface: 'plugin',
+      actionCaller: thirdPartyCaller,
+    })).resolves.toEqual({
+      ok: true,
+      result: results['automation.conversation.targets.list'],
+    });
+
+    await expect(executor.execute('automation.conversation.target.verify', {
+      automationId: 'automation-1',
+      expectedTemplateVersion: 3,
+    }, {
+      surface: 'plugin',
+      actionCaller: thirdPartyCaller,
+    })).resolves.toEqual({
+      ok: true,
+      result: { kind: 'verified', templateVersion: 3 },
+    });
+
+    // The bridge admits with its OWN declared reply-delivery contribution: the
+    // reply-handoff actionRef names no plugin, so a non-Channels plugin can
+    // participate and receive the result.
+    const thirdPartyAdmitInput = {
+      ...conversationAdmitInput,
+      resultDelivery: {
+        kind: 'finalResult',
+        actionRef: {
+          pluginId: 'acme.slack-bridge',
+          localId: 'automation/reply-deliver-v1',
+        },
+        opaqueContext: conversationAdmitInput.resultDelivery.opaqueContext,
+      },
+    } as const;
+    await expect(executor.execute('automation.conversation.admit', thirdPartyAdmitInput, {
+      surface: 'plugin',
+      actionCaller: thirdPartyCaller,
+    })).resolves.toEqual({
+      ok: true,
+      result: { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
+    });
+    expect(automationConversationAction).toHaveBeenLastCalledWith(expect.objectContaining({
+      actionId: 'automation.conversation.admit',
+      input: thirdPartyAdmitInput,
+      caller: thirdPartyCaller,
+    }));
+
+    expect(automationConversationAction.mock.calls.map(([args]) => args.actionId)).toEqual([
+      'automation.conversation.targets.list',
+      'automation.conversation.target.verify',
+      'automation.conversation.admit',
+    ]);
   });
 });

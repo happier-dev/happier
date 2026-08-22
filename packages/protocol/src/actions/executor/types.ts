@@ -1,8 +1,9 @@
 import type { ActionsSettingsV1 } from '../actionSettings.js';
 import type { ActionExecuteResult } from '../actionExecutionResult.js';
-import type { ActionId, RuntimeActionIdV1 } from '../actionIds.js';
+import type { ActionId, PluginDevLoopActionIdV1, RuntimeActionIdV1 } from '../actionIds.js';
 import type { ActionSurfaces, SessionTranscriptGetResult } from '../actionSpecs.js';
 import type { ActionUiPlacement } from '../actionUiPlacements.js';
+import type { ActionDefinitionV1 } from '../actionDefinitionV1.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../../memory/memoryWindow.js';
 import type { ApprovalRequestOriginV1, ApprovalRequestV1 } from '../../approvals/approvalRequestV1.js';
@@ -212,8 +213,9 @@ export type AutomationEventActionArgs = Readonly<{
 
 /**
  * Canonical Automation conversation boundary. The host stamps the plugin
- * caller; the Automation owner verifies current Channels materialization for
- * target reads and occurrence admission.
+ * caller; the Action declaration selects the permitted plugin caller and the
+ * Automation owner verifies current materialization for target reads and
+ * occurrence admission.
  */
 export type AutomationConversationActionArgs = Readonly<{
   actionId: AutomationConversationActionIdV1;
@@ -479,6 +481,13 @@ export type ExecutionRunProtocolV2Requirement = Readonly<{
 }>;
 
 export type ActionExecutorDeps = Readonly<{
+  /**
+   * Reads client-local contributed Actions at the discovery boundary. The
+   * caller owns currentness; ActionExecutor only composes these definitions
+   * with the static host catalog.
+   */
+  listContributedActionDefinitions?: () => readonly ActionDefinitionV1[];
+
   interceptActionExecution?: (request: Readonly<{
     actionId: ActionId;
     input: unknown;
@@ -1030,7 +1039,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
 
   pluginsDevLoopAction?: (args: Readonly<{
-    actionId: Extract<ActionId, 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.reload' | 'plugins.list'>;
+    actionId: PluginDevLoopActionIdV1;
     input: unknown;
     context: ActionExecutorContext;
   }>) => Promise<unknown>;
@@ -1077,7 +1086,7 @@ export type ActionExecutorDeps = Readonly<{
   /** Canonical owner for caller-scoped Event definition, admission, and source-status Actions. */
   automationEventAction?: (args: AutomationEventActionArgs) => Promise<unknown>;
 
-  /** Canonical owner for Channels-originated Automation conversation admission. */
+  /** Canonical owner for plugin-originated Automation conversation admission. */
   automationConversationAction?: (args: AutomationConversationActionArgs) => Promise<unknown>;
 
   buildApprovalPreview?: (args: Readonly<{

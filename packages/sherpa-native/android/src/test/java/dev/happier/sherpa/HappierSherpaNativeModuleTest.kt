@@ -5,9 +5,19 @@ import org.junit.Test
 
 class HappierSherpaNativeModuleTest {
   @Test
+  fun handleModuleDestroy_releasesStreamingAsrState() {
+    var releaseCount = 0
+    val module = HappierSherpaNativeModule(releaseAllStreaming = { releaseCount += 1 })
+
+    module.handleModuleDestroy()
+
+    assertEquals(1, releaseCount)
+  }
+
+  @Test
   fun handleModuleDestroy_cancelsExistingVadRegistry() {
     val registry = FakeVadDetectorRegistryControl()
-    val module = HappierSherpaNativeModule(createVadRegistry = { registry })
+    val module = HappierSherpaNativeModule(createVadRegistry = { registry }, releaseAllStreaming = {})
 
     module.getOrCreateVadRegistry()
     module.handleModuleDestroy()
@@ -22,7 +32,8 @@ class HappierSherpaNativeModuleTest {
       createVadRegistry = {
         createCount += 1
         FakeVadDetectorRegistryControl()
-      }
+      },
+      releaseAllStreaming = {}
     )
 
     module.handleModuleDestroy()

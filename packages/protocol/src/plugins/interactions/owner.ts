@@ -56,8 +56,14 @@ export type TransientInteractionOwnerParams = Readonly<{
   /** Required only for an exact Session scope and maps exclusively to sessionEnded. */
   sessionSignal?: AbortSignal;
   isGenerationCurrent(): boolean;
-  /** Product policy supplied by the host; callers cannot select a fallback. */
-  deadlineMs: number;
+  /**
+   * Product policy supplied by the host; callers cannot select a fallback.
+   * `null` is the explicit no-deadline arm: nothing is stamped and no timer is
+   * created, so the request settles only on a lifecycle event. A host that
+   * chooses it must own a lifecycle signal that can fire (an exact Session
+   * scope always does, through `sessionSignal`).
+   */
+  deadlineMs: number | null;
   present: TransientInteractionPresenter;
   now?: () => number;
   createRequestId?: () => string;
@@ -70,7 +76,8 @@ type PendingInteraction = {
   readonly requesterSignal?: AbortSignal;
   readonly requesterAbort: () => void;
   readonly sessionAbort?: () => void;
-  readonly deadline: ReturnType<typeof setTimeout>;
+  /** Absent for the no-deadline arm: that request has no timer to clear. */
+  readonly deadline?: ReturnType<typeof setTimeout>;
   readonly presentationContext?: unknown;
 };
 
@@ -143,11 +150,12 @@ function readsCurrent(read: () => boolean): boolean {
 export function createTransientInteractionOwner(
   params: TransientInteractionOwnerParams,
 ): TransientInteractionOwner {
-  if (!isTransientInteractionDeadlineMs(params.deadlineMs)) {
+  if (params.deadlineMs !== null && !isTransientInteractionDeadlineMs(params.deadlineMs)) {
     throw new Error(
-      `Transient interaction deadline must be a positive safe integer no greater than ${MAX_TRANSIENT_INTERACTION_TIMER_DELAY_MS}`,
+      `Transient interaction deadline must be null or a positive safe integer no greater than ${MAX_TRANSIENT_INTERACTION_TIMER_DELAY_MS}`,
     );
   }
+  const deadlineMs = params.deadlineMs;
   const parsedScope = InteractionTransientScopeV1Schema.safeParse(params.scope);
   if (!parsedScope.success) throw new Error('Transient interaction scope must be host-stamped and valid');
   const scope = parsedScope.data;
@@ -170,7 +178,7 @@ export function createTransientInteractionOwner(
       return Object.freeze({ status: 'notCurrent', requestId: entry.request.requestId });
     }
     pending.delete(entry.request.requestId);
-    clearTimeout(entry.deadline);
+    if (entry.deadline !== undefined) clearTimeout(entry.deadline);
     if (entry.sessionAbort) params.sessionSignal!.removeEventListener('abort', entry.sessionAbort);
     entry.requesterSignal?.removeEventListener('abort', entry.requesterAbort);
     entry.presenterAbort.abort('interaction_settled');
@@ -226,7 +234,7 @@ export function createTransientInteractionOwner(
       scope,
       requester: options.requester,
       createdAtMs,
-      expiresAtMs: createdAtMs + params.deadlineMs,
+      ...(deadlineMs === null ? {} : { expiresAtMs: createdAtMs + deadlineMs }),
     });
     if (!normalized.ok) return unavailableResult(input, requestId);
     const stamped = normalized.value;
@@ -257,10 +265,12 @@ export function createTransientInteractionOwner(
           ));
         }
         : undefined;
-      const deadline = setTimeout(() => {
-        const current = pending.get(stamped.requestId);
-        if (current) finish(current, lifecycleResult(stamped, 'timedOut'));
-      }, params.deadlineMs);
+      const deadline = deadlineMs === null
+        ? undefined
+        : setTimeout(() => {
+          const current = pending.get(stamped.requestId);
+          if (current) finish(current, lifecycleResult(stamped, 'timedOut'));
+        }, deadlineMs);
       const entry: PendingInteraction = {
         request: stamped,
         presenterAbort,
@@ -271,7 +281,7 @@ export function createTransientInteractionOwner(
           : { presentationContext: options.presentationContext }),
         requesterAbort,
         ...(sessionAbort ? { sessionAbort } : {}),
-        deadline,
+        ...(deadline === undefined ? {} : { deadline }),
       };
       pending.set(stamped.requestId, entry);
       if (sessionAbort) params.sessionSignal!.addEventListener('abort', sessionAbort, { once: true });

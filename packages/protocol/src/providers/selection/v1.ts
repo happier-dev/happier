@@ -305,22 +305,6 @@ export function resolveSessionModelSelectionIntentV1(input: Readonly<{
   };
 }
 
-export function parseSessionModelSelectionV1(
-  value: unknown,
-  legacy: Readonly<{ agentTargetKey: string; updatedAt: number }>,
-): SessionModelSelectionV1 {
-  const parsed = SessionModelSelectionV1Schema.safeParse(value);
-  if (parsed.success) return parsed.data;
-  if (typeof value === 'string') {
-    return SessionModelSelectionV1Schema.parse({
-      v: 1,
-      ref: { agentTargetKey: legacy.agentTargetKey, providerConnectionId: null, modelId: value },
-      updatedAt: legacy.updatedAt,
-    });
-  }
-  throw new Error('Invalid session model selection');
-}
-
 export const ModelVisibilityRefV1Schema = z.union([
   z.object({ scope: z.literal('agent'), agentTargetKey: ProviderAgentTargetKeySchema, providerConnectionId: z.null(), modelId: ProviderModelIdSchema }).strict(),
   z.object({ scope: z.literal('agent'), agentTargetKey: ProviderAgentTargetKeySchema, providerConnectionId: ProviderConnectionIdSchema, modelId: ProviderModelIdSchema }).strict(),

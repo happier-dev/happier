@@ -1,5 +1,6 @@
 import { z, type ZodRawShape, type ZodType, type ZodTypeAny } from 'zod';
 
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import {
   GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS,
 } from '../../agents/generated/externalSession/sources.js';
@@ -223,13 +224,7 @@ export const EXTERNAL_SESSIONS_AGENT_IDS = Object.freeze(
   ...GeneratedExternalSessionsAgentId[],
 ];
 
-export const ExternalSessionAgentIdSchema = z.string()
-  .min(1)
-  .max(128)
-  .refine(
-    (value) => value === value.trim(),
-    'External-session Agent id must already be trimmed.',
-  );
+export const ExternalSessionAgentIdSchema = AgentIdV1Schema;
 export type ExternalSessionAgentId = z.infer<typeof ExternalSessionAgentIdSchema>;
 
 export const ExternalSessionSourceIdSchema = z.string()

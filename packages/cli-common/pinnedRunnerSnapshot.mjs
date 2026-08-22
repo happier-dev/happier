@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.mjs';
 import cliDistBuildManifest from './cliDistBuildManifest.cjs';
@@ -71,6 +71,50 @@ function hasPinnedRunnerSnapshotRuntimeAssets(snapshotRoot) {
   ));
 }
 
+function isRegularFile(path) {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function hasPinnedRunnerSnapshotPluginResources(snapshotRoot) {
+  const packageScopeRoot = join(snapshotRoot, 'node_modules', '@happier-dev');
+  let packageEntries;
+  try {
+    packageEntries = readdirSync(packageScopeRoot, { withFileTypes: true });
+  } catch {
+    // Minimal test fixtures and runners without bundled workspace dependencies have no scope.
+    return true;
+  }
+
+  for (const packageEntry of packageEntries) {
+    if (!packageEntry.isDirectory() || !packageEntry.name.startsWith('plugins-')) continue;
+    const packageRoot = join(packageScopeRoot, packageEntry.name);
+    const manifestPath = join(packageRoot, '.happier-plugin', 'plugin.json');
+    let resources;
+    try {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      resources = manifest?.contributes?.resources;
+    } catch {
+      return false;
+    }
+    if (!Array.isArray(resources)) return false;
+
+    for (const resource of resources) {
+      if (resource?.path === undefined) continue;
+      if (typeof resource.path !== 'string' || !resource.path.trim()) return false;
+      const resourcePath = resolve(packageRoot, resource.path);
+      const relativeResourcePath = relative(packageRoot, resourcePath);
+      if (!isRelativePathInsideRoot(relativeResourcePath) || !isRegularFile(resourcePath)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 export function resolvePinnedRunnerSnapshotManagedProviderRuntimeIdentity({
   entrypoint,
   runtimeRoot,
@@ -97,6 +141,7 @@ export function isPinnedRunnerSnapshotReady(location) {
   if (
     !isPinnedRunnerSnapshotStructurallyReady(location)
     || !hasPinnedRunnerSnapshotRuntimeAssets(location.snapshotRoot)
+    || !hasPinnedRunnerSnapshotPluginResources(location.snapshotRoot)
   ) {
     return false;
   }

@@ -21,6 +21,10 @@ import {
   type PluginLocalizedStringV2,
 } from '../contributions/publicTypes.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import {
+  PluginClientExecutionPlatformsV1Schema,
+  PluginClientExecutionReferenceV1Schema,
+} from '../contributions/clientExecution.js';
 import { asProtocolZod } from "./internalProtocolZodAdapter.js";
 export { PluginJsonSchemaV2Schema, type PluginJsonSchemaV2 as PluginJsonSchema } from '../contributions/publicTypes.js';
 export type { PluginJsonValueV2 as PluginJsonValue } from '../contributions/publicTypes.js';
@@ -69,10 +73,50 @@ export const PluginActionSurfaceV2Schema = z.enum([
   'agent',
   'ui',
   'plugin',
+  'voice',
 ]);
 export type PluginActionSurfaceV2 = z.infer<typeof PluginActionSurfaceV2Schema>;
 
-const PluginToolSurfaceV2Schema = PluginActionSurfaceV2Schema.exclude(['ui', 'plugin']);
+/**
+ * Tool invocation is intentionally a smaller, independent surface grammar.
+ * Adding an Action-only surface must never silently make it available to Tools.
+ */
+export const PluginToolSurfaceV2Schema = z.enum(['cli', 'mcp', 'agent']);
+export type PluginToolSurfaceV2 = z.infer<typeof PluginToolSurfaceV2Schema>;
+
+/**
+ * One contributed Action has one explicit execution realm. The client tuple
+ * identifies the exact client activation module entitled to register it.
+ */
+export const PluginActionExecutionV2Schema = z.discriminatedUnion('target', [
+  z.object({
+    target: z.literal('daemon'),
+  }).strict(),
+  z.object({
+    target: z.literal('client'),
+    client: PluginClientExecutionReferenceV1Schema,
+    platforms: PluginClientExecutionPlatformsV1Schema,
+  }).strict(),
+]);
+export type PluginActionExecutionV2 = z.infer<typeof PluginActionExecutionV2Schema>;
+
+/**
+ * `contributes.actions[].execution` was introduced after plugins were already
+ * packaging `.happier-plugin/plugin.json`, and it arrived without a version
+ * signal: `schemaVersion` is still 2 and `runtime.apiVersion` is still 1, so a
+ * packaged declaration authored before it carries nothing that tells its author
+ * to re-author. The only realm that existed then was the daemon, so an *absent*
+ * realm reads as that realm.
+ *
+ * This is the one owner of that reading. It is a default for an absent
+ * declaration, never tolerance for a declared one: an unknown target, or a
+ * client target missing the artifact tuple the client realm is entitled by,
+ * still fails. Every reader that routes an Action to its realm parses through
+ * this schema so ingestion, the raw catalog projection and the daemon registry
+ * projection cannot reach different answers.
+ */
+export const PluginActionDeclaredExecutionV2Schema = PluginActionExecutionV2Schema
+  .default(() => ({ target: 'daemon' as const }));
 
 export const PluginActionPlacementV2Schema = z.enum([
   'primary',
@@ -444,6 +488,7 @@ export const PluginActionContributionV2Schema = z.object({
   icon: PluginActionIconV2Schema.optional(),
   scopes: z.array(PluginActionScopeV2Schema).min(1),
   surfaces: z.array(PluginActionSurfaceV2Schema).min(1),
+  execution: PluginActionDeclaredExecutionV2Schema,
   placementBindings: PluginActionPlacementBindingsV2Schema.optional(),
   slash: PluginActionSlashV2Schema.optional(),
   inputSchema: PluginJsonSchemaV2Schema.optional(),

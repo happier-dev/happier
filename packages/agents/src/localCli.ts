@@ -1,5 +1,5 @@
-import type { AgentId, CanonicalAgentId } from './types.js';
-import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
+import type { AgentId, BundledAgentId, CanonicalAgentId } from './types.js';
+import { mergeAuthoredWithGeneratedAgentFacts, readBundledAgentFact } from './definitions/generatedFacts.js';
 
 export type AgentCliSupportKind = 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
 export type AgentCliLaunchKind = 'primary' | 'device_code';
@@ -11,7 +11,7 @@ export type AgentCliLaunchCommand = Readonly<{
 }>;
 
 export type AgentLocalCliConfig = Readonly<{
-  agentId: AgentId;
+  agentId: BundledAgentId;
   detectKey: string;
   machineLoginKey: string;
   supportKind: AgentCliSupportKind;
@@ -27,13 +27,13 @@ export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId,
   mergeAuthoredWithGeneratedAgentFacts({
     authored: AUTHORED_AGENT_LOCAL_CLI_CONFIG,
     label: 'local CLI config',
-    readGenerated: (definition) => {
+    readGenerated: (definition, agentId) => {
       const launches = definition.cli.auth.loginLaunches.map((launch) => ({
         ...launch,
         command: definition.cli.executable.binaryName,
       }));
       return {
-        agentId: definition.id as AgentId,
+        agentId,
         detectKey: definition.cli.executable.binaryName,
         machineLoginKey: definition.cli.auth.machineLoginKey ?? definition.cli.executable.binaryName,
         supportKind: definition.cli.auth.support,
@@ -45,6 +45,8 @@ export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId,
 
 export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig>> = CANONICAL_AGENT_LOCAL_CLI_CONFIG;
 
-export function getAgentLocalCliConfig(agentId: AgentId): AgentLocalCliConfig {
-  return AGENT_LOCAL_CLI_CONFIG[agentId];
+export function getAgentLocalCliConfig(agentId: BundledAgentId): AgentLocalCliConfig;
+export function getAgentLocalCliConfig(agentId: AgentId): AgentLocalCliConfig | null;
+export function getAgentLocalCliConfig(agentId: AgentId): AgentLocalCliConfig | null {
+  return readBundledAgentFact(AGENT_LOCAL_CLI_CONFIG, agentId);
 }

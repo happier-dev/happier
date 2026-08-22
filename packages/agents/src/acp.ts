@@ -1,11 +1,11 @@
-import { AGENT_IDS, type AgentId } from './types.js';
+import { AGENT_IDS, type AgentId, type BundledAgentId } from './types.js';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from './generated/bundledAgentDefinitions.js';
 
 export type BuiltInAcpTransportProfile = 'generic' | 'kiro';
 export type BuiltInAcpYesNoAuto = 'yes' | 'no' | 'auto';
 
 export type BuiltInAcpConfig = Readonly<{
-  agentId: AgentId;
+  agentId: BundledAgentId;
   launcher: Readonly<{
     command: string;
     args: ReadonlyArray<string>;

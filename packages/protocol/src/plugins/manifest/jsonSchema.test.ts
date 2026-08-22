@@ -25,6 +25,7 @@ const validManifest = {
       surfaces: ['cli'],
       placementBindings: ['commandPalette'],
       dangerLevel: 'safe',
+      execution: { target: 'daemon' },
     }],
   },
 } as const;

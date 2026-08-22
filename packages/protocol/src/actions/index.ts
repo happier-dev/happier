@@ -2,11 +2,14 @@ export {
   ACTION_ID_FAMILIES_V1,
   ACTION_IDS,
   ActionIdSchema,
+  PLUGIN_DEV_LOOP_ACTION_IDS_V1,
   RUNTIME_ACTION_IDS_V1,
   RuntimeActionIdV1Schema,
+  isPluginDevLoopActionIdV1,
   isRuntimeActionIdV1,
   type ActionId,
   type ActionIdFamilyV1,
+  type PluginDevLoopActionIdV1,
   type RuntimeActionIdV1,
 } from './actionIds.js';
 export type { ActionExecuteResult } from './actionExecutionResult.js';
@@ -50,6 +53,7 @@ export {
   readActionInputOptionValue,
   ActionInputWidgetSchema,
   PluginScaffoldUiModeSchema,
+  SESSION_TRANSCRIPT_GET_MAX_LIMIT,
   SessionEventsGetInputSchema,
   SessionTranscriptGetExternalShareableInputV1Schema,
   SessionTranscriptGetInputSchema,
@@ -101,6 +105,13 @@ export {
   type SessionTranscriptGetOutput,
   type SessionTranscriptGetResult,
 } from './actionSpecs.js';
+
+/**
+ * Converts one admitted localized Action-form descriptor into the canonical
+ * string form consumed by host presentation. The caller owns text resolution;
+ * this owner retains the field/options shape and validation rules.
+ */
+export { normalizeActionInputHintsText } from './actionInputHints.js';
 
 export {
   ACTION_TOOL_EXPOSURE_SURFACES,

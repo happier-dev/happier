@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { ProviderLocalIdSchema } from '../ids.js';
-import { ProviderWireProtocolSchema } from '../capabilities/v1.js';
+import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1, ProviderWireProtocolSchema } from '../capabilities/v1.js';
 import { normalizeProviderCredentialHeaderName, normalizeProviderQueryParameterName } from '../safety/index.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 
@@ -47,7 +47,7 @@ export type ProviderCredentialDestinationV1 = z.infer<typeof ProviderCredentialD
 
 export const ProviderCredentialTransportV1Schema = z.object({
   id: ProviderLocalIdSchema,
-  protocols: z.array(ProviderWireProtocolSchema).min(1).max(4),
+  protocols: z.array(ProviderWireProtocolSchema).min(1).max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
   uses: z.array(z.enum(['probe', 'runtime', 'management'])).min(1).max(3),
   destination: ProviderCredentialDestinationV1Schema,
 }).strict().superRefine((value, ctx) => {

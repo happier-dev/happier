@@ -54,8 +54,11 @@ function mergeRuntimeOverrides<T>(base: T, overrides: PartialDeep<T> | undefined
     return overrides as T;
 }
 
-function readAgentRuntimeControlSurface(agentId: AgentId): AgentCoreRuntimeControlSurface {
-    const entry = getAgentCore(agentId) as AgentCore;
+function readAgentRuntimeControlSurface(agentId: AgentId): AgentCoreRuntimeControlSurface | null {
+    const entry = getAgentCore(agentId);
+    if (entry == null) {
+        return null;
+    }
     return {
         sessionStorage: entry.sessionStorage,
         sessionCapabilities: entry.sessionCapabilities,
@@ -68,7 +71,7 @@ function readAgentRuntimeControlSurface(agentId: AgentId): AgentCoreRuntimeContr
 }
 
 export function getAgentRuntimeKindsManifest<TAgentId extends AgentId>(agentId: TAgentId): AgentCore['runtimeKinds'] | null {
-    return (getAgentCore(agentId) as AgentCore).runtimeKinds ?? null;
+    return getAgentCore(agentId)?.runtimeKinds ?? null;
 }
 
 export function resolveDefaultAgentRuntimeKind<TAgentId extends AgentId>(agentId: TAgentId): AgentRuntimeKindFor<TAgentId> | null {
@@ -79,8 +82,9 @@ export function resolveDefaultAgentRuntimeKind<TAgentId extends AgentId>(agentId
 export function resolveAgentRuntimeControlSurface<TAgentId extends AgentId>(
     agentId: TAgentId,
     runtimeKind: AgentRuntimeKindFor<TAgentId> | null | undefined,
-): AgentCoreRuntimeControlSurface {
+): AgentCoreRuntimeControlSurface | null {
     const base = readAgentRuntimeControlSurface(agentId);
+    if (base == null) return null;
     const manifest = getAgentRuntimeKindsManifest(agentId);
     if (!manifest || !runtimeKind) return base;
     const overrideDefinition = manifest.byKind[runtimeKind as keyof typeof manifest.byKind];

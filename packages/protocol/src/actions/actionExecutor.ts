@@ -1,9 +1,9 @@
 import {
+  actionSpecToActionDefinitionV1,
   findActionInputFieldHint,
   filterResolvedActionOptions,
   getActionSpecForCatalogSurface,
   searchSerializedActionSpecsForSurface,
-  serializeActionSpec,
   serializeActionFieldOptions,
 } from './actionCatalog.js';
 import { resolveActionApprovalFlow } from './actionApprovalMetadata.js';
@@ -24,6 +24,7 @@ import {
   type PermissionEscalationDecision,
 } from './permissionPrivilege.js';
 import type { ActionsSettingsV1 } from './actionSettings.js';
+import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
 import {
   ActionSurfaceSchema,
   getActionSpec,
@@ -36,7 +37,12 @@ import {
   resolveActionSurfaceAvailability,
   type ActionSurfaceAvailability,
 } from './actionSurfaceAvailability.js';
-import { ACTION_ID_FAMILIES_V1, isRuntimeActionIdV1, type ActionId } from './actionIds.js';
+import {
+  ACTION_ID_FAMILIES_V1,
+  isPluginDevLoopActionIdV1,
+  isRuntimeActionIdV1,
+  type ActionId,
+} from './actionIds.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../memory/memoryWindow.js';
@@ -1549,6 +1555,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   const isActionEnabledByPolicy = (spec: ActionSpec, ctx: ActionExecutorContext) => policyAllowsAction(spec.id, ctx);
   const isActionEnabledBySurface = (spec: ActionSpec, ctx: ActionExecutorContext) => isActionSpecSurfacedOn(spec, ctx.surface);
   const isActionEnabled = (spec: ActionSpec, ctx: ActionExecutorContext) => isActionEnabledBySurface(spec, ctx) && isActionEnabledByPolicy(spec, ctx);
+  const listContributedActionDefinitions = (): readonly ActionDefinitionV1[] => {
+    try {
+      return deps.listContributedActionDefinitions?.() ?? [];
+    } catch {
+      return [];
+    }
+  };
+  const getContributedActionDefinition = (
+    id: string,
+    ctx: ActionExecutorContext,
+  ): ActionDefinitionV1 | null => {
+    const definition = listContributedActionDefinitions().find((candidate) => candidate.id === id) ?? null;
+    if (!definition) return null;
+    const surface = parseActionSurfaceKey(ctx.surface);
+    return surface && definition.surfaces[surface] !== true ? null : definition;
+  };
 
   function resolveAvailabilityForContext(spec: ActionSpec, ctx: ActionExecutorContext): ActionSurfaceAvailability | null {
     const surface = parseActionSurfaceKey(ctx.surface);
@@ -2240,7 +2262,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         if (
           ctx.actionCaller?.kind !== 'plugin'
-          || ctx.actionCaller.pluginId !== 'happier.channels'
           || typeof ctx.actionCaller.contributionLocalId !== 'string'
           || ctx.actionCaller.contributionLocalId.trim().length === 0
           || !ctx.actionCaller.materialization
@@ -2277,13 +2298,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return failure ?? { ok: true, result };
       }
 
-      if (
-        actionId === 'plugins.scaffold'
-        || actionId === 'plugins.install'
-        || actionId === 'plugins.uninstall'
-        || actionId === 'plugins.reload'
-        || actionId === 'plugins.list'
-      ) {
+      if (isPluginDevLoopActionIdV1(actionId)) {
         if (!deps.pluginsDevLoopAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
@@ -2606,21 +2621,26 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 query: typeof data.query === 'string' ? data.query : '',
                 limit: typeof data.limit === 'number' ? data.limit : undefined,
                 isActionEnabled: (id) => isActionEnabled(getActionSpec(id), ctx),
+                additionalDefinitions: listContributedActionDefinitions(),
               }),
             },
           };
         }
 
         if (actionId === 'action.spec.get') {
+          const requestedId = String(data.id);
           try {
-            const requestedSpec = getActionSpec(String(data.id) as ActionId);
+            const requestedSpec = getActionSpec(requestedId as ActionId);
             const requestedAvailability = resolveAvailabilityForContext(requestedSpec, ctx);
             if (requestedAvailability ? !requestedAvailability.available : !isActionEnabled(requestedSpec, ctx)) {
               return actionDisabled(requestedAvailability);
             }
-            return { ok: true, result: { actionSpec: serializeActionSpec(requestedSpec) } };
+            return { ok: true, result: { actionSpec: actionSpecToActionDefinitionV1(requestedSpec) } };
           } catch {
-            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            const contributedDefinition = getContributedActionDefinition(requestedId, ctx);
+            return contributedDefinition
+              ? { ok: true, result: { actionSpec: contributedDefinition } }
+              : { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
         }
 
@@ -2631,10 +2651,41 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           let optionsSourceId = directOptionsSourceId;
 
           if (actionIdRaw && fieldPath) {
+            let contributedDefinition: ActionDefinitionV1 | null = null;
             try {
               getActionSpec(actionIdRaw as ActionId);
             } catch {
-              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+              contributedDefinition = getContributedActionDefinition(actionIdRaw, ctx);
+              if (!contributedDefinition) {
+                return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+              }
+            }
+            if (contributedDefinition) {
+              const field = findActionInputFieldHint(contributedDefinition, fieldPath);
+              if (!field) {
+                // Contributed JSON Schema does not define the Action options
+                // protocol. Only explicit inputHints options are representable.
+                return { ok: false, errorCode: 'unavailable', error: 'unavailable' };
+              }
+              const staticOptions = serializeActionFieldOptions(field);
+              if (staticOptions.length > 0) {
+                return {
+                  ok: true,
+                  result: {
+                    actionId: contributedDefinition.id,
+                    fieldPath,
+                    optionsSourceId: null,
+                    options: filterResolvedActionOptions(staticOptions, data),
+                  },
+                };
+              }
+              // Dynamic contributed option sources remain owned by their
+              // plugin execution boundary; ActionExecutor has no source route.
+              return {
+                ok: false,
+                errorCode: 'unavailable',
+                error: 'unavailable',
+              };
             }
             const requestedSpec = getActionSpecForCatalogSurface({
               id: actionIdRaw as ActionId,

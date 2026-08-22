@@ -68,10 +68,15 @@ import {
  * The canonical ceiling every contributed Action input and result crosses,
  * owned by `packages/protocol/src/runtime/agentSessionLimitsV1.ts`
  * (`p0MeasuredCandidates.jsonValueMaxJsonBytes`) and enforced by
- * `packages/protocol/src/json/strictJsonValue.ts`, which throws
- * `JSON aggregate byte limit exceeded` rather than truncating. It is referenced
- * by value because `@happier-dev/protocol` is deliberately outside this
- * package's feature-protocol import allowlist.
+ * `AgentRuntimeJsonValueV1Schema` in
+ * `packages/protocol/src/runtime/agentSessionV1.ts`, which
+ * `packages/protocol/src/plugins/actions/invocation.ts` parses every plugin
+ * Action input and result through before the manifest `resultSchema` is
+ * consulted. It rejects an oversized value rather than truncating it. It is
+ * referenced by value because `@happier-dev/protocol` is deliberately outside
+ * this package's feature-protocol import allowlist; the Triage target's
+ * `actions/maximumEncodedActionValue.test.ts` measures the same values through
+ * that schema itself, so a relocation of the ceiling is caught there.
  *
  * It measures serialized UTF-8 JSON bytes, which is exactly what
  * `JSON.stringify` produces here.
@@ -182,12 +187,22 @@ describe('worst-case JSON escaping', () => {
             .sort();
 
         // Two are the V1 composite identifiers, which admit exactly one
-        // separator between two single-line components. The other two are
+        // separator between two single-line components. The others are
         // external protocol-owned identity strings this protocol embeds whose
         // only grammar is "no outer whitespace", so every control character is
         // admitted throughout. A V1 string that joins this set widens the
         // maxima above and is a deliberate protocol decision, not a detail.
-        expect(sixfold).toEqual(['accountId', 'collisionScope', 'localInstanceKey', 'sessionId']);
+        //
+        // `instanceId` LEFT this set with the Composer-origin `originComposer`
+        // address, which now lives only in Triage's own closed private launch
+        // input (PEP `03d1` §17.8) and never crosses this Action gate. The
+        // remaining `sessionId` is the linked-Session projection's own.
+        expect(sixfold).toEqual([
+            'accountId',
+            'collisionScope',
+            'localInstanceKey',
+            'sessionId',
+        ]);
     });
 
     it('confines each composite identifier to a single separator', () => {

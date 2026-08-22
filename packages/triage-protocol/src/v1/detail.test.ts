@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { createTriageSourceV1Fixture } from '../testing/v1/fixtures.js';
-import { TriageDetailSurfaceInputV1Schema } from './detail.js';
+import {
+    TriageDetailSurfaceInputV1JsonSchema,
+    TriageDetailSurfaceInputV1Schema,
+} from './detail.js';
 import { TriagePrepareReviewWorkspaceResultV1Schema } from './workspace.js';
 
 const fixture = createTriageSourceV1Fixture();
@@ -38,14 +41,61 @@ describe('Triage detail surface input', () => {
         }).success).toBe(false);
     });
 
-    it('has no originComposer field while its canonical projection is unpublished', () => {
-        // COMPOSER-COMPOSABLE-REF: a Triage-local mirror, adoption wrapper, or
-        // permissive JSON carrier for ComposerRefV1 is explicitly forbidden, so
-        // the optional field is absent from V1 rather than faked.
-        expect(TriageDetailSurfaceInputV1Schema.safeParse({
+    it('keeps a source that pinned an older copy renderable when the host adds a field', () => {
+        // Each source pins its own copy of this schema and gates its entire
+        // detail render on one `safeParse` (for example
+        // `scm-bitbucket/src/ui/renderSurface.tsx`), so a closed envelope makes
+        // every future optional host field a total loss of that source's detail
+        // body. The envelope therefore drops unknown outer keys.
+        const parsed = TriageDetailSurfaceInputV1Schema.parse({
+            ...fixture.detailInput,
+            aFieldThisBuildDoesNotKnow: { v: 2, note: 'from a newer host' },
+        });
+        expect(Object.hasOwn(parsed, 'aFieldThisBuildDoesNotKnow')).toBe(false);
+        expect(parsed.instance).toEqual(fixture.detailInput.instance);
+        expect(parsed.linkedSessions).toEqual(fixture.detailInput.linkedSessions);
+
+        // Tolerance stops at the envelope: the inner shapes carry identity and
+        // admission authority and stay closed.
+        for (const closedInner of [
+            {
+                ...fixture.detailInput,
+                observation: { ...fixture.detailInput.observation, unknownInnerField: true },
+            },
+            {
+                ...fixture.detailInput,
+                linkedSessions: [{ sessionId: 'session-1', unknownInnerField: true }],
+            },
+        ]) {
+            expect(TriageDetailSurfaceInputV1Schema.safeParse(closedInner).success).toBe(false);
+        }
+    });
+});
+
+/**
+ * The Composer-origin ADDRESS is not carried here.
+ *
+ * PEP `03d1` §17.8 places `originComposer` in exactly one carrier — Triage's
+ * closed private launch input at
+ * `packages/plugins/triage/src/composer/entryDetailLaunchInput.ts`, whose own
+ * suite owns the five host arms and their negatives. This envelope is
+ * `additive-open/drop`, which is right for a forward-compatible presentation
+ * payload and wrong for an address the destination resolves with an exact
+ * `get(originComposer)`: dropping it silently would leave that destination
+ * unable to reach the draft its reader came from, with no signal at all.
+ *
+ * A second carrier here would also widen the disclosure — this envelope is what
+ * every third-party source plugin receives.
+ */
+describe('the Composer-origin address', () => {
+    it('is not a field of the source detail envelope', () => {
+        const parsed = TriageDetailSurfaceInputV1Schema.parse({
             ...fixture.detailInput,
             originComposer: { kind: 'session', sessionId: 'session-1' },
-        }).success).toBe(false);
+        });
+
+        expect(Object.hasOwn(parsed, 'originComposer')).toBe(false);
+        expect(TriageDetailSurfaceInputV1JsonSchema.properties?.originComposer).toBeUndefined();
     });
 });
 

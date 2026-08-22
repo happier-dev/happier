@@ -1,5 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -45,5 +43,3 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
     }),
 }, { policy: 'additive-open/drop' });
 export type TriageSourceDescriptorV1 = ReturnType<typeof TriageSourceDescriptorV1Schema.parse>;
-export const TriageSourceDescriptorV1JsonSchema: PluginJsonSchema =
-    TriageSourceDescriptorV1Schema.jsonSchema;

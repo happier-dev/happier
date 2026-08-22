@@ -30,6 +30,7 @@ export const PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1 = `^${PLUGIN_UI_HOST_API_VER
  */
 export const PLUGIN_UI_HOST_METHODS_V1 = Object.freeze([
   'context',
+  'publishCurrentUiContext',
   'watchContext',
   'executeAction',
   'readResource',

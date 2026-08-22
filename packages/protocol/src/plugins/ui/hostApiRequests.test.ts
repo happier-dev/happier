@@ -14,6 +14,7 @@ import {
   PluginUiWatchComposerRequestV1Schema,
   PluginUiDeclarativeOpenSurfaceSelectorV1Schema,
   PluginUiExecuteActionRequestV1Schema,
+  PluginUiHostApiResponseEnvelopeV1Schema,
   PluginUiHostApiRequestEnvelopeV1Schema,
   PluginUiHostApiDiagnosticV1Schema,
   PluginUiLaunchInputV1Schema,
@@ -73,6 +74,34 @@ describe('plugin UI diagnostic bounds', () => {
   });
 });
 
+describe('plugin UI Host API response envelope', () => {
+  it('keeps a domain result separate from a typed host error even when its JSON carries an error code', () => {
+    const response = PluginUiHostApiResponseEnvelopeV1Schema.parse({
+      version: 1,
+      requestId: 'request-1',
+      surface,
+      method: 'executeAction',
+      kind: 'result',
+      payload: {
+        code: 'timeout',
+        outcome: 'domain-success',
+      },
+    });
+
+    expect(response).toMatchObject({
+      kind: 'result',
+      payload: { code: 'timeout', outcome: 'domain-success' },
+    });
+    expect(PluginUiHostApiResponseEnvelopeV1Schema.safeParse({
+      version: 1,
+      requestId: 'request-1',
+      surface,
+      method: 'executeAction',
+      payload: { code: 'timeout' },
+    }).success).toBe(false);
+  });
+});
+
 const admittedSelection = {
   target: {
     pluginId: 'acme.preview',
@@ -95,6 +124,17 @@ describe('plugin UI Composer host API payloads', () => {
       sizeBytes: 2,
       sha256: 'a'.repeat(64),
     } as const;
+
+  it('embeds the exact Composer ref validator in Zod-owned host API parents', () => {
+    expect(PluginUiActiveComposerResultV1Schema.safeParse({ kind: 'session' }).success).toBe(false);
+    expect(PluginUiReadComposerRequestV1Schema.safeParse({
+      ref: { kind: 'session' },
+    }).success).toBe(false);
+    expect(PluginUiPickComposerMediaRequestV1Schema.safeParse({
+      ref: { kind: 'session' },
+      request: { attachmentLocalId: 'image', kinds: ['image'] },
+    }).success).toBe(false);
+  });
 
   it('keeps every flat Composer request strict and preserves ordinary absence as a result', () => {
     expect(PluginUiActiveComposerResultV1Schema.parse(null)).toBeNull();

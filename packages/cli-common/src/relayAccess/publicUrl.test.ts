@@ -52,6 +52,7 @@ describe('relayAccess publicUrl', () => {
             tailnetName: 'tailnet.ts.net',
             tailscaleIps: [],
             loggedIn: true,
+            running: true, daemonReachable: true,
         });
         vi.mocked(runTailscaleFunnelStatus).mockResolvedValue(
             'https://relay.example.test\n|-- / proxy http://127.0.0.1:3005',
@@ -85,6 +86,7 @@ describe('relayAccess publicUrl', () => {
             tailnetName: 'tailnet.ts.net',
             tailscaleIps: [],
             loggedIn: true,
+            running: true, daemonReachable: true,
         });
         vi.mocked(runTailscaleFunnelStatus).mockResolvedValue(
             'https://relay.example.test\n|-- / proxy http://127.0.0.1:3005',

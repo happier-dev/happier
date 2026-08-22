@@ -34,9 +34,23 @@ export {
 } from './auth/keyChallenge.js';
 
 export {
+  PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
   createPluginActionInvocation,
+  createPluginActionPresentUserGate,
+  fingerprintPluginActionCurrentIntent,
+  projectPluginActionUnavailableOutcomeCode,
+  PluginActionPresentUserAuthorizationFactsSchema,
+  type PluginActionCurrentIntentRequest,
+  type PluginActionCurrentIntentResult,
   type PluginActionInvocationHandlerInput,
   type PluginActionInvocationResult,
+  type PluginActionPresentUserGatePolicy,
+  type PluginActionPresentUserAuthorizationFacts,
+  type PluginActionPresentUserGateResolved,
+  type PluginActionPresentUserGateResolution,
+  type PluginActionPresentUserGateResult,
+  type PluginActionFailureAuthorPayloadV1,
+  readPluginActionFailureAuthorPayload,
 } from './plugins/actions/invocation.js';
 export {
   compilePluginJsonSchema,
@@ -139,6 +153,7 @@ export {
 } from './connect/connectedServiceCredentialBinding.js';
 export {
   computeCanonicalDomainSeparatedDigest,
+  computeCanonicalDomainSeparatedHexDigest,
   encodeCanonicalLengthDelimited,
 } from './crypto/canonicalDigest.js';
 export {
@@ -364,19 +379,33 @@ export * from './models/descriptor.js';
 export * from './providers/index.js';
 export * from './agents/claude/index.js';
 export {
+  BUNDLED_PROVIDER_WIRE_PROTOCOLS_V1,
+  BundledProviderWireProtocolSchema,
+  PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
   ProviderWireProtocolSchema,
   ProviderCompatibilityCapabilitiesV1Schema,
   ProviderCompatibilityEvidenceV1Schema,
   ProviderCompatibilityOverrideV1Schema,
+  isBundledProviderWireProtocol,
+  readBundledProviderWireProtocolFactV1,
+  type BundledProviderWireProtocol,
   type ProviderWireProtocol,
   type ProviderCompatibilityCapabilitiesV1,
   type ProviderCompatibilityEvidenceV1,
   type ProviderCompatibilityOverrideV1,
 } from './providers/capabilities/v1.js';
 export {
+  BUNDLED_PROVIDER_CATALOG_PARSERS_V1,
+  BundledProviderCatalogParserV1Schema,
   ProviderCatalogDeclarationV1Schema,
+  ProviderCatalogParserV1Schema,
   ProviderCatalogProbeV1Schema,
+  isBundledProviderCatalogParserV1,
+  providerCatalogProbeReportsModelLoadStateV1,
+  readBundledProviderCatalogParserFactV1,
+  type BundledProviderCatalogParserV1,
   type ProviderCatalogDeclarationV1,
+  type ProviderCatalogParserV1,
   type ProviderCatalogProbeV1,
 } from './providers/catalog/descriptorV1.js';
 export {
@@ -395,9 +424,16 @@ export {
   type ProviderCredentialTransportV1,
 } from './providers/credentials/v1.js';
 export {
+  BUNDLED_PROVIDER_COMMAND_CATALOG_PARSERS_V1,
+  BundledProviderCommandCatalogParserV1Schema,
   ProviderCatalogCommandFallbackV1Schema,
+  ProviderCommandCatalogParserV1Schema,
   ProviderDetectionDescriptorV1Schema,
+  isBundledProviderCommandCatalogParserV1,
+  readBundledProviderCommandCatalogParserFactV1,
+  type BundledProviderCommandCatalogParserV1,
   type ProviderCatalogCommandFallbackV1,
+  type ProviderCommandCatalogParserV1,
   type ProviderDetectionDescriptorV1,
 } from './providers/detection/v1.js';
 export {
@@ -483,13 +519,16 @@ export {
   PluginActionConfirmationV2Schema,
   PluginActionContributionV2Schema,
   PluginActionDangerLevelV2Schema,
+  PluginActionDeclaredExecutionV2Schema,
   PluginActionDefinitionExamplesV1Schema,
+  PluginActionExecutionV2Schema,
   PluginActionIconV2Schema,
   PluginActionInputHintsV2Schema,
   PluginActionPlacementBindingsV2Schema,
   PluginActionPlacementV2Schema,
   PluginActionScopeV2Schema,
   PluginActionSurfaceV2Schema,
+  PluginToolSurfaceV2Schema,
   PluginToolContributionV2Schema,
   normalizePluginActionInputHintsV2,
   normalizePluginActionSlashV2,
@@ -500,11 +539,13 @@ export {
   type PluginActionContributionV2,
   type PluginActionDangerLevelV2,
   type PluginActionDefinitionExamplesV1,
+  type PluginActionExecutionV2,
   type PluginActionPlacementBindingsV2,
   type PluginActionInputHintsV2,
   type PluginActionPlacementV2,
   type PluginActionScopeV2,
   type PluginActionSurfaceV2,
+  type PluginToolSurfaceV2,
   type PluginToolContributionV2,
 } from './plugins/actions/v2.js';
 export {
@@ -603,6 +644,11 @@ export {
 } from './plugins/contributions/agentExternalSessions.js';
 export {
   PluginAgentContributionV2Schema,
+  PluginAgentCapabilitiesV2Schema,
+  PluginAgentCapabilitySurfaceV2Schema,
+  PluginAgentCapabilitySurfacesV2Schema,
+  PluginAgentSessionCapabilitiesV2Schema,
+  PluginAgentExecutionRunCapabilitiesV2Schema,
   PluginAgentRuntimeAcpV2Schema,
   PluginAgentRuntimeCustomV2Schema,
   PluginAgentRuntimeV2Schema,
@@ -646,6 +692,14 @@ export {
   PluginTranscriptActivityContributionV1Schema,
   PluginUiTranslationsContributionV1Schema,
   type PluginAgentContributionV2,
+  type PluginAgentCatalogV2,
+  type PluginAgentUiBehaviorContributionV2,
+  type PluginAgentVendorResumeSupportV2,
+  type PluginAgentCapabilitiesV2,
+  type PluginAgentCapabilitySurfaceV2,
+  type PluginAgentCapabilitySurfacesV2,
+  type PluginAgentSessionCapabilitiesV2,
+  type PluginAgentExecutionRunCapabilitiesV2,
   type ParsedPluginAgentContributionV2,
   type PluginAgentRuntimeAcpV2,
   type PluginAgentRuntimeCustomV2,
@@ -997,6 +1051,8 @@ export {
   VoiceAvailabilityPlatformSchema,
   VoiceConversationCapabilitiesSchema,
   VoiceConversationProviderRoleSchema,
+  VoiceConversationToolCapabilitiesSchema,
+  VoiceConversationToolEffectCallsSchema,
   VoiceCredentialAccessPhaseSchema,
   VoiceCredentialDeclarationSchema,
   VoiceCredentialBindingIdentityV1Schema,
@@ -1020,6 +1076,8 @@ export {
   type VoiceAvailabilityPlatform,
   type VoiceConversationCapabilities,
   type VoiceConversationProviderRole,
+  type VoiceConversationToolCapabilities,
+  type VoiceConversationToolEffectCalls,
   type VoiceCredentialAccessPhase,
   type VoiceCredentialDeclaration,
   type VoiceCredentialBindingIdentityV1,
@@ -1102,6 +1160,7 @@ export {
   derivePluginClientContributionRegistrationRights,
   derivePluginDaemonContributionRegistrationRights,
   getPluginContributionCatalogEntryV2,
+  readContributedProviderCatalogParserIds,
   type PluginContributionClientPlatform,
   type PluginContributionRegistrationRight,
   type PluginContributionRegistrationTarget,
@@ -1216,6 +1275,23 @@ export {
   type PluginUiDestinationReferenceV1,
 } from './plugins/ui/hostApiRequests.js';
 export {
+  CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1,
+  CURRENT_UI_CONTEXT_MAX_COMMANDS_V1,
+  CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1,
+  CurrentUiCommandDeclarationV1Schema,
+  CurrentUiCommandDescriptorV1Schema,
+  CurrentUiContextBoundedIncompletenessV1Schema,
+  CurrentUiContextEntityV1Schema,
+  CurrentUiContextSnapshotV1Schema,
+  PluginUiContextEnrichmentV1Schema,
+  type CurrentUiCommandDeclarationV1,
+  type CurrentUiCommandDescriptorV1,
+  type CurrentUiContextBoundedIncompletenessV1,
+  type CurrentUiContextEntityV1,
+  type CurrentUiContextSnapshotV1,
+  type PluginUiContextEnrichmentV1,
+} from './plugins/ui/currentUiContext.js';
+export {
   PLUGIN_UI_ICON_TOKENS_V1,
   PluginUiIconTokenV1Schema,
   type PluginUiIconTokenV1,
@@ -1310,14 +1386,8 @@ export {
   PluginInstallReviewPrincipalPresentationV1Schema,
   PluginPermissionInstalledGenerationIdSchema,
   PluginPermissionSubjectV1Schema,
-  PLUGIN_DE_SCOPED_CAPABILITIES_V1,
-  PLUGIN_DECLARED_CAPABILITIES_V1,
   PLUGIN_ENFORCED_PERMISSION_CAPABILITIES_V1,
-  PLUGIN_EXPERIMENTAL_UNIMPLEMENTED_CAPABILITIES_V1,
-  PluginCapabilityDeclarationV1Schema,
-  PluginDeclaredCapabilityV1Schema,
   PluginPermissionCapabilityV1Schema,
-  PluginPermissionDeclarationV1Schema,
   type PluginPermissionGrantActionIdV1,
 	  type PluginPermissionGrantActorV1,
 	  type PluginPermissionGrantAuditEventKindV1,
@@ -1347,10 +1417,7 @@ export {
   type PluginInstallReviewPrincipalPresentationV1,
   type PluginPermissionInstalledGenerationId,
   type PluginPermissionSubjectV1,
-  type PluginCapabilityDeclarationV1,
-  type PluginDeclaredCapabilityV1,
   type PluginPermissionCapabilityV1,
-  type PluginPermissionDeclarationV1,
 } from './plugins/permissions/v1.js';
 export {
   isReservedHappierPluginId,
@@ -2545,6 +2612,16 @@ export {
   type SessionContinueWithReplayRpcResult,
 } from './sessions/continueWithReplay.js';
 export {
+  HAPPIER_REPLAY_RECENT_MESSAGES_MAX_COUNT,
+  HAPPIER_REPLAY_RECENT_MESSAGES_MIN_COUNT,
+  HAPPIER_REPLAY_SEED_ACCEPTED_MIN_CHARS,
+  HAPPIER_REPLAY_SEED_MAX_CHARS,
+  HAPPIER_REPLAY_SEED_MIN_CHARS,
+  HappierReplayRecentMessagesCountSchema,
+  HappierReplayWireMaxSeedCharsSchema,
+  HappierReplayWritableMaxSeedCharsSchema,
+} from './sessions/replaySeedBudget.js';
+export {
   SessionForkPointSchema,
   SessionForkRpcParamsSchema,
   SessionForkRpcResultSchema,
@@ -2560,7 +2637,10 @@ export {
   SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
   SessionAgentTransitionDividerV1Schema,
   buildSessionAgentTransitionDividerLocalId,
+  isSameSessionAgentTransitionDividerV1,
   isSessionAgentTransitionDividerLocalId,
+  matchesSessionAgentTransitionDividerAgentsV1,
+  readSessionAgentTransitionDividerFromStoredRecordV1,
   readSessionAgentTransitionDividerV1,
   type SessionAgentTransitionDividerV1,
 } from './sessions/agentTransitionDivider.js';
@@ -2573,6 +2653,9 @@ export {
   SESSION_AGENT_TRANSITION_SOURCE_STOPPED_CODES_V1,
   SessionAgentTransitionCurrentViewCommittedCodeV1Schema,
   SessionAgentTransitionErrorCodeV1Schema,
+  SessionAgentTransitionBriefPreviewRequestV1Schema,
+  SessionAgentTransitionBriefPreviewUnavailableReasonV1Schema,
+  SessionAgentTransitionBriefPreviewV1Schema,
   SessionAgentTransitionInputV1Schema,
   SessionAgentTransitionRejectedCodeV1Schema,
   SessionAgentTransitionRequestV1Schema,
@@ -2588,6 +2671,9 @@ export {
   type ComposerAgentContinuationIntentV1,
   type SessionAgentTransitionCurrentViewCommittedCodeV1,
   type SessionAgentTransitionErrorCodeV1,
+  type SessionAgentTransitionBriefPreviewRequestV1,
+  type SessionAgentTransitionBriefPreviewUnavailableReasonV1,
+  type SessionAgentTransitionBriefPreviewV1,
   type SessionAgentTransitionInputV1,
   type SessionAgentTransitionRejectedCodeV1,
   type SessionAgentTransitionRequestV1,
@@ -2614,13 +2700,7 @@ export {
   type SessionSpawnSourceContextV1,
 } from './sessions/creation/sessionSpawnSourceContextV1.js';
 export {
-  AgentNativeContinuityProofKindV1Schema,
-  AgentNativeContinuityProofV1Schema,
   AgentNativeResumeIdentityV1Schema,
-  hasMatchedAgentNativeContinuityProofV1,
-  readAgentNativeResumeIdentityV1,
-  type AgentNativeContinuityProofKindV1,
-  type AgentNativeContinuityProofV1,
   type AgentNativeResumeIdentityV1,
 } from './agents/nativeResumeIdentityV1.js';
 export {
@@ -3248,6 +3328,7 @@ export {
   SessionStopCleanupIncompleteReasonSchema,
   SessionStopOutcomeSchema,
   SessionStopResultSchema,
+  isSessionStopConfirmed,
   SessionShareSchema,
   SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2,
   SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2,
@@ -4681,6 +4762,7 @@ export {
   DaemonPluginReactNativeCrashReportV1Schema,
   DaemonPluginReactNativeCrashReportRequestV1Schema,
   DaemonPluginReactNativeCrashReportResponseV1Schema,
+  PluginProjectedActionInputHintsV2Schema,
   PluginProjectedActionV2Schema,
   PluginProjectedBackendV2Schema,
   PluginProjectedCommandSurfaceV2Schema,
@@ -4777,6 +4859,7 @@ export {
   type DaemonPluginReactNativeCrashReportV1,
   type DaemonPluginReactNativeCrashReportRequestV1,
   type DaemonPluginReactNativeCrashReportResponseV1,
+  type PluginProjectedActionInputHintsV2,
   type PluginProjectedActionV2,
   type PluginProjectedBackendV2,
   type PluginProjectedCommandSurfaceV2,
@@ -5247,6 +5330,8 @@ export {
 export {
   canonicalizeServerUrlForIdentity,
   createServerUrlComparableKey,
+  isLoopbackHostname,
+  normalizeHostnameForLoopbackCheck,
   SERVER_URL_COMPARABLE_KEY_ERROR_CODE,
   ServerUrlComparableKeyError,
 } from './server/urls/index.js';
@@ -5386,6 +5471,16 @@ export {
   type ReviewScmScopePathV1,
   type ReviewScmScopeV1,
 } from './reviews/scope.js';
+
+export {
+  SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY,
+  ScmPullRequestReviewObservationV1Schema,
+  ScmPullRequestReviewScopeV1Schema,
+  resolveScmPullRequestReviewScope,
+  type ScmPullRequestReviewObservationV1,
+  type ScmPullRequestReviewScopeResolutionV1,
+  type ScmPullRequestReviewScopeV1,
+} from './reviews/scmPullRequestScope.js';
 
 export {
   ReviewFollowUpInputSchema,
@@ -6398,6 +6493,7 @@ export {
   AccountEncryptionMigrateRequestBindingDigestV1Schema,
   AccountEncryptionMigrateTransitionAuthorizationBindingDigestV1Schema,
   AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
+  ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS,
   computeAccountEncryptionMigrateKeyFingerprintV1,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   createAccountEncryptionMigrateRequestBindingDigestV1,
@@ -6780,7 +6876,6 @@ export {
 } from './automations/automationRunFailureDetailStoredContent.js';
 export {
   AUTOMATION_TRIGGER_DEFINITION_ACCOUNT_SCOPED_BLOB_KIND_V1,
-  AutomationConversationTriggerDefinitionStoredPayloadV1Schema,
   AutomationTriggerDefinitionBindingV1Schema,
   AutomationTriggerDefinitionStoredPayloadV1Schema,
   isAutomationTriggerDefinitionCiphertextV1,
@@ -6788,7 +6883,6 @@ export {
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
   validateAutomationTriggerDefinitionStoredEnvelopeOuterForModeV1,
   type AutomationTriggerDefinitionBindingV1,
-  type AutomationConversationTriggerDefinitionStoredPayloadV1,
   type AutomationTriggerDefinitionStoredContentOpenFailureV1,
   type AutomationTriggerDefinitionStoredContentOpenResultV1,
   type AutomationTriggerDefinitionStoredContentOuterValidationV1,
@@ -6803,6 +6897,7 @@ export {
   sealAutomationReplyHandoffReceiptStoredEnvelopeV1,
   sealAutomationRunResultStoredEnvelopeV1,
 } from './automations/automationReplyHandoffStoredContent.js';
+export * from './automations/automationColumnBoundsV1.js';
 export * from './automations/automationApiV3.js';
 
 export * from './sessionStop.js';
@@ -7138,7 +7233,9 @@ export {
   type PluginAccountStorageValueEntryV1,
 } from './plugins/data/accountKvV1.js';
 export {
+  PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
   PLUGIN_COLLECTION_LIMITS_V1,
+  PLUGIN_COLLECTION_SCHEMA_VERSION_MAX,
   PLUGIN_COLLECTION_PRIVATE_PAYLOAD_ACCOUNT_SCOPED_BLOB_KIND_V1,
   PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1,
   PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1,
@@ -7162,6 +7259,7 @@ export {
   PluginCollectionContractReadRequestV1Schema,
   PluginCollectionContractReadResultV1Schema,
   PluginCollectionContractRefV1Schema,
+  PluginCollectionSchemaVersionV1Schema,
   PluginCollectionBatchAssertV1Schema,
   PluginCollectionDeleteMutationV1Schema,
   PluginCollectionGetRequestV1Schema,
@@ -7213,12 +7311,15 @@ export {
   getPluginCollectionScalarKindV1,
   isCanonicalPluginCollectionIndexedInstantV1,
   measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1,
+  measurePluginCollectionMutationRequestDecompositionV1,
   measurePluginCollectionMutationRequestEncodedBytesV1,
   nextPluginCollectionIndexPrefixV1,
   normalizePluginAccountCollectionContractV1,
   normalizePluginAccountCollectionContractsV1,
   openPluginCollectionPrivatePayloadV1,
+  resolveEffectivePluginCollectionLimitsV1,
   sealPluginCollectionPrivatePayloadV1,
+  splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1,
   PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1,
   validatePluginCollectionUiQueryParametersV1,
   validatePluginCollectionUiQueryResultV1,
@@ -7238,6 +7339,7 @@ export {
   type PluginCollectionContractReadRequestV1,
   type PluginCollectionContractReadResultV1,
   type PluginCollectionContractRefV1,
+  type PluginCollectionEffectiveLimitsV1,
   type PluginCollectionBatchAssertV1,
   type PluginCollectionDeleteMutationV1,
   type PluginCollectionGetRequestV1,
@@ -7250,6 +7352,7 @@ export {
   type PluginCollectionMutationErrorCodeV1,
   type PluginCollectionMutationErrorV1,
   type PluginCollectionMutationOperationV1,
+  type PluginCollectionMutationRequestMeasurementV1,
   type PluginCollectionMutationRequestV1,
   type PluginCollectionMutationResultEntryV1,
   type PluginCollectionMutationResultV1,

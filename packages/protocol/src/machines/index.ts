@@ -26,6 +26,17 @@ export {
 } from './identity/machineReplacement.js';
 
 export {
+    findMachineInCollection,
+    isMachineReplaced,
+    normalizeMachineIdentityString,
+    resolveCanonicalMachineId,
+    type CanonicalMachineResolution,
+    type MachineCollection,
+    type MachineIdentityRecord,
+    type MachineReplacementRecord,
+} from './identity/canonicalMachineId.js';
+
+export {
     MACHINE_PLAIN_DATA_KEY_MARKER,
     decodePlainMachineStoredContent,
     encodePlainMachineStoredContent,

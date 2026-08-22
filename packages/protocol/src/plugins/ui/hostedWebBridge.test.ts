@@ -182,6 +182,10 @@ describe('hosted web bridge protocol', () => {
       ...bootstrap,
       payload: { ...bootstrap.payload, target: { kind: 'session', sessionId: 'session-1' } },
     }).success).toBe(false);
+    expect(PluginHostedWebBridgeBootstrapEnvelopeV1Schema.safeParse({
+      ...bootstrap,
+      payload: { ...bootstrap.payload, composerRef: { kind: 'session' } },
+    }).success).toBe(false);
   });
 
   it('accepts only the exact token-scoped iOS frame address as a non-HTTP bridge origin', () => {

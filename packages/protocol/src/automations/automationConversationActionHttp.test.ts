@@ -74,7 +74,7 @@ describe('Automation conversation admission HTTP contract', () => {
     }).success).toBe(false);
   });
 
-  it('publishes the strict nondisclosing target-verification route', () => {
+  it('publishes the strict nondisclosing target-verification route with a generic stamped caller carrier', () => {
     const actionId = 'automation.conversation.target.verify';
     const request = {
       v: 1,
@@ -117,6 +117,16 @@ describe('Automation conversation admission HTTP contract', () => {
       kind: 'notVerified',
       reason: 'resultDeliveryUnsupported',
     });
+    // Several bindings may name one target, so the verifier carries no
+    // per-binding question and can publish no per-binding refusal.
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
+      ...request,
+      input: { ...request.input, binding: { kind: 'exact', bindingId: 'binding-1' } },
+    }).success).toBe(false);
+    expect(AutomationConversationActionOutputSchemasV1[actionId].safeParse({
+      kind: 'notVerified',
+      reason: 'bindingMismatch',
+    }).success).toBe(false);
     expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
       ...request,
       caller: {
@@ -127,7 +137,7 @@ describe('Automation conversation admission HTTP contract', () => {
           pluginId: 'com.acme.other',
         },
       },
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it('publishes one strict signed caller frame and response map', () => {
@@ -250,5 +260,65 @@ describe('Automation conversation admission HTTP contract', () => {
         },
       },
     }).success).toBe(false);
+  });
+
+  it('admits any plugin as the delivery target of the Conversation it admitted', () => {
+    const actionId = 'automation.conversation.admit';
+    const thirdPartyRequest = {
+      v: 1,
+      caller: {
+        pluginId: 'acme.slack-bridge',
+        contributionLocalId: 'slack/observation-ingest-v1',
+        materialization: {
+          machineId: 'machine-1',
+          materializationId: 'materialization-1',
+          pluginId: 'acme.slack-bridge',
+        },
+      },
+      input: {
+        ...input,
+        resultDelivery: {
+          kind: 'finalResult',
+          actionRef: {
+            pluginId: 'acme.slack-bridge',
+            localId: 'automation/reply-deliver-v1',
+          },
+          opaqueContext: input.resultDelivery.opaqueContext,
+        },
+      },
+    } as const;
+
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse(thirdPartyRequest))
+      .toEqual(thirdPartyRequest);
+  });
+
+  it('refuses a delivery target outside the admitting plugin so a reply cannot be misrouted', () => {
+    const actionId = 'automation.conversation.admit';
+    const thirdPartyCaller = {
+      pluginId: 'acme.slack-bridge',
+      contributionLocalId: 'slack/observation-ingest-v1',
+      materialization: {
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+        pluginId: 'acme.slack-bridge',
+      },
+    } as const;
+
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
+      v: 1,
+      caller: thirdPartyCaller,
+      // The bundled Channels target is not special: it is simply not this
+      // caller's own contribution.
+      input,
+    }).success).toBe(false);
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse({
+      v: 1,
+      caller: thirdPartyCaller,
+      input: { ...input, resultDelivery: { kind: 'none' } },
+    })).toEqual({
+      v: 1,
+      caller: thirdPartyCaller,
+      input: { ...input, resultDelivery: { kind: 'none' } },
+    });
   });
 });

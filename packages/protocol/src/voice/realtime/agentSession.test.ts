@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 
-import { ProtocolValidationError } from '../../plugins/actions/jsonSchemaValidation.js';
+import { ProtocolValidationError } from '../../plugins/actions/protocolComposableSchema.js';
 import {
   AGENT_SESSION_REALTIME_SDP_MAX_BYTES,
   AgentSessionRealtimeInspectRequestV1Schema,

@@ -6,7 +6,7 @@ import {
   type AccountScopedCryptoMaterial,
 } from '../crypto/accountScopedCipher.js';
 import {
-  AutomationConversationTriggerDefinitionStoredPayloadV1Schema,
+  AutomationTriggerDefinitionBindingV1Schema,
   isAutomationTriggerDefinitionCiphertextV1,
   openAutomationTriggerDefinitionStoredEnvelopeV1,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -36,19 +36,51 @@ const definition = {
 } as const;
 
 describe('Automation trigger-definition stored content', () => {
-  it('keeps a Conversation definition bound to one exact binding id', () => {
-    expect(AutomationConversationTriggerDefinitionStoredPayloadV1Schema.safeParse({
+  it('keeps the retained Conversation binding arm sealed against replay onto another row', () => {
+    const conversationBinding = {
+      v: 1,
+      automationId: 'automation-trigger-definition-2',
+      templateVersion: 1,
+      triggerKind: 'conversation',
+      eventRef: null,
+      sourceSelectorId: null,
+    } as const;
+    const conversationDefinition = {
       v: 1,
       bindingId: 'binding-1',
-    }).success).toBe(true);
-    expect(AutomationConversationTriggerDefinitionStoredPayloadV1Schema.safeParse({
-      v: 1,
+      owner: { pluginId: 'com.acme.slack-bridge', localId: 'slack/observation-ingest-v1' },
+    } as const;
+
+    // The Conversation arm publishes no trigger columns; the physical row
+    // check constraint keeps them null.
+    expect(AutomationTriggerDefinitionBindingV1Schema.safeParse(conversationBinding).success)
+      .toBe(true);
+    expect(AutomationTriggerDefinitionBindingV1Schema.safeParse({
+      ...conversationBinding,
+      eventRef: { pluginId: 'com.acme.slack-bridge', localId: 'slack/observation-ingest-v1' },
     }).success).toBe(false);
-    expect(AutomationConversationTriggerDefinitionStoredPayloadV1Schema.safeParse({
-      v: 1,
-      bindingId: 'binding-1',
-      unexpected: true,
-    }).success).toBe(false);
+
+    const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+      mode: 'plain',
+      binding: conversationBinding,
+      definition: conversationDefinition,
+    });
+    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
+      mode: 'plain',
+      binding: conversationBinding,
+      envelope,
+    })).toEqual({ kind: 'available', definition: conversationDefinition });
+    // The sealed owner cannot be moved onto another Automation or revision.
+    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
+      mode: 'plain',
+      binding: { ...conversationBinding, automationId: 'automation-trigger-definition-3' },
+      envelope,
+    })).toEqual({ kind: 'bindingMismatch' });
+    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
+      mode: 'plain',
+      binding: { ...conversationBinding, templateVersion: 2 },
+      envelope,
+    })).toEqual({ kind: 'bindingMismatch' });
   });
 
   it('uses the dedicated byte-20 domain and binds an Event definition to its record identity and version', () => {

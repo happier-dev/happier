@@ -1,4 +1,5 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { TriageSourcesContributionProtocolV1 } from '../../v1/contribution.js';
@@ -39,15 +40,22 @@ type MutableSourceManifest = {
 function declareAction(
     role: keyof typeof sourceOperations,
     title: string,
-    result: unknown,
+    result: ProtocolJsonValue,
 ) {
     const declaration = sourceOperations[role].declaration;
     return {
         title,
+        // Every Triage source role is a daemon read or write: the source owns
+        // the credential materialization, so the handler is a root daemon
+        // handler rather than a client artifact export.
+        execution: { target: 'daemon' } as const,
         scopes: ['global'] as const,
-        inputSchema: declaration.input.kind === 'protocolDefined'
-            ? declaration.input.schema.jsonSchema
-            : undefined,
+        // Declared only when the role publishes one, rather than declared as
+        // `undefined`: an Action author writes the key or omits it, and the
+        // manifest grammar has no "present but absent" arm.
+        ...(declaration.input.kind === 'protocolDefined'
+            ? { inputSchema: declaration.input.schema.jsonSchema }
+            : {}),
         resultSchema: declaration.resultSchema.jsonSchema,
         surfaces: declaration.surfaces,
         dangerLevel: declaration.dangerLevel,
@@ -148,6 +156,17 @@ describe('Triage sources V1 contribution conformance', () => {
         const result = checkTriageSourceContributionV1(manifest);
         expect(result.ok).toBe(false);
         expect(result.ok === false && result.errors.join(' ')).toContain('input schema');
+    });
+
+    /**
+     * `CONTRACT.md` §9 publishes one success member: the parsed manifest. The
+     * checked contribution is the input the caller already holds, and a second
+     * published member is a permanent name for a value nobody asked for.
+     */
+    it('returns only the parsed manifest on its success arm', () => {
+        const result = checkTriageSourceContributionV1(createExternalSourceManifest());
+
+        expect(Object.keys(result).sort()).toEqual(['manifest', 'ok']);
     });
 
     it('rejects a descriptor with duplicate kind ids', () => {

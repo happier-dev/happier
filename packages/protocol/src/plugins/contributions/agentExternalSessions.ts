@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+import {
+  cloneStrictPluginJsonValue,
+  measureSerializedValidatedStrictPluginJsonUtf8Bytes,
+} from './strictJsonValue.js';
+
 export const MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES = 64 * 1024;
 export const MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_DEPTH = 8;
 export const MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES = 256;
@@ -19,102 +24,94 @@ export type PluginAgentExternalSessionLinkDataValue =
 
 export type PluginAgentExternalSessionLinkData = PluginAgentExternalSessionLinkDataObject;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is PluginAgentExternalSessionLinkDataObject {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
 
-const INVALID_LINK_DATA = Symbol('invalid-link-data');
-
-function snapshotBoundedJsonValue(
-  value: unknown,
-  depth: number,
-  path: PropertyKey[],
-  state: { entries: number },
+function validateLinkDataBounds(
+  value: PluginAgentExternalSessionLinkDataValue,
   ctx: z.RefinementCtx,
-): PluginAgentExternalSessionLinkDataValue | typeof INVALID_LINK_DATA {
-  if (depth > MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_DEPTH) {
-    ctx.addIssue({ code: 'custom', path, message: 'External-session linkData is too deeply nested.' });
-    return INVALID_LINK_DATA;
-  }
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') {
-    if (Number.isFinite(value)) return value;
-    ctx.addIssue({ code: 'custom', path, message: 'External-session linkData numbers must be finite.' });
-    return INVALID_LINK_DATA;
-  }
-  if (Array.isArray(value)) {
-    const ownKeys = Reflect.ownKeys(value);
-    const expectedKeys = new Set<PropertyKey>(['length', ...Array.from({ length: value.length }, (_, index) => String(index))]);
-    if (ownKeys.length !== expectedKeys.size || ownKeys.some((key) => !expectedKeys.has(key))) {
-      ctx.addIssue({ code: 'custom', path, message: 'External-session linkData arrays cannot carry extra or sparse fields.' });
-      return INVALID_LINK_DATA;
+): boolean {
+  const pending: Array<Readonly<{
+    value: PluginAgentExternalSessionLinkDataValue;
+    depth: number;
+    path: PropertyKey[];
+  }>> = [{ value, depth: 0, path: [] }];
+  let entries = 0;
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    if (current.depth > MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_DEPTH) {
+      ctx.addIssue({ code: 'custom', path: current.path, message: 'External-session linkData is too deeply nested.' });
+      return false;
     }
-    state.entries += value.length;
-    if (state.entries > MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES) {
-      ctx.addIssue({ code: 'custom', message: 'External-session linkData has too many entries.' });
-      return INVALID_LINK_DATA;
-    }
-    const snapshot: PluginAgentExternalSessionLinkDataValue[] = [];
-    for (let index = 0; index < value.length; index += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-      if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-        ctx.addIssue({ code: 'custom', path: [...path, index], message: 'External-session linkData fields must be enumerable data properties.' });
-        return INVALID_LINK_DATA;
+    if (current.value === null || typeof current.value !== 'object') continue;
+
+    if (Array.isArray(current.value)) {
+      entries += current.value.length;
+      if (entries > MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES) {
+        ctx.addIssue({ code: 'custom', message: 'External-session linkData has too many entries.' });
+        return false;
       }
-      const item = snapshotBoundedJsonValue(descriptor.value, depth + 1, [...path, index], state, ctx);
-      if (item === INVALID_LINK_DATA) return INVALID_LINK_DATA;
-      snapshot.push(item);
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        pending.push({
+          value: current.value[index]!,
+          depth: current.depth + 1,
+          path: [...current.path, index],
+        });
+      }
+      continue;
     }
-    return Object.freeze(snapshot);
-  }
-  if (!isPlainObject(value)) {
-    ctx.addIssue({ code: 'custom', path, message: 'External-session linkData must contain only JSON values.' });
-    return INVALID_LINK_DATA;
-  }
-  const keys = Reflect.ownKeys(value);
-  if (keys.some((key) => typeof key !== 'string')) {
-    ctx.addIssue({ code: 'custom', path, message: 'External-session linkData keys must be strings.' });
-    return INVALID_LINK_DATA;
-  }
-  state.entries += keys.length;
-  if (state.entries > MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES) {
-    ctx.addIssue({ code: 'custom', message: 'External-session linkData has too many entries.' });
-    return INVALID_LINK_DATA;
-  }
-  const snapshot: Record<string, PluginAgentExternalSessionLinkDataValue> = {};
-  for (const key of keys as string[]) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-      ctx.addIssue({ code: 'custom', path: [...path, key], message: 'External-session linkData fields must be enumerable data properties.' });
-      return INVALID_LINK_DATA;
+
+    const object = current.value as PluginAgentExternalSessionLinkDataObject;
+    const keys = Object.keys(object);
+    entries += keys.length;
+    if (entries > MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES) {
+      ctx.addIssue({ code: 'custom', message: 'External-session linkData has too many entries.' });
+      return false;
     }
-    const item = snapshotBoundedJsonValue(descriptor.value, depth + 1, [...path, key], state, ctx);
-    if (item === INVALID_LINK_DATA) return INVALID_LINK_DATA;
-    Object.defineProperty(snapshot, key, {
-      configurable: false,
-      enumerable: true,
-      writable: false,
-      value: item,
-    });
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index]!;
+      pending.push({
+        value: object[key]!,
+        depth: current.depth + 1,
+        path: [...current.path, key],
+      });
+    }
   }
-  return Object.freeze(snapshot);
+
+  return true;
 }
 
 export const PluginAgentExternalSessionLinkDataSchema: z.ZodType<PluginAgentExternalSessionLinkData> = z
   .unknown()
   .transform((value, ctx) => {
-    if (!isPlainObject(value)) {
+    let snapshot: unknown;
+    try {
+      snapshot = cloneStrictPluginJsonValue(value, 'External-session linkData');
+    } catch (error) {
+      ctx.addIssue({
+        code: 'custom',
+        message: error instanceof Error ? error.message : 'External-session linkData must contain strict JSON data.',
+      });
+      return z.NEVER;
+    }
+    if (!isPlainObject(snapshot)) {
       ctx.addIssue({ code: 'custom', message: 'External-session linkData must be a JSON object.' });
       return z.NEVER;
     }
-    const snapshot = snapshotBoundedJsonValue(value, 0, [], { entries: 0 }, ctx);
-    if (snapshot === INVALID_LINK_DATA || Array.isArray(snapshot) || !isPlainObject(snapshot)) return z.NEVER;
-    const serializedBytes = new TextEncoder().encode(JSON.stringify(snapshot)).byteLength;
-    if (serializedBytes > MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES) {
+    const linkData = snapshot as PluginAgentExternalSessionLinkData;
+    if (!validateLinkDataBounds(linkData, ctx)) return z.NEVER;
+    if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+      linkData,
+      'External-session linkData',
+      MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES,
+    ) > MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES) {
       ctx.addIssue({ code: 'custom', message: 'External-session linkData exceeds the serialized-byte limit.' });
       return z.NEVER;
     }
-    return snapshot;
+    return linkData;
   }) as z.ZodType<PluginAgentExternalSessionLinkData>;

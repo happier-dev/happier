@@ -329,6 +329,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         await recordCurrentWorkspaceRuntimeIdentity(repoRoot);
 
         const runCommandCalls: Array<{ cmd: string; args: string[] }> = [];
+        const sharedDepsLockStatesDuringBuild: boolean[] = [];
 
         await buildCliBinaryArtifactPayload({
             repoRoot,
@@ -343,6 +344,9 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             commandProbe: (command) => command === 'bun' || command === 'yarn',
             runCommand: async (cmd, args) => {
                 runCommandCalls.push({ cmd, args });
+                sharedDepsLockStatesDuringBuild.push(existsSync(
+                    join(repoRoot, '.project', 'tmp', 'cli-shared-deps.lock'),
+                ));
                 await writeCliDistFixture(repoRoot, 'export default "rebuilt-cli-entrypoint";\n', newer);
                 await recordCurrentWorkspaceRuntimeIdentity(repoRoot);
             },
@@ -355,6 +359,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         });
 
         expect(runCommandCalls).toHaveLength(1);
+        expect(sharedDepsLockStatesDuringBuild).toEqual([true]);
         expect(runCommandCalls[0]?.args).toContain('build:prepared');
         expect(runCommandCalls[0]?.args).not.toContain('build');
         expect(compileObservedContents).toEqual([currentSourceContent]);

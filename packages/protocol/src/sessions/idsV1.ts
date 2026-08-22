@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import {
   defineProtocolString,
-} from '../plugins/actions/jsonSchemaValidation.js';
+} from '../plugins/actions/protocolComposableSchema.js';
 
 export const SessionIndexedIdentifierMaxLengthV1 = 191;
 const NO_OUTER_WHITESPACE_PATTERN = /^(?!\s)[\s\S]*\S$(?![\s\S])/u;

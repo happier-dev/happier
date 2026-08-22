@@ -1,5 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-
 import {
     defineProtocolLiteral,
     defineProtocolNumber,
@@ -53,7 +51,6 @@ export const TriageScanInputV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
 ]);
 export type TriageScanInputV1 = ReturnType<typeof TriageScanInputV1Schema.parse>;
-export const TriageScanInputV1JsonSchema: PluginJsonSchema = TriageScanInputV1Schema.jsonSchema;
 
 /**
  * One settled scan page.
@@ -81,7 +78,6 @@ export const TriageScanResultV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
 ]);
 export type TriageScanResultV1 = ReturnType<typeof TriageScanResultV1Schema.parse>;
-export const TriageScanResultV1JsonSchema: PluginJsonSchema = TriageScanResultV1Schema.jsonSchema;
 
 /**
  * One authoritative read of one local ref through one exact configured
@@ -106,7 +102,6 @@ export const TriageGetInputV1Schema = defineProtocolObject({
     lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageGetInputV1 = ReturnType<typeof TriageGetInputV1Schema.parse>;
-export const TriageGetInputV1JsonSchema: PluginJsonSchema = TriageGetInputV1Schema.jsonSchema;
 
 /**
  * `get` is the only operation that may conclude absence, so its result is the
@@ -115,4 +110,3 @@ export const TriageGetInputV1JsonSchema: PluginJsonSchema = TriageGetInputV1Sche
  */
 export const TriageGetResultV1Schema = TriageSourceObservationV1Schema;
 export type TriageGetResultV1 = ReturnType<typeof TriageGetResultV1Schema.parse>;
-export const TriageGetResultV1JsonSchema: PluginJsonSchema = TriageGetResultV1Schema.jsonSchema;

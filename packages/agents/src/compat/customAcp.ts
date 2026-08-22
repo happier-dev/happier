@@ -4,8 +4,8 @@ import type { AgentLocalCliConfig, AgentCliLaunchCommand, AgentCliSupportKind } 
 import type { AgentModelConfig } from '../models.js';
 import type { AgentCliRuntimeSpec } from '../cli/runtime.js';
 import type { AgentSessionModeDescriptor } from '../sessionModes.js';
-import type { AgentCore, AgentId } from '../types.js';
-import { isAgentId } from '../types.js';
+import type { AgentCore, BundledAgentId } from '../types.js';
+import { isBundledAgentId } from '../types.js';
 
 export const LEGACY_CUSTOM_ACP_AGENT_ID = 'customAcp' as const;
 
@@ -16,10 +16,10 @@ export function isLegacyCustomAcpAgentId(value: unknown): value is typeof LEGACY
 export const LEGACY_COMPAT_AGENT_IDS = [LEGACY_CUSTOM_ACP_AGENT_ID] as const;
 export type LegacyCompatAgentId = (typeof LEGACY_COMPAT_AGENT_IDS)[number];
 export type AgentCompatId = LegacyCompatAgentId;
-export type AgentLookupId = AgentId | AgentCompatId;
+export type AgentLookupId = BundledAgentId | AgentCompatId;
 
 export function isAgentLookupId(value: unknown): value is AgentLookupId {
-  return isAgentId(value) || isLegacyCustomAcpAgentId(value);
+  return isBundledAgentId(value) || isLegacyCustomAcpAgentId(value);
 }
 
 export type LegacyCompatAgentCliRuntimeSpec = Readonly<

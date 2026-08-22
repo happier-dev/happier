@@ -194,6 +194,33 @@ describe('transient interaction contract', () => {
     })).toEqual({ ok: false, code: 'interaction_kind_mismatch' });
   });
 
+  it('represents an explicit no-deadline request while still rejecting a non-advancing expiry', () => {
+    const { expiresAtMs: _finiteExpiry, ...noDeadlineStamp } = stamp;
+
+    const noDeadline = normalizeInteractionTransientRequestV1({
+      kind: 'confirmation',
+      message: 'Continue?',
+    }, noDeadlineStamp);
+    expect(noDeadline.ok).toBe(true);
+    expect(noDeadline.ok && noDeadline.value).not.toHaveProperty('expiresAtMs');
+    expect(InteractionTransientRequestV1Schema.safeParse({
+      ...noDeadlineStamp,
+      kind: 'confirmation',
+      title: 'Continue?',
+      message: 'Continue with the current operation?',
+    }).success).toBe(true);
+
+    for (const expiresAtMs of [stamp.createdAtMs, stamp.createdAtMs - 1]) {
+      expect(InteractionTransientRequestV1Schema.safeParse({
+        ...noDeadlineStamp,
+        expiresAtMs,
+        kind: 'confirmation',
+        title: 'Continue?',
+        message: 'Continue with the current operation?',
+      }).success).toBe(false);
+    }
+  });
+
   it('rejects lifecycle-only statuses from a presenter, including Session-ended in app scope', () => {
     const request = InteractionTransientRequestV1Schema.parse({
       ...appScopeStamp,

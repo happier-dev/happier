@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computePluginUiArtifactFileSetSha256DigestV1,
   computePluginUiArtifactSha256DigestV1,
+  isPluginUiHermesBytecodeArtifactV1,
   PluginUiArtifactDigestV1Schema,
   verifyPluginUiArtifactFileSetIntegrityV1,
   verifyPluginUiArtifactBytesIntegrityV1,
@@ -101,5 +102,29 @@ describe('plugin UI artifact byte integrity', () => {
       ok: false,
       reasonCode: 'digest_mismatch',
     });
+  });
+});
+
+describe('isPluginUiHermesBytecodeArtifactV1', () => {
+  it('recognizes the Hermes bytecode magic regardless of the artifact file name', () => {
+    const hermes = new Uint8Array([
+      0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1f,
+      0x5b, 0x00, 0x00, 0x00,
+    ]);
+
+    expect(isPluginUiHermesBytecodeArtifactV1(hermes)).toBe(true);
+  });
+
+  it('accepts plain JavaScript bundles and refuses to guess from a truncated prefix', () => {
+    const plainJs = new TextEncoder().encode('export function renderSurface() { return null; }');
+    const truncatedMagic = new Uint8Array([0xc6, 0x1f, 0xbc, 0x03]);
+    const nearMissMagic = new Uint8Array([
+      0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1e,
+    ]);
+
+    expect(isPluginUiHermesBytecodeArtifactV1(plainJs)).toBe(false);
+    expect(isPluginUiHermesBytecodeArtifactV1(truncatedMagic)).toBe(false);
+    expect(isPluginUiHermesBytecodeArtifactV1(nearMissMagic)).toBe(false);
+    expect(isPluginUiHermesBytecodeArtifactV1(new Uint8Array())).toBe(false);
   });
 });

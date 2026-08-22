@@ -12,7 +12,6 @@ import {
   resolveSessionModelSelectionIntentV1,
   sessionModelSelectionIntentRequiresAgentTargetV1,
   SessionModelSelectionIntentV1Schema,
-  parseSessionModelSelectionV1,
   projectSessionMessageModelSelectionToLegacyModelV1,
   projectSessionModelSelectionIntentToLegacyModelOverrideV1,
   readSessionMessageModelSelectionV1,
@@ -443,19 +442,6 @@ describe('provider model selection contracts', () => {
       modelId: 'Vendor/Model:Preview',
     });
     expect(ref.modelId).toBe('Vendor/Model:Preview');
-  });
-
-  it('reads legacy model strings as native and writes the structured shape', () => {
-    const parsed = parseSessionModelSelectionV1('gpt-legacy', {
-      agentTargetKey: 'agent:codex',
-      updatedAt: 42,
-    });
-    expect(parsed).toEqual({
-      v: 1,
-      ref: { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'gpt-legacy' },
-      updatedAt: 42,
-    });
-    expect(SessionModelSelectionV1Schema.parse(parsed)).toEqual(parsed);
   });
 
   it('uses a collision-safe visibility key and makes native all-agent visibility impossible', () => {

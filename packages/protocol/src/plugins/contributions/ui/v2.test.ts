@@ -113,6 +113,15 @@ describe('declarative node vocabulary v2', () => {
   });
 
   it('rejects unknown members, unbounded metadata and non-curated icons', () => {
+    // The SDK's public type projection must not admit values the canonical
+    // parser rejects, including an invented node kind or a legacy tone.
+    expect(PluginDeclarativeNodeV2Schema.safeParse({
+      kind: 'unbounded',
+    }).success).toBe(false);
+    expect(PluginDeclarativeNodeV2Schema.safeParse({
+      kind: 'text', text: 'Not canonical', tone: 'neutral',
+    }).success).toBe(false);
+
     // Unknown fields stay rejected: this is a bounded document language.
     expect(PluginDeclarativeNodeV2Schema.safeParse({
       kind: 'item', title: 'Row', href: 'https://example.com',
@@ -374,11 +383,11 @@ describe('app-page header action declarations', () => {
         title: 'Refresh',
         icon: 'settings',
         order: 10,
-        command: { kind: 'executeAction', action: 'refresh-activity' },
+        action: { kind: 'executeAction', action: 'refresh-activity' },
       }, {
         id: 'open-settings',
         title: 'Open settings',
-        command: { kind: 'openSurface', destination: 'settings' },
+        action: { kind: 'openSurface', destination: 'settings' },
       }],
     }).success).toBe(true);
   });
@@ -391,7 +400,7 @@ describe('app-page header action declarations', () => {
       headerActions: [{
         id: 'refresh',
         title: 'Refresh',
-        command: { kind: 'executeAction', action: 'refresh-activity' },
+        action: { kind: 'executeAction', action: 'refresh-activity' },
       }],
     }).success).toBe(false);
     expect(PluginUiViewV2Schema.safeParse({
@@ -399,7 +408,7 @@ describe('app-page header action declarations', () => {
       headerActions: [{
         id: 'refresh',
         title: 'Refresh',
-        command: { kind: 'executeAction', action: 'refresh-activity' },
+        action: { kind: 'executeAction', action: 'refresh-activity' },
         availability: { when: { kind: 'literal', value: true } },
       }],
     }).success).toBe(false);

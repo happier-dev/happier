@@ -6,7 +6,7 @@ import {
   defineProtocolNumber,
   defineProtocolObject,
   defineProtocolString,
-} from '../actions/jsonSchemaValidation.js';
+} from '../actions/protocolComposableSchema.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import {
   PluginContributionIdentityV1Schema,

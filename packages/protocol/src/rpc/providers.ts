@@ -25,7 +25,10 @@ import {
 import { ModelVisibilityRefV1Schema, ProviderBoundModelRefSchema, serializeModelVisibilityRefV1 } from '../providers/selection/v1.js';
 import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
 import { SessionProviderBindingMetadataV1Schema } from '../providers/sessions/bindingMetadataV1.js';
-import { ProviderWireProtocolSchema } from '../providers/capabilities/v1.js';
+import {
+  PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
+  ProviderWireProtocolSchema,
+} from '../providers/capabilities/v1.js';
 import { PROVIDER_CATALOG_LIMITS_V1 } from '../providers/catalog/limits.js';
 import { ProviderCatalogProbeModelsV1Schema } from '../providers/catalog/merge.js';
 import { PROVIDER_SETTINGS_LIMITS_V1 } from '../providers/settings/v1.js';
@@ -135,7 +138,7 @@ export const DaemonProviderModelLoadResponseV1Schema = z.discriminatedUnion('sta
 export type DaemonProviderModelLoadResponseV1 = z.infer<typeof DaemonProviderModelLoadResponseV1Schema>;
 
 const ProviderAuthoringEndpointOverridesV1Schema = z.array(ProviderEndpointOverrideV1Schema)
-  .max(4)
+  .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration)
   .superRefine((overrides, ctx) => {
     const endpointIds = new Set<string>();
     overrides.forEach((override, index) => {
@@ -174,7 +177,7 @@ const ProviderConnectionRpcRuntimeSummaryV1Schema = z.object({
     observedAt: z.number().finite().nonnegative().nullable(),
     errorCode: z.string().trim().min(1).max(128).nullable(),
     retryAt: z.number().finite().nonnegative().nullable(),
-  }).strict()).max(4).default([]),
+  }).strict()).max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration).default([]),
 }).strict();
 
 const ProviderRpcDisplayEndpointUrlV1Schema = z.string().trim().min(1).max(2_048).superRefine((value, ctx) => {
@@ -199,7 +202,8 @@ const DaemonProviderAuthoringEndpointV1Schema = z.object({
 const DaemonProviderAuthoringDestinationV1Schema = z.object({
   scope: z.enum(['account', 'machine']),
   machineId: ProviderMachineIdSchema.nullable(),
-  endpoints: z.array(DaemonProviderAuthoringEndpointV1Schema).min(1).max(4),
+  endpoints: z.array(DaemonProviderAuthoringEndpointV1Schema).min(1)
+    .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
 }).strict().superRefine((value, ctx) => {
   if ((value.scope === 'machine') !== (value.machineId !== null)) {
     ctx.addIssue({
@@ -361,7 +365,8 @@ export const DaemonProviderConnectionViewV1Schema = z.object({
       DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema,
     ).max(32),
   }).strict().nullable().default(null),
-  endpoints: z.array(DaemonProviderConnectionEndpointViewV1Schema).max(4),
+  endpoints: z.array(DaemonProviderConnectionEndpointViewV1Schema)
+    .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
   scope: z.enum(['account', 'machine']).nullable(),
   authorized: z.boolean(),
   authorizationError: ProviderErrorV1Schema.nullable(),
@@ -516,7 +521,7 @@ export const DaemonProviderConnectionsDescribeResponseV1Schema = z.discriminated
       endpointTemplates: z.array(z.object({
         id: ProviderEndpointOverrideV1Schema.shape.endpointTemplateId,
         protocol: ProviderWireProtocolSchema,
-      }).strict()).max(4).default([]),
+      }).strict()).max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration).default([]),
     }).strict()),
     discoveryCandidates: z.array(ProviderDiscoveryCandidateV1Schema),
     discoveryCandidatesTruncated: z.boolean().default(false),

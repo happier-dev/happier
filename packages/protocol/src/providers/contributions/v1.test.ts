@@ -448,6 +448,28 @@ describe('ProviderContributionV1Schema', () => {
     expect(ProviderContributionV1Schema.safeParse(invalid).success).toBe(true);
   });
 
+  it('accepts a Provider-contributed catalog format, including for model loading', () => {
+    const contributed = structuredClone(validContribution()) as any;
+    contributed.catalog.probes[0].parser = 'acme-catalog-v3';
+    expect(ProviderContributionV1Schema.safeParse(contributed).success).toBe(true);
+
+    // Model loading depends on the format reporting load state, not on the
+    // host happening to bundle that format's implementation.
+    contributed.kind = 'local';
+    contributed.credential.transports[0].uses.push('management');
+    contributed.modelLoad = {
+      endpointTemplateId: 'responses',
+      path: '/api/v1/models/load',
+      request: 'json-model-id-v1',
+      confirmation: 'refresh-catalog-load-state',
+      preflightPolicy: 'advisory',
+    };
+    expect(ProviderContributionV1Schema.safeParse(contributed).success).toBe(false);
+
+    contributed.catalog.probes[0].reportsModelLoadState = true;
+    expect(ProviderContributionV1Schema.safeParse(contributed).success).toBe(true);
+  });
+
   it('requires model-load management and load-state catalog facts to reference the selected endpoint protocol and id', () => {
     const invalid = structuredClone(validContribution()) as any;
     invalid.kind = 'local';

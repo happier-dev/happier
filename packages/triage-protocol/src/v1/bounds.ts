@@ -72,7 +72,7 @@ export const TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1 =
  * the widest encoding of the longest thing it carries, not a character count.
  * The longest is a title, and a title stops being one somewhere around a few
  * hundred characters. A CJK character costs three UTF-8 bytes and an emoji
- * four, so 768 bytes is that length in the widest script a title is routinely
+ * four, so 512 bytes is that length in the widest script a title is routinely
  * written in: 512 Latin characters, 170 Chinese, Japanese, or Korean, 128
  * emoji. The predecessor bound of 192 bytes was that length in Latin only — it
  * clipped a Japanese title at 64 characters and an emoji-bearing one at 48.

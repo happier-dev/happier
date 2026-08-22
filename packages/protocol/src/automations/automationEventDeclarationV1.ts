@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
+import { AUTOMATION_INT_COLUMN_MAX } from './automationColumnBoundsV1.js';
+
 import {
   PluginContributionIdentityV1Schema,
   type PluginContributionIdentityV1,
@@ -14,8 +16,14 @@ import {
   PluginActionConnectedAccountPurposeBindingV2Schema,
 } from '../plugins/actions/v2.js';
 
-/** Shared positive counter/version primitive for Automation Event contracts. */
-export const AutomationEventPositiveSafeIntegerV1Schema = z.number().int().positive().safe();
+/**
+ * Shared positive counter/version primitive for Automation Event contracts.
+ * Its one current use, the Event source contract version, persists as the
+ * 32-bit `Automation.triggerSourceContractVersion` column, so admission caps it
+ * at that column's ceiling rather than at the JavaScript safe-integer range.
+ */
+export const AutomationEventPositiveSafeIntegerV1Schema = z.number().int().positive()
+  .max(AUTOMATION_INT_COLUMN_MAX);
 
 const AUTOMATION_SOURCE_SELECTOR_ID_V1_PATTERN = '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
 

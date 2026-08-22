@@ -18,7 +18,7 @@ import {
 import {
   MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
-} from './automationEventV1.js';
+} from './automationStoredContentEnvelopeV1.js';
 
 const textEncoder = new TextEncoder();
 

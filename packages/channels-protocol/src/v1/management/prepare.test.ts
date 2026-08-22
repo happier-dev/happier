@@ -8,7 +8,7 @@ describe('Channels V1 connection preparation result', () => {
     it('projects structural transport facts while preparation admission enforces selected transport compatibility', () => {
         const ready = {
             kind: 'ready',
-            supportedTransports: ['checkpointedPull', 'durablePush'],
+            supportedTransports: ['checkpointedPull', 'socket'],
             recommendedTransport: 'checkpointedPull',
             overlapSafety: 'safe',
             replayContinuity: 'none',
@@ -39,13 +39,16 @@ describe('Channels V1 connection preparation result', () => {
         }).success).toBe(false);
         expect(ConversationConnectionPrepareResultV1Schema.safeParse({
             ...ready,
+            supportedTransports: ['checkpointedPull', 'durablePush'],
+        }).success).toBe(false);
+        expect(ConversationConnectionPrepareResultV1Schema.safeParse({
+            ...ready,
             recommendedTransport: 'socket',
         }).success).toBe(true);
         expect(ConversationConnectionPrepareResultV1Schema.safeParse({
             ...ready,
             recommendedTransport: 'durablePush',
-            overlapSafety: 'destructive',
-        }).success).toBe(true);
+        }).success).toBe(false);
         expect(ConversationConnectionPrepareResultV1Schema.safeParse({
             ...ready,
             providerConnectionKey: 'private-provider-identity',

@@ -1,8 +1,9 @@
 import {
   AGENT_IDS,
   type AgentId,
+  type BundledAgentId,
 } from '../types.js';
-import { mergeAuthoredWithGeneratedAgentFacts } from '../definitions/generatedFacts.js';
+import { mergeAuthoredWithGeneratedAgentFacts, readBundledAgentFact } from '../definitions/generatedFacts.js';
 import type { AgentDefinitionCliMetadata } from '../definitions/agentDefinition.js';
 
 function readBooleanEnvWithDefault(value: string | undefined, defaultValue: boolean): boolean {
@@ -65,7 +66,7 @@ export type AgentCliManagedInstallSpec =
     }>;
 
 export type AgentCliRuntimeSpec = Readonly<{
-  id: AgentId;
+  id: BundledAgentId;
   title: string;
   binaryName: string;
   alternativeBinaryNames?: ReadonlyArray<string>;
@@ -83,7 +84,7 @@ export type AgentCliRuntimeSpec = Readonly<{
 }>;
 
 export function projectAgentCliRuntimeSpec(
-  agentId: AgentId,
+  agentId: BundledAgentId,
   cli: AgentDefinitionCliMetadata,
 ): AgentCliRuntimeSpec {
   const { executable, install } = cli;
@@ -115,19 +116,28 @@ export function projectAgentCliRuntimeSpec(
 }
 
 const AUTHORED_AGENT_CLI_RUNTIME_SPECS = {
-} as const satisfies Partial<Record<AgentId, AgentCliRuntimeSpec>>;
+} as const satisfies Partial<Record<BundledAgentId, AgentCliRuntimeSpec>>;
 
-export const CANONICAL_AGENT_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, AgentCliRuntimeSpec>> =
+export const CANONICAL_AGENT_CLI_RUNTIME_SPECS: Readonly<Record<BundledAgentId, AgentCliRuntimeSpec>> =
   mergeAuthoredWithGeneratedAgentFacts<AgentCliRuntimeSpec>({
     authored: AUTHORED_AGENT_CLI_RUNTIME_SPECS,
     label: 'agent CLI runtime spec',
-    readGenerated: (definition) => projectAgentCliRuntimeSpec(definition.id as AgentId, definition.cli),
+    readGenerated: (definition, agentId) => projectAgentCliRuntimeSpec(agentId, definition.cli),
   });
 
-export const AGENT_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, AgentCliRuntimeSpec>> = CANONICAL_AGENT_CLI_RUNTIME_SPECS;
+export const AGENT_CLI_RUNTIME_SPECS: Readonly<Record<BundledAgentId, AgentCliRuntimeSpec>> = CANONICAL_AGENT_CLI_RUNTIME_SPECS;
 
-export function getAgentCliRuntimeSpec(id: AgentId): AgentCliRuntimeSpec {
-  return AGENT_CLI_RUNTIME_SPECS[id];
+/**
+ * Read the generated CLI runtime spec of a bundled Agent.
+ *
+ * The record is exhaustive over `AGENT_IDS` only. An externally installed Agent
+ * ships its own CLI metadata in its plugin manifest, so this accessor reports a
+ * typed unavailable for it rather than pretending a bundled spec exists.
+ */
+export function getAgentCliRuntimeSpec(id: BundledAgentId): AgentCliRuntimeSpec;
+export function getAgentCliRuntimeSpec(id: AgentId): AgentCliRuntimeSpec | null;
+export function getAgentCliRuntimeSpec(id: AgentId): AgentCliRuntimeSpec | null {
+  return readBundledAgentFact(AGENT_CLI_RUNTIME_SPECS, id);
 }
 
 export function getAgentCliBinaryNames(
@@ -135,6 +145,7 @@ export function getAgentCliBinaryNames(
   processEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): ReadonlyArray<string> {
   const runtimeSpec = getAgentCliRuntimeSpec(id);
+  if (runtimeSpec == null) return [];
   const fallbackEnabled = runtimeSpec.alternativeBinaryFallbackEnabledEnvVar
     ? readBooleanEnvWithDefault(processEnv[runtimeSpec.alternativeBinaryFallbackEnabledEnvVar], true)
     : true;
@@ -144,19 +155,19 @@ export function getAgentCliBinaryNames(
   ];
 }
 
-const AGENT_CLI_SETUP_SUPPORTED_IDS: ReadonlyArray<AgentId> = AGENT_IDS;
+const AGENT_CLI_SETUP_SUPPORTED_IDS: ReadonlyArray<BundledAgentId> = AGENT_IDS;
 
-export function getAgentCliSetupSupportedIds(): ReadonlyArray<AgentId> {
+export function getAgentCliSetupSupportedIds(): ReadonlyArray<BundledAgentId> {
   return [...AGENT_CLI_SETUP_SUPPORTED_IDS];
 }
 
-export function getAgentCliSetupRecommendedIds(): ReadonlyArray<AgentId> {
+export function getAgentCliSetupRecommendedIds(): ReadonlyArray<BundledAgentId> {
   return AGENT_CLI_SETUP_SUPPORTED_IDS
     .map((agentId) => ({
       agentId,
       order: AGENT_CLI_RUNTIME_SPECS[agentId].setupRecommendation?.order,
     }))
-    .filter((entry): entry is { agentId: AgentId; order: number } =>
+    .filter((entry): entry is { agentId: BundledAgentId; order: number } =>
       typeof entry.order === 'number',
     )
     .sort((left, right) => left.order - right.order)

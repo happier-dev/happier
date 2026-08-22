@@ -27,10 +27,28 @@ export const AGENT_IDS = Object.freeze([
   'deepsec',
 ] as const);
 
-export type AgentId = (typeof AGENT_IDS)[number];
+/**
+ * Agent ids bundled with this build.
+ *
+ * Closed by construction: it is the discoverability list of Agents whose facts
+ * ship inside the host, and it is the correct key for records that are
+ * exhaustive over bundled Agents.
+ */
+export type BundledAgentId = (typeof AGENT_IDS)[number];
 
-const AGENT_ID_SET: ReadonlySet<string> = new Set(AGENT_IDS);
+/**
+ * Any installed Agent id.
+ *
+ * Plugin manifests admit an open local Agent identifier, so an externally
+ * installed Agent legitimately carries an id outside `AGENT_IDS`. The
+ * `(string & {})` member keeps editor autocomplete on the bundled ids while
+ * accepting those contributed ids; validation belongs to the parsing boundary
+ * that produced the id, not to this type.
+ */
+export type AgentId = BundledAgentId | (string & {});
 
-export function isAgentId(value: unknown): value is AgentId {
-  return typeof value === 'string' && AGENT_ID_SET.has(value);
+const BUNDLED_AGENT_ID_SET: ReadonlySet<string> = new Set(AGENT_IDS);
+
+export function isBundledAgentId(value: unknown): value is BundledAgentId {
+  return typeof value === 'string' && BUNDLED_AGENT_ID_SET.has(value);
 }

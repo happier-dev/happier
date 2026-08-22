@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertPluginProjectionFamilyIdsV2,
+  derivePluginClientContributionRegistrationRights,
   derivePluginContributionRegistrationRights,
   derivePluginDaemonContributionRegistrationRights,
   listPluginProjectionFamilyIdsV2,
   PLUGIN_CONTRIBUTION_CATALOG_V2,
 } from './catalog.js';
-import { PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 } from './v2.js';
+import { PluginContributesV2Schema, PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 } from './v2.js';
 
 describe('plugin contribution catalog', () => {
   it('accounts for every schema family with executable semantic metadata', () => {
@@ -35,7 +36,6 @@ describe('plugin contribution catalog', () => {
     ]);
     for (const entry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
       expect(entry).toEqual(expect.objectContaining({
-        stability: expect.stringMatching(/^(stable|experimental|delegated)$/),
         activationDemand: expect.stringMatching(/^(none|declarative|registration|conditional)$/),
         references: expect.any(Array),
         consumer: expect.any(String),
@@ -149,10 +149,10 @@ describe('plugin contribution catalog', () => {
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'tools')?.references)
       .toContainEqual(expect.objectContaining({ field: 'action', targetFamily: 'actions' }));
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers')).toEqual(
-      expect.objectContaining({ stability: 'delegated', activationDemand: 'conditional', allowedRuntimeRegistration: 'providers' }),
+      expect.objectContaining({ activationDemand: 'conditional', allowedRuntimeRegistration: 'providers' }),
     );
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'agents')).toEqual(
-      expect.objectContaining({ stability: 'stable', allowedRuntimeRegistration: 'agents' }),
+      expect.objectContaining({ allowedRuntimeRegistration: 'agents' }),
     );
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'webhooks')?.references)
       .toContainEqual(expect.objectContaining({ field: 'handlerAction', targetFamily: 'actions' }));
@@ -209,6 +209,45 @@ describe('plugin contribution catalog', () => {
     })).toBe(true);
   });
 
+  it('carries the normalized Voice declaration with each client registration right', () => {
+    const contributes = PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        id: 'conversation',
+        title: 'Conversation',
+        kind: 'conversation',
+        roles: ['realtime_conversation'],
+        platforms: ['web'],
+        capabilities: {
+          turn: { cancelResponse: true, bargeIn: false },
+        },
+        client: {
+          artifactId: 'voice-runtime-web',
+          modulePath: './voiceRuntime',
+          exportName: 'activate',
+        },
+      }],
+    });
+    const declaration = contributes.voiceProviders[0]!;
+
+    expect(derivePluginClientContributionRegistrationRights(contributes, {
+      artifactId: 'voice-runtime-web',
+      modulePath: './voiceRuntime',
+      exportName: 'activate',
+      platform: 'web',
+    })).toEqual([{
+      family: 'voiceProviders',
+      localId: 'conversation',
+      target: {
+        realm: 'client',
+        artifactId: 'voice-runtime-web',
+        modulePath: './voiceRuntime',
+        exportName: 'activate',
+        platforms: ['web'],
+      },
+      voiceProviderDeclaration: declaration,
+    }]);
+  });
+
   it('classifies client and daemon registration realms at the canonical family catalog', () => {
     const entry = (key: string) => PLUGIN_CONTRIBUTION_CATALOG_V2.find((candidate) => candidate.manifestKey === key)!;
     expect(entry('voiceProviders').registrationHost).toBe('discriminated');
@@ -218,24 +257,56 @@ describe('plugin contribution catalog', () => {
       platforms: ['web'],
     })).toBe('client');
     expect(entry('voiceProviders').runtimeRegistrationHost({ kind: 'speech' })).toBe('daemon');
-    expect(entry('actions').runtimeRegistrationHost({ id: 'run' })).toBe('daemon');
+    expect(entry('actions').runtimeRegistrationHost({
+      id: 'run',
+      execution: { target: 'daemon' },
+    })).toBe('daemon');
+    expect(entry('actions').runtimeRegistrationHost({
+      id: 'open-client-preview',
+      execution: {
+        target: 'client',
+        client: { artifactId: 'preview-client', modulePath: './previewClient', exportName: 'activatePreview' },
+        platforms: ['web'],
+      },
+    })).toBe('client');
     expect(entry('voiceProviders').runtimeRegistrationFamily({ kind: 'conversation' })).toBe('voiceProviders');
     expect(entry('voiceProviders').runtimeRegistrationFamily({ kind: 'speech' })).toBe('voiceProviders');
     expect(entry('actions').runtimeRegistrationFamily({ id: 'run' })).toBe('actions');
-    expect(entry('actions').registrationHost).toBe('daemon');
+    expect(entry('actions').registrationHost).toBe('discriminated');
     expect(entry('agents').registrationHost).toBe('daemon');
     expect(entry('mcp.servers').registrationHost).toBe('daemon');
     expect(entry('providers').registrationHost).toBe('daemon');
     expect(entry('composerAttachments').registrationHost).toBe('daemon');
 
     const contributes = {
-      actions: [{ id: 'run' }],
+      actions: [
+        { id: 'run', execution: { target: 'daemon' } },
+        {
+          id: 'open-client-preview',
+          execution: {
+            target: 'client',
+            client: { artifactId: 'preview-client', modulePath: './previewClient', exportName: 'activatePreview' },
+            platforms: ['web'],
+          },
+        },
+      ],
       agents: [{ id: 'agent', runtime: { kind: 'custom' } }],
       mcp: { servers: [{ id: 'dynamic-server', kind: 'dynamic' }] },
     };
     expect(derivePluginContributionRegistrationRights(contributes)).toEqual([
       { family: 'agents', localId: 'agent', target: { realm: 'daemon' }, requiredFields: ['factory'] },
       { family: 'actions', localId: 'run', target: { realm: 'daemon' } },
+      {
+        family: 'actions',
+        localId: 'open-client-preview',
+        target: {
+          realm: 'client',
+          artifactId: 'preview-client',
+          modulePath: './previewClient',
+          exportName: 'activatePreview',
+          platforms: ['web'],
+        },
+      },
       { family: 'mcp.servers', localId: 'dynamic-server', target: { realm: 'daemon' } },
     ]);
     expect(derivePluginDaemonContributionRegistrationRights(contributes)).toEqual([
@@ -243,14 +314,39 @@ describe('plugin contribution catalog', () => {
       { family: 'actions', localId: 'run', target: { realm: 'daemon' } },
       { family: 'mcp.servers', localId: 'dynamic-server', target: { realm: 'daemon' } },
     ]);
+    expect(derivePluginClientContributionRegistrationRights(contributes, {
+      artifactId: 'preview-client',
+      modulePath: './previewClient',
+      exportName: 'activatePreview',
+      platform: 'web',
+    })).toEqual([{
+      family: 'actions',
+      localId: 'open-client-preview',
+      target: {
+        realm: 'client',
+        artifactId: 'preview-client',
+        modulePath: './previewClient',
+        exportName: 'activatePreview',
+        platforms: ['web'],
+      },
+    }]);
 
     expect(derivePluginDaemonContributionRegistrationRights({
       providers: [
         { id: 'ordinary' },
         { id: 'managed', managedRuntime: { kind: 'managed' } },
+        {
+          id: 'bundled-format',
+          catalog: { source: 'probe', probes: [{ parser: 'openai-models' }] },
+        },
+        {
+          id: 'contributed-format',
+          catalog: { source: 'probe', probes: [{ parser: 'acme-catalog-v3' }] },
+        },
       ],
     })).toEqual([
       { family: 'providers', localId: 'managed', target: { realm: 'daemon' } },
+      { family: 'providers', localId: 'contributed-format', target: { realm: 'daemon' } },
     ]);
 
     expect(derivePluginDaemonContributionRegistrationRights({

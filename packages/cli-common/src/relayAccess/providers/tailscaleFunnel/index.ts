@@ -118,12 +118,27 @@ export const tailscaleFunnelRelayAccessProvider: RelayAccessProvider = {
             };
         }
 
-        if (!snapshot.loggedIn) {
+        // Signed in is not the same as usable. Serve/funnel config survives
+        // `tailscale down`, so the configured HTTPS URL keeps printing while
+        // the backend is stopped — reporting that as enabled tells the user a
+        // relay is reachable from their other devices when nothing is
+        // listening. Only a running backend may produce a shareUrl.
+        if (!snapshot.running) {
+            if (snapshot.daemonReachable && !snapshot.loggedIn) {
+                return {
+                    state: 'needs_auth',
+                    details: {
+                        backendState: snapshot.backendState,
+                        authUrl: snapshot.authUrl,
+                    },
+                };
+            }
             return {
-                state: 'needs_auth',
+                state: 'disabled',
                 details: {
                     backendState: snapshot.backendState,
-                    authUrl: snapshot.authUrl,
+                    daemonReachable: snapshot.daemonReachable,
+                    reason: 'tailscale_not_running',
                 },
             };
         }

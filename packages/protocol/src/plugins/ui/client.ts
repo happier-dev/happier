@@ -26,6 +26,25 @@ export {
 export { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 export type { PluginUiJsonValueV1 } from '../contributions/ui/json.js';
 export {
+  CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1,
+  CURRENT_UI_CONTEXT_MAX_COMMANDS_V1,
+  CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1,
+  CurrentUiCommandDeclarationV1Schema,
+  CurrentUiCommandDescriptorV1Schema,
+  CurrentUiContextBoundedIncompletenessV1Schema,
+  CurrentUiContextEntityV1Schema,
+  CurrentUiContextSnapshotV1Schema,
+  PluginUiContextEnrichmentV1Schema,
+} from './currentUiContext.js';
+export type {
+  CurrentUiCommandDeclarationV1,
+  CurrentUiCommandDescriptorV1,
+  CurrentUiContextBoundedIncompletenessV1,
+  CurrentUiContextEntityV1,
+  CurrentUiContextSnapshotV1,
+  PluginUiContextEnrichmentV1,
+} from './currentUiContext.js';
+export {
   PluginUiDisposeHostResourceRequestV1Schema,
   PluginUiResourceSubscriptionEventV1Schema,
   type PluginUiDisposeHostResourceRequestV1,
@@ -104,6 +123,8 @@ export {
   type OpenableContentStatRequestV1,
 } from '../openableContent.js';
 export {
+  PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1,
+  normalizePluginUiSubPathV1,
   PluginUiAcquireComposerInputLockRequestV1Schema,
   PluginUiActiveComposerResultV1Schema,
   PluginUiApplyComposerRequestV1Schema,
@@ -116,6 +137,7 @@ export {
   PluginUiJsonObjectV1Schema,
   PluginUiPickComposerMediaRequestV1Schema,
   PluginUiPickComposerMediaResultV1Schema,
+  PluginUiPublishCurrentUiContextRequestV1Schema,
   PluginUiReadComposerRequestV1Schema,
   PluginUiReadComposerResultV1Schema,
   PluginUiReleaseComposerContentRequestV1Schema,
@@ -147,6 +169,7 @@ export type {
   PluginUiJsonObjectV1,
   PluginUiPickComposerMediaRequestV1,
   PluginUiPickComposerMediaResultV1,
+  PluginUiPublishCurrentUiContextRequestV1,
   PluginUiReadComposerRequestV1,
   PluginUiReadComposerResultV1,
   PluginUiReleaseComposerContentRequestV1,

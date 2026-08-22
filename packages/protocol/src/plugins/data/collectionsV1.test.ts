@@ -6,6 +6,7 @@ import {
   PLUGIN_COLLECTION_CANDIDATE_PREPARATION_RETIRE_HTTP_PATH_V1,
   PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
   PLUGIN_COLLECTION_LIMITS_V1,
+  PLUGIN_COLLECTION_SCHEMA_VERSION_MAX,
   PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
   PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
   PluginAccountCollectionContributionV1Schema,
@@ -28,6 +29,7 @@ import {
   PluginCollectionMutationErrorV1Schema,
   PluginCollectionMutationRequestV1Schema,
   PluginCollectionQuotaRequestV1Schema,
+  PluginCollectionSchemaVersionV1Schema,
   PluginCollectionProjectionV1Schema,
   PluginCollectionQueryRequestV1Schema,
   PluginCollectionQueryResultV1Schema,
@@ -49,6 +51,7 @@ import {
   measurePluginCollectionMutationRequestEncodedBytesV1,
   normalizePluginAccountCollectionContractV1,
   normalizePluginAccountCollectionContractsV1,
+  splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1,
   validatePluginCollectionUiQueryParametersV1,
   validatePluginCollectionUiQueryResultV1,
 } from './collectionsV1.js';
@@ -120,6 +123,36 @@ describe('Plugin Account Collection contracts', () => {
     }).success).toBe(true);
     expect(PluginCollectionQuotaRequestV1Schema.safeParse({
       maxRowEncodedBytes: PLUGIN_COLLECTION_LIMITS_V1.maximumStoredRowEncodedBytes + 1,
+    }).success).toBe(false);
+  });
+
+  it('rejects a collection schema version the persisted integer column cannot hold', () => {
+    expect(PluginCollectionSchemaVersionV1Schema.safeParse(PLUGIN_COLLECTION_SCHEMA_VERSION_MAX).success)
+      .toBe(true);
+    expect(PluginCollectionSchemaVersionV1Schema.safeParse(PLUGIN_COLLECTION_SCHEMA_VERSION_MAX + 1).success)
+      .toBe(false);
+
+    expect(PluginCollectionContractRefV1Schema.safeParse({
+      pluginId: 'example.tasks',
+      collectionId: 'tasks',
+      schemaVersion: PLUGIN_COLLECTION_SCHEMA_VERSION_MAX + 1,
+      contractDigest: 'a'.repeat(43),
+    }).success).toBe(false);
+
+    expect(PluginCollectionMutationRequestV1Schema.safeParse({
+      pluginId: 'example.tasks',
+      collectionId: 'tasks',
+      writerContext: {
+        schemaVersion: PLUGIN_COLLECTION_SCHEMA_VERSION_MAX + 1,
+        contractDigest: 'a'.repeat(43),
+      },
+      operations: [{
+        kind: 'put',
+        rowId: 'row-1',
+        expectedRevision: 'absent',
+        content: { t: 'encrypted', c: 'ciphertext' },
+        projection: { status: 'open' },
+      }],
     }).success).toBe(false);
   });
 
@@ -918,6 +951,49 @@ describe('Plugin Account Collection contracts', () => {
     expect(measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1(stageRequest)).toBe(
       new TextEncoder().encode(JSON.stringify(stageRequest)).byteLength,
     );
+
+    const splitCandidateStageRequests = splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1;
+
+    const maxSingletonBytes = Math.max(
+      ...stageRequest.items.map((item) => (
+        measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1({
+          binding,
+          items: [item],
+        })
+      )),
+    );
+    const byteLimitedRequests = splitCandidateStageRequests({
+      binding,
+      items: stageRequest.items,
+      limits: { maxBatchRows: 100, maxBatchBytes: maxSingletonBytes },
+    }) as readonly typeof stageRequest[];
+    expect(byteLimitedRequests).toHaveLength(stageRequest.items.length);
+    expect(byteLimitedRequests.flatMap((request) => request.items)).toEqual(stageRequest.items);
+    expect(byteLimitedRequests.every((request) => (
+      measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1(request) <= maxSingletonBytes
+    ))).toBe(true);
+
+    const rowLimitedRequests = splitCandidateStageRequests({
+      binding,
+      items: stageRequest.items,
+      limits: {
+        maxBatchRows: 1,
+        maxBatchBytes: measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1(stageRequest),
+      },
+    }) as readonly typeof stageRequest[];
+    expect(rowLimitedRequests.map((request) => request.items)).toEqual(
+      stageRequest.items.map((item) => [item]),
+    );
+
+    const singleton = stageRequest.items[0]!;
+    const singletonRequest = { binding, items: [singleton] };
+    const singletonBytes = measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1(singletonRequest);
+    expect(splitCandidateStageRequests({
+      binding,
+      items: [singleton],
+      limits: { maxBatchRows: 1, maxBatchBytes: singletonBytes - 1 },
+    })).toEqual([singletonRequest]);
+
     const stageResult = { results: [{ status: 'staged' as const }, { status: 'sourceChanged' as const }] };
     expect(PluginCollectionCandidatePreparationStageResultV1Schema.parse(stageResult))
       .toEqual(stageResult);

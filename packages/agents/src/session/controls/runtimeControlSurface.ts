@@ -5,7 +5,7 @@ import type { RuntimeControlSurface } from '../../runtime/engine/contracts.js';
 
 import { resolveAgentConfiguredRuntimeKind } from './runtimeKindOverride.js';
 
-function resolveAgentRuntimeSurface(agentId: AgentId, runtimeKind: AgentRuntimeKind | null): RuntimeControlSurface {
+function resolveAgentRuntimeSurface(agentId: AgentId, runtimeKind: AgentRuntimeKind | null): RuntimeControlSurface | null {
   return resolveAgentRuntimeControlSurface(agentId, runtimeKind as never);
 }
 

@@ -30,6 +30,7 @@ type MutableProviderManifest = {
     contributes: {
         actions: Array<{
             id: string;
+            execution: { target: 'daemon' };
             dangerLevel: string;
             surfaces: string[];
             placementBindings?: string[];
@@ -53,6 +54,7 @@ function createExternalProviderManifest() {
         actions: {
             [EXTERNAL_ACTION_IDS.setup]: {
                 title: 'Connect Comet Chat',
+                execution: { target: 'daemon' },
                 scopes: ['global'],
                 inputSchema: contributorDefinedSetupInputSchema,
                 resultSchema: providerOperations.setup.declaration.resultSchema.jsonSchema,
@@ -64,6 +66,7 @@ function createExternalProviderManifest() {
             },
             [EXTERNAL_ACTION_IDS.setupRemediation]: {
                 title: 'Resolve Comet Chat setup',
+                execution: { target: 'daemon' },
                 description: 'Remove the selected Comet Chat setup conflict.',
                 scopes: ['global'],
                 inputSchema: contributorDefinedSetupInputSchema,
@@ -79,6 +82,7 @@ function createExternalProviderManifest() {
             },
             [EXTERNAL_ACTION_IDS.connectionTest]: {
                 title: 'Probe Comet Chat',
+                execution: { target: 'daemon' },
                 scopes: ['global'],
                 inputSchema: providerOperations.connectionTest.declaration.input.schema.jsonSchema,
                 resultSchema: providerOperations.connectionTest.declaration.resultSchema.jsonSchema,
@@ -88,6 +92,7 @@ function createExternalProviderManifest() {
             },
             [EXTERNAL_ACTION_IDS.messageDeliver]: {
                 title: 'Publish Comet Chat message',
+                execution: { target: 'daemon' },
                 scopes: ['global'],
                 inputSchema: providerOperations.messageDeliver.declaration.input.schema.jsonSchema,
                 resultSchema: providerOperations.messageDeliver.declaration.resultSchema.jsonSchema,
@@ -97,6 +102,7 @@ function createExternalProviderManifest() {
             },
             [EXTERNAL_ACTION_IDS.connectionStop]: {
                 title: 'Close Comet Chat socket',
+                execution: { target: 'daemon' },
                 scopes: ['global'],
                 inputSchema: providerOperations.connectionStop.declaration.input.schema.jsonSchema,
                 resultSchema: providerOperations.connectionStop.declaration.resultSchema.jsonSchema,

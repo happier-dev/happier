@@ -136,9 +136,26 @@ export function planAgentCliInstallForRuntime(params: Readonly<{
   };
 }
 
+/**
+ * Bundled-recipe convenience wrapper.
+ *
+ * The generated CLI runtime table covers bundled Agents only. An externally
+ * installed Agent carries its own CLI descriptor in its plugin manifest and
+ * installs through {@link planAgentCliInstallForRuntime} with that descriptor,
+ * so an id with no bundled recipe reports the same typed `no-recipe` outcome as
+ * a bundled Agent that ships none.
+ */
 export function planAgentCliInstall(params: Readonly<{ agentId: AgentId; platform: AgentCliInstallPlatform }>): AgentCliInstallPlanResult {
+  const runtimeSpec = getAgentCliRuntimeSpec(params.agentId);
+  if (runtimeSpec == null) {
+    return {
+      ok: false,
+      errorCode: 'no-recipe',
+      errorMessage: `No auto-install recipe available for ${params.agentId} on ${params.platform}.`,
+    };
+  }
   return planAgentCliInstallForRuntime({
-    runtimeSpec: getAgentCliRuntimeSpec(params.agentId),
+    runtimeSpec,
     platform: params.platform,
   });
 }
@@ -239,8 +256,18 @@ export async function installAgentCli(params: Readonly<{
   allowVendorRecipeExecution?: boolean;
   deps?: InstallAgentCliDeps;
 }>): Promise<InstallAgentCliResult> {
+  const runtimeSpec = getAgentCliRuntimeSpec(params.agentId);
+  if (runtimeSpec == null) {
+    return {
+      ok: false,
+      errorCode: 'no-recipe',
+      errorMessage: `No auto-install recipe available for ${params.agentId} on ${params.platform}.`,
+      plan: null,
+      logPath: null,
+    };
+  }
   return installAgentCliForRuntime({
-    runtimeSpec: getAgentCliRuntimeSpec(params.agentId),
+    runtimeSpec,
     platform: params.platform,
     env: params.env,
     logDir: params.logDir,

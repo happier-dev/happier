@@ -173,7 +173,7 @@ export const EXTERNAL_SESSION_OPERATION_TIMELINES_V1 = Object.freeze({
 export type ExternalSessionOperationTimelineKindV1 =
   keyof typeof EXTERNAL_SESSION_OPERATION_TIMELINES_V1;
 
-type ExternalSessionOperationPlanTargetV1 = Readonly<
+export type ExternalSessionOperationPlanTargetV1 = Readonly<
   | {
     plan: 'materialize';
     targetStorageMode: 'external-linked';
@@ -333,8 +333,6 @@ export const ExternalSessionOperationBindingsV1Schema = z.object({
   operationClaimId: OperationReferenceIdSchema,
   historicalImportJobId: OperationReferenceIdSchema.optional(),
   privateStagingId: OperationReferenceIdSchema.optional(),
-  runtimeControlClaimId: OperationReferenceIdSchema.optional(),
-  pendingAdmissionId: OperationReferenceIdSchema.optional(),
   targetRuntimeAttemptId: OperationReferenceIdSchema.optional(),
 }).strict();
 export type ExternalSessionOperationBindingsV1 = z.infer<
@@ -737,7 +735,14 @@ function validateOperationOutcome(
   }
 }
 
-function isRetryableExternalLinkedAdmissionAcknowledgementReconciliation(
+/**
+ * The one rule for "this external-linked takeover retains an exact admission
+ * attempt whose acknowledgement is unresolved, so explicit user Retry may
+ * replay it idempotently". Record validation, the record projection, the local
+ * repair owner and the takeover phase runner all read this single predicate so
+ * a record can never be written into a shape one of them would refuse.
+ */
+export function isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1(
   operation: Readonly<{
     request: ExternalSessionOperationPlanTargetV1;
     status: ExternalSessionOperationStatusV1;
@@ -888,7 +893,7 @@ export const ExternalSessionOperationRecordV1Schema = z.object({
   if (
     operation.status === 'reconciliation_required'
     && !operation.canonicalOwnerEvidence.disagreement
-    && !isRetryableExternalLinkedAdmissionAcknowledgementReconciliation(operation)
+    && !isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1(operation)
   ) {
     addOperationIssue(
       context,
@@ -910,11 +915,7 @@ export const ExternalSessionOperationRecordV1Schema = z.object({
   const isExternalLinkedTakeover = operation.request.plan === 'takeover'
     && operation.request.targetStorageMode === 'external-linked';
   if (operation.request.plan === 'materialize') {
-    if (
-      operation.bindings.runtimeControlClaimId
-      || operation.bindings.pendingAdmissionId
-      || operation.bindings.targetRuntimeAttemptId
-    ) {
+    if (operation.bindings.targetRuntimeAttemptId) {
       addOperationIssue(context, ['bindings'], 'Materialization cannot bind runtime admission or spawn.');
     }
   }
@@ -1104,7 +1105,7 @@ export function projectExternalSessionOperationProgressV1(
 ): ExternalSessionOperationProgressV1 {
   const operation = ExternalSessionOperationRecordV1Schema.parse(operationInput);
   const retryableAdmissionAcknowledgement =
-    isRetryableExternalLinkedAdmissionAcknowledgementReconciliation(operation);
+    isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1(operation);
   return ExternalSessionOperationProgressV1Schema.parse({
     v: 1,
     operationId: operation.operationId,

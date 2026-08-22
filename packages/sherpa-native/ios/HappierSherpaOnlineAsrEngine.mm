@@ -1,14 +1,23 @@
 #import "HappierSherpaOnlineAsrEngine.h"
+#import "HappierSherpaAsrStreamRegistry.h"
 
-#include <cmath>
 #include <cstring>
-#include <mutex>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <sherpa-onnx/c-api/c-api.h>
 
 namespace {
+
+// The iOS xcframework hands back const-qualified handles where the Android C API
+// does not, which is why the shared registry is parameterised on the handle types.
+using AsrStreams = happier_sherpa::AsrStreamRegistry<const SherpaOnnxOnlineRecognizer, const SherpaOnnxOnlineStream>;
+
+AsrStreams &AsrJobs() {
+  static AsrStreams registry;
+  return registry;
+}
 
 std::string NsToStd(NSString *s) {
   if (!s) return std::string();
@@ -20,67 +29,31 @@ bool Exists(const std::string &path) {
   return SherpaOnnxFileExists(path.c_str()) != 0;
 }
 
-}  // namespace
-
-@interface HappierSherpaOnlineAsrEngine () {
-  const SherpaOnnxOnlineRecognizer *_recognizer;
-  std::string _assetsDir;
-  std::string _tokensPath;
-  std::string _encoderPath;
-  std::string _decoderPath;
-  std::string _joinerPath;
-  std::string _language;
-  int32_t _sampleRate;
-  std::mutex _mutex;
-}
-@end
-
-@interface HappierSherpaOnlineAsrStream () {
-  const SherpaOnnxOnlineRecognizer *_recognizer;
-  const SherpaOnnxOnlineStream *_stream;
-  std::mutex _mutex;
-}
-
-- (instancetype)initWithRecognizer:(const SherpaOnnxOnlineRecognizer *)recognizer
-                             stream:(const SherpaOnnxOnlineStream *)stream;
-@end
-
-@implementation HappierSherpaOnlineAsrEngine
-
-- (instancetype)initWithAssetsDir:(NSString *)assetsDir
-                       sampleRate:(int32_t)sampleRate
-                         language:(NSString * _Nullable)language
-                            error:(NSError * _Nullable * _Nullable)error {
-  self = [super init];
-  if (!self) return nil;
-
-  _recognizer = nullptr;
-  _assetsDir = NsToStd(assetsDir);
-  _sampleRate = sampleRate > 0 ? sampleRate : 16000;
-  _language = language ? NsToStd(language) : std::string();
-
-  if (_assetsDir.empty()) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:200 userInfo:@{NSLocalizedDescriptionKey: @"assetsDir is empty"}];
-    return nil;
+void SetError(NSError * _Nullable * _Nullable error, NSInteger code, NSString *message) {
+  if (error) {
+    *error = [NSError errorWithDomain:@"HappierSherpaNative" code:code userInfo:@{NSLocalizedDescriptionKey: message}];
   }
+}
 
-  _tokensPath = _assetsDir + "/tokens.txt";
-  _encoderPath = _assetsDir + "/encoder.onnx";
-  _decoderPath = _assetsDir + "/decoder.onnx";
-  _joinerPath = _assetsDir + "/joiner.onnx";
+std::shared_ptr<const SherpaOnnxOnlineRecognizer> CreateRecognizer(const std::string &assetsDir,
+                                                                   NSError * _Nullable * _Nullable error) {
+  const std::string tokensPath = assetsDir + "/tokens.txt";
+  const std::string encoderPath = assetsDir + "/encoder.onnx";
+  const std::string decoderPath = assetsDir + "/decoder.onnx";
+  const std::string joinerPath = assetsDir + "/joiner.onnx";
 
-  if (!Exists(_tokensPath) || !Exists(_encoderPath) || !Exists(_decoderPath) || !Exists(_joinerPath)) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:201 userInfo:@{NSLocalizedDescriptionKey: @"Missing required streaming ASR assets"}];
-    return nil;
+  if (!Exists(tokensPath) || !Exists(encoderPath) || !Exists(decoderPath) || !Exists(joinerPath)) {
+    SetError(error, 201, @"Missing required streaming ASR assets");
+    return nullptr;
   }
 
   SherpaOnnxOnlineRecognizerConfig config;
   memset(&config, 0, sizeof(config));
 
-  config.feat_config.sample_rate = _sampleRate;
+  config.feat_config.sample_rate = 16000;
   config.feat_config.feature_dim = 80;
 
-  config.model_config.tokens = _tokensPath.c_str();
+  config.model_config.tokens = tokensPath.c_str();
   config.model_config.num_threads = 2;
   config.model_config.debug = 0;
   config.model_config.provider = "cpu";
@@ -90,9 +63,9 @@ bool Exists(const std::string &path) {
   config.model_config.modeling_unit = nullptr;
   config.model_config.bpe_vocab = nullptr;
 
-  config.model_config.transducer.encoder = _encoderPath.c_str();
-  config.model_config.transducer.decoder = _decoderPath.c_str();
-  config.model_config.transducer.joiner = _joinerPath.c_str();
+  config.model_config.transducer.encoder = encoderPath.c_str();
+  config.model_config.transducer.decoder = decoderPath.c_str();
+  config.model_config.transducer.joiner = joinerPath.c_str();
 
   config.decoding_method = "greedy_search";
   config.max_active_paths = 4;
@@ -105,93 +78,124 @@ bool Exists(const std::string &path) {
 
   const SherpaOnnxOnlineRecognizer *recognizer = SherpaOnnxCreateOnlineRecognizer(&config);
   if (!recognizer) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:202 userInfo:@{NSLocalizedDescriptionKey: @"Failed to initialize sherpa online ASR recognizer"}];
-    return nil;
+    SetError(error, 202, @"Failed to initialize sherpa online ASR recognizer");
+    return nullptr;
   }
 
-  _recognizer = recognizer;
-  return self;
+  return std::shared_ptr<const SherpaOnnxOnlineRecognizer>(recognizer, SherpaOnnxDestroyOnlineRecognizer);
 }
 
-- (void)dealloc {
-  if (_recognizer) {
-    SherpaOnnxDestroyOnlineRecognizer(_recognizer);
-    _recognizer = nullptr;
+std::shared_ptr<const SherpaOnnxOnlineRecognizer> GetOrCreateRecognizer(const std::string &assetsDir,
+                                                                        NSError * _Nullable * _Nullable error) {
+  if (auto cached = AsrJobs().recognizerForAssetsDir(assetsDir)) {
+    return cached;
   }
+
+  auto created = CreateRecognizer(assetsDir, error);
+  if (!created) {
+    return nullptr;
+  }
+  return AsrJobs().rememberRecognizer(assetsDir, std::move(created));
 }
 
-- (HappierSherpaOnlineAsrStream * _Nullable)createStreamWithError:(NSError * _Nullable * _Nullable)error {
-  std::lock_guard<std::mutex> lock(_mutex);
-  if (!_recognizer) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:203 userInfo:@{NSLocalizedDescriptionKey: @"ASR recognizer not initialized"}];
-    return nil;
-  }
-  const SherpaOnnxOnlineStream *stream = SherpaOnnxCreateOnlineStream(_recognizer);
-  if (!stream) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:204 userInfo:@{NSLocalizedDescriptionKey: @"Failed to create ASR stream"}];
-    return nil;
-  }
-  return [[HappierSherpaOnlineAsrStream alloc] initWithRecognizer:_recognizer stream:stream];
-}
-
-@end
-
-@implementation HappierSherpaOnlineAsrStream
-
-- (instancetype)initWithRecognizer:(const SherpaOnnxOnlineRecognizer *)recognizer
-                             stream:(const SherpaOnnxOnlineStream *)stream {
-  self = [super init];
-  if (!self) return nil;
-
-  _recognizer = recognizer;
-  _stream = stream;
-  return self;
-}
-
-- (NSDictionary *)pushPcm16Data:(NSData *)pcm16le
-                     sampleRate:(int32_t)sampleRate
-                       channels:(int32_t)channels
-                          error:(NSError * _Nullable * _Nullable)error {
-  std::lock_guard<std::mutex> lock(_mutex);
-  if (!_recognizer || !_stream) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:210 userInfo:@{NSLocalizedDescriptionKey: @"ASR stream not initialized"}];
-    return @{};
-  }
-
-  const int32_t sr = sampleRate > 0 ? sampleRate : 16000;
-  const int32_t ch = channels > 0 ? channels : 1;
-
+std::vector<float> Pcm16LeToMonoFloats(NSData *pcm16le, int32_t channels) {
   const int16_t *samples16 = reinterpret_cast<const int16_t *>(pcm16le.bytes);
   const size_t count16 = pcm16le.length / sizeof(int16_t);
-  if (!samples16 || count16 == 0) {
-    return @{@"text": @"", @"isEndpoint": @NO};
-  }
+  if (!samples16 || count16 == 0) return {};
 
+  const int32_t ch = channels > 0 ? channels : 1;
   std::vector<float> mono;
   if (ch == 1) {
     mono.resize(count16);
     for (size_t i = 0; i < count16; i++) {
       mono[i] = static_cast<float>(samples16[i]) / 32768.0f;
     }
-  } else {
-    const size_t frames = count16 / static_cast<size_t>(ch);
-    mono.resize(frames);
-    for (size_t i = 0; i < frames; i++) {
-      int32_t sum = 0;
-      for (int32_t c = 0; c < ch; c++) {
-        sum += samples16[i * static_cast<size_t>(ch) + static_cast<size_t>(c)];
-      }
-      mono[i] = (static_cast<float>(sum) / static_cast<float>(ch)) / 32768.0f;
+    return mono;
+  }
+
+  const size_t frames = count16 / static_cast<size_t>(ch);
+  mono.resize(frames);
+  for (size_t i = 0; i < frames; i++) {
+    int32_t sum = 0;
+    for (int32_t c = 0; c < ch; c++) {
+      sum += samples16[i * static_cast<size_t>(ch) + static_cast<size_t>(c)];
     }
+    mono[i] = (static_cast<float>(sum) / static_cast<float>(ch)) / 32768.0f;
+  }
+  return mono;
+}
+
+}  // namespace
+
+@implementation HappierSherpaOnlineAsrEngine
+
++ (BOOL)createStreamForJob:(NSString *)jobId
+                 assetsDir:(NSString *)assetsDir
+                     error:(NSError * _Nullable * _Nullable)error {
+  const std::string jobKey = NsToStd(jobId);
+  const std::string dir = NsToStd(assetsDir);
+  if (jobKey.empty()) {
+    SetError(error, 205, @"jobId is required");
+    return NO;
+  }
+  if (dir.empty()) {
+    SetError(error, 200, @"assetsDir is empty");
+    return NO;
   }
 
-  SherpaOnnxOnlineStreamAcceptWaveform(_stream, sr, mono.data(), static_cast<int32_t>(mono.size()));
-
-  while (SherpaOnnxIsOnlineStreamReady(_recognizer, _stream)) {
-    SherpaOnnxDecodeOnlineStream(_recognizer, _stream);
+  auto recognizer = GetOrCreateRecognizer(dir, error);
+  if (!recognizer) {
+    return NO;
   }
 
-  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(_recognizer, _stream);
+  const SherpaOnnxOnlineStream *stream = SherpaOnnxCreateOnlineStream(recognizer.get());
+  if (!stream) {
+    SetError(error, 204, @"Failed to create ASR stream");
+    return NO;
+  }
+
+  const auto job = AsrJobs().beginJob(
+      jobKey, dir, std::move(recognizer),
+      std::shared_ptr<const SherpaOnnxOnlineStream>(stream, SherpaOnnxDestroyOnlineStream));
+  if (!job) {
+    SetError(error, 204, @"Failed to create ASR stream");
+    return NO;
+  }
+  return YES;
+}
+
++ (NSDictionary *)pushPcm16Data:(NSData *)pcm16le
+                         forJob:(NSString *)jobId
+                     sampleRate:(int32_t)sampleRate
+                       channels:(int32_t)channels
+                          error:(NSError * _Nullable * _Nullable)error {
+  // Holding the job keeps the stream and its recognizer alive for this whole
+  // decode, so a cancel racing this call can only mark it.
+  const auto job = AsrJobs().findJob(NsToStd(jobId));
+  if (!job) {
+    SetError(error, 210, @"ASR stream not initialized");
+    return @{};
+  }
+  if (job->cancelled()) {
+    return @{@"text": @"", @"isEndpoint": @NO};
+  }
+
+  const std::vector<float> mono = Pcm16LeToMonoFloats(pcm16le, channels);
+  if (mono.empty()) {
+    return @{@"text": @"", @"isEndpoint": @NO};
+  }
+
+  SherpaOnnxOnlineStreamAcceptWaveform(job->stream(), sampleRate > 0 ? sampleRate : 16000, mono.data(),
+                                       static_cast<int32_t>(mono.size()));
+
+  while (!job->cancelled() && SherpaOnnxIsOnlineStreamReady(job->recognizer(), job->stream())) {
+    SherpaOnnxDecodeOnlineStream(job->recognizer(), job->stream());
+  }
+  if (job->cancelled()) {
+    return @{@"text": @"", @"isEndpoint": @NO};
+  }
+
+  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(job->recognizer(), job->stream());
   std::string text;
   if (result && result->text) {
     text = std::string(result->text);
@@ -200,7 +204,7 @@ bool Exists(const std::string &path) {
     SherpaOnnxDestroyOnlineRecognizerResult(result);
   }
 
-  const bool endpoint = SherpaOnnxOnlineStreamIsEndpoint(_recognizer, _stream) != 0;
+  const bool endpoint = SherpaOnnxOnlineStreamIsEndpoint(job->recognizer(), job->stream()) != 0;
 
   return @{
     @"text": [NSString stringWithUTF8String:text.c_str()],
@@ -208,19 +212,25 @@ bool Exists(const std::string &path) {
   };
 }
 
-- (NSString *)finishWithError:(NSError * _Nullable * _Nullable)error {
-  std::lock_guard<std::mutex> lock(_mutex);
-  if (!_recognizer || !_stream) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:211 userInfo:@{NSLocalizedDescriptionKey: @"ASR stream not initialized"}];
++ (NSString *)finishJob:(NSString *)jobId {
+  // Taking the job moves ownership here for the tail decode; the stream is
+  // destroyed when this scope releases it. A job that is no longer live has
+  // nothing left to drain, which is a normal stop after a cancel rather than a
+  // failure, so it yields empty text.
+  const auto job = AsrJobs().takeJob(NsToStd(jobId));
+  if (!job || job->cancelled()) {
     return @"";
   }
 
-  SherpaOnnxOnlineStreamInputFinished(_stream);
-  while (SherpaOnnxIsOnlineStreamReady(_recognizer, _stream)) {
-    SherpaOnnxDecodeOnlineStream(_recognizer, _stream);
+  SherpaOnnxOnlineStreamInputFinished(job->stream());
+  while (!job->cancelled() && SherpaOnnxIsOnlineStreamReady(job->recognizer(), job->stream())) {
+    SherpaOnnxDecodeOnlineStream(job->recognizer(), job->stream());
+  }
+  if (job->cancelled()) {
+    return @"";
   }
 
-  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(_recognizer, _stream);
+  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(job->recognizer(), job->stream());
   std::string text;
   if (result && result->text) {
     text = std::string(result->text);
@@ -229,22 +239,21 @@ bool Exists(const std::string &path) {
     SherpaOnnxDestroyOnlineRecognizerResult(result);
   }
 
-  SherpaOnnxDestroyOnlineStream(_stream);
-  _stream = nullptr;
-
   return [NSString stringWithUTF8String:text.c_str()];
 }
 
-- (void)cancel {
-  std::lock_guard<std::mutex> lock(_mutex);
-  if (_stream) {
-    SherpaOnnxDestroyOnlineStream(_stream);
-    _stream = nullptr;
-  }
++ (void)cancelJob:(NSString *)jobId {
+  AsrJobs().cancelJob(NsToStd(jobId));
 }
 
-- (void)dealloc {
-  [self cancel];
++ (NSUInteger)releaseAssetsDir:(NSString *)assetsDir {
+  const std::string dir = NsToStd(assetsDir);
+  if (dir.empty()) return 0;
+  return static_cast<NSUInteger>(AsrJobs().releaseAssetsDir(dir));
+}
+
++ (NSUInteger)releaseAll {
+  return static_cast<NSUInteger>(AsrJobs().releaseAll());
 }
 
 @end

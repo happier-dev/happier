@@ -5,6 +5,42 @@ async function loadHandoffModule() {
 }
 
 describe('session handoff schemas', () => {
+  it('accepts a bounded installed Agent identity in a target resume plan', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(mod.SessionHandoffPrepareTargetResponseSchema.safeParse({
+      handoffId: 'handoff_external_agent',
+      status: {
+        handoffId: 'handoff_external_agent',
+        status: 'ready_for_cutover',
+        phase: 'staging_target',
+        recoveryActions: [],
+      },
+      remoteSessionId: 'external_remote_session',
+      directSource: {
+        kind: 'claudeConfig',
+        configDir: null,
+        projectId: null,
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'acme.agent',
+        agent: {
+          providerSessionId: 'external_vendor_session',
+        },
+      },
+      resume: {
+        directory: '/repo',
+        agent: 'acme.agent',
+        resume: 'external_vendor_session',
+        transcriptStorage: 'persisted',
+        approvedNewDirectoryCreation: true,
+      },
+    }).success).toBe(true);
+  });
+
   it('bounds typed native-import failures without changing the leaf import request', async () => {
     const mod = await loadHandoffModule();
     expect(mod).not.toHaveProperty('error');
@@ -971,7 +1007,7 @@ describe('session handoff schemas', () => {
     ).toBe(false);
   });
 
-  it('accepts all AgentProviderIdV1 values in resume payloads and rejects unknown providers', async () => {
+  it('accepts bounded Agent identities in resume payloads', async () => {
     const mod = await loadHandoffModule();
     expect(mod).not.toHaveProperty('error');
     if ('error' in mod) return;
@@ -1000,7 +1036,10 @@ describe('session handoff schemas', () => {
 
     expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('pi')).success).toBe(true);
     expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('ohMyPi')).success).toBe(true);
-    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('plugin_backend')).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('plugin_backend')).success).toBe(true);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload(' plugin_backend')).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('')).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('a'.repeat(129))).success).toBe(false);
   });
 
   it('validates runtimeDescriptorV1 as a schema-owned field', async () => {

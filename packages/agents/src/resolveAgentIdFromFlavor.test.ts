@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_AGENT_ID } from './manifest.js';
-
 import { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
-import { inferAgentIdFromSessionMetadata, resolveDeclaredAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
+import { resolveAgentIdFromSessionMetadata, resolveDeclaredAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
 import { resolveLegacyCustomAcpCompatAgentIdFromFlavor } from './compat/customAcp.js';
 
 describe('resolveAgentIdFromFlavor', () => {
@@ -48,13 +46,13 @@ describe('resolveAgentIdFromFlavor', () => {
   });
 });
 
-describe('inferAgentIdFromSessionMetadata', () => {
+describe('resolveAgentIdFromSessionMetadata', () => {
   it('uses metadata.flavor when canonical runtime metadata is absent', () => {
-    expect(inferAgentIdFromSessionMetadata({ flavor: 'gpt' })).toBe('codex');
+    expect(resolveAgentIdFromSessionMetadata({ flavor: 'gpt' })).toBe('codex');
   });
 
   it('prefers canonical runtimeDescriptorV1 provider ids over stale metadata.flavor', () => {
-    expect(inferAgentIdFromSessionMetadata({
+    expect(resolveAgentIdFromSessionMetadata({
       flavor: 'claude',
       runtimeDescriptorV1: {
         v: 1,
@@ -65,7 +63,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
   });
 
   it('imports structured Oh My Pi runtime identity before stale flavor for resume and fork routing', () => {
-    expect(inferAgentIdFromSessionMetadata({
+    expect(resolveAgentIdFromSessionMetadata({
       flavor: 'claude',
       runtimeDescriptorV1: {
         v: 1,
@@ -81,8 +79,8 @@ describe('inferAgentIdFromSessionMetadata', () => {
   });
 
   it('falls back to vendor resume id fields when flavor is missing', () => {
-    expect(inferAgentIdFromSessionMetadata({ opencodeSessionId: 'o1' })).toBe('opencode');
-    expect(inferAgentIdFromSessionMetadata({ claudeSessionId: 'c1' })).toBe('claude');
+    expect(resolveAgentIdFromSessionMetadata({ opencodeSessionId: 'o1' })).toBe('opencode');
+    expect(resolveAgentIdFromSessionMetadata({ claudeSessionId: 'c1' })).toBe('claude');
   });
 
   it('does not treat vendor resume id fields as declared runtime owners', () => {
@@ -91,14 +89,14 @@ describe('inferAgentIdFromSessionMetadata', () => {
   });
 
   it('prefers agentRuntimeDescriptorV1 provider ids when flavor and legacy fields are missing', () => {
-    expect(inferAgentIdFromSessionMetadata({
+    expect(resolveAgentIdFromSessionMetadata({
       agentRuntimeDescriptorV1: {
         v: 1,
         agentId: 'opencode',
         provider: { backendMode: 'server', providerSessionId: 'oc_1' },
       },
     })).toBe('opencode');
-    expect(inferAgentIdFromSessionMetadata({
+    expect(resolveAgentIdFromSessionMetadata({
       agentRuntimeDescriptorV1: {
         v: 1,
         agentId: 'ohMyPi',
@@ -108,7 +106,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
   });
 
   it('prefers linked external-session Agent ids when flavor and runtime descriptor are missing', () => {
-    expect(inferAgentIdFromSessionMetadata({
+    expect(resolveAgentIdFromSessionMetadata({
       directSessionV1: {
         v: 1,
         providerId: 'opencode',
@@ -118,7 +116,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
         linkedAtMs: 1,
       },
     })).toBe('opencode');
-    expect(inferAgentIdFromSessionMetadata({
+    expect(resolveAgentIdFromSessionMetadata({
       externalSessionV1: {
         v: 1,
         agentId: 'codex',
@@ -130,7 +128,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
   });
 
   it('prefers linked external-session Agent ids over stale metadata.flavor', () => {
-    expect(inferAgentIdFromSessionMetadata({
+    expect(resolveAgentIdFromSessionMetadata({
       flavor: 'claude',
       directSessionV1: {
         v: 1,
@@ -162,7 +160,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
     };
 
     expect(resolveDeclaredAgentIdFromSessionMetadata(conflictingLinkedSessionMetadata)).toBeNull();
-    expect(inferAgentIdFromSessionMetadata(conflictingLinkedSessionMetadata)).toBe(DEFAULT_AGENT_ID);
+    expect(resolveAgentIdFromSessionMetadata(conflictingLinkedSessionMetadata)).toBeNull();
 
     expect(resolveDeclaredAgentIdFromSessionMetadata({
       externalSessionV1: {
@@ -174,7 +172,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
   });
 
   it('does not let legacy customAcp flavor carriers override canonical runtime metadata', () => {
-    expect(inferAgentIdFromSessionMetadata({
+    expect(resolveAgentIdFromSessionMetadata({
       flavor: 'customAcp',
       agentRuntimeDescriptorV1: {
         v: 1,
@@ -184,8 +182,8 @@ describe('inferAgentIdFromSessionMetadata', () => {
     })).toBe('codex');
   });
 
-  it('falls back to DEFAULT_AGENT_ID when no inference matches', () => {
-    expect(inferAgentIdFromSessionMetadata({})).toBe(DEFAULT_AGENT_ID);
-    expect(inferAgentIdFromSessionMetadata(null)).toBe(DEFAULT_AGENT_ID);
+  it('reports identity as unavailable when no evidence matches instead of selecting a default Agent', () => {
+    expect(resolveAgentIdFromSessionMetadata({})).toBeNull();
+    expect(resolveAgentIdFromSessionMetadata(null)).toBeNull();
   });
 });

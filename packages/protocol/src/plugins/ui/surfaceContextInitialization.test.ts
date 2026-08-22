@@ -17,7 +17,7 @@ describe('plugin UI surface-context module initialization', () => {
       sessionHeaderActions: [{
         id: 'open-preview',
         title: { key: 'openPreview', fallback: 'Open preview' },
-        command: { kind: 'openSurface', destination: 'preview' },
+        action: { kind: 'openSurface', destination: 'preview' },
       }],
     });
 

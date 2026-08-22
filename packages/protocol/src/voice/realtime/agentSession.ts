@@ -7,7 +7,7 @@ import {
   defineProtocolString,
   defineProtocolUtf8String,
   type ProtocolComposableSchema,
-} from '../../plugins/actions/jsonSchemaValidation.js';
+} from '../../plugins/actions/protocolComposableSchema.js';
 
 export const AGENT_SESSION_REALTIME_SDP_MAX_BYTES = 64 * 1024;
 

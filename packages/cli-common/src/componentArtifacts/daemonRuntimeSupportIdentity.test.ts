@@ -201,6 +201,55 @@ describe('daemon runtime support identity', () => {
     expect(existsSync(join(payloadDir, 'package-dist'))).toBe(false);
   });
 
+  it('stages immutable daemon support without waiting for the mutable CLI dist lock', async () => {
+    const root = await makeTempRepo();
+    await createSupportIdentityFixture(root);
+    const target = targetForHost();
+    const identityInput = {
+      repoRoot: root,
+      target,
+      goVersion: 'go version go1.fixture',
+    };
+    const identity = readCliBinaryArtifactSupportIdentity(identityInput);
+    const payloadDir = join(root, 'artifacts', 'daemon-support', identity.fingerprint, 'payload');
+    const cliDistLockPath = join(root, '.project', 'tmp', 'cli-dist-build.lock');
+    await writeFixtureFile(cliDistLockPath, JSON.stringify({
+      pid: process.pid,
+      createdAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+    }));
+
+    let commandObservedWhileCliDistLocked = false;
+    let markCommandStarted!: () => void;
+    const commandStarted = new Promise<void>((resolvePromise) => {
+      markCommandStarted = resolvePromise;
+    });
+    const build = buildCliBinaryArtifactSupportPayload({
+      ...identityInput,
+      payloadDir,
+      supportArtifactFingerprint: identity.fingerprint,
+      commandProbe: (command) => command === 'yarn',
+      runCommand: async (_command, args) => {
+        commandObservedWhileCliDistLocked = existsSync(cliDistLockPath);
+        const outputIndex = args.indexOf('--output');
+        const outputPath = args[outputIndex + 1];
+        if (outputIndex < 0 || !outputPath) throw new Error('fixture managed-runtime output path missing');
+        await writeFixtureFile(outputPath, 'managed runtime\n');
+        markCommandStarted();
+      },
+    });
+
+    const startedBeforeRelease = await Promise.race([
+      commandStarted.then(() => true),
+      new Promise<false>((resolvePromise) => setTimeout(() => resolvePromise(false), 1_000)),
+    ]);
+    await rm(cliDistLockPath, { force: true });
+    await build;
+
+    expect(startedBeforeRelease).toBe(true);
+    expect(commandObservedWhileCliDistLocked).toBe(true);
+  });
+
   it('builds daemon code without recopying its stable runtime support closure', async () => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);

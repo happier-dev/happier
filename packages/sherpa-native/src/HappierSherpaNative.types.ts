@@ -55,6 +55,15 @@ export type SherpaNativeModule = {
     channels: number;
   }): Promise<{ text: string; isEndpoint: boolean }>;
   finishStreaming(params: { jobId: string }): Promise<{ text: string }>;
+  /**
+   * Drop the streaming recognizer cached for `assetsDir` and cancel the jobs
+   * decoding against it, so a model pack whose bytes are about to be replaced or
+   * removed stops being served from memory.
+   *
+   * Optional because a JS-only update can run against an older native binary
+   * that predates this method; callers must tolerate its absence.
+   */
+  releaseStreamingAssetsDir?(params: { assetsDir: string }): Promise<{ cancelledJobs: number }>;
   createVadDetector(params: {
     detectorId: string;
     minSpeechMs: number;

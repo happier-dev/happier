@@ -92,6 +92,7 @@ function scanAction(inputSchema: PluginJsonSchemaV2) {
     scopes: ['global'],
     surfaces: ['plugin'],
     dangerLevel: 'safe' as const,
+    execution: { target: 'daemon' } as const,
     inputSchema,
     connectedAccountPurposeBindings: [{
       path: 'instance.binding.account',

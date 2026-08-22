@@ -199,9 +199,29 @@
       "types": "./dist/plugins/ui/targetedContributions.d.ts",
       "default": "./dist/plugins/ui/targetedContributions.js"
     },
+    "./plugins/ui/composerRef": {
+      "types": "./dist/plugins/ui/composerRef.d.ts",
+      "default": "./dist/plugins/ui/composerRef.js"
+    },
     "./plugins/actions/json-schema-validation": {
       "types": "./dist/plugins/actions/jsonSchemaValidation.d.ts",
       "default": "./dist/plugins/actions/jsonSchemaValidation.js"
+    },
+    "./plugins/actions/protocol-composable-schema": {
+      "types": "./dist/plugins/actions/protocolComposableSchema.d.ts",
+      "default": "./dist/plugins/actions/protocolComposableSchema.js"
+    },
+    "./plugins/errors": {
+      "types": "./dist/plugins/errors.d.ts",
+      "default": "./dist/plugins/errors.js"
+    },
+    "./plugins/contribution-identity": {
+      "types": "./dist/plugins/contributionIdentity.d.ts",
+      "default": "./dist/plugins/contributionIdentity.js"
+    },
+    "./plugins/plugin-id": {
+      "types": "./dist/plugins/pluginId.d.ts",
+      "default": "./dist/plugins/pluginId.js"
     },
     "./plugins/hooks": {
       "types": "./dist/plugins/hooks/catalog.d.ts",

@@ -5,6 +5,7 @@ import {
   isDynamicPluginResourceContributionV2,
   type PluginConnectedAccountDescriptorContributionV2,
 } from './v2.js';
+import { PluginActionDeclaredExecutionV2Schema } from '../actions/v2.js';
 import {
   PluginMcpDiscoverySourceContributionV1Schema,
   PluginMcpServerContributionV1Schema,
@@ -21,7 +22,11 @@ import {
   readComposerAttachmentRuntimeRegistrationFieldsV1,
   type ComposerAttachmentRuntimeRegistrationFieldV1,
 } from './composerAttachments.js';
+import type { PluginClientExecutionPlatformV1 } from './clientExecution.js';
+import type { VoiceProviderContribution } from './voiceProviders.js';
 import type { PromptAssetTypeDescriptorV1 } from '../../prompts/library/promptAssetsV1.js';
+import { isBundledProviderCatalogParserV1 } from '../../providers/catalog/descriptorV1.js';
+import { isBundledProviderCommandCatalogParserV1 } from '../../providers/detection/descriptorV1.js';
 
 export type PluginContributionReferenceRuleV2 = Readonly<{
   field: string;
@@ -45,7 +50,7 @@ export type PluginContributionReferenceCandidateV2 = Readonly<{
   reference: unknown;
   path: readonly (string | number)[];
 }>;
-export type PluginContributionClientPlatform = 'web' | 'ios' | 'android';
+export type PluginContributionClientPlatform = PluginClientExecutionPlatformV1;
 export type PluginContributionRegistrationTarget =
   | Readonly<{ realm: 'daemon' }>
   | Readonly<{
@@ -66,6 +71,8 @@ export type PluginContributionRegistrationRight = Readonly<{
     | ComposerAttachmentRuntimeRegistrationFieldV1
   )[];
   promptAssetDescriptor?: PromptAssetTypeDescriptorV1;
+  /** Canonical parsed declaration used to validate the registered Voice runtime. */
+  voiceProviderDeclaration?: VoiceProviderContribution;
   connectedAccountDescriptorDeclaration?: PluginConnectedAccountDescriptorContributionV2;
 }>;
 
@@ -89,7 +96,6 @@ export type PluginContributionCatalogEntryV2 = Readonly<{
   schema: z.ZodTypeAny;
   identityField: string | null;
   identityKind: 'localId' | 'nestedId' | 'locale' | 'delegatedDomain';
-  stability: 'stable' | 'experimental' | 'delegated';
   activationDemand: 'none' | 'declarative' | 'registration' | 'conditional';
   projectionFamily: string | null;
   allowedRuntimeRegistration: string | null;
@@ -116,7 +122,6 @@ export type PluginContributionCatalogEntryV2 = Readonly<{
   ): Readonly<{
     localId: string | null;
     family: string;
-    stability: PluginContributionCatalogEntryV2['stability'];
     consumer: string;
     platforms: PluginContributionCatalogEntryV2['platforms'];
     registration: 'required' | 'notRequired';
@@ -159,45 +164,45 @@ const ALL_PLATFORMS = Object.freeze(['cli', 'web', 'ios', 'android', 'desktop'] 
 const CLI_PLATFORMS = Object.freeze(['cli', 'desktop'] as const);
 type CoreFamily = typeof PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2[number]['family'];
 type FamilyPolicy = Pick<PluginContributionCatalogEntryV2,
-  'identityField' | 'stability' | 'disposition' | 'activationDemand' | 'projectionFamily' | 'allowedRuntimeRegistration' | 'consumer' | 'platforms'> &
+  'identityField' | 'disposition' | 'activationDemand' | 'projectionFamily' | 'allowedRuntimeRegistration' | 'consumer' | 'platforms'> &
   Readonly<{ registrationHost?: Exclude<PluginContributionCatalogEntryV2['registrationHost'], null> }>;
 const FAMILY_POLICIES = {
-  agents: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
-  providers: { identityField: 'id', stability: 'delegated', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
-  actions: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'actions', consumer: 'action-dispatch', platforms: ALL_PLATFORMS },
-  commands: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'cli-commands', platforms: CLI_PLATFORMS },
-  tools: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'agent-tools', platforms: CLI_PLATFORMS },
-  resources: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'resources', registrationHost: 'daemon', consumer: 'resource-service', platforms: ALL_PLATFORMS },
-  transcriptActivities: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'transcript-tail-host', platforms: ALL_PLATFORMS },
-  sessionHeaderActions: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'session-header-host', platforms: ALL_PLATFORMS },
-  browserTargets: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginBrowser', allowedRuntimeRegistration: null, consumer: 'browser-host', platforms: ALL_PLATFORMS },
-  browserActions: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginBrowser', allowedRuntimeRegistration: null, consumer: 'browser-host', platforms: ALL_PLATFORMS },
-  settings: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'settings-service', platforms: ALL_PLATFORMS },
-  events: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'events', consumer: 'event-broker', platforms: CLI_PLATFORMS },
-  executionRunProfiles: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'execution-run-host', platforms: CLI_PLATFORMS },
-  notifications: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'notification-service', platforms: ALL_PLATFORMS },
-  notificationChannels: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'notifications', consumer: 'notification-service', platforms: CLI_PLATFORMS },
-  scmHostingProviders: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'scmHostingProviders', allowedRuntimeRegistration: 'scm', consumer: 'scm-host', platforms: CLI_PLATFORMS },
-  scmBackends: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'scmBackends', allowedRuntimeRegistration: 'scm', consumer: 'scm-host', platforms: CLI_PLATFORMS },
-  connectedAccountDescriptors: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'connectedAccounts', allowedRuntimeRegistration: 'connectedAccounts', consumer: 'connected-account-service', platforms: CLI_PLATFORMS },
-  managedDependencies: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'managedDependencies', allowedRuntimeRegistration: null, consumer: 'managed-dependency-service', platforms: CLI_PLATFORMS },
-  systemTools: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'system-tool-service', platforms: CLI_PLATFORMS },
-  promptAssets: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'promptAssets', consumer: 'prompt-service', platforms: CLI_PLATFORMS },
-  hooks: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'hooks', consumer: 'hook-dispatch', platforms: CLI_PLATFORMS },
-  requestInterceptors: { identityField: 'id', stability: 'stable', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'interceptors', consumer: 'fetch-service', platforms: CLI_PLATFORMS },
-  voiceModelPacks: { identityField: 'id', stability: 'experimental', disposition: 'retained', activationDemand: 'none', projectionFamily: 'voiceModelPacks', allowedRuntimeRegistration: null, consumer: 'voice-model-catalog', platforms: ALL_PLATFORMS },
-  voiceProviders: { identityField: 'id', stability: 'experimental', disposition: 'retained', activationDemand: 'registration', projectionFamily: 'voiceProviders', allowedRuntimeRegistration: 'voiceProviders', registrationHost: 'discriminated', consumer: 'voice-host', platforms: Object.freeze(['web', 'ios', 'android'] as const) },
-  backgroundServices: { identityField: 'id', stability: 'stable', disposition: 'retained', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'backgroundServices', registrationHost: 'daemon', consumer: 'background-service-runner', platforms: CLI_PLATFORMS },
-  daemonDatabases: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'daemon-database-service', platforms: CLI_PLATFORMS },
-  composerReferences: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'composerReferences', registrationHost: 'daemon', consumer: 'composer-reference-host', platforms: ALL_PLATFORMS },
-  composerAttachments: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: 'composerAttachments', allowedRuntimeRegistration: 'composerAttachments', registrationHost: 'daemon', consumer: 'composer-attachment-host', platforms: ALL_PLATFORMS },
-  composerControls: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'composerControls', allowedRuntimeRegistration: null, consumer: 'composer-control-host', platforms: ALL_PLATFORMS },
-  composerRegions: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'composerRegions', allowedRuntimeRegistration: null, consumer: 'composer-region-host', platforms: ALL_PLATFORMS },
-  openableContentViewers: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'openable-content-host', platforms: ALL_PLATFORMS },
-  accountCollections: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'accountCollections', allowedRuntimeRegistration: null, consumer: 'account-collection-service', platforms: ALL_PLATFORMS },
-  webhooks: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'webhook-ingress', platforms: ALL_PLATFORMS },
-  pluginContributionPoints: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'targeted-contribution-admission', platforms: ALL_PLATFORMS },
-  targetedPluginContributions: { identityField: 'id', stability: 'experimental', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'targeted-contribution-admission', platforms: ALL_PLATFORMS },
+  agents: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
+  providers: { identityField: 'id', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
+  actions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'actions', registrationHost: 'discriminated', consumer: 'action-dispatch', platforms: ALL_PLATFORMS },
+  commands: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'cli-commands', platforms: CLI_PLATFORMS },
+  tools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'agent-tools', platforms: CLI_PLATFORMS },
+  resources: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'resources', registrationHost: 'daemon', consumer: 'resource-service', platforms: ALL_PLATFORMS },
+  transcriptActivities: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'transcript-tail-host', platforms: ALL_PLATFORMS },
+  sessionHeaderActions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'session-header-host', platforms: ALL_PLATFORMS },
+  browserTargets: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginBrowser', allowedRuntimeRegistration: null, consumer: 'browser-host', platforms: ALL_PLATFORMS },
+  browserActions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginBrowser', allowedRuntimeRegistration: null, consumer: 'browser-host', platforms: ALL_PLATFORMS },
+  settings: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'settings-service', platforms: ALL_PLATFORMS },
+  events: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'events', consumer: 'event-broker', platforms: CLI_PLATFORMS },
+  executionRunProfiles: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'execution-run-host', platforms: CLI_PLATFORMS },
+  notifications: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'notification-service', platforms: ALL_PLATFORMS },
+  notificationChannels: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'notifications', consumer: 'notification-service', platforms: CLI_PLATFORMS },
+  scmHostingProviders: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'scmHostingProviders', allowedRuntimeRegistration: 'scm', consumer: 'scm-host', platforms: CLI_PLATFORMS },
+  scmBackends: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'scmBackends', allowedRuntimeRegistration: 'scm', consumer: 'scm-host', platforms: CLI_PLATFORMS },
+  connectedAccountDescriptors: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: 'connectedAccounts', allowedRuntimeRegistration: 'connectedAccounts', consumer: 'connected-account-service', platforms: CLI_PLATFORMS },
+  managedDependencies: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'managedDependencies', allowedRuntimeRegistration: null, consumer: 'managed-dependency-service', platforms: CLI_PLATFORMS },
+  systemTools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'system-tool-service', platforms: CLI_PLATFORMS },
+  promptAssets: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'promptAssets', consumer: 'prompt-service', platforms: CLI_PLATFORMS },
+  hooks: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'hooks', consumer: 'hook-dispatch', platforms: CLI_PLATFORMS },
+  requestInterceptors: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'interceptors', consumer: 'fetch-service', platforms: CLI_PLATFORMS },
+  voiceModelPacks: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'voiceModelPacks', allowedRuntimeRegistration: null, consumer: 'voice-model-catalog', platforms: ALL_PLATFORMS },
+  voiceProviders: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: 'voiceProviders', allowedRuntimeRegistration: 'voiceProviders', registrationHost: 'discriminated', consumer: 'voice-host', platforms: Object.freeze(['web', 'ios', 'android'] as const) },
+  backgroundServices: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'backgroundServices', registrationHost: 'daemon', consumer: 'background-service-runner', platforms: CLI_PLATFORMS },
+  daemonDatabases: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'daemon-database-service', platforms: CLI_PLATFORMS },
+  composerReferences: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'composerReferences', registrationHost: 'daemon', consumer: 'composer-reference-host', platforms: ALL_PLATFORMS },
+  composerAttachments: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: 'composerAttachments', allowedRuntimeRegistration: 'composerAttachments', registrationHost: 'daemon', consumer: 'composer-attachment-host', platforms: ALL_PLATFORMS },
+  composerControls: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'composerControls', allowedRuntimeRegistration: null, consumer: 'composer-control-host', platforms: ALL_PLATFORMS },
+  composerRegions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'composerRegions', allowedRuntimeRegistration: null, consumer: 'composer-region-host', platforms: ALL_PLATFORMS },
+  openableContentViewers: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'openable-content-host', platforms: ALL_PLATFORMS },
+  accountCollections: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'accountCollections', allowedRuntimeRegistration: null, consumer: 'account-collection-service', platforms: ALL_PLATFORMS },
+  webhooks: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'webhook-ingress', platforms: ALL_PLATFORMS },
+  pluginContributionPoints: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'targeted-contribution-admission', platforms: ALL_PLATFORMS },
+  targetedPluginContributions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'targeted-contribution-admission', platforms: ALL_PLATFORMS },
 } as const satisfies Record<CoreFamily, FamilyPolicy>;
 
 function extractRuleReferences(
@@ -226,12 +231,15 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     reference: destination,
     path,
   }];
-  const semanticCommandReferences = (
-    command: unknown,
+  const semanticActionReferences = (
+    declaration: unknown,
     path: readonly (string | number)[],
   ): PluginContributionReferenceCandidateV2[] => {
-    if (!command || typeof command !== 'object' || Array.isArray(command)) return [];
-    const record = command as Readonly<Record<string, unknown>>;
+    // The bare `action: '<local-id>'` sugar has already widened to
+    // `executeAction` by the time reference extraction sees a contribution, so
+    // there is exactly one shape to read here.
+    if (!declaration || typeof declaration !== 'object' || Array.isArray(declaration)) return [];
+    const record = declaration as Readonly<Record<string, unknown>>;
     if (record.kind === 'executeAction' && record.action !== undefined) {
       return [{ targetFamily: 'actions', reference: record.action, path: [...path, 'action'] }];
     }
@@ -391,15 +399,15 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     return rendererChainReferences(value.renderer, ['renderer']);
   }
   if (family === 'sessionHeaderActions') {
-    return semanticCommandReferences(value.command, ['command']);
+    return semanticActionReferences(value.action, ['action']);
   }
   if (family === 'ui.views') {
     const headerActions = Array.isArray(value.headerActions) ? value.headerActions : [];
     return headerActions.flatMap((headerAction, index) => (
       headerAction && typeof headerAction === 'object'
-        ? semanticCommandReferences(
-            (headerAction as Readonly<Record<string, unknown>>).command,
-            ['headerActions', index, 'command'],
+        ? semanticActionReferences(
+            (headerAction as Readonly<Record<string, unknown>>).action,
+            ['headerActions', index, 'action'],
           )
         : []
     ));
@@ -643,12 +651,51 @@ function requiresFamilyRegistration(family: string, value: Readonly<Record<strin
   }
   if (family === 'providers') {
     const managedRuntime = value.managedRuntime;
-    return managedRuntime !== null
+    const declaresManagedRuntime = managedRuntime !== null
       && typeof managedRuntime === 'object'
       && !Array.isArray(managedRuntime)
       && (managedRuntime as Readonly<Record<string, unknown>>).kind === 'managed';
+    return declaresManagedRuntime
+      || readContributedProviderCatalogParserIds(value).length > 0;
   }
   return false;
+}
+
+/**
+ * The catalog wire formats a Provider contribution declares but the host does
+ * not bundle. Each one must be contributed by the declaring plugin's `providers`
+ * activation, so declaring one is what earns the registration right.
+ */
+export function readContributedProviderCatalogParserIds(
+  value: Readonly<Record<string, unknown>>,
+): readonly string[] {
+  const contributed = new Set<string>();
+  const catalog = value.catalog;
+  if (catalog && typeof catalog === 'object' && !Array.isArray(catalog)) {
+    const probes = (catalog as Readonly<Record<string, unknown>>).probes;
+    if (Array.isArray(probes)) {
+      for (const probe of probes) {
+        if (!probe || typeof probe !== 'object' || Array.isArray(probe)) continue;
+        const parser = (probe as Readonly<Record<string, unknown>>).parser;
+        if (typeof parser !== 'string' || isBundledProviderCatalogParserV1(parser)) continue;
+        contributed.add(parser);
+      }
+    }
+  }
+  // The command catalog fallback names a format from the same contributed
+  // vocabulary, so declaring one there earns the same registration right as
+  // declaring one on an HTTP probe.
+  const discovery = value.discovery;
+  if (discovery && typeof discovery === 'object' && !Array.isArray(discovery)) {
+    const fallback = (discovery as Readonly<Record<string, unknown>>).catalogFallback;
+    if (fallback && typeof fallback === 'object' && !Array.isArray(fallback)) {
+      const parser = (fallback as Readonly<Record<string, unknown>>).parser;
+      if (typeof parser === 'string' && !isBundledProviderCommandCatalogParserV1(parser)) {
+        contributed.add(parser);
+      }
+    }
+  }
+  return Object.freeze([...contributed].sort());
 }
 
 function createCatalogAdapters(input: Readonly<{
@@ -656,7 +703,6 @@ function createCatalogAdapters(input: Readonly<{
   schema: z.ZodTypeAny;
   identityField: string | null;
   identityKind: PluginContributionCatalogEntryV2['identityKind'];
-  stability: PluginContributionCatalogEntryV2['stability'];
   consumer: string;
   platforms: PluginContributionCatalogEntryV2['platforms'];
   requiresRegistration(value: Readonly<Record<string, unknown>>): boolean;
@@ -686,7 +732,7 @@ function createCatalogAdapters(input: Readonly<{
     },
     projectIntrospection: (value, lifecycle = { status: 'normalized' }) => Object.freeze({
       localId: input.identityKind === 'localId' ? conflictKey(value) : null,
-      family: input.manifestKey, stability: input.stability,
+      family: input.manifestKey,
       consumer: input.consumer, platforms: input.projectPlatforms?.(value) ?? input.platforms,
       registration: input.requiresRegistration(value) ? 'required' as const : 'notRequired' as const,
       status: lifecycle.status,
@@ -746,7 +792,22 @@ export const PLUGIN_CONTRIBUTION_CATALOG_V2: readonly PluginContributionCatalogE
         ]);
       },
       requiresRegistration(value) { return requiresFamilyRegistration(descriptor.family, value, policy.activationDemand); },
-      ...(descriptor.family === 'voiceProviders'
+      ...(descriptor.family === 'actions'
+        ? {
+            runtimeRegistrationTarget: (value: Readonly<Record<string, unknown>>) => {
+              const parsed = PluginActionDeclaredExecutionV2Schema.safeParse(value.execution);
+              if (!parsed.success) return null;
+              if (parsed.data.target === 'daemon') return Object.freeze({ realm: 'daemon' as const });
+              return Object.freeze({
+                realm: 'client' as const,
+                artifactId: parsed.data.client.artifactId,
+                modulePath: parsed.data.client.modulePath,
+                exportName: parsed.data.client.exportName,
+                platforms: Object.freeze([...parsed.data.platforms]),
+              });
+            },
+          }
+        : descriptor.family === 'voiceProviders'
         ? {
             runtimeRegistrationTarget: (value: Readonly<Record<string, unknown>>) => {
               if (value.kind === 'speech') return Object.freeze({ realm: 'daemon' as const });
@@ -780,7 +841,7 @@ export const PLUGIN_CONTRIBUTION_CATALOG_V2: readonly PluginContributionCatalogE
   }),
   defineCatalogEntry({
     manifestKey: 'settings.fields', schema: PluginSettingFieldV2Schema, identityField: 'id', identityKind: 'nestedId',
-    stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null,
+    disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null,
     references: Object.freeze([]), extractReferences: () => [], requiresRegistration: () => false,
     consumer: 'settings-service', platforms: ALL_PLATFORMS, fixtureId: 'all-family:settings.fields',
     readEntries: (contributes) => readManifestKeyEntries(contributes, 'settings').flatMap((settings) => (
@@ -789,17 +850,17 @@ export const PLUGIN_CONTRIBUTION_CATALOG_V2: readonly PluginContributionCatalogE
         : []
     )),
   }),
-  defineCatalogEntry({ manifestKey: 'ui.views', schema: PluginUiViewV2Schema, identityField: 'id', identityKind: 'localId', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([{ field: 'renderer', targetFamily: 'ui.renderers' }, { field: 'fallbackRenderers', targetFamily: 'ui.renderers', many: true }]), extractReferences: (value: Readonly<Record<string, unknown>>) => Object.freeze([
+  defineCatalogEntry({ manifestKey: 'ui.views', schema: PluginUiViewV2Schema, identityField: 'id', identityKind: 'localId', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([{ field: 'renderer', targetFamily: 'ui.renderers' }, { field: 'fallbackRenderers', targetFamily: 'ui.renderers', many: true }]), extractReferences: (value: Readonly<Record<string, unknown>>) => Object.freeze([
     ...extractRuleReferences(value, [{ field: 'renderer', targetFamily: 'ui.renderers' }, { field: 'fallbackRenderers', targetFamily: 'ui.renderers', many: true }]),
     ...extractNestedReferences('ui.views', value),
   ]), requiresRegistration: () => false, consumer: 'ui-surface-host', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.views' }),
-  defineCatalogEntry({ manifestKey: 'ui.renderers', schema: PluginUiRendererV2Schema, identityField: 'id', identityKind: 'localId', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([]), extractReferences: (value: Readonly<Record<string, unknown>>) => extractNestedReferences('ui.renderers', value), requiresRegistration: () => false, consumer: 'ui-renderer-host', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.renderers' }),
-  defineCatalogEntry({ manifestKey: 'ui.settingsGroups', schema: PluginUiSettingsGroupV1Schema, identityField: 'id', identityKind: 'localId', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([]), extractReferences: () => [], requiresRegistration: () => false, consumer: 'settings-catalog', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.settingsGroups' }),
-  defineCatalogEntry({ manifestKey: 'ui.settingsPages', schema: PluginUiSettingsPageV1Schema, identityField: 'id', identityKind: 'localId', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([{ field: 'renderer', targetFamily: 'ui.renderers' }, { field: 'group', targetFamily: 'ui.settingsGroups' }]), extractReferences: (value: Readonly<Record<string, unknown>>) => extractNestedReferences('ui.settingsPages', value), requiresRegistration: () => false, consumer: 'settings-catalog', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.settingsPages' }),
-  defineCatalogEntry({ manifestKey: 'ui.translations', schema: PluginUiTranslationBundleV2Schema, identityField: 'locale', identityKind: 'locale', stability: 'stable', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([]), extractReferences: () => [], requiresRegistration: () => false, consumer: 'ui-i18n-host', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.translations' }),
+  defineCatalogEntry({ manifestKey: 'ui.renderers', schema: PluginUiRendererV2Schema, identityField: 'id', identityKind: 'localId', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([]), extractReferences: (value: Readonly<Record<string, unknown>>) => extractNestedReferences('ui.renderers', value), requiresRegistration: () => false, consumer: 'ui-renderer-host', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.renderers' }),
+  defineCatalogEntry({ manifestKey: 'ui.settingsGroups', schema: PluginUiSettingsGroupV1Schema, identityField: 'id', identityKind: 'localId', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([]), extractReferences: () => [], requiresRegistration: () => false, consumer: 'settings-catalog', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.settingsGroups' }),
+  defineCatalogEntry({ manifestKey: 'ui.settingsPages', schema: PluginUiSettingsPageV1Schema, identityField: 'id', identityKind: 'localId', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([{ field: 'renderer', targetFamily: 'ui.renderers' }, { field: 'group', targetFamily: 'ui.settingsGroups' }]), extractReferences: (value: Readonly<Record<string, unknown>>) => extractNestedReferences('ui.settingsPages', value), requiresRegistration: () => false, consumer: 'settings-catalog', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.settingsPages' }),
+  defineCatalogEntry({ manifestKey: 'ui.translations', schema: PluginUiTranslationBundleV2Schema, identityField: 'locale', identityKind: 'locale', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([]), extractReferences: () => [], requiresRegistration: () => false, consumer: 'ui-i18n-host', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.translations' }),
   defineCatalogEntry({
     manifestKey: 'mcp.servers', schema: PluginMcpServerContributionV1Schema,
-    identityField: 'id', identityKind: 'localId', stability: 'stable', activationDemand: 'declarative', projectionFamily: 'mcp',
+    identityField: 'id', identityKind: 'localId', activationDemand: 'declarative', projectionFamily: 'mcp',
     allowedRuntimeRegistration: 'mcp', references: Object.freeze([]), consumer: 'host.mcp',
     extractReferences: (value: Readonly<Record<string, unknown>>) => extractNestedReferences('mcp.servers', value),
     requiresRegistration: (value: Readonly<Record<string, unknown>>) => value.kind === 'dynamic',
@@ -808,7 +869,7 @@ export const PLUGIN_CONTRIBUTION_CATALOG_V2: readonly PluginContributionCatalogE
   }),
   defineCatalogEntry({
     manifestKey: 'mcp.discoverySources', schema: PluginMcpDiscoverySourceContributionV1Schema,
-    identityField: 'id', identityKind: 'localId', stability: 'stable', activationDemand: 'registration', projectionFamily: 'mcp',
+    identityField: 'id', identityKind: 'localId', activationDemand: 'registration', projectionFamily: 'mcp',
     allowedRuntimeRegistration: 'mcp', references: Object.freeze([]), consumer: 'host.mcp',
     extractReferences: () => [],
     requiresRegistration: () => true,
@@ -897,6 +958,14 @@ function derivePluginContributionRegistrationRightsForHost(
           target,
           connectedAccountDescriptorDeclaration:
             record as PluginConnectedAccountDescriptorContributionV2,
+        }];
+      }
+      if (entry.manifestKey === 'voiceProviders') {
+        return [{
+          family,
+          localId,
+          target,
+          voiceProviderDeclaration: record as VoiceProviderContribution,
         }];
       }
       if (entry.manifestKey === 'promptAssets') {

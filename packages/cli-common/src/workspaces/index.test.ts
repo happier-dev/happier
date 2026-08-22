@@ -14,6 +14,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   bundleInstalledPackageWithRuntimeDependencies,
+  bundleWorkspacePackageWithRuntimeDependencies,
+  sanitizeBundledPackageJson,
   vendorBundledPackageRuntimeDependencies,
 } from './index';
 
@@ -43,6 +45,128 @@ afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+describe('sanitizeBundledPackageJson', () => {
+  it('preserves the exact prepublication author file inventory while stripping ordinary package files', () => {
+    const declaredAuthorFiles = [
+      'dist',
+      'package.json',
+      'API.md',
+      'api-surface.json',
+      'capability-matrix.json',
+      'examples/public-authoring/index.ts',
+      'scripts/validate-authoring.mjs',
+      'API.md',
+    ];
+
+    expect(sanitizeBundledPackageJson({
+      name: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      files: declaredAuthorFiles,
+      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+    }).files).toEqual([
+      'dist',
+      'package.json',
+      'API.md',
+      'api-surface.json',
+      'capability-matrix.json',
+      'examples/public-authoring/index.ts',
+      'scripts/validate-authoring.mjs',
+    ]);
+
+    expect(sanitizeBundledPackageJson({
+      name: '@happier-dev/plugins-example',
+      version: '0.0.0',
+      files: ['dist', 'README.md'],
+    })).not.toHaveProperty('files');
+  });
+
+  it('keeps the executable entrypoint declaration for every bundled workspace package', () => {
+    // `bin` is the only thing that makes a bundled package's dist executable
+    // discoverable. The Plugin SDK's `happier-plugin-build-ui` is exactly that:
+    // strip it and no `--ui` author can run `plugins author build` from either
+    // the packaged CLI's own bundled copy or a materialized prepublication root.
+    expect(sanitizeBundledPackageJson({
+      name: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      bin: { 'happier-plugin-build-ui': './dist/ui/build/bin.js' },
+      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+    }).bin).toEqual({ 'happier-plugin-build-ui': './dist/ui/build/bin.js' });
+
+    expect(sanitizeBundledPackageJson({
+      name: '@happier-dev/plugins-example',
+      version: '0.0.0',
+      bin: { 'example-tool': './dist/bin.js' },
+    }).bin).toEqual({ 'example-tool': './dist/bin.js' });
+
+    expect(sanitizeBundledPackageJson({
+      name: '@happier-dev/plugins-example',
+      version: '0.0.0',
+    })).not.toHaveProperty('bin');
+  });
+
+  it.each([
+    ['a traversal path', '../outside.md'],
+    ['a glob path', 'examples/**'],
+    ['a Windows path', 'scripts\\validate.mjs'],
+  ])('rejects a marked prepublication manifest with %s', (_description, declaredFile) => {
+    expect(() => sanitizeBundledPackageJson({
+      name: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      files: ['dist', declaredFile],
+      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+    })).toThrow(/exact relative path/u);
+  });
+});
+
+describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
+  it('validates the complete staged package before replacing last-green', () => {
+    const repositoryRoot = createTempRoot('cli-common-workspace-stage-validation-');
+    const sourceDir = join(repositoryRoot, 'packages', 'plugins', 'fixture');
+    const destinationDir = join(
+      repositoryRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'plugins-fixture',
+    );
+    writePackage(sourceDir, {
+      name: '@happier-dev/plugins-fixture',
+      version: '0.0.0',
+      type: 'module',
+      exports: { '.': './dist/index.js' },
+      dependencies: {},
+    }, {
+      'dist/index.js': 'export const generation = "current";\n',
+    });
+    writePackage(destinationDir, {
+      name: '@happier-dev/plugins-fixture',
+      version: '0.0.0',
+      type: 'module',
+      exports: { '.': './dist/index.js' },
+      dependencies: {},
+    }, {
+      'dist/index.js': 'export const generation = "last-green";\n',
+    });
+
+    expect(() => bundleWorkspacePackageWithRuntimeDependencies({
+      packageName: '@happier-dev/plugins-fixture',
+      srcDir: sourceDir,
+      destDir: destinationDir,
+      dereferenceRootDir: repositoryRoot,
+      validatePreparedPackage: ({ packageName, packageDir }) => {
+        expect(packageName).toBe('@happier-dev/plugins-fixture');
+        expect(readFileSync(join(packageDir, 'dist', 'index.js'), 'utf8'))
+          .toBe('export const generation = "current";\n');
+        throw new Error('fixture staged package rejected');
+      },
+    })).toThrow(/fixture staged package rejected/u);
+
+    expect(readFileSync(join(destinationDir, 'dist', 'index.js'), 'utf8'))
+      .toBe('export const generation = "last-green";\n');
+  });
 });
 
 describe('bundleInstalledPackageWithRuntimeDependencies', () => {

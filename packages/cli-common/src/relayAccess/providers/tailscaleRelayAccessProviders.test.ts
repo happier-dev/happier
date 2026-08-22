@@ -27,6 +27,8 @@ describe("tailscale relay access providers", () => {
       tailnetName: null,
       tailscaleIps: [],
       loggedIn: false,
+      running: false,
+      daemonReachable: true,
     });
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
@@ -47,6 +49,8 @@ describe("tailscale relay access providers", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleFunnelStatus).mockResolvedValue(
       "https://my-machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005",
@@ -71,6 +75,8 @@ describe("tailscale relay access providers", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleFunnelStatus).mockResolvedValue(
       "https://my-machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005",
@@ -102,6 +108,8 @@ describe("tailscale relay access providers", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleFunnelStatus).mockResolvedValue("No funnel config");
 
@@ -185,6 +193,8 @@ describe("tailscale relay access providers", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleServeStatus).mockResolvedValue(
       "https://my-machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005",
@@ -209,6 +219,8 @@ describe("tailscale relay access providers", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleServeStatus).mockResolvedValue(
       "https://my-machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005",
@@ -232,7 +244,8 @@ describe("tailscale relay access providers", () => {
   });
 
   it("tailscaleServe bounds configure commands to the provided deadline and signal", async () => {
-    const { runTailscaleServeEnable } = await import("../../tailscale/index.js");
+    const { runTailscaleServeEnable, runTailscaleServeStatus } = await import("../../tailscale/index.js");
+    vi.mocked(runTailscaleServeStatus).mockResolvedValue("No serve config");
     vi.mocked(runTailscaleServeEnable).mockResolvedValue({
       approvalUrl: null,
       httpsUrl: "https://my-machine.tailnet.ts.net",
@@ -274,6 +287,8 @@ describe("tailscale relay access providers", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleServeStatus).mockResolvedValue(
       "https://my-machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005",
@@ -340,6 +355,8 @@ describe("tailscale relay access providers", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true,
+      daemonReachable: true,
     });
     vi.mocked(runTailscaleFunnelStatus).mockResolvedValue([
       "https://other.tailnet.ts.net",

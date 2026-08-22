@@ -17,6 +17,7 @@ import {
     PluginCollectionCandidatePreparationRetireRequestV1Schema as canonicalPluginCollectionCandidatePreparationRetireRequestV1Schema,
     PluginCollectionCandidatePreparationStageRequestV1Schema as canonicalPluginCollectionCandidatePreparationStageRequestV1Schema,
     PluginCollectionContractReadResultV1Schema as canonicalPluginCollectionContractReadResultV1Schema,
+    splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1 as canonicalSplitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1,
 } from './plugins/data/collectionsV1.js';
 import {
     PluginUiDestinationReferenceV1Schema as canonicalPluginUiDestinationReferenceV1Schema,
@@ -144,6 +145,8 @@ describe('protocol package root exports', () => {
         expectTypeOf<protocol.PluginCollectionCandidatePreparationStageRequestV1>().not.toBeNever();
         expect(protocol.measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1)
             .toBe(canonicalMeasurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1);
+        expect(protocol.splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1)
+            .toBe(canonicalSplitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1);
         expect(protocol.PluginCollectionCandidatePreparationRetireRequestV1Schema)
             .toBe(canonicalPluginCollectionCandidatePreparationRetireRequestV1Schema);
         expectTypeOf<protocol.PluginCollectionCandidatePreparationRetireRequestV1>().not.toBeNever();

@@ -64,9 +64,13 @@ Pod::Spec.new do |s|
 
   s.source_files = [
     '*.{h,m,mm,swift}',
+    '../common/cpp/HappierSherpaAsrStreamRegistry.h',
     '../common/cpp/HappierSherpaTtsJobRegistry.h'
   ]
-  s.private_header_files = '../common/cpp/HappierSherpaTtsJobRegistry.h'
+  s.private_header_files = [
+    '../common/cpp/HappierSherpaAsrStreamRegistry.h',
+    '../common/cpp/HappierSherpaTtsJobRegistry.h'
+  ]
   s.exclude_files = 'Tests/**/*'
   s.resource_bundles = {
     'HappierSherpaNativeResources' => ['../android/src/main/assets/silero_vad_v5.onnx']

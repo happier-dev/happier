@@ -187,7 +187,7 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
         "byServerIdSettingId": "opencodeServerBaseUrlByServerIdV1",
         "constants": {},
         "field": "baseUrl",
-        "kind": "agentSetting",
+        "kind": "agentSettingOverride",
         "normalization": "httpOrigin",
         "settingId": "opencodeServerBaseUrl"
       }
@@ -326,6 +326,13 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "min": 1,
           "name": "agentDir",
           "nullish": true
+        },
+        {
+          "kind": "string",
+          "max": 10000,
+          "min": 1,
+          "name": "sessionFilePath",
+          "nullish": true
         }
       ]
     },
@@ -370,6 +377,13 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "max": 10000,
           "min": 1,
           "name": "agentDir",
+          "nullish": true
+        },
+        {
+          "kind": "string",
+          "max": 10000,
+          "min": 1,
+          "name": "sessionFile",
           "nullish": true
         }
       ]

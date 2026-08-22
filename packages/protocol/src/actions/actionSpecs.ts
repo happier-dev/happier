@@ -6,7 +6,13 @@ import {
   ConversationTurnOriginV1Schema,
   type ConversationTurnOriginV1,
 } from '../messages/structured/conversationTurnOriginV1.js';
-import { ACTION_ID_FAMILIES_V1, ActionIdSchema, type ActionId } from './actionIds.js';
+import {
+  ACTION_ID_FAMILIES_V1,
+  ActionIdSchema,
+  PLUGIN_DEV_LOOP_ACTION_IDS_V1,
+  type ActionId,
+  type PluginDevLoopActionIdV1,
+} from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import {
@@ -49,8 +55,12 @@ import {
   AutomationEventActionOutputSchemasV1,
   type AutomationEventActionIdV1,
 } from '../automations/automationActionSpecsV1.js';
-import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
+import {
+  PluginContributionIdentityV1Schema,
+  PluginContributionLocalIdSchema,
+} from '../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
+import { CurrentUiContextSnapshotV1Schema } from '../plugins/ui/currentUiContext.js';
 import {
   ActionInputFieldHintSchema,
   ActionInputHintsSchema,
@@ -380,10 +390,13 @@ const ActionPluginCallerAdministrativeSelectorSchema = z.object({
 /**
  * A host Action's explicit authority contract when it is callable by a
  * plugin. `caller` requires a current host-stamped plugin caller at the
- * canonical executor. Further identity projection occurs only where an
- * incumbent domain owner has caller-dependent authorization; it never grants
- * authority over another plugin. `self_or_inspector_admin` is reserved for
- * the one plugin-targeted host Action and makes its exceptional Inspector
+ * canonical executor: the host proves the call really came from the claimed
+ * plugin materialization. Further identity projection occurs only where an
+ * incumbent domain owner has caller-dependent authorization — for example the
+ * Account-scoped Automation owner, which fences its own reads by Account and
+ * current materialization rather than by which plugin is asking — and it never
+ * grants authority over another plugin. `self_or_inspector_admin` is reserved
+ * for the one plugin-targeted host Action and makes its exceptional Inspector
  * administration visible at the Action declaration owner.
  */
 export const ActionPluginCallerPolicySchema = z.discriminatedUnion('kind', [
@@ -494,7 +507,7 @@ export const ActionSpecSchema = z.object({
     .optional(),
   prompting: ActionPromptingSchema.optional(),
   toolExposure: ActionToolExposureSchema.optional(),
-  /** Explicit host-stamped caller authority required by a non-safe Plugin Action. */
+  /** Explicit host-stamped caller authority for a Plugin Action. */
   pluginCallerPolicy: ActionPluginCallerPolicySchema.optional(),
   surfaces: ActionSurfaceSchema,
   inputSchema: ZodSchemaLike,
@@ -571,10 +584,10 @@ export const ActionSpecSchema = z.object({
       path: ['pluginCallerPolicy'],
     });
   }
-  if (!nonSafePluginAction && value.pluginCallerPolicy) {
+  if (!value.surfaces.plugin && value.pluginCallerPolicy) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'pluginCallerPolicy requires a non-safe surface.plugin Action',
+      message: 'pluginCallerPolicy requires a surface.plugin Action',
       path: ['pluginCallerPolicy'],
     });
   }
@@ -606,9 +619,10 @@ export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
 }>;
 
 /**
- * Evaluates the declaration-owned policy against only host-stamped caller
- * provenance and already-validated canonical Action input. No Action input is
- * allowed to manufacture caller identity.
+ * Evaluates the declaration-owned policy against host-stamped caller
+ * provenance. Action input never manufactures, widens, or narrows caller
+ * authority: it is read only to name the plugin the call *targets*, and the
+ * target is then compared against the stamped caller.
  */
 export function isPluginActionCallerPolicySatisfied(
   policy: ActionPluginCallerPolicy | undefined,
@@ -747,10 +761,21 @@ const SessionTranscriptRoleSchema = z.enum(['user', 'assistant']);
 const SessionStoredTranscriptRoleSchema = z.enum(['user', 'agent', 'event', 'unknown']);
 
 const SessionTranscriptGetExternalShareableProjectionSchema = z.literal('externalShareableV1');
+
+/**
+ * The largest page `session.transcript.get` will return for one request.
+ *
+ * Named here because the bound has consumers outside the schema: the reader
+ * clamps to it, and a caller that wants the fewest possible round trips asks
+ * for exactly it. Each of those was carrying its own copy of the number, so
+ * lowering the bound left them confidently over-asking.
+ */
+export const SESSION_TRANSCRIPT_GET_MAX_LIMIT = 100;
+
 const SessionTranscriptGetInputShape = {
   sessionId: z.string().min(1),
   projection: SessionTranscriptGetExternalShareableProjectionSchema.optional(),
-  limit: z.number().int().min(1).max(100).optional(),
+  limit: z.number().int().min(1).max(SESSION_TRANSCRIPT_GET_MAX_LIMIT).optional(),
   cursor: z.string().min(1).nullable().optional(),
   direction: z.enum(['before', 'after']).optional(),
   scope: z.enum(['main', 'sidechain', 'all']).optional(),
@@ -1345,6 +1370,17 @@ const ActionOptionsResolveInputSchema = z.object({
   }
 });
 
+/** One generic dynamic Action bridge; selection and policy remain executor-owned. */
+const ActionInvokeInputSchema = z.object({
+  action: asProtocolZod(PluginContributionIdentityV1Schema),
+  input: StrictJsonValueSchema.optional(),
+}).strict();
+
+/** Current-UI semantic payloads stay behind the ephemeral opaque command handle. */
+const CurrentUiContextCommandInvokeInputSchema = z.object({
+  commandId: z.string().trim().min(1),
+}).strict();
+
 const SessionSendMessageInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   message: z.string().min(1),
@@ -1745,6 +1781,9 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'action.spec.search',
   'action.spec.get',
   'action.options.resolve',
+  'action.invoke',
+  'ui.current_context.read',
+  'ui.current_context.command.invoke',
   'account.plugins.data.erase',
   'sessions.subagents.list',
   'sessions.subagents.get',
@@ -1797,6 +1836,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'approval.request.list',
   'approval.request.get',
   'plugins.list',
+  'plugins.change.status',
   'plugins.settings.list',
   'plugins.settings.get',
   'plugins.settings.secret.status',
@@ -2034,6 +2074,13 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'plugins.scaffold',
   'plugins.install',
   'plugins.uninstall',
+  'plugins.dev',
+  'plugins.author.install',
+  'plugins.author.typecheck',
+  'plugins.author.build',
+  'plugins.author.test',
+  'plugins.doctor',
+  'plugins.pack',
   'plugins.reload',
   'plugins.sessionHooks.install',
   'plugins.sessionHooks.disable',
@@ -2251,15 +2298,6 @@ function bindPluginPermissionSubject(
   };
 }
 
-const PLUGIN_DEV_LOOP_ACTION_IDS = [
-  'plugins.scaffold',
-  'plugins.install',
-  'plugins.uninstall',
-  'plugins.reload',
-  'plugins.list',
-] as const satisfies readonly ActionId[];
-type PluginDevLoopActionId = typeof PLUGIN_DEV_LOOP_ACTION_IDS[number];
-
 /**
  * The single vocabulary for the plugin scaffold's UI mode. Every surface that
  * accepts `--ui` (CLI parser, `plugins.scaffold` action input, scaffold engine)
@@ -2290,39 +2328,153 @@ const PluginReloadActionInputSchema = z.object({
   pluginId: z.string().trim().min(1),
 }).strict();
 
+const PluginDevActionInputSchema = z.object({
+  projectRoot: z.string().trim().min(1),
+  sdkRegistryOrigin: z.string().trim().min(1).optional(),
+}).strict();
+
+const PluginAuthorActionInputSchema = z.object({
+  projectRoot: z.string().trim().min(1),
+  sdkRegistryOrigin: z.string().trim().min(1).optional(),
+}).strict();
+
+const PluginDoctorActionInputSchema = z.object({
+  locator: z.string().trim().min(1),
+}).strict();
+
+const PluginPackActionInputSchema = z.object({
+  locator: z.string().trim().min(1),
+  outPath: z.string().trim().min(1).optional(),
+  sdkRegistryOrigin: z.string().trim().min(1).optional(),
+}).strict();
+
 const PluginListActionInputSchema = z.object({}).strict();
+
+const PluginChangeStatusActionInputSchema = z.object({
+  pendingChangeId: z.string().trim().min(1),
+}).strict();
 
 const PluginDevLoopActionInputSchemas = {
   'plugins.scaffold': PluginScaffoldActionInputSchema,
   'plugins.install': PluginInstallActionInputSchema,
   'plugins.uninstall': PluginUninstallActionInputSchema,
+  'plugins.dev': PluginDevActionInputSchema,
+  'plugins.author.install': PluginAuthorActionInputSchema,
+  'plugins.author.typecheck': PluginAuthorActionInputSchema,
+  'plugins.author.build': PluginAuthorActionInputSchema,
+  'plugins.author.test': PluginAuthorActionInputSchema,
+  'plugins.doctor': PluginDoctorActionInputSchema,
+  'plugins.pack': PluginPackActionInputSchema,
   'plugins.reload': PluginReloadActionInputSchema,
   'plugins.list': PluginListActionInputSchema,
-} as const satisfies Readonly<Record<PluginDevLoopActionId, z.ZodTypeAny>>;
+  'plugins.change.status': PluginChangeStatusActionInputSchema,
+} as const satisfies Readonly<Record<PluginDevLoopActionIdV1, z.ZodTypeAny>>;
 
-const PluginDevLoopActionOutputSchema = z.object({
-  ok: z.boolean().optional(),
+const PluginDevLoopActionResultKindSchema = z.enum([
+  'plugins_scaffold',
+  'plugins_install',
+  'plugins_uninstall',
+  'plugins_dev',
+  'plugins_author_install',
+  'plugins_author_typecheck',
+  'plugins_author_build',
+  'plugins_author_test',
+  'plugins_doctor',
+  'plugins_pack',
+  'plugins_reload',
+  'plugins_list',
+  'plugins_change_status',
+]);
+
+const PluginDevLoopPendingReviewSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('sourceRootReviewRequired'),
+    pendingChangeId: z.string().trim().min(1),
+    // The daemon/CLI change owner retains the source-review payload contract.
+    // Action consumers receive it only as an opaque, nested projection.
+    review: z.object({}).passthrough(),
+  }).passthrough(),
+  z.object({
+    kind: z.literal('reviewRequired'),
+    pendingChangeId: z.string().trim().min(1),
+    // The daemon/CLI change owner retains the package-review payload contract.
+    review: z.object({}).passthrough(),
+  }).passthrough(),
+]);
+
+const PluginDevLoopReviewRequiredActionOutputSchema = z.object({
+  ok: z.literal(false),
+  kind: z.enum(['plugins_install', 'plugins_dev', 'plugins_reload']),
+  outcome: z.literal('reviewRequired'),
+  // A pending daemon candidate is one nested value. An Action may report it,
+  // but never decides it or supplies authenticated user interaction evidence.
+  pendingReview: PluginDevLoopPendingReviewSchema,
+  pendingChangeId: z.never().optional(),
+  review: z.never().optional(),
 }).passthrough();
 
-const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionId, string>> = Object.freeze({
+const PluginDevLoopChangeStatusActionOutputSchema = z.object({
+  ok: z.literal(true),
+  kind: z.literal('plugins_change_status'),
+  // Status is daemon-lifetime state owned by the CLI change client. Keep its
+  // state/result payload opaque here instead of introducing a second owner.
+  status: z.object({}).passthrough(),
+}).passthrough();
+
+const PluginDevLoopOrdinaryActionOutputSchema = z.object({
+  ok: z.boolean(),
+  kind: PluginDevLoopActionResultKindSchema.exclude(['plugins_change_status']),
+  // Only install currently emits an ordinary outcome. Keeping this bounded
+  // prevents a review-required result from bypassing its typed envelope.
+  outcome: z.enum(['applied', 'failed']).optional(),
+  pendingReview: z.never().optional(),
+  pendingChangeId: z.never().optional(),
+  review: z.never().optional(),
+}).passthrough();
+
+const PluginDevLoopActionOutputSchema = z.union([
+  PluginDevLoopReviewRequiredActionOutputSchema,
+  PluginDevLoopChangeStatusActionOutputSchema,
+  PluginDevLoopOrdinaryActionOutputSchema,
+]);
+
+const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionIdV1, string>> = Object.freeze({
   'plugins.scaffold': 'Scaffold plugin',
   'plugins.install': 'Install plugin',
   'plugins.uninstall': 'Uninstall plugin',
+  'plugins.dev': 'Submit plugin development snapshot',
+  'plugins.author.install': 'Prepare plugin author dependencies',
+  'plugins.author.typecheck': 'Typecheck plugin author source',
+  'plugins.author.build': 'Build plugin author source',
+  'plugins.author.test': 'Test plugin author source',
+  'plugins.doctor': 'Diagnose plugin author source',
+  'plugins.pack': 'Pack plugin',
   'plugins.reload': 'Reload plugin',
   'plugins.list': 'List plugins',
+  'plugins.change.status': 'Get plugin change status',
 });
 
-const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionId, string>> = Object.freeze({
+const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionIdV1, string>> = Object.freeze({
   'plugins.scaffold': 'Create a local plugin scaffold from the first-party template.',
   'plugins.install': 'Install a local plugin source and optionally enable the dev reload loop.',
   'plugins.uninstall': 'Remove a local installed plugin through the daemon-owned plugin lifecycle.',
+  'plugins.dev': 'Inspect a local plugin source and submit its current snapshot to the daemon-owned development cycle without starting a watcher.',
+  'plugins.author.install': 'Prepare external plugin-author dependencies through the managed runtime.',
+  'plugins.author.typecheck': 'Run the managed TypeScript check for an external plugin-author source.',
+  'plugins.author.build': 'Build an external plugin-author source through the managed runtime.',
+  'plugins.author.test': 'Run the external plugin-author test command through the managed runtime.',
+  'plugins.doctor': 'Evaluate and diagnose an external plugin-author source.',
+  'plugins.pack': 'Validate and package a local plugin into an installable archive.',
   'plugins.reload': 'Reload one local development plugin through the daemon-owned plugin lifecycle.',
   'plugins.list': 'List installed plugins with source and load diagnostics.',
+  'plugins.change.status': 'Read one daemon-issued pending plugin change without creating or deciding it.',
 });
 
-function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionId): ActionSpecWithoutApproval {
-  const isRead = actionId === 'plugins.list';
-  const isInspectorUiAction = actionId === 'plugins.list' || actionId === 'plugins.reload';
+function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1): ActionSpecWithoutApproval {
+  const isRead = actionId === 'plugins.list' || actionId === 'plugins.change.status';
+  const isInspectorUiAction = actionId === 'plugins.list'
+    || actionId === 'plugins.reload'
+    || actionId === 'plugins.change.status';
   const isPluginCallable = actionId === 'plugins.list' || actionId === 'plugins.reload';
   const inputSchema = PluginDevLoopActionInputSchemas[actionId];
 
@@ -2564,10 +2716,10 @@ function createAutomationConversationActionSpec(
   const readOnly = actionId === 'automation.conversation.targets.list'
     || actionId === 'automation.conversation.target.verify';
   const description = actionId === 'automation.conversation.targets.list'
-    ? 'List current Channel-selectable Automation conversation targets through the canonical Automation owner.'
+    ? 'List current selectable Automation conversation targets through the canonical Automation owner.'
     : readOnly
-      ? 'Verify a Channel-owned conversation target through the canonical Automation owner.'
-      : 'Admit a Channel conversation occurrence through the canonical Automation owner.';
+      ? 'Verify an Automation conversation target through the canonical Automation owner.'
+      : 'Admit a conversation occurrence through the canonical Automation owner.';
   return {
     id: actionId,
     title: AUTOMATION_CONVERSATION_ACTION_TITLES[actionId],
@@ -3193,7 +3345,7 @@ const EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION =
   'Timeout only ends this observation; it does not stop, retry, or start the run. Cancellation only ends this wait.';
 
 const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
-  ...PLUGIN_DEV_LOOP_ACTION_IDS.map(createPluginDevLoopActionSpec),
+  ...PLUGIN_DEV_LOOP_ACTION_IDS_V1.map(createPluginDevLoopActionSpec),
   ...PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1.map(createPluginSettingsAdministrationActionSpec),
   ...PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1.map(createPluginPermissionGrantActionSpec),
   ...PLUGIN_WEBHOOK_ACTION_IDS_V1.map(createPluginWebhookActionSpec),
@@ -3332,6 +3484,39 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     },
     outputSchema: StrictJsonValueSchema,
     inputSchema: ActionOptionsResolveInputSchema,
+  },
+  {
+    id: 'action.invoke',
+    title: 'Invoke contributed action',
+    description: 'Invoke one currently available contributed Action through the canonical host dispatcher.',
+    sideEffectClass: 'external',
+    safety: 'safe',
+    placements: [],
+    bindings: { voiceClientToolName: 'invokeAction' },
+    examples: {
+      voice: { argsExample: '{"action":{"pluginId":"acme.plugin","localId":"open-details"},"input":{"source":"voice"}}' },
+    },
+    surfaces: {
+      ui: false,
+      voice: true,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: false,
+    },
+    inputHints: {
+      title: 'Invoke contributed action',
+      description: 'Use the exact qualified Action identity returned by action discovery and only its declared input.',
+      fields: [
+        { path: 'action.pluginId', title: 'Plugin id', widget: 'text', required: true },
+        { path: 'action.localId', title: 'Action id', widget: 'text', required: true },
+        { path: 'input', title: 'Declared Action input', widget: 'textarea' },
+      ],
+    },
+    outputSchema: StrictJsonValueSchema,
+    inputSchema: ActionInvokeInputSchema,
   },
   {
     id: 'review.start',
@@ -5749,8 +5934,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'getSessionTranscript', mcpToolName: 'session_transcript_get' },
     examples: {
-      mcp: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"],"maxCharsPerMessage":null}' },
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"],"maxCharsPerMessage":null}' },
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"cursor":null,"direction":"before","roles":["user","assistant"],"maxCharsPerMessage":null}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"cursor":null,"direction":"before","roles":["user","assistant"],"maxCharsPerMessage":null}' },
     },
     surfaces: {
       ui: true,
@@ -5768,6 +5953,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'limit', title: 'Limit', widget: 'text' },
         { path: 'cursor', title: 'Cursor', widget: 'text' },
+        {
+          path: 'direction',
+          title: 'Direction',
+          description: 'Page away from the cursor: before reads older items (the default), after reads newer ones.',
+          widget: 'select',
+          options: [
+            { value: 'before', label: 'Before cursor (older)' },
+            { value: 'after', label: 'After cursor (newer)' },
+          ],
+        },
         {
           path: 'maxCharsPerMessage',
           title: 'Message truncation chars',
@@ -6367,6 +6562,66 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: OptionalSessionIdInputSchema,
+  },
+  {
+    id: 'ui.current_context.read',
+    title: 'Read current UI context',
+    description: 'Read the current local UI navigation context and its bounded opaque command descriptors.',
+    sideEffectClass: 'read',
+    safety: 'safe',
+    placements: [],
+    bindings: { voiceClientToolName: 'readCurrentUiContext' },
+    examples: {
+      voice: { argsExample: '{}' },
+    },
+    surfaces: {
+      ui: false,
+      voice: true,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: false,
+    },
+    inputHints: {
+      title: 'Read current UI context',
+      description: 'Returns only the current local navigation snapshot and opaque command descriptors.',
+      fields: [],
+    },
+    outputSchema: CurrentUiContextSnapshotV1Schema,
+    inputSchema: EmptyObjectSchema,
+  },
+  {
+    id: 'ui.current_context.command.invoke',
+    title: 'Invoke current UI command',
+    description: 'Invoke one currently available opaque command from the local current UI context.',
+    sideEffectClass: 'external',
+    safety: 'safe',
+    placements: [],
+    bindings: { voiceClientToolName: 'invokeCurrentUiCommand' },
+    examples: {
+      voice: { argsExample: '{"commandId":"current-ui:1:0"}' },
+    },
+    surfaces: {
+      ui: false,
+      voice: true,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: false,
+    },
+    inputHints: {
+      title: 'Invoke current UI command',
+      description: 'Use only an opaque command id returned by readCurrentUiContext; semantic command data is never accepted here.',
+      fields: [
+        { path: 'commandId', title: 'Opaque command id', widget: 'text', required: true },
+      ],
+    },
+    outputSchema: StrictJsonValueSchema,
+    inputSchema: CurrentUiContextCommandInvokeInputSchema,
   },
   {
     id: 'memory.search',
@@ -8074,7 +8329,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
 ] as const));
 
 type PluginDevLoopPluginInvocableActionId = Extract<
-  PluginDevLoopActionId,
+  PluginDevLoopActionIdV1,
   'plugins.list' | 'plugins.reload'
 >;
 type PluginDevLoopActionSpecDefinition = {
@@ -8355,14 +8610,18 @@ const PLUGIN_RELOAD_CALLER_POLICY: ActionPluginCallerPolicy = {
     contributionLocalId: 'inspector-app',
   }],
 };
-
 /**
- * The one declaration census for non-safe host Actions exposed to plugins.
+ * The one declaration census for host Actions with a caller policy on the
+ * plugin surface.
  * `caller` means the canonical executor requires a current host-stamped
- * plugin caller. Further identity projection occurs only when the incumbent
- * domain owner has caller-dependent authorization; it is deliberately not an
- * ambient peer-plugin administration grant. The only plugin-targeted Action
- * is reload, whose self scope and Inspector exception live here.
+ * plugin caller. A `caller` row names no plugin identity: a built-in plugin
+ * and an out-of-tree plugin reach exactly the same host capability. Further
+ * identity projection occurs only when the incumbent domain owner has
+ * caller-dependent authorization — Account scope, publisher proof, and current
+ * materialization are that owner's fences, and they do not depend on which
+ * plugin is asking. Reload is the one plugin-*targeted* Action: it administers
+ * a peer plugin's development generation, so its self scope and the exact
+ * Inspector administrative surface live here rather than in any consumer.
  */
 const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   Partial<Record<ActionId, ActionPluginCallerPolicy>>
@@ -8372,6 +8631,8 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'plugins.permissions.grants.revoke': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'automation.event.admit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'automation.event.source.status.report': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'automation.conversation.targets.list': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'automation.conversation.target.verify': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'automation.conversation.admit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'reviews.comments.create': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'reviews.comments.transition': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
@@ -8426,8 +8687,8 @@ function resolveActionPluginCallerPolicy(
   if (requiresPolicy && !policy) {
     throw new Error(`Non-safe plugin Action ${spec.id} is missing pluginCallerPolicy`);
   }
-  if (!requiresPolicy && policy) {
-    throw new Error(`Action ${spec.id} declares pluginCallerPolicy without a non-safe plugin surface`);
+  if (!spec.surfaces.plugin && policy) {
+    throw new Error(`Action ${spec.id} declares pluginCallerPolicy without a plugin surface`);
   }
   return policy;
 }

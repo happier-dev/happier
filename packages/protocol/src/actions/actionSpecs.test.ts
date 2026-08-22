@@ -12,9 +12,14 @@ import {
   ExecutionRunStopResponseSchema,
 } from '../execution/runs/index.js';
 import { serializeActionSpec } from './actionCatalog.js';
-import { ActionInputHintsSchema, ActionSpecSchema, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, actionAcceptsContextualSessionId, getActionSpec, isActionSpecSurfacedOn, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
+import { ActionInputHintsSchema, ActionSpecSchema, SESSION_TRANSCRIPT_GET_MAX_LIMIT, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, actionAcceptsContextualSessionId, getActionSpec, isActionSpecSurfacedOn, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
 import type { ActionSpec } from './actionSpecs.js';
-import { ActionIdSchema, RuntimeActionIdV1Schema, type ActionId } from './actionIds.js';
+import {
+  ActionIdSchema,
+  PLUGIN_DEV_LOOP_ACTION_IDS_V1,
+  RuntimeActionIdV1Schema,
+  type ActionId,
+} from './actionIds.js';
 
 const RETIRED_UNBACKED_RUNTIME_ACTION_IDS = [
   'browser.automation.evaluate',
@@ -135,6 +140,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'action.spec.search',
   'action.spec.get',
   'action.options.resolve',
+  'action.invoke',
   'account.plugins.data.erase',
   'sessions.subagents.list',
   'sessions.subagents.get',
@@ -185,6 +191,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'approval.request.get',
   'plugins.permissions.grants.list',
   'plugins.list',
+  'plugins.change.status',
   'plugins.settings.list',
   'plugins.settings.get',
   'plugins.settings.secret.status',
@@ -196,6 +203,8 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'transcript.readAfter',
   'transcript.follow',
   'transcript.search',
+  'ui.current_context.read',
+  'ui.current_context.command.invoke',
   'sessions.external.candidates.list',
   'sessions.external.operation.status.get',
   'sessions.external.status.get',
@@ -332,6 +341,13 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'plugins.scaffold',
   'plugins.install',
   'plugins.uninstall',
+  'plugins.dev',
+  'plugins.author.install',
+  'plugins.author.typecheck',
+  'plugins.author.build',
+  'plugins.author.test',
+  'plugins.doctor',
+  'plugins.pack',
   'plugins.reload',
   'plugins.sessionHooks.install',
   'plugins.sessionHooks.disable',
@@ -354,8 +370,16 @@ describe('Action Spec Registry', () => {
       ['plugins.scaffold', 'danger'],
       ['plugins.install', 'danger'],
       ['plugins.uninstall', 'danger'],
+      ['plugins.dev', 'danger'],
+      ['plugins.author.install', 'danger'],
+      ['plugins.author.typecheck', 'danger'],
+      ['plugins.author.build', 'danger'],
+      ['plugins.author.test', 'danger'],
+      ['plugins.doctor', 'danger'],
+      ['plugins.pack', 'danger'],
       ['plugins.reload', 'danger'],
       ['plugins.list', 'safe'],
+      ['plugins.change.status', 'safe'],
     ] as const;
 
     for (const [actionId, safety] of expectations) {
@@ -368,6 +392,70 @@ describe('Action Spec Registry', () => {
       expect(spec.bindings?.mcpToolName).toBe(actionId.replaceAll('.', '_'));
       expect(spec.outputSchema).toBeDefined();
     }
+
+    expect(expectations.map(([actionId]) => actionId)).toEqual(PLUGIN_DEV_LOOP_ACTION_IDS_V1);
+  });
+
+  it('projects daemon-issued plugin reviews through one typed pending-review envelope', () => {
+    const schema = getActionSpec('plugins.dev').outputSchema;
+
+    expect(schema?.safeParse({
+      ok: false,
+      kind: 'plugins_dev',
+      outcome: 'reviewRequired',
+      pendingReview: {
+        kind: 'sourceRootReviewRequired',
+        pendingChangeId: 'pending-plugin-change',
+        review: { sourceRootPath: '/plugins/acme' },
+      },
+    }).success).toBe(true);
+    expect(schema?.safeParse({
+      ok: false,
+      kind: 'plugins_install',
+      outcome: 'reviewRequired',
+      pendingReview: {
+        kind: 'reviewRequired',
+        pendingChangeId: 'pending-plugin-change',
+        review: { pluginId: 'acme.plugin' },
+      },
+    }).success).toBe(true);
+
+    expect(schema?.safeParse({
+      ok: false,
+      kind: 'plugins_dev',
+      outcome: 'reviewRequired',
+      pendingChangeId: 'pending-plugin-change',
+      review: { sourceRootPath: '/plugins/acme' },
+    }).success).toBe(false);
+    expect(schema?.safeParse({
+      ok: false,
+      kind: 'plugins_dev',
+      outcome: 'reviewRequired',
+    }).success).toBe(false);
+    expect(schema?.safeParse({
+      ok: false,
+      kind: 'plugins_reload',
+      outcome: 'reviewRequired',
+      pendingReview: {
+        kind: 'pending',
+        pendingChangeId: 'pending-plugin-change',
+        review: {},
+      },
+    }).success).toBe(false);
+    expect(schema?.safeParse({
+      ok: true,
+      kind: 'plugins_unknown',
+    }).success).toBe(false);
+
+    expect(serializeActionSpec(getActionSpec('plugins.dev')).outputSchema).toMatchObject({
+      anyOf: expect.any(Array),
+    });
+
+    expect(getActionSpec('plugins.change.status').outputSchema?.safeParse({
+      ok: true,
+      kind: 'plugins_change_status',
+      status: { kind: 'daemonUnavailable' },
+    }).success).toBe(true);
   });
 
   it('does not advertise Settings administration on the UI surface without a UI executor', () => {
@@ -569,6 +657,72 @@ describe('Action Spec Registry', () => {
       ...base,
       pluginCallerPolicy: { kind: 'caller' },
     }).success).toBe(true);
+  });
+
+  it('rejects an ad-hoc exact-plugin grant and admits only the declared reload administration shape', () => {
+    const base = {
+      id: 'review.start',
+      title: 'Start review',
+      safety: 'safe',
+      approval: { result: 'none' },
+      placements: [],
+      surfaces: {
+        ui: false,
+        voice: false,
+        agent: false,
+        mcp: false,
+        cli: false,
+        rpc: false,
+        sdk: false,
+        plugin: true,
+      },
+      inputSchema: z.object({}).strict(),
+      outputSchema: z.object({ ok: z.boolean() }).strict(),
+    } as const;
+
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      pluginCallerPolicy: { kind: 'caller' },
+    }).success).toBe(true);
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      pluginCallerPolicy: { kind: 'exact_plugin', pluginId: 'happier.channels' },
+    }).success).toBe(false);
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      pluginCallerPolicy: {
+        kind: 'self_or_inspector_admin',
+        targetPluginIdField: 'pluginId',
+        administrativeCallers: [{ pluginId: 'happier.inspector', contributionLocalId: 'inspector-app' }],
+      },
+    }).success).toBe(true);
+    // The administrative surface is exact: a bare plugin id with no contribution
+    // surface, and an empty administrator list, are both refused.
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      pluginCallerPolicy: {
+        kind: 'self_or_inspector_admin',
+        targetPluginIdField: 'pluginId',
+        administrativeCallers: [{ pluginId: 'happier.inspector' }],
+      },
+    }).success).toBe(false);
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      pluginCallerPolicy: {
+        kind: 'self_or_inspector_admin',
+        targetPluginIdField: 'pluginId',
+        administrativeCallers: [],
+      },
+    }).success).toBe(false);
+    // Only the canonical target field may be named.
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      pluginCallerPolicy: {
+        kind: 'self_or_inspector_admin',
+        targetPluginIdField: 'targetPluginId',
+        administrativeCallers: [{ pluginId: 'happier.inspector', contributionLocalId: 'inspector-app' }],
+      },
+    }).success).toBe(false);
   });
 
   it('validates owner-local RPC and plugin surface bindings without serializing a second action row', () => {
@@ -828,7 +982,7 @@ describe('Action Spec Registry', () => {
     }
   });
 
-  it('keeps the non-safe Plugin Action caller-policy census to one reload exception', () => {
+  it('classifies every non-safe Plugin Action and reserves plugin-targeted administration for reload', () => {
     const nonSafePluginActions = listActionSpecsForSurface('plugin').filter(
       (spec) => spec.safety !== 'safe',
     );
@@ -840,6 +994,9 @@ describe('Action Spec Registry', () => {
     expect(nonSafePluginActions.filter(
       (spec) => spec.pluginCallerPolicy?.kind === 'self_or_inspector_admin',
     ).map((spec) => spec.id)).toEqual(['plugins.reload']);
+    expect(nonSafePluginActions.filter(
+      (spec) => spec.pluginCallerPolicy === undefined,
+    )).toHaveLength(0);
   });
 
   it('keeps plugin Session input and transcript access at the closed admission projection', () => {
@@ -2031,8 +2188,8 @@ describe('Action Spec Registry', () => {
   it('declares session transcript full-text defaults and optional truncation metadata', () => {
     const transcript = getActionSpec('session.transcript.get' as ActionId);
 
-    expect(transcript.examples?.mcp?.argsExample).toBe('{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"],"maxCharsPerMessage":null}');
-    expect(transcript.examples?.voice?.argsExample).toBe('{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"],"maxCharsPerMessage":null}');
+    expect(transcript.examples?.mcp?.argsExample).toBe('{"sessionId":"{{sessionId}}","limit":20,"cursor":null,"direction":"before","roles":["user","assistant"],"maxCharsPerMessage":null}');
+    expect(transcript.examples?.voice?.argsExample).toBe('{"sessionId":"{{sessionId}}","limit":20,"cursor":null,"direction":"before","roles":["user","assistant"],"maxCharsPerMessage":null}');
     expect(transcript.inputHints?.fields.find((field) => field.path === 'maxCharsPerMessage')).toEqual({
       path: 'maxCharsPerMessage',
       title: 'Message truncation chars',
@@ -2081,6 +2238,79 @@ describe('Action Spec Registry', () => {
       projection: 'externalShareableV1',
       includeRaw: true,
     })).toThrow();
+  });
+
+  it('names the executing Agent on transcript items with agentId, never the model-provider term', () => {
+    const transcript = getActionSpec('session.transcript.get' as ActionId);
+    if (!transcript?.outputSchema) throw new Error('session.transcript.get output schema is unavailable');
+    const page = {
+      ok: true as const,
+      sessionId: 's1',
+      items: [{
+        id: 'i1',
+        createdAt: 1,
+        semanticRole: 'assistant' as const,
+        role: 'assistant' as const,
+        kind: 'assistant_message',
+        agentId: 'codex',
+      }],
+      nextCursor: null,
+      hasMore: false,
+      diagnostics: {
+        rawRowsScanned: 1,
+        pagesFetched: 1,
+        scanLimitReached: false,
+        payloadTruncations: 0,
+      },
+    };
+
+    expect(transcript.outputSchema.parse(page)).toMatchObject({
+      items: [{ agentId: 'codex' }],
+    });
+    // `provider` is reserved for model providers; an Agent id under that key
+    // must be rejected by the strict item shape rather than silently accepted.
+    const { agentId: _agentId, ...itemWithoutAgentId } = page.items[0]!;
+    expect(() => transcript.outputSchema!.parse({
+      ...page,
+      items: [{ ...itemWithoutAgentId, provider: 'codex' }],
+    })).toThrow();
+  });
+
+  it('declares the transcript paging vocabulary so a discovering caller can page backwards', () => {
+    const transcript = getActionSpec('session.transcript.get' as ActionId);
+
+    // The action reads backwards by default, but a caller that only sees the
+    // catalog cannot choose a parameter the catalog never mentions. Declaring
+    // the option space here is what lets a consumer derive the call instead of
+    // transcribing a literal it read out of the server's normalizer.
+    expect(transcript.inputHints?.fields.find((field) => field.path === 'direction')).toEqual({
+      path: 'direction',
+      title: 'Direction',
+      description: 'Page away from the cursor: before reads older items (the default), after reads newer ones.',
+      widget: 'select',
+      options: [
+        { value: 'before', label: 'Before cursor (older)' },
+        { value: 'after', label: 'After cursor (newer)' },
+      ],
+    });
+    // Both halves of the idiom: a direction with no cursor still starts at the
+    // newest page, so the example has to show the pair.
+    const mcpExample = JSON.parse(String(transcript.examples?.mcp?.argsExample ?? '{}')) as Record<string, unknown>;
+    expect(mcpExample).toMatchObject({ direction: 'before', cursor: null });
+    expect(transcript.inputSchema.safeParse(mcpExample).success).toBe(true);
+
+    // Every value the hints offer is one the action actually accepts.
+    for (const option of transcript.inputHints?.fields.find((field) => field.path === 'direction')?.options ?? []) {
+      expect(transcript.inputSchema.safeParse({ sessionId: 's1', direction: option.value }).success).toBe(true);
+    }
+    expect(transcript.inputSchema.safeParse({ sessionId: 's1', direction: 'sideways' }).success).toBe(false);
+  });
+
+  it('names the transcript page maximum once, at the schema that enforces it', () => {
+    const transcript = getActionSpec('session.transcript.get' as ActionId);
+
+    expect(transcript.inputSchema.safeParse({ sessionId: 's1', limit: SESSION_TRANSCRIPT_GET_MAX_LIMIT }).success).toBe(true);
+    expect(transcript.inputSchema.safeParse({ sessionId: 's1', limit: SESSION_TRANSCRIPT_GET_MAX_LIMIT + 1 }).success).toBe(false);
   });
 
   it('declares a closed result contract for the external shareable transcript projection', () => {

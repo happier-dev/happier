@@ -62,6 +62,19 @@ async function writeReadySnapshot({ cliDir, workspaceRuntimeIdentity, mtimeMs })
   return { fingerprint, snapshotIdentity, snapshotRoot, snapshotEntrypoint };
 }
 
+async function writeBundledPlugin(snapshotRoot, {
+  packageName = 'plugins-example',
+  resources = [],
+} = {}) {
+  const packageRoot = join(snapshotRoot, 'node_modules', '@happier-dev', packageName);
+  const manifestPath = join(packageRoot, '.happier-plugin', 'plugin.json');
+  await mkdir(dirname(manifestPath), { recursive: true });
+  await writeFile(manifestPath, `${JSON.stringify({
+    contributes: { resources },
+  })}\n`, 'utf8');
+  return packageRoot;
+}
+
 test('selects the newest structurally ready immutable runner and ignores a newer partial publication', async (t) => {
   const cliDir = await mkdtemp(join(tmpdir(), 'happier-pinned-runner-selection-'));
   t.after(async () => rm(cliDir, { recursive: true, force: true }));
@@ -180,6 +193,39 @@ test('rejects a newer snapshot whose recorded managed runtime asset is no longer
     'corrupt-managed-runtime\n',
     'utf8',
   );
+
+  assert.equal(
+    resolveNewestReadyPinnedRunnerSnapshot(mutableEntrypoint)?.snapshotEntrypoint,
+    older.snapshotEntrypoint,
+  );
+});
+
+test('rejects a newer snapshot missing bytes declared by a bundled plugin manifest', async (t) => {
+  const cliDir = await mkdtemp(join(tmpdir(), 'happier-pinned-runner-plugin-resource-'));
+  t.after(async () => rm(cliDir, { recursive: true, force: true }));
+  const mutableEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(mutableEntrypoint), { recursive: true });
+  await writeFile(mutableEntrypoint, 'export {};\n', 'utf8');
+
+  const older = await writeReadySnapshot({
+    cliDir,
+    workspaceRuntimeIdentity: 'b'.repeat(64),
+    mtimeMs: 1_000,
+  });
+  const olderPluginRoot = await writeBundledPlugin(older.snapshotRoot, {
+    resources: [{ id: 'prompt', path: 'resources/prompt.md' }],
+  });
+  await mkdir(join(olderPluginRoot, 'resources'), { recursive: true });
+  await writeFile(join(olderPluginRoot, 'resources', 'prompt.md'), '# Prompt\n', 'utf8');
+
+  const newer = await writeReadySnapshot({
+    cliDir,
+    workspaceRuntimeIdentity: 'd'.repeat(64),
+    mtimeMs: 2_000,
+  });
+  await writeBundledPlugin(newer.snapshotRoot, {
+    resources: [{ id: 'prompt', path: 'resources/prompt.md' }],
+  });
 
   assert.equal(
     resolveNewestReadyPinnedRunnerSnapshot(mutableEntrypoint)?.snapshotEntrypoint,

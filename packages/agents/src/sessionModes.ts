@@ -1,6 +1,6 @@
-import type { AgentId, CanonicalAgentId } from './types.js';
+import type { AgentId, BundledAgentId, CanonicalAgentId } from './types.js';
 import { AGENT_IDS } from './types.js';
-import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
+import { mergeAuthoredWithGeneratedAgentFacts, readBundledAgentFact } from './definitions/generatedFacts.js';
 import type { AgentRuntimeModeSwitchKind } from './advancedModes.js';
 
 export type AgentSessionModesKind = 'none' | 'acpPolicyPresets' | 'acpAgentModes' | 'staticAgentModes';
@@ -58,10 +58,15 @@ export const CANONICAL_AGENT_SESSION_MODES: Readonly<Record<CanonicalAgentId, Ag
 
 export const AGENT_SESSION_MODES: Readonly<Record<CanonicalAgentId, AgentSessionModesKind>> = CANONICAL_AGENT_SESSION_MODES;
 
-export function getAgentSessionModeDescriptor(agentId: AgentId): AgentSessionModeDescriptor {
-  return AGENT_SESSION_MODE_DESCRIPTORS[agentId];
+export function getAgentSessionModeDescriptor(agentId: BundledAgentId): AgentSessionModeDescriptor;
+export function getAgentSessionModeDescriptor(agentId: AgentId): AgentSessionModeDescriptor | null;
+export function getAgentSessionModeDescriptor(agentId: AgentId): AgentSessionModeDescriptor | null {
+  return readBundledAgentFact(AGENT_SESSION_MODE_DESCRIPTORS, agentId);
 }
 
-export function getAgentSessionModesKind(agentId: AgentId): AgentSessionModesKind {
-  return descriptorToSessionModesKind(getAgentSessionModeDescriptor(agentId));
+export function getAgentSessionModesKind(agentId: BundledAgentId): AgentSessionModesKind;
+export function getAgentSessionModesKind(agentId: AgentId): AgentSessionModesKind | null;
+export function getAgentSessionModesKind(agentId: AgentId): AgentSessionModesKind | null {
+  const descriptor = getAgentSessionModeDescriptor(agentId);
+  return descriptor == null ? null : descriptorToSessionModesKind(descriptor);
 }

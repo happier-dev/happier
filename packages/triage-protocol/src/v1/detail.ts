@@ -36,8 +36,6 @@ export const TriageLinkedSessionProjectionV1Schema = defineProtocolObject({
 export type TriageLinkedSessionProjectionV1 = ReturnType<
     typeof TriageLinkedSessionProjectionV1Schema.parse
 >;
-export const TriageLinkedSessionProjectionV1JsonSchema: PluginJsonSchema =
-    TriageLinkedSessionProjectionV1Schema.jsonSchema;
 
 /**
  * The mounted detail input: the exact configured instance, the host-applied
@@ -47,12 +45,21 @@ export const TriageLinkedSessionProjectionV1JsonSchema: PluginJsonSchema =
  * `entryRef` and the target's `observedAtMs`, which a source result may never
  * contain. `[]` linked sessions means no links.
  *
- * The optional exact origin Composer ref described in `CONTRACT.md` §7 is
- * deliberately absent from V1 of this schema: its canonical validator-neutral
- * composable projection is owned by the Composer/SDK program under blocker
- * `COMPOSER-COMPOSABLE-REF` and does not exist yet. A Triage-local mirror,
- * adoption wrapper, or permissive JSON carrier is explicitly forbidden, so the
- * field is added only after that producer publishes.
+ * A Composer-origin launch adds no field here. Its `originComposer` address
+ * lives in exactly one carrier — Triage's own CLOSED private launch input at
+ * `packages/plugins/triage/src/composer/entryDetailLaunchInput.ts` (PEP `03d1`
+ * §17.8) — because the destination resolves it with an exact
+ * `get(originComposer)`, and the drop policy below would silently empty it
+ * instead of refusing. This envelope is also what every third-party source
+ * receives, and an address is not theirs to read.
+ *
+ * The outer object is `additive-open/drop` for the same reason as the descriptor
+ * and snapshot envelopes (`CONTRACT.md` §8): each source pins its own copy of
+ * this schema and gates its whole detail render on one `safeParse`, so a closed
+ * envelope would turn "the host added an optional field" into a source that can
+ * no longer show the entry at all. Every inner shape — the target-stamped
+ * observation and each linked-Session projection — stays closed, because those
+ * carry identity and admission authority.
  */
 export const TriageDetailSurfaceInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -69,7 +76,7 @@ export const TriageDetailSurfaceInputV1Schema = defineProtocolObject({
     linkedSessions: defineProtocolArray(TriageLinkedSessionProjectionV1Schema, {
         maxItems: MAX_TRIAGE_LINKED_SESSIONS_V1,
     }),
-}, { policy: 'closed' });
+}, { policy: 'additive-open/drop' });
 export type TriageDetailSurfaceInputV1 = ReturnType<
     typeof TriageDetailSurfaceInputV1Schema.parse
 >;

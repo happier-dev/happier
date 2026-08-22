@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+import {
+  SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY,
+  ScmPullRequestReviewScopeV1Schema,
+} from './scmPullRequestScope.js';
 import { ReviewScmScopeV1Schema } from './scope.js';
 
 /**
@@ -42,6 +46,10 @@ export const ReviewStartInputSchema = z
     base: ReviewBaseSchema.default({ kind: 'none' }),
     engines: ReviewEngineInputsSchema.prefault(DEFAULT_REVIEW_ENGINE_INPUTS),
     scmReviewScope: ReviewScmScopeV1Schema.optional(),
+    // A selected pull request is scoped by its own strict sibling key, never by
+    // widening the worktree scope above: `ReviewProfile` re-derives that one on
+    // every start and would discard anything packed into it.
+    [SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY]: ScmPullRequestReviewScopeV1Schema.optional(),
     permissionMode: z.string().min(1).default('read_only'),
     profileId: z.string().trim().min(1).optional(),
     profileGenerationId: z.string().trim().min(1).optional(),

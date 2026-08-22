@@ -1,7 +1,7 @@
 import {
   defineProtocolObject,
   defineProtocolString,
-} from '../src/plugins/actions/jsonSchemaValidation.js';
+} from '../src/plugins/actions/protocolComposableSchema.js';
 
 export const DeclarationPortableStringSchema = defineProtocolString({
   minLength: 1,

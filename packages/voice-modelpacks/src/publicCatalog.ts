@@ -5,6 +5,8 @@ import {
   VOICE_MODEL_PACK_CONTRIBUTION_MAX_COMPONENT_BYTES_V1,
   VoiceModelPackContributionV1Schema,
   VoiceModelPackIdentityV1Schema,
+  getModelPackCatalogEntry,
+  resolveCanonicalModelPackId,
   resolveVoiceModelPackArtifactsV1,
   type PluginFinalPolicyDecision,
   type ModelPackRuntimeFamily,
@@ -467,6 +469,19 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
   }
   if (!allDeclaredOriginsGranted(contribution, grantedNetworkOrigins)) {
     return result('blocked', 'network_origin_not_granted');
+  }
+  // A pack id that collides with a built-in catalog entry (or that resolves to
+  // a different canonical id, i.e. a blank id selecting the host default) must
+  // never be admitted: admitting it would let a contribution shadow a built-in
+  // identity. This is a per-contribution authoring defect, so it is refused
+  // here as a blocked descriptor rather than thrown out of the catalog
+  // projection, where one plugin's mistake used to empty the catalog for every
+  // plugin. The refusal keeps the identity so the author can attribute it.
+  if (
+    getModelPackCatalogEntry(contribution.id)
+    || resolveCanonicalModelPackId(contribution.id) !== contribution.id
+  ) {
+    return result('blocked', 'voice_model_pack_identity_reserved');
   }
   const policy = params.resourcePolicy ?? DEFAULT_VOICE_MODEL_PACK_RESOURCE_POLICY_V1;
   try {

@@ -1,5 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -92,8 +90,6 @@ export const TriageRowFactValueV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
 ]);
 export type TriageRowFactValueV1 = ReturnType<typeof TriageRowFactValueV1Schema.parse>;
-export const TriageRowFactValueV1JsonSchema: PluginJsonSchema =
-    TriageRowFactValueV1Schema.jsonSchema;
 
 /**
  * One projected list-row fact. `id` uniqueness within a snapshot is a keyed
@@ -115,7 +111,6 @@ export const TriageRowFactV1Schema = defineProtocolObject({
     value: TriageRowFactValueV1Schema,
 }, { policy: 'closed' });
 export type TriageRowFactV1 = ReturnType<typeof TriageRowFactV1Schema.parse>;
-export const TriageRowFactV1JsonSchema: PluginJsonSchema = TriageRowFactV1Schema.jsonSchema;
 
 /**
  * @internal Relative-only closed presentation state. `unknown` keeps the entry
@@ -162,8 +157,6 @@ export const TriageSourceEntrySnapshotV1Schema = defineProtocolObject({
 export type TriageSourceEntrySnapshotV1 = ReturnType<
     typeof TriageSourceEntrySnapshotV1Schema.parse
 >;
-export const TriageSourceEntrySnapshotV1JsonSchema: PluginJsonSchema =
-    TriageSourceEntrySnapshotV1Schema.jsonSchema;
 
 /**
  * Presentation and attention evidence for the exact configured account. It
@@ -201,8 +194,6 @@ export const TriageSourceViewerFactsV1Schema = defineProtocolObject({
 export type TriageSourceViewerFactsV1 = ReturnType<
     typeof TriageSourceViewerFactsV1Schema.parse
 >;
-export const TriageSourceViewerFactsV1JsonSchema: PluginJsonSchema =
-    TriageSourceViewerFactsV1Schema.jsonSchema;
 
 /** @internal Relative-only fields of one authoritative present observation. */
 export const TriageSourcePresentObservationV1Fields = {
@@ -256,8 +247,6 @@ export const TriageSourceObservationV1Schema = defineProtocolUnion([
     TriageSourceUnresolvedObservationV1ProtocolSchema,
 ]);
 export type TriageSourceObservationV1 = ReturnType<typeof TriageSourceObservationV1Schema.parse>;
-export const TriageSourceObservationV1JsonSchema: PluginJsonSchema =
-    TriageSourceObservationV1Schema.jsonSchema;
 
 /**
  * The scan-safe observation union. `scan` has no absent arm: a finished walk is
@@ -271,8 +260,6 @@ export const TriageSourceScanObservationV1Schema = defineProtocolUnion([
 export type TriageSourceScanObservationV1 = ReturnType<
     typeof TriageSourceScanObservationV1Schema.parse
 >;
-export const TriageSourceScanObservationV1JsonSchema: PluginJsonSchema =
-    TriageSourceScanObservationV1Schema.jsonSchema;
 
 /**
  * The source-private in-memory scan continuation. It binds the initial limit
@@ -285,8 +272,6 @@ export const TriageScanContinuationV1Schema = defineProtocolObject({
     token: defineTriageSingleLineStringV1(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1),
 }, { policy: 'closed' });
 export type TriageScanContinuationV1 = ReturnType<typeof TriageScanContinuationV1Schema.parse>;
-export const TriageScanContinuationV1JsonSchema: PluginJsonSchema =
-    TriageScanContinuationV1Schema.jsonSchema;
 
 /**
  * Scan health evidence is exactly `walkFinished`, `partial`, or `moving`.
@@ -311,8 +296,6 @@ export const TriageSourceScanEvidenceV1Schema = defineProtocolUnion([
 export type TriageSourceScanEvidenceV1 = ReturnType<
     typeof TriageSourceScanEvidenceV1Schema.parse
 >;
-export const TriageSourceScanEvidenceV1JsonSchema: PluginJsonSchema =
-    TriageSourceScanEvidenceV1Schema.jsonSchema;
 
 /** @internal Relative-only bounded page of scan observations. */
 export const TriageScanObservationsV1ProtocolSchema = defineProtocolArray(

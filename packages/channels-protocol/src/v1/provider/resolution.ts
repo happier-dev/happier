@@ -11,6 +11,7 @@ import {
 
 import {
     CONVERSATION_ENDPOINT_AUDIENCES_V1,
+    CONVERSATION_ENDPOINT_KINDS_V1,
     MAX_CONVERSATION_ENDPOINT_DISPLAY_LABEL_CODE_POINTS,
     MAX_CONVERSATION_ENDPOINT_RESOLUTION_INPUT_UTF8_BYTES,
     MAX_CONVERSATION_ENDPOINT_STABLE_ID_UTF8_BYTES,
@@ -173,13 +174,13 @@ export const ConversationResolutionQueryV1ProtocolSchema = defineProtocolUtf8Str
 /** @internal Relative-only endpoint-kind selection shared by provider and management resolution schemas. */
 export const ConversationEndpointResolveKindsV1ProtocolSchema = defineProtocolUniqueArray(
     defineProtocolUnion([
-        defineProtocolLiteral('direct'),
-        defineProtocolLiteral('shared'),
-        defineProtocolLiteral('thread'),
-        defineProtocolLiteral('githubIssue'),
-        defineProtocolLiteral('githubPullRequest'),
+        defineProtocolLiteral(CONVERSATION_ENDPOINT_KINDS_V1[0]),
+        defineProtocolLiteral(CONVERSATION_ENDPOINT_KINDS_V1[1]),
+        defineProtocolLiteral(CONVERSATION_ENDPOINT_KINDS_V1[2]),
+        defineProtocolLiteral(CONVERSATION_ENDPOINT_KINDS_V1[3]),
+        defineProtocolLiteral(CONVERSATION_ENDPOINT_KINDS_V1[4]),
     ]),
-    { minItems: 1, maxItems: 5 },
+    { minItems: 1, maxItems: CONVERSATION_ENDPOINT_KINDS_V1.length },
 );
 
 /** @internal Relative-only input for the optional endpoint-resolution role. */

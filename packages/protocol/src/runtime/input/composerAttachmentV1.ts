@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
+import { defineProtocolString } from '../../plugins/actions/protocolComposableSchema.js';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import {
@@ -10,6 +11,10 @@ import {
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { PluginUiIconTokenV1Schema, PluginUiToneV1Schema } from '../../plugins/contributions/ui/tokens.js';
 import { MAX_INTERACTION_TRANSIENT_JSON_BYTES_V1 } from '../../plugins/interactions/transientV1.js';
+import {
+  ComposerInstanceIdProtocolSchema,
+  MAX_COMPOSER_INSTANCE_ID_CODE_POINTS_V1,
+} from './composerInstanceId.js';
 import { MENTION_BOUNDS } from './mentionRefV1.js';
 import {
   ComposerSessionMediaContentV1Schema,
@@ -68,10 +73,23 @@ function rejectOversizedCanonicalJson(
   }
 }
 
+/**
+ * The opaque composer instance identity keeps one grammar owner, now in its own
+ * leaf so the browser-safe composer-scope projection can embed it without
+ * reaching this module's attachment/media/mention graph.
+ */
+export {
+  ComposerInstanceIdProtocolSchema,
+  MAX_COMPOSER_INSTANCE_ID_CODE_POINTS_V1,
+} from './composerInstanceId.js';
+
 /** Host-created opaque identity for one attachment instance in one composer. */
-export const ComposerInstanceIdSchema = z.string().min(1).max(256).refine((value) => value === value.trim(), {
-  message: 'Composer instance ids must not have surrounding whitespace.',
-});
+export const ComposerInstanceIdSchema = z.string()
+  .min(1)
+  .max(MAX_COMPOSER_INSTANCE_ID_CODE_POINTS_V1)
+  .refine((value) => ComposerInstanceIdProtocolSchema.safeParse(value).success, {
+    message: 'Composer instance ids must not have surrounding whitespace.',
+  });
 export type ComposerInstanceId = z.infer<typeof ComposerInstanceIdSchema>;
 export const ComposerAttachmentInstanceIdV1Schema = ComposerInstanceIdSchema;
 export type ComposerAttachmentInstanceIdV1 = ComposerInstanceId;

@@ -7,16 +7,16 @@ import {
 } from './index.js';
 
 describe('plugin-UI public subpath initialization', () => {
-  it('initializes the root contribution descriptor and the public UI command schema together', () => {
+  it('initializes the root contribution descriptor and the public UI semantic-action schema together', () => {
     expect(PluginSessionHeaderActionDescriptorV1Schema.parse({
       id: 'open-activity',
       title: 'Open activity',
-      command: {
+      action: {
         kind: 'openSurface',
         destination: 'activity',
       },
     })).toMatchObject({
-      command: {
+      action: {
         kind: 'openSurface',
         destination: 'activity',
       },

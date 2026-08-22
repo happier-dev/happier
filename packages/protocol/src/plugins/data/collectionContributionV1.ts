@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
-import { PLUGIN_COLLECTION_LIMITS_V1 } from './collectionLimitsV1.js';
+import { PLUGIN_COLLECTION_LIMITS_V1, PLUGIN_COLLECTION_SCHEMA_VERSION_MAX } from './collectionLimitsV1.js';
 import { PluginJsonSchemaV2Schema, type PluginJsonSchemaV2 } from '../contributions/publicTypes.js';
 import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../pluginId.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
@@ -219,10 +219,21 @@ export type PluginCollectionProjectedScalarFieldRefV1 = z.infer<
   typeof PluginCollectionProjectedScalarFieldRefV1Schema
 >;
 
+/**
+ * The one admission rule for a Collection `schemaVersion`, wherever it crosses a wire
+ * or a projection. Versions start at 1 and stop at what the persisted column can hold,
+ * so the author's declaration, an admitted contract ref, a writer context, the stored
+ * contract and the UI projection cannot disagree about which versions exist.
+ */
+export const PluginCollectionSchemaVersionV1Schema = z.number().int()
+  .min(1)
+  .max(PLUGIN_COLLECTION_SCHEMA_VERSION_MAX);
+export type PluginCollectionSchemaVersionV1 = z.infer<typeof PluginCollectionSchemaVersionV1Schema>;
+
 /** Static, descriptor-only contribution. Runtime collection registration is intentionally absent. */
 export const PluginAccountCollectionContributionV1Schema = z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
-  schemaVersion: z.number().int().min(1),
+  schemaVersion: PluginCollectionSchemaVersionV1Schema,
   schema: PluginCollectionSchemaV1Schema,
   rowIdField: PluginCollectionMemberNameV1Schema.default('id'),
   serverReadable: z.array(PluginCollectionMemberNameV1Schema).min(1).max(16),
@@ -230,7 +241,7 @@ export const PluginAccountCollectionContributionV1Schema = z.object({
   uiQueries: z.array(PluginCollectionUiQueryDescriptorV1Schema).max(16).default([]),
   relations: z.array(PluginCollectionRelationV1Schema).max(16).default([]),
   quota: PluginCollectionQuotaRequestV1Schema.optional(),
-  readableSchemaVersions: z.array(z.number().int().min(1)).max(32).optional(),
+  readableSchemaVersions: z.array(PluginCollectionSchemaVersionV1Schema).max(32).optional(),
   migrations: z.array(PluginCollectionMigrationDeclarationV1Schema).max(32).default([]),
   /**
    * The declared fields whose stored value is a mode-derived identity tag, so

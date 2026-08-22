@@ -1,5 +1,5 @@
-import type { AgentId, CanonicalAgentId } from './types.js';
-import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
+import type { AgentId, BundledAgentId, CanonicalAgentId } from './types.js';
+import { mergeAuthoredWithGeneratedAgentFacts, readBundledAgentFact } from './definitions/generatedFacts.js';
 import type { AgentModelDescriptor } from '@happier-dev/protocol';
 
 export type {
@@ -79,12 +79,17 @@ export const CANONICAL_AGENT_MODEL_CONFIG: Readonly<Record<CanonicalAgentId, Age
 
 export const AGENT_MODEL_CONFIG: Readonly<Record<CanonicalAgentId, AgentModelConfig>> = CANONICAL_AGENT_MODEL_CONFIG;
 
-export function getAgentModelConfig(agentId: AgentId): AgentModelConfig {
-  return AGENT_MODEL_CONFIG[agentId];
+export function getAgentModelConfig(agentId: BundledAgentId): AgentModelConfig;
+export function getAgentModelConfig(agentId: AgentId): AgentModelConfig | null;
+export function getAgentModelConfig(agentId: AgentId): AgentModelConfig | null {
+  return readBundledAgentFact(AGENT_MODEL_CONFIG, agentId);
 }
 
 export function getAgentStaticModels(agentId: AgentId): readonly AgentModelDescriptor[] {
   const config = getAgentModelConfig(agentId);
+  if (config == null) {
+    return [];
+  }
   const staticModels = Array.isArray(config.staticModels) && config.staticModels.length > 0
     ? config.staticModels
     : config.allowedModes.map((id) => ({ id, name: id }));

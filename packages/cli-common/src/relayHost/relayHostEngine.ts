@@ -1538,9 +1538,14 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const statePath = join(defaults.installRoot, 'self-host-state.json');
     const stdoutPath = join(defaults.logDir, 'server.out.log');
     const stderrPath = join(defaults.logDir, 'server.err.log');
-    const backend = resolveServiceBackend({ platform: process.platform, mode });
+    const backend = resolveServiceBackend({ platform: process.platform, mode }) as ServiceBackend;
+    const effectiveServiceName = await resolveLocalEffectiveServiceName({
+      backend,
+      channel,
+      defaults,
+    });
     const serviceSpec = buildRelayRuntimeServiceSpec({
-      label: defaults.serviceName,
+      label: effectiveServiceName,
       installRoot: defaults.installRoot,
       serverBinaryPath: installServerBinaryPath,
       env: {},

@@ -122,6 +122,20 @@ describe('evaluatePluginActionPolicy', () => {
       requiresCurrentIntent: false,
     });
   });
+
+  it('does not turn a declared but inapplicable host service into an action gate', () => {
+    expect(evaluatePluginActionPolicy(withInput({
+      serviceAvailability: [{
+        ...allowed.serviceAvailability[0]!,
+        status: 'notApplicable',
+        code: 'plugin_host_access_not_applicable',
+      }],
+    }))).toEqual({
+      outcome: 'visible',
+      code: 'plugin_action_available',
+      requiresCurrentIntent: true,
+    });
+  });
 });
 
 describe('evaluatePluginFinalPolicy', () => {

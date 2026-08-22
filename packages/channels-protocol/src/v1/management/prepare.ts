@@ -5,6 +5,7 @@ import {
     defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
+    defineProtocolUniqueArray,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     PluginTargetedContributionSelectionV1Schema,
@@ -12,13 +13,12 @@ import {
 
 import {
     CONVERSATION_OUTBOUND_TEXT_UNITS_V1,
-    CONVERSATION_TRANSPORT_KINDS_V1,
 } from '../bounds.js';
+import { ConversationConnectionSelectableTransportV1ProtocolSchema } from './connections.js';
 import { ConversationEndpointDisplayLabelV1ProtocolSchema } from '../provider/resolution.js';
 import { ConversationQualifiedConnectedAccountRefV1ProtocolSchema } from '../provider/connection.js';
 import {
     ConversationProviderSetupRemediationV1ProtocolSchema,
-    ConversationSupportedTransportsV1ProtocolSchema,
 } from '../provider/setup.js';
 import { ConversationJsonValueV1ProtocolSchema } from '../json.js';
 
@@ -30,11 +30,10 @@ export type { ConversationProviderSetupRemediationV1 } from '../provider/setup.j
 
 const targetedContributionSelectionV1 = PluginTargetedContributionSelectionV1Schema;
 
-const conversationTransportKindV1 = defineProtocolUnion([
-    defineProtocolLiteral(CONVERSATION_TRANSPORT_KINDS_V1[0]),
-    defineProtocolLiteral(CONVERSATION_TRANSPORT_KINDS_V1[1]),
-    defineProtocolLiteral(CONVERSATION_TRANSPORT_KINDS_V1[2]),
-]);
+const conversationConnectionPrepareSelectableTransportsV1 = defineProtocolUniqueArray(
+    ConversationConnectionSelectableTransportV1ProtocolSchema,
+    { minItems: 1, maxItems: 2 },
+);
 
 /** @internal Relative-only input for no-invoke provider setup selection. */
 export const ConversationConnectionPrepareInputV1ProtocolSchema = defineProtocolObject({
@@ -69,8 +68,8 @@ const conversationConnectionPrepareOutboundTextLimitV1 = defineProtocolObject({
 
 const conversationConnectionPrepareReadyV1 = defineProtocolObject({
     kind: defineProtocolLiteral('ready'),
-    supportedTransports: ConversationSupportedTransportsV1ProtocolSchema,
-    recommendedTransport: conversationTransportKindV1,
+    supportedTransports: conversationConnectionPrepareSelectableTransportsV1,
+    recommendedTransport: ConversationConnectionSelectableTransportV1ProtocolSchema,
     overlapSafety: defineProtocolUnion([
         defineProtocolLiteral('safe'),
         defineProtocolLiteral('providerExclusive'),
@@ -86,8 +85,9 @@ const conversationConnectionPrepareReadyV1 = defineProtocolObject({
 }, { policy: 'closed' });
 
 /**
- * Transport-free preparation projects only display-safe provider facts. Final
- * setup, account correspondence, testing, and persistence stay elsewhere.
+ * Transport-free preparation projects only the transports current connection
+ * creation can select. Final setup, account correspondence, testing, and
+ * persistence stay elsewhere.
  */
 export const ConversationConnectionPrepareResultV1Schema = defineProtocolUnion([
     conversationConnectionPrepareReadyV1,

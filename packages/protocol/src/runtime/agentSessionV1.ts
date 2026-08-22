@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
-import { AgentNativeContinuityProofV1Schema } from '../agents/nativeResumeIdentityV1.js';
 import {
   AgentSessionProviderBindingV1Schema,
   type AgentSessionProviderBindingV1,
@@ -13,6 +12,7 @@ import {
 } from './permissionIntentV1.js';
 import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
 import { StrictJsonValueSchema, type JsonValue as StrictJsonValue } from '../json/strictJsonValue.js';
+import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../plugins/contributions/strictJsonValue.js';
 import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -51,11 +51,44 @@ const HostIdSchema = exactString(HOST_ID_MAX);
 const ProviderIdSchema = exactString(PROVIDER_ID_MAX);
 const InputIdSchema = opaqueNonBlankString(HOST_ID_MAX);
 const SafeIntegerSchema = z.number().int().nonnegative().max(LIMITS.safeIntegerMax);
+const AGENT_RUNTIME_JSON_VALUE_MAX_BYTES = LIMITS.p0MeasuredCandidates.jsonValueMaxJsonBytes;
 
-export const AgentRuntimeJsonValueV1Schema: z.ZodType<StrictJsonValue, unknown> = StrictJsonValueSchema;
+/**
+ * The strict runtime JSON value at an **admission** boundary: launch data, a
+ * configuration snapshot, a send request's structured input, a contributed
+ * Action's input/result. Each of those admits a value the caller has not yet
+ * committed anywhere, so the shared aggregate ceiling is reused here rather
+ * than reinvented per field, and an oversized value is refused before it is
+ * accepted.
+ */
+export const AgentRuntimeJsonValueV1Schema: z.ZodType<StrictJsonValue, unknown> = StrictJsonValueSchema.refine(
+  (value) => (
+    measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+      value,
+      'Agent Runtime JSON',
+      AGENT_RUNTIME_JSON_VALUE_MAX_BYTES,
+    ) <= AGENT_RUNTIME_JSON_VALUE_MAX_BYTES
+  ),
+  'Agent Runtime JSON exceeds the aggregate byte bound',
+);
+
+/**
+ * The same strict JSON value on the canonical runtime **event** union, where
+ * the boundary is the event's own `eventMaxJsonBytes` ceiling and nothing else.
+ *
+ * The distinction is not cosmetic. `AgentSessionRuntimeEventV1Schema` is parsed
+ * on read — Host Event dispatch (`plugins/events/hostV1.ts`), external-session
+ * transcript replay (`apps/cli/src/session/external/terminalFollowProjection.ts`)
+ * — so a tool payload that was admissible when the event was written has to
+ * stay readable. Applying the admission ceiling here would retroactively refuse
+ * every already-written payload between it and the event bound; a ~1.5 MB tool
+ * result is an ordinary size for a file read or a search. The event bound is
+ * the ceiling that was in force when the event was produced, so it is the only
+ * one a reader may enforce.
+ */
+const AgentRuntimeEventJsonValueV1Schema: z.ZodType<StrictJsonValue, unknown> = StrictJsonValueSchema;
 export const AgentRuntimeJsonValueSchema = AgentRuntimeJsonValueV1Schema;
 
-const JsonValueSchema = AgentRuntimeJsonValueV1Schema;
 export const AgentSessionProviderCheckpointMaxJsonBytesV1 = 4_096;
 export const AgentSessionProviderCheckpointV1Schema = AgentRuntimeJsonValueV1Schema.refine(
   (value) => (
@@ -157,7 +190,7 @@ const PluginDiagnosticDataSchema = z.object({
   code: exactString(SOURCE_MAX),
   severity: z.enum(['info', 'warning', 'error']),
   message: z.string().max(DESCRIPTION_MAX).optional(),
-  details: JsonValueSchema.optional(),
+  details: AgentRuntimeEventJsonValueV1Schema.optional(),
   remediation: PluginRemediationDataSchema.optional(),
 }).strict();
 
@@ -301,13 +334,19 @@ const LifecycleSchemas = [
     kind: z.literal('provider-session-id'),
     providerSessionId: ProviderIdSchema,
     /**
-     * Matched continuity proof for THIS id, when the runtime produced one in the
-     * same generation. It rides the same event as the id because `REQ-STATE-01`
-     * requires the pair to be atomic: a proof published on its own could be
-     * matched to a later, different id and would then authorize resuming the
-     * wrong native conversation. Omitted means "no proof", never "unchanged".
+     * Where this Agent keeps its OWN session log for the id in this event, when
+     * the runtime knows the path. MACHINE-LOCAL: it is only meaningful on the
+     * machine that produced it.
+     *
+     * It rides the same event as the id because the path names one specific
+     * conversation — published on its own it could be matched to a later,
+     * different id and would then point a reader at the wrong log. Omitted
+     * means "no log path", never "unchanged".
+     *
+     * This is a POINTER, not a resume gate (`AM-24`): its only consumer is the
+     * handoff brief, which offers the successor Agent the predecessor's log.
      */
-    continuityProof: AgentNativeContinuityProofV1Schema.optional(),
+    nativeSessionLogPath: z.string().trim().min(1).max(4_096).optional(),
   }).strict(),
   z.object({
     ...TurnEventBaseShape,
@@ -354,21 +393,21 @@ const OutputSchemas = [
     kind: z.literal('tool-call'),
     toolCallId: ProviderIdSchema,
     toolName: exactString(NAME_MAX),
-    input: JsonValueSchema,
+    input: AgentRuntimeEventJsonValueV1Schema,
     sidechainId: HostIdSchema.optional(),
   }).strict(),
   z.object({
     ...TurnEventBaseShape,
     kind: z.literal('tool-progress'),
     toolCallId: ProviderIdSchema,
-    progress: JsonValueSchema,
+    progress: AgentRuntimeEventJsonValueV1Schema,
     sidechainId: HostIdSchema.optional(),
   }).strict(),
   z.object({
     ...TurnEventBaseShape,
     kind: z.literal('tool-result'),
     toolCallId: ProviderIdSchema,
-    output: JsonValueSchema,
+    output: AgentRuntimeEventJsonValueV1Schema,
     isError: z.boolean().optional(),
     sidechainId: HostIdSchema.optional(),
   }).strict(),
@@ -489,7 +528,7 @@ export const AgentSessionRuntimeEventSchema = AgentSessionRuntimeEventV1Schema;
 
 const AgentSessionInputV1Schema = z.object({
   text: z.string().max(INPUT_TEXT_CANDIDATE_MAX),
-  structuredInput: JsonValueSchema.optional(),
+  structuredInput: AgentRuntimeJsonValueV1Schema.optional(),
 }).strict();
 
 const AgentSessionDeliveryV1Schema = z.discriminatedUnion('kind', [

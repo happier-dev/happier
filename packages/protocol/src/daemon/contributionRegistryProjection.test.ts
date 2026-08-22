@@ -25,6 +25,7 @@ import {
   DaemonPluginUiArtifactBytesReadRequestSchema,
   DaemonPluginUiArtifactBytesReadResponseSchema,
   PluginProjectedActionV2Schema,
+  PluginProjectedAgentV2Schema,
   PluginProjectedSettingsFieldV2Schema,
   PluginProjectionInstalledPackageV2Schema,
   PluginProjectionV2Schema,
@@ -35,8 +36,39 @@ import {
 import * as protocol from '../index.js';
 import { RPC_METHODS } from '../rpc/index.js';
 import { PluginSettingsContributionV2Schema } from '../plugins/contributions/settings.js';
+import { PluginActionPresentUserAuthorizationFactsSchema } from '../plugins/actions/invocation.js';
 
 describe('daemon contribution registry projection (wire)', () => {
+  it('accepts the complete normalized Agent lifecycle declaration', () => {
+    const projected = {
+      id: 'acme-lifecycle',
+      identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
+      capabilities: {
+        surfaces: ['terminal'],
+        sessions: {
+          open: ['create', 'resume', 'fork'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
+          conversationRollback: true,
+          usageLimitRecovery: {
+            active: ['checkNow'],
+            inactive: ['checkNow', 'consumeResetCredit'],
+          },
+        },
+        executionRuns: {
+          open: ['create', 'resume', 'fork'],
+          checkpoint: true,
+          stop: true,
+        },
+      },
+    } as const;
+
+    expect(PluginProjectedAgentV2Schema.parse(projected)).toEqual({
+      ...projected,
+      providerOwnedEnvironmentKeys: [],
+    });
+  });
+
   it('keeps exact daemon Settings watches content-free and revision-scoped', () => {
     const request = {
       serverIdentityId: 'srv_settings',
@@ -568,6 +600,7 @@ describe('daemon contribution registry projection (wire)', () => {
       title: 'Delete workspace',
       scopes: ['workspace'],
       surfaces: ['ui'],
+      execution: { target: 'daemon' },
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
       confirmation,
@@ -598,6 +631,7 @@ describe('daemon contribution registry projection (wire)', () => {
       title: 'Refresh provider state',
       scopes: ['session'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
     } as const;
 
@@ -605,6 +639,171 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(PluginProjectedActionV2Schema.safeParse({
       ...pluginOnly,
       surfaces: ['ui'],
+    }).success).toBe(false);
+  });
+
+  it('accepts legacy and localized Action presentation without widening other projected contributions', () => {
+    const action = {
+      id: 'refresh-preview',
+      pluginId: 'acme.preview',
+      scopes: ['session'],
+      surfaces: ['ui', 'voice'],
+      placementBindings: ['commandPalette'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'safe',
+    } as const;
+    const localizedPresentation = {
+      title: { key: 'actions.refresh.title', fallback: 'Refresh preview' },
+      description: { key: 'actions.refresh.description', fallback: 'Refresh the active preview.' },
+      inputHints: {
+        title: { key: 'actions.refresh.form.title', fallback: 'Refresh options' },
+        submitLabel: { key: 'actions.refresh.form.submit', fallback: 'Refresh' },
+        fields: [{
+          path: 'mode',
+          widget: 'select',
+          title: { key: 'actions.refresh.mode.title', fallback: 'Mode' },
+          description: { key: 'actions.refresh.mode.description', fallback: 'Choose a refresh mode.' },
+          options: [{
+            value: 'quick',
+            label: { key: 'actions.refresh.mode.quick', fallback: 'Quick' },
+            description: { key: 'actions.refresh.mode.quick.description', fallback: 'Refresh recent data.' },
+          }],
+        }],
+      },
+    } as const;
+
+    expect(PluginProjectedActionV2Schema.parse({
+      ...action,
+      ...localizedPresentation,
+    })).toMatchObject(localizedPresentation);
+    expect(PluginProjectedActionV2Schema.parse({
+      ...action,
+      title: 'Refresh preview',
+      description: 'Refresh the active preview.',
+      inputHints: {
+        title: 'Refresh options',
+        submitLabel: 'Refresh',
+        fields: [{
+          path: 'mode',
+          widget: 'select',
+          title: 'Mode',
+          options: [{ value: 'quick', label: 'Quick' }],
+        }],
+      },
+    })).toMatchObject({ title: 'Refresh preview' });
+  });
+
+  it('carries the explicit Action execution target with its exact producer origin', () => {
+    const outputSchema = {
+      type: 'object',
+      properties: {
+        summary: { type: 'string' },
+      },
+      required: ['summary'],
+      additionalProperties: false,
+    } as const;
+    const projectedAction = {
+      id: 'open-client-preview',
+      pluginId: 'acme.preview',
+      title: 'Open preview',
+      scopes: ['session'],
+      surfaces: ['ui'],
+      placementBindings: ['detailsPanel'],
+      execution: {
+        target: 'client',
+        client: {
+          artifactId: 'preview-client',
+          modulePath: './previewClient',
+          exportName: 'activatePreview',
+        },
+        platforms: ['web'],
+      },
+      serverIdentityId: 'srv_preview',
+      materializationRef: {
+        machineId: 'machine-preview',
+        materializationId: 'materialization-preview',
+        pluginId: 'acme.preview',
+      },
+      outputSchema,
+      dangerLevel: 'safe',
+    } as const;
+
+    expect(PluginProjectedActionV2Schema.parse(projectedAction)).toMatchObject({
+      execution: projectedAction.execution,
+      serverIdentityId: 'srv_preview',
+      materializationRef: projectedAction.materializationRef,
+      outputSchema,
+    });
+    expect(PluginProjectedActionV2Schema.safeParse({
+      ...projectedAction,
+      materializationRef: {
+        ...projectedAction.materializationRef,
+        pluginId: 'acme.other',
+      },
+    }).success).toBe(false);
+    expect(PluginProjectedActionV2Schema.safeParse({
+      ...projectedAction,
+      serverIdentityId: undefined,
+    }).success).toBe(false);
+  });
+
+  it('accepts only the normalized present-user authorization projection for an Action', () => {
+    const authorization = {
+      packageTrust: {
+        packageIdentity: 'package:acme.preview:generation-7',
+        reviewedPackageIdentity: 'package:acme.preview:generation-7',
+      },
+      generation: {
+        targetGeneration: 'generation-7',
+        desiredGeneration: 'generation-7',
+        appliedGeneration: 'generation-7',
+        targetGenerationMode: 'current',
+      },
+      resourceSelections: [{
+        id: 'review-account',
+        required: true,
+        requestedResourceId: 'review-account',
+        selectedResourceId: 'review-account',
+      }],
+      scopedGrants: [{
+        id: 'workspace-review',
+        required: true,
+        status: 'active',
+        requiredScope: { workspaceId: 'workspace-1' },
+        grantedScope: { workspaceId: 'workspace-1' },
+      }],
+      serviceAvailability: [{
+        id: 'reviews',
+        required: true,
+        status: 'available',
+      }],
+      operatingSystemAuthorization: [],
+    } as const;
+    const projectedAction = {
+      id: 'open-client-preview',
+      pluginId: 'acme.preview',
+      title: 'Open preview',
+      scopes: ['session'],
+      surfaces: ['ui'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'safe',
+      authorization,
+    } as const;
+
+    expect(PluginActionPresentUserAuthorizationFactsSchema.parse(authorization)).toEqual(authorization);
+    expect(PluginProjectedActionV2Schema.shape.authorization.unwrap())
+      .toBe(PluginActionPresentUserAuthorizationFactsSchema);
+    expect(PluginProjectedActionV2Schema.parse(projectedAction)).toMatchObject({ authorization });
+    expect(PluginProjectedActionV2Schema.safeParse({
+      ...projectedAction,
+      authorization: {
+        ...authorization,
+        packageTrust: {
+          ...authorization.packageTrust,
+          rawTrustRecord: { credential: 'must-not-project' },
+        },
+      },
     }).success).toBe(false);
   });
 
@@ -616,6 +815,13 @@ describe('daemon contribution registry projection (wire)', () => {
       input: null,
       executionSurface: 'ui',
     }).executionSurface).toBe('ui');
+    expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({
+      machineId: 'm1',
+      expectedGeneration: '7',
+      qualifiedActionId: 'acme.voice/mint-session',
+      input: null,
+      executionSurface: 'voice',
+    }).executionSurface).toBe('voice');
 
     // UI-D26: the surface is the target-action authorization input, so an
     // omitted field must be a wire rejection rather than a host-side default.
@@ -1572,19 +1778,6 @@ describe('daemon contribution registry projection (wire)', () => {
       hostedWebFrameCapability: { platform: 'desktop', adapter: 'wry' },
     }).hostedWebFrameCapability).toEqual({ platform: 'desktop', adapter: 'wry' });
 
-    // `remote-dev` currently sends this predecessor-only browser spelling.
-    // Normalize it exactly once at the Protocol ingress rather than making
-    // every downstream host-runtime consumer carry two fact shapes.
-    const predecessor = DaemonContributionRegistryProjectionDescribeRequestSchema.parse({
-      machineId: 'm1',
-      hostedWebBrowserFrameCapability: { platform: 'web', adapter: 'domIframe' },
-    });
-    expect(predecessor.hostedWebFrameCapability).toEqual({
-      platform: 'web',
-      adapter: 'domIframe',
-    });
-    expect(predecessor).not.toHaveProperty('hostedWebBrowserFrameCapability');
-
     expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
       machineId: 'm1',
       hostedWebFrameCapability: { platform: 'desktop', adapter: 'domIframe' },
@@ -1600,11 +1793,6 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
       machineId: 'm1',
       hostedWebFrameCapability: { platform: 'ios', adapter: 'WebViewAssetLoader' },
-    }).success).toBe(false);
-    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
-      machineId: 'm1',
-      hostedWebFrameCapability: { platform: 'web', adapter: 'domIframe' },
-      hostedWebBrowserFrameCapability: { platform: 'web', adapter: 'domIframe' },
     }).success).toBe(false);
   });
 
@@ -1626,7 +1814,12 @@ describe('daemon contribution registry projection (wire)', () => {
             },
           },
         },
-        agentsById: {},
+        agentsById: {
+          'acme-agent': {
+            id: 'acme-agent',
+            connectedServiceIds: ['openai-codex'],
+          },
+        },
         backendsById: {},
         actionsById: {},
         toolsById: {},
@@ -1639,6 +1832,8 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(parsed.protocolVersion).toBe(1);
     expect(parsed.projection.v).toBe(2);
     expect(parsed.projection.installedPackagesById['acme.plugin']?.displayName).toBe('Acme Plugin');
+    expect(parsed.projection.agentsById['acme-agent']?.connectedServiceIds)
+      .toEqual(['openai-codex']);
   });
 
   it('normalizes only the active predecessor daemon projection fields at the describe-response ingress', () => {
@@ -1677,6 +1872,7 @@ describe('daemon contribution registry projection (wire)', () => {
             title: 'Open archive',
             scopes: ['settings' as const],
             surfaces: ['ui' as const],
+            execution: { target: 'daemon' as const },
             placement: 'primary',
             dangerLevel: 'safe' as const,
           },
@@ -1902,6 +2098,7 @@ describe('daemon contribution registry projection (wire)', () => {
           title: 'Refresh Acme',
           scopes: ['settings'],
           surfaces: ['agent'],
+          execution: { target: 'daemon' },
           placementBindings: ['primary'],
           dangerLevel: 'safe',
           available: true,
@@ -2544,11 +2741,11 @@ describe('daemon contribution registry projection (wire)', () => {
   });
 
   it('admits only compiled semantic commands in current plugin-UI projection entries', () => {
-    const headerCommand = {
+    const headerSemanticAction = {
       kind: 'executeAction' as const,
       action: { pluginId: 'acme.ui', localId: 'refresh' },
     };
-    const pageCommand = {
+    const pageSemanticAction = {
       kind: 'openSurface' as const,
       destination: { pluginId: 'acme.ui', localId: 'activity' },
     };
@@ -2577,7 +2774,7 @@ describe('daemon contribution registry projection (wire)', () => {
               descriptorId: 'refresh',
               title: 'Refresh',
               icon: 'refresh',
-              command: headerCommand,
+              action: headerSemanticAction,
             },
             'surfacePlacement:acme.ui:activity': {
               id: 'surfacePlacement:acme.ui:activity',
@@ -2595,7 +2792,7 @@ describe('daemon contribution registry projection (wire)', () => {
                 id: 'open-activity',
                 title: 'Open activity',
                 icon: 'action',
-                command: pageCommand,
+                action: pageSemanticAction,
               }],
               availability: { state: 'available', reason: 'available', diagnostics: [] },
             },
@@ -2656,7 +2853,7 @@ describe('daemon contribution registry projection (wire)', () => {
             ...projection.familiesById.pluginUi.entriesById,
             'sessionHeaderAction:acme.ui:refresh': {
               ...projection.familiesById.pluginUi.entriesById['sessionHeaderAction:acme.ui:refresh'],
-              command: { kind: 'executeAction', action: 'refresh' },
+              action: { kind: 'executeAction', action: 'refresh' },
             },
           },
         },
@@ -2674,7 +2871,7 @@ describe('daemon contribution registry projection (wire)', () => {
               headerActions: [{
                 id: 'open-activity',
                 title: 'Open activity',
-                command: { kind: 'openSurface', destination: 'activity' },
+                action: { kind: 'openSurface', destination: 'activity' },
               }],
             },
           },
@@ -2759,6 +2956,28 @@ describe('daemon contribution registry projection (wire)', () => {
       machineId: 'm1',
       cacheIdentity,
     });
+    const clientContribution = {
+      family: 'actions',
+      action: { pluginId: 'acme.preview', localId: 'open-preview' },
+    } as const;
+    const clientCacheIdentity = {
+      ...cacheIdentity,
+      contributionId: clientContribution.action.localId,
+    } as const;
+    const clientContributionRequest = DaemonPluginUiArtifactBytesReadRequestSchema.parse({
+      artifactFamily: 'reactNative',
+      artifactOwnerKind: 'clientContribution',
+      machineId: 'm1',
+      cacheIdentity: clientCacheIdentity,
+      clientContribution,
+    });
+    expect(clientContributionRequest).toEqual({
+      artifactFamily: 'reactNative',
+      artifactOwnerKind: 'clientContribution',
+      machineId: 'm1',
+      cacheIdentity: clientCacheIdentity,
+      clientContribution,
+    });
     expect(DaemonPluginUiArtifactBytesReadRequestSchema.safeParse({
       ...rendererRequest,
       reactNativeHostRuntimeIdentity: { platform: 'ios', channel: 'internal' },
@@ -2786,6 +3005,17 @@ describe('daemon contribution registry projection (wire)', () => {
     }).success).toBe(false);
     expect(DaemonPluginUiArtifactBytesReadRequestSchema.safeParse({
       ...collectionMigrationsRequest,
+      crashStateToken,
+    }).success).toBe(false);
+    expect(DaemonPluginUiArtifactBytesReadRequestSchema.safeParse({
+      ...clientContributionRequest,
+      clientContribution: {
+        ...clientContribution,
+        action: { ...clientContribution.action, localId: 'replaced-action' },
+      },
+    }).success).toBe(false);
+    expect(DaemonPluginUiArtifactBytesReadRequestSchema.safeParse({
+      ...clientContributionRequest,
       crashStateToken,
     }).success).toBe(false);
     expect(DaemonPluginUiArtifactBytesReadResponseSchema.parse({
@@ -2865,9 +3095,30 @@ describe('daemon contribution registry projection (wire)', () => {
       ok: true,
       artifactOwnerKind: 'collectionMigrations',
     });
+    expect(DaemonPluginUiArtifactBytesReadResponseSchema.parse({
+      ok: true,
+      artifactFamily: 'reactNative',
+      artifactOwnerKind: 'clientContribution',
+      cacheIdentity: clientContributionRequest.cacheIdentity,
+      clientContribution,
+      artifact: {
+        pluginId: 'acme.preview',
+        contributionId: clientContribution.action.localId,
+        artifactKind: 'reactNativeBundle',
+        digest: `sha256:${'a'.repeat(64)}`,
+        format: 'plainJs',
+        byteSize: 9,
+      },
+      bytesBase64: 'Ly8gYnVuZGxl',
+    })).toMatchObject({
+      ok: true,
+      artifactOwnerKind: 'clientContribution',
+      clientContribution,
+    });
     expect(protocol.DaemonPluginReactNativeArtifactOwnerKindV1Schema.parse('renderer')).toBe('renderer');
     expect(protocol.DaemonPluginReactNativeArtifactOwnerKindV1Schema.parse('voiceProvider')).toBe('voiceProvider');
     expect(protocol.DaemonPluginReactNativeArtifactOwnerKindV1Schema.parse('collectionMigrations')).toBe('collectionMigrations');
+    expect(protocol.DaemonPluginReactNativeArtifactOwnerKindV1Schema.parse('clientContribution')).toBe('clientContribution');
 
     expect(DaemonPluginUiArtifactBytesReadResponseSchema.parse({
       ok: false,

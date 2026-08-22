@@ -20,10 +20,7 @@ function assertWellFormedUnicode(value: string, path: string): void {
   }
 }
 
-/**
- * The one Protocol owner for UTF-8 byte measurement. Strict JSON data rejects
- * malformed UTF-16 rather than relying on platform replacement behavior.
- */
+/** The one Protocol owner for raw, well-formed UTF-8 string measurement. */
 export function measurePluginJsonUtf8Bytes(value: string, path: string): number {
   assertWellFormedUnicode(value, path);
   return textEncoder.encode(value).byteLength;
@@ -59,6 +56,9 @@ function assertStrictJsonArrayDescriptors(
   input: object,
   path: string,
 ): Readonly<Record<string, PropertyDescriptor>> {
+  if (Object.getPrototypeOf(input) !== Array.prototype) {
+    throw new Error(`${path} must contain only ordinary arrays`);
+  }
   const descriptors = Object.getOwnPropertyDescriptors(input);
   const keys = Reflect.ownKeys(descriptors);
   const lengthDescriptor = descriptors.length;
@@ -231,8 +231,8 @@ type StrictJsonMeasurementTask =
 /**
  * Measures the exact JSON.stringify spelling in UTF-8 bytes without creating
  * a complete serialized JSON string. Individual strings still use
- * JSON.stringify so escaping (including lone-surrogate escapes), number
- * spelling, and object-key spelling stay aligned with the platform contract.
+ * JSON.stringify so escaping, number spelling, and object-key spelling stay
+ * aligned with the platform contract.
  *
  * When a maximum is supplied, return `maximum + 1` as soon as the complete
  * serialization is known to exceed it. This gives boundary owners an exact

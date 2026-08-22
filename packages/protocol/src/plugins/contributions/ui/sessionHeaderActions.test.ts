@@ -14,7 +14,7 @@ describe('PluginSessionHeaderActionDescriptorV1Schema', () => {
     const execute = PluginSessionHeaderActionDescriptorV1Schema.parse({
       id: 'refresh',
       title: 'Refresh',
-      command: {
+      action: {
         kind: 'executeAction',
         action: 'refresh-session',
         input: { force: true },
@@ -23,7 +23,7 @@ describe('PluginSessionHeaderActionDescriptorV1Schema', () => {
     const open = PluginSessionHeaderActionDescriptorV1Schema.parse({
       id: 'details',
       title: 'Details',
-      command: {
+      action: {
         kind: 'openSurface',
         destination: 'session-details',
         subPath: '/recent',
@@ -33,7 +33,7 @@ describe('PluginSessionHeaderActionDescriptorV1Schema', () => {
 
     expect(normalizePluginUiSemanticCommandV1({
       pluginId: 'acme.navigation',
-      command: execute.command,
+      command: execute.action,
     })).toEqual({
       kind: 'executeAction',
       action: { pluginId: 'acme.navigation', localId: 'refresh-session' },
@@ -41,7 +41,7 @@ describe('PluginSessionHeaderActionDescriptorV1Schema', () => {
     });
     expect(normalizePluginUiSemanticCommandV1({
       pluginId: 'acme.navigation',
-      command: open.command,
+      command: open.action,
     })).toEqual({
       kind: 'openSurface',
       destination: { pluginId: 'acme.navigation', localId: 'session-details' },
@@ -50,29 +50,48 @@ describe('PluginSessionHeaderActionDescriptorV1Schema', () => {
     });
   });
 
-  it('keeps general semantic commands qualified while rejecting cross-plugin Session-header opens', () => {
-    expect(PluginSessionHeaderActionDescriptorV1Schema.safeParse({
+  it('widens the bare Action-reference sugar and rejects the retired `command` spelling', () => {
+    // The same `action: '<local-id>'` sugar `commands`, `tools` and
+    // `browserActions` accept. It widens once, here, to `executeAction`.
+    expect(PluginSessionHeaderActionDescriptorV1Schema.parse({
       id: 'legacy',
       title: 'Legacy',
       action: 'run',
+    }).action).toEqual({ kind: 'executeAction', action: 'run' });
+    // The retired spelling is refused outright, not silently ignored. The
+    // descriptor also carries a valid `action`, so the only thing that can
+    // reject it is the retired key itself.
+    expect(PluginSessionHeaderActionDescriptorV1Schema.safeParse({
+      id: 'retired',
+      title: 'Retired',
+      action: 'run',
+      command: { kind: 'executeAction', action: 'run' },
     }).success).toBe(false);
+    expect(PluginSessionHeaderActionDescriptorV1Schema.safeParse({
+      id: 'retired',
+      title: 'Retired',
+      command: { kind: 'executeAction', action: 'run' },
+    }).success).toBe(false);
+  });
+
+  it('keeps general semantic actions qualified while rejecting cross-plugin Session-header opens', () => {
     expect(PluginSessionHeaderActionDescriptorV1Schema.safeParse({
       id: 'metadata',
       title: 'Metadata',
-      command: { kind: 'executeAction', action: 'run' },
+      action: { kind: 'executeAction', action: 'run' },
       metadata: { arbitrary: true },
     }).success).toBe(false);
     const crossPlugin = PluginSessionHeaderActionDescriptorV1Schema.parse({
       id: 'cross-plugin',
       title: 'Cross plugin',
-      command: {
+      action: {
         kind: 'openSurface',
         destination: { pluginId: 'other.plugin', localId: 'settings' },
       },
     });
     expect(normalizePluginUiSemanticCommandV1({
       pluginId: 'acme.navigation',
-      command: crossPlugin.command,
+      command: crossPlugin.action,
     })).toEqual({
       kind: 'openSurface',
       destination: { pluginId: 'other.plugin', localId: 'settings' },
@@ -84,14 +103,14 @@ describe('PluginSessionHeaderActionDescriptorV1Schema', () => {
     expect(PluginSessionHeaderActionDescriptorV1Schema.safeParse({
       id: 'cross-plugin-action',
       title: 'Cross plugin Action',
-      command: {
+      action: {
         kind: 'executeAction',
         action: { pluginId: 'other.plugin', localId: 'mutate' },
       },
     }).success).toBe(false);
   });
 
-  it('publishes a strict resolved-command boundary for compiled consumers', () => {
+  it('publishes a strict resolved-action boundary for compiled consumers', () => {
     const command = normalizePluginUiSemanticCommandV1({
       pluginId: 'acme.navigation',
       command: {

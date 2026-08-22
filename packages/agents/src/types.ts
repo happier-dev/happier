@@ -9,18 +9,26 @@ import {
 } from '@happier-dev/protocol';
 import {
     AGENT_IDS,
-    isAgentId,
+    isBundledAgentId,
     type AgentId,
+    type BundledAgentId,
 } from './generated/agentIds.js';
 import type { AnyAgentRuntimeKindsManifest } from './runtimeKinds.js';
 
 export {
     AGENT_IDS,
-    isAgentId,
+    isBundledAgentId,
     type AgentId,
+    type BundledAgentId,
 };
 export const CANONICAL_AGENT_IDS = AGENT_IDS;
-export type CanonicalAgentId = AgentId;
+/**
+ * Historical name for {@link BundledAgentId}.
+ *
+ * Kept because the canonical-fact records and their `CANONICAL_*` aggregates
+ * read in that vocabulary; both names denote the same closed bundled set.
+ */
+export type CanonicalAgentId = BundledAgentId;
 
 export const PERMISSION_MODES = SESSION_PERMISSION_MODES;
 
@@ -117,6 +125,23 @@ export type ExperimentalVendorResumePolicy = 'disabled_by_default' | 'runtime_ch
 export type AgentResumeConfig = Readonly<{
     vendorResume: VendorResumeSupportLevel;
     vendorResumeIdField?: VendorResumeIdField | null;
+    /**
+     * Session-metadata key where this Agent publishes its OWN session-log path
+     * for the current vendor resume id, when it keeps one on this machine.
+     *
+     * A POINTER, never a gate (`AM-24`): its only consumer is the Agent-transition
+     * brief, which offers the successor the predecessor's log. An Agent that
+     * persists nothing can still declare `resolveAgentNativeSessionLogPath` in the
+     * catalog and have the path derived instead.
+     *
+     * The NAME is predecessor vocabulary and is scheduled to become
+     * `agentNativeSessionLogPathField`. It is one key in a GENERATED projection
+     * (`packages/agents/src/generated/bundledAgentDefinitions.ts`) whose single
+     * producer is `scripts/migrations/extensions/generateBundledPluginEntries.ts`,
+     * so the rename lands with that producer's next successful run — never by
+     * hand, because a source-only rename would leave the runtime reading an
+     * absent key and silently drop the pointer.
+     */
     vendorResumeContinuityProofField?: string | null;
     experimentalResumePolicy?: ExperimentalVendorResumePolicy;
 }>;
@@ -154,7 +179,7 @@ export type AgentCoreRuntimeControlSurface = Readonly<{
 }>;
 
 export type AgentCore = Readonly<{
-    id: AgentId;
+    id: BundledAgentId;
     /**
      * Whether this agent contributes a concrete backend definition.
      *
@@ -167,7 +192,7 @@ export type AgentCore = Readonly<{
      * CLI subcommand used to spawn/select the agent.
      * For now this matches the canonical id.
      */
-    cliSubcommand: AgentId;
+    cliSubcommand: BundledAgentId;
     /**
      * CLI binary name used for local detection (e.g. `command -v <detectKey>`).
      * For now this matches the canonical id.

@@ -286,6 +286,37 @@ describe('AgentSessionRuntimeEventV1Schema', () => {
     }
   });
 
+  it('admits a tool payload between the Action gate and the event bound, and rejects past the event bound', () => {
+    // The boundary a runtime event payload actually has is the event's own
+    // aggregate byte bound. A payload above the plugin Action gate but below
+    // that bound was admissible when these events were written, so it is still
+    // readable: this schema is parsed on read (Host Event dispatch, external
+    // transcript replay), and narrowing it would orphan already-written data.
+    const base = { sequence: 1, sessionId: 'session-1', emittedAtMs: 1, turnId: 'turn-1' } as const;
+    const inBand = 'x'.repeat(1_500_000);
+    for (const event of [
+      { ...base, kind: 'tool-call', toolCallId: 'tool-1', toolName: 'read', input: { text: inBand } },
+      { ...base, kind: 'tool-progress', toolCallId: 'tool-1', progress: { text: inBand } },
+      { ...base, kind: 'tool-result', toolCallId: 'tool-1', output: { text: inBand } },
+    ]) {
+      expect(
+        AgentSessionRuntimeEventV1Schema.safeParse(event),
+        String(event.kind),
+      ).toMatchObject({ success: true });
+    }
+
+    const pastEventBound = AgentSessionRuntimeEventV1Schema.safeParse({
+      ...base,
+      kind: 'tool-result',
+      toolCallId: 'tool-1',
+      output: { text: 'x'.repeat(2_500_001) },
+    });
+    expect(pastEventBound.success).toBe(false);
+    expect(pastEventBound.error?.issues.some((issue) => (
+      issue.message === 'Agent runtime event exceeds the CORE-A candidate byte bound'
+    ))).toBe(true);
+  });
+
   it('rejects provider checkpoints larger than the canonical turn checkpoint limit', () => {
     const oversizedCheckpoint = 'x'.repeat(4_097);
     expect(AgentSessionRuntimeEventV1Schema.safeParse({

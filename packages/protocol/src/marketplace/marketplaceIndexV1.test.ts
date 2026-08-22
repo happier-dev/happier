@@ -1,12 +1,66 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createMarketplaceNpmDiscoveryProjectionV1,
+  deriveMarketplaceNpmCompatibilityPlatformsV1,
   MarketplaceIndexQueryResultV1Schema,
   MarketplaceIndexQueryV1Schema,
+  MarketplaceNpmDiscoveryProjectionV1Schema,
   MarketplaceIndexSourceSnapshotV1Schema,
 } from './marketplaceIndexV1.js';
+import { PluginCompatibilityProjectionV1Schema } from '../plugins/availability/v1.js';
 
 describe('MarketplaceIndexV1', () => {
+  it('derives a closed npm discovery projection from generated compatibility facts', () => {
+    const compatibility = PluginCompatibilityProjectionV1Schema.parse({
+      version: 1,
+      manifest: {
+        schemaVersion: 2,
+        id: 'acme.discovery',
+        version: '1.0.0',
+        displayName: { key: 'plugin.title', fallback: 'Acme Discovery' },
+        description: { key: 'plugin.description', fallback: 'Derived from the manifest' },
+        engines: { happier: '>=1.0.0' },
+        runtime: { apiVersion: 1 },
+        entrypoints: { daemon: './dist/index.js' },
+        hostAccess: {
+          required: [{
+            id: 'network',
+            reason: 'Connect to Acme',
+            capability: 'network',
+            scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }] },
+          }],
+          optional: [],
+        },
+        contributes: {},
+      },
+      uiArtifacts: { version: 1, entries: [] },
+    });
+
+    const projection = createMarketplaceNpmDiscoveryProjectionV1({
+      compatibility,
+      manifestDigest: `sha256:${'a'.repeat(64)}`,
+    });
+
+    expect(projection).toEqual({
+      version: 1,
+      pluginId: 'acme.discovery',
+      manifestDigest: `sha256:${'a'.repeat(64)}`,
+      display: { title: 'Acme Discovery', description: 'Derived from the manifest' },
+      summary: {
+        contributions: [],
+        requiredHostAccess: ['network'],
+        optionalHostAccess: [],
+        executableRealms: ['daemon'],
+      },
+    });
+    expect(deriveMarketplaceNpmCompatibilityPlatformsV1(compatibility)).toEqual([]);
+    expect(MarketplaceNpmDiscoveryProjectionV1Schema.safeParse({
+      ...projection,
+      compatibility: compatibility.manifest.engines,
+    }).success).toBe(false);
+  });
+
   it('bounds query pagination and source documents', () => {
     expect(MarketplaceIndexQueryV1Schema.safeParse({ text: 'x'.repeat(257), limit: 101, cursor: null, filters: {} }).success).toBe(false);
     expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({

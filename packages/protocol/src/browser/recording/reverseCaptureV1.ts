@@ -4,7 +4,7 @@ import { z } from 'zod';
  * Reverse (daemon -> UI) browser-recording native-view capture contract (W2C-BA-1).
  *
  * The desktop Wry WebView is owned by the UI process; the spawned cli daemon runs in a SEPARATE OS
- * process and cannot `invokeTauri` directly. So the daemon `nativeViewCapture` recording producer
+ * process and cannot `invokeDesktopHost` directly. So the daemon `nativeViewCapture` recording producer
  * asks the connected desktop UI — over the existing daemon<->UI session RPC channel
  * (`RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME`) — to capture ONE frame from the view it owns.
  *

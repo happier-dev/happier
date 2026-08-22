@@ -1,4 +1,4 @@
-import { AGENT_IDS, type AgentId } from '../types.js';
+import { AGENT_IDS, type AgentId, type BundledAgentId } from '../types.js';
 import { CANONICAL_AGENTS_CORE, DEFAULT_AGENT_ID } from '../manifest.js';
 import {
   CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS,
@@ -16,7 +16,7 @@ import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../generated/bundledAgentDefini
 import type { AgentCatalogDefinition, AgentDefinitionContractV1 } from './types.js';
 import { resolveOwnedBackendIdsForAgent } from './resolveBackendOwnership.js';
 
-function createAgentCatalogDefinition(agentId: AgentId): AgentCatalogDefinition {
+function createAgentCatalogDefinition(agentId: BundledAgentId): AgentCatalogDefinition {
   const bundledDefinition = BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId];
   const settingsBackendId = bundledDefinition
     && 'settingsBackendId' in bundledDefinition
@@ -36,7 +36,7 @@ function createAgentCatalogDefinition(agentId: AgentId): AgentCatalogDefinition 
   };
 }
 
-function createAgentDefinitionContract(agentId: AgentId): AgentDefinitionContractV1 {
+function createAgentDefinitionContract(agentId: BundledAgentId): AgentDefinitionContractV1 {
   const bundledDefinition = BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId];
   const enablementCompatibilityBackendIds = bundledDefinition
     && 'enablementCompatibilityBackendIds' in bundledDefinition

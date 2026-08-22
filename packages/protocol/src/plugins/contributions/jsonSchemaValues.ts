@@ -143,3 +143,45 @@ export function containsEquivalentPluginJsonValue(
 ): boolean {
   return values.some((value) => pluginJsonValuesEqual(value, candidate));
 }
+
+/**
+ * Stable comparison key for the JSON scalars that compare by value, so
+ * uniqueness and enum membership can be decided without a pairwise structural
+ * walk. Compound values return `undefined` and fall back to
+ * `containsEquivalentPluginJsonValue`.
+ */
+export function scalarPluginJsonValueKey(value: unknown): string | undefined {
+  if (value === null) return 'null';
+  switch (typeof value) {
+    case 'boolean':
+      return `boolean:${value}`;
+    case 'number':
+      return Number.isFinite(value) ? `number:${String(value)}` : undefined;
+    case 'string':
+      return `string:${value}`;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * JSON Schema `uniqueItems`/`enum` uniqueness decided under this module's one
+ * structural-equality rule. It belongs with that rule rather than with the AJV
+ * compiler, so schema construction can enforce uniqueness without reaching a
+ * validator-library graph.
+ */
+export function hasUniquePluginJsonValues(values: readonly unknown[]): boolean {
+  const seenScalars = new Set<string>();
+  const seenCompounds: unknown[] = [];
+  for (const value of values) {
+    const scalarKey = scalarPluginJsonValueKey(value);
+    if (scalarKey !== undefined) {
+      if (seenScalars.has(scalarKey)) return false;
+      seenScalars.add(scalarKey);
+      continue;
+    }
+    if (containsEquivalentPluginJsonValue(seenCompounds, value)) return false;
+    seenCompounds.push(value);
+  }
+  return true;
+}

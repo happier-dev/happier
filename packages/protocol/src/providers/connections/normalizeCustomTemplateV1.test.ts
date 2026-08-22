@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeCustomProviderAdvancedTemplateV1, normalizeCustomProviderTemplateV1 } from './normalizeCustomTemplateV1.js';
+import {
+  defaultCustomProviderCatalogParserV1,
+  normalizeCustomProviderAdvancedTemplateV1,
+  normalizeCustomProviderTemplateV1,
+} from './normalizeCustomTemplateV1.js';
 
 describe('normalizeCustomProviderTemplateV1', () => {
   it('normalizes the OpenAI Responses simple form without asserting capabilities', () => {
@@ -85,6 +89,24 @@ describe('normalizeCustomProviderTemplateV1', () => {
         }],
       },
     });
+  });
+
+  it('keeps an authored catalog parser instead of re-deriving it from the protocol', () => {
+    // The authoring form is the single owner of the catalog format; the
+    // protocol only supplies the preset default when no format is authored. A
+    // second decision-maker here silently downgraded every user-authored
+    // connection to the openai/anthropic model-list formats.
+    expect(normalizeCustomProviderTemplateV1({
+      name: 'Local gateway',
+      protocol: 'openai-chat',
+      baseUrl: 'https://gateway.example/v1',
+      catalog: 'probe',
+      modelsPath: '/api/tags',
+      catalogParser: 'ollama-tags',
+    }).catalog).toMatchObject({ probes: [{ parser: 'ollama-tags' }] });
+
+    expect(defaultCustomProviderCatalogParserV1('openai-chat')).toBe('openai-models');
+    expect(defaultCustomProviderCatalogParserV1('anthropic')).toBe('anthropic-models');
   });
 
   it('requires a validated header only for custom-header credentials', () => {

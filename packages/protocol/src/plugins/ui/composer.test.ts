@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  defineProtocolLiteral,
+  defineProtocolObject,
+} from '../actions/protocolComposableSchema.js';
+import {
   COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
   ComposerControlStateV1Schema,
   ComposerControlStateContentTypeV1Schema,
@@ -111,6 +115,33 @@ describe('Composer protocol surface', () => {
     expect(ComposerRefV1Schema.safeParse(composer).success).toBe(true);
     expect(ComposerRefV1Schema.safeParse({ kind: 'sideChat', sessionId: 'session-1' }).success).toBe(false);
     expect(ComposerRefV1Schema.safeParse({ kind: 'session', sessionId: ' session-1 ' }).success).toBe(false);
+  });
+
+  it('publishes the live composer scope as a validator-neutral composable a feature protocol can embed', () => {
+    // A feature protocol declares its own closed launch input through the
+    // public composition algebra. Embedding this canonical scope must compose
+    // structurally and carry its constraints into the published JSON Schema —
+    // a validator-specific value degrades its members instead.
+    const launchInput = defineProtocolObject({
+      v: defineProtocolLiteral(1),
+      originComposer: ComposerRefV1Schema.optional(),
+    }, { policy: 'closed' });
+
+    expect(launchInput.parse({ v: 1, originComposer: composer })).toEqual({ v: 1, originComposer: composer });
+    expect(launchInput.parse({ v: 1 })).toEqual({ v: 1 });
+    for (const malformed of [
+      { kind: 'session' },
+      { kind: 'session', sessionId: 'session-1', instanceId: 'instance-1' },
+      { kind: 'sideChat', sessionId: 'session-1' },
+      { kind: 'pendingMessage', sessionId: 'session-1' },
+      { kind: 'newSession', instanceId: ' instance-1 ' },
+    ]) {
+      expect(launchInput.safeParse({ v: 1, originComposer: malformed }).success).toBe(false);
+    }
+
+    const projected = launchInput.jsonSchema.properties?.originComposer;
+    expect(projected?.anyOf?.length).toBe(5);
+    expect(projected?.anyOf?.[0]?.properties?.sessionId?.type).toBe('string');
   });
 
   it('keeps Composer references range-bound and distinct from persisted structured mentions', () => {

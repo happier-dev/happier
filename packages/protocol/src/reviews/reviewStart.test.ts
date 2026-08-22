@@ -77,6 +77,48 @@ describe('ReviewStartInputSchema', () => {
     }).success).toBe(false);
   });
 
+  it('carries the strict selected pull request review scope under its own top-level key', () => {
+    const scope = {
+      kind: 'scm_pull_request_review_scope.v1',
+      account: {
+        service: { pluginId: 'happier.scm-github', localId: 'github' },
+        accountId: 'account-7',
+      },
+      pullRequest: { number: 42 },
+      observed: {
+        baseSha: '1111111111111111111111111111111111111111',
+        headSha: '2222222222222222222222222222222222222222',
+        nativeRevision: 'PR_kwDOABCD',
+        observedAtMs: 1_700_000_000_000,
+      },
+    };
+
+    const parsed = reviewStart.ReviewStartInputSchema.parse({
+      engineIds: ['acme.review'],
+      instructions: 'Review.',
+      scmPullRequestReviewScope: scope,
+    });
+
+    expect(parsed.scmPullRequestReviewScope).toEqual(scope);
+    expect(parsed.scmReviewScope).toBeUndefined();
+  });
+
+  it('rejects a malformed selected pull request review scope rather than passing it through', () => {
+    expect(reviewStart.ReviewStartInputSchema.safeParse({
+      engineIds: ['acme.review'],
+      instructions: 'Review.',
+      scmPullRequestReviewScope: {
+        kind: 'scm_pull_request_review_scope.v1',
+        account: { service: { pluginId: 'happier.scm-github', localId: 'github' }, accountId: 'account-7' },
+        pullRequest: { number: 42 },
+        observed: {
+          baseSha: '1111111111111111111111111111111111111111',
+          headSha: '2222222222222222222222222222222222222222',
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it('rejects malformed host-resolved SCM review scope', () => {
     expect(() => reviewStart.ReviewStartInputSchema.parse({
       engineIds: ['acme.review'],

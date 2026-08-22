@@ -2,27 +2,54 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface HappierSherpaOnlineAsrStream : NSObject
+/**
+ * Streaming ASR, addressed by job id.
+ *
+ * Recognizers are cached per assets directory and streams are indexed by job id
+ * inside the shared C++ registry that the Android JNI layer also uses, so both
+ * platforms have one lifetime model: a push owns its stream and recognizer for
+ * the whole decode, while a concurrent cancel or a pack invalidation only marks
+ * the job and drops the registry's reference. Ownership therefore lives here
+ * rather than in a Swift-side dictionary, the way offline TTS keeps its job
+ * registry inside the engine.
+ */
+@interface HappierSherpaOnlineAsrEngine : NSObject
 
-- (NSDictionary *)pushPcm16Data:(NSData *)pcm16le
+/** Open a stream for `jobId`, building the recognizer for `assetsDir` on first use. */
++ (BOOL)createStreamForJob:(NSString *)jobId
+                 assetsDir:(NSString *)assetsDir
+                     error:(NSError * _Nullable * _Nullable)error;
+
+/** Decode one PCM16 frame, returning `{ text, isEndpoint }`. */
++ (NSDictionary *)pushPcm16Data:(NSData *)pcm16le
+                         forJob:(NSString *)jobId
                      sampleRate:(int32_t)sampleRate
                        channels:(int32_t)channels
                           error:(NSError * _Nullable * _Nullable)error;
 
-- (NSString *)finishWithError:(NSError * _Nullable * _Nullable)error;
+/**
+ * Drain the tail of `jobId` and release its stream, returning the final text.
+ * A job that is no longer live yields empty text rather than an error: it has
+ * already been cancelled or finished, which is a normal stop.
+ */
++ (NSString *)finishJob:(NSString *)jobId;
 
-- (void)cancel;
+/** Mark `jobId` cancelled and release the registry's reference to it. */
++ (void)cancelJob:(NSString *)jobId;
 
-@end
+/**
+ * Drop the recognizer cached for `assetsDir` and cancel the jobs decoding
+ * against it, so a model pack whose bytes are being replaced or removed stops
+ * being served from memory. Returns the number of jobs cancelled.
+ */
++ (NSUInteger)releaseAssetsDir:(NSString *)assetsDir;
 
-@interface HappierSherpaOnlineAsrEngine : NSObject
-
-- (nullable instancetype)initWithAssetsDir:(NSString *)assetsDir
-                                sampleRate:(int32_t)sampleRate
-                                  language:(NSString * _Nullable)language
-                                     error:(NSError * _Nullable * _Nullable)error;
-
-- (HappierSherpaOnlineAsrStream * _Nullable)createStreamWithError:(NSError * _Nullable * _Nullable)error;
+/**
+ * Drop every cached recognizer and cancel every job. The registry outlives the
+ * Expo module object, so teardown releases its native handles here instead of
+ * leaving them held for the life of the process. Returns the jobs cancelled.
+ */
++ (NSUInteger)releaseAll;
 
 @end
 

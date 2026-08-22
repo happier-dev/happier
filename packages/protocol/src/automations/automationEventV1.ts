@@ -91,7 +91,22 @@ import {
 } from './automationEventJsonBoundsV1.js';
 import { AutomationOriginOccurredAtV1Schema } from './automationOriginOccurredAtV1.js';
 import {
-  AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
+  addAutomationStoredEnvelopeUtf8LimitIssue,
+  AutomationStoredContentEnvelopeV1Schema,
+  ENCRYPTED_STORED_CONTENT_SCHEMA,
+  MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
+  MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
+} from './automationStoredContentEnvelopeV1.js';
+// The foundational stored-content envelope and its ceilings moved below this
+// module so persistence owners that must not depend on Event contracts can
+// reach them. Incumbent importers keep resolving them here.
+export {
+  AutomationStoredContentEnvelopeV1Schema,
+  MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
+  MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
+};
+export type { AutomationStoredContentEnvelopeV1 } from './automationStoredContentEnvelopeV1.js';
+import {
   AutomationConversationAdmitInputV1Schema,
   AutomationConversationAdmitResultV1Schema,
   AutomationConversationResultDeliveryV1Schema,
@@ -105,6 +120,8 @@ import {
   AutomationResultDeliverySourceV1Schema,
   AutomationRunResultV1JsonSchema,
   AutomationRunResultV1Schema,
+  isAutomationConversationResultDeliveryOwnedByCallerV1,
+  MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS,
@@ -236,7 +253,6 @@ export type {
   PluginEventAutomationHistoryGapResetActionResultV1,
 } from './automationEventHistoryGapResetActionV1.js';
 export {
-  AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
   AutomationConversationAdmitInputV1Schema,
   AutomationConversationAdmitResultV1Schema,
   AutomationConversationResultDeliveryV1Schema,
@@ -249,6 +265,8 @@ export {
   AutomationResultDeliverySourceV1Schema,
   AutomationRunResultV1JsonSchema,
   AutomationRunResultV1Schema,
+  isAutomationConversationResultDeliveryOwnedByCallerV1,
+  MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS,
@@ -266,8 +284,6 @@ export type {
 
 export const MAX_AUTOMATION_PROVIDER_CHECKPOINT_UTF8_BYTES = 64 * 1024;
 export const MAX_AUTOMATION_OBSERVATIONS_PER_POLL = 100;
-export const MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES = 256 * 1024;
-export const MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES = 512 * 1024;
 /**
  * Every private Event-admission body has this canonical UTF-8 transport ceiling,
  * regardless of its Account encryption mode. E3 partitions the public Action
@@ -678,6 +694,25 @@ export function evaluateAutomationEventFilterV1(
   });
 }
 
+/**
+ * The sole Event observation freshness rule for every admission owner (server
+ * and CLI alike). `maximumObservationAgeMs` bounds how *stale* an occurrence
+ * may be, so it is measured only in the forward direction: `occurredAt` is
+ * minted by the observed source's clock, and a source clock that leads this
+ * host's receipt time makes the occurrence newer than local time rather than
+ * older. Skipping such an occurrence as `outsideFreshness` would silently drop
+ * a genuinely fresh Event, and nothing downstream is pinned to `occurredAt`, so
+ * the lead stays admissible. A null bound disables the freshness gate.
+ */
+export function isAutomationEventObservationFreshV1(input: Readonly<{
+  occurredAt: number;
+  observationReceivedAt: number;
+  maximumObservationAgeMs: number | null;
+}>): boolean {
+  return input.maximumObservationAgeMs === null
+    || input.observationReceivedAt - input.occurredAt <= input.maximumObservationAgeMs;
+}
+
 export const AutomationEventTriggerObservationTransportV1Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('checkpointedPull'),
@@ -693,32 +728,6 @@ export type AutomationEventTriggerObservationTransportV1 = z.infer<
   typeof AutomationEventTriggerObservationTransportV1Schema
 >;
 
-const ENCRYPTED_STORED_CONTENT_SCHEMA = z.object({
-  t: z.literal('encrypted'),
-  c: z.string().min(1),
-}).strict();
-
-function addAutomationStoredEnvelopeUtf8LimitIssue(
-  value: unknown,
-  context: z.RefinementCtx,
-  message: string,
-): void {
-  if (UTF8_ENCODER.encode(createCanonicalJsonSigningInput(value)).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message });
-  }
-}
-
-export const AutomationStoredContentEnvelopeV1Schema = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('plain'), v: PluginJsonValueV2Schema }).strict(),
-  ENCRYPTED_STORED_CONTENT_SCHEMA,
-]).superRefine((value, context) => {
-  addAutomationStoredEnvelopeUtf8LimitIssue(
-    value,
-    context,
-    'Stored Automation envelope exceeds its UTF-8 byte limit',
-  );
-});
-export type AutomationStoredContentEnvelopeV1 = z.infer<typeof AutomationStoredContentEnvelopeV1Schema>;
 
 /**
  * A bounded, canonical strict Run recipe serialized by the Protocol recipe
@@ -936,7 +945,7 @@ export type AutomationEventAdmitHostEvidenceV1 = z.infer<
 /**
  * Immutable correspondence sealed alongside every Conversation Automation
  * handoff payload. The target daemon compares this inner binding with the
- * server-routed claim before it can invoke the Channel Action.
+ * server-routed claim before it can invoke the target plugin's Action.
  */
 export const AutomationReplyHandoffCorrespondenceV1Schema = z.object({
   accountId: asProtocolZod(HostIdentifierV1Schema),
@@ -1185,7 +1194,7 @@ export type AutomationReplyHandoffDispatchRequestV1 = z.infer<
 /**
  * The only settlement detail the ciphertext-blind server can act on. Action
  * custody ids, suppression reasons, block codes, and provider detail stay in
- * the sealed receipt envelope owned by the target daemon/Channel consumer.
+ * the sealed receipt envelope owned by the target daemon/plugin consumer.
  */
 export const AutomationReplyHandoffSettlementV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('accepted') }).strict(),
@@ -1304,8 +1313,8 @@ export type AutomationEventSourceCatalogStatusV1 = z.infer<typeof AutomationEven
 
 /**
  * Server-owned admission endpoint for the distinct Conversation trigger. The
- * signed caller frame is separate from immutable Action input so a Channel
- * plugin cannot select a machine or materialization through its payload.
+ * signed caller frame is separate from immutable Action input so a plugin
+ * cannot select a machine or materialization through its payload.
  */
 export const AutomationConversationActionHttpPathsV1 = Object.freeze({
   'automation.conversation.targets.list': '/v1/automations/conversation/targets/list',
@@ -1314,7 +1323,7 @@ export const AutomationConversationActionHttpPathsV1 = Object.freeze({
 } as const satisfies Readonly<Record<AutomationConversationActionIdV1, string>>);
 
 export const AutomationConversationActionHttpCallerV1Schema = z.object({
-  pluginId: z.literal('happier.channels'),
+  pluginId: asProtocolZod(PluginIdSchema),
   contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   materialization: PluginMachineMaterializationRefV1Schema,
 }).strict().superRefine((caller, context) => {
@@ -1345,7 +1354,21 @@ export const AutomationConversationActionHttpRequestSchemasV1 = Object.freeze({
     v: z.literal(1),
     caller: AutomationConversationActionHttpCallerV1Schema,
     input: AutomationConversationAdmitInputV1Schema,
-  }).strict(),
+  }).strict().superRefine((request, context) => {
+    // Any plugin may admit a Conversation and receive its own reply. The frozen
+    // delivery target must stay inside the admitting plugin: naming another
+    // plugin's contribution would misroute a user's reply out of its owner.
+    if (!isAutomationConversationResultDeliveryOwnedByCallerV1({
+      callerPluginId: request.caller.pluginId,
+      resultDelivery: request.input.resultDelivery,
+    })) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['input', 'resultDelivery', 'actionRef', 'pluginId'],
+        message: 'Result delivery must target the admitting plugin\'s own Action contribution',
+      });
+    }
+  }),
 } as const satisfies Readonly<Record<AutomationConversationActionIdV1, z.ZodTypeAny>>);
 export type AutomationConversationTargetsListHttpRequestV1 = z.infer<
   typeof AutomationConversationActionHttpRequestSchemasV1['automation.conversation.targets.list']

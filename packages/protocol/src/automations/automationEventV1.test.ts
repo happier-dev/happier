@@ -19,7 +19,6 @@ import {
   AutomationEventTriggerDefinitionStoredPayloadV1Schema,
   AutomationEventTriggerObservationTransportV1Schema,
   AutomationStoredContentEnvelopeV1Schema,
-  AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
   AutomationConversationAdmitInputV1Schema,
   AutomationConversationAdmitResultV1Schema,
   AutomationConversationResultDeliveryV1Schema,
@@ -34,6 +33,7 @@ import {
   AutomationResultDeliverySourceV1Schema,
   AutomationRunResultV1JsonSchema,
   AutomationRunResultV1Schema,
+  isAutomationConversationResultDeliveryOwnedByCallerV1,
   MAX_AUTOMATION_EVENT_PAYLOAD_UTF8_BYTES,
   MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
@@ -42,6 +42,7 @@ import {
   PluginEventAutomationHistoryGapResetActionResultV1Schema,
   PluginEventAutomationDeclarationV1Schema,
   evaluateAutomationEventFilterV1,
+  isAutomationEventObservationFreshV1,
   validateAutomationEventFilterAgainstPayloadSchemaV1,
 } from './automationEventV1.js';
 import {
@@ -59,8 +60,8 @@ const eventDeclarationRelease = {
 
 describe('Automation event V1 contracts', () => {
   it('reexports the exact browser-safe result-delivery values from their canonical leaf', () => {
-    expect(AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1).toBe(
-      AutomationResultDeliveryV1.AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
+    expect(isAutomationConversationResultDeliveryOwnedByCallerV1).toBe(
+      AutomationResultDeliveryV1.isAutomationConversationResultDeliveryOwnedByCallerV1,
     );
     expect(AutomationConversationAdmitInputV1Schema).toBe(
       AutomationResultDeliveryV1.AutomationConversationAdmitInputV1Schema,
@@ -301,6 +302,33 @@ describe('Automation event V1 contracts', () => {
     })).toBe(false);
     expect(AutomationEventFilterV1Schema.safeParse({ v: 1, all: [] }).success)
       .toBe(false);
+  });
+
+  it('bounds Event observation freshness by staleness alone, so a source clock that leads this host still admits', () => {
+    const occurredAt = 1_700_000_000_000;
+
+    expect(isAutomationEventObservationFreshV1({
+      occurredAt,
+      observationReceivedAt: occurredAt + 60_000,
+      maximumObservationAgeMs: 60_000,
+    })).toBe(true);
+    expect(isAutomationEventObservationFreshV1({
+      occurredAt,
+      observationReceivedAt: occurredAt + 60_001,
+      maximumObservationAgeMs: 60_000,
+    })).toBe(false);
+    // A source clock ahead of ours makes the occurrence newer than local time,
+    // never staler; skipping it would drop an occurrence that is in fact fresh.
+    expect(isAutomationEventObservationFreshV1({
+      occurredAt,
+      observationReceivedAt: occurredAt - 86_400_000,
+      maximumObservationAgeMs: 0,
+    })).toBe(true);
+    expect(isAutomationEventObservationFreshV1({
+      occurredAt,
+      observationReceivedAt: occurredAt + 86_400_000,
+      maximumObservationAgeMs: null,
+    })).toBe(true);
   });
 
   it('validates bounded Event filter paths and scalar operands against the declared payload schema', () => {

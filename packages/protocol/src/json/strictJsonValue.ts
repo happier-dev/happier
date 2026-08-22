@@ -1,19 +1,17 @@
 import { z } from 'zod';
 
-import {
-  cloneStrictPluginJsonValue,
-  measureSerializedValidatedStrictPluginJsonUtf8Bytes,
-} from '../plugins/contributions/strictJsonValue.js';
-import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from '../runtime/agentSessionLimitsV1.js';
+import { cloneStrictPluginJsonValue } from '../plugins/contributions/strictJsonValue.js';
 
 /**
  * The one Protocol-owned strict JSON value: data that has already passed
  * `normalizeStrictJsonValue`, so it carries the prototype, accessor,
- * dense-array, well-formed-Unicode, and aggregate-byte guarantees that owner
- * enforces. It is immutable because it names a normalized result rather than
- * authoring input. Every other strict spelling in this repository is an alias
- * of this type (`ProtocolJsonValue`) or a declaration-neutral SDK projection
- * of it; the mutable pre-normalization vocabulary is `PluginJsonValueV2` in
+ * dense-array, finite-number, and immutable-snapshot guarantees that owner
+ * enforces. Strict JSON preserves lone UTF-16 surrogates for `JSON.stringify`;
+ * raw UTF-8 and aggregate-byte requirements belong to their named boundary
+ * owners. Every other strict
+ * spelling in this repository is an alias of this type (`ProtocolJsonValue`)
+ * or a declaration-neutral SDK projection of it; the mutable
+ * pre-normalization vocabulary is `PluginJsonValueV2` in
  * `plugins/contributions/jsonSchema.ts`.
  */
 export type JsonValue =
@@ -25,16 +23,7 @@ export type JsonValue =
   | { readonly [key: string]: JsonValue };
 
 export function normalizeStrictJsonValue(input: unknown): JsonValue {
-  const normalized = cloneStrictPluginJsonValue(input, 'value') as JsonValue;
-  const maximumBytes = LIMITS.p0MeasuredCandidates.jsonValueMaxJsonBytes;
-  if (measureSerializedValidatedStrictPluginJsonUtf8Bytes(
-    normalized,
-    'value',
-    maximumBytes,
-  ) > maximumBytes) {
-    throw new Error('JSON aggregate byte limit exceeded');
-  }
-  return normalized;
+  return cloneStrictPluginJsonValue(input, 'value') as JsonValue;
 }
 
 export const StrictJsonValueSchema = z.unknown().transform((value, context): JsonValue => {

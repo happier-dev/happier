@@ -45,6 +45,66 @@ function tryParseProxyTargetFromLine(line: string): URL | null {
   }
 }
 
+export type TailscaleServeRootSlot =
+  | Readonly<{ kind: 'free' }>
+  | Readonly<{ kind: 'exact'; httpsUrl: string | null }>
+  | Readonly<{ kind: 'conflict'; exposure: 'serve' | 'funnel'; httpsUrl: string | null }>;
+
+function isRootProxyLine(line: string): boolean {
+  return /^\|?--\s+\/\s+proxy\s+/iu.test(String(line ?? '').trim());
+}
+
+function proxyTargetMatchesInternalServerUrl(target: URL, internalServerUrl: string): boolean {
+  let wanted: URL;
+  try {
+    wanted = new URL(internalServerUrl);
+  } catch {
+    return false;
+  }
+  if (target.toString().replace(/\/+$/u, '') === wanted.toString().replace(/\/+$/u, '')) return true;
+  const loopbackSpellings = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '[::1]', '::1']);
+  return Boolean(
+    wanted.port
+    && target.port === wanted.port
+    && loopbackSpellings.has(target.hostname.toLowerCase())
+    && loopbackSpellings.has(wanted.hostname.toLowerCase()),
+  );
+}
+
+/**
+ * Classify only the root HTTPS mount that `tailscale serve --bg <upstream>`
+ * would replace. Other paths may coexist and are therefore not conflicts.
+ */
+export function classifyTailscaleServeRootSlot(
+  statusText: string,
+  internalServerUrl: string,
+): TailscaleServeRootSlot {
+  let currentHttpsUrl: string | null = null;
+  const lines = String(statusText ?? '').split(/\r?\n/u);
+  for (const rawLine of lines) {
+    const line = String(rawLine ?? '').trim();
+    if (!line) continue;
+
+    const maybeHttps = line.match(/^(https:\/\/\S+)/iu)?.[1];
+    if (maybeHttps && !line.toLowerCase().includes('proxy')) {
+      currentHttpsUrl = normalizeHttpsUrl(maybeHttps);
+      continue;
+    }
+    if (!isRootProxyLine(line)) continue;
+
+    const target = tryParseProxyTargetFromLine(line);
+    if (target && proxyTargetMatchesInternalServerUrl(target, internalServerUrl)) {
+      return { kind: 'exact', httpsUrl: currentHttpsUrl };
+    }
+    return {
+      kind: 'conflict',
+      exposure: /\bfunnel\b/iu.test(statusText) ? 'funnel' : 'serve',
+      httpsUrl: currentHttpsUrl,
+    };
+  }
+  return { kind: 'free' };
+}
+
 function tryParseServePathFromLine(line: string): string | null {
   const trimmed = String(line ?? '').trim();
   const match = trimmed.match(/^\|--\s+(\S+)\s+proxy\s+\S+/i);
@@ -184,7 +244,7 @@ export function tailscaleServeStatusMatchesInternalServerUrl(
   }
   if (!port) return false;
 
-  const re = new RegExp(String.raw`\\bproxy\\s+https?:\\/\\/(?:127\\.0\\.0\\.1|localhost|0\\.0\\.0\\.0):${port}\\b`, 'i');
+  const re = new RegExp(String.raw`\bproxy\s+https?:\/\/(?:127\.0\.0\.1|localhost|0\.0\.0\.0):${port}\b`, 'i');
   return re.test(serveStatusText);
 }
 

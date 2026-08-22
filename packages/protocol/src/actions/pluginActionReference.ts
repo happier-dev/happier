@@ -88,7 +88,7 @@ export function renderPluginActionReferenceMarkdown(): string {
     'description: Generated reference for every host Action available through the Plugin Actions service.',
     '---',
     '',
-    `<!-- ${GENERATED_REFERENCE_NOTE} -->`,
+    `{/* ${GENERATED_REFERENCE_NOTE} */}`,
     '',
     'Use this reference when calling host Actions from a Plugin invocation context. It is generated from the canonical ActionSpec registry, so each listed id is available through `context.services.actions.execute(...)` and no hand-maintained Action list can drift from the host.',
     '',

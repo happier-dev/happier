@@ -122,7 +122,6 @@ export type PluginContributionIntrospectionPresentationV1 = z.infer<
 export const PluginContributionLifecycleRecordV1Schema = z.object({
   version: z.literal(1),
   contribution: PluginContributionIntrospectionIdentityV1Schema,
-  stability: z.enum(['stable', 'experimental', 'delegated']),
   progression: z.object({
     declared: z.literal(true),
     normalized: z.boolean(),

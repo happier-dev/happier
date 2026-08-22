@@ -7,6 +7,10 @@ import { InstallableAutoUpdateModeSchema } from '../../installables/descriptor.j
 import { SavedSecretSchema } from '../../profiles/backendProfileSchema.js';
 import { ExternalSessionsSettingsV1Schema } from '../../sessions/external/followLifecycleV1.js';
 import {
+  HappierReplayRecentMessagesCountSchema,
+  HappierReplayWritableMaxSeedCharsSchema,
+} from '../../sessions/replaySeedBudget.js';
+import {
   buildQualifiedPluginContributionKey,
   PluginContributionIdentityV1Schema,
 } from '../../plugins/contributionIdentity.js';
@@ -775,7 +779,13 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
   crashReportsOptOut: accountPreference(z.boolean(), false, 'privacy'),
   experiments: accountPreference(z.boolean(), false, 'feature choices'),
   useEnhancedSessionWizard: accountPreference(z.boolean(), false, 'session authoring'),
-  sessionReplayEnabled: accountPreference(z.boolean(), false, 'session replay'),
+  // Default ON. Replay is the only fork strategy available to an Agent whose
+  // provider declares `sessionFork: unsupported` (Claude Code, among others),
+  // and the fork gate is `native || replay` — so defaulting this off removed
+  // the fork affordance entirely for exactly the sessions this setting exists
+  // to serve. The same machinery is already default-on for the in-place Agent
+  // switch. A user can still turn it off.
+  sessionReplayEnabled: accountPreference(z.boolean(), true, 'session replay'),
   useProfiles: accountPreference(z.boolean(), false, 'profile presentation'),
   sessionPermissionModeApplyTiming: accountPolicy(
     z.enum(['immediate', 'next_prompt']),
@@ -825,6 +835,11 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
   sessionListAttentionPromotionModeV1: accountPreference(
     z.enum(['off', 'global', 'withinGroups']),
     'off',
+    'session list presentation',
+  ),
+  sessionListAttentionStandingDefaultV1: accountPreference(
+    z.boolean(),
+    false,
     'session list presentation',
   ),
   sessionListWorkingPlacementModeV1: accountPreference(
@@ -882,8 +897,10 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
     'recent_messages',
     'session replay',
   ),
-  sessionReplayRecentMessagesCount: accountPreference(z.number().int().min(1).max(10_000), 250, 'session replay'),
-  sessionReplayMaxSeedChars: accountPreference(z.number().int().min(1).max(512 * 1024), 120_000, 'session replay'),
+  // Bounds come from the one Replay-budget owner. A stored value outside them
+  // recovers to the default: a budget below the floor produced no seed at all.
+  sessionReplayRecentMessagesCount: accountPreference(HappierReplayRecentMessagesCountSchema, 250, 'session replay'),
+  sessionReplayMaxSeedChars: accountPreference(HappierReplayWritableMaxSeedCharsSchema, 120_000, 'session replay'),
   executionRunsGuidanceEnabled: accountPreference(z.boolean(), false, 'execution guidance'),
   executionRunsGuidanceMaxChars: accountPreference(z.number().int().min(1).max(64 * 1024), 4_000, 'execution guidance'),
   attachmentsUploadsUploadLocation: accountPreference(z.enum(['workspace', 'os_temp']), 'workspace', 'attachment uploads'),
@@ -898,6 +915,7 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
   sessionTagsEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
   sessionListWorkingStatusAnimatedTextEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
   mobileWorkspaceExperienceV1: accountPreference(z.enum(['classic', 'cockpit']), 'cockpit', 'mobile workspace presentation'),
+  sessionCockpitSwipeNavigationEnabled: accountPreference(z.boolean(), true, 'mobile workspace presentation'),
   tabBarGitBadgeMode: accountPreference(z.enum(['changedFiles', 'diffLines', 'off']), 'changedFiles', 'application chrome'),
   tabBarFriendsBadgeEnabled: accountPreference(z.boolean(), true, 'application chrome'),
   tabBarInboxBadgeEnabled: accountPreference(z.boolean(), true, 'application chrome'),

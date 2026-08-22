@@ -10,6 +10,7 @@ import {
   admitMentionRefsV1ForText,
   buildMentionRefForKindV1,
   buildMentionRefV1,
+  mentionRefV1SurvivesRenderedTokenAlone,
   parseMentionRefV1,
   readMentionRefOpaqueForKindV1,
   sanitizeMentionRefsV1,
@@ -100,6 +101,94 @@ describe('built-in kind reference schemes', () => {
     expect(readMentionRefOpaqueForKindV1(MENTION_KIND_V1.vendorPlugin, ref)).toBeNull();
     expect(readMentionRefOpaqueForKindV1(MENTION_KIND_V1.skill, 'ticket:ACME-1')).toBeNull();
     expect(readMentionRefOpaqueForKindV1(MENTION_KIND_V1.skill, 'skill:%zz')).toBeNull();
+  });
+});
+
+describe('mentionRefV1SurvivesRenderedTokenAlone', () => {
+  /**
+   * Some persistence keeps only the rendered prompt text: an Automation template
+   * stores the message a later run sends, never this `mentions[]` array. The
+   * question this owner answers for each kind is exactly "if that run happens with
+   * only the token, does the agent reach the same thing the user picked?".
+   */
+  it('admits a file reference whose rendered token carries the whole path', () => {
+    expect(mentionRefV1SurvivesRenderedTokenAlone({
+      kind: MENTION_KIND_V1.file,
+      ref: buildMentionRefForKindV1(MENTION_KIND_V1.file, 'docs/README.md'),
+      token: '@docs/README.md',
+    })).toBe(true);
+
+    // The composer quotes a path with a token-boundary character. The path is
+    // still literally present, so the same run still reaches the same file.
+    expect(mentionRefV1SurvivesRenderedTokenAlone({
+      kind: MENTION_KIND_V1.file,
+      ref: buildMentionRefForKindV1(MENTION_KIND_V1.file, 'docs/read me.md'),
+      token: '@"docs/read me.md"',
+    })).toBe(true);
+  });
+
+  it('refuses every kind whose identity the rendered token cannot express', () => {
+    const verdicts = [
+      // `skill:` carries the catalog identity (`vendor:codex:review`); the token is
+      // the bare display name, which no catalog lookup can resolve back.
+      {
+        kind: MENTION_KIND_V1.skill,
+        ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:codex:review'),
+        token: '$review',
+      },
+      // `vendorPlugin:` carries the marketplace ref; the token is the plugin name.
+      {
+        kind: MENTION_KIND_V1.vendorPlugin,
+        ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, 'plugin://linear@happier'),
+        token: '@Linear',
+      },
+      // `session:` carries the session id; the token is a title slug plus a short
+      // id tail, which names no session on its own.
+      {
+        kind: MENTION_KIND_V1.session,
+        ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'sess_01HZX'),
+        token: '@session:nightly-audit-1HZX',
+      },
+      // A plugin composer reference carries an opaque candidate id AND the
+      // contributing plugin identity; the token is the candidate's label.
+      {
+        kind: 'happier.composerReference',
+        ref: buildMentionRefV1('composerReference', 'ISSUE-4192'),
+        token: '@Fix the login redirect',
+      },
+      // `kind` is an open string. An unknown kind is refused rather than guessed:
+      // fail closed is the safe default inside this narrowing.
+      {
+        kind: 'acme.ticket',
+        ref: buildMentionRefV1('ticket', 'ACME-1'),
+        token: '@ACME-1',
+      },
+    ];
+
+    expect(verdicts.map((mention) => mentionRefV1SurvivesRenderedTokenAlone(mention))).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('refuses a file reference whose token does not carry its path', () => {
+    // `reference.insert` lets a plugin supply the token itself, so a file-kind
+    // reference is not automatically a self-describing one.
+    expect(mentionRefV1SurvivesRenderedTokenAlone({
+      kind: MENTION_KIND_V1.file,
+      ref: buildMentionRefForKindV1(MENTION_KIND_V1.file, 'docs/README.md'),
+      token: '@the readme',
+    })).toBe(false);
+
+    // A file-tagged reference schemed for another kind never reads back as a path.
+    expect(mentionRefV1SurvivesRenderedTokenAlone({
+      kind: MENTION_KIND_V1.file,
+      ref: 'session:docs/README.md',
+      token: '@docs/README.md',
+    })).toBe(false);
   });
 });
 

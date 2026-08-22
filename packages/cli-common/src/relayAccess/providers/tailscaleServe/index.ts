@@ -8,6 +8,7 @@ import {
 } from '../tailscale/commandParams.js';
 
 import {
+    classifyTailscaleServeRootSlot,
     extractTailscaleServeHttpsUrl,
     tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
     runTailscaleServeDisable,
@@ -39,9 +40,37 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
 
         try {
             const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
+            const commandParams = resolveTailscaleRelayAccessCommandParams(ctx, {
+                timeoutMs,
+                deadline: commandDeadline,
+                signal,
+            });
+            const serveStatus = await runTailscaleServeStatus(
+                commandParams,
+                {
+                    ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
+                    ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
+                },
+            );
+            const rootSlot = classifyTailscaleServeRootSlot(serveStatus, upstreamUrl);
+            if (rootSlot.kind === 'conflict') {
+                return {
+                    state: 'error',
+                    details: {
+                        reason: 'tailscale_root_slot_conflict',
+                        exposure: rootSlot.exposure,
+                        shareUrl: rootSlot.httpsUrl,
+                    },
+                };
+            }
+            if (rootSlot.kind === 'exact') {
+                return rootSlot.httpsUrl
+                    ? { state: 'enabled', shareUrl: rootSlot.httpsUrl }
+                    : { state: 'unknown' };
+            }
             const res = await runTailscaleServeEnable(
                 {
-                    ...resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
+                    ...commandParams,
                     upstreamUrl,
                 },
                 {
@@ -118,12 +147,27 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
             };
         }
 
-        if (!snapshot.loggedIn) {
+        // Signed in is not the same as usable. Serve/funnel config survives
+        // `tailscale down`, so the configured HTTPS URL keeps printing while
+        // the backend is stopped — reporting that as enabled tells the user a
+        // relay is reachable from their other devices when nothing is
+        // listening. Only a running backend may produce a shareUrl.
+        if (!snapshot.running) {
+            if (snapshot.daemonReachable && !snapshot.loggedIn) {
+                return {
+                    state: 'needs_auth',
+                    details: {
+                        backendState: snapshot.backendState,
+                        authUrl: snapshot.authUrl,
+                    },
+                };
+            }
             return {
-                state: 'needs_auth',
+                state: 'disabled',
                 details: {
                     backendState: snapshot.backendState,
-                    authUrl: snapshot.authUrl,
+                    daemonReachable: snapshot.daemonReachable,
+                    reason: 'tailscale_not_running',
                 },
             };
         }

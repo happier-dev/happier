@@ -1,0 +1,45 @@
+{
+  "name": "@happier-dev/triage-sources",
+  "version": "0.0.0",
+  "description": "The shared source-runtime authorization, forge HTTP and PRs & Issues settings page every first-party Triage source consumes.",
+  "private": false,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run --config vitest.config.ts",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugin-ui": "0.0.0",
+    "@happier-dev/triage-protocol": "0.0.0"
+  },
+  "peerDependencies": {
+    "react": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "react": "19.2.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

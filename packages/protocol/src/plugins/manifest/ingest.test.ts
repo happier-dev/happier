@@ -5,7 +5,10 @@ import {
   PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2,
   PluginManifestHostAccessV2Schema,
 } from './v2.js';
-import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '../contributions/catalog.js';
+import {
+  PLUGIN_CONTRIBUTION_CATALOG_V2,
+  derivePluginContributionRegistrationRights,
+} from '../contributions/catalog.js';
 import { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 } from '../contributions/ui/declarativeDocument.js';
 import {
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
@@ -98,6 +101,7 @@ function automationSetupAction(overrides: Record<string, unknown> = {}): Record<
     title: 'Set up source',
     scopes: ['global'],
     surfaces: ['plugin'],
+    execution: { target: 'daemon' },
     resultSchema: automationSetupResultSchema(),
     dangerLevel: 'safe',
     ...overrides,
@@ -110,6 +114,7 @@ function historyGapResetAction(overrides: Record<string, unknown> = {}): Record<
     title: 'Resume event source',
     scopes: ['global'],
     surfaces: ['plugin'],
+    execution: { target: 'daemon' },
     inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
     resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
     dangerLevel: 'writesLocal',
@@ -397,6 +402,7 @@ describe('canonical plugin manifest ingestion', () => {
           surfaces: ['ui'],
           placementBindings: ['rowAction'],
           dangerLevel: 'safe',
+          execution: { target: 'daemon' },
         }],
         resources: [{
           id: 'import-progress',
@@ -453,6 +459,49 @@ describe('canonical plugin manifest ingestion', () => {
         path: ['contributes', 'transcriptActivities', 0, 'resourceId'],
       })],
     });
+  });
+
+  it('reads a packaged Action declaration authored before the execution realm as a daemon Action', () => {
+    // `contributes.actions[].execution` was introduced after plugins were
+    // already packaging `.happier-plugin/plugin.json`. Every realm that existed
+    // before it was the daemon, so an absent declaration is that realm and not
+    // a rejected manifest: `schemaVersion` is still 2 and `runtime.apiVersion`
+    // is still 1, so a packaged declaration carries no signal that it must be
+    // re-authored. One owner decides this, and the raw catalog projection that
+    // routes an Action to its realm has to reach the same answer as ingestion.
+    const legacyAction = {
+      id: 'summarize',
+      title: 'Summarize',
+      scopes: ['session'],
+      surfaces: ['cli'],
+      dangerLevel: 'safe',
+    };
+    const ingested = ingestPluginManifestV2(manifest({
+      contributes: { actions: [legacyAction] },
+    }));
+
+    expect(ingested.ok).toBe(true);
+    expect(ingested.ok && ingested.manifest.contributes.actions).toEqual([
+      { ...legacyAction, execution: { target: 'daemon' } },
+    ]);
+    expect(derivePluginContributionRegistrationRights({ actions: [legacyAction] }))
+      .toEqual([expect.objectContaining({
+        localId: 'summarize',
+        target: { realm: 'daemon' },
+      })]);
+
+    // The backfill is a default for an absent realm, never tolerance for a
+    // declared one: an unknown target still fails, and so does a client target
+    // that omits the artifact tuple the client realm is entitled by.
+    for (const execution of [
+      { target: 'host' },
+      { target: 'client' },
+      { target: 'daemon', client: { artifactId: 'a', modulePath: './a', exportName: 'a' } },
+    ]) {
+      expect(ingestPluginManifestV2(manifest({
+        contributes: { actions: [{ ...legacyAction, execution }] },
+      })).ok).toBe(false);
+    }
   });
 
   it('accepts target entrypoints/hostAccess and rejects retired manifest owners', () => {
@@ -769,7 +818,7 @@ describe('canonical plugin manifest ingestion', () => {
     const result = ingestPluginManifestV2(manifest({
       contributes: {
         resources: [{ id: 'shared', kind: 'asset', path: 'shared.txt', contentType: 'text/plain' }],
-        actions: [{ id: 'shared', title: 'Shared', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }],
+        actions: [{ id: 'shared', title: 'Shared', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' } }],
       },
     }));
 
@@ -942,6 +991,7 @@ describe('canonical plugin manifest ingestion', () => {
           scopes: ['session'],
           surfaces: ['plugin'],
           dangerLevel: 'safe',
+          execution: { target: 'daemon' },
         }],
         composerControls: [{
           id: 'issue-control',
@@ -975,6 +1025,7 @@ describe('canonical plugin manifest ingestion', () => {
           surfaces: ['ui'],
           placementBindings: ['rowAction'],
           dangerLevel: 'safe',
+          execution: { target: 'daemon' },
         }],
         ui: {
           renderers: [{
@@ -1056,7 +1107,7 @@ describe('canonical plugin manifest ingestion', () => {
         sessionHeaderActions: [{
           id: 'open-provider',
           title: 'Open provider',
-          command: {
+          action: {
             kind: 'openSurface',
             destination: { pluginId: 'com.acme.provider', localId: 'repair-view' },
           },
@@ -1083,7 +1134,7 @@ describe('canonical plugin manifest ingestion', () => {
             headerActions: [{
               id: 'open-settings',
               title: 'Open settings',
-              command: {
+              action: {
                 kind: 'openSurface',
                 destination: { pluginId: 'com.acme.provider', localId: 'repair-settings' },
               },
@@ -1103,11 +1154,11 @@ describe('canonical plugin manifest ingestion', () => {
       diagnostics: expect.arrayContaining([
         expect.objectContaining({
           code: 'plugin_manifest_dangling_reference',
-          path: ['contributes', 'sessionHeaderActions', 0, 'command', 'destination'],
+          path: ['contributes', 'sessionHeaderActions', 0, 'action', 'destination'],
         }),
         expect.objectContaining({
           code: 'plugin_manifest_dangling_reference',
-          path: ['contributes', 'ui', 'views', 0, 'headerActions', 0, 'command', 'destination'],
+          path: ['contributes', 'ui', 'views', 0, 'headerActions', 0, 'action', 'destination'],
         }),
         expect.objectContaining({
           code: 'plugin_manifest_dangling_reference',
@@ -1128,6 +1179,7 @@ describe('canonical plugin manifest ingestion', () => {
           surfaces: ['ui'],
           placementBindings: ['rowAction'],
           dangerLevel: 'safe',
+          execution: { target: 'daemon' },
         }],
         ui: {
           renderers: [{
@@ -1317,7 +1369,7 @@ describe('canonical plugin manifest ingestion', () => {
     expect(ingestPluginManifestV2(manifest({
       contributes: {
         actions: [{
-          id: 'live-document', title: 'Not a Resource', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe',
+          id: 'live-document', title: 'Not a Resource', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' },
         }],
         ui: { renderers: [renderer] },
       },
@@ -1393,7 +1445,7 @@ describe('canonical plugin manifest ingestion', () => {
   it('normalizes tools and commands as references to one declared action', () => {
     const result = ingestPluginManifestV2(manifest({
       contributes: {
-        actions: [{ id: 'summarize', title: 'Summarize', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }],
+        actions: [{ id: 'summarize', title: 'Summarize', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' } }],
         tools: [{ id: 'summarize-tool', title: 'Summarize', name: 'summarize', action: 'summarize' }],
         commands: [{ id: 'summarize-command', title: 'Summarize', path: ['summarize'], action: 'summarize' }],
       },
@@ -1405,16 +1457,16 @@ describe('canonical plugin manifest ingestion', () => {
   it('resolves action hostAccess request ids against the manifest disclosure owner', () => {
     const allowed = ingestPluginManifestV2(manifest({
       hostAccess: { required: [{ id: 'api', capability: 'network', reason: 'API', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }] } }] },
-      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', hostAccess: ['api'] }] },
+      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' }, hostAccess: ['api'] }] },
     }));
     expect(allowed.ok).toBe(true);
     expect(ingestPluginManifestV2(manifest({
       hostAccess: { required: [{ id: 'api', capability: 'network', reason: 'API', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }] } }] },
-      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', hostAccess: ['api', 'api'] }] },
+      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' }, hostAccess: ['api', 'api'] }] },
     })).ok).toBe(false);
 
     const dangling = ingestPluginManifestV2(manifest({
-      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', hostAccess: ['missing'] }] },
+      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' }, hostAccess: ['missing'] }] },
     }));
     expect(dangling).toEqual({
       ok: false,
@@ -1521,7 +1573,7 @@ describe('canonical plugin manifest ingestion', () => {
   it('resolves structured cross-plugin references against the complete manifest set', () => {
     const owner = ingestPluginManifestV2(manifest({
       id: 'com.acme.actions',
-      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }] },
+      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', execution: { target: 'daemon' } }] },
     }));
     const consumer = ingestPluginManifestV2(manifest({
       id: 'com.acme.tools',

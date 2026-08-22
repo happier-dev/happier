@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { defineProtocolJsonValue } from '../plugins/actions/jsonSchemaValidation.js';
+import { defineProtocolJsonValue } from '../plugins/actions/protocolComposableSchema.js';
 import type { PluginJsonValueV2 } from '../plugins/contributions/publicTypes.js';
 
 export const MAX_AUTOMATION_EVENT_PAYLOAD_UTF8_BYTES = 64 * 1024;

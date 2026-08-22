@@ -6,7 +6,11 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.concurrent.ConcurrentHashMap
 
 class HappierSherpaNativeModule internal constructor(
-  private val createVadRegistry: (() -> FrameFedVadDetectorRegistryControl)? = null
+  private val createVadRegistry: (() -> FrameFedVadDetectorRegistryControl)? = null,
+  // Injected for the same reason as the VAD registry: the JNI library is allowed
+  // to be absent (see `HappierSherpaNativeJni`), so teardown must be drivable
+  // without it.
+  private val releaseAllStreaming: () -> Unit = { HappierSherpaNativeJni.nativeReleaseAllStreaming() }
 ) : Module() {
   private val enginesByAssetsDir = ConcurrentHashMap<String, Long>()
   private var vadRegistry: FrameFedVadDetectorRegistryControl? = null
@@ -27,6 +31,9 @@ class HappierSherpaNativeModule internal constructor(
   }
 
   internal fun handleModuleDestroy() {
+    // Streaming ASR state lives in the process-wide native registry, so it is
+    // released here rather than dying with this module instance.
+    releaseAllStreaming()
     val registry = vadRegistry ?: return
     vadRegistry = null
     registry.cancelAll()
@@ -131,6 +138,7 @@ class HappierSherpaNativeModule internal constructor(
 
       val bytes = if (pcm16leBase64.isBlank()) ByteArray(0) else Base64.decode(pcm16leBase64, Base64.DEFAULT)
       return@AsyncFunction HappierSherpaNativeJni.nativePushAudioFrame(jobId, bytes, sampleRate, channels)
+        ?: throw Exception("ASR stream not found")
     }
 
     AsyncFunction("finishStreaming") { params: Map<String, Any?> ->
@@ -138,6 +146,13 @@ class HappierSherpaNativeModule internal constructor(
       if (jobId.isBlank()) throw Exception("jobId is required")
       val text = HappierSherpaNativeJni.nativeFinishStreaming(jobId)
       return@AsyncFunction mapOf("text" to text)
+    }
+
+    AsyncFunction("releaseStreamingAssetsDir") { params: Map<String, Any?> ->
+      val assetsDir = params["assetsDir"] as? String ?: ""
+      if (assetsDir.isBlank()) throw Exception("assetsDir is required")
+      val cancelledJobs = HappierSherpaNativeJni.nativeReleaseStreamingAssetsDir(assetsDir)
+      return@AsyncFunction mapOf<String, Any>("cancelledJobs" to cancelledJobs)
     }
 
     AsyncFunction("createVadDetector") { params: Map<String, Any?> ->
@@ -198,9 +213,11 @@ object HappierSherpaNativeJni {
   external fun nativeCancel(handle: Long, jobId: String)
 
   external fun nativeCreateStreamingRecognizer(jobId: String, assetsDir: String, sampleRate: Int, channels: Int, language: String): Int
-  external fun nativePushAudioFrame(jobId: String, pcm16le: ByteArray, sampleRate: Int, channels: Int): Map<String, Any?>
+  external fun nativePushAudioFrame(jobId: String, pcm16le: ByteArray, sampleRate: Int, channels: Int): Map<String, Any?>?
   external fun nativeFinishStreaming(jobId: String): String
   external fun nativeCancelStreaming(jobId: String)
+  external fun nativeReleaseStreamingAssetsDir(assetsDir: String): Int
+  external fun nativeReleaseAllStreaming(): Int
 
   external fun nativeCreateVadSession(modelPath: String, sampleRate: Int, minSpeechSec: Float, minSilenceSec: Float): Long
   external fun nativeVadAcceptPcm16(handle: Long, pcm16: ShortArray, count: Int, channels: Int): Int

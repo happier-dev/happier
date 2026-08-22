@@ -1,4 +1,8 @@
 export {
+  isLoopbackHostname,
+  normalizeHostnameForLoopbackCheck,
+} from './loopbackHostname.js';
+export {
   canonicalizeServerUrlForIdentity,
   createServerUrlComparableKey,
   SERVER_URL_COMPARABLE_KEY_ERROR_CODE,

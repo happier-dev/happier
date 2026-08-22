@@ -1,5 +1,8 @@
-import type { AgentNativeContinuityProofV1, SessionMetadata } from '@happier-dev/protocol';
-import { AgentNativeContinuityProofV1Schema } from '@happier-dev/protocol';
+import {
+  readRuntimeDescriptorV1FromMetadata,
+  writeRuntimeDescriptorV1ToMetadata,
+  type SessionMetadata,
+} from '@happier-dev/protocol';
 
 import { AGENT_IDS } from '../../../types.js';
 import { getAgentResumeConfig } from '../../../manifest.js';
@@ -20,39 +23,39 @@ const LEGACY_PROVIDER_SESSION_ID_KEYS = Object.freeze(
 );
 
 /**
- * Catalog-declared continuity-proof keys, indexed by the vendor resume id key
- * they prove. A proof is only meaningful for the exact id it was produced
- * alongside (`REQ-STATE-01`), so the two keys are always written and cleared
- * together and never resolved independently.
+ * Catalog-declared native-session-log-path keys, indexed by the vendor resume id
+ * key whose conversation they name. The path names ONE conversation, so the two
+ * keys are always written and cleared together: an id write that inherited the
+ * previous id's path would point a reader at the wrong log.
  */
-const CONTINUITY_PROOF_METADATA_KEY_BY_RESUME_ID_KEY = Object.freeze(Object.fromEntries(
+const NATIVE_SESSION_LOG_PATH_METADATA_KEY_BY_RESUME_ID_KEY = Object.freeze(Object.fromEntries(
   AGENT_IDS.flatMap((agentId) => {
     const resume = getAgentResumeConfig(agentId);
-    const proofField = resume.vendorResumeContinuityProofField?.trim();
-    return resume.vendorResumeIdField && proofField
-      ? [[resume.vendorResumeIdField, proofField] as const]
+    const logPathField = resume.vendorResumeContinuityProofField?.trim();
+    return resume.vendorResumeIdField && logPathField
+      ? [[resume.vendorResumeIdField, logPathField] as const]
       : [];
   }),
 )) as Readonly<Record<string, string>>;
 
-const VENDOR_RESUME_CONTINUITY_PROOF_KEYS = Object.freeze(
-  Object.values(CONTINUITY_PROOF_METADATA_KEY_BY_RESUME_ID_KEY),
+const AGENT_NATIVE_SESSION_LOG_PATH_KEYS = Object.freeze(
+  Object.values(NATIVE_SESSION_LOG_PATH_METADATA_KEY_BY_RESUME_ID_KEY),
 );
 
 export function getLegacyProviderSessionIdMetadataKeys(): readonly ProviderSessionIdMetadataKey[] {
   return LEGACY_PROVIDER_SESSION_ID_KEYS;
 }
 
-/** Every catalog-declared continuity-proof metadata key, in catalog order. */
-export function getVendorResumeContinuityProofMetadataKeys(): readonly string[] {
-  return VENDOR_RESUME_CONTINUITY_PROOF_KEYS;
+/** Every catalog-declared native-session-log-path metadata key, in catalog order. */
+export function getAgentNativeSessionLogPathMetadataKeys(): readonly string[] {
+  return AGENT_NATIVE_SESSION_LOG_PATH_KEYS;
 }
 
-/** The continuity-proof key that belongs to one vendor resume id key, if any. */
-export function getVendorResumeContinuityProofMetadataKey(
+/** The native-session-log-path key that belongs to one vendor resume id key, if any. */
+export function getAgentNativeSessionLogPathMetadataKey(
   vendorResumeIdMetadataKey: string,
 ): string | null {
-  return CONTINUITY_PROOF_METADATA_KEY_BY_RESUME_ID_KEY[vendorResumeIdMetadataKey] ?? null;
+  return NATIVE_SESSION_LOG_PATH_METADATA_KEY_BY_RESUME_ID_KEY[vendorResumeIdMetadataKey] ?? null;
 }
 
 function asTrimmedString(value: unknown): string | null {
@@ -99,12 +102,37 @@ export function readProviderSessionIdSessionState(
   };
 }
 
+/**
+ * The agent-agnostic slot for an Agent with no catalog-declared flat field —
+ * every external (manifest-contributed) Agent, and any bundled Agent whose
+ * catalog stops declaring one.
+ *
+ * The descriptor is the Session's own runtime identity and already names the
+ * Agent, so the id lands beside the Agent that produced it. Without a
+ * descriptor there is no Agent identity to attach the id to, and inventing one
+ * would attribute a native conversation to the wrong Agent, so the write is
+ * declined rather than guessed.
+ */
+function writeRuntimeDescriptorProviderSessionId<TMetadata extends Record<string, unknown>>(
+  metadata: TMetadata,
+  providerSessionId: string,
+): TMetadata {
+  const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
+  if (!descriptor) return metadata;
+  const agent = descriptor.agent as Readonly<Record<string, unknown>>;
+  if (agent.providerSessionId === providerSessionId) return metadata;
+  return writeRuntimeDescriptorV1ToMetadata(metadata, {
+    ...descriptor,
+    agent: { ...agent, providerSessionId },
+  }) as TMetadata;
+}
+
 export function writeProviderSessionIdSessionState<TMetadata extends Record<string, unknown>>(
   metadata: TMetadata,
   update: Readonly<{
-    metadataKey: keyof TMetadata & string;
+    metadataKey: (keyof TMetadata & string) | null;
     value: string | null | undefined;
-    continuityProof?: AgentNativeContinuityProofV1 | null;
+    nativeSessionLogPath?: string | null;
   }>,
 ): TMetadata {
   const next = typeof update.value === 'string' ? update.value.trim() : '';
@@ -112,53 +140,66 @@ export function writeProviderSessionIdSessionState<TMetadata extends Record<stri
     return metadata;
   }
 
+  if (!update.metadataKey) {
+    return writeRuntimeDescriptorProviderSessionId(metadata, next);
+  }
+
   const written = {
     ...metadata,
     [update.metadataKey]: next,
   };
 
-  const proofMetadataKey = getVendorResumeContinuityProofMetadataKey(update.metadataKey);
-  if (!proofMetadataKey) {
+  const logPathMetadataKey = getAgentNativeSessionLogPathMetadataKey(update.metadataKey);
+  if (!logPathMetadataKey) {
     return written;
   }
 
-  // The proof belongs to exactly one id. Writing an id therefore always
-  // rewrites its proof slot — setting the matched proof, or clearing whatever
-  // was there — so a new id can never inherit the previous id's proof
-  // (`REQ-STATE-01`). This is why the proof rides inside this write rather than
-  // being a separately publishable field.
-  const proofValue = update.continuityProof?.value.trim() ?? '';
-  if (!proofValue) {
-    const { [proofMetadataKey]: _clearedProof, ...withoutProof } = written;
-    return withoutProof as TMetadata;
+  // The log path names exactly one conversation. Writing an id therefore always
+  // rewrites its path slot — setting the matched path, or clearing whatever was
+  // there — so a new id can never inherit the previous id's log. This is why the
+  // path rides inside this write rather than being a separately publishable
+  // field.
+  const logPathValue = update.nativeSessionLogPath?.trim() ?? '';
+  if (!logPathValue) {
+    const { [logPathMetadataKey]: _clearedLogPath, ...withoutLogPath } = written;
+    return withoutLogPath as TMetadata;
   }
   return {
     ...written,
-    [proofMetadataKey]: proofValue,
+    [logPathMetadataKey]: logPathValue,
   };
 }
 
+/**
+ * A structured id write. `metadataKey` is the CATALOG-DECLARED flat slot when the
+ * publisher knows one; a key no Agent catalog declares is not honored as a
+ * metadata key (a caller must never be able to name an arbitrary metadata
+ * field) and the write falls through to the agent-agnostic descriptor slot.
+ */
 function readStructuredProviderSessionIdWrite(
   value: SessionStateFieldWriteValue<'identity.providerSessionId'>,
 ): Readonly<{
   value: string | null | undefined;
-  metadataKey: ProviderSessionIdMetadataKey;
-  continuityProof: AgentNativeContinuityProofV1 | null;
+  metadataKey: ProviderSessionIdMetadataKey | null;
+  nativeSessionLogPath: string | null;
 }> | null {
   if (!isRecord(value)) return null;
-  const metadataKey = typeof value.metadataKey === 'string' && value.metadataKey.trim().length > 0
+  const rawMetadataKey = typeof value.metadataKey === 'string' && value.metadataKey.trim().length > 0
     ? value.metadataKey.trim()
     : null;
-  if (!metadataKey || !(LEGACY_PROVIDER_SESSION_ID_KEYS as readonly string[]).includes(metadataKey)) return null;
-  const parsedProof = value.continuityProof == null
-    ? null
-    : AgentNativeContinuityProofV1Schema.safeParse(value.continuityProof);
+  const metadataKey = rawMetadataKey
+    && (LEGACY_PROVIDER_SESSION_ID_KEYS as readonly string[]).includes(rawMetadataKey)
+    ? rawMetadataKey
+    : null;
+  const rawLogPath = typeof value.nativeSessionLogPath === 'string'
+    ? value.nativeSessionLogPath.trim()
+    : '';
   return {
     metadataKey,
     value: typeof value.value === 'string' ? value.value : null,
-    // An unparseable proof is treated as no proof: it must degrade to a fresh
-    // target, never authorize resuming an arbitrary native session.
-    continuityProof: parsedProof?.success ? parsedProof.data : null,
+    // A non-string or blank path is treated as no path: the seed offers the
+    // successor nothing rather than a pointer it cannot follow.
+    nativeSessionLogPath: rawLogPath || null,
   };
 }
 
@@ -182,25 +223,34 @@ export function createProviderSessionIdBinding(
         {
           metadataKey,
           value: readProviderSessionIdWriteValue(update.value),
-          continuityProof: structured?.continuityProof ?? null,
+          nativeSessionLogPath: structured?.nativeSessionLogPath ?? null,
         },
       ) as SessionMetadata;
     },
   };
 }
 
+/**
+ * ONE writer for a Session's native provider session id.
+ *
+ * A catalog-declared flat `<vendor>SessionId` slot wins when the Agent has one;
+ * otherwise the id goes to the agent-agnostic runtime-descriptor slot. Before,
+ * the absence of a declared slot returned the metadata unchanged, so every
+ * external Agent's id — including one published through the documented
+ * `identity.providerSessionId` author channel — was silently discarded and its
+ * Session could never be resumed.
+ */
 export const providerSessionIdBinding: SessionStateBinding<'identity.providerSessionId'> = {
   read: readProviderSessionIdSessionState,
   write: (metadata, update) => {
     const structured = readStructuredProviderSessionIdWrite(update.value);
     const metadataKey = structured?.metadataKey ?? resolveProviderSessionIdMetadataKey(metadata);
-    if (!metadataKey) return metadata;
     return writeProviderSessionIdSessionState(
       metadata as SessionMetadata & Record<string, unknown>,
       {
         metadataKey,
         value: structured?.value ?? readProviderSessionIdWriteValue(update.value),
-        continuityProof: structured?.continuityProof ?? null,
+        nativeSessionLogPath: structured?.nativeSessionLogPath ?? null,
       },
     ) as SessionMetadata;
   },

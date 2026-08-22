@@ -16,8 +16,10 @@ import {
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from './hostApiDefinition.js';
 import { PluginUiLaunchInputV1Schema, PluginUiSubPathV1Schema } from './hostApiRequests.js';
 import { ComposerRefV1Schema } from './composer.js';
+import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 
 const BridgeIdSchema = z.string().trim().min(1);
+const ComposerRefV1ZodSchema = asProtocolZod(ComposerRefV1Schema);
 const HOSTED_WEB_NATIVE_ARTIFACT_PARTITION_PATTERN = /^hpa_[a-f0-9]{64}$/u;
 const HOSTED_WEB_ANDROID_ARTIFACT_FRAME_HOST_SUFFIX = '.plugins.happier.dev';
 
@@ -198,7 +200,7 @@ export const PluginHostedWebBridgeBootstrapPayloadV1Schema = z.object({
   identity: PluginUiHostApiWireIdentityV1Schema,
   subPath: PluginUiSubPathV1Schema.optional(),
   launchInput: PluginUiLaunchInputV1Schema.optional(),
-  composerRef: ComposerRefV1Schema.optional(),
+  composerRef: ComposerRefV1ZodSchema.optional(),
 }).strict();
 export type PluginHostedWebBridgeBootstrapPayloadV1 =
   z.infer<typeof PluginHostedWebBridgeBootstrapPayloadV1Schema>;

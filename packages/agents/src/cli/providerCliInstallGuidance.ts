@@ -31,7 +31,7 @@ type PlatformRecipeLine = Readonly<{
 }>;
 
 function buildPlatformRecipeLines(providerId: AgentId): ReadonlyArray<PlatformRecipeLine> {
-  const recipes = getAgentCliRuntimeSpec(providerId).manualInstallRecipes;
+  const recipes = getAgentCliRuntimeSpec(providerId)?.manualInstallRecipes;
   if (!recipes) return [];
 
   const grouped = new Map<string, PlatformRecipeLine>();
@@ -63,7 +63,7 @@ function formatPlatformLabel(platforms: ReadonlyArray<AgentCliInstallPlatform>):
 
 export function getProviderCliInstallGuideUrl(providerId: AgentId): string | null {
   const spec = getAgentCliRuntimeSpec(providerId);
-  return spec.installGuideUrl ?? spec.docsUrl ?? null;
+  return spec?.installGuideUrl ?? spec?.docsUrl ?? null;
 }
 
 export function getProviderCliManualInstallSummaryLines(providerId: AgentId): ReadonlyArray<string> {

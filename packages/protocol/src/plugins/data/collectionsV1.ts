@@ -26,6 +26,7 @@ import {
   PluginCollectionProjectedScalarValueV1Schema,
   PluginCollectionQuotaRequestV1Schema,
   PluginCollectionSchemaV1Schema,
+  PluginCollectionSchemaVersionV1Schema,
   PluginCollectionUiQueryParameterV1Schema,
   PluginCollectionUiQueryValueV1Schema,
   PluginCollectionRelationV1Schema,
@@ -57,7 +58,13 @@ import {
   type PluginCollectionUiRowContextV1,
   type PluginCollectionUiRowV1,
 } from './collectionUiQueryWireV1.js';
-import { PLUGIN_COLLECTION_LIMITS_V1 } from './collectionLimitsV1.js';
+import {
+  PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
+  PLUGIN_COLLECTION_LIMITS_V1,
+} from './collectionLimitsV1.js';
+import type {
+  PluginDataCollectionsCapabilities,
+} from '../../features/payload/capabilities/pluginDataCollectionsCapabilities.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 export {
@@ -71,9 +78,11 @@ export {
   PluginCollectionQuotaRequestV1Schema,
   PluginCollectionRelationV1Schema,
   PluginCollectionScalarKindV1Schema,
+  PluginCollectionSchemaVersionV1Schema,
   PluginCollectionUiQueryDescriptorV1Schema,
   PluginCollectionUiQueryParameterV1Schema,
   type PluginAccountCollectionContributionV1,
+  type PluginCollectionSchemaVersionV1,
   type PluginCollectionIndexFieldV1,
   type PluginCollectionIndexPrefixQuotaV1,
   type PluginCollectionIndexV1,
@@ -110,7 +119,11 @@ const MAX_COLLECTION_INDEXED_STRING_UTF8_BYTES = 256;
 const MAX_COLLECTION_INDEX_TUPLE_PREFIX_BYTES = 2_060;
 export const PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1 = 2_318;
 
-export { PLUGIN_COLLECTION_LIMITS_V1 } from './collectionLimitsV1.js';
+export {
+  PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
+  PLUGIN_COLLECTION_LIMITS_V1,
+  PLUGIN_COLLECTION_SCHEMA_VERSION_MAX,
+} from './collectionLimitsV1.js';
 
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -133,6 +146,89 @@ export function measurePluginCollectionMutationRequestEncodedBytesV1(
   return encodedJsonUtf8ByteLength(request);
 }
 
+/**
+ * The canonical mutation-request metric decomposed into the parts a batch
+ * planner recombines: the request shell every batch pays once, and each
+ * operation's marginal cost including the separator that joins it to a
+ * preceding operation. Costs are additive, so the shell plus any subset of the
+ * operation costs, less the one separator the first operation does not pay,
+ * is exactly `measurePluginCollectionMutationRequestEncodedBytesV1` of that
+ * subset sent as one request.
+ */
+export type PluginCollectionMutationRequestMeasurementV1 = Readonly<{
+  /** Encoded bytes one mutation request costs before any operation. */
+  overheadEncodedBytes: number;
+  /** Encoded bytes each operation adds, in the order supplied. */
+  operationEncodedBytes: readonly number[];
+}>;
+
+/**
+ * The single decomposition owner for the metric above. Every planner — daemon
+ * plugin, plugin UI, or host — reads its batch sizing from here so no surface
+ * re-models the private envelope, the projection, or the request shell.
+ */
+export function measurePluginCollectionMutationRequestDecompositionV1(
+  request: PluginCollectionMutationRequestV1,
+): PluginCollectionMutationRequestMeasurementV1 {
+  return Object.freeze({
+    // Spreading keeps the request's own key order, so this is the exact shell
+    // the wire would carry with no operations in it.
+    overheadEncodedBytes: encodedJsonUtf8ByteLength({ ...request, operations: [] }),
+    operationEncodedBytes: Object.freeze(
+      request.operations.map((operation) => encodedJsonUtf8ByteLength(operation) + 1),
+    ),
+  });
+}
+
+/**
+ * The Account Collection limits actually in force for one bound collection:
+ * the connected deployment's published policy narrowed by that collection's
+ * admitted quota. The server composes its enforced maximum the same way, so a
+ * planner reading this plans against the value that will be enforced rather
+ * than a compatibility ceiling.
+ *
+ * Batch dimensions are deployment-owned: a collection quota bounds stored rows
+ * and Account aggregates, never how much one atomic request may carry.
+ */
+export type PluginCollectionEffectiveLimitsV1 = Readonly<{
+  maxRowEncodedBytes: number;
+  maxBatchBytes: number;
+  maxBatchRows: number;
+  maxAccountRows: number;
+  maxAccountBytes: number;
+  /**
+   * `deployment` when the connected deployment published its effective policy.
+   * `default` when it has not yet and these are the platform's shipped
+   * deployment defaults; an operator may have lowered a dimension the client
+   * cannot see, so a batch planned on a `default` basis can still be rejected.
+   */
+  basis: 'deployment' | 'default';
+}>;
+
+/**
+ * The single composition owner for the limits a Collection writer plans
+ * against. Both the daemon plugin runtime and the plugin-UI Data client
+ * resolve through this function so the two surfaces cannot report different
+ * effective ceilings for the same bound collection.
+ */
+export function resolveEffectivePluginCollectionLimitsV1(input: Readonly<{
+  deployment: PluginDataCollectionsCapabilities | undefined;
+  quota: PluginCollectionQuotaRequestV1 | undefined;
+}>): PluginCollectionEffectiveLimitsV1 {
+  const deployment = input.deployment ?? PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1;
+  const narrowed = (deploymentMaximum: number, requested: number | undefined): number => (
+    requested === undefined ? deploymentMaximum : Math.min(deploymentMaximum, requested)
+  );
+  return Object.freeze({
+    maxRowEncodedBytes: narrowed(deployment.maxRowEncodedBytes, input.quota?.maxRowEncodedBytes),
+    maxBatchBytes: deployment.maxBatchBytes,
+    maxBatchRows: deployment.maxBatchRows,
+    maxAccountRows: narrowed(deployment.maxAccountRows, input.quota?.maxRows),
+    maxAccountBytes: narrowed(deployment.maxAccountBytes, input.quota?.maxCollectionEncodedBytes),
+    basis: input.deployment ? 'deployment' : 'default',
+  });
+}
+
 /** Stable UTF-16 code-unit order; unlike localeCompare, this cannot vary with process locale. */
 function compareCanonicalText(left: string, right: string): number {
   if (left < right) return -1;
@@ -149,13 +245,13 @@ export type PluginCollectionContractDigestV1 = z.infer<typeof PluginCollectionCo
 export const PluginCollectionContractRefV1Schema = z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
-  schemaVersion: z.number().int().min(1),
+  schemaVersion: PluginCollectionSchemaVersionV1Schema,
   contractDigest: PluginCollectionContractDigestV1Schema,
 }).strict();
 export type PluginCollectionContractRefV1 = z.infer<typeof PluginCollectionContractRefV1Schema>;
 
 export const PluginCollectionWriterContextV1Schema = z.object({
-  schemaVersion: z.number().int().min(1),
+  schemaVersion: PluginCollectionSchemaVersionV1Schema,
   contractDigest: PluginCollectionContractDigestV1Schema,
 }).strict();
 export type PluginCollectionWriterContextV1 = z.infer<typeof PluginCollectionWriterContextV1Schema>;
@@ -622,6 +718,45 @@ export function measurePluginCollectionCandidatePreparationStageRequestEncodedBy
   return encodedJsonUtf8ByteLength(request);
 }
 
+/**
+ * Greedily groups target-stage items into the largest requests that fit the
+ * currently advertised deployment limits. It deliberately preserves a
+ * singleton that does not fit: the server remains the authoritative owner of
+ * that typed refusal because no smaller valid request shape exists.
+ */
+export function splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1(input: Readonly<{
+  binding: PluginCollectionCandidatePreparationBindingV1;
+  items: readonly PluginCollectionCandidatePreparationStageRequestV1['items'][number][];
+  limits: Readonly<{
+    maxBatchRows: number;
+    maxBatchBytes: number;
+  }>;
+}>): readonly PluginCollectionCandidatePreparationStageRequestV1[] {
+  const requests: PluginCollectionCandidatePreparationStageRequestV1[] = [];
+  let pending: PluginCollectionCandidatePreparationStageRequestV1['items'][number][] = [];
+  const toRequest = (items: readonly PluginCollectionCandidatePreparationStageRequestV1['items'][number][]) => (
+    PluginCollectionCandidatePreparationStageRequestV1Schema.parse({
+      binding: input.binding,
+      items,
+    })
+  );
+
+  for (const item of input.items) {
+    const candidate = toRequest([...pending, item]);
+    const exceedsKnownLimit = candidate.items.length > input.limits.maxBatchRows
+      || measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1(candidate)
+        > input.limits.maxBatchBytes;
+    if (exceedsKnownLimit && pending.length > 0) {
+      requests.push(toRequest(pending));
+      pending = [item];
+    } else {
+      pending.push(item);
+    }
+  }
+  if (pending.length > 0) requests.push(toRequest(pending));
+  return requests;
+}
+
 const PluginCollectionCandidatePreparationStageItemResultV1Schema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('staged') }).strict(),
   z.object({ status: z.literal('sourceChanged') }).strict(),
@@ -794,7 +929,7 @@ function collectionObjectProperties(
 export const NormalizedPluginAccountCollectionContractV1Schema = z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
-  schemaVersion: z.number().int().min(1),
+  schemaVersion: PluginCollectionSchemaVersionV1Schema,
   migrations: z.array(PluginCollectionMigrationDeclarationV1Schema).default([]),
   contractDigest: PluginCollectionContractDigestV1Schema,
   rowIdField: PluginCollectionMemberNameV1Schema,
@@ -804,7 +939,7 @@ export const NormalizedPluginAccountCollectionContractV1Schema = z.object({
   uiQueries: z.array(NormalizedPluginCollectionUiQueryDescriptorV1Schema),
   relations: z.array(PluginCollectionRelationV1Schema),
   quota: PluginCollectionQuotaRequestV1Schema.optional(),
-  readableSchemaVersions: z.array(z.number().int().min(1)),
+  readableSchemaVersions: z.array(PluginCollectionSchemaVersionV1Schema),
   identityFields: z.array(PluginCollectionMemberNameV1Schema).default([]),
 }).strict().superRefine((value, context) => {
   if (collectionObjectProperties(value.schema) === null) {

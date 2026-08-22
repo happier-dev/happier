@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import { ExternalSessionsSourceSchema } from '../../external/sourceCatalog.js';
-import { AgentProviderIdV1Schema } from '../../../generated/providers/agentProviderIdsV1.js';
+import {
+  ExternalSessionAgentIdSchema,
+  ExternalSessionsSourceSchema,
+} from '../../external/sourceCatalog.js';
 import { RuntimeDescriptorV1Schema } from '../../metadata/runtimeDescriptorV1.js';
 
 import {
@@ -223,7 +225,7 @@ export type SessionHandoffMetadataV2 = z.infer<typeof SessionHandoffMetadataV2Sc
 const SessionHandoffResumePlanSchema = z
   .object({
     directory: z.string().min(1).max(MAX_PATH_LENGTH),
-    agent: AgentProviderIdV1Schema,
+    agent: ExternalSessionAgentIdSchema,
     resume: z.string().min(1).max(4096),
     environmentVariables: z.record(z.string().min(1).max(128), z.string().max(16 * 1024)).optional(),
     transcriptStorage: z.enum(['direct', 'persisted']),

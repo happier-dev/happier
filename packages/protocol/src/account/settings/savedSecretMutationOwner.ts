@@ -231,6 +231,8 @@ export type AccountSettingsVoiceCredentialSourceResolution = Readonly<{
     secretId: string;
     source: 'account' | 'machine_override';
   }> | null;
+  /** The recipient contract the user approved for this target, when recorded. */
+  approvedRecipientContractDigest: string | null;
 }>;
 
 export class AccountSettingsSavedSecretMutationError extends Error {
@@ -1391,6 +1393,8 @@ export function resolveAccountSettingsVoiceCredentialSource(
     readQualifiedPurposeBindings(settings),
     identity.purpose,
   );
+  const rawDigest = state.binding?.approvedRecipientContractDigest;
+  const approvedRecipientContractDigest = typeof rawDigest === 'string' ? rawDigest : null;
   if (source.kind === 'connectedAccount') {
     if (!purposeBinding) {
       throw new AccountSettingsSavedSecretMutationError(
@@ -1405,6 +1409,7 @@ export function resolveAccountSettingsVoiceCredentialSource(
       }),
       binding: purposeBinding,
       savedSecret: null,
+      approvedRecipientContractDigest,
     });
   }
   if (purposeBinding) {
@@ -1418,6 +1423,7 @@ export function resolveAccountSettingsVoiceCredentialSource(
       selection: Object.freeze({ kind: 'none' }),
       binding: null,
       savedSecret: null,
+      approvedRecipientContractDigest,
     });
   }
   if (source.kind !== 'savedSecret') {
@@ -1454,6 +1460,7 @@ export function resolveAccountSettingsVoiceCredentialSource(
     selection: Object.freeze({ kind: 'savedSecret' }),
     binding: null,
     savedSecret,
+    approvedRecipientContractDigest,
   });
 }
 

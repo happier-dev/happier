@@ -16,7 +16,9 @@ describe('planServiceAction (schtasks install)', () => {
 
     const create = plan.commands.find((command) =>
       command.cmd === 'schtasks' && command.args.includes('/Create'));
-    expect(plan.commands.map((command) => command.cmd)).toEqual(['powershell.exe', 'schtasks', 'schtasks']);
+    // stop-if-running, /Create, apply service policy (restart + long-running
+    // hardening, which schtasks cannot express), /Run.
+    expect(plan.commands.map((command) => command.cmd)).toEqual(['powershell.exe', 'schtasks', 'powershell.exe', 'schtasks']);
     expect(plan.commands[0]?.args).toEqual(expect.arrayContaining([
       '-NoProfile',
       '-NonInteractive',

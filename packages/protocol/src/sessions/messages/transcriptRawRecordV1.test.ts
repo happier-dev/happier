@@ -1072,18 +1072,37 @@ describe('agent-transition divider attention', () => {
   const divider = {
     type: 'message',
     message: 'Continued with another Agent.',
-    sessionAgentTransitionV1: { v: 1, fromAgentId: 'claude', toAgentId: 'codex' },
+    sessionAgentTransitionV1: {
+      v: 1,
+      fromAgentId: 'claude',
+      toAgentId: 'codex',
+      sourceCutoffSeqInclusive: 29_979,
+    },
   };
 
-  it('silences an event carrying the transition sidecar', () => {
-    expect(agentEventAttentionImpact(divider)).toEqual({
+  const DIVIDER_LOCAL_ID = 'agent-transition:local_01';
+
+  it('silences an event carrying the transition sidecar at the reserved localId', () => {
+    expect(agentEventAttentionImpact(divider, DIVIDER_LOCAL_ID)).toEqual({
       affectsUnread: false,
       affectsMeaningfulActivity: false,
     });
   });
 
+  it('does not silence the same sidecar carried by an ordinary message row', () => {
+    // The reserved localId namespace is refused by every generic ingress, so a
+    // sidecar under an ordinary localId cannot have come from the cutover. It
+    // must not be able to buy silence.
+    for (const localId of ['local_01', 'agent-transition', 'x-agent-transition:local_01', null, undefined]) {
+      expect(agentEventAttentionImpact(divider, localId), String(localId)).toEqual({
+        affectsUnread: true,
+        affectsMeaningfulActivity: true,
+      });
+    }
+  });
+
   it('leaves an ordinary passthrough message event attention-bearing', () => {
-    expect(agentEventAttentionImpact({ type: 'message', message: 'Continued with another Agent.' })).toEqual({
+    expect(agentEventAttentionImpact({ type: 'message', message: 'Continued with another Agent.' }, DIVIDER_LOCAL_ID)).toEqual({
       affectsUnread: true,
       affectsMeaningfulActivity: true,
     });
@@ -1091,7 +1110,7 @@ describe('agent-transition divider attention', () => {
 
   it('does not silence a malformed or unknown-version sidecar', () => {
     for (const sidecar of [{ v: 2, fromAgentId: 'claude', toAgentId: 'codex' }, 'garbage', null]) {
-      expect(agentEventAttentionImpact({ type: 'message', message: 'x', sessionAgentTransitionV1: sidecar })).toEqual({
+      expect(agentEventAttentionImpact({ type: 'message', message: 'x', sessionAgentTransitionV1: sidecar }, DIVIDER_LOCAL_ID)).toEqual({
         affectsUnread: true,
         affectsMeaningfulActivity: true,
       });

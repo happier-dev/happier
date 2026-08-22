@@ -1291,8 +1291,8 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
           auth: 'agent',
         },
         relay: {
-          relayUrl: 'http://127.0.0.1:3005',
-          webappUrl: 'http://localhost:3005',
+          relayUrl: 'http://localhost.:3005',
+          webappUrl: 'http://localhost.:3005',
         },
       },
     });

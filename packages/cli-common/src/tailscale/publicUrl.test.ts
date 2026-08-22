@@ -11,6 +11,7 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true, daemonReachable: true,
     });
     expect(url).toBe("https://my-machine.tailnet.ts.net");
   });
@@ -23,6 +24,7 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true, daemonReachable: true,
     });
     expect(url).toBe("https://my-machine.tailnet.ts.net");
 
@@ -33,6 +35,7 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
       tailnetName: "tailnet.ts.net",
       tailscaleIps: [],
       loggedIn: true,
+      running: true, daemonReachable: true,
     });
     expect(bad).toBeNull();
   });
@@ -46,6 +49,7 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
         tailnetName: null,
         tailscaleIps: [],
         loggedIn: false,
+        running: true, daemonReachable: true,
       }),
     ).toBeNull();
   });

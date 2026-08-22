@@ -21,10 +21,6 @@ import {
   AutomationStoredContentEnvelopeV1Schema,
   type AutomationStoredContentEnvelopeV1,
 } from './automationEventV1.js';
-import {
-  AutomationConversationBindingIdV1Schema,
-} from './automationOccurrenceV1.js';
-
 export const AUTOMATION_TRIGGER_DEFINITION_ACCOUNT_SCOPED_BLOB_KIND_V1 =
   'automation_trigger_definition' as const;
 
@@ -33,7 +29,9 @@ const NONNEGATIVE_SAFE_INTEGER_SCHEMA = z.number().int().nonnegative().safe();
 /**
  * Durable definition binding. Event source identity remains public on the
  * Automation row, while this exact tuple prevents its private definition from
- * being replayed onto another definition or revision.
+ * being replayed onto another definition or revision. A Conversation trigger
+ * publishes no trigger columns at all: its owning plugin travels inside the
+ * private definition below, bound to this same tuple.
  */
 export const AutomationTriggerDefinitionBindingV1Schema = z.object({
   v: z.literal(1),
@@ -82,18 +80,6 @@ export const AutomationTriggerDefinitionStoredPayloadV1Schema = z.object({
 }).strict();
 export type AutomationTriggerDefinitionStoredPayloadV1 = z.infer<
   typeof AutomationTriggerDefinitionStoredPayloadV1Schema
->;
-
-/**
- * The private Conversation definition binds one durable Automation row to the
- * exact Channels binding that is allowed to admit its occurrences.
- */
-export const AutomationConversationTriggerDefinitionStoredPayloadV1Schema = z.object({
-  v: z.literal(1),
-  bindingId: AutomationConversationBindingIdV1Schema,
-}).strict();
-export type AutomationConversationTriggerDefinitionStoredPayloadV1 = z.infer<
-  typeof AutomationConversationTriggerDefinitionStoredPayloadV1Schema
 >;
 
 export type AutomationTriggerDefinitionStoredContentOpenFailureV1 =

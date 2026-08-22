@@ -9,7 +9,7 @@ import { PluginIdSchema } from '../pluginId.js';
 import {
   cloneStrictPluginJsonValue,
   measureSerializedValidatedStrictPluginJsonUtf8Bytes,
-} from '../actions/jsonSchemaValidation.js';
+} from '../actions/protocolComposableSchema.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import type { PluginUiJsonValueV1 } from '../contributions/ui/json.js';
 
@@ -125,6 +125,26 @@ export const PluginUiSemanticCommandV1Schema = z.discriminatedUnion('kind', [
 ]);
 export type PluginUiSemanticCommandV1 =
   z.infer<typeof PluginUiSemanticCommandV1Schema>;
+
+/**
+ * What a semantic chrome affordance does, as its author declares it.
+ *
+ * Every other Action-referencing family — `commands`, `tools`,
+ * `browserActions` — spells this field `action` and accepts a bare same-plugin
+ * Action local id. Header actions accept that same sugar and additionally the
+ * explicit `openSurface` form, which no plain Action reference can express.
+ * The bare id widens to `executeAction` here, at the one owner, so nothing
+ * downstream sees two shapes.
+ */
+export const PluginUiSemanticActionDeclarationV1Schema = z.union([
+  PluginContributionLocalIdZodSchema.transform((action): PluginUiSemanticCommandV1 => ({
+    kind: 'executeAction' as const,
+    action,
+  })),
+  PluginUiSemanticCommandV1Schema,
+]);
+export type PluginUiSemanticActionDeclarationV1Input =
+  z.input<typeof PluginUiSemanticActionDeclarationV1Schema>;
 
 /**
  * The post-normalization command carried by compiled UI projection entries.

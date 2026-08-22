@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
   PluginActionContributionV2Schema,
+  PluginActionExecutionV2Schema,
   PluginActionInputHintsV2Schema,
   PluginToolContributionV2Schema,
   normalizePluginActionSlashV2,
@@ -11,13 +12,20 @@ import {
 import { PluginCommandContributionV2Schema } from '../contributions/v2.js';
 import type { PluginLocalizedStringV2 } from '../contributions/publicTypes.js';
 import {
+  PluginActionExecutionV2Schema as RootPluginActionExecutionV2Schema,
   PluginActionInputHintsV2Schema as RootPluginActionInputHintsV2Schema,
   normalizePluginActionSlashV2 as RootNormalizePluginActionSlashV2,
 } from '../../index.js';
 
 const localized = { key: 'plugin.title', fallback: 'Title' };
+const daemonExecution = { target: 'daemon' } as const;
 
 describe('plugin executable contribution target grammar', () => {
+  it('exposes the closed Action execution parser through the root Protocol import', () => {
+    expect(RootPluginActionExecutionV2Schema).toBe(PluginActionExecutionV2Schema);
+    expect(RootPluginActionExecutionV2Schema.parse({ target: 'daemon' })).toEqual({ target: 'daemon' });
+  });
+
   it('initializes Action input hints for both direct and root Protocol imports', () => {
     expect(PluginActionInputHintsV2Schema).toBe(RootPluginActionInputHintsV2Schema);
   });
@@ -60,12 +68,92 @@ describe('plugin executable contribution target grammar', () => {
       .not.toHaveProperty('connectedAccountOptions');
   });
 
+  it('keeps Action invocation surfaces independent from Tool surfaces and resolves the execution realm', () => {
+    const daemonVoiceAction = {
+      id: 'start-voice-note',
+      title: localized,
+      scopes: ['session'],
+      surfaces: ['voice'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'safe' as const,
+    };
+
+    expect(PluginActionContributionV2Schema.parse(daemonVoiceAction)).toMatchObject({
+      surfaces: ['voice'],
+      execution: { target: 'daemon' },
+    });
+    // An absent realm is the daemon realm — the realm that was the only one
+    // when packaged declarations were authored without this field. A *declared*
+    // realm is never defaulted.
+    const { execution: _absent, ...withoutExecution } = daemonVoiceAction;
+    expect(PluginActionContributionV2Schema.parse(withoutExecution).execution).toEqual({ target: 'daemon' });
+    expect(PluginActionContributionV2Schema.parse({
+      ...daemonVoiceAction,
+      execution: undefined,
+    }).execution).toEqual({ target: 'daemon' });
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonVoiceAction,
+      execution: { target: 'host' },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonVoiceAction,
+      execution: { target: 'daemon', client: { artifactId: 'a', modulePath: './a', exportName: 'a' } },
+    }).success).toBe(false);
+    expect(PluginToolContributionV2Schema.safeParse({
+      id: 'voice-tool',
+      name: 'Voice tool',
+      title: localized,
+      action: 'start-voice-note',
+      surfaces: ['voice'],
+    }).success).toBe(false);
+  });
+
+  it('accepts only a fully declared client Action execution target', () => {
+    const clientAction = {
+      id: 'open-client-preview',
+      title: localized,
+      scopes: ['session'],
+      surfaces: ['ui'],
+      placementBindings: ['detailsPanel'],
+      execution: {
+        target: 'client',
+        client: {
+          artifactId: 'preview-client',
+          modulePath: './previewClient',
+          exportName: 'activatePreview',
+        },
+        platforms: ['web'],
+      },
+      dangerLevel: 'safe' as const,
+    };
+
+    expect(PluginActionContributionV2Schema.parse(clientAction).execution).toEqual(clientAction.execution);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...clientAction,
+      execution: {
+        ...clientAction.execution,
+        platforms: ['web', 'web'],
+      },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...clientAction,
+      execution: {
+        ...clientAction.execution,
+        client: {
+          ...clientAction.execution.client,
+          modulePath: '../previewClient',
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it('admits UI as an explicit action invocation surface', () => {
     expect(PluginActionContributionV2Schema.parse({
       id: 'open-preview',
       title: localized,
       scopes: ['session'],
       surfaces: ['ui'],
+      execution: daemonExecution,
       placementBindings: ['detailsPanel'],
       dangerLevel: 'safe',
     }).surfaces).toEqual(['ui']);
@@ -78,6 +166,7 @@ describe('plugin executable contribution target grammar', () => {
       icon: 'magic-wand',
       scopes: ['session'],
       surfaces: ['ui'],
+      execution: daemonExecution,
       placementBindings: ['primary', 'secondary'],
       priority: -10,
       dangerLevel: 'safe' as const,
@@ -105,6 +194,7 @@ describe('plugin executable contribution target grammar', () => {
       icon: 'sparkles',
       scopes: ['session', 'message'],
       surfaces: ['ui'],
+      execution: daemonExecution,
       placementBindings: [
         'composer.primary',
         'composer.more',
@@ -137,6 +227,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['session'],
       surfaces: ['ui'],
+      execution: daemonExecution,
       placementBindings: ['detailsPanel'],
       dangerLevel: 'safe' as const,
       slash: { tokens: ['/preview', '/p'] },
@@ -166,6 +257,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['session'],
       surfaces: ['plugin'],
+      execution: daemonExecution,
       dangerLevel: 'writesRemote',
     })).toMatchObject({
       surfaces: ['plugin'],
@@ -179,6 +271,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['session'],
       surfaces: ['ui'],
+      execution: daemonExecution,
       dangerLevel: 'safe',
     }).success).toBe(false);
 
@@ -187,6 +280,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['session'],
       surfaces: ['plugin', 'cli'],
+      execution: daemonExecution,
       dangerLevel: 'writesRemote',
     }).success).toBe(false);
   });
@@ -197,6 +291,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['session'],
       surfaces: ['cli', 'mcp'],
+      execution: daemonExecution,
       placementBindings: ['commandPalette'],
       resultSchema: { type: 'object' },
       hostAccess: ['session-write'],
@@ -208,6 +303,17 @@ describe('plugin executable contribution target grammar', () => {
       },
     })).toMatchObject({ dangerLevel: 'writesLocal' });
 
+    expect(PluginActionContributionV2Schema.safeParse({
+      id: 'invalid-result-schema',
+      title: 'Invalid result schema',
+      scopes: ['session'],
+      surfaces: ['cli'],
+      execution: daemonExecution,
+      placementBindings: ['commandPalette'],
+      resultSchema: 'not-a-json-schema-object',
+      dangerLevel: 'safe',
+    }).success).toBe(false);
+
     for (const forbidden of [
       { danger: 'safe' },
       { outputSchema: { type: 'object' } },
@@ -217,6 +323,7 @@ describe('plugin executable contribution target grammar', () => {
         title: 'Read',
         scopes: ['session'],
         surfaces: ['cli'],
+        execution: daemonExecution,
         placementBindings: ['primary'],
         dangerLevel: 'safe',
         ...forbidden,
@@ -228,6 +335,7 @@ describe('plugin executable contribution target grammar', () => {
       title: 'Write',
       scopes: ['session'],
       surfaces: ['cli'],
+      execution: daemonExecution,
       placementBindings: ['primary'],
       dangerLevel: 'writesRemote',
     }).success).toBe(false);
@@ -239,6 +347,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['settings'],
       surfaces: ['ui', 'plugin'],
+      execution: daemonExecution,
       placementBindings: ['detailsPanel'],
       dangerLevel: 'safe',
       inputSchema: {
@@ -299,6 +408,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['settings'],
       surfaces: ['ui', 'plugin'],
+      execution: daemonExecution,
       placementBindings: ['detailsPanel'],
       dangerLevel: 'safe',
       inputSchema: {
@@ -430,6 +540,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['settings'],
       surfaces: ['ui'],
+      execution: daemonExecution,
       placementBindings: ['detailsPanel'],
       dangerLevel: 'safe' as const,
       hostAccess: ['select-account'],
@@ -543,6 +654,7 @@ describe('plugin executable contribution target grammar', () => {
       title: localized,
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: daemonExecution,
       dangerLevel: 'safe' as const,
       inputSchema: {
         type: 'object' as const,

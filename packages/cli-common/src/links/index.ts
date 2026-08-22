@@ -1,3 +1,5 @@
+import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol';
+
 export type TerminalConnectLinks = Readonly<{
   webUrl: string;
   mobileUrl: string;
@@ -20,12 +22,18 @@ function stripTrailingSlash(url: string): string {
 
 const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
 
-function isLoopbackHostname(hostname: string): boolean {
-  const host = String(hostname ?? '').trim().toLowerCase();
-  if (!host) return false;
-  if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]') return true;
-  if (host.endsWith('.localhost')) return true;
-  return false;
+/**
+ * Whether this host is unusable as an address handed to another device.
+ *
+ * Loopback itself is `@happier-dev/protocol`'s to decide — it owns the bracket
+ * and trailing-dot parsing that a private copy here kept getting wrong, which
+ * put `http://[::1]:3005` into mobile QR and deep links as if it were remote.
+ * The extra case is local: a relay reporting `0.0.0.0` is not loopback, but it
+ * is not something a phone can be pointed at either.
+ */
+function isUnreachableFromOtherDevices(hostname: string): boolean {
+  if (isLoopbackHostname(hostname)) return true;
+  return normalizeHostnameForLoopbackCheck(hostname) === '0.0.0.0';
 }
 
 function parseSafeServerUrl(raw: string): URL | null {
@@ -49,20 +57,20 @@ function parseSafeServerUrl(raw: string): URL | null {
 function isLocalWebappUrl(raw: string): boolean {
   const parsed = parseSafeServerUrl(raw);
   if (!parsed) return false;
-  return isLoopbackHostname(parsed.hostname);
+  return isUnreachableFromOtherDevices(parsed.hostname);
 }
 
 function sanitizeServerUrlForWebLink(raw: string, webappUrl: string): string | null {
   const parsed = parseSafeServerUrl(raw);
   if (!parsed) return null;
-  if (isLoopbackHostname(parsed.hostname) && !isLocalWebappUrl(webappUrl)) return null;
+  if (isUnreachableFromOtherDevices(parsed.hostname) && !isLocalWebappUrl(webappUrl)) return null;
   return stripTrailingSlash(parsed.toString());
 }
 
 function sanitizeServerUrlForMobileLink(raw: string): string | null {
   const parsed = parseSafeServerUrl(raw);
   if (!parsed) return null;
-  if (isLoopbackHostname(parsed.hostname)) return null;
+  if (isUnreachableFromOtherDevices(parsed.hostname)) return null;
   return stripTrailingSlash(parsed.toString());
 }
 

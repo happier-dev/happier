@@ -1,5 +1,4 @@
 import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
-import { AgentNativeContinuityProofV1Schema } from '@happier-dev/protocol';
 import {
   buildBackendTargetKey,
 } from '@happier-dev/protocol/plugins/agents';
@@ -11,12 +10,12 @@ import {
 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { AgentId } from '../../types.js';
 import { getAgentResumeConfig, isRuntimeCheckedExperimentalVendorResume } from '../../manifest.js';
+import { readNormalizedRuntimeDescriptor } from '../../runtime/identity/runtimeDescriptor.js';
 import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
 
 export type VendorResumeEligibilityReasonCode =
   | 'agent_unsupported'
   | 'vendor_resume_id_missing'
-  | 'vendor_resume_continuity_proof_missing'
   | 'linked_session_identity_unverified'
   | 'experimental_disabled'
   | 'backend_disabled_by_account_settings';
@@ -33,16 +32,6 @@ export type VendorResumeLinkedSessionCurrentAgent = Readonly<{
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
-}
-
-function hasObservedVendorResumeContinuityProof(
-  agentId: AgentId,
-  metadata: unknown,
-): boolean {
-  const proofField = getAgentResumeConfig(agentId).vendorResumeContinuityProofField;
-  if (!proofField) return true;
-  const proof = asRecord(metadata)?.[proofField];
-  return typeof proof === 'string' && proof.trim().length > 0;
 }
 
 function isBackendDisabledByAccountSettings(agentId: AgentId, accountSettings: Record<string, unknown> | null): boolean {
@@ -68,9 +57,12 @@ export function isLinkedVendorResumeIdentityCurrent(input: Readonly<{
   const link = resolution.linkedSession;
   if (link.agentId !== input.agentId) return false;
 
+  // An Agent with no catalog-declared flat field keeps its native id in the
+  // agent-agnostic descriptor slot; reading only the flat field there would
+  // refuse every external Agent's linked-session resume as unverified.
   const persistedVendorResumeId = input.vendorResumeIdField
     ? metadata[input.vendorResumeIdField]
-    : null;
+    : resolveRuntimeDescriptorVendorResumeId(input.agentId as AgentId, metadata);
   if (
     typeof persistedVendorResumeId !== 'string'
     || persistedVendorResumeId.trim().length === 0
@@ -92,6 +84,41 @@ export function isLinkedVendorResumeIdentityCurrent(input: Readonly<{
   );
 }
 
+/**
+ * The Agent's own native conversation id, from the one carrier that is not an
+ * enumeration of bundled vendors.
+ *
+ * `runtimeDescriptorV1.agent.providerSessionId` is agent-agnostic: the schema
+ * accepts any `agentId`, the host stamps the id there for EVERY Session it
+ * runs, and the descriptor is what `readProviderSessionIdSessionState` and the
+ * CLI/UI resume readers already prefer. It is therefore the only slot an
+ * external (manifest-contributed) Agent has, since generated
+ * `<vendor>SessionId` fields and session-control adapters exist for bundled
+ * Agents only.
+ *
+ * The descriptor names exactly one Agent, so a descriptor written by a
+ * different Agent is never borrowed.
+ */
+function resolveRuntimeDescriptorVendorResumeId(agentId: AgentId, metadata: unknown): string | null {
+  const descriptor = readNormalizedRuntimeDescriptor(metadata);
+  return descriptor && descriptor.providerId === agentId
+    ? descriptor.providerSessionId
+    : null;
+}
+
+/**
+ * ONE owner for "what is this Session's native resume id", in declared-authority
+ * order:
+ *
+ * 1. the Agent's own session-control adapter, which may prefer a richer handle
+ *    (Pi resumes from an absolute session-file path, not a bare id);
+ * 2. the Agent's catalog-declared flat `<vendor>SessionId` field;
+ * 3. the agent-agnostic runtime-descriptor slot.
+ *
+ * Tiers 1 and 2 exist only for bundled Agents, so tier 3 is what makes an
+ * external Agent resumable at all. It is LAST so that adding it cannot change
+ * any bundled Agent's answer.
+ */
 export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metadata: unknown): string | null {
   const adapterResumeId = getProviderSessionControlAdapter(agentId)?.resolveVendorResumeId?.(metadata);
   if (adapterResumeId) return adapterResumeId;
@@ -101,70 +128,50 @@ export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metad
 
   const resume = getAgentResumeConfig(agentId);
   const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
-  if (!field) return null;
+  if (field) {
+    const raw = record[field];
+    if (typeof raw === 'string' && raw.trim()) {
+      return raw.trim();
+    }
+  }
 
-  const raw = record[field];
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  return trimmed;
-}
-
-export function resolveObservedVendorResumeIdForResume(input: Readonly<{
-  agentId: AgentId;
-  metadata: unknown;
-  vendorResumeId: string | null | undefined;
-}>): string | null {
-  const vendorResumeId = typeof input.vendorResumeId === 'string'
-    ? input.vendorResumeId.trim()
-    : '';
-  if (!vendorResumeId) return null;
-
-  const proofField = getAgentResumeConfig(input.agentId).vendorResumeContinuityProofField;
-  if (!proofField) return vendorResumeId;
-
-  const metadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(input.agentId, input.metadata);
-  if (metadataVendorResumeId !== vendorResumeId) return null;
-  return hasObservedVendorResumeContinuityProof(input.agentId, input.metadata)
-    ? vendorResumeId
-    : null;
+  return resolveRuntimeDescriptorVendorResumeId(agentId, record);
 }
 
 /**
- * The read side of `writeProviderSessionIdSessionState`'s matched pair.
+ * This Agent's own conversation id, as its catalog declares the slot.
  *
- * `REQ-STATE-01` makes the id and its proof atomic on WRITE; without a matching
- * reader, a caller that needs the pair has to read two metadata slots and
- * re-match them itself — which is exactly how a proof belonging to a previous id
- * gets resurrected. Both halves are therefore read here, from the one Agent's
- * catalog-declared slots, and returned as the same pair type the writer accepts.
- *
- * The proof KIND is not persisted: the catalog declares one proof FIELD per
- * Agent and `AgentNativeContinuityProofV1Schema` declares exactly one kind
- * (`transcriptPath`). A second kind must arrive as a catalog declaration, at
- * which point this constant becomes a lookup. A proof that fails that schema is
- * read as NO proof, so it degrades to a fresh target rather than authorizing a
- * resume it cannot justify.
+ * There is no proof to match (`AM-24`): a recorded id is either still resumable,
+ * which resuming answers, or it is not, and both Agents that support native
+ * resume fail loudly rather than silently starting fresh.
  */
 export function resolveAgentNativeResumeIdentityFromSessionMetadata(
   agentId: AgentId,
   metadata: unknown,
 ): AgentNativeResumeIdentityV1 | null {
   const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
-  if (!vendorResumeId) return null;
+  return vendorResumeId ? { v: 1, vendorResumeId } : null;
+}
 
-  const proofField = getAgentResumeConfig(agentId).vendorResumeContinuityProofField?.trim();
-  if (!proofField) return { v: 1, vendorResumeId, continuityProof: null };
-
-  const parsedProof = AgentNativeContinuityProofV1Schema.safeParse({
-    kind: 'transcriptPath',
-    value: asRecord(metadata)?.[proofField],
-  });
-  return {
-    v: 1,
-    vendorResumeId,
-    continuityProof: parsedProof.success ? parsedProof.data : null,
-  };
+/**
+ * This Agent's own on-disk session log for the Session, as its catalog declares
+ * the slot — never a vendor key named by the caller.
+ *
+ * A POINTER, not a gate: the Agent-transition brief offers it to the successor
+ * so the successor can read what the predecessor wrote. The path is
+ * MACHINE-LOCAL, and it is cleared from the current view at an Agent cutover, so
+ * a reader that needs it must read BEFORE the projection runs. The caller
+ * verifies the file still exists; Agents prune and rotate their logs.
+ */
+export function resolveAgentNativeTranscriptPathFromSessionMetadata(
+  agentId: AgentId,
+  metadata: unknown,
+): string | null {
+  const field = getAgentResumeConfig(agentId)?.vendorResumeContinuityProofField?.trim();
+  if (!field) return null;
+  const raw = asRecord(metadata)?.[field];
+  if (typeof raw !== 'string') return null;
+  return raw.trim() || null;
 }
 
 function evaluateMetadataVendorResumeId(input: Readonly<{
@@ -185,14 +192,7 @@ function evaluateMetadataVendorResumeId(input: Readonly<{
   })) {
     return { eligible: false, reasonCode: 'linked_session_identity_unverified' };
   }
-  const eligibleVendorResumeId = resolveObservedVendorResumeIdForResume({
-    agentId: input.agentId,
-    metadata: input.metadata,
-    vendorResumeId,
-  });
-  return eligibleVendorResumeId
-    ? { eligible: true, vendorResumeId: eligibleVendorResumeId }
-    : { eligible: false, reasonCode: 'vendor_resume_continuity_proof_missing' };
+  return { eligible: true, vendorResumeId };
 }
 
 export function evaluateVendorResumeEligibility(input: Readonly<{

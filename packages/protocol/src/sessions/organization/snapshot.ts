@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS,
   SESSION_ORGANIZATION_MAX_FOLDERS,
   SESSION_ORGANIZATION_MAX_LABELS,
   SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
@@ -11,6 +12,7 @@ import {
 import { SessionFolderAssignmentSchema, SessionOrganizationFolderSchema } from './folders.js';
 import { SessionOrganizationLabelSchema, SessionOrganizationOrderEntrySchema } from './ordering.js';
 import { SessionOrganizationPinSchema } from './pins.js';
+import { SessionAttentionStandingSchema } from './standings.js';
 import { SessionOrganizationTagSchema, SessionTagAssignmentSchema } from './tags.js';
 
 const SessionOrganizationScopedIdSchema = z.string().trim().min(1).max(10_000);
@@ -31,6 +33,7 @@ export const SessionOrganizationSnapshotRequestSchema = z
     folderIds: z.array(SessionOrganizationScopedIdSchema).max(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS).default([]),
     tagIds: z.array(SessionOrganizationScopedIdSchema).max(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS).default([]),
     orderScopes: z.array(SessionOrganizationOrderScopeRequestSchema).max(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS).default([]),
+    includeAttentionStandings: z.boolean().default(false),
   })
   .strict();
 export type SessionOrganizationSnapshotRequest = z.infer<typeof SessionOrganizationSnapshotRequestSchema>;
@@ -46,6 +49,7 @@ export const SessionOrganizationSnapshotSchema = z
     tagAssignments: z.array(SessionTagAssignmentSchema),
     orderEntries: z.array(SessionOrganizationOrderEntrySchema),
     labels: z.array(SessionOrganizationLabelSchema).max(SESSION_ORGANIZATION_MAX_LABELS),
+    attentionStandings: z.array(SessionAttentionStandingSchema).max(SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS).optional(),
   })
   .strict();
 export type SessionOrganizationSnapshot = z.infer<typeof SessionOrganizationSnapshotSchema>;

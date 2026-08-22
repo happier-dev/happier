@@ -30,6 +30,12 @@ import { RecipientOperationV1Schema } from '../recipientContractV1.js';
 import type { VoiceProviderSettingsJsonValueV1 } from '../../voice/realtime/providerSettings.js';
 import { normalizeProviderEndpointUrlSyntax } from '../../providers/safety/url.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
+import {
+  PluginClientExecutionPlatformV1Schema,
+  PluginClientExecutionPlatformsV1Schema,
+  PluginClientExecutionReferenceV1Schema,
+  type PluginClientExecutionPlatformV1,
+} from './clientExecution.js';
 
 const VoiceJsonScalarSchema = z.union([z.null(), z.boolean(), z.number().finite(), z.string()]);
 
@@ -53,8 +59,9 @@ export const VoiceSpeechProviderRoleSchema = z.enum([
 ]);
 export type VoiceSpeechProviderRole = z.infer<typeof VoiceSpeechProviderRoleSchema>;
 
-export const VoiceAvailabilityPlatformSchema = z.enum(['web', 'ios', 'android']);
-export type VoiceAvailabilityPlatform = z.infer<typeof VoiceAvailabilityPlatformSchema>;
+/** Voice availability uses the shared client-execution platform grammar. */
+export const VoiceAvailabilityPlatformSchema = PluginClientExecutionPlatformV1Schema;
+export type VoiceAvailabilityPlatform = PluginClientExecutionPlatformV1;
 
 export const VoiceSpeechInputMimeTypeSchema = z.enum([
   'audio/wav',
@@ -522,6 +529,23 @@ export const VoiceSpeechProviderLimitsSchema = z.object({
 }).strict();
 export type VoiceSpeechProviderLimits = z.infer<typeof VoiceSpeechProviderLimitsSchema>;
 
+/**
+ * Provider evidence that effectful Voice tools can be retried/redelivered without
+ * executing their semantic effect more than once. `stable_ids` requires a
+ * provider-stable tool-call identity and retained result delivery.
+ */
+export const VoiceConversationToolEffectCallsSchema = z.enum(['none', 'stable_ids']);
+export type VoiceConversationToolEffectCalls = z.infer<
+  typeof VoiceConversationToolEffectCallsSchema
+>;
+
+export const VoiceConversationToolCapabilitiesSchema = z.object({
+  effectCalls: VoiceConversationToolEffectCallsSchema.default('none'),
+}).strict();
+export type VoiceConversationToolCapabilities = z.infer<
+  typeof VoiceConversationToolCapabilitiesSchema
+>;
+
 export const VoiceConversationCapabilitiesSchema = z.object({
   turn: z.object({
     cancelResponse: z.boolean(),
@@ -532,6 +556,7 @@ export const VoiceConversationCapabilitiesSchema = z.object({
     exactMessage: z.boolean().optional(),
     interruptionPolicy: z.enum(['disabled', 'client_two_stage', 'provider_immediate']).optional(),
   }).strict(),
+  tools: VoiceConversationToolCapabilitiesSchema.default({ effectCalls: 'none' }),
 }).strict();
 export type VoiceConversationCapabilities = z.infer<typeof VoiceConversationCapabilitiesSchema>;
 
@@ -550,12 +575,7 @@ const VoiceConversationProviderContributionSchema = z.object({
     VoiceConversationProviderRoleSchema.options.length,
     'Voice conversation roles',
   ),
-  platforms: uniqueBoundedArray(
-    VoiceAvailabilityPlatformSchema,
-    1,
-    VoiceAvailabilityPlatformSchema.options.length,
-    'Voice platforms',
-  ),
+  platforms: PluginClientExecutionPlatformsV1Schema,
   capabilities: VoiceConversationCapabilitiesSchema,
   credentials: VoiceCredentialDeclarationSchema.optional(),
   execution: z.object({
@@ -569,12 +589,9 @@ const VoiceConversationProviderContributionSchema = z.object({
     ),
   }).strict().optional(),
   settings: VoiceProviderSettingsSchema.optional(),
-  client: z.object({
-    artifactId: asProtocolZod(PluginContributionLocalIdSchema),
-    modulePath: z.string().trim().min(3).max(256).startsWith('./')
-      .refine((path) => !path.split(/[\\/]/u).includes('..'), 'Voice client module paths must not traverse parents.'),
+  client: PluginClientExecutionReferenceV1Schema.extend({
     exportName: z.literal('activate'),
-  }).strict(),
+  }),
 }).strict();
 
 const VoiceSpeechProviderContributionSchema = z.object({
@@ -587,12 +604,7 @@ const VoiceSpeechProviderContributionSchema = z.object({
     VoiceSpeechProviderRoleSchema.options.length,
     'Voice speech roles',
   ),
-  platforms: uniqueBoundedArray(
-    VoiceAvailabilityPlatformSchema,
-    1,
-    VoiceAvailabilityPlatformSchema.options.length,
-    'Voice platforms',
-  ),
+  platforms: PluginClientExecutionPlatformsV1Schema,
   credentials: VoiceCredentialDeclarationSchema.optional(),
   settings: VoiceProviderSettingsSchema,
   catalogs: z.array(VoiceSpeechCatalogDeclarationSchema).max(2).optional(),

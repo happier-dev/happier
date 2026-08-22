@@ -11,9 +11,16 @@ import {
 } from '../ids.js';
 
 export {
+  BUNDLED_PROVIDER_COMMAND_CATALOG_PARSERS_V1,
+  BundledProviderCommandCatalogParserV1Schema,
   ProviderCatalogCommandFallbackV1Schema,
+  ProviderCommandCatalogParserV1Schema,
   ProviderDetectionDescriptorV1Schema,
+  isBundledProviderCommandCatalogParserV1,
+  readBundledProviderCommandCatalogParserFactV1,
+  type BundledProviderCommandCatalogParserV1,
   type ProviderCatalogCommandFallbackV1,
+  type ProviderCommandCatalogParserV1,
   type ProviderDetectionDescriptorV1,
 } from './descriptorV1.js';
 

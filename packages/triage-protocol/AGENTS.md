@@ -2,7 +2,8 @@
 
 `packages/plugins/triage` is the domain owner for this package's public source
 ABI: versioned types, executable validator-neutral schemas, bounded JSON Schema
-projections, the one caller-bound source-administration Action ABI, contribution
+projections, the caller-bound source Action ABIs — `sources/administer-v1`, the
+sole writer, and `sources/read-configured-v1`, its read half — contribution
 declarations, and conformance fixtures. Keep host runtime, provider
 implementation, registries, UI, credential materialization, scanning, and
 persistence outside this package.

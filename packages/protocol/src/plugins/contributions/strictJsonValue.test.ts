@@ -26,13 +26,12 @@ describe('cloneStrictPluginJsonValue', () => {
     expect(() => cloneStrictPluginJsonValue(value, 'value')).not.toThrow();
   });
 
-  it('measures the exact JSON.stringify UTF-8 spelling, including escaped and lone-surrogate strings', () => {
+  it('measures the exact JSON.stringify UTF-8 spelling', () => {
     for (const value of [
       'plain',
       'é',
       'quote " slash \\ newline\n',
-      '\uD800',
-      { 'key\uD800': ['é', 'quote " slash \\ newline\n'] },
+      { key: ['é', 'quote " slash \\ newline\n'] },
     ]) {
       const cloned = cloneStrictPluginJsonValue(value, 'value');
 
@@ -53,7 +52,9 @@ describe('cloneStrictPluginJsonValue', () => {
       },
     });
 
-    for (const value of [sparse, accessor, new Date(), undefined, Number.NaN, Infinity, 1n]) {
+    const cyclic = { self: null as unknown };
+    cyclic.self = cyclic;
+    for (const value of [sparse, accessor, new Date(), undefined, Number.NaN, Infinity, 1n, cyclic]) {
       expect(() => cloneStrictPluginJsonValue(value, 'value')).toThrow();
     }
     expect(accessorReads).toBe(0);
@@ -79,5 +80,29 @@ describe('cloneStrictPluginJsonValue', () => {
 
     expect(() => cloneStrictPluginJsonValue(withSymbol, 'value')).toThrow();
     expect(() => cloneStrictPluginJsonValue(withNonEnumerable, 'value')).toThrow();
+  });
+
+  it('rejects arrays with an inherited custom prototype rather than normalizing their identity away', () => {
+    const authored = [true];
+    Object.setPrototypeOf(authored, {
+      customArrayMethod() {
+        return 'must-not-cross-the-boundary';
+      },
+    });
+
+    expect(Array.isArray(authored)).toBe(true);
+    expect(() => cloneStrictPluginJsonValue(authored, 'value')).toThrow();
+  });
+
+  it('preserves lone UTF-16 surrogates for JSON.stringify while rejecting Array subclasses', () => {
+    class ExtendedArray extends Array<unknown> {}
+
+    const value = { '\uDC00': '\uD800' };
+    const cloned = cloneStrictPluginJsonValue(value, 'value');
+
+    expect(cloned).toEqual(value);
+    expect(measureSerializedStrictPluginJsonUtf8Bytes(cloned, 'value'))
+      .toBe(serializedUtf8Bytes(value));
+    expect(() => cloneStrictPluginJsonValue(new ExtendedArray('value'), 'value')).toThrow();
   });
 });

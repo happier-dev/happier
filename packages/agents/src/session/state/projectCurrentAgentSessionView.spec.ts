@@ -1,7 +1,30 @@
+import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
+import { buildHappierReplayPromptFromDialog } from '../../sessions/replay/happierReplayPrompt.js';
 import { applyModelIntentSessionMetadata } from './metadataWriters.js';
 import { projectCurrentAgentSessionView } from './projectCurrentAgentSessionView.js';
+
+/**
+ * The departing Agent's tracked work, as it really sits in Session metadata.
+ * A placeholder `{ v: 1 }` is not displayable, so it cannot exercise the half of
+ * section 8 that captures the snapshot before the field is cleared.
+ */
+const SOURCE_WORK_STATE = {
+  v: 1,
+  backendId: 'claude',
+  updatedAt: 10,
+  items: [
+    {
+      id: 'i1',
+      kind: 'task',
+      origin: 'vendor',
+      status: 'active',
+      title: 'Port the parser to the new decoder',
+      updatedAt: 10,
+    },
+  ],
+} as const;
 
 const CLAUDE_NATIVE_VIEW = {
   flavor: 'claude',
@@ -11,10 +34,10 @@ const CLAUDE_NATIVE_VIEW = {
 } as const;
 
 describe('projectCurrentAgentSessionView — one flat vendor key', () => {
-  it('emits only the target Agent key and drops the source Agent key and proof', () => {
+  it('emits only the target Agent key and drops the source Agent key and log path', () => {
     const next = projectCurrentAgentSessionView(CLAUDE_NATIVE_VIEW, {
       agentId: 'codex',
-      nativeResumeIdentity: { v: 1, vendorResumeId: 'codex-1', continuityProof: null },
+      nativeResumeIdentity: { v: 1, vendorResumeId: 'codex-1' },
       runtimeDescriptor: { v: 1, agentId: 'codex', agent: {} },
     });
 
@@ -25,19 +48,22 @@ describe('projectCurrentAgentSessionView — one flat vendor key', () => {
     expect(next.runtimeDescriptorV1).toEqual({ v: 1, agentId: 'codex', agent: {} });
   });
 
-  it('writes the target proof only alongside its own matched id', () => {
-    const next = projectCurrentAgentSessionView({ flavor: 'codex', codexSessionId: 'codex-1' }, {
+  it('writes the target’s own id and clears every other Agent’s', () => {
+    const next = projectCurrentAgentSessionView({
+      flavor: 'codex',
+      codexSessionId: 'codex-1',
+      claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
+    }, {
       agentId: 'claude',
-      nativeResumeIdentity: {
-        v: 1,
-        vendorResumeId: 'claude-2',
-        continuityProof: { kind: 'transcriptPath', value: '/home/u/.claude/x/claude-2.jsonl' },
-      },
+      nativeResumeIdentity: { v: 1, vendorResumeId: 'claude-2' },
     });
 
     expect(next.claudeSessionId).toBe('claude-2');
-    expect(next.claudeTranscriptPath).toBe('/home/u/.claude/x/claude-2.jsonl');
     expect(next.codexSessionId).toBeUndefined();
+    // The restored id names a DIFFERENT conversation than the path left behind,
+    // so the slot is cleared rather than carried: the returning Agent's own
+    // runtime republishes the right path on its next established turn.
+    expect(next.claudeTranscriptPath).toBeUndefined();
   });
 
   it('leaves no flat key at all for a fresh target', () => {
@@ -49,14 +75,10 @@ describe('projectCurrentAgentSessionView — one flat vendor key', () => {
     expect(next.flavor).toBe('codex');
   });
 
-  it('never writes a proof for an Agent whose catalog declares no proof field', () => {
-    const next = projectCurrentAgentSessionView({}, {
+  it('never carries one Agent’s session-log path into another Agent’s view', () => {
+    const next = projectCurrentAgentSessionView({ claudeTranscriptPath: '/tmp/leak.jsonl' }, {
       agentId: 'codex',
-      nativeResumeIdentity: {
-        v: 1,
-        vendorResumeId: 'codex-1',
-        continuityProof: { kind: 'transcriptPath', value: '/tmp/leak.jsonl' },
-      },
+      nativeResumeIdentity: { v: 1, vendorResumeId: 'codex-1' },
     });
 
     expect(next.codexSessionId).toBe('codex-1');
@@ -94,7 +116,7 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
     runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
 
     // Agent-scoped current projections.
-    sessionWorkStateV1: { v: 1 },
+    sessionWorkStateV1: SOURCE_WORK_STATE,
     sessionWorkflowActivityHeadlineV1: { v: 1 },
     sessionAgentActivityHeadlineV1: { v: 1 },
     slashCommands: ['/compact'],
@@ -124,6 +146,18 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
     sessionModeOverrideV1: 'plan',
     acpConfigOptionOverridesV1: { v: 1 },
     sessionConfigOptionOverridesV1: { v: 1 },
+
+    // The source Agent's connected-service auth binding and its materialized
+    // credential home. Both name a service only the SOURCE Agent's catalog
+    // declares, so a target that cannot apply them must not inherit them.
+    connectedServices: {
+      v: 1,
+      bindingsByServiceId: {
+        'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'team' },
+      },
+    },
+    connectedServicesUpdatedAt: 11,
+    connectedServiceMaterializationIdentityV1: { v: 1, id: 'csm_source', createdAt: 1, source: 'first_spawn' },
   } as const;
 
   const CARRIED_KEYS = [
@@ -169,6 +203,9 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
     'sessionModeOverrideV1',
     'acpConfigOptionOverridesV1',
     'sessionConfigOptionOverridesV1',
+    'connectedServices',
+    'connectedServicesUpdatedAt',
+    'connectedServiceMaterializationIdentityV1',
   ] as const;
 
   it.each(CARRIED_KEYS)('carries the Session-global fact %s', (key) => {
@@ -192,13 +229,19 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
   it('carries Agent-scoped current projections when the caller keeps them', () => {
     const next = projectCurrentAgentSessionView(SOURCE_VIEW, {
       agentId: 'claude',
-      nativeResumeIdentity: { v: 1, vendorResumeId: 'claude-1', continuityProof: null },
+      nativeResumeIdentity: { v: 1, vendorResumeId: 'claude-1' },
       agentScopedCurrentState: 'carry',
     }) as Record<string, unknown>;
 
-    expect(next.sessionWorkStateV1).toEqual({ v: 1 });
+    expect(next.sessionWorkStateV1).toEqual(SOURCE_WORK_STATE);
     expect(next.slashCommands).toEqual(['/compact']);
     expect(next.modelSelectionIntentV1).toEqual({ v: 1 });
+    // Physical handoff moves the SAME Agent, so its connected-service binding
+    // and the materialized home carrying those credentials are still true.
+    expect(next.connectedServices).toEqual(SOURCE_VIEW.connectedServices);
+    expect(next.connectedServicesUpdatedAt).toBe(11);
+    expect(next.connectedServiceMaterializationIdentityV1)
+      .toEqual(SOURCE_VIEW.connectedServiceMaterializationIdentityV1);
   });
 
   it('leaves target mode/model intent to the canonical intent writers rather than inventing a second one', () => {
@@ -231,6 +274,40 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
     projectCurrentAgentSessionView(input, { agentId: 'codex', agentScopedCurrentState: 'clear' });
 
     expect(input.claudeSessionId).toBe('claude-1');
-    expect(input.sessionWorkStateV1).toEqual({ v: 1 });
+    expect(input.sessionWorkStateV1).toEqual(SOURCE_WORK_STATE);
+  });
+
+  /**
+   * Section 8's work-state row has TWO clauses — "capture bounded display-safe
+   * snapshot into brief, THEN clear current field" — and asserting only the
+   * clear is how a half-implemented requirement stayed green: the field
+   * disappeared at the cutover, the in-flight plan went with it, and no test
+   * could tell. The items live in a structured projection, not in the replayed
+   * prose, so the brief is the only thing that can carry them across.
+   *
+   * Both halves are asserted against the SAME metadata object, so neither the
+   * snapshot nor the clear can be satisfied by a different field.
+   */
+  it('captures the departing work state into the brief before clearing the current field', () => {
+    const workState = readSessionWorkStateV1FromMetadata(SOURCE_VIEW);
+    expect(workState).not.toBeNull();
+
+    const brief = buildHappierReplayPromptFromDialog({
+      previousSessionId: 'sess_same',
+      continuity: 'same_session_agent_change',
+      strategy: 'recent_messages',
+      recentMessagesCount: 5,
+      dialog: [{ role: 'User', createdAt: 1, text: 'keep going' }],
+      workState,
+    });
+    expect(brief).toContain('[active] task: Port the parser to the new decoder');
+
+    const next = projectCurrentAgentSessionView(SOURCE_VIEW, {
+      agentId: 'codex',
+      agentScopedCurrentState: 'clear',
+    }) as Record<string, unknown>;
+
+    expect(next.sessionWorkStateV1).toBeUndefined();
+    expect(JSON.stringify(next)).not.toContain('Port the parser to the new decoder');
   });
 });

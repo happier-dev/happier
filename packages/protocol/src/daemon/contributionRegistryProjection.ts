@@ -2,14 +2,18 @@ import { z } from 'zod';
 
 import {
   ActionInputHintsSchema,
+  ActionInputOptionValueSchema,
   ActionInputPathSchema,
+  createActionInputHintsSchemas,
 } from '../actions/actionInputHints.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { QualifiedConnectedAccountRefSchema as CanonicalQualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
+import { ConnectedServiceIdSchema } from '../connect/connectedServiceBindings.js';
 import { MessageActionReferenceV1Schema } from '../sessions/messages/messageActionReferenceV1.js';
 import {
   PluginActionConfirmationV2Schema,
   PluginActionDangerLevelV2Schema,
+  PluginActionExecutionV2Schema,
   PluginActionIconV2Schema,
   PluginActionPlacementV2Schema,
   PluginActionPlacementBindingsV2Schema,
@@ -19,6 +23,7 @@ import {
   pluginActionRequiresConfirmationPresentation,
   pluginActionRequiresPlacement,
 } from '../plugins/actions/v2.js';
+import { PluginActionPresentUserAuthorizationFactsSchema } from '../plugins/actions/invocation.js';
 import { PluginUiArtifactDigestV1Schema } from '../plugins/ui/artifactIntegrity.js';
 import { PluginUiHostMethodV1Schema } from '../plugins/ui/hostApiDefinition.js';
 import { PluginUiSelectedActionInputCarrierV1Schema } from '../plugins/ui/selectedActionInput.js';
@@ -27,8 +32,11 @@ import { PluginUiResolvedSemanticCommandV1Schema } from '../plugins/ui/semanticC
 import {
   ComposerRefV1Schema,
   ComposerSurfaceRoleV1Schema,
+  type ComposerRefV1,
 } from '../plugins/ui/composer.js';
 import {
+  PluginAgentCapabilitiesV2Schema,
+  PluginAgentUiBehaviorContributionV2Schema,
   PluginResourceContextV1Schema,
   PluginResourceKindV2Schema,
 } from '../plugins/contributions/v2.js';
@@ -40,6 +48,7 @@ import {
   PluginAvailabilityDescriptorV2Schema,
   PluginJsonSchemaV2Schema,
   PluginJsonValueV2Schema,
+  PluginLocalizedStringV2Schema,
 } from '../plugins/contributions/publicTypes.js';
 import { PluginEventAutomationDeclarationV1Schema } from '../automations/automationEventDeclarationV1.js';
 import {
@@ -99,6 +108,7 @@ import {
 import {
   NormalizedPluginCollectionUiQueryDescriptorV1Schema,
   PluginCollectionContractDigestV1Schema,
+  PluginCollectionSchemaVersionV1Schema,
 } from '../plugins/data/collectionsV1.js';
 import { PluginMachineExecutionOriginV1Schema } from '../machines/administration/pluginMachineExecutionOriginV1.js';
 import {
@@ -312,16 +322,6 @@ export type DaemonHostedWebFrameCapabilityV1 = z.infer<
 >;
 
 /**
- * `remote-dev` currently produces this browser-only request field. It is an
- * ingress compatibility shape, not a second host-runtime fact or downstream
- * selection path; the describe request normalizes it to the union above.
- */
-const DaemonHostedWebBrowserFrameCapabilityPredecessorV1Schema = z.object({
-  platform: z.literal('web'),
-  adapter: z.literal('domIframe'),
-}).strict();
-
-/**
  * The one mounted target whose cold-admitted contribution snapshot a client
  * may request. This is an equality fence against the daemon's current runtime
  * registry, never a general catalog selector.
@@ -339,25 +339,12 @@ export const DaemonContributionRegistryProjectionDescribeRequestSchema = z.objec
   reactNativeHostRuntimeIdentity: DaemonReactNativeHostRuntimeIdentityV1Schema.optional(),
   reactNativeWebLoaderCapability: DaemonReactNativeWebLoaderCapabilityV1Schema.optional(),
   hostedWebFrameCapability: DaemonHostedWebFrameCapabilityV1Schema.optional(),
-  hostedWebBrowserFrameCapability: DaemonHostedWebBrowserFrameCapabilityPredecessorV1Schema.optional(),
   mountedTarget: DaemonContributionRegistryProjectionMountedTargetV1Schema.optional(),
 }).passthrough().superRefine((value, context) => {
   if (value.reactNativeHostRuntimeIdentity && value.reactNativeWebLoaderCapability) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'native runtime identity and web loader capability are mutually exclusive',
-    });
-  }
-  if (value.hostedWebFrameCapability && value.hostedWebBrowserFrameCapability) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'hosted frame capability and predecessor browser capability are mutually exclusive',
-    });
-  }
-  if (value.reactNativeHostRuntimeIdentity && value.hostedWebBrowserFrameCapability) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'native runtime identity and predecessor browser iframe capability are mutually exclusive',
     });
   }
   if (
@@ -370,17 +357,6 @@ export const DaemonContributionRegistryProjectionDescribeRequestSchema = z.objec
       message: 'native runtime identity and hosted frame capability must report the same physical platform',
     });
   }
-}).transform((value) => {
-  const {
-    hostedWebBrowserFrameCapability: predecessorBrowserFrameCapability,
-    hostedWebFrameCapability,
-    ...rest
-  } = value;
-  const capability = hostedWebFrameCapability ?? predecessorBrowserFrameCapability;
-  return {
-    ...rest,
-    ...(capability ? { hostedWebFrameCapability: capability } : {}),
-  };
 });
 export type DaemonContributionRegistryProjectionDescribeRequest = z.infer<
   typeof DaemonContributionRegistryProjectionDescribeRequestSchema
@@ -805,7 +781,7 @@ export type DaemonPluginStructuredMessageActionMountedBinding = z.infer<
  * execution time.
  */
 export const DaemonPluginHostPresentedComposerCurrentIntentV1Schema = z.object({
-  composer: ComposerRefV1Schema,
+  composer: asProtocolZod(ComposerRefV1Schema),
   revision: z.number().int().nonnegative(),
 }).strict();
 export type DaemonPluginHostPresentedComposerCurrentIntentV1 = z.infer<
@@ -849,7 +825,7 @@ function messageActionReferencesMatch(
     && left.observedRevision === right.observedRevision;
 }
 
-function composerRefSessionId(ref: z.infer<typeof ComposerRefV1Schema>): string | null {
+function composerRefSessionId(ref: ComposerRefV1): string | null {
   return ref.kind === 'newSession' ? null : ref.sessionId;
 }
 
@@ -875,7 +851,7 @@ export const DaemonPluginStructuredMessageActionExecuteRequestSchema = z.object(
    * predecessor revision carries this RPC, so there is no omitting client to
    * keep compatible with.
    */
-  executionSurface: z.enum(['cli', 'ui']),
+  executionSurface: z.enum(['cli', 'ui', 'voice']),
   /**
    * Host-private currentness expectation retained from a selected targeted
    * contribution operation. It is never Action input, mounted caller
@@ -1161,6 +1137,7 @@ export const DaemonPluginReactNativeArtifactOwnerKindV1Schema = z.enum([
   'renderer',
   'voiceProvider',
   'collectionMigrations',
+  'clientContribution',
 ]);
 export type DaemonPluginReactNativeArtifactOwnerKindV1 = z.infer<
   typeof DaemonPluginReactNativeArtifactOwnerKindV1Schema
@@ -1310,6 +1287,17 @@ const DaemonPluginReactNativeArtifactBytesReadRequestBaseShape = {
   reactNativeWebLoaderCapability: DaemonReactNativeWebLoaderCapabilityV1Schema.optional(),
 };
 
+/**
+ * A generic client executable is authorized by the selected projected Action,
+ * not by a renderer or Voice provider that happens to share its bundle. The
+ * exact Action identity is echoed on success so the client cannot adopt bytes
+ * for another Action with the same Artifact owner kind.
+ */
+const DaemonPluginReactNativeClientContributionIdentityV1Schema = z.object({
+  family: z.literal('actions'),
+  action: PluginContributionIdentityV1Schema,
+}).strict();
+
 const DaemonPluginReactNativeRendererArtifactBytesReadRequestSchema = z.object({
   ...DaemonPluginReactNativeArtifactBytesReadRequestBaseShape,
   artifactOwnerKind: z.literal('renderer'),
@@ -1348,6 +1336,23 @@ const DaemonPluginReactNativeCollectionMigrationsArtifactBytesReadRequestSchema 
     { message: 'native runtime identity and web loader capability are mutually exclusive' },
   );
 
+const DaemonPluginReactNativeClientContributionArtifactBytesReadRequestSchema = z.object({
+  ...DaemonPluginReactNativeArtifactBytesReadRequestBaseShape,
+  artifactOwnerKind: z.literal('clientContribution'),
+  clientContribution: DaemonPluginReactNativeClientContributionIdentityV1Schema,
+}).strict()
+  .refine(
+    (value) => (
+      value.cacheIdentity.pluginId === value.clientContribution.action.pluginId
+      && value.cacheIdentity.contributionId === value.clientContribution.action.localId
+    ),
+    { message: 'Client contribution Artifact reads must use the exact Action cache identity.' },
+  )
+  .refine(
+    (value) => !(value.reactNativeHostRuntimeIdentity && value.reactNativeWebLoaderCapability),
+    { message: 'native runtime identity and web loader capability are mutually exclusive' },
+  );
+
 const DaemonPluginHostedWebArtifactBytesReadRequestSchema = z.object({
   artifactFamily: z.literal('hostedWeb'),
   machineId: z.string().trim().min(1),
@@ -1365,6 +1370,7 @@ export const DaemonPluginUiArtifactBytesReadRequestSchema = z.union([
   DaemonPluginReactNativeRendererArtifactBytesReadRequestSchema,
   DaemonPluginReactNativeVoiceProviderArtifactBytesReadRequestSchema,
   DaemonPluginReactNativeCollectionMigrationsArtifactBytesReadRequestSchema,
+  DaemonPluginReactNativeClientContributionArtifactBytesReadRequestSchema,
   DaemonPluginHostedWebArtifactBytesReadRequestSchema,
 ]);
 export type DaemonPluginUiArtifactBytesReadRequest = z.infer<
@@ -1403,6 +1409,18 @@ const DaemonPluginReactNativeCollectionMigrationsArtifactBytesReadSuccessSchema 
   artifactOwnerKind: z.literal('collectionMigrations'),
 }).strict();
 
+const DaemonPluginReactNativeClientContributionArtifactBytesReadSuccessSchema = z.object({
+  ...DaemonPluginReactNativeArtifactBytesReadSuccessBaseShape,
+  artifactOwnerKind: z.literal('clientContribution'),
+  clientContribution: DaemonPluginReactNativeClientContributionIdentityV1Schema,
+}).strict().refine(
+  (value) => (
+    value.cacheIdentity.pluginId === value.clientContribution.action.pluginId
+    && value.cacheIdentity.contributionId === value.clientContribution.action.localId
+  ),
+  { message: 'Client contribution Artifact bytes must echo their exact Action cache identity.' },
+);
+
 const DaemonPluginHostedWebArtifactBytesReadSuccessSchema = z.object({
   ok: z.literal(true),
   artifactFamily: z.literal('hostedWeb'),
@@ -1422,6 +1440,7 @@ export const DaemonPluginUiArtifactBytesReadResponseSchema = z.union([
   DaemonPluginReactNativeRendererArtifactBytesReadSuccessSchema,
   DaemonPluginReactNativeVoiceProviderArtifactBytesReadSuccessSchema,
   DaemonPluginReactNativeCollectionMigrationsArtifactBytesReadSuccessSchema,
+  DaemonPluginReactNativeClientContributionArtifactBytesReadSuccessSchema,
   DaemonPluginHostedWebArtifactBytesReadSuccessSchema,
   z.object({
     ok: z.literal(false),
@@ -1755,6 +1774,17 @@ export type PluginProjectedAgentExternalSessionsV2 = z.infer<
   typeof PluginProjectedAgentExternalSessionsV2Schema
 >;
 
+const PluginProjectedAgentConnectedServiceIdsV2Schema = z.array(
+  ConnectedServiceIdSchema,
+).max(ConnectedServiceIdSchema.options.length).superRefine((serviceIds, ctx) => {
+  if (new Set(serviceIds).size !== serviceIds.length) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Projected Agent Connected Service ids must be unique',
+    });
+  }
+});
+
 export const PluginProjectedAgentV2Schema = z.object({
   id: z.string().trim().min(1),
   identity: PluginContributionIdentityV1Schema.optional(),
@@ -1765,16 +1795,18 @@ export const PluginProjectedAgentV2Schema = z.object({
   settingsBackendId: PluginOptionalStringSchema,
   catalogAgentId: PluginOptionalStringSchema,
   iconAgentId: PluginOptionalStringSchema,
+  connectedServiceIds: PluginProjectedAgentConnectedServiceIdsV2Schema.optional(),
   providerOwnedEnvironmentKeys: PluginProjectedProviderOwnedEnvironmentKeysV2Schema.default([]),
-  capabilities: z.object({
-    sessions: z.object({
-      startupInstructions: z.object({
-        versions: z.tuple([z.literal(1)]),
-      }).strict().optional(),
-    }).strict().optional(),
-  }).strict().optional(),
+  capabilities: PluginAgentCapabilitiesV2Schema.optional(),
   cli: PluginAgentCliMetadataSchema.optional(),
   externalSessions: PluginProjectedAgentExternalSessionsV2Schema.optional(),
+  /**
+   * The Agent's own client UI-behavior descriptor, carried verbatim. This is
+   * the runtime channel an installed Agent uses to reach the client's single
+   * fail-closed descriptor interpreter; absent it, the client has only its
+   * build-time bundled projection and degrades the Agent to neutral behavior.
+   */
+  ui: PluginAgentUiBehaviorContributionV2Schema.optional(),
 }).strict();
 export type PluginProjectedAgentV2 = z.infer<typeof PluginProjectedAgentV2Schema>;
 
@@ -1789,19 +1821,68 @@ export const PluginProjectedBackendV2Schema = z.object({
 }).strict();
 export type PluginProjectedBackendV2 = z.infer<typeof PluginProjectedBackendV2Schema>;
 
+/**
+ * Action presentation is the one projected contribution surface that retains
+ * plugin localization descriptors. Existing string projections remain valid,
+ * while UI presentation resolves these values through the projected plugin
+ * translation bundle rather than the daemon's execution normalization.
+ */
+const PluginProjectedActionInputHintsSchemasV2 = createActionInputHintsSchemas(
+  PluginLocalizedStringV2Schema,
+  ActionInputOptionValueSchema,
+);
+export const PluginProjectedActionInputHintsV2Schema =
+  PluginProjectedActionInputHintsSchemasV2.hintsSchema;
+export type PluginProjectedActionInputHintsV2 = z.infer<
+  typeof PluginProjectedActionInputHintsV2Schema
+>;
+
 export const PluginProjectedActionV2Schema = PluginProjectedContributionBaseV2Schema.extend({
+  title: PluginLocalizedStringV2Schema,
+  // Older projection writers emitted `null` for an omitted description.
+  description: PluginLocalizedStringV2Schema.nullable().optional(),
   icon: PluginActionIconV2Schema.optional(),
   scopes: z.array(PluginActionScopeV2Schema).min(1),
   surfaces: z.array(PluginActionSurfaceV2Schema).min(1),
+  execution: PluginActionExecutionV2Schema,
+  // The Action projection retains the producer-owned exact origin used by
+  // client projection admission. Consumers must not derive this from a
+  // package/member identity or replace it with a coarser machine fact.
+  serverIdentityId: PluginMachineExecutionOriginV1Schema.shape.serverIdentityId.optional(),
+  materializationRef: PluginMachineExecutionOriginV1Schema.shape.materializationRef.optional(),
   placementBindings: PluginActionPlacementBindingsV2Schema.optional(),
   slash: PluginActionSlashV2Schema.optional(),
   inputSchema: PluginJsonSchemaV2Schema.optional(),
-  inputHints: ActionInputHintsSchema.optional(),
+  outputSchema: PluginJsonSchemaV2Schema.optional(),
+  inputHints: PluginProjectedActionInputHintsV2Schema.optional(),
   priority: z.number().int().optional(),
   dangerLevel: PluginActionDangerLevelV2Schema,
   confirmation: PluginActionConfirmationV2Schema.optional(),
   available: z.boolean().optional(),
+  /**
+   * Read-only canonical Action policy facts. This additive field is absent
+   * when the daemon cannot resolve a current final-policy authority.
+   */
+  authorization: PluginActionPresentUserAuthorizationFactsSchema.optional(),
 }).strict().superRefine((value, context) => {
+  const hasServerIdentity = value.serverIdentityId !== undefined;
+  const hasMaterializationRef = value.materializationRef !== undefined;
+  if (hasServerIdentity !== hasMaterializationRef) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: hasServerIdentity ? ['materializationRef'] : ['serverIdentityId'],
+      message: 'Projected Action execution origin must include both serverIdentityId and materializationRef.',
+    });
+  } else if (
+    hasMaterializationRef
+    && value.materializationRef!.pluginId !== value.pluginId
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['materializationRef', 'pluginId'],
+      message: 'Projected Action execution origin must match the Action pluginId.',
+    });
+  }
   if (pluginActionRequiresPlacement(value.surfaces) && !value.placementBindings) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -2355,7 +2436,7 @@ const PluginProjectedMcpEntryV2Schema = strictProjectedFamilyEntrySchema([
 export const PluginProjectedAccountCollectionEntryV1Schema = z.object({
   pluginId: PluginIdSchema,
   collectionId: PluginContributionLocalIdSchema,
-  schemaVersion: z.number().int().min(1),
+  schemaVersion: PluginCollectionSchemaVersionV1Schema,
   contractDigest: PluginCollectionContractDigestV1Schema,
   uiQueries: z.array(NormalizedPluginCollectionUiQueryDescriptorV1Schema).max(16),
 }).strict().superRefine((value, context) => {
@@ -2398,7 +2479,7 @@ const PluginProjectedBrowserEntryV2Schema = strictProjectedFamilyEntrySchema([
   'order',
 ] as const);
 const PluginProjectedUiHeaderActionV2Schema = PluginUiHeaderActionPresentationV1Schema.extend({
-  command: PluginUiResolvedSemanticCommandV1Schema,
+  action: PluginUiResolvedSemanticCommandV1Schema,
 }).strict();
 
 const PROJECTED_OPENABLE_CONTENT_VIEWER_FIELDS = new Set([
@@ -2436,7 +2517,6 @@ const PluginProjectedUiEntryV2Schema = strictProjectedFamilyEntrySchema([
   'description',
   'icon',
   'action',
-  'command',
   'kind',
   'order',
   'availability',
@@ -2486,7 +2566,7 @@ const PluginProjectedUiEntryV2Schema = strictProjectedFamilyEntrySchema([
   'reactNativeCrashState',
   'diagnostics',
 ] as const).extend({
-  command: PluginUiResolvedSemanticCommandV1Schema.optional(),
+  action: PluginUiResolvedSemanticCommandV1Schema.optional(),
   headerActions: z.array(PluginProjectedUiHeaderActionV2Schema).optional(),
   binding: PluginUiDestinationBindingV1Schema.optional(),
   container: PluginUiContainerV1Schema.optional(),

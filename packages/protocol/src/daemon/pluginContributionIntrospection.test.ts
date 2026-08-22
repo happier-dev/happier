@@ -18,7 +18,6 @@ describe('plugin contribution introspection wire contract', () => {
   it('preserves local, locale, and delegated-domain identities without collapsing them', () => {
     const contributionBase = {
       version: 1,
-      stability: 'stable',
       progression: { declared: true, normalized: true, merged: true },
       registration: { requirement: 'notRequired', state: 'notRequired' },
       activation: { state: 'notRequired' },
@@ -40,7 +39,6 @@ describe('plugin contribution introspection wire contract', () => {
     });
     const delegated = PluginContributionLifecycleRecordV1Schema.parse({
       ...contributionBase,
-      stability: 'delegated',
       contribution: {
         kind: 'delegatedDomain',
         pluginId: 'acme.example',
@@ -70,7 +68,6 @@ describe('plugin contribution introspection wire contract', () => {
     const parsed = PluginContributionLifecycleRecordV1Schema.parse({
       version: 1,
       contribution,
-      stability: 'stable',
       progression: {
         declared: true,
         normalized: true,
@@ -96,7 +93,6 @@ describe('plugin contribution introspection wire contract', () => {
     const parsed = PluginContributionLifecycleRecordV1Schema.parse({
       version: 1,
       contribution: { ...contribution, family: 'commands', qualifiedId: 'acme.example/commands/run' },
-      stability: 'stable',
       progression: { declared: true, normalized: true, merged: true },
       registration: { requirement: 'notRequired', state: 'notRequired' },
       activation: { state: 'notRequired' },
@@ -114,7 +110,6 @@ describe('plugin contribution introspection wire contract', () => {
     const base = {
       version: 1,
       contribution,
-      stability: 'stable',
       progression: { declared: true, normalized: true, merged: true },
       registration: { requirement: 'required', state: 'unbound' },
       activation: { state: 'dormant' },
@@ -186,7 +181,6 @@ describe('plugin contribution introspection wire contract', () => {
     const base = {
       version: 1,
       contribution,
-      stability: 'stable',
       progression: { declared: true, normalized: true, merged: true },
       projection: { state: 'projected' },
       consumer: 'action-dispatch',
@@ -224,7 +218,6 @@ describe('plugin contribution introspection wire contract', () => {
     expect(PluginContributionLifecycleRecordV1Schema.safeParse({
       version: 1,
       contribution,
-      stability: 'stable',
       progression: { declared: true, normalized: true, merged: true },
       registration: { requirement: 'required', state: 'unavailable', reason: oversized },
       activation: { state: 'dormant' },

@@ -186,9 +186,17 @@ export const InteractionTransientRequestStampV1Schema = z.object({
   scope: InteractionTransientScopeV1Schema,
   requester: InteractionTransientRequesterV1Schema,
   createdAtMs: z.number().int().nonnegative(),
-  expiresAtMs: z.number().int().nonnegative(),
+  /**
+   * Two explicit arms. Present: the host imposed this deadline and its owner
+   * arms a timer that settles `timedOut`. Absent: the host imposes no deadline
+   * at all — the arm L-25 requires for interactive prompts — and the request
+   * settles only on an observable lifecycle event (user answer, requester
+   * abort, generation retirement, Session end, host restart, unavailability).
+   * An absent deadline is never a very large one: no timer exists for it.
+   */
+  expiresAtMs: z.number().int().nonnegative().optional(),
 }).strict().superRefine((value, context) => {
-  if (value.expiresAtMs <= value.createdAtMs) {
+  if (value.expiresAtMs !== undefined && value.expiresAtMs <= value.createdAtMs) {
     context.addIssue({
       code: 'custom',
       path: ['expiresAtMs'],

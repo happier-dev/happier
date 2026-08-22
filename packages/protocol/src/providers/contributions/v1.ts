@@ -1,7 +1,15 @@
 import { z } from 'zod';
 
-import { ProviderCompatibilityCapabilitiesV1Schema, ProviderCompatibilityOverridesV1Schema, ProviderWireProtocolSchema } from '../capabilities/v1.js';
-import { ProviderCatalogDeclarationV1Schema } from '../catalog/descriptorV1.js';
+import {
+  PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
+  ProviderCompatibilityCapabilitiesV1Schema,
+  ProviderCompatibilityOverridesV1Schema,
+  ProviderWireProtocolSchema,
+} from '../capabilities/v1.js';
+import {
+  ProviderCatalogDeclarationV1Schema,
+  providerCatalogProbeReportsModelLoadStateV1,
+} from '../catalog/descriptorV1.js';
 import { ProviderApiKeyCredentialRequirementV1Schema } from '../credentials/v1.js';
 import { ProviderDetectionDescriptorV1Schema } from '../detection/descriptorV1.js';
 import { ProviderLocalIdSchema } from '../ids.js';
@@ -104,7 +112,8 @@ export const ProviderManagedRuntimeDeclarationV1Schema = z.object({
   dependencies: z.array(asProtocolZod(PluginContributionLocalIdSchema)).max(16).optional(),
   connectedAccounts: ConnectedAccountPurposeDeclarationsV1Schema.optional(),
   requestAuthUses: ConnectedAccountRequestAuthUsesV1Schema.optional(),
-  endpointTemplateIds: z.array(ProviderLocalIdSchema).min(1).max(4),
+  endpointTemplateIds: z.array(ProviderLocalIdSchema).min(1)
+    .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
 }).strict().superRefine((value, context) => {
   const dependencies = value.dependencies ?? [];
   if (new Set(dependencies).size !== dependencies.length) {
@@ -324,7 +333,10 @@ export const ProviderContributionV1Schema = z.object({
   icon: z.string().trim().min(1).max(512).optional(),
   websiteUrl: ProviderHttpsUrlSchema.optional(),
   kind: z.enum(['frontier', 'aggregator', 'cloud', 'local']),
-  endpointTemplates: z.array(ProviderEndpointTemplateV1Schema).min(1).max(4),
+  // One endpoint per protocol, so this bound follows the protocol-declaration
+  // bound rather than the bundled protocol count.
+  endpointTemplates: z.array(ProviderEndpointTemplateV1Schema).min(1)
+    .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
   credential: ProviderApiKeyCredentialRequirementV1Schema.optional(),
   catalog: ProviderCatalogDeclarationV1Schema,
   modelLoad: ProviderModelLoadDescriptorV1Schema.optional(),
@@ -366,7 +378,8 @@ export const ProviderContributionV1Schema = z.object({
       transport.uses.includes('management') && transport.protocols.includes(loadEndpoint.protocol)));
     if (!hasManagementTransport) ctx.addIssue({ code: 'custom', path: ['modelLoad'], message: 'Authenticated model loading requires a management credential transport' });
     const hasLoadStateParser = 'probes' in value.catalog && value.catalog.probes.some((probe) =>
-      probe.endpointTemplateId === value.modelLoad?.endpointTemplateId && probe.parser === 'lmstudio-native-models');
+      probe.endpointTemplateId === value.modelLoad?.endpointTemplateId
+      && providerCatalogProbeReportsModelLoadStateV1(probe));
     if (!hasLoadStateParser) ctx.addIssue({ code: 'custom', path: ['modelLoad'], message: 'Model loading requires a catalog parser that reports load state' });
   }
   if (value.discovery) {
