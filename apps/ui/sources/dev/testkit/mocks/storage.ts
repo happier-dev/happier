@@ -16,6 +16,7 @@ import {
     createUseLocalSettingMutableMock as createUseLocalSettingRuntimeMutableMock,
     createUseSettingMock as createUseSettingRuntimeMock,
     createUseSettingMutableMock as createUseSettingRuntimeMutableMock,
+    createStableStorageReader,
     adaptStorageStoreLike,
     isStorageStoreLike,
     type CreateUseLocalSettingMockOptions as CreateUseLocalSettingRuntimeMockOptions,
@@ -93,6 +94,8 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         createMutableSetter: createVitestMutableSetter,
     });
 }
+
+export { createStableStorageReader };
 
 export const createUseSettingMock = createUseSettingRuntimeMock;
 

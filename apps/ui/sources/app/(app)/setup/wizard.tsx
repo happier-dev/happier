@@ -6,7 +6,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { SetupWizardSurface } from '@/components/onboarding/surfaces/SetupWizardSurface';
 import { shouldUseWizardFullscreenPresentation } from '@/components/onboarding/ui/wizardPresentation';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import type { WizardContext, WizardStepId } from '@/components/onboarding/state/wizardTypes';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
@@ -90,7 +90,7 @@ export default function SetupWizardRoute() {
     const content = (
         <SetupWizardSurface
             testID="setupWizard.surface"
-            isDesktopShell={isTauriDesktop()}
+            isDesktopShell={isDesktopHost()}
             useOuterScrollContainer={true}
             onExit={() => {
                 applyLocalSettings({ sessionGettingStartedGuidanceDismissed: true });

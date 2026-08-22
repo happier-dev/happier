@@ -37,6 +37,7 @@ const eligibleSource: SessionAgentContinuationSourceState = {
     storageKind: 'persisted',
     canEditSession: true,
     machinePresence: 'online',
+    hasConversationToCarry: true,
 };
 
 const SUPPORTED: SessionAgentContinuationInspectionState = {
@@ -45,7 +46,6 @@ const SUPPORTED: SessionAgentContinuationInspectionState = {
         type: 'available',
         protocolVersion: 1,
         sameSessionTransition: true,
-        nativeReturn: false,
     },
 };
 
@@ -168,7 +168,6 @@ describe('resolveSessionAgentContinuationEligibility', () => {
                     type: 'available',
                     protocolVersion: 1,
                     sameSessionTransition: false,
-                    nativeReturn: false,
                 },
             }, {}, 'unsupported_session'],
         ];

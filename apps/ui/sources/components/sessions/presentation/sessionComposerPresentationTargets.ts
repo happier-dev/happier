@@ -35,9 +35,10 @@ import {
     type PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import type {
-    PluginSurfaceHostApiHandlers,
-    PluginSurfaceHostApiRequestOptions,
+import {
+    createPluginSurfaceHostApiError,
+    type PluginSurfaceHostApiHandlers,
+    type PluginSurfaceHostApiRequestOptions,
 } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 import {
     composerAttachmentDraftToView,
@@ -1264,15 +1265,15 @@ type ActiveComposerObservation = Readonly<{
 }>;
 
 function composerHostUnavailable(reason: string): PluginUiJsonValueV1 {
-    return { code: 'unavailable', diagnostics: [reason] };
+    return createPluginSurfaceHostApiError('unavailable', [reason]);
 }
 
 function composerHostInvalidPayload(reason: string): PluginUiJsonValueV1 {
-    return { code: 'invalid_payload', diagnostics: [reason] };
+    return createPluginSurfaceHostApiError('invalid_payload', [reason]);
 }
 
 function composerHostStaleSurface(): PluginUiJsonValueV1 {
-    return { code: 'stale_surface', diagnostics: ['plugin_surface_retired'] };
+    return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
 }
 
 function composerHostRequestRefusal(

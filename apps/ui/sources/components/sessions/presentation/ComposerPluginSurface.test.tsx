@@ -119,4 +119,51 @@ describe('ComposerPluginSurface', () => {
             releaseComposerContent: expect.any(Function),
         }));
     });
+
+    // The Composer host is presented by the same web bundle in a plain browser
+    // tab and inside the Tauri/Electron desktop shell, where `Platform.OS` is
+    // still `'web'`. Only the canonical desktop-aware resolver separates them,
+    // and the separation decides whether a hosted Composer surface reaches the
+    // native desktop Artifact path or the sandboxed browser iframe.
+    it('classifies the desktop shell as desktop and a plain browser tab as web', async () => {
+        const { ComposerPluginSurface } = await import('./ComposerPluginSurface');
+        const catalogEntry = createCatalogEntry();
+        const renderComposerSurface = () => renderScreen(<ComposerPluginSurface
+            request={{
+                contribution: catalogEntry.contribution,
+                immutableGenerationId: 'generation-1',
+                role: 'region',
+                input: {
+                    v: 1,
+                    role: 'region',
+                    composer: { kind: 'newSession', instanceId: 'new-session-1' },
+                    regionLocalId: 'summary',
+                },
+                instanceKey: 'composer:region:acme.compose/summary',
+            }}
+            physicalTarget={{ kind: 'app' }}
+            projectionGeneration={7}
+            catalogEntries={[catalogEntry]}
+            pluginProjectionById={{}}
+            pluginProjectionV2={{ v: 2, generation: 7 } as PluginProjectionV2}
+            machineId="machine-1"
+            serverId="server-1"
+            parentLifetime={lifetime}
+            transactionApplier={{ apply: () => ({ status: 'rejected' }) } as never}
+        />);
+        const readPlatform = (): unknown => (
+            (pluginSurfaceHostSpy.mock.calls.at(-1)?.[0] as Readonly<{ platform?: unknown }>)?.platform
+        );
+
+        await renderComposerSurface();
+        expect(readPlatform()).toBe('web');
+
+        (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: () => undefined };
+        try {
+            await renderComposerSurface();
+            expect(readPlatform()).toBe('desktop');
+        } finally {
+            delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
+        }
+    });
 });

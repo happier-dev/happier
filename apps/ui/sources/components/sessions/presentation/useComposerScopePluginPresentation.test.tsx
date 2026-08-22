@@ -110,7 +110,7 @@ function createProjection(): PluginProjectionV2 {
 
 function createOrderedControl(input: Readonly<{
     localId: string;
-    order: number;
+    order?: number;
 }>): PluginProjectedComposerControlEntryV1 {
     return {
         id: `acme.compose/${input.localId}`,
@@ -121,7 +121,7 @@ function createOrderedControl(input: Readonly<{
             id: input.localId,
             label: input.localId,
             icon: 'preview',
-            order: input.order,
+            ...(input.order === undefined ? {} : { order: input.order }),
             interaction: { kind: 'action', action: 'refresh' },
         },
     } as PluginProjectedComposerControlEntryV1;
@@ -129,7 +129,7 @@ function createOrderedControl(input: Readonly<{
 
 function createOrderedRegion(input: Readonly<{
     localId: string;
-    order: number;
+    order?: number;
 }>): PluginProjectedComposerRegionEntryV1 {
     return {
         id: `acme.compose/${input.localId}`,
@@ -139,7 +139,7 @@ function createOrderedRegion(input: Readonly<{
         definition: {
             id: input.localId,
             placement: 'beforeComposer',
-            order: input.order,
+            ...(input.order === undefined ? {} : { order: input.order }),
         },
     } as PluginProjectedComposerRegionEntryV1;
 }

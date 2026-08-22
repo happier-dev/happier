@@ -7,6 +7,7 @@ import { t } from '@/text';
 import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { CapabilityDetectResult, CliCapabilityData, TmuxCapabilityData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { getAgentCore } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { Text } from '@/components/ui/text/Text';
@@ -94,7 +95,8 @@ export function DetectedClisList({ state, layout = 'inline' }: Props) {
     const entries: Array<[string, { available: boolean | null; resolvedPath?: string; version?: string }]> = [
         ...enabledAgents.map((agentId): [string, { available: boolean | null; resolvedPath?: string; version?: string }] => {
             const capId = buildProviderCliCapabilityId(agentId);
-            return [t(getAgentCore(agentId).displayNameKey), readCliResult(results[capId])];
+            const core = getAgentCore(agentId);
+            return [core ? t(core.displayNameKey) : formatAgentLikeIdForDisplay(agentId), readCliResult(results[capId])];
         }),
         ['tmux', readTmuxResult(results['tool.tmux'])],
     ];

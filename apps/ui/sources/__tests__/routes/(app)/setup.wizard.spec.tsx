@@ -21,8 +21,8 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => true,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => true,
 }));
 
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({

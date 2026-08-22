@@ -1,4 +1,4 @@
-import { invokeTauri, listenTauriEvent } from '@/utils/platform/tauri';
+import { invokeDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 import type { DesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
 import { DESKTOP_ACTIVITY_OVERLAY_INTERACTION_RESULT_TIMEOUT_MS } from '../desktopActivityOverlayTiming';
@@ -124,29 +124,29 @@ function readErrorMessage(error: unknown): string {
 }
 
 export async function syncDesktopActivityOverlay(payload: DesktopActivityOverlaySyncPayload): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_sync', { payload });
+    await invokeDesktopHost<void>('desktop_activity_overlay_sync', { payload });
 }
 
 export async function getDesktopActivityOverlayWindowState(): Promise<DesktopActivityOverlayWindowStatePayload | null> {
-    return invokeTauri<DesktopActivityOverlayWindowStatePayload | null>('desktop_activity_overlay_get_window_state');
+    return invokeDesktopHost<DesktopActivityOverlayWindowStatePayload | null>('desktop_activity_overlay_get_window_state');
 }
 
 export async function setDesktopActivityOverlayExpanded(expanded: boolean): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_set_expanded', { expanded });
+    await invokeDesktopHost<void>('desktop_activity_overlay_set_expanded', { expanded });
 }
 
 export async function setDesktopActivityOverlayInputLocked(locked: boolean): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_set_input_locked', { locked });
+    await invokeDesktopHost<void>('desktop_activity_overlay_set_input_locked', { locked });
 }
 
 export async function applyDesktopActivityOverlayDragDelta(deltaX: number, deltaY: number): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_apply_drag_delta', { deltaX, deltaY });
+    await invokeDesktopHost<void>('desktop_activity_overlay_apply_drag_delta', { deltaX, deltaY });
 }
 
 export async function releaseDesktopActivityOverlayDragVelocity(
     payload: DesktopActivityOverlayDragVelocityPayload,
 ): Promise<void> {
-    const plan = await invokeTauri<DesktopActivityOverlayMomentumPlan>('desktop_activity_overlay_release_drag_velocity', {
+    const plan = await invokeDesktopHost<DesktopActivityOverlayMomentumPlan>('desktop_activity_overlay_release_drag_velocity', {
         payload: {
             ...payload,
             pointerId: String(payload.pointerId),
@@ -158,7 +158,7 @@ export async function releaseDesktopActivityOverlayDragVelocity(
 export async function applyDesktopActivityOverlayMomentumDelta(
     payload: DesktopActivityOverlayMomentumDeltaPayload,
 ): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_apply_momentum_delta', { payload });
+    await invokeDesktopHost<void>('desktop_activity_overlay_apply_momentum_delta', { payload });
 }
 
 function scheduleDesktopActivityOverlayMomentumPlan(
@@ -182,21 +182,21 @@ function scheduleDesktopActivityOverlayMomentumPlan(
 }
 
 export async function resetDesktopActivityOverlayPosition(): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_reset_position');
+    await invokeDesktopHost<void>('desktop_activity_overlay_reset_position');
 }
 
 export async function showDesktopMainWindow(): Promise<void> {
-    await invokeTauri<void>('desktop_show_main_window');
+    await invokeDesktopHost<void>('desktop_show_main_window');
 }
 
 export async function emitDesktopActivityOverlayInteraction(payload: DesktopActivityOverlayInteractionPayload): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_emit_interaction', { payload });
+    await invokeDesktopHost<void>('desktop_activity_overlay_emit_interaction', { payload });
 }
 
 export async function emitDesktopActivityOverlayInteractionResult(
     payload: DesktopActivityOverlayInteractionResultPayload,
 ): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_emit_interaction_result', { payload });
+    await invokeDesktopHost<void>('desktop_activity_overlay_emit_interaction_result', { payload });
 }
 
 export async function executeDesktopActivityOverlayInteractionWithResult(
@@ -262,17 +262,17 @@ export async function executeDesktopActivityOverlayInteractionWithResult(
 export async function listenDesktopActivityOverlayWindowState(
     handler: (payload: DesktopActivityOverlayWindowStatePayload) => void,
 ): Promise<() => void> {
-    return listenTauriEvent<DesktopActivityOverlayWindowStatePayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.state, handler);
+    return listenDesktopHostEvent<DesktopActivityOverlayWindowStatePayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.state, handler);
 }
 
 export async function listenDesktopActivityOverlayInteraction(
     handler: (payload: DesktopActivityOverlayInteractionPayload) => void,
 ): Promise<() => void> {
-    return listenTauriEvent<DesktopActivityOverlayInteractionPayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.interaction, handler);
+    return listenDesktopHostEvent<DesktopActivityOverlayInteractionPayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.interaction, handler);
 }
 
 export async function listenDesktopActivityOverlayInteractionResult(
     handler: (payload: DesktopActivityOverlayInteractionResultPayload) => void,
 ): Promise<() => void> {
-    return listenTauriEvent<DesktopActivityOverlayInteractionResultPayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.interactionResult, handler);
+    return listenDesktopHostEvent<DesktopActivityOverlayInteractionResultPayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.interactionResult, handler);
 }

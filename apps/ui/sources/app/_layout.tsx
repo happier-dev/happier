@@ -17,6 +17,7 @@ import { SidebarNavigator } from '@/components/navigation/shell/SidebarNavigator
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
 import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
+import { CurrentUiContextProvider } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { PostHogProvider } from 'posthog-react-native';
 import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
@@ -62,7 +63,7 @@ import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/d
 import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
@@ -764,11 +765,11 @@ function AppBoot(props: {
     // Boot
     //
 
-    const tauriDesktop = isTauriDesktop();
+    const desktopHost = isDesktopHost();
     const appShellChromeHost = resolveAppShellChromeHost({
         isAuthenticated: initState.credentials != null,
         isWeb: Platform.OS === 'web',
-        isTauriDesktop: tauriDesktop,
+        isDesktopHost: desktopHost,
         isTablet,
         isTerminalConnectRoute,
     });
@@ -803,7 +804,7 @@ function AppBoot(props: {
     );
     const appShellWithRootDesktopDragSurface = shouldUseRootDesktopDragSurface ? (
         <DesktopMainContentDragSurface
-            enabled={Platform.OS === 'web' && tauriDesktop}
+            enabled={Platform.OS === 'web' && desktopHost}
             leftOffsetPx={0}
             style={{ flex: 1 }}
         >
@@ -815,7 +816,15 @@ function AppBoot(props: {
         <ThemePreferenceTransitionHost>
             <HorizontalSafeAreaWrapper>
                 <MainAppTabStateProvider>
-                    {appShellWithRootDesktopDragSurface}
+                    <CurrentUiContextProvider>
+                        {isDesktopOverlayWindow ? appShellWithRootDesktopDragSurface : (
+                            <RealtimeProvider>
+                                <VoiceEnergyAppProvider>
+                                    {appShellWithRootDesktopDragSurface}
+                                </VoiceEnergyAppProvider>
+                            </RealtimeProvider>
+                        )}
+                    </CurrentUiContextProvider>
                 </MainAppTabStateProvider>
             </HorizontalSafeAreaWrapper>
         </ThemePreferenceTransitionHost>
@@ -846,13 +855,7 @@ function AppBoot(props: {
                             <StatusBarProvider />
                             <AppPaneModalProvider>
                                 <CommandPaletteProvider>
-                                    {isDesktopOverlayWindow ? appContent : (
-                                        <RealtimeProvider>
-                                            <VoiceEnergyAppProvider>
-                                                {appContent}
-                                            </VoiceEnergyAppProvider>
-                                        </RealtimeProvider>
-                                    )}
+                                    {appContent}
                                 </CommandPaletteProvider>
                             </AppPaneModalProvider>
                         </ThemeProvider>

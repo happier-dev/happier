@@ -86,6 +86,25 @@ describe('WarningActionBanner', () => {
         expect(onSecondary).toHaveBeenCalledTimes(1);
     });
 
+    it('lets a large-text action grow instead of clipping it at the compact visual height', async () => {
+        const { WarningActionBanner } = await import('./WarningActionBanner');
+
+        const screen = await renderScreen(
+            <WarningActionBanner
+                testID="warning"
+                actionTestID="warning-primary"
+                title="Limit reached"
+                actionLabel="Resume when the provider allows this session to continue"
+                onActionPress={vi.fn()}
+            />,
+        );
+
+        const actionStyle = flattenStyle(screen.findByTestId('warning-primary')?.props.style({ pressed: false }));
+        expect(actionStyle.height).toBeUndefined();
+        expect(actionStyle.minHeight).toBe(28);
+        expect(actionStyle.paddingVertical).toBeGreaterThan(0);
+    });
+
     it('keeps action buttons to the right of the warning copy on desktop', async () => {
         const { WarningActionBanner } = await import('./WarningActionBanner');
 

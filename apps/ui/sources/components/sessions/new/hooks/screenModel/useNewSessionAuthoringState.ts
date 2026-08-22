@@ -6,7 +6,6 @@ import {
     buildPersistedNewSessionDraftFromAuthoringDraft,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
-import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
 import { clearNewSessionDraft, saveNewSessionDraft } from '@/sync/domains/state/persistence';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
@@ -38,7 +37,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedPath: string;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     promptStore: NewSessionPromptStore;
-    agentType: AgentId;
+    /** Compatibility-only bundled identity for persisted legacy draft fields. */
+    staticAgentId: AgentId | null;
     backendTarget: BackendTargetRefV2 | null;
     transcriptStorage: BuildResolvedInputs['transcriptStorage'];
     useProfiles: boolean;
@@ -78,8 +78,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const draftAgentId = React.useMemo(() => resolveNewSessionCompatAgentType({
         backendTarget: params.backendTarget,
         persistedAgentId: params.settings.lastUsedAgent,
-        selectedBuiltInAgentId: params.agentType,
-    }), [params.agentType, params.backendTarget, params.settings.lastUsedAgent]);
+        selectedBuiltInAgentId: params.staticAgentId,
+    }), [params.backendTarget, params.settings.lastUsedAgent, params.staticAgentId]);
 
     // The live composer text is read from its store at build time instead of being a render
     // dependency: typing must not rebuild the authoring draft, but every build (render-time
@@ -120,7 +120,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         });
     }, [
         params.acpSessionModeId,
-        params.agentType,
+        params.staticAgentId,
         params.agentNewSessionOptions,
         params.backendTarget,
         params.checkoutCreationDraft,
@@ -191,17 +191,13 @@ export function useNewSessionAuthoringState(params: Readonly<{
             agentType: resolveNewSessionCompatAgentType({
                 backendTarget: persistedDraft.backendTarget ?? null,
                 persistedAgentId: draftAgentId,
-                selectedBuiltInAgentId: resolvePersistedAgentIdForBackendTarget({
-                    backendTarget: persistedDraft.backendTarget ?? null,
-                    persistedAgentId: persistedDraft.agentType,
-                    selectedBuiltInAgentId: params.agentType,
-                }),
+                selectedBuiltInAgentId: params.staticAgentId ?? draftAgentId,
             }),
         };
     }, [
         buildCurrentAuthoringDraft,
         effectiveAutomationDraft,
-        params.agentType,
+        params.staticAgentId,
         params.backendNewSessionOptionStateByTargetKey,
         params.composerAttachments,
         params.automationRequestedByRoute,

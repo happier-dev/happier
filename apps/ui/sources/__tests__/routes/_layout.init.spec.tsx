@@ -27,7 +27,7 @@ const bootCredentialsState = vi.hoisted(() => ({
     value: null as null | { token: string; secret: string },
 }));
 const shellChromeState = vi.hoisted(() => ({
-    isTauriDesktop: false,
+    isDesktopHost: false,
     isTablet: true,
 }));
 const desktopOverlayWindowState = vi.hoisted(() => ({
@@ -149,10 +149,10 @@ vi.mock('@/boot/resolveBootCredentials', () => ({
     resolveBootCredentials: vi.fn(async () => bootCredentialsState.value),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => shellChromeState.isTauriDesktop,
-    invokeTauri: vi.fn(),
-    listenTauriEvent: vi.fn(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => shellChromeState.isDesktopHost,
+    invokeDesktopHost: vi.fn(),
+    listenDesktopHostEvent: vi.fn(),
 }));
 
 vi.mock('@/desktop/window/isDesktopOverlayWindowContext', () => ({
@@ -221,6 +221,12 @@ vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', async (
         useMainAppTabState,
     };
 });
+
+vi.mock('@/components/appShell/currentUiContext/CurrentUiContextProvider', () => ({
+    CurrentUiContextProvider: ({ children }: { children: React.ReactNode }) => (
+        React.createElement('CurrentUiContextProvider', null, children)
+    ),
+}));
 
 installRouteRootCommonModuleMocks({
     reactNative: async () => {
@@ -401,7 +407,12 @@ vi.mock('@/track/useTrackScreens', () => ({
 vi.mock('@/realtime/RealtimeProvider', () => {
     const React = require('react');
     return {
-        RealtimeProvider: ({ children }: { children: React.ReactNode }) => React.createElement('RealtimeProvider', null, children),
+        RealtimeProvider: ({ children }: { children: React.ReactNode }) => React.createElement(
+            'RealtimeProvider',
+            null,
+            React.createElement('VoiceSessionRuntime'),
+            children,
+        ),
     };
 });
 
@@ -451,7 +462,7 @@ describe('app/_layout init resilience', () => {
         mockedPathname = '/';
         mockedConfigVariant = '';
         bootCredentialsState.value = null;
-        shellChromeState.isTauriDesktop = false;
+        shellChromeState.isDesktopHost = false;
         shellChromeState.isTablet = true;
         desktopOverlayWindowState.value = false;
         notificationNativeState.unavailable = false;
@@ -538,6 +549,17 @@ describe('app/_layout init resilience', () => {
         expect(probes).toHaveLength(1);
         expect(screen.findAllByType('RealtimeProvider' as any)).toHaveLength(1);
     });
+
+    for (const platform of ['web', 'ios', 'android'] as const) {
+        it(`mounts the realtime voice runtime beneath the one AppShell current UI provider on ${platform}`, async () => {
+            mockedPlatformOS = platform;
+            const screen = await renderSettledRootLayout();
+
+            const currentUiProvider = screen.findByType('CurrentUiContextProvider' as any);
+            expect(currentUiProvider.findAllByType('RealtimeProvider' as any)).toHaveLength(1);
+            expect(currentUiProvider.findAllByType('VoiceSessionRuntime' as any)).toHaveLength(1);
+        });
+    }
 
     it('configures separate Android notification channels for permission/action request pushes', async () => {
         mockedPlatformOS = 'android';
@@ -628,20 +650,22 @@ describe('app/_layout init resilience', () => {
     it('skips sync restore inside the dedicated desktop activity overlay window', async () => {
         mockedPlatformOS = 'web';
         mockedPathname = '/desktop/activity-overlay';
-        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isDesktopHost = true;
         desktopOverlayWindowState.value = true;
         bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
 
         const screen = await renderSettledRootLayout();
 
         expect(screen.findAllByType('RealtimeProvider' as any)).toHaveLength(0);
+        expect(screen.findAllByType('VoiceSessionRuntime' as any)).toHaveLength(0);
+        expect(screen.findAllByType('CurrentUiContextProvider' as any)).toHaveLength(1);
         expect(syncRestoreMock).not.toHaveBeenCalled();
     });
 
     it('restores synced pet state while keeping the pet overlay free of realtime runtimes', async () => {
         mockedPlatformOS = 'web';
         mockedPathname = '/desktop/pet-overlay';
-        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isDesktopHost = true;
         desktopOverlayWindowState.value = true;
         bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
 
@@ -657,7 +681,7 @@ describe('app/_layout init resilience', () => {
         mockedPlatformOS = 'web';
         mockedPathname = '/desktop/activity-overlay';
         bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
-        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isDesktopHost = true;
         shellChromeState.isTablet = false;
         desktopOverlayWindowState.value = true;
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'native-macos-traffic-lights' });
@@ -673,7 +697,7 @@ describe('app/_layout init resilience', () => {
         mockedPlatformOS = 'web';
         mockedPathname = '/desktop/activity-overlay';
         bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
-        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isDesktopHost = true;
         desktopOverlayWindowState.value = true;
 
         const screen = await renderSettledRootLayout();
@@ -730,7 +754,7 @@ describe('app/_layout init resilience', () => {
 
     it('does not mount a root-shell update tag for unauthenticated desktop flows owned by the pre-auth host', async () => {
         mockedPathname = '/';
-        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isDesktopHost = true;
 
         const screen = await renderSettledRootLayout();
 
@@ -746,7 +770,7 @@ describe('app/_layout init resilience', () => {
     it('keeps desktop shell chrome inside the sidebar host for authenticated wide desktop flows', async () => {
         mockedPathname = '/';
         bootCredentialsState.value = { token: 'token', secret: 'secret' };
-        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isDesktopHost = true;
         shellChromeState.isTablet = true;
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'native-macos-traffic-lights' });
 
@@ -761,7 +785,7 @@ describe('app/_layout init resilience', () => {
     it('renders an explicit narrow-desktop fallback host instead of folding it into focus-mode fallback', async () => {
         mockedPathname = '/';
         bootCredentialsState.value = { token: 'token', secret: 'secret' };
-        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isDesktopHost = true;
         shellChromeState.isTablet = false;
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'native-macos-traffic-lights' });
 
@@ -1101,4 +1125,5 @@ describe('app/_layout init resilience', () => {
         );
         expect(fontInitErrors).toHaveLength(0);
     });
+
 });

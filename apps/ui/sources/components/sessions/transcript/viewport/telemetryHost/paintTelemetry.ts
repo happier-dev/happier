@@ -8,6 +8,7 @@ import {
     hasTranscriptWarmStablePaint,
     rememberTranscriptWarmStablePaint,
 } from '@/components/sessions/transcript/paint/transcriptWarmPaintCache';
+import { resolveTranscriptWarmPaintRecordable } from '@/components/sessions/transcript/paint/resolveTranscriptWarmPaintRecordable';
 import type { TranscriptViewportPlatform } from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
 import {
     readSessionUiTelemetryNowMs,
@@ -68,6 +69,21 @@ export function recordFirstListPaintTelemetry(params: Readonly<{
 export function recordStablePaintTelemetry(params: Readonly<{
     clearWebStablePaintRetry: () => void;
     committedMessagesCount: number;
+    /**
+     * The FIRST-paint state, so this function can keep the pair ordered.
+     *
+     * The two marks have different triggers — first paint is recorded only when a native
+     * viewport paint is accepted, while stable paint is also reachable through mount
+     * settle and through the deadline. When a transcript settles without an accepted
+     * viewport paint, first paint goes unrecorded or lands later than stable (measured on
+     * remote-dev 2026-08-18: openToFirstPaint 2044ms against openToStablePaint 1410ms
+     * from the same origin, which is impossible).
+     *
+     * A transcript cannot be stable without having painted, so stable paint is a truthful
+     * upper bound. Optional so callers that do not own the first-paint state are
+     * unchanged.
+     */
+    firstPaintTelemetryState?: TranscriptPaintTelemetryState | null;
     firstListPaintObserved: boolean;
     isWarmKeepAliveInstance: boolean;
     itemCount: number;
@@ -90,6 +106,19 @@ export function recordStablePaintTelemetry(params: Readonly<{
         return false;
     }
     params.clearWebStablePaintRetry();
+    // Order the pair BEFORE stamping stable, so a derived first paint carries a timestamp
+    // at or before it. Reuses the one first-paint recorder; if it already ran, this is a
+    // no-op and the observed value stands.
+    if (params.firstPaintTelemetryState) {
+        recordFirstListPaintTelemetry({
+            committedMessagesCount: params.committedMessagesCount,
+            itemCount: params.itemCount,
+            platformOS: params.platformOS,
+            routeHydrationPending: params.routeHydrationPending,
+            sessionId: params.sessionId,
+            telemetryState: params.firstPaintTelemetryState,
+        });
+    }
     telemetryState.recorded = true;
     syncPerformanceTelemetry.recordDuration(
         'ui.sessions.transcript.stablePaint',
@@ -251,7 +280,14 @@ export function useTranscriptPaintTelemetry(params: Readonly<{
         paintMetrics: TranscriptPaintMetrics,
         options: Readonly<{ nativeViewportObserved?: boolean }> = {},
     ): boolean => {
-        if (options.nativeViewportObserved === true) {
+        // Recording is what makes the NEXT open of this session fast, so it must accept every
+        // trustworthy settle — not only the viewport signal, which never fires on the cockpit
+        // swipe path and left warm re-entry permanently unreachable there.
+        if (resolveTranscriptWarmPaintRecordable({
+            nativeViewportObserved: options.nativeViewportObserved === true,
+            nativeMountSettleStable,
+            nativeMountSettleDeadlineReached,
+        })) {
             rememberTranscriptWarmStablePaint({
                 committedMessagesCount,
                 items: itemCount,
@@ -264,6 +300,7 @@ export function useTranscriptPaintTelemetry(params: Readonly<{
         return recordStablePaintTelemetry({
             clearWebStablePaintRetry,
             committedMessagesCount,
+            firstPaintTelemetryState: firstPaintTelemetryRef.current,
             firstListPaintObserved,
             isWarmKeepAliveInstance,
             itemCount,

@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { readAccountTranscriptStorageDefaults, resolveNewSessionDefaultTranscriptStorage } from '@/sync/domains/session/transcriptStorageDefaults';
@@ -32,7 +31,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
     newSessionDefaultPersistenceModeV1: Settings['newSessionDefaultPersistenceModeV1'];
     newSessionDefaultPersistenceModeByTargetKeyV1: Settings['newSessionDefaultPersistenceModeByTargetKeyV1'];
     resolvedBackendTargets: ReadonlyArray<BackendTargetRefV2>;
-    agentType: AgentId;
+    agentType: string;
     backendTarget: BackendTargetRefV2;
     settings: Settings;
     externalSessionsFeatureEnabled: boolean;

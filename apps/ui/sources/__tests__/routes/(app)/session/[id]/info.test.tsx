@@ -259,6 +259,7 @@ function buildSessionOrganizationProjectionFromFixtures(serverIdRaw: unknown): S
             { sessionId, sortKey: String(index + 1).padStart(4, '0'), pinnedAt: index + 1 },
         ])),
         foldersById,
+        attentionStandingsBySessionId: {},
         folderAssignmentsBySessionId: {},
         tagsById,
         tagAssignmentsBySessionId,
@@ -475,7 +476,6 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
 }));
 vi.mock('@/sync/domains/settings/actionsSettings', () => ({ isActionEnabledInState: () => true }));
 vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({ canForkConversation: () => true }));
-vi.mock('@/sync/domains/sessionHandoff/handoffUiSupport', () => ({ canHandoffConversation: () => true }));
 vi.mock('@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow', () => ({ runSessionHandoffPickerFlow: vi.fn() }));
 vi.mock('@happier-dev/protocol', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@happier-dev/protocol')>();

@@ -2,7 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
@@ -33,20 +32,21 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
     openStorageTargetKey: string | null;
     setOpenStorageTargetKey: (targetKey: string | null) => void;
     popoverBoundaryRef: React.RefObject<unknown>;
-    getPermissionAgentId: (entry: ResolvedBackendCatalogEntry) => AgentId;
+    getPermissionAgentId: (entry: ResolvedBackendCatalogEntry) => string;
     getDisplayAgentIconName: (entry: ResolvedBackendCatalogEntry) => string;
-    getPermissionIconName: (agentId: AgentId, mode: PermissionMode) => string;
+    getPermissionIconName: (agentId: string, mode: PermissionMode) => string;
     setDefaultPermissionMode: (targetKey: string, mode: PermissionMode | null) => void;
     setDefaultTranscriptStorageMode: (targetKey: string, mode: SessionTranscriptStorageMode | null) => void;
 }>) {
     const { theme } = useUnistyles();
     const compatibleEntries = props.resolvedBackendEntries.filter((entry) =>
-        props.compatibilityByTargetKey[resolveProfileBackendTargetKeyForEntry(entry)] === true);
+        props.compatibilityByTargetKey[resolveProfileBackendTargetKeyForEntry(entry)] === true
+        && getPermissionModeOptionsForAgentType(props.getPermissionAgentId(entry)).length > 0);
     const compatibleDirectEntries = props.supportedDirectBackendEntries.filter((entry) =>
         props.compatibilityByTargetKey[resolveProfileBackendTargetKeyForEntry(entry)] === true);
 
     return <>
-        <ItemGroup title={t('profiles.defaultPermissions.title')} footer={t('profiles.defaultPermissions.footer')}>
+        {compatibleEntries.length > 0 ? <ItemGroup title={t('profiles.defaultPermissions.title')} footer={t('profiles.defaultPermissions.footer')}>
             {compatibleEntries.map((entry, index) => {
                 const targetKey = resolveProfileBackendTargetKeyForEntry(entry);
                 const agentId = props.getPermissionAgentId(entry);
@@ -113,7 +113,7 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                     }}
                 />;
             })}
-        </ItemGroup>
+        </ItemGroup> : null}
 
         {props.externalSessionsEnabled && compatibleDirectEntries.length > 0 ? <ItemGroup
             title={t('profiles.defaultStorage.title')}

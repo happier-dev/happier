@@ -245,7 +245,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         expect(routerMock.replace).toHaveBeenCalledWith('/new');
     });
 
-    it('uses the last explicit built-in placeholder when route context is missing without reviving customAcp', async () => {
+    it('does not treat the last built-in selection as an external-session carrier for an unprojected configured backend', async () => {
         routeParamsState.value = {
             dataId: 'draft-1',
             machineId: 'machine-2',
@@ -282,26 +282,8 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
 
         await renderScreen(React.createElement(ResumeBrowsePickerScreen));
-        const props = browseScreenPropsRef.current;
-        expect(props?.lockScope?.providerId).toBe('codex');
-
-        await props?.onPickRemoteSessionId?.('session-picked');
-
-        expect(routerMock.replace).toHaveBeenCalledWith({
-            pathname: '/new',
-            params: {
-                backendTarget: JSON.stringify({
-                    kind: 'backend',
-                    backendId: 'review-bot',
-                    configuredBackendId: 'review-bot',
-                }),
-                backendTargetKey: 'backend:review-bot:configured:review-bot',
-                dataId: 'draft-1',
-                machineId: 'machine-2',
-                spawnServerId: 'server-2',
-                resumeSessionId: 'session-picked',
-            },
-        });
+        expect(browseScreenPropsRef.current).toBeNull();
+        expect(routerMock.replace).toHaveBeenCalledWith('/new');
     });
 
     it('uses the projected runtime carrier when browsing direct sessions for a plugin backend', async () => {
@@ -347,7 +329,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
         await renderScreen(React.createElement(ResumeBrowsePickerScreen));
 
-        expect(browseScreenPropsRef.current?.lockScope?.providerId).toBe('claude');
+        expect(browseScreenPropsRef.current?.lockScope?.providerId).toBe('plugin:review-bot');
     });
 
     it('waits for plugin carrier projection on cold load instead of navigating away through the customAcp fallback', async () => {
@@ -415,6 +397,6 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
 
         expect(routerMock.back).not.toHaveBeenCalled();
         expect(routerMock.replace).not.toHaveBeenCalled();
-        expect(browseScreenPropsRef.current?.lockScope?.providerId).toBe('claude');
+        expect(browseScreenPropsRef.current?.lockScope?.providerId).toBe('plugin:review-bot');
     });
 });

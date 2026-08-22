@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import type {
     Settings,
     WritableSettingsKey,
@@ -71,6 +73,37 @@ export function createUseCurrentSecretBindingsByProfileIdMutableMock(
                 : emptyCurrentSecretBindingsByProfileId,
             createMutableSetter(),
         ];
+    };
+}
+
+/**
+ * Reproduces the referential stability the real storage hooks give their readers.
+ *
+ * `useSetting`, `useProfile` and `useActiveServerAccountScope` all select out of one
+ * immutable zustand snapshot through `useShallow`, so an unchanged value is handed back
+ * as the SAME object on every render. Consumers depend on that: a value derived from the
+ * reader (a `useMemo` parse, an effect dependency) only changes when the setting really
+ * changed. A fixture that rebuilds its object literal on every call breaks the contract —
+ * every derived identity churns per render, and an effect that publishes into a store the
+ * same tree subscribes to then re-renders forever instead of settling.
+ *
+ * The returned reader memoizes per first argument, which is the hooks' setting key (and
+ * `undefined` for the argument-less readers), and hands back the previous value whenever
+ * the fixture produced an equal one.
+ */
+export function createStableStorageReader<TArgs extends readonly unknown[], TValue>(
+    read: (...args: TArgs) => TValue,
+): (...args: TArgs) => TValue {
+    const previousByKey = new Map<unknown, TValue>();
+    return (...args: TArgs) => {
+        const key = args[0];
+        const next = read(...args);
+        if (previousByKey.has(key)) {
+            const previous = previousByKey.get(key) as TValue;
+            if (previous === next || isDeepStrictEqual(previous, next)) return previous;
+        }
+        previousByKey.set(key, next);
+        return next;
     };
 }
 

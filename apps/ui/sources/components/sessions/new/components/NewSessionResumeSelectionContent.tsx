@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { InputBrowseButton } from '@/components/ui/buttons/InputBrowseButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -126,7 +126,7 @@ export type NewSessionResumeSelectionContentProps = Readonly<{
 export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectionContentProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const agentType = isAgentId(props.agentType) ? props.agentType : null;
+    const agentType = isBundledAgentId(props.agentType) ? props.agentType : null;
     const agentLabel = props.agentLabel?.trim()
         || (agentType ? t(getAgentCore(agentType).displayNameKey) : tLoose('common.unknown'));
 

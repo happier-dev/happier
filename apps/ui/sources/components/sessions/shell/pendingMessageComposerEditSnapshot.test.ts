@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { SESSION_DRAFT_VALUE_FIELD_CATALOG } from '../../../sync/domains/input/draftValues/sessionDraftValueFieldCatalog';
 
 import {
+    buildPendingMessageComposerEditStructuredInput,
     hydratePendingMessageComposerAttachmentDrafts,
     isEmptyPendingMessageComposerSemanticDraftSnapshot,
     readPendingMessageComposerSemanticDraftFieldsToRestore,
@@ -42,6 +43,54 @@ describe('pending message composer semantic draft snapshot', () => {
                 presentation: { label: 'Issue #42', typeLabel: 'Issue' },
             }],
         });
+    });
+
+    it('writes back a contentless attachment the Pending row can persist', () => {
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        expect(buildPendingMessageComposerEditStructuredInput({
+            text: 'Queued edit text',
+            mentions: [],
+            attachments: [attachment],
+        })).toEqual({
+            status: 'ready',
+            structuredInput: { v: 1, composerAttachments: [attachment] },
+        });
+    });
+
+    it('refuses a write-back whose attachment still owns a transfer-staged claim instead of dropping it', () => {
+        expect(buildPendingMessageComposerEditStructuredInput({
+            text: 'Queued edit text',
+            mentions: [],
+            attachments: [{
+                v: 1,
+                instanceId: 'issue-42',
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                key: '42',
+                value: { issueId: 42 },
+                presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+                content: {
+                    kind: 'stagedMedia',
+                    handle: {
+                        v: 1,
+                        id: 'stage-1',
+                        executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+                        owner: { pluginId: 'acme.issues', localId: 'issue' },
+                        mediaKind: 'image',
+                        mimeType: 'image/png',
+                        name: 'screenshot.png',
+                        sizeBytes: 1234,
+                        sha256: 'a'.repeat(64),
+                    },
+                },
+            }],
+        })).toEqual({ status: 'unavailable' });
     });
 
     it('keeps a media-bearing admitted attachment unavailable rather than dropping its media id or inventing a content handle', () => {

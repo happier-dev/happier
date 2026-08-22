@@ -94,7 +94,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: (agentId: string) => ({
         displayNameKey: `agents.${agentId}.displayName`,
     }),
-    isAgentId: (value: unknown): value is string => typeof value === 'string' && value !== 'not-a-real-agent',
+    isBundledAgentId: (value: unknown): value is string => typeof value === 'string' && value !== 'not-a-real-agent',
 }));
 
 vi.mock('@/utils/ui/clipboard', () => ({

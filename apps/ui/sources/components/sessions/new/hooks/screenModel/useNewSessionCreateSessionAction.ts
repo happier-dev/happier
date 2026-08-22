@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 
 type UseCreateNewSessionParams = Parameters<typeof useCreateNewSession>[0];
 type UseCreateNewSessionResult = ReturnType<typeof useCreateNewSession>;
@@ -39,10 +40,12 @@ export function useNewSessionCreateSessionAction(params: UseNewSessionCreateSess
         options?: Parameters<UseCreateNewSessionResult['handleCreateSession']>[0],
     ) => {
         const selectedMachineId = createSessionParams.selectedMachineId;
-        if (selectedMachineId) {
+        const staticAgentId = createSessionParams.staticAgentId
+            ?? (isBundledAgentId(createSessionParams.agentType) ? createSessionParams.agentType : null);
+        if (selectedMachineId && staticAgentId) {
             try {
                 await ensureAgentInstallablesBackground({
-                    agentId: createSessionParams.agentType,
+                    agentId: staticAgentId,
                     machineId: selectedMachineId,
                     serverId: capabilityServerId,
                     settings: createSessionParams.settings,
@@ -57,6 +60,7 @@ export function useNewSessionCreateSessionAction(params: UseNewSessionCreateSess
         capabilityServerId,
         createSession.handleCreateSession,
         createSessionParams.agentType,
+        createSessionParams.staticAgentId,
         createSessionParams.resumeSessionId,
         createSessionParams.selectedMachineId,
         createSessionParams.settings,

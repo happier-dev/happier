@@ -452,6 +452,21 @@ function daemonProjection(input: Readonly<{
             [NOTES_PLUGIN_ID]: packageEntry(NOTES_PLUGIN_ID),
             ...(input.secondPlugin ? { [JOURNAL_PLUGIN_ID]: packageEntry(JOURNAL_PLUGIN_ID) } : {}),
         },
+        // Header Actions execute the daemon-admitted contributed declaration,
+        // never a header-local reconstruction, so the page header can only be
+        // enabled for an Action this projection actually carries.
+        actionsById: {
+            [`${NOTES_PLUGIN_ID}/refresh`]: {
+                id: 'refresh',
+                pluginId: NOTES_PLUGIN_ID,
+                title: 'Refresh notes',
+                scopes: ['global'],
+                surfaces: ['commandPalette'],
+                execution: { target: 'daemon' },
+                dangerLevel: 'safe',
+                available: true,
+            },
+        },
         familiesById: { pluginUi: { entriesById: entries } },
     } as never;
 }
@@ -758,7 +773,7 @@ describe('plugin app page host route (EU-5b)', () => {
                     id: 'open-notes',
                     title: 'Open notes',
                     icon: 'action',
-                    command: {
+                    action: {
                         kind: 'openSurface',
                         destination: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' },
                         input: { source: 'page-header' },
@@ -779,7 +794,7 @@ describe('plugin app page host route (EU-5b)', () => {
                     id: 'refresh-notes',
                     title: 'Refresh notes',
                     icon: 'action',
-                    command: {
+                    action: {
                         kind: 'executeAction',
                         action: { pluginId: NOTES_PLUGIN_ID, localId: 'refresh' },
                     },
@@ -814,7 +829,7 @@ describe('plugin app page host route (EU-5b)', () => {
                     id: 'refresh-notes',
                     title: 'Refresh notes',
                     icon: 'action',
-                    command: {
+                    action: {
                         kind: 'executeAction',
                         action: { pluginId: NOTES_PLUGIN_ID, localId: 'refresh' },
                     },

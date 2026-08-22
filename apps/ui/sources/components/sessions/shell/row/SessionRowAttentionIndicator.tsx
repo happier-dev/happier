@@ -60,6 +60,12 @@ export const SessionRowAttentionIndicator = React.memo(function SessionRowAttent
             case 'permission':
             case 'action':
                 return theme.colors.state.warning.foreground;
+            // Attention standing explains a row that is only in the band because
+            // the person put it there. It takes the same muted ink as the
+            // sentence beside it — every other marker matches its own status
+            // text — so the line reads as one quiet utterance, not a signal.
+            case 'standing':
+                return theme.colors.text.secondary;
         }
     })();
 

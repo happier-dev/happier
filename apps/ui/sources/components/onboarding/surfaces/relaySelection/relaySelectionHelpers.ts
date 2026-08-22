@@ -6,14 +6,13 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { HAPPIER_CLOUD_SERVER_URL, getOrCreateHappierCloudServerProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import { isLoopbackHostname } from '@happier-dev/protocol';
 
 import type { WizardRelaySelection } from '../../state/wizardTypes';
 
 function isExplicitLoopbackServerUrl(serverUrl: string): boolean {
     try {
-        const url = new URL(serverUrl);
-        const hostname = url.hostname.toLowerCase();
-        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+        return isLoopbackHostname(new URL(serverUrl).hostname);
     } catch {
         return false;
     }

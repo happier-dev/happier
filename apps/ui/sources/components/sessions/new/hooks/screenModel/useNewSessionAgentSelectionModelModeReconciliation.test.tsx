@@ -9,6 +9,7 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionAgentPickerCon
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    isBundledAgentId: (value: unknown) => value === 'gemini' || value === 'opencode',
     getAgentCore: (agentType: string) => ({
         model: {
             defaultMode: agentType === 'gemini' ? 'gemini-2.5-pro' : 'default',

@@ -7,6 +7,7 @@ import type {
     PluginAgentExternalSessionLinkData,
 } from '@happier-dev/protocol';
 
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { machineExternalSessionsCandidatesList } from '@/sync/ops/machineExternalSessions';
 import { t } from '@/text';
 import {
@@ -53,7 +54,15 @@ const CANDIDATES_PAGE_LIMIT = 50;
 const MAX_CANDIDATE_INDEX_PREPARATION_REQUESTS = 250;
 const MAX_EMPTY_FULL_SEARCH_PAGE_REQUESTS = 20;
 
-type CandidateApplyMode = 'replace' | 'append' | 'merge';
+/**
+ * `republish` is the completed-full-search arm: the served page is authoritative
+ * for its own order and field values, but it is not a superset of what is on
+ * screen — the fast pass reads on-disk rollouts (exec-mode sessions no app
+ * server owns) that a full search cannot return. It therefore leads with the
+ * canonical page and keeps the rows this page did not serve, instead of
+ * blanking candidates the user was already looking at.
+ */
+type CandidateApplyMode = 'replace' | 'append' | 'merge' | 'republish';
 type CandidateSearchMode = 'fast' | 'full';
 type CandidateContinuation = Readonly<{
     cursor: string;
@@ -109,6 +118,36 @@ function mergeExternalSessionBrowseCandidates(
         merged.set(candidateKey, existing ? mergeExternalSessionBrowseCandidate(existing, candidate) : candidate);
     }
     return Array.from(merged.values());
+}
+
+/**
+ * Publish an authoritative page in its own canonical order while keeping the
+ * rows it did not serve. Overlapping rows take the served page's fields, so a
+ * refreshed title still wins; unserved rows follow, still reachable.
+ */
+function republishExternalSessionBrowseCandidates(
+    current: readonly ExternalSessionBrowseCandidate[],
+    next: readonly ExternalSessionBrowseCandidate[],
+): readonly ExternalSessionBrowseCandidate[] {
+    const currentByKey = new Map(current.map((candidate) => [
+        readExternalSessionBrowseCandidateKey(candidate),
+        candidate,
+    ] as const));
+    const servedKeys = new Set<string>();
+    const served = next.map((candidate) => {
+        const candidateKey = readExternalSessionBrowseCandidateKey(candidate);
+        servedKeys.add(candidateKey);
+        const existing = currentByKey.get(candidateKey);
+        return existing
+            ? mergeExternalSessionBrowseCandidate(existing, candidate)
+            : candidate;
+    });
+    return [
+        ...served,
+        ...current.filter((candidate) => !servedKeys.has(
+            readExternalSessionBrowseCandidateKey(candidate),
+        )),
+    ];
 }
 
 /**
@@ -210,6 +249,17 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     const loadedScopeKeyRef = React.useRef<string | null>(null);
     const activePageRequestKeysRef = React.useRef(new Set<string>());
     const activeScopeAbortControllerRef = React.useRef<AbortController | null>(null);
+    /**
+     * The Account lifetime that owns the in-flight scope request, captured from the
+     * canonical active-scope owner. Browse rows, annotations and continuations are
+     * Account-scoped data: a listing started under Account A must never publish into
+     * Account B after a switch. Paging requests join the scope request's fence rather
+     * than capturing a second one.
+     */
+    const activeScopeAccountCurrentnessRef = React.useRef<Readonly<{
+        isCurrent(): boolean;
+    }> | null>(null);
+    const activeScopeAccountRetirementRef = React.useRef<Readonly<{ dispose(): void }> | null>(null);
     const seenPageContinuationsRef = React.useRef<{
         scopeKey: string;
         continuations: Set<string>;
@@ -278,6 +328,12 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             }
             abortController = new AbortController();
             activeScopeAbortControllerRef.current = abortController;
+            activeScopeAccountRetirementRef.current?.dispose();
+            const accountCurrentness = captureActiveServerAccountScopeCurrentness();
+            activeScopeAccountCurrentnessRef.current = accountCurrentness;
+            activeScopeAccountRetirementRef.current = accountCurrentness.onRetire(() => {
+                abortController.abort();
+            });
             if (loadedScopeKeyRef.current !== currentScopeKey) {
                 loadedScopeKeyRef.current = null;
                 setLoadedScopeKey(null);
@@ -292,6 +348,8 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             abortController = activeScopeAbortControllerRef.current ?? new AbortController();
         }
         if (!machineId || !providerId || !scopedSource) return;
+        const accountCurrentness = activeScopeAccountCurrentnessRef.current;
+        const accountScopeIsCurrent = () => accountCurrentness?.isCurrent() !== false;
         const currentGeneration = loadGenerationRef.current;
         const pageRequestKey = JSON.stringify([
             currentGeneration,
@@ -339,6 +397,11 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             mode: CandidateApplyMode,
             searchMode?: CandidateSearchMode,
         ): boolean => {
+            // Account lifetime is the outermost fence on this listing. A response that
+            // resolves after a switch describes Account A's machines and sources; it can
+            // publish neither rows, annotations, continuations nor an auto-link policy
+            // scope into Account B.
+            if (!accountScopeIsCurrent()) return false;
             if (!result.ok) {
                 loadedScopeKeyRef.current = currentScopeKey;
                 setLoadedScopeKey(currentScopeKey);
@@ -388,10 +451,12 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 current,
                 mode === 'replace'
                     ? mergeExternalSessionBrowseCandidates([], nextItems)
-                    : mergeExternalSessionBrowseCandidates(current, nextItems),
+                    : mode === 'republish'
+                        ? republishExternalSessionBrowseCandidates(current, nextItems)
+                        : mergeExternalSessionBrowseCandidates(current, nextItems),
             ));
             setSearchIncomplete(result.searchIncomplete === true);
-            setAnnotationsIncomplete((current) => mode === 'replace'
+            setAnnotationsIncomplete((current) => mode === 'replace' || mode === 'republish'
                 ? result.annotationsIncomplete === true
                 : current || result.annotationsIncomplete === true);
             if (mode === 'merge') {
@@ -451,7 +516,11 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 Awaited<ReturnType<typeof machineExternalSessionsCandidatesList>> | null = null;
             while (preparationRequestCount < MAX_CANDIDATE_INDEX_PREPARATION_REQUESTS) {
                 const result = await requestCandidates(searchMode, cursor);
-                if (abortController.signal.aborted || loadGenerationRef.current !== currentGeneration) {
+                if (
+                    abortController.signal.aborted
+                    || loadGenerationRef.current !== currentGeneration
+                    || !accountScopeIsCurrent()
+                ) {
                     return null;
                 }
                 if (!result.ok || !result.preparation || append || cursor !== null) {
@@ -557,11 +626,19 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     && !augmentedPageResult.result.preparation;
                 applyResult(
                     augmentedPageResult.result,
-                    augmentedPageResult.prepared || fullSearchIsComplete ? 'replace' : 'merge',
+                    augmentedPageResult.prepared
+                        ? 'replace'
+                        : fullSearchIsComplete
+                            ? 'republish'
+                            : 'merge',
                     'full',
                 );
             } catch (augmentationError) {
-                if (abortController.signal.aborted || loadGenerationRef.current !== currentGeneration) {
+                if (
+                    abortController.signal.aborted
+                    || loadGenerationRef.current !== currentGeneration
+                    || !accountScopeIsCurrent()
+                ) {
                     return;
                 }
                 if (requestObservedPreparation) {
@@ -575,7 +652,11 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 // Otherwise keep fast search results visible if slower augmentation fails.
             }
         } catch (loadError) {
-            if (abortController.signal.aborted || loadGenerationRef.current !== currentGeneration) {
+            if (
+                abortController.signal.aborted
+                || loadGenerationRef.current !== currentGeneration
+                || !accountScopeIsCurrent()
+            ) {
                 return;
             }
             loadedScopeKeyRef.current = currentScopeKey;

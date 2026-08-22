@@ -1,4 +1,4 @@
-import { invokeTauri, listenTauriEvent } from '@/utils/platform/tauri';
+import { invokeDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 import type { SystemTaskBridgeListenerSet, SystemTasksBridge } from './types';
 
@@ -14,7 +14,7 @@ function buildEventName(taskId: string, kind: 'event' | 'result'): string {
 export function createTauriSystemTaskBridge(): SystemTasksBridge {
     return {
         async start(spec) {
-            const response = await invokeTauri<{ taskId: string }>('start_system_task', {
+            const response = await invokeDesktopHost<{ taskId: string }>('start_system_task', {
                 specJson: JSON.stringify(spec),
             });
             return response.taskId;
@@ -24,14 +24,14 @@ export function createTauriSystemTaskBridge(): SystemTasksBridge {
             const pendingEvents: unknown[] = [];
             let pendingResult: unknown | null = null;
             const [unlistenEvent, unlistenResult] = await Promise.all([
-                listenTauriEvent(buildEventName(taskId, 'event'), (payload) => {
+                listenDesktopHostEvent(buildEventName(taskId, 'event'), (payload) => {
                     if (!snapshotLoaded) {
                         pendingEvents.push(payload);
                         return;
                     }
                     listeners.onEvent(payload);
                 }),
-                listenTauriEvent(buildEventName(taskId, 'result'), (payload) => {
+                listenDesktopHostEvent(buildEventName(taskId, 'result'), (payload) => {
                     if (!snapshotLoaded) {
                         pendingResult = payload;
                         return;
@@ -40,7 +40,7 @@ export function createTauriSystemTaskBridge(): SystemTasksBridge {
                 }),
             ]);
 
-            const snapshot = await invokeTauri<SnapshotPayload>('get_system_task_snapshot', { taskId });
+            const snapshot = await invokeDesktopHost<SnapshotPayload>('get_system_task_snapshot', { taskId });
             if (Array.isArray(snapshot.events)) {
                 for (const event of snapshot.events) {
                     listeners.onEvent(event);
@@ -63,10 +63,10 @@ export function createTauriSystemTaskBridge(): SystemTasksBridge {
             };
         },
         async cancel(taskId: string) {
-            await invokeTauri<void>('cancel_system_task', { taskId });
+            await invokeDesktopHost<void>('cancel_system_task', { taskId });
         },
         async respond(taskId: string, answer: unknown) {
-            await invokeTauri<void>('respond_system_task_prompt', {
+            await invokeDesktopHost<void>('respond_system_task_prompt', {
                 taskId,
                 answerJson: JSON.stringify(answer),
             });

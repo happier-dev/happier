@@ -10,7 +10,6 @@ import {
 } from 'react-native-unistyles';
 
 import {
-    DEFAULT_AGENT_ID,
 } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
@@ -142,12 +141,13 @@ function appendSessionListTargets(
     }
 }
 
-function resolveSessionAgentId(session: TranscriptSendToSessionTargetSource) {
+/** Empty when the target Session's Agent is unknown; the icon then shows its neutral mark. */
+function resolveSessionAgentId(session: TranscriptSendToSessionTargetSource): string {
     return (
         'agentState' in session
             ? readSessionPresentationAgentId(session)
             : resolveAgentIdFromSessionMetadata(session.metadata)
-    ) ?? DEFAULT_AGENT_ID;
+    ) ?? '';
 }
 
 const TranscriptSendToSessionRowMeta = React.memo(function TranscriptSendToSessionRowMeta(

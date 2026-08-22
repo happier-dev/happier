@@ -1,6 +1,6 @@
 import { readBackendTargetRefV2, type AcpCatalogSettingsV1, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol';
 
-import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { normalizeAcpCatalogSettingsV1 } from '@/sync/domains/acpCatalog/normalizeAcpCatalogSettingsV1';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -24,7 +24,7 @@ export function resolveExecutionRunBackendLabel(
     const canonicalTarget: BackendTargetRefV2 = readBackendTargetRefV2(backendTarget);
 
     if (!canonicalTarget.configuredBackendId) {
-        if (isAgentId(canonicalTarget.backendId)) {
+        if (isBundledAgentId(canonicalTarget.backendId)) {
             return t(getAgentCore(canonicalTarget.backendId).displayNameKey);
         }
         return canonicalTarget.backendId;

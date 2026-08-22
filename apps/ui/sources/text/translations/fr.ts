@@ -5,8 +5,11 @@ import { externalSessionSettingsTranslations } from './externalSessionSettingsTr
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
 import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
-import { voiceDiagnosticsConsentTranslations } from './voiceDiagnosticsConsentTranslations';
+import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
+import { voiceRealtimeProviderSetupTranslations } from './voiceRealtimeProviderSetupTranslations';
+import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCredentialApprovalTranslations';
+import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
@@ -314,7 +317,7 @@ const acpCatalogTranslationExtension = {
     acpCatalogFieldId: 'ID',
     acpCatalogFieldName: 'Nom',
     acpCatalogFieldTitle: 'Titre',
-    acpCatalogFieldDescription: 'Description',
+    acpCatalogFieldDescription: 'Descriptif',
     acpCatalogFieldCommand: 'Commande',
     acpCatalogFieldArgs: 'Args (un par ligne)',
     acpCatalogMachineLoginKey: 'Clé de login machine',
@@ -653,7 +656,7 @@ export const fr = {
         singleKeySubtitle: 'Autorise des raccourcis comme ? quand aucun champ de saisie n’est actif.',
         conflictsTitle: ({ count }: { count: number }) => `${count} raccourci en conflit${count === 1 ? '' : 's'} détecté(s)`,
         conflictsSubtitle: ({ count }: { count: number }) => `${count} commande${count === 1 ? '' : 's'} à vérifier avant que tous les raccourcis soient actifs.`,
-        conflictsGroupTitle: 'Diagnostics',
+        conflictsGroupTitle: 'Diagnostic',
         commandsGroupTitle: 'Commandes',
         commandsGroupFooter: 'Les valeurs par défaut viennent du registre de raccourcis. Définis un raccourci personnalisé, désactive une commande ou réinitialise-la pour retrouver le raccourci d’origine.',
         noDefaultShortcut: 'Aucun raccourci par défaut',
@@ -715,7 +718,7 @@ export const fr = {
     // Tab navigation labels
     inbox: "Boîte de réception",
     friends: "Amis",
-    sessions: "Sessions",
+    sessions: "Séances",
     settings: "Réglages",
 
     projects: "Projets",},
@@ -814,7 +817,7 @@ export const fr = {
     emptyTitle: "Tu es à jour",
     emptyDescription: "Aucune demande ni mise à jour en attente.",
     approvals: "Approbations",
-    permissions: "Permissions",
+    permissions: "Autorisations",
     unreadSessions: "Sessions non lues",
     updates: "Activité",
   },
@@ -851,12 +854,12 @@ export const fr = {
     librarySubtitle: "Gère les prompts et les skills",
     create: "Créer",
 	    newPrompt: "Nouveau prompt",
-	    templates: "Templates",
+	    templates: "Modèles",
 	    templatesSubtitle: "Crée et gère les templates /slash",
 	    newTemplate: "Nouveau template",
 	    newSkill: "Nouveau skill",
-    prompts: "Prompts",
-    skills: "Skills",
+    prompts: "Invites",
+    skills: "Compétences",
     untitledPrompt: "Prompt sans titre",
     untitledSkill: "Skill sans titre",
     origin: "Origine",
@@ -1014,7 +1017,7 @@ export const fr = {
       interruptLabel: "Interrompre",
       interruptHelp:
         "Annule le tour en cours, puis envoie ton message comme nouveau tour.",
-      promptLabel: "Prompt",
+      promptLabel: "Invite",
     },
   },
 
@@ -1043,6 +1046,8 @@ export const fr = {
   },
 
   automations: {
+    unsupportedReference: ({ reference }: { reference: string }) =>
+        `Les automatisations n’enregistrent que le texte du message : ${reference} ne désignerait donc plus ce que vous avez choisi. Retirez cette référence du message ou mentionnez plutôt un chemin de fichier.`,
     openA11y: "Ouvrir les automatisations",
     list: {
       interval: ({ minutes, timezone }: { minutes: number; timezone: string | null }) => `Toutes les ${minutes}min${timezone ? ` (${timezone})` : ""}`,
@@ -1109,12 +1114,12 @@ export const fr = {
         minutes: "minutes",
         presets: "Préréglages",
         intervalUnits: {
-          minutes: "Minutes",
+          minutes: "Procès-verbal",
           hours: "Heures",
           days: "Jours",
         },
         cronFieldGuide: {
-          minute: "Minute",
+          minute: "Minutes",
           hour: "Heure",
           dayOfMonth: "Jour",
           month: "Mois",
@@ -1180,7 +1185,7 @@ export const fr = {
         nextRunTitle: "Prochaine exécution",
       },
       status: {
-        active: "Active",
+        active: "Actif",
         paused: "En pause",
       },
       event: {
@@ -1218,6 +1223,19 @@ export const fr = {
           pluginEvent: "Événement",
           conversation: "Conversation",
         },
+        state: {
+          queued: "En file d’attente",
+          claimed: "Réservée",
+          running: "En cours",
+          succeeded: "Réussie",
+          failed: "Échouée",
+          cancelled: "Annulée",
+          expired: "Expirée",
+          dispatch_failed: "Échec de l’envoi",
+          skipped: "Ignorée",
+          missed: "Manquée",
+          outcome_uncertain: "Résultat incertain",
+        },
         occurred: ({ time }: { time: string }) => `Survenu : ${time}`,
         invoked: ({ time }: { time: string }) => `Invoqué : ${time}`,
         admitted: ({ time }: { time: string }) => `Admis : ${time}`,
@@ -1237,7 +1255,7 @@ export const fr = {
         sourceInstance: "Instance de la source",
         filter: "Filtre",
         filterMatched: "Correspondance",
-        payload: "Payload",
+        payload: "Charge utile",
         input: "Entrée",
         target: "Cible figée",
         outputCeiling: "Limite de sortie",
@@ -1309,6 +1327,7 @@ export const fr = {
     cancel: "Annuler",
     submit: "Envoyer",
     close: "Fermer",
+    dismissKeyboard: 'Masquer le clavier',
       open: "Ouvrir",
       done: "Terminé",
       reorder: "Réordonner",
@@ -1320,7 +1339,7 @@ export const fr = {
 		    error: "Erreur",
 		    success: "Réussi",
 		    warning: "Avertissement",
-		    info: "Info",
+		    info: "Informations",
 		    comingSoon: "Bientôt disponible",
 		    ok: "OK",
 		    continue: "Continuer",
@@ -1398,14 +1417,14 @@ export const fr = {
     name: "Nom",
     blocked: "Bloqué",
     active: "Actif",
-    inactive: "Inactive",
+    inactive: "Inactif",
     running: "En cours…",
     login: "Connexion",
     install: "Installer",
     enable: "Activer",
     disable: "Désactiver",
     tabs: "Onglets",
-    logs: "Logs",
+    logs: "Journaux",
     share: "Partager",
     unreachable: "Injoignable",},
 
@@ -1463,6 +1482,7 @@ export const fr = {
         recentlyActive: 'Actif récemment',
         externalStatusUnknown: 'Statut externe inconnu',
     readyForReview: "prêt pour relecture",
+    keptInAttention: "maintenue en attention",
     canceled: "Annulée",
     offline: "hors ligne",
     lastSeen: ({ time }: { time: string }) => `vu pour la dernière fois ${time}`,
@@ -1477,7 +1497,7 @@ export const fr = {
     title: "Connexion",
     labels: {
       server: "Serveur",
-      socket: "Socket",
+      socket: "Prise",
       authenticated: "Authentifié",
       lastSync: "Dernière sync",
       nextRetry: "Prochain essai",
@@ -1590,7 +1610,7 @@ export const fr = {
         openFallbackIssueButton: "Ouvrir l’issue de secours",
       },
       diagnostics: {
-        title: "Diagnostics",
+        title: "Diagnostic",
         subtitle: "Choisis ce qu’il faut inclure et prévisualise avant d’envoyer.",
         includeTitle: "Inclure les diagnostics",
         includeSubtitle:
@@ -1699,7 +1719,7 @@ export const fr = {
         serverVersionLabel: "Version du serveur (optionnel)",
         deploymentTypeLabel: "Type de déploiement",
         deploymentType: {
-          cloud: "Cloud",
+          cloud: "Nuage",
           selfHosted: "Auto-hébergé",
           enterprise: "Entreprise",
         },
@@ -1801,7 +1821,7 @@ export const fr = {
       },
     },
     backfill: {
-      title: "Backfill",
+      title: "Remblai",
       footer:
         "Contrôle la quantité d’historique indexée à l’activation de la mémoire locale.",
       triggerTitle: "Politique",
@@ -1946,7 +1966,7 @@ export const fr = {
             subtitle: "Revue de code / constats.",
           },
           plan: {
-            title: "Plan",
+            title: "Planifier",
             subtitle: "Planification / architecture.",
           },
           delegate: {
@@ -1957,11 +1977,11 @@ export const fr = {
       },
       exampleToolCalls: {
         label: "Exemples d’appels d’outils (facultatif, un par ligne)",
-        placeholder: "execution.run.start …",
+        placeholder: "exécution.run.start…",
       },
     },
         settings: {
-      groupTitle: "Subagents",
+      groupTitle: "Sous-agents",
       disabled: {
         footer:
           "Les subagents sont désactivés. Active Happier Subagents dans Réglages → Fonctionnalités pour utiliser les règles de délégation.",
@@ -1979,7 +1999,7 @@ export const fr = {
         explainerTitle: "Ce que contrôle cette page",
         explainerSubtitle:
           "Les règles de délégation des subagents, plus des liens vers les réglages subagents propres à chaque provider.",
-        happierStatusTitle: "Subagents",
+        happierStatusTitle: "Sous-agents",
         happierStatusEnabledSubtitle:
           "Activés. Tu peux lancer des subagents depuis les sessions compatibles.",
         happierStatusDisabledSubtitle:
@@ -1992,7 +2012,7 @@ export const fr = {
         sessionTitle: "Comportement des sessions",
         sessionSubtitle:
           "Envoi des messages, steering pendant un tour, comportement de replay/reprise.",
-        providersTitle: "Providers",
+        providersTitle: "Fournisseurs",
         providersSubtitle:
           "Auth, runtime et réglages d’agent propres à chaque provider.",
         backendsTitle: "Catalogue ACP",
@@ -2055,14 +2075,14 @@ export const fr = {
     system: 'Système',
 
     // Renamed / promoted items
-    sessions: 'Sessions',
-    transcript: 'Transcript',
+    sessions: 'Séances',
+    transcript: 'Transcription',
     transcriptSubtitle: 'Réflexion, rendu des outils et affichage du code',
-    permissions: 'Permissions',
+    permissions: 'Autorisations',
     permissionsSubtitle: 'Mode de permission et comportement des approbations',
     filesSourceControl: 'Fichiers et gestion de version',
     filesSourceControlSubtitle: 'Éditeur, diffs et intégration de la gestion de version',
-    workspaces: 'Workspaces',
+    workspaces: 'Espaces de travail',
     workspacesSubtitle: 'Gère les workspaces liés, les emplacements et les checkouts',
 
     connectedAccounts: "Comptes connectés",
@@ -2221,14 +2241,14 @@ export const fr = {
     secrets: "Secrets",
     secretsSubtitle:
       "Gère les secrets enregistrés (jamais réaffichés après saisie)",
-    terminal: "Terminal",
-    session: "Session",
+    terminal: "Borne",
+    session: "Séance",
     sessionSubtitleTmuxEnabled: "Tmux activé",
     sessionSubtitleMessageSendingAndTmux: "Envoi des messages et tmux",
         actionsSubtitle: 'Choisis où chaque action apparaît dans l’app, la voix et les intégrations.',
     prompts: "Prompts et skills",
     promptsSubtitle: "Bibliothèque de prompts, modèles et stacks",
-    servers: "Relays",
+    servers: "Relais",
     serversSubtitle: "Relays enregistrés, groupes et valeurs par défaut",
 		    systemStatus: "État du système",
 		    systemStatusSubtitle: "Relays, compte, machines, daemon",
@@ -2248,16 +2268,16 @@ export const fr = {
 		    mcpServersPickSecretNoneSubtitle: "Aucun secret sélectionné",
 		    mcpServersEditorBasics: "Bases",
 		    mcpServersEditorStdio: "Stdio",
-		    mcpServersEditorRemote: "Remote",
-		    mcpServersEditorBindings: "Bindings",
+		    mcpServersEditorRemote: "À distance",
+		    mcpServersEditorBindings: "Reliures",
 		    mcpServersFieldName: "Nom",
 		    mcpServersFieldTitle: "Titre",
 		    mcpServersFieldTitlePlaceholder: "Titre d’affichage (optionnel)",
-		    mcpServersFieldTransport: "Transport",
+		    mcpServersFieldTransport: "Transports",
 		    mcpServersFieldCommand: "Commande",
 		    mcpServersFieldArgs: "Args",
 		    mcpServersFieldUrl: "URL",
-		    mcpServersBindingTitle: "Binding",
+		    mcpServersBindingTitle: "Reliure",
 		    mcpServersBindingEnabled: "Activé",
 		    mcpServersBindingEnabledSubtitle: "Active ou désactive ce binding",
 		    mcpServersBindingTarget: "Cible",
@@ -2272,7 +2292,7 @@ export const fr = {
 		    mcpServersBindingTargetAllMachinesSubtitle: "Activer sur toutes les machines",
 		    mcpServersBindingTargetMachineTitle: "Machine",
 		    mcpServersBindingTargetMachineSubtitle: "Activer sur une seule machine",
-		    mcpServersBindingTargetWorkspaceTitle: "Workspace",
+		    mcpServersBindingTargetWorkspaceTitle: "Espace de travail",
 		    mcpServersBindingTargetWorkspaceSubtitle: "Activer uniquement pour un chemin de workspace précis",
 		    mcpServersValidationFailed: "Les réglages du serveur MCP sont invalides.",
 		    mcpServersServerNotFound: "Serveur introuvable.",
@@ -2367,7 +2387,7 @@ export const fr = {
 			    mcpServersOverridesDeleteHeaderPrompt: "Saisis le nom du header à supprimer pour ce binding.",
 			    mcpServersOverridesCommandRequired: "L’override de commande est activé mais vide.",
 			    mcpServersOverridesUrlRequired: "L’override d’URL est activé mais vide.",
-			    mcpServersTestTitle: "Test",
+			    mcpServersTestTitle: "Tester",
 			    mcpServersTestFooter: "S’exécute sur la machine sélectionnée. Aucun secret n’est affiché dans les résultats.",
 			    mcpServersTestMachineTitle: "Tester sur la machine",
 			    mcpServersTestBindingTitle: "Utiliser un binding",
@@ -2593,7 +2613,7 @@ export const fr = {
         'native-this-device': 'Accès natif sur cet appareil',
         'hosted-web': 'Accès web hébergé',
         'lan-only': 'Accès LAN uniquement',
-        diagnostic: 'Diagnostics',
+        diagnostic: 'Diagnostic',
       },
       limitation: {
         'this-device-only': 'Disponible uniquement sur cet appareil',
@@ -2648,7 +2668,7 @@ export const fr = {
 
   systemStatus: {
     sections: {
-      application: "Application",
+      application: "Demande",
       updates: "Mises à jour",
       appHealth: "Santé de l’app et de la sync",
       currentServer: "Relay actuel",
@@ -2693,7 +2713,7 @@ export const fr = {
     ui: {
       dataReady: "Données prêtes",
       realtime: "Temps réel",
-      socket: "Socket",
+      socket: "Prise",
       socketLastError: ({ error }: { error: string }) => `Dernière erreur : ${error}`,
       lastSync: "Dernière sync",
     },
@@ -2876,9 +2896,9 @@ export const fr = {
       bitbucket: "Bitbucket",},
     title: "Services connectés",
     authChip: {
-      label: "Auth",
+      label: "Authentification",
       labelWithCount: ({ count }: { count: number }) => `Auth : ${count}`,
-      nativeLabel: "Native",
+      nativeLabel: "Natif",
       connectedCountLabel: ({ count }: { count: number }) => `${count} connectés`,
     },
     authSwitch: {
@@ -3092,11 +3112,16 @@ export const fr = {
       },
     },
     account: {
+      configurationTitle: 'Paramètres du compte',
+      configurationUpdatedTitle: 'Paramètres du compte mis à jour',
+      configurationInvalid: 'Les paramètres du compte sont invalides. Vérifie chaque champ et utilise une origine HTTPS exacte et sans identifiants là où c’est requis.',
+      configurationRefreshApplied: 'Les nouveaux paramètres ont été enregistrés et le compte connecté a été actualisé.',
+      configurationReconnectApplied: 'Les nouveaux paramètres ont été enregistrés et le compte connecté a été reconnecté.',
       refreshA11y: 'Actualiser l’utilisation et les limites',
       usedDetail: ({ used, limit }: { used: string; limit: string }) => `${used}/${limit} utilisés`,
       usageCaption: 'Utilisation',
       resetsCaption: 'Réinitialisations',
-      poolsLabel: 'Pools',
+      poolsLabel: 'Piscines',
       poolsCount: ({ count }: { count: number }) => count === 1 ? '1 pool' : `${count} pools`,
       planEmailSubtitle: ({ plan, email }: { plan: string; email: string }) => `${plan} · ${email}`,
       activeMemberA11y: 'Compte actif',
@@ -3115,8 +3140,8 @@ export const fr = {
       },
     },
     pools: {
-      title: 'Pools',
-      autoBadge: 'Auto',
+      title: 'Piscines',
+      autoBadge: 'Automatique',
       manualBadge: 'Manuel',
       memberWarningsA11y: ({ count }: { count: number }) =>
         count === 1 ? '1 membre demande ton attention' : `${count} membres demandent ton attention`,
@@ -3249,7 +3274,7 @@ export const fr = {
       },
     },
     detail: {
-      segments: { accounts: "Comptes", pools: "Pools" },
+      segments: { accounts: "Comptes", pools: "Piscines" },
       unknownService: "Service connecté inconnu.",
       actionsGroupTitle: "Actions",
       actions: {
@@ -3292,9 +3317,9 @@ export const fr = {
         apiKeyTitle: "Clé API",
         apiKeyBody: "Colle ta clé API Anthropic.",
         apiKeyPlaceholder: "sk-ant-…",
-        setupTokenTitle: "Setup-token",
+        setupTokenTitle: "Jeton de configuration",
         setupTokenBody: "Colle ton setup-token Claude (issu de claude setup-token).",
-        setupTokenPlaceholder: "sk-ant-oat01-…",
+        setupTokenPlaceholder: "sk-ant-avoine01-…",
         accessTokenTitle: "Token d’accès",
         accessTokenBody: "Colle ton personal access token GitHub. Utilise un token fine-grained avec Contents, Pull requests et Administration en lecture et écriture pour que les workflows de PR et de publication de dépôt puissent s’exécuter.",
         accessTokenPlaceholder: "github_pat_…",
@@ -3304,10 +3329,10 @@ export const fr = {
 
         personalAccessTokenTitle: "Token d’accès personnel",
         personalAccessTokenBody: "Colle ton token d’accès personnel.",
-        personalAccessTokenPlaceholder: "token",
+        personalAccessTokenPlaceholder: "jeton",
         apiTokenTitle: "Token API",
         apiTokenBody: "Colle ton token API.",
-        apiTokenPlaceholder: "api-token",},
+        apiTokenPlaceholder: "jeton API",},
       alerts: {
         invalidProfileIdTitle: "Id de profil invalide",
         invalidProfileIdBody: "Utilise des lettres, des chiffres, un tiret ou un underscore (64 max).",
@@ -3409,7 +3434,7 @@ export const fr = {
         groupIdTitle: "Id du groupe",
         membersTitle: "Membres",
         membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} activés`,
-        optionsTitle: "Options",
+        optionsTitle: "Possibilités",
         autoSwitchTitle: "Repli automatique",
         autoSwitchEnabledSubtitle: "Bascule vers un autre membre quand le compte actif a besoin d’une récupération.",
         autoSwitchDisabledSubtitle: "Continue d’utiliser le membre actif jusqu’à ce que tu changes manuellement.",
@@ -3473,7 +3498,7 @@ export const fr = {
       lastRefreshed: "Dernière actualisation",
       refreshQuotaNow: "Actualiser le quota",
       refreshQuotaNowSubtitle: "Récupère la dernière utilisation de ce compte.",
-      poolsGroupTitle: "Pools",
+      poolsGroupTitle: "Piscines",
       pools: {
         emptyTitle: "Dans aucun pool",
         emptySubtitle: "Ajoute ce compte à un pool pour le repli automatique.",
@@ -3897,7 +3922,7 @@ export const fr = {
     },},
 
   settingsPets: {
-    title: 'Pets',
+    title: 'Animaux de compagnie',
     previewTitle: 'Clignotement',
     previewSubtitle: 'Un petit compagnon pour le statut des sessions et les revues à traiter.',
     disabledTitle: 'Les Pets sont désactivés',
@@ -3978,7 +4003,7 @@ export const fr = {
 
   settingsNotifications: {
     badges: {
-      title: 'Badges',
+      title: 'Insignes',
       footer: 'Contrôle les compteurs de badges et les indicateurs desktop.',
       enabledTitle: 'Activer les badges',
       enabledSubtitle: 'Afficher les compteurs sur l’icône de l’app',
@@ -4049,7 +4074,7 @@ export const fr = {
           "Les notifications push sont désactivées pour ce compte",
       },
       permission: {
-        title: "Permission",
+        title: "Autorisation",
         loading: "Chargement…",
         loadingSubtitle: "Vérification des permissions de notification",
         runtimeUnavailable: 'Indisponible',
@@ -4157,7 +4182,7 @@ export const fr = {
       accountDescription:
         "Suivre le comportement de notification synchronisé pour ce compte",},
     types: {
-      title: "Types",
+      title: "Espèces",
       footer:
         "Désactive certains types si tu ne veux que certaines alertes.",
       ready: {
@@ -4308,7 +4333,7 @@ export const fr = {
         other: 'Autre',
         alwaysAllowTool: ({ tool }: { tool: string }) => `Toujours autoriser ${tool}`,},
       activity: {
-        defaultSessionTitle: 'Session',
+        defaultSessionTitle: 'Séance',
         readyFallbackBody: 'Tour terminé. Ouvre la session pour continuer.',
         permissionFallbackBody: 'Approbation requise.',
         userActionFallbackBody: 'Cette session a besoin de ta réponse.',
@@ -4371,7 +4396,7 @@ export const fr = {
       catalogModelListTitle: "Liste des modèles du catalogue",
       catalogModelListEmpty: "Aucun modèle de catalogue disponible",
       dynamicModelProbeTitle: "Détection dynamique des modèles",
-      dynamicModelProbeAuto: "Auto",
+      dynamicModelProbeAuto: "Automatique",
       dynamicModelProbeStaticOnly: "Statique uniquement",
       nonAcpApplyScopeTitle: "Portée d’application du modèle hors ACP",
       nonAcpApplyScopeSpawnOnly: "Appliquer au démarrage de la session",
@@ -4516,7 +4541,7 @@ export const fr = {
                         subtitle: "Choisis le multiplexeur de terminal que Happier utilise pour les sessions Claude unifiées.",
                         options: {
                             auto: {
-                                title: "Auto",
+                                title: "Automatique",
                                 subtitle: "Privilégier le meilleur hôte pris en charge sur cette machine."
                             },
                             tmux: {
@@ -4524,7 +4549,7 @@ export const fr = {
                                 subtitle: "Utiliser tmux quand il est disponible."
                             },
                             zellij: {
-                                title: 'Zellij',
+                                title: 'Zellige',
                                 subtitle: "Utiliser Zellij quand il est disponible et pris en charge."
                             }
                         }
@@ -4616,7 +4641,7 @@ export const fr = {
                                 subtitle: "Charge les réglages du dépôt (dont CLAUDE.md)."
                             },
                             local: {
-                                title: "Local",
+                                title: "Locale",
                                 subtitle: "Charge les surcharges locales uniquement."
                             }
                         }
@@ -4745,7 +4770,7 @@ export const fr = {
                 title: "Antigravity",
                 sections: {
                     runtime: {
-                        title: "Runtime",
+                        title: "Durée d'exécution",
                         footer: "Choisis comment démarrent les sessions Antigravity. Le mode CLI utilise ta connexion par abonnement avec des contrôles en direct dégradés ; le mode SDK utilise l’API Gemini ou des identifiants Vertex."
                     }
                 },
@@ -4755,7 +4780,7 @@ export const fr = {
                         subtitle: "Choisis le routage automatique, le mode print du CLI par abonnement, ou le mode SDK.",
                         options: {
                             auto: {
-                                title: "Auto",
+                                title: "Automatique",
                                 subtitle: "Privilégier le CLI par abonnement quand il est disponible, puis les identifiants SDK."
                             },
                             cliPrint: {
@@ -4788,7 +4813,7 @@ export const fr = {
 	            subtitle: "Choisis App Server, ACP ou MCP.",
 	            options: {
 	              appServer: {
-	                title: "App Server",
+	                title: "Serveur d'applications",
 	                subtitle: "Mode app-server officiel Codex recommandé",
 	              },
 	              acp: {
@@ -4807,6 +4832,10 @@ export const fr = {
 	  },
 
   workspaceCockpit: {
+    sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' sur ' + total,
+    previousSession: 'Session précédente',
+    nextSession: 'Session suivante',
+    switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Passage à ' + name + ', ' + position + ' sur ' + total,
     openCockpit: 'Ouvrir le cockpit',
     openClassicView: 'Ouvrir la vue classique',
     tabs: 'Onglets',
@@ -4818,7 +4847,7 @@ export const fr = {
       footer: 'Personnalise la barre d’onglets du bas.',
       showLabels: 'Afficher les libellés d’onglets',
       size: 'Taille de la barre d’onglets',
-      sizeCompact: 'Compact',
+      sizeCompact: 'Compacte',
       sizeRegular: 'Normal',
       sizeLarge: 'Grand',
     },
@@ -4861,7 +4890,7 @@ export const fr = {
     contentWidthDescription:
       "Choisis la largeur du contenu plein écran sur les grands écrans",
     contentWidthOptions: {
-      compact: "Compact",
+      compact: "Compacte",
       compactDescription: "Garder un contenu étroit pour une lecture concentrée",
       medium: "Moyen",
       mediumDescription: "Utiliser une largeur équilibrée pour du contenu varié",
@@ -4908,7 +4937,7 @@ export const fr = {
     agentInputActionBarLayoutDescription:
       "Choisis comment les chips d’action s’affichent au-dessus de la saisie",
     agentInputActionBarLayoutOptions: {
-      auto: "Auto",
+      auto: "Automatique",
       wrap: "Sur plusieurs lignes",
       scroll: "Défilement",
       collapsed: "Replié",
@@ -4917,7 +4946,7 @@ export const fr = {
     agentInputChipDensityDescription:
       "Choisis si les chips d’action affichent des libellés ou des icônes",
     agentInputChipDensityOptions: {
-      auto: "Auto",
+      auto: "Automatique",
       labels: "Libellés",
       icons: "Icônes seules",
     },
@@ -4974,7 +5003,7 @@ export const fr = {
       comfortableDescription: "Utiliser la taille et l’espacement de ligne standard",
       cozy: "Confortable",
       cozyDescription: "Utiliser des lignes légèrement plus serrées sans passer à la mise en page compacte",
-      compact: "Compact",
+      compact: "Compacte",
       compactDescription: "Afficher plus de lignes à l’écran avec un espacement plus serré",
     },
 
@@ -5014,7 +5043,7 @@ export const fr = {
     },
         expAutomations: "Automatisations",
         expAutomationsSubtitle: "Activer les surfaces UI d’automatisations et la planification",
-        expExecutionRuns: "Subagents",
+        expExecutionRuns: "Sous-agents",
       expExecutionRunsSubtitle:
         "Activer les surfaces du plan de contrôle Subagents (reviews / délégation)",
       expAttachmentsUploads: "Envoi de pièces jointes",
@@ -5090,7 +5119,7 @@ export const fr = {
       historyScopeModalMessage:
         "Choisis si Flèche haut/Flèche bas parcourt les messages envoyés dans cette session uniquement, ou dans toutes les sessions.",
       historyScopePerSessionOption: "Par session",
-      historyScopeGlobalOption: "Global",
+      historyScopeGlobalOption: "Mondial",
       commandPalette: "Palette de commandes",
       commandPaletteEnabled: "Utiliser le raccourci pour ouvrir",
       commandPaletteDisabled: "Accès rapide aux commandes désactivé",
@@ -5148,7 +5177,7 @@ export const fr = {
       fileNotFound: "Fichier introuvable",
       invalidFormat: "Format invalide",
       operationFailed: "L’opération a échoué",
-      signupDisabled: "Les inscriptions de nouveaux comptes sont désactivées sur ce serveur. Connectez-vous avec un compte existant ou demandez à l’administrateur du serveur d’activer les inscriptions.",
+      signupDisabled: "Les inscriptions de nouveaux comptes sont désactivées sur ce serveur. Connecte-toi avec un compte existant ou demande à l’administrateur du serveur d’activer les inscriptions.",
       failedToForkSession: "Impossible de forker la session",
       daemonUnavailableTitle: "Daemon indisponible",
       daemonUnavailableBody:
@@ -5439,7 +5468,7 @@ export const fr = {
     sessionType: {
       title: "Type de session",
       simple: "Simple",
-      worktree: "Worktree",
+      worktree: "Arbre de travail",
       comingSoon: "Bientôt",
     },
     profileAvailability: {
@@ -5469,7 +5498,7 @@ export const fr = {
         `Échec de la création du worktree : ${error}`,
       success: "Worktree créé",
       createTitle: "Nouveau worktree depuis une branche",
-      backToRoot: "Worktrees",
+      backToRoot: "Arbres de travail",
       searchPlaceholder: "Rechercher des worktrees",
       searchBranchPlaceholder: "Rechercher des branches",
       sections: {
@@ -5489,7 +5518,7 @@ export const fr = {
       },
       nameStep: {
         title: "Nomme ton worktree",
-        backLabel: "Branches",
+        backLabel: "Succursales",
         placeholder: "Nomme ce worktree",
         emptyHint: "Ce sera le nom de la nouvelle branche et du worktree.",
         suggestedSectionTitle: "Suggéré",
@@ -5674,7 +5703,7 @@ export const fr = {
           sectionTitle: "Workflows actifs",
           goalActive: "Objectif actif",
           goalLabel: ({ title }: { title: string }) => `Objectif : ${title}`,
-          bare: "Workflow",
+          bare: "Flux de travail",
           agentsFallback: ({ fraction }: { fraction: string }) => `Workflow ${fraction} agents`,
           olderRunsHidden: ({ count }: { count: number }) => `${count} exécutions plus anciennes non affichées`,
           phaseLabel: ({ title, fraction }: { title: string; fraction: string }) => `${title} ${fraction}`,
@@ -5790,12 +5819,26 @@ export const fr = {
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Exécute cette session.`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Dernier Agent utilisé par cette session.`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Dernier Agent signalé pour cette session.`,
-      armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Sélectionné pour votre prochain message.`,
+      armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Sélectionné pour ton prochain message.`,
       detailTitle: ({ agent }: { agent: string }) => `Continuer avec ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Continuer avec ${agent}`,
-      detailDescription: 'Votre conversation récente est conservée sous forme de texte ; les images et les fichiers ne le sont pas. Rien n’est envoyé avant votre prochain message.',
+      detailDescription: 'Ta conversation récente est conservée sous forme de texte ; les images et les fichiers ne le sont pas. Rien n’est envoyé avant ton prochain message.',
+      detailDescriptionEmpty: 'Il n’y a pas encore de conversation à conserver. Rien n’est envoyé avant ton prochain message.',
       announcement: ({ agent }: { agent: string }) => `${agent} sélectionné pour le prochain message. Rien n’a été envoyé.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Cette session a continué de ${from_} à ${to}`,
+      handedOver: {
+          open: "Afficher le contexte transmis ici",
+          title: "Contexte transmis",
+          reconstructed: "Reconstruit maintenant à partir de la transcription de cette session, et non enregistré à l’époque — le résultat peut donc différer de ce qui a été envoyé. Ce que l’Agent précédent suivait, ainsi que son propre journal, ne peuvent pas être reconstruits : ils sont donc omis.",
+          loading: "Reconstruction…",
+          empty: "Rien n’a été transmis. Il n’y avait aucune conversation antérieure à rejouer.",
+          unavailableOperation: "Mettez à jour ou reconnectez la CLI sur cette machine pour reconstruire ceci.",
+          notRebuildable: "Du contexte a bien été transmis ici, mais la transcription de cette session ne le contient plus : impossible de le reconstruire.",
+          unavailableSource: "Happier n’a pas pu lire la transcription de cette session : impossible de reconstruire ceci.",
+          unreachable: "Happier n’a pas pu joindre la machine qui héberge cette session.",
+          retryAction: "Réessayer",
+          jumpAction: "Aller au dernier message inclus",
+      },
       checking: "Vérification de la disponibilité…",
       unavailable: {
         unsupportedSession: ({ agent }: { agent: string }) => `Cette session ne peut pas continuer avec ${agent}.`,
@@ -5808,16 +5851,16 @@ export const fr = {
       transition: {
         rejected: {
           unsupportedOperation: 'Cette session ne prend pas en charge le changement d’agent. Rien n’a été envoyé.',
-          forbidden: 'Vous n’avez pas l’autorisation de changer l’agent de cette session. Rien n’a été envoyé.',
+          forbidden: 'Tu n’as pas l’autorisation de changer l’agent de cette session. Rien n’a été envoyé.',
           sameTarget: ({ agent }: { agent: string }) => `Cette session utilise déjà ${agent}. Rien n’a été envoyé.`,
-          staleSelection: 'La session a changé pendant votre choix. Rien n’a été envoyé : réessayez.',
+          staleSelection: 'La session a changé pendant ton choix. Rien n’a été envoyé : réessaie.',
           targetUnavailable: ({ agent }: { agent: string }) => `${agent} n’est pas disponible sur cette machine. Rien n’a été envoyé.`,
-          sourceNotIdle: ({ agent }: { agent: string }) => `${agent} travaille encore. Rien n’a été envoyé : réessayez une fois terminé.`,
+          sourceNotIdle: ({ agent }: { agent: string }) => `${agent} travaille encore. Rien n’a été envoyé : réessaie une fois terminé.`,
           sourceStopFailed: ({ agent }: { agent: string }) => `Impossible d’arrêter ${agent}, donc rien n’a changé. Rien n’a été envoyé.`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `Rien n’a été envoyé. Ce message a déjà une autre destination, il ne peut donc pas aussi faire passer cette session à ${agent}. Retirez l’un des deux et renvoyez.`,
-        sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} s’est arrêté, mais le passage à ${agent} n’a pas abouti. Votre message n’a pas été envoyé.`,
-        switched: ({ agent }: { agent: string }) => `Cette session utilise maintenant ${agent}, mais votre message n’a pas été envoyé. Renvoyez-le.`,
+        sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} s’est arrêté, mais le passage à ${agent} n’a pas abouti. Ton message n’a pas été envoyé.`,
+        switched: ({ agent }: { agent: string }) => `Cette session utilise maintenant ${agent}, mais ton message n’a pas été envoyé. Renvoie-le.`,
         /** Compact status for the collapsed composer banner badge. */
         badgeLabel: 'Changement d’Agent',
         /** Delegates to the Session’s existing resume owner; never a second start path. */
@@ -5860,6 +5903,13 @@ export const fr = {
           configure: {
               title: "Configurer une nouvelle session",
               subtitle: "Choisis un autre agent, modèle, machine ou dossier, et emporte cette conversation.",
+          },
+          unavailable: {
+              nativeAgent: "Cet agent ne peut pas forker sa propre conversation.",
+              nativeFromMessage: "Cet agent peut forker toute la conversation, mais pas à partir d’un message antérieur.",
+              nativeProviderBound: "L’agent ne peut pas forker une session liée à un compte provider.",
+              replayOff: "Replay est désactivé dans les Réglages.",
+              replaySettingsAction: "Réglages Replay",
           },
           progress: {
               creatingNative: "Création du fork natif…",
@@ -5938,7 +5988,7 @@ export const fr = {
     },
     inactiveResumable: "Inactive (reprenable)",
     inactiveMachineOffline: "Inactive (machine hors ligne)",
-    inactiveNotResumable: "Inactive",
+    inactiveNotResumable: "Inactif",
     inactiveNotResumableNoticeTitle: "Cette session ne peut pas être reprise",
     inactiveNotResumableNoticeBody: ({ provider }: { provider: string }) =>
       `Cette session est terminée et ne peut pas être reprise, car ${provider} ne prend pas en charge la restauration de son contexte ici. Démarre une nouvelle session pour continuer.`,
@@ -5993,7 +6043,7 @@ export const fr = {
               launchClaudeTeamsTitle: "Lancer des équipes Claude",
               launchClaudeTeamsSubtitle: "Crée une équipe ou lance un équipier avec les commandes structurées d’équipe Claude.",
               teamIdLabel: "ID d’équipe",
-              teamIdPlaceholder: "team-id",
+              teamIdPlaceholder: "identifiant d'équipe",
               teamDescriptionPlaceholder: "De quoi cette équipe est-elle responsable ?",
               launchClaudeTeamA11y: "Créer l’équipe Claude",
               launchClaudeTeamAction: "Créer l’équipe",
@@ -6017,13 +6067,13 @@ export const fr = {
               unavailable: "Ce transcript d’agent n’est plus disponible.",
             },
             kind: {
-              execution_run: "Subagent",
+              execution_run: "Sous-agent",
               agent_team_member: "Agent d’équipe",
-              subagent_sidechain: "Subagent",
+              subagent_sidechain: "Sous-agent",
             },
             intent: {
-              review: "Review",
-              plan: "Plan",
+              review: "Examen",
+              plan: "Planifier",
               delegate: "Déléguer",
             },
           },
@@ -6056,7 +6106,7 @@ export const fr = {
       },
 
     planOutput: {
-      title: "Plan",
+      title: "Planifier",
       recommendedBackend: "Backend recommandé",
       risks: "Risques",
       milestones: "Jalons",
@@ -6304,7 +6354,7 @@ export const fr = {
       shareNotFound: "Lien de partage introuvable ou expiré",
       failedToDecrypt: "Échec du déchiffrement de la session",
       noMessages: "Aucun message pour l’instant",
-      session: "Session",
+      session: "Séance",
     },
   },
 
@@ -6318,7 +6368,7 @@ export const fr = {
         shortcutsHelpHelp: 'Ouvrir les raccourcis clavier',
         shortcutsHelpNewSession: 'Nouvelle session',
         commands: {
-            sessionsCategory: 'Sessions',
+            sessionsCategory: 'Séances',
             navigationCategory: 'Navigation',
             recentSessionsCategory: 'Sessions récentes',
             runsCategory: 'Exécutions',
@@ -6344,7 +6394,7 @@ export const fr = {
             startReviewRunTitle: 'Lancer un run de revue',
             startPlanRunTitle: 'Lancer un run de plan',
             startDelegationRunTitle: 'Lancer un run de délégation',
-            executionRunsSubtitle: 'Execution runs',
+            executionRunsSubtitle: 'Exécutions',
             openSessionRunsTitle: 'Ouvrir les runs de la session',
             runsForCurrentSessionSubtitle: 'Runs de la session en cours',
             runsAcrossMachinesSubtitle: 'Runs sur toutes les machines',
@@ -6356,7 +6406,7 @@ export const fr = {
             developerMenuSubtitle: 'Accéder aux outils de développement',
         },
     pets: {
-      category: "Pets",
+      category: "Animaux de compagnie",
       wakeTitle: "Réveiller le pet",
       wakeSubtitle: "Affiche le compagnon sur cette surface.",
       tuckTitle: "Mettre le pet de côté",
@@ -6451,8 +6501,8 @@ export const fr = {
     format: {
       voiceAgent: "Agent vocal",
       you: "Toi",
-      assistant: "Assistant",
-      assistantStreaming: "Assistant…",
+      assistant: "Assistante",
+      assistantStreaming: "Assistante…",
       action: "Action",
       error: "Erreur",
       status: "Statut",
@@ -6480,7 +6530,7 @@ export const fr = {
     sessionIdPlaceholder: "Laisse vide pour utiliser la cible vocale actuelle",
     initialContextLabel: "Contexte initial",
     initialContextPlaceholder: "Contexte optionnel envoyé au démarrage de la session QA",
-    promptLabel: "Prompt",
+    promptLabel: "Invite",
     promptPlaceholder: "Saisis le texte que tu veux envoyer à l’agent vocal",
     contextUpdateLabel: "Mise à jour de contexte",
     contextUpdatePlaceholder: "Mise à jour de contexte de suivi (optionnelle)",
@@ -6578,7 +6628,7 @@ export const fr = {
     addServerGroupSubtitle: "Créer un groupe de relays réutilisable",
     serverGroupNameLabel: "Nom du groupe",
     serverGroupNamePlaceholder: "Mon groupe de Relays",
-    serverGroupServersLabel: "Relays",
+    serverGroupServersLabel: "Relais",
     saveServerGroup: "Enregistrer le groupe",
     serverGroupMustHaveServer:
       "Un groupe de Relays doit contenir au moins un relay.",
@@ -6619,7 +6669,7 @@ export const fr = {
       deleteInactiveSessionsDays: ({ count }: { count: number }) => `Supprime les sessions inactives après ${count} ${plural({ count, singular: 'jour', plural: 'jours' })}.`,
       deleteOlderThanDays: ({ count }: { count: number }) => `Supprime les données après ${count} ${plural({ count, singular: 'jour', plural: 'jours' })}.`,
       sessionNotice: ({ count }: { count: number }) => `Ce relay supprime les sessions inactives après ${count} ${plural({ count, singular: 'jour', plural: 'jours' })} d’inactivité.`,
-      sessions: "Sessions",
+      sessions: "Séances",
       sidechainMessages: "Transcriptions des sous-agents",
       usageEvents: "Événements d’utilisation",
       accountChanges: "Modifications du compte",
@@ -6675,7 +6725,7 @@ export const fr = {
     serverHeader: ({ server }: { server: string }) => `Serveur : ${server}`,
     storagePersistedTab: "Happier",
     storageAllFilter: "Tout",
-    storageFilterCategory: "Sessions",
+    storageFilterCategory: "Séances",
     storageExternalFilter: "Externe",
     storageDirectTab: "Direct",
     renameWorkspace: 'Renommer le workspace',
@@ -6704,7 +6754,7 @@ export const fr = {
     folderViewOff: 'Masquer les dossiers',
     moveToFolder: 'Déplacer vers un dossier',
     moveToWorkspaceRoot: 'Racine du workspace',
-    sessionFallbackLabel: 'Session',
+    sessionFallbackLabel: 'Séance',
     moveSheetTitle: ({ item }: { item: string }) => 'Déplacer ' + item,
     moveSheetDestinationLabel: 'Destination',
     moveSheetSubmit: 'Déplacer',
@@ -6750,7 +6800,7 @@ export const fr = {
     selectionRemoveTagsPromptTitle: 'Retirer des tags',
     selectionSetTagsPromptTitle: 'Définir les tags',
     selectionTagsPromptMessage: 'Sépare les tags par des virgules.',
-    selectionTagsPlaceholder: 'tag-one, tag-two',
+    selectionTagsPlaceholder: 'étiquette-un, étiquette-deux',
     selectionCancelA11yLabel: 'Annuler la sélection de sessions',
     selectionProgress: ({ completed, total }: { completed: number; total: number }) => `${completed} sur ${total} terminé`,
     selectionCancelRunningA11yLabel: 'Annuler l’action sur les sessions sélectionnées',
@@ -6826,8 +6876,8 @@ export const fr = {
     stopSessionConfirm: "Veux-tu vraiment arrêter cette session ?",
     archiveSession: "Archiver la session",
     archiveSessionConfirm: "Veux-tu vraiment archiver cette session ?",
-    workspaceTitle: "Workspace",
-    workspaceLabel: "Workspace",
+    workspaceTitle: "Espace de travail",
+    workspaceLabel: "Espace de travail",
     linkWorkspaceTitle: "Lier ce workspace",
     linkWorkspaceSubtitle: "Créer un workspace lié à partir du chemin de cette session et ouvrir ses réglages.",
     openWorkspaceTitle: "Ouvrir le workspace",
@@ -6835,7 +6885,7 @@ export const fr = {
     createWorktreeTitle: "Créer un worktree",
     createWorktreeSubtitle: "Démarrer une nouvelle session qui créera un worktree Git dans ce workspace lié.",
     locationLabel: "Emplacement",
-    checkoutLabel: "Checkout",
+    checkoutLabel: "Commander",
     happySessionIdCopied: "ID de session Happier copié dans le presse-papiers",
     failedToCopySessionId: "Échec de la copie de l’ID de session Happier",
     happySessionId: "ID de session Happier",
@@ -6888,6 +6938,10 @@ export const fr = {
     markSessionReadSubtitle: "Effacer l’attention non lue pour cette session",
     markSessionUnread: "Marquer comme non lu",
     markSessionUnreadSubtitle: "Garder cette session dans ta liste des non lus",
+    keepInAttention: "Garder dans Nécessite ton attention",
+    keepInAttentionSubtitle: "La garde ici même après lecture",
+    removeFromAttention: "Retirer de Nécessite ton attention",
+    removeFromAttentionSubtitle: "La laisse redescendre dans la liste une fois lue",
     executionRunsSubtitle: "Voir les subagents de cette session",
     automationsTitle: "Automatisations",
     automationsSubtitle: "Gérer les messages planifiés de cette session",
@@ -6913,7 +6967,7 @@ export const fr = {
     path: "Chemin",
     operatingSystem: "Système d’exploitation",
     processId: "ID du processus",
-    happyHome: "Happier Home",
+    happyHome: "Happier Accueil",
     attachFromTerminal: "Attacher depuis le terminal",
     tmuxTarget: "Cible tmux",
     tmuxFallback: "Fallback tmux",
@@ -7014,9 +7068,9 @@ export const fr = {
     suggestionGroups: {
       files: 'Fichiers',
       plugins: 'Plugins',
-      sessions: 'Sessions',
+      sessions: 'Séances',
       references: 'Références',
-      skills: 'Skills',
+      skills: 'Compétences',
       commands: 'Commandes',
     },
     stopCodingTurn: "Arrêter le tour de code",
@@ -7116,7 +7170,7 @@ export const fr = {
         running: ({ model }: { model: string }) => `En cours : ${model}`,
         lastUsed: ({ model }: { model: string }) => `Dernier utilisé : ${model}`,
         lastReported: ({ model }: { model: string }) => `Dernier signalé : ${model}`,
-        applyTimingNextMessage: "S’applique à partir de votre prochain message",
+        applyTimingNextMessage: "S’applique à partir de ton prochain message",
         applyTimingNewSession: "S’applique au démarrage d’une nouvelle session",
         selectedForResume: "Le modèle sélectionné sera utilisé à la reprise de cette session.",
         configureInCli: "Configure les modèles dans les réglages du CLI",
@@ -7204,9 +7258,9 @@ export const fr = {
       refreshingModes: "Rafraîchissement des modes…",
       useDefaultModeHint: "Utiliser le mode par défaut pour cet agent.",
       startIn: ({ name }: { name: string }) => `Démarrer en : ${name}`,
-      build: "Build",
+      build: "Construire",
       buildDescription: "Comportement par défaut",
-      plan: "Plan",
+      plan: "Planifier",
       planDescription: "Réfléchir d’abord",
     },
     acp: {
@@ -7219,7 +7273,7 @@ export const fr = {
       refreshingModes: "Rafraîchissement des modes…",
       useDefaultModeHint: "Utiliser le mode par défaut pour cet agent.",
       startIn: ({ name }: { name: string }) => `Démarrer en : ${name}`,
-      optionsSectionTitle: "Options",
+      optionsSectionTitle: "Possibilités",
       optionsUnavailable: "Les options de configuration sont indisponibles pour ce provider sur cette machine.",
       currentValue: ({ value }: { value: string }) => `Actuel : ${value}`,
       optionOverriddenBy: ({ name }: { name: string }) => `Remplacé par ${name}`,
@@ -7274,7 +7328,7 @@ export const fr = {
         httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
       },
     fullView: {
-      description: "Description",
+      description: "Descriptif",
       inputParams: "Paramètres d’entrée",
       output: "Sortie",
       error: "Erreur",
@@ -7289,14 +7343,14 @@ export const fr = {
     agentTeamView: {
       team: "Équipe",
       member: "Membre",
-      type: "Type",
+      type: "Tapez",
       content: "Contenu",
       status: "Statut",
-      description: "Description",
+      description: "Descriptif",
     },
     workflowView: {
       title: "Titre",
-      description: "Description",
+      description: "Descriptif",
       status: "Statut",
       summary: "Résumé",
       run: "Exécuter",
@@ -7304,7 +7358,7 @@ export const fr = {
       toolUse: "Utilisation d’outil",
     },
     workflowActivityView: {
-        untitled: "Workflow",
+        untitled: "Flux de travail",
         loading: "Chargement…",
         unavailable: "Détails indisponibles",
         noDetail: "Aucun détail supplémentaire",
@@ -7333,7 +7387,7 @@ export const fr = {
         detailShowLess: 'Afficher moins',
     },
     subAgentRunView: {
-      planTitle: "Plan",
+      planTitle: "Planifier",
       delegateTitle: "Délégation",
       reviewDigestTitle: "Synthèse de review",
     },
@@ -7347,9 +7401,9 @@ export const fr = {
     },
     structuredResult: {
       exit: "Code de sortie",
-      stdout: "Stdout",
+      stdout: "Sortie standard",
       stderr: "Stderr",
-      diff: "Diff",
+      diff: "Différence",
       result: "Résultat",
       items: "Éléments",
       more: ({ count }: { count: number }) => `+${count} de plus`,
@@ -7375,7 +7429,7 @@ export const fr = {
       defaultTitle: "Indexation du workspace",
       description:
         "L’indexation aide l’agent à chercher plus vite dans ta base de code et à répondre plus précisément. Cela peut scanner les fichiers de ton workspace.",
-      optionFallback: "Option",
+      optionFallback: "Options",
       chooseOptionHint: "Choisis une option ci-dessous pour continuer.",
     },
     acpHistoryImport: {
@@ -7405,8 +7459,8 @@ export const fr = {
     },
     names: {
       task: "Tâche",
-      subAgent: "Subagent",
-      terminal: "Terminal",
+      subAgent: "Sous-agent",
+      terminal: "Borne",
       searchFiles: "Recherche de fichiers",
       search: "Recherche",
       searchContent: "Recherche de contenu",
@@ -7422,7 +7476,7 @@ export const fr = {
       webSearch: "Recherche web",
       reasoning: "Raisonnement",
       applyChanges: "Mise à jour de fichier",
-      viewDiff: "Diff",
+      viewDiff: "Différence",
       turnDiff: "Diff du tour",
       question: "Question",
       changeTitle: "Changer le titre",
@@ -7579,11 +7633,11 @@ export const fr = {
       searchPlaceholder: "Rechercher des branches…",
       category: {
         actions: "Actions",
-        branches: "Branches",
-        worktrees: "Worktrees",
-        remote: "Remote",
-        local: "Local",
-        options: "Options",
+        branches: "Succursales",
+        worktrees: "Arbres de travail",
+        remote: "À distance",
+        local: "Locale",
+        options: "Possibilités",
       },
       publish: {
         title: "Publier la branche",
@@ -7883,7 +7937,7 @@ export const fr = {
           diffUnavailableTitle: "Diff du commit indisponible",
           diffUnavailableHint:
             "Essaie de rouvrir le commit depuis l’écran Fichiers.",
-          commitLabel: "Commit",
+          commitLabel: "S'engager",
           running: ({ operation }: { operation: string }) =>
             `En cours : ${operation}`,
           revert: {
@@ -7932,9 +7986,9 @@ export const fr = {
           previewUnavailableA11y: "Aperçu du média indisponible",
           unavailableImageA11y: ({ name }: { name: string }) => `${name} indisponibles`,},
         cannotDisplayBinary: "Impossible d’afficher le contenu d’un fichier binaire",
-        diff: "Diff",
+        diff: "Différence",
       file: "Fichier",
-      markdown: "Markdown",
+      markdown: "Démarquage",
     diffModes: {
       pending: "En attente",
       included: "Inclus",
@@ -8049,9 +8103,9 @@ export const fr = {
       conflictsDetected:
         "Conflits détectés. Commit, pull et push sont bloqués tant que les conflits ne sont pas résolus.",
       actions: {
-        fetch: "Fetch",
-        pull: "Pull",
-        push: "Push",
+        fetch: "Récupérer",
+        pull: "Tirer",
+        push: "Pousser",
       },
       blockedHints: {
         lock: "Verrou",
@@ -8061,7 +8115,7 @@ export const fr = {
       },
       update: {
         remotes: {
-          title: "Remotes",
+          title: "Télécommandes",
           empty: "Aucun remote n’est configuré pour ce dépôt.",
           addTitle: "Ajouter un remote",
           editTitle: ({ name }: { name: string }) => `Modifier ${name}`,
@@ -8070,7 +8124,7 @@ export const fr = {
           nameLabel: "Nom du remote",
           fetchUrlLabel: "URL de fetch",
           pushUrlLabel: "URL de push",
-          namePlaceholder: "origin",
+          namePlaceholder: "origine",
           fetchUrlPlaceholder: "URL de fetch",
           pushUrlPlaceholder: "URL de push (optionnelle)",
           noFetchUrl: "Aucune URL de fetch",
@@ -8090,10 +8144,10 @@ export const fr = {
           body: "Crée un dépôt GitHub et l’ajoute comme origin.",
           ownerLabel: "Propriétaire",
           repositoryNameLabel: "Nom du dépôt",
-          repositoryNamePlaceholder: "repository-name",
+          repositoryNamePlaceholder: "nom du référentiel",
           visibilityLabel: "Visibilité",
           private: "Privé",
-          public: "Public",
+          public: "Publique",
           internal: "Interne",
           remoteKindLabel: "URL du remote",
           httpsRemote: "Remote HTTPS",
@@ -8130,7 +8184,7 @@ export const fr = {
           title: "Merge et rebase",
           sourceLabel: "Branche source",
           sourcePlaceholder: "Branche ou ref remote",
-          merge: "Merge",
+          merge: "Fusionner",
           rebase: "Rebase",
           continue: "Continuer",
           abort: "Abandonner",
@@ -8145,7 +8199,7 @@ export const fr = {
           },
         },
         pullRequests: {
-          title: "Pull request",
+          title: "Demande de tirage",
           readyTitle: "Prêt à ouvrir une pull request",
           view: "Voir la PR",
           openOrReuse: "Ouvrir ou réutiliser la PR",
@@ -8188,7 +8242,7 @@ export const fr = {
         },
 
         pullRequest: {
-            title: "Pull request",
+            title: "Demande de tirage",
             existing: "Pull request existante",
             ready: "Prêt à créer une pull request",
             branchPair: ({ head, base }: { head: string; base: string }) =>
@@ -8228,7 +8282,7 @@ export const fr = {
             },
             visibility: {
                 private: "Privé",
-                public: "Public",
+                public: "Publique",
                 internal: "Interne",
             },
             protocol: {
@@ -8293,7 +8347,7 @@ export const fr = {
     },
     session: {
       thisSessionTitle: 'Cette session',
-      workspaceTitle: 'Workspace',
+      workspaceTitle: 'Espace de travail',
     },
     scope: {
       workspace: 'Ce workspace',
@@ -8347,7 +8401,7 @@ export const fr = {
       },
     },
     launcher: {
-      title: 'Launchpad',
+      title: 'Barre de lancement',
       refreshing: 'Actualisation des services locaux',
       openInBrowserA11y: 'Ouvrir le service local dans le navigateur',
       status: {
@@ -8573,25 +8627,25 @@ export const fr = {
       title: 'État du profil de navigateur',
       modeLabel: 'Mode',
       storageLabel: 'Stockage',
-      permissionsLabel: 'Permissions',
+      permissionsLabel: 'Autorisations',
       unavailable: 'Indisponible',
       mode: {
         ephemeral: 'Éphémère',
-        session: 'Session',
+        session: 'Séance',
         user: 'Utilisateur',
         plugin: 'Plugin',
       },
       storage: {
         unavailable: 'Aucune partition',
         ephemeral: 'Éphémère',
-        session: 'Session',
+        session: 'Séance',
         persistent: 'Persistant',
         plugin: 'Plugin',
       },
       permissions: {
         none: 'Aucune autorisation',
         active: ({ count }: { count: number }) => `${count} actives`,
-        prompt: 'Prompt',
+        prompt: 'Invite',
         denied: 'Refusées',
       },
       management: {
@@ -8637,7 +8691,7 @@ export const fr = {
       },
     },
     devtools: {
-      title: 'Diagnostics',
+      title: 'Diagnostic',
       collapse: 'Réduire les diagnostics',
       expand: 'Développer les diagnostics',
       close: 'Masquer les diagnostics',
@@ -8649,8 +8703,8 @@ export const fr = {
         elements: 'Éléments',
         resources: 'Ressources',
         storage: 'Stockage',
-        info: 'Info',
-        performance: 'Performance',
+        info: 'Informations',
+        performance: 'Performances',
       },
     },
   },
@@ -8729,13 +8783,13 @@ export const fr = {
             moreControls: 'Plus de contrôles de l’appareil',
     },
     sidebands: {
-      title: 'Diagnostics',
-      logs: 'Logs',
+      title: 'Diagnostic',
+      logs: 'Journaux',
       accessibilityTree: 'Accessibilité',
       deviceConfig: 'Config de l’appareil',
       appMetadata: 'Métadonnées de l’app',
       networkDiagnostics: 'Réseau',
-      route: 'Route',
+      route: 'Itinéraire',
       captureHealth: 'Santé de la capture',
       refresh: 'Actualiser',
       empty: 'Aucune donnée pour l’instant.',
@@ -8748,7 +8802,7 @@ export const fr = {
             fields: {
                 level: 'Niveau',
                 message: 'Message',
-                route: 'Route',
+                route: 'Itinéraire',
                 status: 'Statut',
                 reason: 'Raison',
             },
@@ -8811,10 +8865,10 @@ export const fr = {
         elements: 'Éléments',
         resources: 'Ressources',
         storage: 'Stockage',
-        performance: 'Performance',
+        performance: 'Performances',
         network: 'Réseau',
         pageInfo: 'Infos de page',
-                other: 'Diagnostics',
+                other: 'Diagnostic',
             },
       detail: {
         keys: ({ count }: { count: string }) => `Clés (${count})`,
@@ -8827,7 +8881,7 @@ export const fr = {
         duration: 'Durée',
         requestSize: 'Requête',
         responseSize: 'Réponse',
-        socket: 'Socket',
+        socket: 'Prise',
         state: 'État',
         framesSent: 'Frames envoyées',
         framesReceived: 'Frames reçues',
@@ -8837,7 +8891,7 @@ export const fr = {
         protocol: 'Protocole',
         selector: 'Sélecteur',
         backendNode: 'Nœud backend',
-        rect: 'Rect',
+        rect: 'Rectifier',
         accessibleName: 'Nom accessible',
         storageType: 'Type de stockage',
         keyCount: 'Clés',
@@ -8845,13 +8899,13 @@ export const fr = {
         level: 'Niveau',
         arguments: 'Arguments',
         message: 'Message',
-        serviceWorker: 'Service worker',
+        serviceWorker: 'Employé de service',
         webgl: 'WebGL',
         webrtc: 'WebRTC',
         nodeCount: 'Nœuds',
         elementCount: 'Éléments',
         maxDepth: 'Profondeur max',
-        readyState: 'Ready state',
+        readyState: 'État prêt',
         lcp: 'LCP',
         cls: 'CLS',
         inp: 'INP',
@@ -8861,7 +8915,7 @@ export const fr = {
         responseEnd: 'Fin de réponse',
         domContentLoaded: 'DOMContentLoaded',
         loadEventEnd: 'Fin de l’événement load',
-        type: 'Type',
+        type: 'Tapez',
       },
       interaction: {
         title: 'Diagnostics interactifs',
@@ -8903,14 +8957,14 @@ export const fr = {
       headerTitle: "Démarrer un run",
       sections: {
         intent: "Intention",
-        permissions: "Permissions",
+        permissions: "Autorisations",
         backends: "Backends",
         profiles: "Profils",
         instructions: "Instructions",
       },
       intents: {
         review: "Revue",
-        plan: "Plan",
+        plan: "Planifier",
         delegate: "Délégation",
       },
       permissionModes: {
@@ -9024,9 +9078,9 @@ export const fr = {
                     default: { title: 'Par défaut', subtitle: 'Exiger le comportement d’approbation normal ou inférieur.' },
                     acceptEdits: { title: 'Accepter les modifications', subtitle: 'Autoriser les modifications automatiques mais pas le bypass complet.' },
                     bypassPermissions: { title: 'Contourner les permissions', subtitle: 'Autoriser jusqu’au bypass complet quand l’appelant l’a aussi.' },
-                    plan: { title: 'Plan', subtitle: 'Limiter les sessions créées à un comportement planification/lecture seule.' },
+                    plan: { title: 'Planifier', subtitle: 'Limiter les sessions créées à un comportement planification/lecture seule.' },
                     'read-only': { title: 'Lecture seule', subtitle: 'Limiter les sessions créées à un comportement en lecture seule.' },
-                    'safe-yolo': { title: 'Safe yolo', subtitle: 'Autoriser les écritures automatiques sûres dans le workspace.' },
+                    'safe-yolo': { title: 'Yolo en toute sécurité', subtitle: 'Autoriser les écritures automatiques sûres dans le workspace.' },
                     yolo: { title: 'Yolo', subtitle: 'Autoriser jusqu’à yolo quand l’appelant l’a aussi.' },
                 },
             },
@@ -9061,7 +9115,7 @@ export const fr = {
                 title: 'Plugins',
             },
             session: {
-                title: 'Sessions',
+                title: 'Séances',
             },
             scm: {
                 title: 'Gestion de version',
@@ -9168,20 +9222,20 @@ settingsSession: {
 	          narrowWorkingIndicatorTitle: 'Indicateur d’activité étroit',
 	          narrowWorkingIndicatorSpinnerSelectedSubtitle: 'Affiche un petit spinner neutre dans les lignes étroites',
 	          narrowWorkingIndicatorPulseSelectedSubtitle: 'Affiche un point pulsant dans les lignes étroites',
-	          narrowWorkingIndicatorSpinnerTitle: 'Spinner',
+	          narrowWorkingIndicatorSpinnerTitle: 'Fileur',
 	          narrowWorkingIndicatorSpinnerSubtitle: 'Un spinner neutre et compact pendant que la session travaille.',
 	          narrowWorkingIndicatorPulseTitle: 'Point pulsant',
 	          narrowWorkingIndicatorPulseSubtitle: 'Un point animé compact pendant que la session travaille.',
 	          workingIndicatorTitle: 'Indicateur d’activité',
 	          workingIndicatorSpinnerSelectedSubtitle: 'Affiche un petit spinner neutre pendant que les sessions travaillent',
 	          workingIndicatorPulseSelectedSubtitle: 'Affiche un point pulsant pendant que les sessions travaillent',
-	          workingIndicatorSpinnerTitle: 'Spinner',
+	          workingIndicatorSpinnerTitle: 'Fileur',
 	          workingIndicatorSpinnerSubtitle: 'Un spinner neutre et compact pendant que la session travaille.',
 	          workingIndicatorPulseTitle: 'Point pulsant',
 	          workingIndicatorPulseSubtitle: 'Un point animé compact pendant que la session travaille.',
 	          identityDisplayTitle: 'Identité de session',
 	          identityDisplaySubtitle: 'Choisis ce qui apparaît avant les noms de session dans la liste.',
-	          identityDisplayAvatarTitle: 'Avatar',
+	          identityDisplayAvatarTitle: 'avatar',
 	          identityDisplayAvatarSubtitle: 'Affiche l’avatar généré de chaque session.',
 	          identityDisplayAgentLogoTitle: 'Logo de l’agent',
 	          identityDisplayAgentLogoSubtitle: 'Affiche le logo de l’agent pour chaque session.',
@@ -9189,7 +9243,7 @@ settingsSession: {
 	          identityDisplayNoneSubtitle: 'Masque le marqueur d’identité dans les lignes de session.',
 	          headerIdentityDisplayTitle: 'Identité dans l’en-tête de session',
 	          headerIdentityDisplaySubtitle: 'Choisis ce qui apparaît avant le titre dans une session.',
-	          headerIdentityDisplayAvatarTitle: 'Avatar',
+	          headerIdentityDisplayAvatarTitle: 'avatar',
 	          headerIdentityDisplayAvatarSubtitle: 'Affiche l’avatar généré de la session.',
 	          headerIdentityDisplayAgentLogoTitle: 'Logo de l’agent',
 	          headerIdentityDisplayAgentLogoSubtitle: 'Affiche le logo de l’agent qui exécute la session.',
@@ -9239,6 +9293,10 @@ settingsSession: {
 	          attentionPromotionModeGlobalSubtitle: 'Affiche une section « attention » au-dessus du reste',
 	          attentionPromotionModeWithinGroupsTitle: 'Déplacer en haut du groupe actuel',
 	          attentionPromotionModeWithinGroupsSubtitle: 'Garde les sessions dans leur dossier ou workspace',
+	          attentionStandingDefaultTitle: 'Garder les sessions dans Nécessite ton attention',
+	          attentionStandingDefaultEnabledSubtitle: 'Chaque session y reste jusqu’à ce que tu la retires',
+	          attentionStandingDefaultDisabledSubtitle: 'Garde les sessions une par une',
+	          attentionStandingDefaultUnavailableSubtitle: "Choisis d'abord un emplacement dans Sessions nécessitant ton attention",
 	          workingPlacementModeTitle: 'Sessions en cours',
 	          workingPlacementModeSubtitle: 'Choisis où apparaissent les sessions actuellement en cours',
 	          workingPlacementModeOffTitle: 'Laisser à leur place normale',
@@ -9268,7 +9326,7 @@ settingsSession: {
 	          title: 'Mode cockpit',
 	          subtitle: 'Choisis la mise en page téléphone utilisée dans les sessions.',
 	          options: {
-	              cockpitTitle: 'Cockpit',
+	              cockpitTitle: 'Poste de pilotage',
 	              cockpitSubtitle: 'Utilise des onglets en bas pour le chat, les fichiers, Git, les onglets et le terminal.',
 	              classicTitle: 'Classique',
 	              classicSubtitle: 'Utilise l’ancienne mise en page de l’écran de session.',
@@ -9374,7 +9432,7 @@ settingsSession: {
         autoWaitEnabledSubtitle: "Les sessions bloquées par une limite d’utilisation peuvent attendre la réinitialisation et reprendre automatiquement.",
         autoWaitDisabledSubtitle: "Demander avant d’attendre la réinitialisation d’une limite d’utilisation.",
         resumePromptTitle: "Prompt de reprise",
-        resumePromptStandardTitle: "Standard",
+        resumePromptStandardTitle: "Norme",
         resumePromptStandardSubtitle: "Envoie le prompt de continuation habituel quand la reprise relance une session.",
         resumePromptOffTitle: "Désactivé",
         resumePromptOffSubtitle: "Reprendre sans envoyer de prompt de continuation supplémentaire.",
@@ -9399,7 +9457,7 @@ settingsSession: {
         windowDailySubtitle: "Préfère la fenêtre de quota quotidienne.",
         windowWeeklyTitle: "Hebdomadaire",
         windowWeeklySubtitle: "Préfère la fenêtre de quota hebdomadaire.",
-        windowSessionTitle: "Session",
+        windowSessionTitle: "Séance",
         windowSessionSubtitle: "Préfère la fenêtre de quota de la session en cours.",
         windowPrimaryTitle: "Principale",
         windowPrimarySubtitle: "Préfère la fenêtre de quota principale du provider.",
@@ -9444,7 +9502,7 @@ settingsSession: {
           title: "Densité des outils",
           comfortableTitle: "Confortable",
           comfortableSubtitle: "Plus d’espacement et une séparation plus nette (cartes et flux d’outils).",
-          compactTitle: "Compact",
+          compactTitle: "Compacte",
           compactSubtitle: "Lignes plus serrées et marges réduites (cartes et flux d’outils).",
         },
         activityFeed: {
@@ -9467,7 +9525,7 @@ settingsSession: {
           "Développe automatiquement les payloads bruts des outils dans la vue complète.",
       },
       transcript: {
-        title: "Transcript",
+        title: "Transcription",
         entrySubtitle: "Ouvrir les réglages du transcript",
         footer:
           "Personnalise l’affichage des conversations et le comportement du transcript.",
@@ -9563,7 +9621,7 @@ settingsSession: {
             turnGroupingTitle: "Groupement par tours",
             turnGroupingFooter:
             "Contrôle la façon dont les groupes d’appels d’outils sont formés dans les tours.",
-            performanceTitle: "Performance",
+            performanceTitle: "Performances",
             performanceFooter: "Réglages de performance du streaming et de la liste.",
             coalesceEnabledTitle: "Fusionner les mises à jour du streaming",
             coalesceEnabledSubtitle:
@@ -9662,7 +9720,7 @@ settingsSession: {
           expandedFooter: "Surcharge le niveau de détail développé pour des outils précis.",
         },
       permissions: {
-        title: "Permissions",
+        title: "Autorisations",
         entrySubtitle: "Ouvrir les réglages de permissions",
         footer:
           "Configure les permissions par défaut et la façon dont les changements s’appliquent aux sessions en cours.",
@@ -9710,7 +9768,7 @@ settingsSession: {
         },
         summaryRunner: {
           title: "Générateur de résumé (à la demande)",
-          backendTitle: "Backend",
+          backendTitle: "Back-end",
           backendPlaceholder: "claude",
           searchBackendsPlaceholder: "Rechercher un backend…",
           modelTitle: "Modèle",
@@ -9720,11 +9778,14 @@ settingsSession: {
           customTitle: "Personnalisé",
           customBackendIdSubtitle: "Saisis un id de backend (ex. claude).",
           customModelIdSubtitle: "Saisis un id de modèle (ex. default).",
+          requiresModelNotice: "Choisis un modèle de résumé ci-dessous. Sans modèle, la relecture se limite aux messages récents.",
+          requiresExecutionRunsNotice: "Les résumés nécessitent les exécutions, désactivées sur ce compte. La relecture utilisera uniquement les messages récents.",
         },
         recentMessagesTitle: "Messages récents à inclure",
         recentMessagesPlaceholder: "16",
         maxSeedCharsTitle: "Taille max du contexte de replay (caractères)",
         maxSeedCharsPlaceholder: "50000",
+        maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Entre ${min} et ${max} caractères. Un nombre hors de cette plage est enregistré à la limite la plus proche.`,
       },
       handoff: settingsSessionHandoffTranslationExtensions.fr,
       sessionCreation: {
@@ -9739,7 +9800,7 @@ settingsSession: {
         presentationGroupFooter: "Choisis si Nouvelle session s’ouvre comme un écran routé ou comme une modale.",
         presentationModeTitle: "Présentation de Nouvelle session",
         presentationModeSubtitle: "Contrôle la route utilisée quand tu ouvres Nouvelle session.",
-        presentationAutoTitle: "Auto",
+        presentationAutoTitle: "Automatique",
         presentationAutoSubtitle: "Utiliser la présentation modale par défaut sur chaque plateforme.",
         presentationScreenTitle: "Écran",
         presentationScreenSubtitle: "Ouvre Nouvelle session dans la zone de contenu principale, avec le composer ancré en bas.",
@@ -9770,7 +9831,7 @@ settingsSession: {
         wizardPresentationTitle: "Disposition des sélecteurs de l’assistant",
         wizardPresentationFooter:
           "Le mode auto garde les sections courtes en listes et bascule les sections longues en menus déroulants avec recherche.",
-        wizardPresentationAutoTitle: "Auto",
+        wizardPresentationAutoTitle: "Automatique",
         wizardPresentationAutoSubtitle:
           "Laisse Happier choisir la meilleure disposition selon la quantité de contenu.",
         wizardPresentationListTitle: "Liste",
@@ -9818,7 +9879,7 @@ settingsSession: {
         titleOnlyTitle: "Titre seul",
         titleOnlySubtitle:
           "Affiche uniquement le nom de l’outil dans la timeline (masque le sous-titre, le statut et le corps).",
-        compactTitle: "Compact",
+        compactTitle: "Compacte",
         compactSubtitle: "Affiche le nom de l’outil + le sous-titre en ligne + le statut sur une seule ligne (masque le corps).",
         summaryTitle: "Résumé",
         summarySubtitle: "Affiche un résumé compact et sûr dans la timeline.",
@@ -9852,7 +9913,7 @@ settingsSession: {
     consoleSubtitle: "Ouvre la session dans une fenêtre de console Windows standard.",
   },
   settingsVoice: {
-    ...voiceDiagnosticsConsentTranslations.fr,
+    ...voiceDiagnosticsTranslations.fr,
     intents: {
       dictation: { title: 'Dictée', subtitle: 'Transforme une phrase dite en texte dans le champ de saisie.' },
       conversations: { title: 'Conversations vocales', subtitle: 'Choisis un provider et configure sa mise en place principale.' },
@@ -9902,7 +9963,7 @@ settingsSession: {
       supersededBody: 'Cette requête d’historique vocal a été arrêtée avant de pouvoir utiliser un autre compte. Recharge pour continuer en toute sécurité.',
       retry: 'Réessayer',
       roleYou: 'Toi',
-      roleAssistant: 'Assistant',
+      roleAssistant: 'Assistante',
     },
     dictation: {
       title: 'Dictée',
@@ -9946,9 +10007,14 @@ settingsSession: {
       localSubtitle: "Utiliser la voix de l’appareil ou des endpoints STT/TTS locaux compatibles OpenAI",
       byo: "Utiliser mon ElevenLabs",
       byoSubtitle: "Utiliser ta propre clé API et ton agent ElevenLabs",
+      openaiRealtime: "OpenAI Realtime",
+      openaiRealtimeSubtitle: "Utiliser une clé API enregistrée ou un compte OpenAI explicitement sélectionné",
+      grokRealtime: "Grok Voice · BYOK",
+      grokRealtimeSubtitle: "Utiliser ta propre clé API xAI pour la voix en direct",
     },
     realtimeProviders: {
       ...voiceProviderPrivacyTranslations.fr,
+      ...voiceRealtimeProviderSetupTranslations.fr,
       operationFailed: 'Impossible de mettre à jour ce réglage. Réessaie.',
       operationFailedUnsaved: 'Impossible de mettre à jour ce réglage. Tes modifications n’ont pas été enregistrées.',
       operationFailedVoiceNotFound: 'La voix sélectionnée n’est pas disponible sur le compte connecté. Choisis une autre voix, puis relance cette action. Tes modifications n’ont pas été enregistrées.',
@@ -9974,16 +10040,16 @@ settingsSession: {
       scopeSubtitle: "Choisis si la voix est traitée comme globale (liée au compte) ou liée à la session par défaut.",
       scopeGlobal: "Globale (compte)",
       scopeGlobalSubtitle: "La voix reste visible pendant la navigation ; tu peux cibler des sessions",
-      scopeSession: "Session",
+      scopeSession: "Séance",
       scopeSessionSubtitle: "La voix se pilote depuis la session dans laquelle tu l’as lancée",
       surfaceLocationTitle: "Emplacement de la surface",
       surfaceLocationSubtitle: "Choisis où apparaît la surface vocale.",
       surfaceLocation: {
-        autoTitle: "Auto",
+        autoTitle: "Automatique",
         autoSubtitle: "La portée globale s’affiche dans la barre latérale ; la portée session s’affiche dans la session.",
         sidebarTitle: "Barre latérale",
         sidebarSubtitle: "Afficher la surface vocale dans la barre latérale.",
-        sessionTitle: "Session",
+        sessionTitle: "Séance",
         sessionSubtitle: "Afficher la surface vocale au-dessus du champ de saisie dans la session.",
       },
       updates: {
@@ -10014,7 +10080,7 @@ settingsSession: {
           neverSubtitle: "Désactiver les extraits pour les autres sessions.",
           onDemandTitle: "À la demande",
           onDemandSubtitle: "Autoriser uniquement quand l’utilisateur le demande explicitement.",
-          autoTitle: "Auto",
+          autoTitle: "Automatique",
           autoSubtitle: "Autoriser les extraits automatiques des autres sessions (bruyant).",
         },
       },
@@ -10111,9 +10177,9 @@ settingsSession: {
           title: "Modèle",
           subtitle:
             "Optionnel : remplacer l’id du modèle TTS ElevenLabs.",
-          detailAuto: "Auto",
+          detailAuto: "Automatique",
           options: {
-            autoTitle: "Auto",
+            autoTitle: "Automatique",
             autoSubtitle: "Utiliser le modèle par défaut d’ElevenLabs.",
             multilingualV2Subtitle: "Valeur par défaut courante (multilingue).",
             turboV2Subtitle:
@@ -10166,6 +10232,7 @@ settingsSession: {
       disconnectConfirm: "Déconnecter",
     },
     externalCredentials: {
+      ...voiceExternalCredentialApprovalTranslations.fr,
       apiKeyTitle: "Clé API",
       promptTitle: "Connecter ce provider vocal",
       promptDescription: "Colle la clé API du provider. Elle sera enregistrée dans ton compte et envoyée uniquement à l’endpoint du provider déclaré par ce plugin ; le code runtime du plugin ne la reçoit pas.",
@@ -10179,10 +10246,7 @@ settingsSession: {
       unavailable: "Configuration de l’identifiant indisponible",
     },
     local: {
-      voiceCredential: {
-        useSavedSecretTitle: "Utiliser un secret enregistré",
-        useSavedSecretSubtitle: "Choisis une clé déjà stockée dans ce compte.",
-      },
+      ...voiceLocalCredentialTranslations.fr,
       title: "Voix locale",
       footer:
         "Configure des endpoints compatibles OpenAI pour la reconnaissance vocale (STT) et la synthèse vocale (TTS).\n\nNote web : ton endpoint doit autoriser le CORS (et répondre au preflight OPTIONS) pour que le test STT/TTS fonctionne dans le navigateur.",
@@ -10196,15 +10260,16 @@ settingsSession: {
       apiKeySaveFailed: "Échec de l’enregistrement de la clé API. Réessaie.",
       googleCloudTts: {
         provider: {
-          title: "Google Cloud Text-to-Speech",
+          title: "Synthèse vocale Google Cloud",
           subtitle:
             "Utiliser ta propre clé API Google Cloud pour synthétiser l’audio.",
-          detail: "Google Cloud",
+          detail: "Google Cloud",
         },
         common: {
           default: "Par défaut",
         },
         apiKey: {
+          machineCredentialRestrictionBody: "La clé enregistrée est limitée à un certificat d’app Android et ne peut pas être utilisée par la machine sélectionnée. Saisis une clé API distincte compatible avec la machine ; la valeur synchronisée existante restera inchangée pour les clients plus anciens.",
           title: "Clé API Google Cloud",
           promptTitle: "Clé API Google Cloud",
           promptBody:
@@ -10248,7 +10313,7 @@ settingsSession: {
           loadingTitle: "Chargement des voix…",
         },
         format: {
-          title: "Format",
+          title: "Format audio",
           subtitle: "Le MP3 est plus léger ; le WAV est non compressé.",
           mp3Subtitle: "Sortie plus légère, largement compatible.",
           wavSubtitle: "Sortie plus lourde, non compressée.",
@@ -10284,7 +10349,7 @@ settingsSession: {
           subtitle:
             "Indice optionnel pour améliorer la précision de la transcription.",
           searchPlaceholder: "Rechercher des langues",
-          autoTitle: "Auto",
+          autoTitle: "Automatique",
           autoSubtitle: "Ne pas fournir d’indice de langue.",
         },
       },
@@ -10620,7 +10685,7 @@ settingsSession: {
             "Autoriser un peu plus de détail si nécessaire.",
         },
         streaming: {
-          title: "Streaming",
+          title: "Diffusion en continu",
           enableTitle: "Activer le streaming",
           enableSubtitle:
             "Diffuser le texte partiel de l’agent au fil de sa génération (utilisé pour la parole en streaming).",
@@ -10641,7 +10706,7 @@ settingsSession: {
       mediatorBackend: "Backend de l’agent vocal",
       mediatorBackendSubtitle:
         "Daemon (utilise ton backend Happier) ou HTTP compatible OpenAI",
-      mediatorBackendDaemon: "Daemon",
+      mediatorBackendDaemon: "Démon",
       mediatorBackendOpenAi: "HTTP compatible OpenAI",
       mediatorAgentSource: "Source de l’agent vocal",
       mediatorAgentSourceSubtitle:
@@ -10789,14 +10854,14 @@ settingsSession: {
         provider: {
           title: "Endpoint compatible OpenAI",
           subtitle: "Utilise ton propre serveur de transcription compatible Whisper.",
-          detail: "Endpoint",
+          detail: "Point de terminaison",
         },
       },
       openaiCompatTts: {
         provider: {
           title: "Endpoint compatible OpenAI",
           subtitle: "Utilise ton propre serveur TTS compatible OpenAI, local ou distant.",
-          detail: "Endpoint",
+          detail: "Point de terminaison",
         },
       },
       deviceSttDetail: "Appareil",
@@ -10805,7 +10870,7 @@ settingsSession: {
         execution: {
           title: "Exécution du neural local",
           subtitle: "Choisis si la voix neural locale s’exécute sur l’appareil ou sur ton daemon.",
-          options: { auto: "Auto", device: "Appareil", daemon: "Daemon" },
+          options: { auto: "Automatique", device: "Appareil", daemon: "Démon" },
           optionSubtitles: {
             auto: "Préférer le chemin d’exécution recommandé pour cette plateforme.",
             device: "Exécuter la voix neural locale directement sur cet appareil quand c’est pris en charge.",
@@ -10915,6 +10980,17 @@ settingsSession: {
       shareFilePaths: "Partager les chemins de fichiers locaux",
       shareFilePathsSubtitle:
         "Inclure les chemins locaux dans le contexte vocal (non recommandé)",
+      currentUiContextModeTitle: "Contexte de l’interface actuelle",
+      currentUiContextModeSubtitle:
+        "Choisis quand Voice peut utiliser le contexte sémantique limité de la fenêtre active de l’app Happier ou de l’onglet du navigateur.",
+      currentUiContextMode: {
+        offTitle: "Désactivé",
+        offSubtitle: "Voice ne reçoit aucun contexte de l’interface actuelle ni aucune commande contextuelle de ce client.",
+        onDemandTitle: "À la demande",
+        onDemandSubtitle: "Lorsque tu le demandes, Voice peut lire le contexte sémantique limité de cette fenêtre d’app ou de cet onglet de navigateur. Les commandes contextuelles restent soumises à des contrôles distincts.",
+        automaticTitle: "Automatique",
+        automaticSubtitle: "Voice reçoit aussi automatiquement les métadonnées de navigation de base. Le contexte détaillé reste à la demande et les commandes contextuelles restent soumises à des contrôles distincts.",
+      },
     },
     languageTitle: "Langue",
     languageDescription:
@@ -11266,14 +11342,14 @@ settingsSession: {
       rendererTitle: "Moteur de rendu du terminal",
       rendererAuto: "Automatique",
       rendererAutoDescription: "Utilise le moteur de rendu accessible xterm.js sauf si le moteur natif est pleinement éligible.",
-      rendererXtermWebView: "xterm.js WebView",
+      rendererXtermWebView: "xterm.js Vue Web",
       rendererXtermWebViewDescription: "Moteur de rendu de compatibilité avec le meilleur support d’accessibilité.",
       rendererNativeExperimental: "Natif (expérimental)",
       rendererNativeExperimentalDescription: "Préfère Ghostty sur iOS ou Termux sur Android quand tous les prérequis natifs sont remplis.",
     },
     quickKeys: {
-      esc: "Esc",
-      tab: "Tab",
+      esc: "Échap",
+      tab: "Onglet",
       ctrlC: "Ctrl+C",
       ctrlD: "Ctrl+D",
       enter: "Entrée",
@@ -11446,7 +11522,7 @@ settingsSession: {
     welcomeFooterRelayActiveLabel: "Ton relay :",
     welcomeFooterRelayEditAccessibility: "Changer de relay",
     welcomeFooterDocs: "Besoin d’aide ?",
-    welcomeFooterDocsAction: "Docs",
+    welcomeFooterDocsAction: "Documents",
     welcomeFooterGithubLabel: "Dépôt GitHub",
     welcomeFooterDiscordLabel: "Communauté Discord",
 
@@ -11535,7 +11611,7 @@ settingsSession: {
 
                   description: 'Ceci affiche un QR / lien pour connecter ton terminal à ton compte.',
 
-                  copyLabel: 'Auth login',
+                  copyLabel: 'Connexion d\'authentification',
 
               },
 
@@ -11613,7 +11689,7 @@ settingsSession: {
 	          relayAccessUrlTitle: 'URL du relay',
 	          relayAccessUrlSubtitle: 'Saisis une URL que ton téléphone peut joindre.',
 	          relayAccessUrlBody: 'Ça peut être une adresse LAN, un domaine personnalisé ou une URL de tunnel — du moment que ton téléphone peut l’ouvrir.',
-	          relayAccessCloudflareTitle: 'Cloudflare Tunnel',
+	          relayAccessCloudflareTitle: 'Tunnel de fusée nuageuse',
 	          relayAccessCloudflareSubtitle: 'Expose ton relay via un Cloudflare Named Tunnel.',
 	          relayAccessCloudflareBody: 'Crée ou sélectionne un Named Tunnel, puis on le configure pour rediriger le trafic vers ton relay local.',
           changeRelay: 'Changer de serveur',
@@ -11806,10 +11882,10 @@ settingsSession: {
       autoUpdateModes: {
         off: "Désactivé",
         notify: "Notifier",
-        auto: "Auto",
+        auto: "Automatique",
       },
     },
-    daemon: "Daemon",
+    daemon: "Démon",
     status: "État",
     daemonStatus: {
       unknown: "Inconnu",
@@ -11930,7 +12006,7 @@ settingsSession: {
     runtimeInventory: 'Inventaire du runtime Happier',
     runtimeInventoryOverview: 'Vue d’ensemble',
     runtimeInventoryInstallations: 'Installations',
-    runtimeInventoryServices: 'Services',
+    runtimeInventoryServices: 'Prestations',
     runtimeInventoryWarnings: 'Avertissements',
     doctorRepairSummary: 'Résumé de la réparation',
     doctorRepairFindingsSummary: ({ total, warning, error, actionable }: {
@@ -12089,8 +12165,8 @@ settingsSession: {
       codeCopied: "Code copié",
       copyFailed: "Échec de la copie",
       mermaidRenderFailed: "Échec du rendu du diagramme mermaid",
-      diffLabel: "Diff",
-      codeLabel: "Code",
+      diffLabel: "Différence",
+      codeLabel: "Coder",
 
       // Slash menu commands (Lane G)
       slash: {
@@ -12268,7 +12344,7 @@ settingsSession: {
     last30Days: "30 derniers jours",
     totalTokens: "Total tokens",
     totalCost: "Coût total",
-    tokens: "Tokens",
+    tokens: "Jetons",
     cost: "Coût",
     usageOverTime: "Usage dans le temps",
     byModel: "Par modèle",
@@ -12283,7 +12359,7 @@ settingsSession: {
 
     lastYear: "L’an dernier",
     costMode: "Mode de coût",
-    auto: "Auto",
+    auto: "Automatique",
     reported: "Déclaré",
     estimated: "Estimé",
     insights: "Analyses",
@@ -12370,7 +12446,7 @@ settingsSession: {
       topModel: "Modèle de prédilection",
       engine: "Moteur",
       export: {
-        session: "Session",
+        session: "Séance",
         period: "Période",
         metric: "Métrique",
         costMode: "Mode de coût",
@@ -12830,7 +12906,7 @@ settingsSession: {
     readOnlyAccountRecovery: "Les détails de plugin du compte sont disponibles, mais les détails propres à la machine ne le seront pas tant qu’une installation de plugin compatible n’est pas disponible.",
     readOnlySnapshot: "Les détails de plugin en cache sont en lecture seule tant que cette machine est déconnectée. Reconnecte-toi pour gérer les plugins.",
     viewSelectorLabel: "Vues de gestion des plugins",
-    views: { installed: "Installé", discover: "Découvrir", development: "Développement", diagnostics: "Diagnostics" },
+    views: { installed: "Installé", discover: "Découvrir", development: "Développement", diagnostics: "Diagnostic" },
     developmentTitle: "Développement",
     developmentFooter: "Sources locales approuvées et diagnostics de développement remontés par cette machine.",
     developmentEmpty: "Aucune source de développement remontée",
@@ -12847,6 +12923,16 @@ settingsSession: {
     developmentTrustSourceRootTitle: "Faire confiance à ce dossier de plugin ?",
     developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier va installer des dépendances dans ce dossier, le builder et exécuter son code :\n\n${path}\n\nNe continue que si tu fais confiance à tout ce que contient ce dossier et à tout ce qu’il peut télécharger. Tu examineras le plugin lui-même à l’étape suivante.`,
     developmentTrustSourceRootConfirm: "Approuver le dossier",
+    pendingChangesTitle: "En attente de votre décision",
+    pendingChangesFooter: "Modifications de plugin préparées sur cette machine. Un agent peut en préparer une, mais vous seul pouvez l'approuver.",
+    pendingChangesReviewHint: "Affiche la revue complète avant toute approbation.",
+    pendingChangeSourceRootSubtitle: ({ path }: { path: string }) => `Dossier du plugin : ${path}`,
+    pendingChangeInstallSubtitle: ({ pluginId, source }: { pluginId: string; source: string }) => `${pluginId} depuis ${source}`,
+    pendingChangeApplying: "Cette modification a déjà été décidée et est en cours d'application.",
+    pendingChangeExpired: "Cette modification a expiré avant d'être décidée. Demandez-la à nouveau.",
+    pendingChangeRejected: "La modification du plugin a été rejetée.",
+    pendingChangeConfirmRejectBody: "La modification préparée est abandonnée. Rien n'est installé ni approuvé.",
+    pendingChangeFailed: ({ outcome }: { outcome: string }) => `La modification du plugin n'a pas été appliquée (${outcome}).`,
     developmentCreateDirectoryTitle: "Répertoire du plugin",
     developmentCreateDirectoryBody: "Saisis le répertoire absolu du nouveau plugin sur la machine sélectionnée. Le répertoire ne doit pas déjà exister.",
     developmentCreateNameTitle: "Nom du plugin",
@@ -12869,7 +12955,7 @@ settingsSession: {
     developmentPack: "Packager le plugin",
     developmentPackSubtitle: "Crée l’archive installable validée à côté du dossier source approuvé.",
     developmentPackSucceeded: "Package du plugin créé à côté de son dossier source.",
-    diagnosticsSnapshotTitle: "Diagnostics",
+    diagnosticsSnapshotTitle: "Diagnostic",
     diagnosticsSnapshotFooter: "Diagnostics actuels remontés par le registre de plugins de cette machine.",
     diagnosticsSnapshotEmpty: "Aucun diagnostic de plugin actuel",
     diagnosticsSnapshotEmptySubtitle: "Les diagnostics actuels du registre apparaîtront ici quand cette machine les remontera.",
@@ -12888,9 +12974,9 @@ settingsSession: {
     sourceKind: {
       bundled: "Intégré",
       path: "Chemin local",
-      marketplace: "Marketplace",
+      marketplace: "Marché",
       package: "Registre de packages",
-      archive: "Archive",
+      archive: "Archiver",
       catalog: "Catalogue",
     },
     unknownValue: ({ value }: { value: string }) => `Autre : ${value}`,
@@ -12900,6 +12986,7 @@ settingsSession: {
     provenanceTitle: "Source et confiance",
     diagnosticsTitle: "Diagnostics du plugin",
     registryDiagnosticsTitle: "Diagnostics du registre",
+    agentUiDiagnosticsTitle: "Diagnostics de l'interface de l'agent",
     contributionsTitle: "Contributions projetées",
     unsupportedDescriptorField: "Ce champ de descripteur n’est pas pris en charge par cette version de Happier.",
     noDescriptors: "Aucun descripteur rendu par l’hôte n’a été projeté pour cette section.",
@@ -12936,7 +13023,7 @@ settingsSession: {
     registriesNameBody: "Choisis un nom affiché uniquement dans les réglages Happier.",
     registriesScopesTitle: "Scopes de packages",
     registriesScopesBody: "Scopes optionnels, séparés par des virgules, routés vers ce registre.",
-    registriesScopesPlaceholder: "@company, @team",
+    registriesScopesPlaceholder: "@entreprise, @équipe",
     registriesDefaultTitle: "Registre de packages par défaut",
     registriesDefaultBody: "Utiliser ce registre pour les packages sans scope qui ne sont pas routés vers une autre source configurée ?",
     registriesUseAsDefault: "Utiliser par défaut",

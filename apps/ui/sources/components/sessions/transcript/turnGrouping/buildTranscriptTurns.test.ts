@@ -35,6 +35,7 @@ function contextCompactionEventMessage(
 ): ModeSwitchMessage {
     return {
         kind: 'agent-event',
+        localId: null,
         id,
         createdAt,
         event: {

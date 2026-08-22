@@ -10,7 +10,7 @@ describe('resolveAppShellChromeHost', () => {
         expect(resolveAppShellChromeHost({
             isAuthenticated: true,
             isWeb: true,
-            isTauriDesktop: true,
+            isDesktopHost: true,
             isTablet: true,
             isTerminalConnectRoute: true,
         })).toBe('none');
@@ -20,7 +20,7 @@ describe('resolveAppShellChromeHost', () => {
         expect(resolveAppShellChromeHost({
             isAuthenticated: false,
             isWeb: true,
-            isTauriDesktop: true,
+            isDesktopHost: true,
             isTablet: true,
             isTerminalConnectRoute: false,
         })).toBe('unauth-shell');
@@ -30,7 +30,7 @@ describe('resolveAppShellChromeHost', () => {
         expect(resolveAppShellChromeHost({
             isAuthenticated: false,
             isWeb: true,
-            isTauriDesktop: false,
+            isDesktopHost: false,
             isTablet: true,
             isTerminalConnectRoute: false,
         })).toBe('web-top-right');
@@ -40,7 +40,7 @@ describe('resolveAppShellChromeHost', () => {
         const params = {
             isAuthenticated: true,
             isWeb: false,
-            isTauriDesktop: false,
+            isDesktopHost: false,
             isTablet: false,
             isTerminalConnectRoute: false,
         } as ResolveAppShellChromeHostParams & { isWeb: boolean };
@@ -52,7 +52,7 @@ describe('resolveAppShellChromeHost', () => {
         expect(resolveAppShellChromeHost({
             isAuthenticated: true,
             isWeb: true,
-            isTauriDesktop: true,
+            isDesktopHost: true,
             isTablet: true,
             isTerminalConnectRoute: false,
         })).toBe('none');
@@ -62,7 +62,7 @@ describe('resolveAppShellChromeHost', () => {
         expect(resolveAppShellChromeHost({
             isAuthenticated: true,
             isWeb: true,
-            isTauriDesktop: true,
+            isDesktopHost: true,
             isTablet: false,
             isTerminalConnectRoute: false,
         })).toBe('narrow-desktop-fallback');
@@ -72,7 +72,7 @@ describe('resolveAppShellChromeHost', () => {
         expect(resolveAppShellChromeHost({
             isAuthenticated: true,
             isWeb: true,
-            isTauriDesktop: true,
+            isDesktopHost: true,
             isTablet: true,
             isTerminalConnectRoute: false,
         })).toBe('none');

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { getAgentCore, isAgentId, resolveAgentIdFromCliDetectKey } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, resolveAgentIdFromCliDetectKey } from '@/agents/catalog/catalog';
 import { consumeProfileIdParam } from '@/profileRouteParams';
 import { t } from '@/text';
 
@@ -38,7 +38,7 @@ export function useNewSessionProfileSelectionPresentation(params: Readonly<{
         if (availability.available || !availability.reason) return null;
         if (availability.reason.startsWith('requires-agent:')) {
             const required = availability.reason.split(':')[1];
-            const agentLabel = isAgentId(required) ? t(getAgentCore(required).displayNameKey) : required;
+            const agentLabel = isBundledAgentId(required) ? t(getAgentCore(required).displayNameKey) : required;
             return t('newSession.profileAvailability.requiresAgent', { agent: agentLabel });
         }
         if (availability.reason.startsWith('logged-out:')) {
@@ -47,7 +47,8 @@ export function useNewSessionProfileSelectionPresentation(params: Readonly<{
         if (availability.reason.startsWith('cli-not-detected:')) {
             const cli = availability.reason.split(':')[1];
             const agentFromCli = resolveAgentIdFromCliDetectKey(cli);
-            const cliLabel = agentFromCli ? t(getAgentCore(agentFromCli).displayNameKey) : cli;
+            const displayNameKey = getAgentCore(agentFromCli ?? '')?.displayNameKey;
+            const cliLabel = displayNameKey ? t(displayNameKey) : cli;
             return t('newSession.profileAvailability.cliNotDetected', { cli: cliLabel });
         }
         return availability.reason;

@@ -16,7 +16,11 @@ import {
 } from './sessionActionFieldOptions';
 
 function resolveAgentLabel(agentId: string): string {
-    return t(getAgentCore(agentId as AgentId).displayNameKey);
+    // An Agent with no bundled core has no translated display name. The id is
+    // this surface's own convention for an unlabelled backend, and it is what
+    // the option list already falls back to for a backend with no entry title.
+    const core = getAgentCore(agentId as AgentId);
+    return core ? t(core.displayNameKey) : agentId;
 }
 
 /** The card's resolver: the full paint, including the snapshot-derived `disabled` flags. */

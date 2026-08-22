@@ -60,8 +60,8 @@ vi.mock('@/sync/store/settingsWriters', () => ({
     useApplyLocalSettings: () => applyLocalSettingsMock,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => true,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => true,
 }));
 
 vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () => ({

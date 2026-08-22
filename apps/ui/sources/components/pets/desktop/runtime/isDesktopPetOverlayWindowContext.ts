@@ -1,4 +1,4 @@
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 function normalizePathname(pathname: string): string {
     if (pathname.length <= 1) {
@@ -8,7 +8,7 @@ function normalizePathname(pathname: string): string {
 }
 
 export function isDesktopPetOverlayWindowContext(): boolean {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return false;
     }
     if (typeof window === 'undefined' || typeof window.location?.href !== 'string') {

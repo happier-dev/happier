@@ -8,6 +8,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { t } from '@/text';
 import type { SessionRollbackTarget } from '@happier-dev/protocol';
+import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { executeTranscriptRollbackAction, type CheckpointCodeRollbackEvidence } from './transcriptRollbackActionRunner';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -22,6 +23,7 @@ export const TranscriptRollbackActionButton = React.memo((props: {
     style?: any;
     pressedStyle?: any;
     checkpointCodeRollback?: CheckpointCodeRollbackEvidence;
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 }) => {
     const { theme } = useUnistyles();
     const sessionServerId = usePreferredServerIdForSession(props.sessionId);
@@ -29,8 +31,9 @@ export const TranscriptRollbackActionButton = React.memo((props: {
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: () => sessionServerId,
+            currentAgentCapabilities: props.currentAgentCapabilities,
         }),
-        [sessionServerId],
+        [props.currentAgentCapabilities, sessionServerId],
     );
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 

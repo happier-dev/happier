@@ -49,7 +49,10 @@ import type { BrowserAutomationControlService } from '@/sync/domains/browser/aut
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import {
+    createPluginUiProjectedActionResolver,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 import {
     selectPluginBrowserActionsForPlacement,
     selectPluginBrowserToolbarActions,
@@ -59,6 +62,11 @@ import {
 import {
     resolvePluginBrowserPolicyDecision,
 } from '@/sync/domains/plugins/browser/policy';
+import {
+    resolvePluginUiClientActionRegistration,
+    usePluginUiClientExecutableRegistrationRevision,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
+import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import {
     createPluginUiPolicyEvaluationContext,
     type PluginUiPolicyEvaluationContext,
@@ -394,13 +402,35 @@ export function BrowserShell(props: Readonly<{
         ),
         [props.browserProfile?.profile?.storageMode, props.platform, props.pluginBrowserPolicyContext],
     );
+    const clientExecutableRegistrationRevision = usePluginUiClientExecutableRegistrationRevision();
+    const resolveContributedAction = React.useMemo(
+        () => createPluginUiProjectedActionResolver(props.pluginUiProjection?.actionsById),
+        [props.pluginUiProjection?.actionsById],
+    );
+    const hasCurrentClientActionRegistration = React.useCallback((browserAction: PluginBrowserActionProjection): boolean => {
+        const action = resolveContributedAction(browserAction.actionIdentity);
+        if (!action || action.execution.target !== 'client') return true;
+        const projectionGeneration = props.pluginUiProjection?.generation;
+        return typeof projectionGeneration === 'number'
+            && resolvePluginUiClientActionRegistration({
+                action,
+                projectionGeneration,
+                platform: resolvePluginUiClientExecutablePlatform(),
+            }) !== null;
+    }, [props.pluginUiProjection?.generation, resolveContributedAction]);
     const pluginBrowserToolbarActions = React.useMemo(
         () => selectPluginBrowserToolbarActions({
             projection: props.pluginBrowserProjection,
             targetId: activeView?.target.targetId,
             policyContext: pluginBrowserPolicyContext,
-        }),
-        [activeView?.target.targetId, pluginBrowserPolicyContext, props.pluginBrowserProjection],
+        }).filter(hasCurrentClientActionRegistration),
+        [
+            activeView?.target.targetId,
+            clientExecutableRegistrationRevision,
+            hasCurrentClientActionRegistration,
+            pluginBrowserPolicyContext,
+            props.pluginBrowserProjection,
+        ],
     );
     const pluginBrowserDetailsPanelActions = React.useMemo(
         () => selectPluginBrowserActionsForPlacement({
@@ -408,8 +438,14 @@ export function BrowserShell(props: Readonly<{
             targetId: activeView?.target.targetId,
             placement: 'detailsPanel',
             policyContext: pluginBrowserPolicyContext,
-        }),
-        [activeView?.target.targetId, pluginBrowserPolicyContext, props.pluginBrowserProjection],
+        }).filter(hasCurrentClientActionRegistration),
+        [
+            activeView?.target.targetId,
+            clientExecutableRegistrationRevision,
+            hasCurrentClientActionRegistration,
+            pluginBrowserPolicyContext,
+            props.pluginBrowserProjection,
+        ],
     );
     const pluginBrowserContextMenuActions = React.useMemo(
         () => selectPluginBrowserActionsForPlacement({
@@ -417,8 +453,14 @@ export function BrowserShell(props: Readonly<{
             targetId: activeView?.target.targetId,
             placement: 'contextMenu',
             policyContext: pluginBrowserPolicyContext,
-        }),
-        [activeView?.target.targetId, pluginBrowserPolicyContext, props.pluginBrowserProjection],
+        }).filter(hasCurrentClientActionRegistration),
+        [
+            activeView?.target.targetId,
+            clientExecutableRegistrationRevision,
+            hasCurrentClientActionRegistration,
+            pluginBrowserPolicyContext,
+            props.pluginBrowserProjection,
+        ],
     );
     const showLaunchpad = !activeView;
     const activeLocalPreviewMachineId = activeView?.target.kind === 'localServicePreview'

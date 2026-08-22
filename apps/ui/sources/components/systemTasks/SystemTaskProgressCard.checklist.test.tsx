@@ -13,8 +13,8 @@ import type { SystemTaskRunState } from './types';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => false));
-const invokeTauriMock = vi.hoisted(() => vi.fn(async () => undefined));
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => false));
+const invokeDesktopHostMock = vi.hoisted(() => vi.fn(async () => undefined));
 const openUrlMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -65,9 +65,9 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: isTauriDesktopMock,
-    invokeTauri: invokeTauriMock,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: isDesktopHostMock,
+    invokeDesktopHost: invokeDesktopHostMock,
 }));
 
 vi.mock('@tauri-apps/api/path', () => ({
@@ -91,7 +91,7 @@ function createSnapshot(overrides: Partial<SystemTaskRunState> = {}): SystemTask
 
 describe('SystemTaskProgressCard checklist rendering', () => {
     it('renders checklist rows for observed steps and tags earlier ones as done', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const events: readonly SystemTaskEvent[] = [
@@ -141,7 +141,7 @@ describe('SystemTaskProgressCard checklist rendering', () => {
     });
 
     it('supports a checklist-only variant without the verbose status rows', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const events: readonly SystemTaskEvent[] = [
@@ -179,7 +179,7 @@ describe('SystemTaskProgressCard checklist rendering', () => {
     });
 
     it('falls back to the raw step id when no translation key is registered', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const events: readonly SystemTaskEvent[] = [
@@ -213,20 +213,20 @@ describe('SystemTaskProgressCard checklist rendering', () => {
     });
 
     it('shows Open logs only on desktop and invokes the tauri command with an absolute path', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValueOnce(undefined);
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValueOnce(undefined);
         const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, { snapshot: createSnapshot() }));
 
         await screen.pressByTestIdAsync('system-task-progress-open-logs');
 
-        expect(invokeTauriMock).toHaveBeenCalledWith('system_tasks_open_log_path', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('system_tasks_open_log_path', {
             path: '/home/test/.happier/logs',
         });
     });
 
     it('allows the caller to omit the group title by passing title=null', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, { snapshot: createSnapshot(), title: null }));
@@ -235,7 +235,7 @@ describe('SystemTaskProgressCard checklist rendering', () => {
     });
 
     it('renders an open action for URL prompts and opens the provided URL', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         openUrlMock.mockResolvedValueOnce(undefined);
         const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
@@ -266,7 +266,7 @@ describe('SystemTaskProgressCard checklist rendering', () => {
     });
 
     it('uses the tailscale-specific install label for install prompts', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {

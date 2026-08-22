@@ -1,6 +1,6 @@
 import { readSessionAgentTransitionDividerV1 } from '@happier-dev/protocol';
 
-import { isAgentId, type AgentId } from '@/agents/registry/registryCore';
+import { isBundledAgentId, type AgentId } from '@/agents/registry/registryCore';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
 /**
@@ -67,6 +67,49 @@ function readRowSeq(value: unknown): number | null {
     return normalized >= 0 ? normalized : null;
 }
 
+function collectSessionTranscriptAgentAttributionBoundaries(
+    messages: Iterable<Message | null | undefined> | null | undefined,
+): SessionAgentTransitionBoundary[] {
+    if (!messages) return [];
+
+    const boundaries: SessionAgentTransitionBoundary[] = [];
+    for (const message of messages) {
+        if (!message || message.kind !== 'agent-event') continue;
+        const seq = readRowSeq(message.seq);
+        if (seq === null) continue;
+        // Only a row at the reserved localId can contribute a boundary: a sidecar
+        // on an ordinary row would otherwise re-attribute the whole transcript
+        // before it to an Agent that never ran.
+        const divider = readSessionAgentTransitionDividerV1({
+            localId: message.localId,
+            event: message.event,
+        });
+        if (!divider) continue;
+        if (!isBundledAgentId(divider.fromAgentId) || !isBundledAgentId(divider.toAgentId)) continue;
+        boundaries.push({
+            seq,
+            fromAgentId: divider.fromAgentId,
+            toAgentId: divider.toAgentId,
+        });
+    }
+    boundaries.sort((a, b) => a.seq - b.seq);
+    return boundaries;
+}
+
+/**
+ * The complete output-relevant input for transcript-root attribution.
+ *
+ * Streaming text and unrelated message-map replacements are deliberately not
+ * represented: they cannot change historical Agent attribution. The list is
+ * sorted before serialization, so map insertion order cannot republish an
+ * otherwise equivalent divider set.
+ */
+export function createSessionTranscriptAgentAttributionBoundarySignature(
+    messages: Iterable<Message | null | undefined> | null | undefined,
+): string {
+    return JSON.stringify(collectSessionTranscriptAgentAttributionBoundaries(messages));
+}
+
 /**
  * Build the boundary index for one transcript. Called once per transcript, not
  * once per row: resolution is a lookup against a list that is empty or tiny.
@@ -79,25 +122,8 @@ function readRowSeq(value: unknown): number | null {
 export function buildSessionTranscriptAgentAttributionIndex(
     messages: Iterable<Message | null | undefined> | null | undefined,
 ): SessionTranscriptAgentAttributionIndex {
-    if (!messages) return EMPTY_SESSION_TRANSCRIPT_AGENT_ATTRIBUTION_INDEX;
-
-    const boundaries: SessionAgentTransitionBoundary[] = [];
-    for (const message of messages) {
-        if (!message || message.kind !== 'agent-event') continue;
-        const seq = readRowSeq(message.seq);
-        if (seq === null) continue;
-        const divider = readSessionAgentTransitionDividerV1(message.event);
-        if (!divider) continue;
-        if (!isAgentId(divider.fromAgentId) || !isAgentId(divider.toAgentId)) continue;
-        boundaries.push({
-            seq,
-            fromAgentId: divider.fromAgentId,
-            toAgentId: divider.toAgentId,
-        });
-    }
+    const boundaries = collectSessionTranscriptAgentAttributionBoundaries(messages);
     if (boundaries.length === 0) return EMPTY_SESSION_TRANSCRIPT_AGENT_ATTRIBUTION_INDEX;
-
-    boundaries.sort((a, b) => a.seq - b.seq);
     return { boundaries };
 }
 

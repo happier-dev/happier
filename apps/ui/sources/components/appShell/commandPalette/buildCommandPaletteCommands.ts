@@ -16,6 +16,11 @@ import { t } from '@/text';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
+import { openPluginContributedAction } from '@/components/plugins/actions/openPluginContributedAction';
+import {
+  resolvePluginContributedActionIconName,
+} from '@/components/plugins/actions/pluginContributedActionPresentation';
+import type { PluginContributedActionController } from '@/components/plugins/actions/pluginContributedActionController';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -92,6 +97,23 @@ type CompactAppDestinationCommandParams =
     onActivateCompactAppDestination: (destination: CompactAppDestination) => void;
   }>;
 
+/**
+ * The palette consumes already-admitted Action descriptors from the shared
+ * controller. It owns presentation only: currentness, availability, forms,
+ * policy, and dispatch remain at that controller and its canonical dispatcher.
+ */
+type PluginActionPresentationCommandParams =
+  | Readonly<{
+    pluginActionPresentation?: undefined;
+  }>
+  | Readonly<{
+    pluginActionPresentation: Readonly<{
+      controller: PluginContributedActionController;
+      scope: 'global' | 'session';
+      signal?: AbortSignal;
+    }>;
+  }>;
+
 function resolveCompactAppDestinationCommandSubtitle(
   destination: CompactAppDestination,
 ): string | undefined {
@@ -111,7 +133,9 @@ function resolveCompactAppDestinationCommandSubtitle(
 }
 
 export function buildCommandPaletteCommands(
-  params: BuildCommandPaletteCommandsBaseParams & CompactAppDestinationCommandParams,
+  params: BuildCommandPaletteCommandsBaseParams
+    & CompactAppDestinationCommandParams
+    & PluginActionPresentationCommandParams,
 ): Command[] {
   const {
     sessionsById,
@@ -260,6 +284,32 @@ export function buildCommandPaletteCommands(
       category: t('commandPalette.commands.recentSessionsCategory'),
       action: () => nav.navigateToSession(sessionId),
     });
+  }
+
+  const pluginActionPresentation = params.pluginActionPresentation;
+  if (pluginActionPresentation) {
+    for (const action of pluginActionPresentation.controller.list({
+      placement: 'commandPalette',
+      scope: pluginActionPresentation.scope,
+    })) {
+      const subtitle = [action.description, action.qualifiedActionId]
+        .filter((part): part is string => typeof part === 'string' && part.length > 0)
+        .join(' · ');
+      cmds.push({
+        id: `plugin-action:${action.qualifiedActionId}`,
+        title: action.title,
+        ...(subtitle ? { subtitle } : {}),
+        icon: resolvePluginContributedActionIconName(action.icon),
+        category: action.identity.pluginId,
+        action: async () => {
+          await openPluginContributedAction({
+            controller: pluginActionPresentation.controller,
+            action,
+            ...(pluginActionPresentation.signal ? { signal: pluginActionPresentation.signal } : {}),
+          });
+        },
+      });
+    }
   }
 
   const state = storage.getState() as any;

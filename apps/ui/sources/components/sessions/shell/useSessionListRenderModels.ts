@@ -19,6 +19,7 @@ import {
     createSessionListReachabilitySummaryCache,
 } from './buildSessionListReachabilitySummary';
 import { buildSessionListRowViewModels, type SessionListRowViewModel } from './sessionListRowViewModels';
+import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 import {
     useSessionListRelativeNowMs,
     useSessionListRuntimeNowMs,
@@ -182,6 +183,8 @@ export function useSessionListRenderModels(input: Readonly<{
     rowSubscriptionKeys?: ReadonlySet<string> | null;
     clocksActive?: boolean | null;
     rowViewModelMode?: 'list' | 'deferred' | null;
+    attentionStandingEnabled?: boolean | null;
+    attentionStandingPolicy?: SessionAttentionStandingPolicy | null;
 }>) {
     const deriveRowViewModels = input.rowViewModelMode !== 'deferred';
     const pinnedKeySet = React.useMemo(() => (
@@ -338,10 +341,14 @@ export function useSessionListRenderModels(input: Readonly<{
                 selectedSessionId: input.selectedSessionId,
                 showServerBadge: input.showServerBadge,
                 showPinnedServerBadge: input.showPinnedServerBadge,
+                attentionStandingEnabled: input.attentionStandingEnabled === true,
+                attentionStandingPolicy: input.attentionStandingPolicy ?? undefined,
             }),
         );
     }, [
         pinnedKeySet,
+        input.attentionStandingEnabled,
+        input.attentionStandingPolicy,
         input.selectedSessionId,
         input.showPinnedServerBadge,
         input.showServerBadge,
@@ -387,9 +394,13 @@ export function useSessionListRenderModels(input: Readonly<{
             selectedSessionId: input.selectedSessionId,
             showServerBadge: input.showServerBadge,
             showPinnedServerBadge: input.showPinnedServerBadge,
+            attentionStandingEnabled: input.attentionStandingEnabled === true,
+            attentionStandingPolicy: input.attentionStandingPolicy ?? undefined,
         });
     }, [
         input.activeColorMode,
+        input.attentionStandingEnabled,
+        input.attentionStandingPolicy,
         input.hideInactiveSessions,
         input.identityDisplay,
         input.selectedSessionId,

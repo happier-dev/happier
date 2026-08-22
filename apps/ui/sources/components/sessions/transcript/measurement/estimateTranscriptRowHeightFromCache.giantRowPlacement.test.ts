@@ -77,6 +77,7 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
 
     function estimateMessageRowPx(text: string): number {
         const estimate = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => agentText('m1', text),
             item: { kind: 'message', id: 'i1', messageId: 'm1' } as TranscriptRowShellItem,
@@ -127,6 +128,7 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
             messageId === 'a1' ? agentText('a1', 'x'.repeat(GIANT_MARKDOWN_CHARS)) : null
         );
         const wholeTurn = estimateTranscriptRowHeightFromContent({
+            platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById,
             item: {
@@ -142,6 +144,7 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
         expect(wholeTurn).toBeUndefined();
 
         const decomposedRow = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById,
             item: { kind: 'message', id: 'i-a1', messageId: 'a1' } as TranscriptRowShellItem,
@@ -153,12 +156,13 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
     it('DOES bound a giant pending-queue row — that row has its own painted ceiling', () => {
         // The C-1 no-ceiling rule is about rows whose painted height is unbounded. The pending
         // queue is not one: `PendingMessagesTranscriptBlock` renders its messages inside a
-        // `ScrollView` carrying `maxHeight: transcriptPendingQueueMaxHeightPx` (default 80), so a
-        // giant paste is SCROLLED inside a ~95px row, never painted at multi-thousand px. Modelling
-        // it unbounded put a ~340px phantom gap under the tail row on every multi-message send
-        // (J/D2, 2026-07-30); the measured painted heights live in
-        // `estimateTranscriptRowHeightFromCache.pendingChrome.test.ts`.
+        // `ScrollView` carrying the bound `resolvePendingQueueScrollMaxHeightPx` decides — the head's
+        // six painted lines plus the compact backlog strip for a queue — so a giant paste is
+        // SCROLLED, never painted at multi-thousand px. Modelling it unbounded put a ~340px phantom
+        // gap under the tail row on every multi-message send (J/D2, 2026-07-30); the measured
+        // painted heights live in `estimateTranscriptRowHeightFromCache.pendingChrome.test.ts`.
         const estimate = estimateTranscriptRowHeightFromContent({
+            platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => null,
             item: {
@@ -180,7 +184,8 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
                 discardedMessages: [],
             } as unknown as TranscriptRowShellItem,
         }) as number;
-        expect(estimate).toBeLessThan(200);
+        // header 14.625 + (head cap 166 + backlog strip 80).
+        expect(estimate).toBeLessThanOrEqual(14.625 + 166 + 80);
         expect(estimate).toBeGreaterThan(80);
     });
 });

@@ -6,6 +6,9 @@ import type {
     PluginUiPageHeaderActionProjection,
     PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
+import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { comparePluginContributionOrder } from '@/sync/domains/plugins/contributionOrder';
 import { resolvePluginUiText } from '@/sync/domains/plugins/ui/i18n';
 import { getPreferredLanguage } from '@/text';
@@ -16,22 +19,31 @@ import {
     resolvePluginUiIconName,
 } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import {
+    resolvePluginUiClientActionRegistration,
+    usePluginUiClientExecutableRegistrationRevision,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
+import {
     dispatchPluginSurfaceAction,
     type PluginSurfaceActionDispatchOutcome,
+    type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceContributedActionTransport,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import {
+    createPluginActionCurrentIntentHandler,
+} from '@/components/plugins/surfaces/pluginSurfaceFeedback';
 import type { PluginSurfaceLaunchAuthority } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import type {
     PluginSurfaceOpenHandler,
     PluginSurfaceOpenOutcome,
 } from '@/components/plugins/surfaces/openPluginSurface';
+import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 
 import type { PluginAppPage } from './pluginAppPages';
 
 /**
  * Page-header chrome is a host presentation of the admitted app-page metadata,
  * not another contribution catalog. The Registry has already qualified the
- * command; this adapter only applies the established ordering and dispatches
+ * semantic action; this adapter only applies the established ordering and dispatches
  * it through the same Action/openSurface owners used elsewhere in the shell.
  */
 export function resolvePluginAppPageHeaderActions(
@@ -47,37 +59,80 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
     /** Exact selected origin of the page that owns this header's chrome. */
     actionAuthority: PluginSurfaceLaunchAuthority | null | undefined;
     openSurface: PluginSurfaceOpenHandler;
+    resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
     execute?: PluginSurfaceContributedActionTransport;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
+    readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
 }>): Promise<PluginSurfaceActionDispatchOutcome | PluginSurfaceOpenOutcome> {
-    if (input.action.command.kind === 'openSurface') {
+    const semanticAction = input.action.action;
+    if (semanticAction.kind === 'openSurface') {
         return await input.openSurface({
-            destination: input.action.command.destination,
-            ...(input.action.command.input === undefined ? {} : { input: input.action.command.input }),
-            ...(input.action.command.subPath === undefined ? {} : { subPath: input.action.command.subPath }),
-            ...(input.action.command.instanceKey === undefined ? {} : { instanceKey: input.action.command.instanceKey }),
+            destination: semanticAction.destination,
+            ...(semanticAction.input === undefined ? {} : { input: semanticAction.input }),
+            ...(semanticAction.subPath === undefined ? {} : { subPath: semanticAction.subPath }),
+            ...(semanticAction.instanceKey === undefined ? {} : { instanceKey: semanticAction.instanceKey }),
         });
     }
 
+    const projectedAction = input.resolveContributedAction?.(semanticAction.action) ?? null;
     const authority = input.actionAuthority;
     const generation = authority?.generation ?? null;
     const machineId = authority?.machineId?.trim() ?? '';
-    if (generation === null || machineId.length === 0) {
+    // A daemon binding is a daemon-target fact, never a blanket action gate.
+    // The canonical dispatcher still owns the target result and fail-closed
+    // missing-projection outcome after this caller supplies its exact lookup.
+    if (projectedAction?.execution.target === 'daemon' && (generation === null || machineId.length === 0)) {
         return { ok: false, code: 'unavailable', reason: 'plugin_ui_action_unavailable' };
     }
+    const isCurrent = input.isCurrent ?? (() => true);
+    const requestCurrentIntent = projectedAction?.execution.target === 'client'
+        && typeof generation === 'number'
+        ? createPluginActionCurrentIntentHandler({
+            requester: {
+                pluginId: projectedAction.pluginId,
+                contributionId: projectedAction.id,
+                generationId: String(generation),
+                invocationId: `ui-action:${generation}`,
+            },
+            ...(input.signal ? { signal: input.signal } : {}),
+            isCurrent,
+        })
+        : undefined;
     return await dispatchPluginSurfaceAction({
         callerPluginId: input.page.pluginId,
-        action: input.action.command.action,
+        action: semanticAction.action,
         // Absence has one canonical RPC sentinel for a contributed Action;
-        // the page-header command itself retains absence for openSurface.
-        input: input.action.command.input ?? null,
-        contributedAction: {
-            machineId,
-            serverId: authority?.serverId ?? null,
-            expectedGeneration: String(generation),
-            ...(input.execute ? { execute: input.execute } : {}),
-        },
+        // the page-header action itself retains absence for openSurface.
+        input: semanticAction.input ?? null,
+        ...(input.resolveContributedAction
+            ? { resolveContributedAction: input.resolveContributedAction }
+            : {}),
+        ...(projectedAction?.execution.target === 'daemon'
+            ? {
+                contributedAction: {
+                    machineId,
+                    serverId: authority?.serverId ?? null,
+                    expectedGeneration: String(generation),
+                    ...(input.execute ? { execute: input.execute } : {}),
+                },
+            }
+            : {}),
+        ...(projectedAction?.execution.target === 'client'
+            && typeof generation === 'number'
+            && Number.isInteger(generation)
+            && generation >= 0
+            ? {
+                clientAction: {
+                    projectionGeneration: generation,
+                    openSurface: input.openSurface,
+                    ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
+                    ...(input.readCurrentUiContext
+                        ? { currentUiContext: input.readCurrentUiContext }
+                        : {}),
+                },
+            }
+            : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
     });
@@ -109,16 +164,36 @@ export function PluginAppPageHeaderActions(props: Readonly<{
     isCurrent?: () => boolean;
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
+    const currentUiContextReader = useOptionalCurrentUiContextReader();
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+    usePluginUiClientExecutableRegistrationRevision();
+    const resolveContributedAction = React.useMemo(
+        () => createPluginUiProjectedActionResolver(props.projection?.actionsById),
+        [props.projection?.actionsById],
+    );
     if (props.actions.length === 0) return null;
 
-    const canExecuteContributedAction = (
-        props.actionAuthority?.generation !== null
-        && props.actionAuthority?.generation !== undefined
-        && (props.actionAuthority?.machineId?.trim().length ?? 0) > 0
-        && props.actionAuthority?.accountLifetime?.isCurrent() !== false
-        && props.isCurrent?.() !== false
-    );
+    const canExecuteContributedAction = (action: PluginUiPageHeaderActionProjection): boolean => {
+        if (action.action.kind !== 'executeAction') return true;
+        const projectedAction = resolveContributedAction(action.action.action);
+        if (!projectedAction) return false;
+        const locallyCurrent = props.actionAuthority?.accountLifetime?.isCurrent() !== false
+            && props.isCurrent?.() !== false;
+        if (projectedAction.execution.target === 'client') {
+            const projectionGeneration = props.actionAuthority?.generation;
+            return locallyCurrent
+                && typeof projectionGeneration === 'number'
+                && resolvePluginUiClientActionRegistration({
+                    action: projectedAction,
+                    projectionGeneration,
+                    platform: resolvePluginUiClientExecutablePlatform(),
+                }) !== null;
+        }
+        return locallyCurrent
+            && props.actionAuthority?.generation !== null
+            && props.actionAuthority?.generation !== undefined
+            && (props.actionAuthority?.machineId?.trim().length ?? 0) > 0;
+    };
 
     return (
         <View style={{ alignItems: 'center', flexDirection: 'row' }}>
@@ -128,7 +203,7 @@ export function PluginAppPageHeaderActions(props: Readonly<{
                     projection: props.projection,
                     pluginId: props.page.pluginId,
                 });
-                const disabled = action.command.kind === 'executeAction' && !canExecuteContributedAction;
+                const disabled = action.action.kind === 'executeAction' && !canExecuteContributedAction(action);
                 return (
                     <Pressable
                         key={action.id}
@@ -142,8 +217,12 @@ export function PluginAppPageHeaderActions(props: Readonly<{
                                 page: props.page,
                                 actionAuthority: props.actionAuthority,
                                 openSurface: props.openSurface,
+                                resolveContributedAction,
                                 ...(props.signal ? { signal: props.signal } : {}),
                                 ...(props.isCurrent ? { isCurrent: props.isCurrent } : {}),
+                                ...(currentUiContextReader
+                                    ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
+                                    : {}),
                             }), { tag: 'PluginAppPageHeaderActions.dispatch' });
                         }}
                         style={({ pressed }) => ({

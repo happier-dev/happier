@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -224,11 +224,11 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     }, [modelOptions, props.onSelectionChange]);
 
     const catalogAgentId = React.useMemo<AgentId | null>(() => {
-        if (isAgentId(props.runtimeCarrierAgentId)) {
+        if (isBundledAgentId(props.runtimeCarrierAgentId)) {
             return props.runtimeCarrierAgentId;
         }
         return resolveCatalogAgentIdForBackendTarget(props.backendTarget)
-            ?? (isAgentId(props.backendTarget.backendId) ? props.backendTarget.backendId : null);
+            ?? (isBundledAgentId(props.backendTarget.backendId) ? props.backendTarget.backendId : null);
     }, [props.backendTarget, props.runtimeCarrierAgentId]);
     const providerCore = React.useMemo(() => (
         catalogAgentId ? getAgentCore(catalogAgentId) : null

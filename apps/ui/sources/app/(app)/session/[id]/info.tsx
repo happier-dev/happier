@@ -22,6 +22,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { DEFAULT_AGENT_ID, getAgentCore } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { useSessionSharingSupport } from '@/hooks/session/useSessionSharingSupport';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
@@ -53,6 +55,7 @@ import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/ses
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { resolveSessionActionDefaultBackendTitle } from '@/sync/domains/session/resolveSessionActionDefaultBackendTitle';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -68,7 +71,11 @@ import {
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNPIN_ID,
 } from '@/components/sessions/actions/sessionActionIds';
-import { listVisibleSessionActionIds, resolveSessionReadStateActionId } from '@/components/sessions/actions/sessionActionAvailability';
+import {
+    listVisibleSessionActionIds,
+    resolveSessionAttentionStandingActionId,
+    resolveSessionReadStateActionId,
+} from '@/components/sessions/actions/sessionActionAvailability';
 import { createSessionActionInfoItemProps } from '@/components/sessions/actions/sessionActionPresentation';
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
@@ -89,6 +96,8 @@ import {
     type SessionOrganizationMutationScope,
 } from '@/sync/ops/sessionOrganization';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
+import { resolveSessionAttentionStanding } from '@/sync/domains/session/organization/attentionStanding';
+import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
 import {
     buildSessionDebugInformation,
     isSessionDebugInformationEnabled,
@@ -257,11 +266,15 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         serverId: sessionServerId ?? null,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready' ? daemonMergedProjection.inputs : null;
+    const currentAgentCapabilities = React.useMemo(() => readCurrentProjectedAgentCapabilities({
+        projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+        agentId: resolveAgentIdFromSessionMetadata(metadata),
+    }), [daemonMergedProjectionInputs?.pluginProjectionV2, metadata]);
     const sessionActionDefaultBackend = React.useMemo(
         () => resolveSessionActionDefaultBackend({
             session,
             enabledAgentIds,
-            fallbackAgentId: agentId,
+            fallbackAgentId: core?.id ?? null,
         }),
         [agentId, enabledAgentIds, session],
     );
@@ -312,8 +325,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [actionsSettingsV1]);
 
     const forkSupported = React.useMemo(() => {
-        return canForkConversation({ session, replayEnabled: sessionReplayEnabled }) === true;
-    }, [session, sessionReplayEnabled]);
+        return canForkConversation({
+            session,
+            replayEnabled: sessionReplayEnabled,
+            agentSwitchingEnabled,
+            currentAgentCapabilities,
+        }) === true;
+    }, [agentSwitchingEnabled, currentAgentCapabilities, session, sessionReplayEnabled]);
     const handoffActionSpec = React.useMemo(() => getActionSpec('session.handoff'), []);
     const handoffActionEnabled = React.useMemo(() => {
         return isActionEnabledInState(
@@ -337,16 +355,19 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const newSessionSeedMachineId = reachableMachineId ?? metadata?.machineId ?? null;
     const newSessionSeedDirectory = reachableMachineTarget?.basePath ?? metadata?.path ?? null;
 
-    const vendorResumeLabelKey = core.resume.uiVendorResumeIdLabelKey;
-    const vendorResumeCopiedKey = core.resume.uiVendorResumeIdCopiedKey;
+    const vendorResumeLabelKey = core?.resume.uiVendorResumeIdLabelKey ?? null;
+    const vendorResumeCopiedKey = core?.resume.uiVendorResumeIdCopiedKey ?? null;
     const vendorResumeId = React.useMemo(() => {
         return getAgentVendorResumeId(metadata, agentId);
     }, [agentId, metadata]);
-    const providerDisplayName = React.useMemo(() => t(core.displayNameKey), [core.displayNameKey]);
+    const providerDisplayName = React.useMemo(
+        () => core ? t(core.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
+        [agentId, core],
+    );
     const providerSessionIdForDebug = React.useMemo(() => resolveProviderSessionIdForDebug({
         metadata,
-        vendorResumeIdField: core.resume.vendorResumeIdField,
-    }), [core.resume.vendorResumeIdField, metadata]);
+        vendorResumeIdField: core?.resume.vendorResumeIdField,
+    }), [core?.resume.vendorResumeIdField, metadata]);
     const providerSessionArtifactPath = React.useMemo(
         () => resolveProviderSessionArtifactPath(metadata),
         [metadata],
@@ -467,13 +488,32 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     );
     const isArchivedSession = session.archivedAt != null;
     const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
+    const sessionSettingsKey = typeof resolvedServerId === 'string' && resolvedServerId.trim()
+        ? sessionTagKey(resolvedServerId, session.id)
+        : null;
+    const attentionStanding = useSessionAttentionStandingInputs(
+        organizationListViewState.attentionStandingOverridesBySessionKey,
+    );
+    const attentionStandingEnabled = attentionStanding.actionEnabled && sessionSettingsKey != null;
+    const isAttentionStandingSession = sessionSettingsKey != null
+        && resolveSessionAttentionStanding(attentionStanding.policy, sessionSettingsKey);
     const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
         session,
         serverId: scopedMutationServerId,
         currentUserId,
         isConnected: sessionStatus.isConnected,
         isPinned: isPinnedSession,
-    }), [currentUserId, isPinnedSession, scopedMutationServerId, session, sessionStatus.isConnected]);
+        attentionStandingEnabled,
+        attentionStanding: isAttentionStandingSession,
+    }), [
+        attentionStandingEnabled,
+        currentUserId,
+        isAttentionStandingSession,
+        isPinnedSession,
+        scopedMutationServerId,
+        session,
+        sessionStatus.isConnected,
+    ]);
     const canStopSession = sessionActionTarget.isActive && sessionActionTarget.canStop;
     const canArchiveSession = sessionActionTarget.canArchive;
     const canDeleteSession = sessionActionTarget.canDelete;
@@ -482,9 +522,6 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         [sessionActionTarget],
     );
     const canRenameSession = visibleSessionActionIds.has(SESSION_ACTION_RENAME_ID);
-    const sessionSettingsKey = typeof resolvedServerId === 'string' && resolvedServerId.trim()
-        ? sessionTagKey(resolvedServerId, session.id)
-        : null;
     const sessionInfoTagEntries = sessionSettingsKey
         ? sessionTagsV1[sessionSettingsKey] ?? []
         : [];
@@ -541,6 +578,16 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             : null,
         [readStateActionId, theme.colors.accent.blue],
     );
+    const attentionStandingActionId = React.useMemo(
+        () => resolveSessionAttentionStandingActionId(sessionActionTarget),
+        [sessionActionTarget],
+    );
+    const attentionStandingInfoItem = React.useMemo(
+        () => attentionStandingActionId
+            ? createSessionActionInfoItemProps({ actionId: attentionStandingActionId, iconColor: theme.colors.accent.blue })
+            : null,
+        [attentionStandingActionId, theme.colors.accent.blue],
+    );
     const moveTargets = React.useMemo(() => buildSessionInfoMoveTargets({
         sessionFolders: sessionFoldersV1,
         workspace: resolveSessionInfoWorkspaceRef(session, scopedMutationServerId),
@@ -554,6 +601,15 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         });
     }, [readStateActionId, sessionActionTarget]);
     const [updatingReadState, performReadStateAction] = useHappyAction(handleReadStateAction);
+
+    const handleAttentionStandingAction = useCallback(async () => {
+        if (!attentionStandingActionId) return;
+        await executeSessionAction({
+            actionId: attentionStandingActionId,
+            target: sessionActionTarget,
+        });
+    }, [attentionStandingActionId, sessionActionTarget]);
+    const [updatingAttentionStanding, performAttentionStandingAction] = useHappyAction(handleAttentionStandingAction);
 
     const handleTogglePinned = useCallback(async () => {
         if (!sessionSettingsKey) return;
@@ -685,6 +741,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             forkPoint: { type: 'latest' },
             settings,
             replayEnabled: sessionReplayEnabled,
+            currentAgentCapabilities,
             executionRunsEnabled,
             agentSwitchingEnabled,
             navigateToSession: (childSessionId, options) => {
@@ -699,6 +756,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         });
     }, [
         agentSwitchingEnabled,
+        currentAgentCapabilities,
         executionRunsEnabled,
         reachableMachineId,
         router,
@@ -849,7 +907,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         icon={<Icon name="fingerprint" size={29} color={theme.colors.accent.blue} />}
                         copy={session.id}
                     />
-                    {vendorResumeId && vendorResumeLabelKey && vendorResumeCopiedKey && (
+                    {core && vendorResumeId && vendorResumeLabelKey && vendorResumeCopiedKey && (
                         <Item
                             title={t(vendorResumeLabelKey)}
                             subtitle={`${vendorResumeId.substring(0, 8)}...${vendorResumeId.substring(vendorResumeId.length - 8)}`}
@@ -931,6 +989,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             {...readStateInfoItem}
                             onPress={performReadStateAction}
                             loading={updatingReadState}
+                        />
+                    ) : null}
+                    {attentionStandingInfoItem ? (
+                        <Item
+                            {...attentionStandingInfoItem}
+                            onPress={performAttentionStandingAction}
+                            loading={updatingAttentionStanding}
                         />
                     ) : null}
                     {!isArchivedSession && sessionSettingsKey && pinInfoItemProps ? (
@@ -1085,7 +1150,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             subtitle={resolveSessionActionDefaultBackendTitle({
                                 session,
                                 sessionActionDefaultBackendEntryTitle: sessionActionDefaultBackendEntry?.title ?? null,
-                                fallbackTitle: t(getAgentCore(agentId).displayNameKey),
+                                fallbackTitle: providerDisplayName,
                             })}
                             icon={<Icon name="sparkle" size={29} color={theme.colors.accent.indigo} />}
                             showChevron={false}

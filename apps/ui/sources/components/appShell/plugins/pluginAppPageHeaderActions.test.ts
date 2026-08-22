@@ -4,6 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle } from '@/dev/testkit';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import type {
+    PluginContributionIdentityV1,
+    PluginProjectedActionV2,
+} from '@happier-dev/protocol';
 
 import type {
     PluginUiPageHeaderActionProjection,
@@ -35,7 +39,69 @@ function actionAuthority(generation: number): PluginSurfaceLaunchAuthority {
     };
 }
 
+function resolveClientTargetAction(
+    identity: PluginContributionIdentityV1,
+): PluginProjectedActionV2 {
+    return {
+        id: identity.localId,
+        pluginId: identity.pluginId,
+        title: identity.localId,
+        scopes: ['session'],
+        surfaces: ['ui'],
+        execution: {
+            target: 'client',
+            client: {
+                artifactId: 'client-action-bundle',
+                modulePath: './actions/clientAction',
+                exportName: 'execute',
+            },
+            platforms: ['web'],
+        },
+        dangerLevel: 'safe',
+    };
+}
+
+function resolveDaemonTargetAction(
+    identity: PluginContributionIdentityV1,
+): PluginProjectedActionV2 {
+    return {
+        id: identity.localId,
+        pluginId: identity.pluginId,
+        title: identity.localId,
+        scopes: ['session'],
+        surfaces: ['ui'],
+        execution: { target: 'daemon' },
+        dangerLevel: 'safe',
+    };
+}
+
 describe('dispatchPluginAppPageHeaderAction', () => {
+    it('does not require daemon authority or call the daemon for a client-target Action', async () => {
+        const execute = vi.fn();
+
+        await expect(dispatchPluginAppPageHeaderAction({
+            action: {
+                id: 'refresh',
+                title: 'Refresh',
+                action: {
+                    kind: 'executeAction',
+                    action: { pluginId: 'acme.notes', localId: 'refresh-index' },
+                },
+            },
+            page: page(),
+            actionAuthority: null,
+            openSurface: vi.fn(),
+            resolveContributedAction: resolveClientTargetAction,
+            execute,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'unavailable',
+            reason: 'plugin_surface_client_action_unavailable',
+        });
+
+        expect(execute).not.toHaveBeenCalled();
+    });
+
     it('uses the canonical Android 48dp physical target for page-header controls', async () => {
         const { Platform } = await import('react-native');
         const previousPlatform = Platform.OS;
@@ -48,7 +114,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
                             id: 'open-details',
                             title: 'Open details',
                             icon: 'action',
-                            command: {
+                            action: {
                                 kind: 'openSurface',
                                 destination: { pluginId: 'acme.details', localId: 'panel' },
                             },
@@ -70,11 +136,11 @@ describe('dispatchPluginAppPageHeaderAction', () => {
         }
     });
 
-    it('delegates the compiled qualified openSurface command exactly once to the mounted app-page handler', async () => {
+    it('delegates the compiled qualified openSurface action exactly once to the mounted app-page handler', async () => {
         const action: PluginUiPageHeaderActionProjection = {
             id: 'open-details',
             title: 'Open details',
-            command: {
+            action: {
                 kind: 'openSurface',
                 destination: { pluginId: 'acme.details', localId: 'panel' },
                 input: { source: 'page-header' },
@@ -103,7 +169,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
         const action: PluginUiPageHeaderActionProjection = {
             id: 'refresh',
             title: 'Refresh',
-            command: {
+            action: {
                 kind: 'executeAction',
                 action: { pluginId: 'acme.notes', localId: 'refresh-index' },
             },
@@ -118,6 +184,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             page: page(),
             actionAuthority: actionAuthority(7),
             openSurface: vi.fn(),
+            resolveContributedAction: resolveDaemonTargetAction,
             execute,
         })).resolves.toEqual({ ok: true, result: { refreshed: true } });
 
@@ -140,7 +207,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             action: {
                 id: 'refresh',
                 title: 'Refresh',
-                command: {
+                action: {
                     kind: 'executeAction',
                     action: { pluginId: 'acme.notes', localId: 'refresh-index' },
                 },
@@ -148,6 +215,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             page: page(),
             actionAuthority: actionAuthority(7),
             openSurface: vi.fn(),
+            resolveContributedAction: resolveDaemonTargetAction,
             execute,
             isCurrent: () => false,
         })).resolves.toEqual({
@@ -166,7 +234,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             action: {
                 id: 'refresh',
                 title: 'Refresh',
-                command: {
+                action: {
                     kind: 'executeAction',
                     action: { pluginId: 'acme.notes', localId: 'refresh-index' },
                 },
@@ -174,6 +242,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             page: page(),
             actionAuthority: null,
             openSurface: vi.fn(),
+            resolveContributedAction: resolveDaemonTargetAction,
             execute,
         })).resolves.toEqual({
             ok: false,

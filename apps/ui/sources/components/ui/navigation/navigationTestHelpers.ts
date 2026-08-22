@@ -90,14 +90,16 @@ export function installNavigationCommonModuleMocks(
         };
     });
 
-    vi.mock('@/constants/Typography', async () => {
+    vi.mock('@/constants/Typography', async (importOriginal) => {
         const activeOptions = navigationModuleState.options;
         if (activeOptions.typography) {
             return await activeOptions.typography();
         }
 
-        return {
-            Typography: { default: () => ({}) },
-        };
+        // Typography is internal style logic, not a system boundary: the real module is
+        // pure and only reads `Platform`. Handing back a hand-written subset made every
+        // bar test fail the moment a bar composed a primitive the subset had never heard
+        // of, which is a stub-drift failure and not a contract this suite owns.
+        return await importOriginal<typeof import('@/constants/Typography')>();
     });
 }

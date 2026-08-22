@@ -1,8 +1,11 @@
 import * as React from 'react';
 
 import type { AgentId } from '@/agents/registry/registryCore';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 
 import {
+    buildSessionTranscriptAgentAttributionIndex,
+    createSessionTranscriptAgentAttributionBoundarySignature,
     EMPTY_SESSION_TRANSCRIPT_AGENT_ATTRIBUTION_INDEX,
     resolveHistoricalAgentIdAtSeq,
     type SessionTranscriptAgentAttributionIndex,
@@ -29,6 +32,28 @@ export const SessionTranscriptAgentAttributionProvider =
     SessionTranscriptAgentAttributionIndexContext.Provider;
 
 export const TranscriptRowSeqProvider = TranscriptRowSeqContext.Provider;
+
+/**
+ * Builds the transcript-root context only when the ordered divider boundaries
+ * change. A streamed row still replaces the message map, but cannot make every
+ * historical-attribution consumer re-render unless it changes those boundaries.
+ */
+export function useSessionTranscriptAgentAttributionIndexForMessages(
+    messagesById: Readonly<Record<string, Message>>,
+): SessionTranscriptAgentAttributionIndex {
+    const messages = React.useMemo(() => Object.values(messagesById), [messagesById]);
+    const boundarySignature = React.useMemo(
+        () => createSessionTranscriptAgentAttributionBoundarySignature(messages),
+        [messages],
+    );
+    // `boundarySignature` contains every output-relevant part of `messages`.
+    // Rebuilding for a fresh message-map identity would republish the Context.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return React.useMemo(
+        () => buildSessionTranscriptAgentAttributionIndex(messages),
+        [boundarySignature],
+    );
+}
 
 export function useSessionTranscriptAgentAttributionIndex(): SessionTranscriptAgentAttributionIndex {
     return React.useContext(SessionTranscriptAgentAttributionIndexContext);

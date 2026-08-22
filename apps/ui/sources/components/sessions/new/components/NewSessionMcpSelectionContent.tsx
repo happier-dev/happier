@@ -9,7 +9,8 @@ import type {
 } from '@happier-dev/protocol';
 import { resolveManagedSessionMcpSelectionV1 } from '@happier-dev/protocol';
 
-import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import {
     resolveAuthBadgeLabel,
     resolveDetectedAvailabilityLabel,
@@ -40,7 +41,7 @@ export type NewSessionMcpSelectionContentProps = Readonly<{
     machineId?: string | null;
     machineName?: string | null;
     directory: string;
-    agentType: AgentId;
+    agentType: string;
     hasContext: boolean;
     preview: PreviewSuccess | null;
     selection: SessionMcpSelectionV1;
@@ -180,7 +181,9 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
             .sort((a, b) => (a.title ?? a.name).localeCompare(b.title ?? b.name));
     }, [mcpServersSettings.servers]);
 
-    const agentDisplayName = t(getAgentCore(props.agentType).displayNameKey);
+    const agentDisplayName = isBundledAgentId(props.agentType)
+        ? t(getAgentCore(props.agentType).displayNameKey)
+        : formatAgentLikeIdForDisplay(props.agentType);
     const detectedSectionTitle = t('newSession.mcpDetectedSectionTitleForAgent', { agentName: agentDisplayName });
 
     const shouldRenderDetectedGroup = React.useMemo(() => {

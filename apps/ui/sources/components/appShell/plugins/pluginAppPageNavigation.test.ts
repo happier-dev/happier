@@ -95,6 +95,9 @@ function pageHostOrigin(input: Readonly<{
         machineId: input.machineId,
         serverId: 'server-1',
         generation: input.generation,
+        // The union producer stamps the projection phase; an origin without it
+        // is a predecessor stamp and must not recover launch authority.
+        phase: 'current',
         interactionEnabled: true,
         executionOrigin: pageExecutionOrigin(input),
     };

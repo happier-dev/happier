@@ -6,6 +6,9 @@
 //! registration and Protocol-authored response table for a restricted,
 //! nonpersistent Wry child only.
 
+use crate::browser::{
+    child_embedding_supported_for, resolve_current_desktop_browser_platform, DesktopBrowserPlatform,
+};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
@@ -31,24 +34,23 @@ use objc2_foundation::{
     NSDictionary, NSKeyValueChangeKey, NSKeyValueObservingOptions,
     NSObjectNSKeyValueObserverRegistration, NSObjectProtocol, NSString,
 };
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::borrow::Cow;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::cell::RefCell;
 #[cfg(target_os = "macos")]
 use std::{ffi::c_void, ptr::null_mut};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use tauri::Emitter;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use url::Url;
 
 const CACHE_NAMESPACE: &str = "happier-plugin-ui-artifacts-v1";
 const CACHE_DIRECTORY: &str = "hosted-artifacts-v1";
-#[cfg(target_os = "macos")]
 const ARTIFACT_SCHEME: &str = "happier-hosted-artifact";
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const HOST_EVENT: &str = "desktop-hosted-artifact-event";
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const MAX_IPC_MESSAGE_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -297,7 +299,11 @@ impl Default for DesktopHostedArtifactState {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum HostedArtifactRegistrationResult {
-    Registered,
+    Registered {
+        #[serde(rename = "frameOrigin")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        frame_origin: Option<String>,
+    },
     Unavailable {
         code: &'static str,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -359,6 +365,190 @@ pub enum HostedArtifactViewResult {
 pub enum HostedArtifactGoBackResult {
     Handled { handled: bool },
     Unavailable { code: &'static str },
+}
+
+/// The one frame capability the restricted Artifact child can report. This is
+/// intentionally narrower than the general desktop browser's availability:
+/// it says only that this process can construct the Artifact-owned direct Wry
+/// child, not that it can host external navigation or a persistent profile.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostedArtifactFrameCapability {
+    platform: &'static str,
+    adapter: &'static str,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum HostedArtifactFrameCapabilityResult {
+    Available {
+        capability: HostedArtifactFrameCapability,
+    },
+    Unavailable {
+        code: &'static str,
+    },
+}
+
+/// The Artifact host consumes the existing host-platform fact but keeps its
+/// own transport decision: the general browser's persistent profile and
+/// privileged tools are deliberately not a hosted-Artifact capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostedArtifactDesktopTransport {
+    MacOsDirectWry,
+    WindowsDirectWry,
+    LinuxX11DirectWry,
+}
+
+impl HostedArtifactDesktopTransport {
+    fn frame_origin(self, partition_id: &str) -> String {
+        match self {
+            Self::MacOsDirectWry | Self::LinuxX11DirectWry => {
+                format!("{ARTIFACT_SCHEME}://{partition_id}")
+            }
+            Self::WindowsDirectWry => {
+                format!("https://{ARTIFACT_SCHEME}.{partition_id}")
+            }
+        }
+    }
+
+    fn registration_frame_origin(self, partition_id: &str) -> Option<String> {
+        match self {
+            Self::WindowsDirectWry => Some(self.frame_origin(partition_id)),
+            Self::MacOsDirectWry | Self::LinuxX11DirectWry => None,
+        }
+    }
+}
+
+/// Which direct-Wry transport this shell *implements* for a desktop platform.
+///
+/// Structural only. It is derived from `child_embedding_supported_for`, the
+/// single owner of "this shell links a `build_as_child` path for that
+/// platform", and it deliberately does not consume the desktop browser's
+/// `child_embedding_verified_for` product gate: that flag records manual QA of
+/// the *browser* surface (arbitrary navigation, persistent profile, devtools,
+/// capture), none of which this restricted Artifact frame has. Borrowing it
+/// would make this transport depend on a different surface's QA schedule
+/// instead of on its own implementation fact.
+///
+/// Saying the code path exists is not saying the hosted-Artifact platform row
+/// has been proved on it; `hosted_artifact_desktop_transport_for` composes this
+/// with `hosted_artifact_child_embedding_proved_for` for that.
+fn hosted_artifact_desktop_transport_implementation_for(
+    platform: DesktopBrowserPlatform,
+) -> Option<HostedArtifactDesktopTransport> {
+    if !child_embedding_supported_for(platform) {
+        return None;
+    }
+    match platform {
+        DesktopBrowserPlatform::MacOs => Some(HostedArtifactDesktopTransport::MacOsDirectWry),
+        DesktopBrowserPlatform::Windows => Some(HostedArtifactDesktopTransport::WindowsDirectWry),
+        DesktopBrowserPlatform::LinuxX11 => Some(HostedArtifactDesktopTransport::LinuxX11DirectWry),
+        // Unreachable while the primitive owner above is the only gate; kept
+        // exhaustive so a new platform cell cannot silently pick a transport.
+        DesktopBrowserPlatform::LinuxWayland
+        | DesktopBrowserPlatform::LinuxUnknown
+        | DesktopBrowserPlatform::Unsupported => None,
+    }
+}
+
+/// Per-platform hosted-Artifact frame proof, seeded from the approved contract
+/// rather than from this shell's link-time facts.
+///
+/// `PEP-UI-HOSTED-ARTIFACTS` `UI-RT-REQ-27` makes macOS the first factual
+/// packaged-desktop row and keeps other desktop platforms typed-unavailable
+/// until proved, and `UI-RT-INV-13` restricts Preview to advertising only
+/// platform cells with approved loaded proof. Flipping a platform to `true` is
+/// the one auditable edit that turns its `available` bit on, and it must be
+/// backed by a hosted-Artifact loaded run on that platform — multi-file
+/// custom-protocol load, strict IPC, mount/bridge retirement, late-request
+/// denial. Desktop-browser QA is a different surface and cannot stand in for
+/// it, and neither can a compiling implementation or a CI build matrix.
+///
+/// This is deliberately a separate fact from
+/// `hosted_artifact_desktop_transport_implementation_for`: the Windows and X11
+/// direct-Wry paths stay implemented, selectable and unit-tested in source, and
+/// only their product advertisement waits on their own loaded proof.
+fn hosted_artifact_child_embedding_proved_for(platform: DesktopBrowserPlatform) -> bool {
+    match platform {
+        // The first factual packaged-desktop row (`UI-RT-REQ-27`).
+        DesktopBrowserPlatform::MacOs => true,
+        // Implemented and unit-tested, but with no recorded hosted-Artifact
+        // loaded run on either platform yet.
+        DesktopBrowserPlatform::Windows | DesktopBrowserPlatform::LinuxX11 => false,
+        // No implemented child-embedding primitive at all; the structural owner
+        // already refuses these, and they carry their own typed reasons.
+        DesktopBrowserPlatform::LinuxWayland
+        | DesktopBrowserPlatform::LinuxUnknown
+        | DesktopBrowserPlatform::Unsupported => false,
+    }
+}
+
+/// The one direct-Wry transport this shell may actually use for a platform:
+/// an implemented child-embedding path that also carries this surface's own
+/// recorded loaded proof. Everything downstream — the advertised frame
+/// capability, registration, and view lifecycle — reads this, so an unproved
+/// platform can never be advertised as available while still being able to
+/// open a view.
+fn hosted_artifact_desktop_transport_for(
+    platform: DesktopBrowserPlatform,
+) -> Option<HostedArtifactDesktopTransport> {
+    if !hosted_artifact_child_embedding_proved_for(platform) {
+        return None;
+    }
+    hosted_artifact_desktop_transport_implementation_for(platform)
+}
+
+/// Why this platform cannot frame a hosted Artifact. Each cell states its own
+/// blocking fact so no consumer has to restate a generic "desktop is
+/// unsupported" claim that is false for the platforms that do have a
+/// transport.
+fn hosted_artifact_platform_unavailable_code(platform: DesktopBrowserPlatform) -> &'static str {
+    match platform {
+        // Wry's `build_as_child` returns `UnsupportedWindowHandle` for a
+        // Wayland parent handle. The supported Wayland route is
+        // `WebViewBuilderExtUnix::build_gtk` against an app-owned `gtk::Fixed`
+        // that overlays the shell's own webview, which is a different host
+        // widget topology than the direct child this module builds.
+        DesktopBrowserPlatform::LinuxWayland => {
+            "desktop_hosted_artifact_wayland_gtk_container_unimplemented"
+        }
+        DesktopBrowserPlatform::LinuxUnknown => "desktop_hosted_artifact_linux_display_unavailable",
+        DesktopBrowserPlatform::Unsupported => "desktop_hosted_artifact_platform_unsupported",
+        // The direct-Wry child is implemented here, but this surface has no
+        // recorded loaded run on the platform yet, so it is not advertised.
+        // The reason names the missing proof rather than claiming the adapter
+        // does not exist.
+        DesktopBrowserPlatform::Windows | DesktopBrowserPlatform::LinuxX11 => {
+            "desktop_hosted_artifact_platform_frame_unproved"
+        }
+        // This owns an admitted transport; a caller only reaches this for a
+        // runtime failure that is not a platform fact.
+        DesktopBrowserPlatform::MacOs => "desktop_hosted_artifact_platform_unavailable",
+    }
+}
+
+fn current_hosted_artifact_platform_unavailable_code() -> &'static str {
+    hosted_artifact_platform_unavailable_code(resolve_current_desktop_browser_platform())
+}
+
+fn current_hosted_artifact_desktop_transport() -> Option<HostedArtifactDesktopTransport> {
+    hosted_artifact_desktop_transport_for(resolve_current_desktop_browser_platform())
+}
+
+fn hosted_artifact_frame_capability_for(
+    platform: DesktopBrowserPlatform,
+) -> HostedArtifactFrameCapabilityResult {
+    match hosted_artifact_desktop_transport_for(platform) {
+        Some(_) => HostedArtifactFrameCapabilityResult::Available {
+            capability: HostedArtifactFrameCapability {
+                platform: "desktop",
+                adapter: "wry",
+            },
+        },
+        None => HostedArtifactFrameCapabilityResult::Unavailable {
+            code: hosted_artifact_platform_unavailable_code(platform),
+        },
+    }
 }
 
 fn is_lower_hex(value: &str, expected_length: usize) -> bool {
@@ -1113,48 +1303,46 @@ fn registered_artifact_from_input(
 }
 
 #[tauri::command]
+pub fn desktop_hosted_artifact_get_frame_capability() -> HostedArtifactFrameCapabilityResult {
+    hosted_artifact_frame_capability_for(resolve_current_desktop_browser_platform())
+}
+
+#[tauri::command]
 pub fn desktop_hosted_artifact_register(
     state: State<'_, DesktopHostedArtifactState>,
     input: HostedArtifactRegistrationInput,
 ) -> HostedArtifactRegistrationResult {
-    // Direct Wry has verified nonpersistent child-view behavior only on macOS.
-    // Keep all other desktop targets typed unavailable instead of treating a
-    // generic browser profile or an unverified child embedding as equivalent.
-    #[cfg(not(target_os = "macos"))]
-    {
+    let Some(transport) = current_hosted_artifact_desktop_transport() else {
         let _ = (state, input);
         return HostedArtifactRegistrationResult::Unavailable {
             code: "hosted_web_profile_isolation_unavailable",
             capability: Some("MULTI_PROFILE"),
         };
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let Ok((token, registration)) = registered_artifact_from_input(input) else {
-            return HostedArtifactRegistrationResult::Unavailable {
-                code: "native_artifact_resource_registration_failed",
-                capability: None,
-            };
+    };
+    let Ok((token, registration)) = registered_artifact_from_input(input) else {
+        return HostedArtifactRegistrationResult::Unavailable {
+            code: "native_artifact_resource_registration_failed",
+            capability: None,
         };
-        let mut inner = match state.inner.lock() {
-            Ok(inner) => inner,
-            Err(_) => {
-                return HostedArtifactRegistrationResult::Unavailable {
-                    code: "native_artifact_resource_registration_failed",
-                    capability: None,
-                };
-            }
-        };
-        if inner.registrations.contains_key(&token) {
+    };
+    let frame_origin = transport.registration_frame_origin(&registration.storage_partition_id);
+    let mut inner = match state.inner.lock() {
+        Ok(inner) => inner,
+        Err(_) => {
             return HostedArtifactRegistrationResult::Unavailable {
                 code: "native_artifact_resource_registration_failed",
                 capability: None,
             };
         }
-        inner.registrations.insert(token, registration);
-        HostedArtifactRegistrationResult::Registered
+    };
+    if inner.registrations.contains_key(&token) {
+        return HostedArtifactRegistrationResult::Unavailable {
+            code: "native_artifact_resource_registration_failed",
+            capability: None,
+        };
     }
+    inner.registrations.insert(token, registration);
+    HostedArtifactRegistrationResult::Registered { frame_origin }
 }
 
 #[tauri::command]
@@ -1162,40 +1350,31 @@ pub fn desktop_hosted_artifact_unregister(
     state: State<'_, DesktopHostedArtifactState>,
     token: String,
 ) -> bool {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (state, token);
-        return false;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let view_ids = {
-            let mut inner = match state.inner.lock() {
-                Ok(inner) => inner,
-                Err(_) => return false,
-            };
-            if inner.registrations.remove(&token).is_none() {
-                return false;
-            }
-            let view_ids = inner
-                .views
-                .iter()
-                .filter_map(|(view_id, view)| (view.token == token).then(|| view_id.clone()))
-                .collect::<Vec<_>>();
-            for view_id in &view_ids {
-                inner.views.remove(view_id);
-            }
-            view_ids
+    let view_ids = {
+        let mut inner = match state.inner.lock() {
+            Ok(inner) => inner,
+            Err(_) => return false,
         };
-        // Physical child destruction is intentionally a native best effort
-        // after the registration is removed. The caller does not wait: JS
-        // Artifact currentness has already synchronously retired the token.
-        for view_id in view_ids {
-            remove_native_view(&view_id);
+        if inner.registrations.remove(&token).is_none() {
+            return false;
         }
-        true
+        let view_ids = inner
+            .views
+            .iter()
+            .filter_map(|(view_id, view)| (view.token == token).then(|| view_id.clone()))
+            .collect::<Vec<_>>();
+        for view_id in &view_ids {
+            inner.views.remove(view_id);
+        }
+        view_ids
+    };
+    // Physical child destruction is intentionally a native best effort after
+    // the registration is removed. Artifact currentness has already retired
+    // the token synchronously on the JavaScript side.
+    for view_id in view_ids {
+        remove_native_view(&view_id);
     }
+    true
 }
 
 fn view_is_active(inner: &HostedArtifactInner, view_id: &str, token: &str) -> bool {
@@ -1206,8 +1385,12 @@ fn view_is_active(inner: &HostedArtifactInner, view_id: &str, token: &str) -> bo
         .unwrap_or(false)
 }
 
-#[cfg(target_os = "macos")]
-fn artifact_initial_url(partition_id: &str, initial_path_and_query: &str) -> Option<String> {
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn artifact_initial_url(
+    transport: HostedArtifactDesktopTransport,
+    partition_id: &str,
+    initial_path_and_query: &str,
+) -> Option<String> {
     if !is_partition_id(partition_id)
         || !initial_path_and_query.starts_with('/')
         || initial_path_and_query.contains('#')
@@ -1215,29 +1398,53 @@ fn artifact_initial_url(partition_id: &str, initial_path_and_query: &str) -> Opt
     {
         return None;
     }
-    let candidate = format!("{ARTIFACT_SCHEME}://{partition_id}{initial_path_and_query}");
-    let parsed = Url::parse(&candidate).ok()?;
-    (parsed.scheme() == ARTIFACT_SCHEME
-        && parsed.host_str() == Some(partition_id)
-        && parsed.username().is_empty()
-        && parsed.password().is_none()
-        && parsed.port().is_none())
-    .then_some(candidate)
+    let candidate = format!(
+        "{}{initial_path_and_query}",
+        transport.frame_origin(partition_id)
+    );
+    is_allowed_artifact_navigation(&candidate, transport, partition_id).then_some(candidate)
 }
 
-#[cfg(target_os = "macos")]
-fn is_allowed_artifact_navigation(raw_url: &str, partition_id: &str) -> bool {
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn has_exact_origin(url: &Url) -> bool {
+    url.username().is_empty() && url.password().is_none() && url.port().is_none()
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn is_allowed_artifact_navigation(
+    raw_url: &str,
+    transport: HostedArtifactDesktopTransport,
+    partition_id: &str,
+) -> bool {
+    let Ok(url) = Url::parse(raw_url) else {
+        return false;
+    };
+    match transport {
+        HostedArtifactDesktopTransport::MacOsDirectWry
+        | HostedArtifactDesktopTransport::LinuxX11DirectWry => {
+            url.scheme() == ARTIFACT_SCHEME
+                && url.host_str() == Some(partition_id)
+                && has_exact_origin(&url)
+        }
+        HostedArtifactDesktopTransport::WindowsDirectWry => {
+            url.scheme() == "https"
+                && url.host_str() == Some(format!("{ARTIFACT_SCHEME}.{partition_id}").as_str())
+                && has_exact_origin(&url)
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn is_allowed_artifact_protocol_request(raw_url: &str, partition_id: &str) -> bool {
     let Ok(url) = Url::parse(raw_url) else {
         return false;
     };
     url.scheme() == ARTIFACT_SCHEME
         && url.host_str() == Some(partition_id)
-        && url.username().is_empty()
-        && url.password().is_none()
-        && url.port().is_none()
+        && has_exact_origin(&url)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn protocol_response(
     status: u16,
     headers: Option<&PolicyHeaders>,
@@ -1263,7 +1470,7 @@ fn protocol_response(
     })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn serve_artifact_protocol_request(
     inner: &Arc<Mutex<HostedArtifactInner>>,
     cache_root: &Path,
@@ -1278,7 +1485,7 @@ fn serve_artifact_protocol_request(
         return protocol_response(405, None, None, Vec::new());
     }
     let request_url = request.uri().to_string();
-    if !is_allowed_artifact_navigation(&request_url, partition_id) {
+    if !is_allowed_artifact_protocol_request(&request_url, partition_id) {
         return protocol_response(404, None, None, Vec::new());
     }
     let registration = match inner.lock() {
@@ -1323,7 +1530,7 @@ fn serve_artifact_protocol_request(
     )
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HostedArtifactHostEvent {
@@ -1337,9 +1544,22 @@ struct HostedArtifactHostEvent {
     code: Option<&'static str>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn emit_hosted_artifact_event<R: Runtime>(window: &Window<R>, event: HostedArtifactHostEvent) {
     let _ = window.emit(HOST_EVENT, event);
+}
+
+fn hosted_artifact_host_message_delivery_script(
+    message: &serde_json::Value,
+) -> Result<String, String> {
+    let data = serde_json::to_string(message).map_err(|error| error.to_string())?;
+    // This is the sole fixed host-to-guest delivery expression for the
+    // established bridge. It is not a caller-provided eval API: the command
+    // accepts structured data, and its only interpolated fragment is a JSON
+    // serialization rather than executable source.
+    Ok(format!(
+        "window.dispatchEvent(new MessageEvent('message',{{data:{data},origin:location.origin}}));"
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -1408,27 +1628,33 @@ impl Drop for HostedArtifactHistoryObserver {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 thread_local! {
     static NATIVE_HOSTED_ARTIFACT_VIEWS: RefCell<HashMap<String, WryHostedArtifactView>> =
         RefCell::new(HashMap::new());
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn replace_native_view(view_id: String, view: WryHostedArtifactView) {
     NATIVE_HOSTED_ARTIFACT_VIEWS.with(|views| {
         views.borrow_mut().insert(view_id, view);
     });
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn remove_native_view(view_id: &str) {
     NATIVE_HOSTED_ARTIFACT_VIEWS.with(|views| {
         views.borrow_mut().remove(view_id);
     });
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn remove_native_view(_view_id: &str) {
+    // Non-desktop targets never construct this direct Wry child. Logical
+    // registration retirement above remains authoritative for those targets.
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn with_native_view<T>(
     view_id: &str,
     operation: impl FnOnce(&WryHostedArtifactView) -> Result<T, String>,
@@ -1442,32 +1668,36 @@ fn with_native_view<T>(
     })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 struct WryHostedArtifactView {
     // Wry requires the context to outlive its child WebView. It is constructed
     // with no profile path and `with_incognito(true)`, so it cannot become the
     // generic desktop browser's persistent profile owner.
     _context: wry::WebContext,
-    // Keeps the host-native KVO subscription alive while the direct Wry child
-    // exists. It is the factual history source; guests cannot publish this
-    // state through the Artifact bridge.
+    // Keeps the macOS-native KVO subscription alive while the direct Wry
+    // child exists. It is the factual history source; guests cannot publish
+    // this state through the Artifact bridge.
+    #[cfg(target_os = "macos")]
     _history_observer: Retained<HostedArtifactHistoryObserver>,
     webview: wry::WebView,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 impl WryHostedArtifactView {
     fn new<R: Runtime>(
         window: &Window<R>,
         request: &HostedArtifactOpenViewRequest,
+        transport: HostedArtifactDesktopTransport,
         partition_id: &str,
         inner: Arc<Mutex<HostedArtifactInner>>,
         cache_root: PathBuf,
     ) -> Result<Self, String> {
+        #[cfg(target_os = "macos")]
         use wry::{WebViewBuilderExtDarwin, WebViewExtMacOS};
 
-        let initial_url = artifact_initial_url(partition_id, &request.initial_path_and_query)
-            .ok_or_else(|| "invalid hosted Artifact initial path".to_string())?;
+        let initial_url =
+            artifact_initial_url(transport, partition_id, &request.initial_path_and_query)
+                .ok_or_else(|| "invalid hosted Artifact initial path".to_string())?;
         let mut context = wry::WebContext::new(None);
         context.set_allows_automation(false);
         let token_for_protocol = request.token.clone();
@@ -1476,10 +1706,6 @@ impl WryHostedArtifactView {
         let partition_for_navigation = partition_id.to_string();
         let view_id_for_load = request.view_id.clone();
         let window_for_load = window.clone();
-        let view_id_for_ipc = request.view_id.clone();
-        let window_for_ipc = window.clone();
-        let view_id_for_crash = request.view_id.clone();
-        let window_for_crash = window.clone();
         let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
             .with_id(request.view_id.as_str())
             .with_url(initial_url)
@@ -1489,9 +1715,9 @@ impl WryHostedArtifactView {
             .with_navigation_handler(move |url| {
                 // Token is captured only to make this closure's binding
                 // explicit; permitted navigation remains only the registered
-                // partition custom-protocol origin, never arbitrary URLs.
+                // partition Artifact origin, never arbitrary URLs.
                 let _ = &token_for_navigation;
-                is_allowed_artifact_navigation(&url, &partition_for_navigation)
+                is_allowed_artifact_navigation(&url, transport, &partition_for_navigation)
             })
             .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
             .with_download_started_handler(|_, _| false)
@@ -1524,28 +1750,44 @@ impl WryHostedArtifactView {
                     },
                 );
             })
-            .with_ipc_handler(move |request| {
-                let message = request.into_body();
-                if message.len() > MAX_IPC_MESSAGE_BYTES
-                    || serde_json::from_str::<serde_json::Value>(&message)
-                        .ok()
-                        .filter(serde_json::Value::is_object)
-                        .is_none()
-                {
-                    return;
+            .with_ipc_handler({
+                let view_id_for_ipc = request.view_id.clone();
+                let window_for_ipc = window.clone();
+                move |request| {
+                    let message = request.into_body();
+                    if message.len() > MAX_IPC_MESSAGE_BYTES
+                        || serde_json::from_str::<serde_json::Value>(&message)
+                            .ok()
+                            .filter(serde_json::Value::is_object)
+                            .is_none()
+                    {
+                        return;
+                    }
+                    emit_hosted_artifact_event(
+                        &window_for_ipc,
+                        HostedArtifactHostEvent {
+                            view_id: view_id_for_ipc.clone(),
+                            kind: "message",
+                            can_go_back: None,
+                            message: Some(message),
+                            code: None,
+                        },
+                    );
                 }
-                emit_hosted_artifact_event(
-                    &window_for_ipc,
-                    HostedArtifactHostEvent {
-                        view_id: view_id_for_ipc.clone(),
-                        kind: "message",
-                        can_go_back: None,
-                        message: Some(message),
-                        code: None,
-                    },
-                );
-            })
-            .with_on_web_content_process_terminate_handler(move || {
+            });
+        #[cfg(target_os = "windows")]
+        let builder = {
+            use wry::WebViewBuilderExtWindows;
+
+            // WebView2 maps custom protocols to HTTP unless this is explicit.
+            // The returned HTTPS origin is the exact bridge sender binding.
+            builder.with_https_scheme(true)
+        };
+        #[cfg(target_os = "macos")]
+        let builder = {
+            let view_id_for_crash = request.view_id.clone();
+            let window_for_crash = window.clone();
+            builder.with_on_web_content_process_terminate_handler(move || {
                 emit_hosted_artifact_event(
                     &window_for_crash,
                     HostedArtifactHostEvent {
@@ -1556,45 +1798,56 @@ impl WryHostedArtifactView {
                         code: Some("hosted_web_content_process_terminated"),
                     },
                 );
-            });
+            })
+        };
         // `with_incognito(true)` is the nonpersistent-store authority. Do not
         // add a data-store identifier: that is the generic browser's profile
         // mechanism and would be a second persistence path here.
         let webview = builder
             .build_as_child(window)
             .map_err(|error| error.to_string())?;
-        let native_webview = webview.webview();
-        let view_id_for_history = request.view_id.clone();
-        let window_for_history = window.clone();
-        let history_observer = HostedArtifactHistoryObserver::new(
-            native_webview.clone(),
-            Box::new(move |can_go_back| {
-                emit_hosted_artifact_event(
-                    &window_for_history,
-                    HostedArtifactHostEvent {
-                        view_id: view_id_for_history.clone(),
-                        kind: "historyState",
-                        can_go_back: Some(can_go_back),
-                        message: None,
-                        code: None,
-                    },
-                );
-            }),
-        );
-        let can_go_back = unsafe { native_webview.as_super().canGoBack() };
-        emit_hosted_artifact_event(
-            window,
-            HostedArtifactHostEvent {
-                view_id: request.view_id.clone(),
-                kind: "historyState",
-                can_go_back: Some(can_go_back),
-                message: None,
-                code: None,
-            },
-        );
+
+        #[cfg(target_os = "macos")]
+        {
+            let native_webview = webview.webview();
+            let view_id_for_history = request.view_id.clone();
+            let window_for_history = window.clone();
+            let history_observer = HostedArtifactHistoryObserver::new(
+                native_webview.clone(),
+                Box::new(move |can_go_back| {
+                    emit_hosted_artifact_event(
+                        &window_for_history,
+                        HostedArtifactHostEvent {
+                            view_id: view_id_for_history.clone(),
+                            kind: "historyState",
+                            can_go_back: Some(can_go_back),
+                            message: None,
+                            code: None,
+                        },
+                    );
+                }),
+            );
+            let can_go_back = unsafe { native_webview.as_super().canGoBack() };
+            emit_hosted_artifact_event(
+                window,
+                HostedArtifactHostEvent {
+                    view_id: request.view_id.clone(),
+                    kind: "historyState",
+                    can_go_back: Some(can_go_back),
+                    message: None,
+                    code: None,
+                },
+            );
+            return Ok(Self {
+                _context: context,
+                _history_observer: history_observer,
+                webview,
+            });
+        }
+
+        #[cfg(not(target_os = "macos"))]
         Ok(Self {
             _context: context,
-            _history_observer: history_observer,
             webview,
         })
     }
@@ -1622,27 +1875,14 @@ impl WryHostedArtifactView {
     }
 
     fn post_host_message(&self, message: &serde_json::Value) -> Result<(), String> {
-        let data = serde_json::to_string(message).map_err(|error| error.to_string())?;
-        // This is a fixed host-to-guest transport delivery expression, not a
-        // user-controlled eval command. The only interpolated fragment is a
-        // JSON serialization of an already schema-validated host envelope.
-        let script = format!(
-            "window.dispatchEvent(new MessageEvent('message',{{data:{data},origin:location.origin}}));"
-        );
+        let script = hosted_artifact_host_message_delivery_script(message)?;
         self.webview
             .evaluate_script(&script)
             .map_err(|error| error.to_string())
     }
 
     fn go_back(&self) -> Result<bool, String> {
-        use wry::WebViewExtMacOS;
-
-        let native_webview = self.webview.webview();
-        let native_webview = native_webview.as_super();
-        if !unsafe { native_webview.canGoBack() } {
-            return Ok(false);
-        }
-        Ok(unsafe { native_webview.goBack() }.is_some())
+        self.webview.go_back().map_err(|error| error.to_string())
     }
 }
 
@@ -1670,16 +1910,21 @@ pub fn desktop_hosted_artifact_open_view<R: Runtime>(
     state: State<'_, DesktopHostedArtifactState>,
     request: HostedArtifactOpenViewRequest,
 ) -> HostedArtifactViewResult {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (window, state, request);
         return HostedArtifactViewResult::Unavailable {
-            code: "desktop_hosted_artifact_platform_unavailable",
+            code: "desktop_hosted_artifact_platform_unsupported",
         };
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
+        let Some(transport) = current_hosted_artifact_desktop_transport() else {
+            return HostedArtifactViewResult::Unavailable {
+                code: current_hosted_artifact_platform_unavailable_code(),
+            };
+        };
         let partition_id = {
             let inner = match state.inner.lock() {
                 Ok(inner) => inner,
@@ -1712,6 +1957,7 @@ pub fn desktop_hosted_artifact_open_view<R: Runtime>(
         let view = match WryHostedArtifactView::new(
             &window,
             &request,
+            transport,
             &partition_id,
             Arc::clone(&state.inner),
             root,
@@ -1758,16 +2004,21 @@ pub fn desktop_hosted_artifact_set_bounds(
     state: State<'_, DesktopHostedArtifactState>,
     request: HostedArtifactBoundsRequest,
 ) -> HostedArtifactViewResult {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (state, request);
         return HostedArtifactViewResult::Unavailable {
-            code: "desktop_hosted_artifact_platform_unavailable",
+            code: "desktop_hosted_artifact_platform_unsupported",
         };
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
+        if current_hosted_artifact_desktop_transport().is_none() {
+            return HostedArtifactViewResult::Unavailable {
+                code: current_hosted_artifact_platform_unavailable_code(),
+            };
+        }
         // Hold the registration lock through the native mutation. Otherwise an
         // unregister could retire the token after the check and before the
         // child is reached, allowing a stale bounds update to affect it.
@@ -1796,16 +2047,21 @@ pub fn desktop_hosted_artifact_post_message(
     state: State<'_, DesktopHostedArtifactState>,
     request: HostedArtifactPostMessageRequest,
 ) -> HostedArtifactViewResult {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (state, request);
         return HostedArtifactViewResult::Unavailable {
-            code: "desktop_hosted_artifact_platform_unavailable",
+            code: "desktop_hosted_artifact_platform_unsupported",
         };
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
+        if current_hosted_artifact_desktop_transport().is_none() {
+            return HostedArtifactViewResult::Unavailable {
+                code: current_hosted_artifact_platform_unavailable_code(),
+            };
+        }
         // As with bounds, serialize currentness with delivery. A command that
         // observes a retired token must never reach the child view.
         let delivered = state
@@ -1833,16 +2089,21 @@ pub fn desktop_hosted_artifact_go_back(
     state: State<'_, DesktopHostedArtifactState>,
     request: HostedArtifactViewRequest,
 ) -> HostedArtifactGoBackResult {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (state, request);
         return HostedArtifactGoBackResult::Unavailable {
-            code: "desktop_hosted_artifact_platform_unavailable",
+            code: "desktop_hosted_artifact_platform_unsupported",
         };
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
+        if current_hosted_artifact_desktop_transport().is_none() {
+            return HostedArtifactGoBackResult::Unavailable {
+                code: current_hosted_artifact_platform_unavailable_code(),
+            };
+        }
         // Hold the registration lock through the native operation, just as
         // bounds and host-message delivery do. A retired token must not send
         // a Back command to a reused child view.
@@ -1866,16 +2127,21 @@ pub fn desktop_hosted_artifact_close_view(
     state: State<'_, DesktopHostedArtifactState>,
     request: HostedArtifactViewRequest,
 ) -> HostedArtifactViewResult {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (state, request);
         return HostedArtifactViewResult::Unavailable {
-            code: "desktop_hosted_artifact_platform_unavailable",
+            code: "desktop_hosted_artifact_platform_unsupported",
         };
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
+        if current_hosted_artifact_desktop_transport().is_none() {
+            return HostedArtifactViewResult::Unavailable {
+                code: current_hosted_artifact_platform_unavailable_code(),
+            };
+        }
         let removed = state
             .inner
             .lock()
@@ -1905,6 +2171,7 @@ mod tests {
     use std::path::PathBuf;
 
     const DESKTOP_HOSTED_ARTIFACT_COMMANDS: &[&str] = &[
+        "desktop_hosted_artifact_get_frame_capability",
         "desktop_hosted_artifact_register",
         "desktop_hosted_artifact_unregister",
         "desktop_hosted_artifact_cache_read",
@@ -2046,7 +2313,308 @@ mod tests {
         assert!(registered_artifact_from_input(input).is_err());
     }
 
-    #[cfg(target_os = "macos")]
+    #[test]
+    fn hosted_artifact_transport_admits_every_implemented_child_embedding_platform() {
+        let partition_id = format!("hpa_{}", "a".repeat(64));
+        // The Windows and X11 direct-Wry paths stay implemented and selectable in
+        // source; only their product advertisement waits on their own loaded proof.
+        assert_eq!(
+            hosted_artifact_desktop_transport_implementation_for(DesktopBrowserPlatform::MacOs),
+            Some(HostedArtifactDesktopTransport::MacOsDirectWry),
+        );
+        assert_eq!(
+            HostedArtifactDesktopTransport::MacOsDirectWry.frame_origin(&partition_id),
+            format!("{ARTIFACT_SCHEME}://{partition_id}"),
+        );
+        assert_eq!(
+            hosted_artifact_desktop_transport_implementation_for(DesktopBrowserPlatform::Windows),
+            Some(HostedArtifactDesktopTransport::WindowsDirectWry),
+        );
+        assert_eq!(
+            HostedArtifactDesktopTransport::WindowsDirectWry.frame_origin(&partition_id),
+            format!("https://{ARTIFACT_SCHEME}.{partition_id}"),
+        );
+        assert_eq!(
+            hosted_artifact_desktop_transport_implementation_for(DesktopBrowserPlatform::LinuxX11),
+            Some(HostedArtifactDesktopTransport::LinuxX11DirectWry),
+        );
+        assert_eq!(
+            HostedArtifactDesktopTransport::LinuxX11DirectWry.frame_origin(&partition_id),
+            format!("{ARTIFACT_SCHEME}://{partition_id}"),
+        );
+        // Wayland has no implemented child-embedding primitive, so this owner must not
+        // manufacture a transport for it.
+        for platform in [
+            DesktopBrowserPlatform::LinuxWayland,
+            DesktopBrowserPlatform::LinuxUnknown,
+            DesktopBrowserPlatform::Unsupported,
+        ] {
+            assert_eq!(
+                hosted_artifact_desktop_transport_implementation_for(platform),
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn hosted_artifact_transport_is_admitted_only_where_this_surface_recorded_loaded_proof() {
+        // `UI-RT-REQ-27`/`UI-RT-INV-13`: macOS is the first factual packaged-desktop
+        // row and every other desktop cell stays typed-unavailable until its own
+        // hosted-Artifact loaded run is recorded. An implemented, compiling,
+        // CI-built adapter is not that proof.
+        for platform in [
+            DesktopBrowserPlatform::MacOs,
+            DesktopBrowserPlatform::Windows,
+            DesktopBrowserPlatform::LinuxX11,
+            DesktopBrowserPlatform::LinuxWayland,
+            DesktopBrowserPlatform::LinuxUnknown,
+            DesktopBrowserPlatform::Unsupported,
+        ] {
+            assert_eq!(
+                hosted_artifact_desktop_transport_for(platform).is_some(),
+                hosted_artifact_child_embedding_proved_for(platform),
+                "{platform:?} admitted a hosted-Artifact transport without its own proof",
+            );
+        }
+        assert_eq!(
+            hosted_artifact_desktop_transport_for(DesktopBrowserPlatform::MacOs),
+            Some(HostedArtifactDesktopTransport::MacOsDirectWry),
+        );
+        for platform in [
+            DesktopBrowserPlatform::Windows,
+            DesktopBrowserPlatform::LinuxX11,
+        ] {
+            assert_eq!(hosted_artifact_desktop_transport_for(platform), None);
+            // The implementation is still linked and selectable; only the product
+            // row is withheld.
+            assert!(hosted_artifact_desktop_transport_implementation_for(platform).is_some());
+        }
+    }
+
+    #[test]
+    fn hosted_artifact_transport_never_outruns_the_child_embedding_primitive_owner() {
+        for platform in [
+            DesktopBrowserPlatform::MacOs,
+            DesktopBrowserPlatform::Windows,
+            DesktopBrowserPlatform::LinuxX11,
+            DesktopBrowserPlatform::LinuxWayland,
+            DesktopBrowserPlatform::LinuxUnknown,
+            DesktopBrowserPlatform::Unsupported,
+        ] {
+            assert_eq!(
+                hosted_artifact_desktop_transport_implementation_for(platform).is_some(),
+                child_embedding_supported_for(platform),
+                "{platform:?} hosted-Artifact transport disagreed with the primitive owner",
+            );
+            assert!(
+                !hosted_artifact_desktop_transport_for(platform).is_some()
+                    || child_embedding_supported_for(platform),
+                "{platform:?} admitted a transport the primitive owner does not support",
+            );
+        }
+    }
+
+    #[test]
+    fn hosted_artifact_frame_capability_reports_one_derived_status_per_platform() {
+        assert_eq!(
+            serde_json::to_value(hosted_artifact_frame_capability_for(
+                DesktopBrowserPlatform::MacOs
+            ))
+            .expect("admitted hosted Artifact capability should serialize"),
+            json!({
+                "kind": "available",
+                "capability": { "platform": "desktop", "adapter": "wry" },
+            }),
+            "macOS should advertise the one direct-Wry adapter",
+        );
+
+        // An unavailable platform states why, so no consumer has to restate a generic
+        // "desktop is unsupported" claim that is false for the proved cell — and an
+        // implemented-but-unproved cell says so instead of claiming no adapter exists.
+        for (platform, code) in [
+            (
+                DesktopBrowserPlatform::Windows,
+                "desktop_hosted_artifact_platform_frame_unproved",
+            ),
+            (
+                DesktopBrowserPlatform::LinuxX11,
+                "desktop_hosted_artifact_platform_frame_unproved",
+            ),
+            (
+                DesktopBrowserPlatform::LinuxWayland,
+                "desktop_hosted_artifact_wayland_gtk_container_unimplemented",
+            ),
+            (
+                DesktopBrowserPlatform::LinuxUnknown,
+                "desktop_hosted_artifact_linux_display_unavailable",
+            ),
+            (
+                DesktopBrowserPlatform::Unsupported,
+                "desktop_hosted_artifact_platform_unsupported",
+            ),
+        ] {
+            assert_eq!(
+                serde_json::to_value(hosted_artifact_frame_capability_for(platform))
+                    .expect("unavailable hosted Artifact capability should serialize"),
+                json!({ "kind": "unavailable", "code": code }),
+            );
+        }
+    }
+
+    #[test]
+    fn published_hosted_web_doc_states_this_owner_s_status_for_every_desktop_platform() {
+        // The published availability statement must be derived from this owner rather than
+        // hand-maintained: a generic "packaged desktop" claim is wrong for Wayland, and a
+        // "macOS only" claim is wrong for Windows and X11.
+        let doc = fs::read_to_string(
+            manifest_dir()
+                .ancestors()
+                .nth(3)
+                .expect("src-tauri should live under apps/ui")
+                .join("apps/docs/content/docs/plugins/ui/hosted-web.mdx"),
+        )
+        .expect("published hosted-web doc should be readable");
+
+        assert!(
+            !doc.contains("packaged runtime support remains unavailable until the platform-specific frame adapter is present and verified"),
+            "the retired global availability sentence must not outlive the per-platform status",
+        );
+
+        for platform in [
+            DesktopBrowserPlatform::MacOs,
+            DesktopBrowserPlatform::Windows,
+            DesktopBrowserPlatform::LinuxX11,
+            DesktopBrowserPlatform::LinuxWayland,
+            DesktopBrowserPlatform::LinuxUnknown,
+        ] {
+            let documented = match hosted_artifact_frame_capability_for(platform) {
+                HostedArtifactFrameCapabilityResult::Available { capability } => {
+                    format!(
+                        "{{ platform: '{}', adapter: '{}' }}",
+                        capability.platform, capability.adapter,
+                    )
+                }
+                HostedArtifactFrameCapabilityResult::Unavailable { code } => code.to_string(),
+            };
+            assert!(
+                doc.contains(&documented),
+                "hosted-web doc omits the derived status {documented:?} for {platform:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn hosted_artifact_host_delivery_uses_a_fixed_message_event_template_with_json_payload() {
+        let message = json!({
+            "kind": "bootstrap",
+            "payload": { "text": "\"}); globalThis.happierInjected = true; //" },
+        });
+        let payload = serde_json::to_string(&message).expect("fixture should serialize as JSON");
+
+        assert_eq!(
+            hosted_artifact_host_message_delivery_script(&message)
+                .expect("hosted Artifact delivery script should serialize"),
+            format!(
+                "window.dispatchEvent(new MessageEvent('message',{{data:{payload},origin:location.origin}}));"
+            ),
+        );
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn hosted_artifact_host_events_keep_history_and_failure_payloads_exact() {
+        let history = HostedArtifactHostEvent {
+            view_id: "hpa_view_test".to_string(),
+            kind: "historyState",
+            can_go_back: Some(true),
+            message: None,
+            code: None,
+        };
+        assert_eq!(
+            serde_json::to_value(history).expect("history event should serialize"),
+            json!({
+                "viewId": "hpa_view_test",
+                "kind": "historyState",
+                "canGoBack": true,
+            }),
+        );
+
+        let failure = HostedArtifactHostEvent {
+            view_id: "hpa_view_test".to_string(),
+            kind: "error",
+            can_go_back: None,
+            message: None,
+            code: Some("hosted_web_content_process_terminated"),
+        };
+        assert_eq!(
+            serde_json::to_value(failure).expect("failure event should serialize"),
+            json!({
+                "viewId": "hpa_view_test",
+                "kind": "error",
+                "code": "hosted_web_content_process_terminated",
+            }),
+        );
+    }
+
+    #[test]
+    fn hosted_artifact_registration_serializes_only_the_verified_transport_origin() {
+        let partition_id = format!("hpa_{}", "a".repeat(64));
+        let macos = HostedArtifactRegistrationResult::Registered {
+            frame_origin: HostedArtifactDesktopTransport::MacOsDirectWry
+                .registration_frame_origin(&partition_id),
+        };
+        assert_eq!(
+            serde_json::to_value(macos).expect("macOS registration should serialize"),
+            json!({ "kind": "registered" }),
+        );
+
+        let windows = HostedArtifactRegistrationResult::Registered {
+            frame_origin: HostedArtifactDesktopTransport::WindowsDirectWry
+                .registration_frame_origin(&partition_id),
+        };
+        assert_eq!(
+            serde_json::to_value(windows).expect("Windows registration should serialize"),
+            json!({
+                "kind": "registered",
+                "frameOrigin": format!("https://{ARTIFACT_SCHEME}.{partition_id}"),
+            }),
+        );
+    }
+
+    #[test]
+    fn hosted_artifact_windows_transport_separates_frame_and_protocol_origins() {
+        let partition_id = format!("hpa_{}", "a".repeat(64));
+        let frame_url = format!("https://{ARTIFACT_SCHEME}.{partition_id}/index.html?theme=dark");
+        let protocol_url = format!("{ARTIFACT_SCHEME}://{partition_id}/index.html?theme=dark");
+
+        assert_eq!(
+            artifact_initial_url(
+                HostedArtifactDesktopTransport::WindowsDirectWry,
+                &partition_id,
+                "/index.html?theme=dark",
+            ),
+            Some(frame_url.clone()),
+        );
+        assert!(is_allowed_artifact_navigation(
+            &frame_url,
+            HostedArtifactDesktopTransport::WindowsDirectWry,
+            &partition_id,
+        ));
+        assert!(!is_allowed_artifact_navigation(
+            &protocol_url,
+            HostedArtifactDesktopTransport::WindowsDirectWry,
+            &partition_id,
+        ));
+        assert!(is_allowed_artifact_protocol_request(
+            &protocol_url,
+            &partition_id,
+        ));
+        assert!(!is_allowed_artifact_protocol_request(
+            &frame_url,
+            &partition_id,
+        ));
+    }
+
     #[test]
     fn protocol_serves_registered_artifact_bytes_only_to_get_requests() {
         let temporary = tempfile::tempdir().expect("temporary cache root should exist");
@@ -2114,7 +2682,6 @@ mod tests {
         assert!(response.body().is_empty());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn protocol_serves_a_registered_relative_artifact_graph_from_native_cache() {
         let temporary = tempfile::tempdir().expect("temporary cache root should exist");
@@ -2244,7 +2811,7 @@ mod tests {
         assert!(retired_response.body().is_empty());
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
     fn cache_and_protocol_reject_a_resource_symlink_that_escapes_the_artifact_directory() {
         use std::os::unix::fs::symlink;
@@ -2324,7 +2891,7 @@ mod tests {
         assert_eq!(response.status().as_u16(), 404);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
     fn cache_rejects_an_account_component_symlink_before_read_protocol_or_delete() {
         use std::os::unix::fs::symlink;

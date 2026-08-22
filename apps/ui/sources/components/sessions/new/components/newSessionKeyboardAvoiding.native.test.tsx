@@ -14,7 +14,21 @@ const mockEnv = vi.hoisted(() => ({
     platform: 'ios' as 'ios' | 'android',
 }));
 const useKeyboardHandlerMock = vi.fn();
-let latestAnimatedStyleFactory: null | (() => any) = null;
+// The screen now registers several animated styles (the composer's keyboard seat, the floating
+// composer's entrance, the scrim's fade), so "the last one" no longer identifies the one under
+// test. Records are matched back to the node that actually consumed them.
+const animatedStyleRecords: Array<{ factory: () => any; result: unknown }> = [];
+
+function resolveComposerKeyboardStyleFactory(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+): () => any {
+    const composerHost = screen.tree.root.findByProps({ testID: 'new-session-composer-keyboard-host' });
+    const style = composerHost.props.style;
+    const applied = new Set(Array.isArray(style) ? style.flat(Infinity) : [style]);
+    const record = [...animatedStyleRecords].reverse().find((entry) => applied.has(entry.result));
+    if (!record) throw new Error('Expected the composer host to consume a registered animated style');
+    return record.factory;
+}
 const keyboardAnimationState = {
     height: { value: -240 },
     progress: { value: 1 },
@@ -66,19 +80,21 @@ vi.mock('react-native-safe-area-context', () => ({
     initialWindowMetrics: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
 }));
 
+// `react-native-reanimated` is a boundary the testkit owns (installed globally in
+// `dev/vitestSetup.ts`). A hand-rolled subset here previously shadowed it with four exports, so any
+// production code reaching for a fifth — `withTiming`/`interpolate` for the composer's entrance —
+// failed at the mock rather than at an assertion. Only `useAnimatedStyle` is overridden, because
+// this suite observes the composer's keyboard transform through the factory it registers.
 vi.mock('react-native-reanimated', async () => {
-    const React = await import('react');
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    const base = createReanimatedModuleMock();
     return {
-        __esModule: true,
-        default: {
-            View: (props: any) => React.createElement('AnimatedView', props, props.children),
-        },
+        ...base,
         useAnimatedStyle: (fn: any) => {
-            latestAnimatedStyleFactory = fn;
-            return fn();
+            const result = fn();
+            animatedStyleRecords.push({ factory: fn, result });
+            return result;
         },
-        runOnJS: (fn: (...args: any[]) => unknown) => fn,
-        useSharedValue: (initial: any) => ({ value: initial }),
     };
 });
 
@@ -166,7 +182,7 @@ afterEach(() => {
     mockEnv.keyboardListeners.clear();
     mockEnv.platform = 'ios';
     useKeyboardHandlerMock.mockReset();
-    latestAnimatedStyleFactory = null;
+    animatedStyleRecords.length = 0;
     keyboardAnimationState.height.value = -240;
     keyboardAnimationState.progress.value = 1;
 });
@@ -332,14 +348,14 @@ describe('new-session native keyboard avoiding', () => {
 
     it('translates the simple panel upward on Android keyboard events', async () => {
         mockEnv.platform = 'android';
-        await renderScreen(await buildSimplePanel());
+        const screen = await renderScreen(await buildSimplePanel());
+        const composerKeyboardStyle = resolveComposerKeyboardStyleFactory(screen);
 
         const [handlers] = useKeyboardHandlerMock.mock.calls.at(-1) ?? [];
         act(() => {
             handlers?.onStart?.({ height: 240, progress: 1 });
         });
-        const animatedStyle = latestAnimatedStyleFactory?.();
-        const translateY = animatedStyle?.transform?.[0]?.translateY;
+        const translateY = composerKeyboardStyle()?.transform?.[0]?.translateY;
 
         expect(translateY).toBeLessThanOrEqual(0);
     });
@@ -348,7 +364,8 @@ describe('new-session native keyboard avoiding', () => {
         mockEnv.platform = 'android';
         keyboardAnimationState.height.value = 0;
         keyboardAnimationState.progress.value = 0;
-        await renderScreen(await buildSimplePanel());
+        const screen = await renderScreen(await buildSimplePanel());
+        const composerKeyboardStyle = resolveComposerKeyboardStyleFactory(screen);
 
         act(() => {
             mockEnv.keyboardListeners.get('keyboardDidShow')?.({
@@ -356,13 +373,13 @@ describe('new-session native keyboard avoiding', () => {
             });
         });
 
-        expect(latestAnimatedStyleFactory?.()?.transform?.[0]?.translateY).toBe(-320);
+        expect(composerKeyboardStyle()?.transform?.[0]?.translateY).toBe(-320);
 
         act(() => {
             mockEnv.keyboardListeners.get('keyboardDidHide')?.();
         });
 
-        expect(latestAnimatedStyleFactory?.()?.transform?.[0]?.translateY).toBe(-34);
+        expect(composerKeyboardStyle()?.transform?.[0]?.translateY).toBe(-34);
     });
 
     it('uses the scaffold keyboard host for the wizard on iOS', async () => {

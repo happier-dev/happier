@@ -9,6 +9,10 @@ import {
     readSessionRuntimePresentationFreshnessExpirations,
 } from '@/sync/domains/session/attention/runtimePresentation';
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
+import {
+    resolveSessionAttentionStanding,
+    type SessionAttentionStandingPolicy,
+} from '@/sync/domains/session/organization/attentionStanding';
 import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import { getSessionName, getSessionStatus, type SessionStatus, type SessionWorkingTextMode } from '@/utils/sessions/sessionUtils';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
@@ -66,6 +70,22 @@ export type SessionListRowViewModel = Readonly<{
      * WITHOUT animation for it, with a dedicated status text.
      */
     workingPlacementRetained: boolean;
+    /**
+     * The row sits in Needs attention only because the user asked it to. It
+     * comes off the placement reason rather than the stored bit on purpose: a
+     * kept session that is currently placed for being unread has something of
+     * its own to say and must not be presented as merely kept.
+     */
+    attentionStanding: boolean;
+    /**
+     * The stored bit `resolveSessionAttentionStanding` returns for this row, NOT
+     * the placement outcome above. Action surfaces must offer Remove for a kept
+     * session even while it is currently placed for being unread, so the row
+     * menu target reads this and never `attentionStanding`.
+     */
+    isAttentionStanding: boolean;
+    /** Whether the Keep / Remove action means anything at all (attention band on). */
+    attentionStandingEnabled: boolean;
 }>;
 
 const EMPTY_SESSION_LIST_ROW_VIEW_MODELS: ReadonlyArray<SessionListRowViewModel | null> = [];
@@ -100,6 +120,8 @@ export type BuildSessionListRowViewModelInput = Readonly<{
     selectedSessionId: string | null;
     showServerBadge: boolean;
     showPinnedServerBadge: boolean;
+    attentionStandingEnabled?: boolean;
+    attentionStandingPolicy?: SessionAttentionStandingPolicy;
 }>;
 
 export function buildSessionListRowViewModel(input: BuildSessionListRowViewModelInput): SessionListRowViewModel {
@@ -188,6 +210,11 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
         tags: getTagsForSession(input.sessionTags, sessionKey ?? ''),
         secondaryLineMode: resolveSessionListSecondaryLineMode({ groupKind: item.groupKind }),
         workingPlacementRetained: item.workingPlacementReason === 'working-retained',
+        attentionStanding: item.attentionPlacementReason === 'standing',
+        isAttentionStanding: input.attentionStandingPolicy != null && sessionKey != null
+            ? resolveSessionAttentionStanding(input.attentionStandingPolicy, sessionKey)
+            : false,
+        attentionStandingEnabled: input.attentionStandingEnabled === true && sessionKey != null,
     };
     const signature = buildRowViewModelSignature(rowViewModel);
     const cacheKey = sessionKey ?? `session:${sessionId}`;
@@ -227,6 +254,8 @@ export function buildSessionListRowViewModels(input: Readonly<{
     selectedSessionId: string | null;
     showServerBadge: boolean;
     showPinnedServerBadge: boolean;
+    attentionStandingEnabled?: boolean;
+    attentionStandingPolicy?: SessionAttentionStandingPolicy;
 }>): ReadonlyArray<SessionListRowViewModel | null> {
     if (input.listItems.length === 0) {
         return EMPTY_SESSION_LIST_ROW_VIEW_MODELS;
@@ -280,6 +309,9 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
         viewModel.tags.join('\u0001'),
         viewModel.secondaryLineMode,
         viewModel.workingPlacementRetained ? '1' : '0',
+        viewModel.attentionStanding ? '1' : '0',
+        viewModel.isAttentionStanding ? '1' : '0',
+        viewModel.attentionStandingEnabled ? '1' : '0',
     ].join('\u0002');
 }
 

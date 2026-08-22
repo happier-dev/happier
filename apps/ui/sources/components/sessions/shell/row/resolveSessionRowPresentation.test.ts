@@ -23,11 +23,12 @@ type ResolveSessionRowPresentation = (input: Readonly<{
     hasPathSubtitle: boolean;
     workingRetained?: boolean;
     backgroundActive?: boolean;
+    standing?: boolean;
 }>) => Readonly<{
-    attentionIndicator: 'none' | 'working' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action';
+    attentionIndicator: 'none' | 'working' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action' | 'standing';
     titleTone: 'quiet' | 'normal' | 'emphasized';
     secondaryLine: 'none' | 'path' | 'status';
-    statusTextKey?: 'status.readyForReview' | 'status.error' | 'status.workingRetained' | 'status.backgroundActive';
+    statusTextKey?: 'status.readyForReview' | 'status.error' | 'status.workingRetained' | 'status.backgroundActive' | 'status.keptInAttention';
 }>;
 
 async function loadRowPresentationResolver(): Promise<ResolveSessionRowPresentation> {
@@ -274,6 +275,69 @@ describe('resolveSessionRowPresentation', () => {
             attentionIndicator: 'none',
             titleTone: 'quiet',
             secondaryLine: 'none',
+        });
+    });
+});
+
+describe('session row attention standing presentation', () => {
+    it('marks a kept but otherwise quiet row without emphasising its title', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'quiet',
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+            standing: true,
+        })).toEqual({
+            attentionIndicator: 'standing',
+            titleTone: 'quiet',
+            secondaryLine: 'status',
+            statusTextKey: 'status.keptInAttention',
+        });
+    });
+
+    it('keeps the session own signal when it has one, so standing never masks unread or ready', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'unread',
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+            standing: true,
+        })).toEqual({
+            attentionIndicator: 'unread',
+            titleTone: 'emphasized',
+            secondaryLine: 'path',
+        });
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'ready',
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+            standing: true,
+        })).toMatchObject({
+            attentionIndicator: 'ready',
+            statusTextKey: 'status.readyForReview',
+        });
+    });
+
+    it('still names a kept row on a minimal density row that draws no secondary line', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'quiet',
+            density: 'minimal',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: false,
+            standing: true,
+        })).toEqual({
+            attentionIndicator: 'standing',
+            titleTone: 'quiet',
+            secondaryLine: 'none',
+            statusTextKey: 'status.keptInAttention',
         });
     });
 });

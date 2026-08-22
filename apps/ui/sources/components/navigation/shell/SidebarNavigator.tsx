@@ -15,7 +15,7 @@ import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/deskt
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/focusMode/resolvePaneFocusModeRouteScopeId';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
 import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
@@ -316,7 +316,7 @@ export const SidebarNavigator = React.memo(() => {
 
     return (
         <DesktopMainContentDragSurface
-            enabled={Platform.OS === 'web' && isTauriDesktop()}
+            enabled={Platform.OS === 'web' && isDesktopHost()}
             leftOffsetPx={drawerWidth}
             style={styles.desktopDrawerRoot}
         >

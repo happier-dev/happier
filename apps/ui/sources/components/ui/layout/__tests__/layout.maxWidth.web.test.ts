@@ -12,7 +12,7 @@ describe('layout.maxWidth (web)', () => {
         }));
 
         vi.doMock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
-        vi.doMock('@/utils/platform/tauri', () => ({ isTauriDesktop: () => false }));
+        vi.doMock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false }));
         vi.doMock('@/sync/domains/state/storageStore', () => ({
             getStorage: () => ({ getState: () => ({ localSettings: { uiContentWidthMode: 'compact' } }) }),
         }));
@@ -34,7 +34,7 @@ describe('layout.maxWidth (web)', () => {
         }));
 
         vi.doMock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
-        vi.doMock('@/utils/platform/tauri', () => ({ isTauriDesktop: () => true }));
+        vi.doMock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => true }));
         vi.doMock('@/sync/domains/state/storageStore', () => ({
             getStorage: () => ({ getState: () => ({ localSettings: { uiContentWidthMode: 'compact' } }) }),
         }));
@@ -56,7 +56,7 @@ describe('layout.maxWidth (web)', () => {
         }));
 
         vi.doMock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
-        vi.doMock('@/utils/platform/tauri', () => ({ isTauriDesktop: () => false }));
+        vi.doMock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false }));
         vi.doMock('@/sync/domains/state/storageStore', () => ({
             getStorage: () => ({ getState: () => ({ localSettings: { uiContentWidthMode: 'medium' } }) }),
         }));
@@ -78,7 +78,7 @@ describe('layout.maxWidth (web)', () => {
         }));
 
         vi.doMock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
-        vi.doMock('@/utils/platform/tauri', () => ({ isTauriDesktop: () => false }));
+        vi.doMock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false }));
         vi.doMock('@/sync/domains/state/storageStore', () => ({
             getStorage: () => ({ getState: () => ({ localSettings: { uiContentWidthMode: 'full' } }) }),
         }));

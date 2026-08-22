@@ -22,7 +22,20 @@ export type SessionActionId =
     | 'ui.session.pin'
     | 'ui.session.unpin'
     | 'ui.session.tags.edit'
-    | 'ui.session.move-to-folder';
+    | 'ui.session.move-to-folder'
+    | 'ui.session.set-attention-standing'
+    | 'ui.session.clear-attention-standing';
+
+/**
+ * Whether this session can be kept in — or released from — Needs attention, and which way the
+ * single toggle currently points. `none` covers every reason the instruction is unreachable
+ * (no attention band configured, archived, view-only access), so a surface never has to
+ * re-derive that rule to decide whether to draw the action.
+ */
+export type SessionAttentionStandingAction =
+    | { kind: 'set-standing'; visible: true; targetStanding: true }
+    | { kind: 'clear-standing'; visible: true; targetStanding: false }
+    | { kind: 'none'; visible: false };
 
 export type SessionActionSession = Session | SessionListRenderableSession;
 
@@ -43,6 +56,7 @@ export type SessionActionTarget = Readonly<{
     canResume: boolean;
     canDelete: boolean;
     readStateAction: SessionReadStateAction;
+    attentionStandingAction: SessionAttentionStandingAction;
 }>;
 
 export type SessionActionOperationResult = Readonly<{
@@ -89,6 +103,11 @@ export type SessionActionExecutionOperations = Readonly<{
     moveToFolder?: (
         target: SessionActionTarget,
         input?: Readonly<{ folderId?: string | null }>,
+    ) => void | SessionActionOperationResult | Promise<void | SessionActionOperationResult>;
+    setAttentionStanding?: (
+        sessionId: string,
+        standing: boolean,
+        opts?: Readonly<{ serverId?: string | null }>,
     ) => void | SessionActionOperationResult | Promise<void | SessionActionOperationResult>;
     setManualReadState?: (
         sessionId: string,

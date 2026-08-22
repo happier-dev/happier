@@ -1,37 +1,37 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const invokeTauriMock = vi.hoisted(() => vi.fn());
-const listenTauriEventMock = vi.hoisted(() => vi.fn());
-const isTauriDesktopMock = vi.hoisted(() => vi.fn());
+const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
+const listenDesktopHostEventMock = vi.hoisted(() => vi.fn());
+const isDesktopHostMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/utils/platform/tauri', () => ({
-    invokeTauri: (command: string, args?: Record<string, unknown>) => invokeTauriMock(command, args),
-    listenTauriEvent: (eventName: string, handler: (payload: unknown) => void) => listenTauriEventMock(eventName, handler),
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostMock(command, args),
+    listenDesktopHostEvent: (eventName: string, handler: (payload: unknown) => void) => listenDesktopHostEventMock(eventName, handler),
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 describe('desktopWindowBridge', () => {
     afterEach(() => {
         vi.resetModules();
-        invokeTauriMock.mockReset();
-        listenTauriEventMock.mockReset();
-        isTauriDesktopMock.mockReset();
+        invokeDesktopHostMock.mockReset();
+        listenDesktopHostEventMock.mockReset();
+        isDesktopHostMock.mockReset();
     });
 
     it('returns a disabled chrome policy when the host is not Tauri desktop', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
 
         const { getDesktopWindowChromePolicy } = await import('./desktopWindowBridge');
 
         await expect(getDesktopWindowChromePolicy()).resolves.toEqual({
             strategy: 'none',
         });
-        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
     });
 
     it('falls back to a disabled policy when the runtime policy lookup fails', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockRejectedValue(new Error('unavailable'));
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockRejectedValue(new Error('unavailable'));
 
         const { getDesktopWindowChromePolicy } = await import('./desktopWindowBridge');
 
@@ -40,8 +40,8 @@ describe('desktopWindowBridge', () => {
         });
     });
 
-    it('routes actions through invokeTauri when the current window policy allows chrome controls', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+    it('routes actions through invokeDesktopHost when the current window policy allows chrome controls', async () => {
+        isDesktopHostMock.mockReturnValue(true);
 
         const {
             DESKTOP_WINDOW_CHROME_POLICY_COMMAND,
@@ -55,7 +55,7 @@ describe('desktopWindowBridge', () => {
             toggleDesktopWindowMaximize,
         } = await import('./desktopWindowBridge');
 
-        invokeTauriMock.mockImplementation(async (command: string) => {
+        invokeDesktopHostMock.mockImplementation(async (command: string) => {
             if (command === DESKTOP_WINDOW_CHROME_POLICY_COMMAND) {
                 return {
                     strategy: 'custom-controls',
@@ -70,14 +70,14 @@ describe('desktopWindowBridge', () => {
         await closeDesktopWindow();
         await startDesktopWindowDragging();
 
-        expect(invokeTauriMock).toHaveBeenCalledWith(DESKTOP_WINDOW_MINIMIZE_COMMAND, undefined);
-        expect(invokeTauriMock).toHaveBeenCalledWith(DESKTOP_WINDOW_TOGGLE_MAXIMIZE_COMMAND, undefined);
-        expect(invokeTauriMock).toHaveBeenCalledWith(DESKTOP_WINDOW_CLOSE_COMMAND, undefined);
-        expect(invokeTauriMock).toHaveBeenCalledWith(DESKTOP_WINDOW_START_DRAGGING_COMMAND, undefined);
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith(DESKTOP_WINDOW_MINIMIZE_COMMAND, undefined);
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith(DESKTOP_WINDOW_TOGGLE_MAXIMIZE_COMMAND, undefined);
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith(DESKTOP_WINDOW_CLOSE_COMMAND, undefined);
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith(DESKTOP_WINDOW_START_DRAGGING_COMMAND, undefined);
     });
 
     it('no-ops actions when the current window policy is disabled', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
 
         const {
             DESKTOP_WINDOW_CHROME_POLICY_COMMAND,
@@ -85,7 +85,7 @@ describe('desktopWindowBridge', () => {
             minimizeDesktopWindow,
         } = await import('./desktopWindowBridge');
 
-        invokeTauriMock.mockImplementation(async (command: string) => {
+        invokeDesktopHostMock.mockImplementation(async (command: string) => {
             if (command === DESKTOP_WINDOW_CHROME_POLICY_COMMAND) {
                 return {
                     strategy: 'none',
@@ -97,11 +97,11 @@ describe('desktopWindowBridge', () => {
 
         await minimizeDesktopWindow();
 
-        expect(invokeTauriMock).not.toHaveBeenCalledWith(DESKTOP_WINDOW_MINIMIZE_COMMAND, undefined);
+        expect(invokeDesktopHostMock).not.toHaveBeenCalledWith(DESKTOP_WINDOW_MINIMIZE_COMMAND, undefined);
     });
 
     it('returns a default unmaximized state when desktop is unavailable or policy is disabled', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
 
         const { getDesktopWindowState } = await import('./desktopWindowBridge');
 
@@ -110,11 +110,11 @@ describe('desktopWindowBridge', () => {
         });
 
         vi.resetModules();
-        invokeTauriMock.mockReset();
-        listenTauriEventMock.mockReset();
-        isTauriDesktopMock.mockReset();
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockReset();
+        listenDesktopHostEventMock.mockReset();
+        isDesktopHostMock.mockReset();
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             strategy: 'none',
         });
 
@@ -126,7 +126,7 @@ describe('desktopWindowBridge', () => {
     });
 
     it('syncs initial and event-driven window state through the backend bridge', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         const handler = vi.fn();
         const unlisten = vi.fn();
 
@@ -137,7 +137,7 @@ describe('desktopWindowBridge', () => {
             listenDesktopWindowState,
         } = await import('./desktopWindowBridge');
 
-        invokeTauriMock.mockImplementation(async (command: string) => {
+        invokeDesktopHostMock.mockImplementation(async (command: string) => {
             if (command === DESKTOP_WINDOW_CHROME_POLICY_COMMAND) {
                 return {
                     strategy: 'custom-controls',
@@ -154,7 +154,7 @@ describe('desktopWindowBridge', () => {
         });
 
         let eventHandler: ((payload: unknown) => void) | undefined;
-        listenTauriEventMock.mockImplementation(async (eventName: string, nextHandler: (payload: unknown) => void) => {
+        listenDesktopHostEventMock.mockImplementation(async (eventName: string, nextHandler: (payload: unknown) => void) => {
             eventHandler = nextHandler;
             expect(eventName).toBe(DESKTOP_WINDOW_EVENTS.state);
             return unlisten;
@@ -184,7 +184,7 @@ describe('desktopWindowBridge', () => {
     });
 
     it('handles state lookup and listener failures without throwing', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         const handler = vi.fn();
 
         const {
@@ -194,7 +194,7 @@ describe('desktopWindowBridge', () => {
             listenDesktopWindowState,
         } = await import('./desktopWindowBridge');
 
-        invokeTauriMock.mockImplementation(async (command: string) => {
+        invokeDesktopHostMock.mockImplementation(async (command: string) => {
             if (command === DESKTOP_WINDOW_CHROME_POLICY_COMMAND) {
                 return {
                     strategy: 'custom-controls',
@@ -207,7 +207,7 @@ describe('desktopWindowBridge', () => {
 
             return null;
         });
-        listenTauriEventMock.mockRejectedValue(new Error('listen failed'));
+        listenDesktopHostEventMock.mockRejectedValue(new Error('listen failed'));
 
         await expect(getDesktopWindowState()).resolves.toEqual({
             isMaximized: false,

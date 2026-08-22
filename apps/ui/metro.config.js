@@ -334,12 +334,22 @@ function addInternalWorkspaceWatchFolders() {
 
 // Add support for binary/runtime artifacts that are imported as packaged assets.
 // - `.wasm` is required by Skia on every platform.
-// - `.bundle` and `.map` are part of bundled native Plugin UI artifact trees. Metro's
+// - `.bundle` and `.map` are part of the bundled Plugin UI artifact trees on every platform. Metro's
 //   file map only hashes configured source/asset extensions, so watched native chunks
 //   and source maps are otherwise still invisible to `require()` and fail with
 //   "Failed to get the SHA-1".
 // Skia source: https://shopify.github.io/react-native-skia/docs/getting-started/installation/
-config.resolver.assetExts.push('wasm', 'bundle', 'map');
+//
+// `bundle` and `map` are artifact-only: they exist for those artifact trees and are never meaningful
+// as the trailing dot-segment of an npm package NAME. Every Plugin UI artifact the SDK declares is
+// named to terminate in one of them (`entry.mjs.bundle`, `<platform>.bundle`, `[name].chunk.bundle`,
+// `*.map`) precisely because Metro would otherwise transform and EXECUTE the artifact as app source;
+// a source extension such as `js`/`mjs` can never join this list. See
+// `packages/plugin-sdk/src/ui/artifactMetroAssetNaming.test.ts`. Metro decides asset-ness from that segment, so
+// they are withheld again for colliding package specifiers — see
+// `resolvePackageNameShadowedByArtifactAssetExt`.
+const artifactOnlyAssetExts = ['bundle', 'map'];
+config.resolver.assetExts.push('wasm', ...artifactOnlyAssetExts);
 
 // Enable inlineRequires for proper Skia and Reanimated loading
 // Source: https://shopify.github.io/react-native-skia/docs/getting-started/web/
@@ -774,6 +784,40 @@ function resolveInternalWorkspacePackageExport(moduleName, blockList, platform) 
   return candidate;
 }
 
+// Metro classifies a specifier as an asset when ANY dot-suffix of its basename is a configured asset
+// extension (`metro-resolver/src/utils/isAssetFile`), which does not distinguish a file extension from
+// the tail of a package NAME. `artifactOnlyAssetExts` therefore shadows every bare npm package whose name ends
+// in `.bundle`/`.map` — `array.prototype.map`, a runtime dependency of `promise.allsettled`, is such a
+// package. Those specifiers take metro-resolver's asset branch, and `DependencyGraph.resolveAsset`
+// keeps any file-map entry with a truthy `realPath`, including the package DIRECTORY. Metro then
+// converts that asset resolution to `{ type: "sourceFile", filePath: <directory> }` and
+// `Transformer.transformFile` fails with "Failed to get the SHA-1 for: <directory>".
+//
+// Withhold the artifact-only extensions for exactly those package names so normal package resolution
+// applies. Subpath asset requests such as `@happier-dev/plugins-x/happier-plugin-ui/**/*.chunk.bundle.map`
+// keep them, because the collision is in the package name segment only.
+function getBarePackageName(moduleName) {
+  if (typeof moduleName !== "string" || moduleName.length === 0) return null;
+  if (moduleName.startsWith(".") || path.isAbsolute(moduleName)) return null;
+  const segments = moduleName.split("/");
+  if (moduleName.startsWith("@")) {
+    return segments.length >= 2 && segments[0] && segments[1] ? `${segments[0]}/${segments[1]}` : null;
+  }
+  return segments[0] || null;
+}
+
+function resolvePackageNameShadowedByArtifactAssetExt(context, moduleName) {
+  const assetExts = context?.assetExts;
+  if (!(assetExts instanceof Set)) return context;
+  const packageName = getBarePackageName(moduleName);
+  if (packageName == null) return context;
+  if (!artifactOnlyAssetExts.some((ext) => packageName.endsWith(`.${ext}`))) return context;
+
+  const narrowedAssetExts = new Set(assetExts);
+  for (const ext of artifactOnlyAssetExts) narrowedAssetExts.delete(ext);
+  return { ...context, assetExts: narrowedAssetExts };
+}
+
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const generatedWorkletResolution = resolveGeneratedWorkletModule(moduleName);
@@ -977,9 +1021,11 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     resolvedModuleName !== "happier";
   let lastResolutionError = null;
 
+  const resolutionContext = resolvePackageNameShadowedByArtifactAssetExt(context, resolvedModuleName);
+
   if (typeof defaultResolveRequest === "function") {
     try {
-      const resolved = defaultResolveRequest(context, resolvedModuleName, platform);
+      const resolved = defaultResolveRequest(resolutionContext, resolvedModuleName, platform);
       if (resolved != null) return resolved;
     } catch (error) {
       lastResolutionError = error;
@@ -987,9 +1033,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     }
   }
 
-  if (typeof context.resolveRequest === "function") {
+  if (typeof resolutionContext.resolveRequest === "function") {
     try {
-      const resolved = context.resolveRequest(context, resolvedModuleName, platform);
+      const resolved = resolutionContext.resolveRequest(resolutionContext, resolvedModuleName, platform);
       if (resolved != null) return resolved;
     } catch (error) {
       lastResolutionError = error;

@@ -7,7 +7,6 @@ import type { SessionModeChipPresentation } from './resolveSessionModeChipPresen
 import { buildCoreAgentInputControlNodes } from './buildCoreAgentInputControlNodes';
 import { resolveRenderedAgentInputControls } from './resolveRenderedAgentInputControls';
 import { resolveRenderedExtraActionChipNodes } from './resolveRenderedExtraActionChipNodes';
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { ShakeInstance } from '@/components/ui/feedback/Shaker';
 import type { View } from 'react-native';
@@ -58,7 +57,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     onEnvVarsPress: () => void;
     hasAgentSelection: boolean;
     agentChipAnchorRef: React.RefObject<View | null>;
-    agentId: AgentId;
+    agentId: string;
     agentLabel: string;
     engineLabel: string;
     /** Hover/focus/press-in on the Agent chip, before the picker opens. */

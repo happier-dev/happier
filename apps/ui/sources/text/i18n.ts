@@ -2,6 +2,7 @@ import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLan
 import type { Translations } from './_types';
 import { getDeviceLocales } from './deviceLocales';
 import { ca } from './translations/ca';
+import { de } from './translations/de';
 import { en } from './translations/en';
 import { es } from './translations/es';
 import { fr } from './translations/fr';
@@ -44,6 +45,7 @@ const TRANSLATIONS_BY_LANGUAGE = {
     it: () => it,
     pt: () => pt,
     ca: () => ca,
+    de: () => de,
     'zh-Hans': () => zhHans,
     'zh-Hant': () => zhHant,
     ja: () => ja,

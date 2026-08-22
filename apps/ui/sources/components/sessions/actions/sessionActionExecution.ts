@@ -8,6 +8,7 @@ import {
     sessionStopWithServerScope,
     sessionUnarchiveWithServerScope,
 } from '@/sync/ops';
+import { sessionSetAttentionStandingWithServerScope } from '@/sync/ops/sessionOrganization';
 import {
     clearSessionVisibleWhenInactive,
     isSessionActiveArchiveResult,
@@ -16,6 +17,7 @@ import {
 
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
@@ -24,9 +26,11 @@ import {
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
     SESSION_ACTION_UNPIN_ID,
+    resolveAttentionStandingFromSessionActionId,
 } from './sessionActionIds';
 import type {
     SessionActionExecutionContext,
@@ -66,6 +70,15 @@ function resolveResumeSession(context: SessionActionExecutionContext | undefined
 
 function resolveSetManualReadState(context: SessionActionExecutionContext | undefined) {
     return context?.operations?.setManualReadState ?? sessionSetManualReadStateWithServerScope;
+}
+
+/**
+ * Standing writes go through the same server-scoped organization op the settings and bulk paths
+ * use; a surface may still substitute its own operation (tests, optimistic row handlers) the way
+ * every other action here allows.
+ */
+function resolveSetAttentionStanding(context: SessionActionExecutionContext | undefined) {
+    return context?.operations?.setAttentionStanding ?? sessionSetAttentionStandingWithServerScope;
 }
 
 function resolveSetPinned(context: SessionActionExecutionContext | undefined) {
@@ -190,6 +203,16 @@ export async function executeSessionAction(params: Readonly<{
             if (!setPinned) throwUnsupportedSingleTargetAction();
             throwIfFailed(
                 await setPinned(params.target.sessionId, params.actionId === SESSION_ACTION_PIN_ID, { serverId: params.target.serverId }),
+                t('errors.unknownError'),
+            );
+            return;
+        }
+        case SESSION_ACTION_SET_ATTENTION_STANDING_ID:
+        case SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID: {
+            const setAttentionStanding = resolveSetAttentionStanding(params.context);
+            const standing = resolveAttentionStandingFromSessionActionId(params.actionId) === true;
+            throwIfFailed(
+                await setAttentionStanding(params.target.sessionId, standing, { serverId: params.target.serverId }),
                 t('errors.unknownError'),
             );
             return;

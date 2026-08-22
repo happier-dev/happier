@@ -13,7 +13,7 @@ export type SessionRowAttentionState =
     | 'action_required';
 
 export type SessionRowDensity = 'default' | 'compact' | 'minimal';
-export type SessionRowAttentionIndicator = 'none' | 'working' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action';
+export type SessionRowAttentionIndicator = 'none' | 'working' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action' | 'standing';
 export type SessionRowTitleTone = 'quiet' | 'normal' | 'emphasized';
 export type SessionRowSecondaryLine = 'none' | 'path' | 'status';
 
@@ -21,7 +21,7 @@ export type SessionRowPresentation = Readonly<{
     attentionIndicator: SessionRowAttentionIndicator;
     titleTone: SessionRowTitleTone;
     secondaryLine: SessionRowSecondaryLine;
-    statusTextKey?: 'status.readyForReview' | 'status.error' | 'status.workingRetained' | 'status.backgroundActive';
+    statusTextKey?: 'status.readyForReview' | 'status.error' | 'status.workingRetained' | 'status.backgroundActive' | 'status.keptInAttention';
 }>;
 
 export function resolveLegacySessionRowAttentionState(input: Readonly<{
@@ -56,16 +56,33 @@ export function resolveSessionRowPresentation(input: Readonly<{
      * live activity (e.g. "online") under the paused indicator.
      */
     workingRetained?: boolean;
+    /**
+     * Attention standing: the person asked for this session to stay in Needs
+     * attention, so it sits there with nothing of its own to say. It is a
+     * separate input rather than an attention state on purpose — standing says
+     * nothing about whether the session was read, and must not colour the title
+     * or the badge the way unread does.
+     */
+    standing?: boolean;
 }>): SessionRowPresentation {
-    const attentionIndicator = resolveAttentionIndicator(input.attentionState, input.backgroundActive === true);
+    const signalIndicator = resolveAttentionIndicator(input.attentionState, input.backgroundActive === true);
+    // Standing is the weakest thing a row can say, so it only speaks for a row
+    // that has no signal of its own: anything the session is actually doing —
+    // unread, ready, working, failed, permission, action — keeps the row.
+    const presentsStanding = input.standing === true && signalIndicator === 'none';
+    const attentionIndicator: SessionRowAttentionIndicator = presentsStanding ? 'standing' : signalIndicator;
     const titleTone = input.attentionState === 'quiet'
         ? 'quiet'
-        : attentionIndicator === 'none'
+        : signalIndicator === 'none'
             ? 'normal'
             : 'emphasized';
 
     if (input.density === 'minimal') {
-        return { attentionIndicator, titleTone, secondaryLine: 'none' };
+        // A minimal row draws no secondary line, but the marker still needs the
+        // key: it is what the row is announced with.
+        return presentsStanding
+            ? { attentionIndicator, titleTone, secondaryLine: 'none', statusTextKey: 'status.keptInAttention' }
+            : { attentionIndicator, titleTone, secondaryLine: 'none' };
     }
 
     if (input.attentionState === 'failed') {
@@ -90,6 +107,10 @@ export function resolveSessionRowPresentation(input: Readonly<{
 
     if (input.attentionState === 'ready') {
         return { attentionIndicator, titleTone, secondaryLine: 'status', statusTextKey: 'status.readyForReview' };
+    }
+
+    if (presentsStanding) {
+        return { attentionIndicator, titleTone, secondaryLine: 'status', statusTextKey: 'status.keptInAttention' };
     }
 
     if (input.requestedSecondaryLineMode === 'path' && input.hasPathSubtitle) {

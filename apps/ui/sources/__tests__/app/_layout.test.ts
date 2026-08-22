@@ -25,7 +25,7 @@ const notificationNativeState = vi.hoisted(() => ({
 const tauriDesktopState = vi.hoisted(() => ({
     value: false,
 }));
-const invokeTauriSpy = vi.hoisted(() => vi.fn());
+const invokeDesktopHostSpy = vi.hoisted(() => vi.fn());
 
 let isAuthenticated = true;
 let segments: string[] = ['(app)'];
@@ -314,10 +314,10 @@ vi.mock('@/utils/platform/platform', () => {
     return { isRunningOnMac: () => false };
 });
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.value,
-    invokeTauri: (...args: any[]) => invokeTauriSpy(...args),
-    listenTauriEvent: vi.fn(async () => () => {}),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.value,
+    invokeDesktopHost: (...args: any[]) => invokeDesktopHostSpy(...args),
+    listenDesktopHostEvent: vi.fn(async () => () => {}),
 }));
 
 afterEach(() => {
@@ -325,7 +325,7 @@ afterEach(() => {
     vi.resetModules();
     router.replace.mockReset();
     router.push.mockReset();
-    invokeTauriSpy.mockReset();
+    invokeDesktopHostSpy.mockReset();
     notificationNativeState.unavailable = false;
     lastNotificationResponse = null;
     platformState.os = 'web';
@@ -653,7 +653,7 @@ describe('RootLayout desktop window sizing', () => {
         const { default: RootLayout } = await import('@/app/(app)/_layout');
         await renderScreen(React.createElement(RootLayout));
 
-        expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'main' });
+        expect(invokeDesktopHostSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'main' });
     }, 60_000);
 
     it('keeps the standard Tauri desktop window mode for unauthenticated users at the app shell', async () => {
@@ -666,7 +666,7 @@ describe('RootLayout desktop window sizing', () => {
         const { default: RootLayout } = await import('@/app/(app)/_layout');
         await renderScreen(React.createElement(RootLayout));
 
-        expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'main' });
+        expect(invokeDesktopHostSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'main' });
     }, 60_000);
 });
 

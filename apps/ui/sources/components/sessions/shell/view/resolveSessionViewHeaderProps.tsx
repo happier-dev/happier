@@ -39,7 +39,6 @@ import {
 import type { ExternalSessionRuntimePresentation } from '../../presentation/externalSessionRuntimePresentation';
 import { SessionRowAttentionIndicator } from '../row/SessionRowAttentionIndicator';
 import { resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import type { AgentId } from '@/agents/registry/registryCore';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export type SessionViewHeaderProps = Readonly<{
@@ -49,7 +48,7 @@ export type SessionViewHeaderProps = Readonly<{
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     avatarId?: string;
-    agentId?: AgentId | null;
+    agentId?: string | null;
     rightElement?: React.ReactNode;
     /** The right-sidebar toggle. The header decides whether it fits the margin or joins the icons. */
     gutterElement?: React.ReactNode;
@@ -152,7 +151,7 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     avatarId: string | undefined;
     // Part of the key, not just the props: the header renders this, so a session whose agent
     // changes must not be served the previous agent's cached header.
-    agentId: AgentId | null | undefined;
+    agentId: string | null | undefined;
     sessionInfoHref: string;
     sessionRunsHref: string;
     sessionAutomationsHref: string;

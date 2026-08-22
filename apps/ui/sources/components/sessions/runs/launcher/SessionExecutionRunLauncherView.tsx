@@ -12,7 +12,7 @@ import {
     resolveEffectiveActionInputFields,
 } from '@happier-dev/protocol';
 
-import { buildResumeSessionExtrasFromUiState, isAgentId } from '@/agents/catalog/catalog';
+import { buildResumeSessionExtrasFromUiState, isBundledAgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -143,9 +143,9 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
             const fromMetadata = resolveAgentIdFromSessionMetadata((session as any)?.metadata);
             if (fromMetadata) return fromMetadata;
             const agent = typeof (session as any)?.metadata?.agent === 'string'
-                ? String((session as any).metadata.agent)
-                : null;
-            return isAgentId(agent) ? agent : null;
+                ? (session as any).metadata.agent.trim()
+                : '';
+            return agent || null;
         },
         [session],
     );
@@ -293,7 +293,7 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
     );
 
     const permissionModeOptions = React.useMemo(() => {
-        const rawAgentType = selectedBackendChoices[0] && isAgentId(selectedBackendChoices[0].backendId)
+        const rawAgentType = selectedBackendChoices[0] && isBundledAgentId(selectedBackendChoices[0].backendId)
             ? selectedBackendChoices[0].backendId
             : sessionActionDefaultBackend?.defaultBackendId
             ?? (session as any)?.metadata?.agent

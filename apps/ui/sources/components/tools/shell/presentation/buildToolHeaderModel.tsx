@@ -2,7 +2,6 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
 
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import type { AgentId } from '@/agents/registry/registryCore';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import { knownTools } from '@/components/tools/catalog';
@@ -12,7 +11,7 @@ import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/pres
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     getAgentCore,
-} from '@/agents/catalog/catalog';
+    } from '@/agents/catalog/catalog';
 
 export type ToolHeaderModel = Readonly<{
     toolForRendering: ToolCall;
@@ -43,7 +42,7 @@ export function buildToolHeaderModel(input: {
      * must not be re-judged by whoever is running now. `null`/absent keeps the
      * live-metadata answer.
      */
-    historicalAgentId?: AgentId | null;
+    historicalAgentId?: string | null;
 }): ToolHeaderModel {
     const toolForRendering = normalizeToolCallForRendering(input.tool);
     const headerText = resolveToolHeaderTextPresentation({ tool: toolForRendering, metadata: input.metadata });
@@ -61,7 +60,7 @@ export function buildToolHeaderModel(input: {
         toolForRendering.state === 'running';
 
     const agentId = input.historicalAgentId ?? resolveAgentIdFromSessionMetadata(input.metadata);
-    const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
+    const hideUnknownToolsByDefault = getAgentCore(agentId ?? '')?.toolRendering.hideUnknownToolsByDefault === true;
 
     const shouldHideBodyPermanently = hideUnknownToolsByDefault && isUnknownTool;
     const shouldCollapseUnknownToolByDefault = isUnknownTool && toolForRendering.state === 'completed';

@@ -33,7 +33,7 @@ vi.mock('@/agents/registry/compat/customAcp', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
-  isAgentId: (value: unknown) => value === 'codex' || value === 'opencode' || value === 'claude',
+  isBundledAgentId: (value: unknown) => value === 'codex' || value === 'opencode' || value === 'claude',
   getAgentCore: (agentId: string) => ({
     sessionModes: { kind: agentId === 'codex' ? 'acpPolicyPresets' : 'acpAgentModes' },
   }),

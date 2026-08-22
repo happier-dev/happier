@@ -1,11 +1,13 @@
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
 } from './sessionActionIds';
@@ -18,6 +20,13 @@ export function resolveSessionReadStateActionId(target: SessionActionTarget): Se
         : SESSION_ACTION_MARK_UNREAD_ID;
 }
 
+export function resolveSessionAttentionStandingActionId(target: SessionActionTarget): SessionActionId | null {
+    if (!target.attentionStandingAction.visible) return null;
+    return target.attentionStandingAction.targetStanding
+        ? SESSION_ACTION_SET_ATTENTION_STANDING_ID
+        : SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID;
+}
+
 export function listVisibleSessionActionIds(params: Readonly<{
     target: SessionActionTarget;
     surface: SessionActionSurface;
@@ -28,6 +37,11 @@ export function listVisibleSessionActionIds(params: Readonly<{
 
     if (readStateId) {
         ids.push(readStateId);
+    }
+
+    const attentionStandingId = resolveSessionAttentionStandingActionId(target);
+    if (attentionStandingId) {
+        ids.push(attentionStandingId);
     }
 
     if (target.canRename) {

@@ -22,10 +22,10 @@ index 15a5ab7..41cecfb 100644
    }
  
 diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
-index d02e003..f18ba8d 100644
+index d02e003..6df48f2 100644
 --- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
 +++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
-@@ -491,6 +491,28 @@ - (void)textInputDidChange
+@@ -491,6 +491,36 @@ - (void)textInputDidChange
  
    [self _updateState];
  
@@ -37,7 +37,15 @@ index d02e003..f18ba8d 100644
 +  // The reveal must be NON-animated: an animated scrollRangeToVisible is re-triggered by every
 +  // subsequent keystroke while the caret is still clipped, restarting the ease curve each time,
 +  // which degrades the one-line scroll into a ~1s crawl during fast typing.
-+  if (_backedTextInputView.isFirstResponder && [_backedTextInputView isKindOfClass:[UIScrollView class]]) {
++  // HAPPIER PATCH(composer-jiggle-reveal-gate): only reveal once the box has STOPPED growing.
++  // While the input is still below its clamped max height, `_updateState` has only queued an async
++  // Fabric commit, so `bounds.height` here is the PRE-growth height; revealing against it
++  // bottom-aligns to a stale viewport and overshoots by a full line until the real frame mounts.
++  // When the content already overflows, the height is final (clamped) and the reveal is exact —
++  // which is the only case the reveal was needed for anyway.
++  if (_backedTextInputView.isFirstResponder && [_backedTextInputView isKindOfClass:[UIScrollView class]] &&
++      ((UIScrollView *)_backedTextInputView).contentSize.height >
++          CGRectGetHeight(_backedTextInputView.bounds) + 0.5) {
 +    UITextRange *typingSelectedRange = _backedTextInputView.selectedTextRange;
 +    if (typingSelectedRange != nil && typingSelectedRange.empty) {
 +      CGRect caretRect = [_backedTextInputView caretRectForPosition:typingSelectedRange.start];
@@ -54,7 +62,7 @@ index d02e003..f18ba8d 100644
    if (_eventEmitter) {
      const auto &textInputEventEmitter = static_cast<const TextInputEventEmitter &>(*_eventEmitter);
      textInputEventEmitter.onChange([self _textInputMetrics]);
-@@ -765,6 +787,12 @@ - (void)_setAttributedString:(NSAttributedString *)attributedString
+@@ -765,6 +795,20 @@ - (void)_setAttributedString:(NSAttributedString *)attributedString
    }
    UITextRange *selectedRange = _backedTextInputView.selectedTextRange;
    NSInteger oldTextLength = _backedTextInputView.attributedText.string.length;
@@ -64,17 +72,32 @@ index d02e003..f18ba8d 100644
 +  // such a refresh causes late one-line jumps while typing (the composer "jiggle"), so only
 +  // restore the scroll when the string content actually changed.
 +  BOOL contentStringChanged = ![attributedString.string isEqualToString:_backedTextInputView.attributedText.string];
++  // HAPPIER PATCH(composer-jiggle): assigning attributedText makes UIKit move the caret to the end
++  // and scroll (see RN's note below). Stock RN repairs that with an unconditional
++  // scrollRangeToVisible; skipping the repair for attribute-only re-applies left the composer
++  // parked at whatever offset UIKit chose — the last line clipped until the next keystroke.
++  // Capture the offset so the repair can put it back EXACTLY instead of chasing the caret.
++  BOOL canPreserveContentOffset = [_backedTextInputView isKindOfClass:[UIScrollView class]];
++  CGPoint preservedContentOffset =
++      canPreserveContentOffset ? ((UIScrollView *)_backedTextInputView).contentOffset : CGPointZero;
    _backedTextInputView.attributedText = attributedString;
    // Updating the UITextView attributedText, for example changing the lineHeight, the color or adding
    // a new paragraph with \n, causes the cursor to move to the end of the Text and scroll.
-@@ -778,7 +806,10 @@ - (void)_setAttributedString:(NSAttributedString *)attributedString
+@@ -778,7 +822,17 @@ - (void)_setAttributedString:(NSAttributedString *)attributedString
                                                                   offset:newOffset];
    [_backedTextInputView setSelectedTextRange:[_backedTextInputView textRangeFromPosition:position toPosition:position]
                                notifyDelegate:YES];
 -  [_backedTextInputView scrollRangeToVisible:NSMakeRange(offsetStart, 0)];
-+  // HAPPIER PATCH(composer-jiggle): see contentStringChanged above.
++  // HAPPIER PATCH(composer-jiggle): see contentStringChanged above. Content genuinely changed ->
++  // follow the caret (stock behaviour). Attribute-only re-apply -> undo UIKit's scroll dump by
++  // restoring the exact previous offset, which neither jiggles nor leaves the last line clipped.
 +  if (contentStringChanged) {
 +    [_backedTextInputView scrollRangeToVisible:NSMakeRange(offsetStart, 0)];
++  } else if (canPreserveContentOffset) {
++    UIScrollView *textScrollView = (UIScrollView *)_backedTextInputView;
++    if (!CGPointEqualToPoint(textScrollView.contentOffset, preservedContentOffset)) {
++      [textScrollView setContentOffset:preservedContentOffset animated:NO];
++    }
 +  }
  
    // A zero-length selection range can cause the caret position to change on iOS,

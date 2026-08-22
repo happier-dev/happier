@@ -19,7 +19,7 @@ const reactNativeRuntime = vi.hoisted(() => ({
     platformOs: 'ios' as 'web' | 'ios' | 'android',
 }));
 
-let isTauriDesktopValue = false;
+let isDesktopHostValue = false;
 let visibleSessionIdsValue: string[] = [];
 let localSettingsValue: Record<string, unknown> = {
     localNotificationsEnabled: true,
@@ -83,8 +83,8 @@ vi.mock('@/sync/domains/session/sessionSurfaceVisibility', () => ({
     isSessionSurfaceVisible: (sessionId: string) => visibleSessionIdsValue.includes(sessionId),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopValue,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostValue,
 }));
 
 vi.mock('../channels/sendExpoLocalNotification', () => ({
@@ -98,7 +98,7 @@ vi.mock('../channels/sendTauriLocalNotification', () => ({
 describe('ActivityLocalNotificationRuntime', () => {
     afterEach(async () => {
         reactNativeRuntime.platformOs = 'ios';
-        isTauriDesktopValue = false;
+        isDesktopHostValue = false;
         visibleSessionIdsValue = [];
         localSettingsValue = {
             localNotificationsEnabled: true,
@@ -218,7 +218,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             hasFocus: () => false,
         };
         reactNativeRuntime.platformOs = 'web';
-        isTauriDesktopValue = true;
+        isDesktopHostValue = true;
         visibleSessionIdsValue = ['session-1'];
 
         try {
@@ -306,7 +306,7 @@ describe('ActivityLocalNotificationRuntime', () => {
 
     it('respects per-topic device-local toggles and routes tauri events to the desktop channel', async () => {
         reactNativeRuntime.platformOs = 'web';
-        isTauriDesktopValue = true;
+        isDesktopHostValue = true;
         localSettingsValue = {
             ...localSettingsValue,
             localNotificationsShowReady: false,

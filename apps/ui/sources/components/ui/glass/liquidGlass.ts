@@ -30,16 +30,36 @@ function loadGlassModule(): GlassModule | null {
     return cachedModule;
 }
 
-export function isLiquidGlassAvailable(): boolean {
-    const module = loadGlassModule();
-    if (!module) {
-        return false;
-    }
+export type LiquidGlassProbes = Readonly<{
+    /** Whether the BUILD supports Liquid Glass (toolchain + iOS version). */
+    isLiquidGlassAvailable?: () => boolean;
+    /** Whether the Liquid Glass API is actually present on THIS device at runtime. */
+    isGlassEffectAPIAvailable?: () => boolean;
+}>;
+
+/**
+ * Pure availability decision, kept separate from the native `require` so it is testable without
+ * standing up the native module.
+ *
+ * BOTH probes are required. `isLiquidGlassAvailable` answers "was this built against a toolchain
+ * that supports Liquid Glass"; `isGlassEffectAPIAvailable` was added by `expo-glass-effect`
+ * specifically because some iOS 26 builds report the first as true while the runtime API is absent,
+ * and rendering a `GlassView` there crashes. Checking only the build-level flag is exactly the case
+ * that guard exists to catch. A probe that is missing or throws counts as unavailable, so an older
+ * module version degrades to blur instead of crashing.
+ */
+export function resolveLiquidGlassAvailability(probes: LiquidGlassProbes | null): boolean {
+    if (!probes) return false;
     try {
-        return module.isLiquidGlassAvailable() === true;
+        if (probes.isLiquidGlassAvailable?.() !== true) return false;
+        return probes.isGlassEffectAPIAvailable?.() === true;
     } catch {
         return false;
     }
+}
+
+export function isLiquidGlassAvailable(): boolean {
+    return resolveLiquidGlassAvailability(loadGlassModule());
 }
 
 export function getGlassViewComponent(): GlassModule['GlassView'] | null {

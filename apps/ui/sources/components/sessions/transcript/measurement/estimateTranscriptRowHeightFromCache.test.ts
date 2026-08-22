@@ -134,11 +134,13 @@ describe('estimateTranscriptRowHeightFromContent', () => {
 
     it('scales a text message estimate with its content instead of a flat scalar', () => {
         const short = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => agentText('m1', 'hello'),
             item: { kind: 'message', id: 'i1', messageId: 'm1' } as TranscriptRowShellItem,
         });
         const giant = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => agentText('m1', 'x'.repeat(14_000)),
             item: { kind: 'message', id: 'i1', messageId: 'm1' } as TranscriptRowShellItem,
@@ -163,6 +165,7 @@ describe('estimateTranscriptRowHeightFromContent', () => {
      */
     it('estimates the tool-group cap rows at their measured heights so accumulation leaves no gap', () => {
         const estimateFor = (item: TranscriptRowShellItem) => estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => null,
             item,
@@ -183,6 +186,7 @@ describe('estimateTranscriptRowHeightFromContent', () => {
      */
     it('hands the pre-decomposition group shapes back to the renderer estimate', () => {
         const estimateFor = (item: TranscriptRowShellItem) => estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => null,
             item,
@@ -211,6 +215,7 @@ describe('estimateTranscriptRowHeightFromContent', () => {
 
     it('returns undefined for unknown item shapes so the renderer fallback applies', () => {
         const estimate = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => null,
             item: { kind: 'mystery', id: 'x' } as unknown as TranscriptRowShellItem,
@@ -255,6 +260,7 @@ describe('P · a tool row is sized by the chrome it actually paints', () => {
         item: TranscriptRowShellItem,
         toolCallsGroupChromeVariant: 'cards' | 'feed' | 'feed_background',
     ) => estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
         getMessageById: () => null,
         item,
         toolCallsGroupChromeVariant,
@@ -336,6 +342,7 @@ describe('P · a tool row is sized by the chrome it actually paints', () => {
     const messageItem = { kind: 'message', id: 'i1', messageId: 'm1' } as TranscriptRowShellItem;
     const estimateMessageFor = (variant: 'cards' | 'feed' | 'feed_background') => (
         estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             getMessageById: () => toolMessage,
             item: messageItem,
             toolCallsGroupChromeVariant: variant,

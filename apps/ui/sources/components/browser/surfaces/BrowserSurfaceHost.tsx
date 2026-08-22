@@ -36,7 +36,11 @@ import { resolveBrowserViewIdForTarget } from '@/sync/domains/browser/store';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import { useDesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/useDesktopWebViewNativeAvailability';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    createPluginUiProjectedActionResolver,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 import {
     executePluginBrowserAction,
     type PluginBrowserProjectionModel,
@@ -59,6 +63,7 @@ import {
 import { BrowserPluginSurfacePlacements } from './BrowserPluginSurfacePlacements';
 import { BrowserSurfaceFallback, type BrowserSurfaceUnavailableReason } from './BrowserSurfaceFallback';
 import { BrowserKeepAliveBinder } from './browserPresentationRetention';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
 type BrowserSurfaceState = Readonly<{
     browserState: BrowserControlState;
@@ -263,6 +268,7 @@ export function BrowserSurfaceHost(props: Readonly<{
      */
     keepAliveAboveRouter?: boolean;
 }>): React.ReactElement {
+    const currentUiContextReader = useOptionalCurrentUiContextReader();
     const browserDecision = useFeatureDecision('browser', { scopeKind: 'runtime' });
     const viewTargetsDecision = useFeatureDecision('browser.viewTargets', { scopeKind: 'runtime' });
     const diagnosticsDecision = useFeatureDecision('browser.diagnostics', { scopeKind: 'runtime' });
@@ -621,16 +627,42 @@ export function BrowserSurfaceHost(props: Readonly<{
         }
         navigateCurrentTabInPlace(target, options);
     }, [navigateCurrentTabInPlace, props.onOpenTarget]);
+    const resolveContributedAction = React.useMemo(
+        () => createPluginUiProjectedActionResolver(props.pluginUiProjection?.actionsById),
+        [props.pluginUiProjection?.actionsById],
+    );
+    const pluginBrowserActionAccountLifetime = captureActiveServerAccountScopeLifetime();
+    const pluginBrowserActionCurrentRef = React.useRef({
+        accountLifetime: pluginBrowserActionAccountLifetime,
+        generation: props.pluginBrowserProjection?.generation ?? null,
+        interactionEnabled: props.pluginUiInteractionEnabled === true,
+    });
+    pluginBrowserActionCurrentRef.current = {
+        accountLifetime: pluginBrowserActionAccountLifetime,
+        generation: props.pluginBrowserProjection?.generation ?? null,
+        interactionEnabled: props.pluginUiInteractionEnabled === true,
+    };
     const onPluginBrowserAction = React.useCallback<NonNullable<React.ComponentProps<typeof BrowserShell>['onPluginBrowserAction']>>(
         (action, input) => {
+            const expectedGeneration = props.pluginBrowserProjection?.generation ?? null;
             void executePluginBrowserAction({
                 action,
-                generation: props.pluginBrowserProjection?.generation ?? null,
+                generation: expectedGeneration,
                 machineId: props.pluginBrowserActionContext?.machineId,
                 serverId: props.pluginBrowserActionContext?.serverId,
                 sessionId: props.pluginBrowserActionContext?.sessionId,
                 input,
                 policyContext: pluginBrowserPolicyContext,
+                resolveContributedAction,
+                ...(currentUiContextReader
+                    ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
+                    : {}),
+                isCurrent: () => (
+                    pluginBrowserActionCurrentRef.current.accountLifetime === pluginBrowserActionAccountLifetime
+                    && pluginBrowserActionAccountLifetime?.isCurrent() === true
+                    && pluginBrowserActionCurrentRef.current.interactionEnabled
+                    && pluginBrowserActionCurrentRef.current.generation === expectedGeneration
+                ),
             });
         },
         [
@@ -639,6 +671,9 @@ export function BrowserSurfaceHost(props: Readonly<{
             props.pluginBrowserActionContext?.sessionId,
             props.pluginBrowserProjection?.generation,
             pluginBrowserPolicyContext,
+            pluginBrowserActionAccountLifetime,
+            resolveContributedAction,
+            currentUiContextReader,
         ],
     );
 
@@ -679,7 +714,7 @@ export function BrowserSurfaceHost(props: Readonly<{
                 pluginUiInteractionEnabled={props.pluginUiInteractionEnabled}
                 pluginBrowserProjection={props.pluginBrowserProjection}
                 pluginBrowserPolicyContext={pluginBrowserPolicyContext}
-                onPluginBrowserAction={props.pluginBrowserActionContext?.machineId ? onPluginBrowserAction : undefined}
+                onPluginBrowserAction={props.pluginUiInteractionEnabled === true ? onPluginBrowserAction : undefined}
                 simulatorPreviewRuntime={props.simulatorPreviewRuntime}
                 browserContext={browserContextForShell}
                 browserDiagnostics={browserDiagnosticsForShell}

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { AppState } from 'react-native';
 
 import { isTauriMainWindowActivelyViewed } from '@/desktop/window/isTauriMainWindowActivelyViewed';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { isRuntimeActive } from './isRuntimeActive';
 
@@ -41,7 +41,7 @@ let watchStarted = false;
 const listeners = new Set<() => void>();
 
 function readHostActivelyViewedNow(): boolean {
-    return isTauriDesktop() ? isTauriMainWindowActivelyViewed() : isRuntimeActive();
+    return isDesktopHost() ? isTauriMainWindowActivelyViewed() : isRuntimeActive();
 }
 
 function publishHostActivelyViewed(): void {

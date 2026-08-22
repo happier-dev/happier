@@ -76,32 +76,33 @@ const supportedSource: SessionAgentContinuationSourceState = {
     storageKind: 'persisted',
     canEditSession: true,
     machinePresence: 'online',
+    hasConversationToCarry: true,
 };
 
 const onlineMachine: SessionAgentContinuationMachineTarget = {
     machineId: 'machine-1',
     serverId: 'server-1',
     connectionGeneration: 1,
+    daemonGeneration: 1,
 };
 
 const AVAILABLE = {
     type: 'available',
     protocolVersion: 1,
     sameSessionTransition: true,
-    nativeReturn: false,
 } as const;
 
 const UNSUPPORTED = {
     type: 'available',
     protocolVersion: 1,
     sameSessionTransition: false,
-    nativeReturn: false,
 } as const;
 
 type HookProps = Readonly<{
     currentAgentId?: string | null;
     entries?: readonly ResolvedBackendCatalogEntry[];
     featureEnabled?: boolean;
+    machine?: SessionAgentContinuationMachineTarget;
     source?: SessionAgentContinuationSourceState;
 }>;
 
@@ -114,7 +115,7 @@ async function renderControls(props: HookProps = {}) {
         entries: hookProps.entries ?? [entry('claude'), entry('codex')],
         featureEnabled: hookProps.featureEnabled ?? true,
         source: hookProps.source ?? supportedSource,
-        machine: onlineMachine,
+        machine: hookProps.machine ?? onlineMachine,
         detail: {
             settings: {} as never,
             capabilityServerId: 'server-1',
@@ -161,6 +162,20 @@ function armedIntentFor(targetAgentId: string) {
     };
 }
 
+function createDeferred<T>() {
+    let resolvePromise: ((value: T | PromiseLike<T>) => void) | null = null;
+    const promise = new Promise<T>((resolve) => {
+        resolvePromise = resolve;
+    });
+    return {
+        promise,
+        resolve(value: T) {
+            if (resolvePromise === null) throw new Error('Deferred promise was not initialized');
+            resolvePromise(value);
+        },
+    };
+}
+
 describe('useInSessionAgentPickerControls arm draft', () => {
     beforeEach(() => {
         resetSessionDraftValueCachesForTests();
@@ -184,6 +199,55 @@ describe('useInSessionAgentPickerControls arm draft', () => {
 
         expect(second.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
         expect(second.getCurrent().agentPickerSelectedOptionId).toBe('backend:codex');
+    });
+
+    // The identity is the daemon's dedupe key and the divider correlation key.
+    // Re-minting it on a remount is how a retry of ONE armed switch committed a
+    // second message and a second divider for a cutover that may already have
+    // happened.
+    it('retains the submitted identity when the same armed switch comes back', async () => {
+        const first = await renderControls();
+        await armTarget(first, 'backend:codex');
+        const submittedLocalId = first.getCurrent().armedContinuationLocalId;
+        expect(submittedLocalId).toEqual(expect.any(String));
+        // The send happened and its effect is unestablished; the Session screen
+        // mirrors that fact into the draft beside the arm.
+        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuationSubmission', {
+            localId: submittedLocalId as string,
+            intent: armedIntentFor('codex'),
+            result: { type: 'outcome_unknown', localId: submittedLocalId as string },
+            submittedText: 'switch and send this',
+            reconciled: false,
+        });
+        await first.unmount();
+
+        const second = await renderControls();
+
+        expect(second.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(second.getCurrent().armedContinuationLocalId).toBe(submittedLocalId);
+    });
+
+    // A submission identity belongs to the switch it was made for. Adopting it
+    // for a different target would dedupe a genuinely new message against
+    // another switch's divider.
+    it('mints a fresh identity for an arm the submitted switch does not describe', async () => {
+        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+            backendTargetKey: 'backend:gemini',
+            intent: armedIntentFor('gemini'),
+        });
+        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuationSubmission', {
+            localId: 'submitted-for-codex',
+            intent: armedIntentFor('codex'),
+            result: { type: 'outcome_unknown', localId: 'submitted-for-codex' },
+            submittedText: 'switch and send this',
+            reconciled: false,
+        });
+
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
+
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('gemini'));
+        expect(hook.getCurrent().armedContinuationLocalId).toEqual(expect.any(String));
+        expect(hook.getCurrent().armedContinuationLocalId).not.toBe('submitted-for-codex');
     });
 
     it('asks the machine for a Session that is already armed, without waiting for the chip', async () => {
@@ -270,6 +334,63 @@ describe('useInSessionAgentPickerControls arm draft', () => {
 
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(readPersistedArm()).toBeDefined();
+    });
+
+    it('keeps an arm through a daemon reinspection that remains eligible', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'backend:codex');
+        const localId = hook.getCurrent().armedContinuationLocalId;
+        expect(localId).toEqual(expect.any(String));
+        const reinspection = createDeferred<typeof AVAILABLE>();
+        machineRpcWithServerScope.mockImplementationOnce(() => reinspection.promise);
+
+        await hook.rerender({ machine: { ...onlineMachine, daemonGeneration: 2 } });
+        await act(async () => { await Promise.resolve(); });
+
+        // A changed daemon invalidates the old answer, not the reader's choice.
+        // The choice stays armed until the replacement answer establishes it is
+        // no longer honourable.
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);
+        expect(readPersistedArm()).toBeDefined();
+
+        await act(async () => {
+            reinspection.resolve(AVAILABLE);
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);
+        expect(readPersistedArm()).toBeDefined();
+    });
+
+    it('clears an arm only after a reconnect reinspection settles unavailable', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'backend:codex');
+        const localId = hook.getCurrent().armedContinuationLocalId;
+        expect(localId).toEqual(expect.any(String));
+        const reinspection = createDeferred<typeof UNSUPPORTED>();
+        machineRpcWithServerScope.mockImplementationOnce(() => reinspection.promise);
+
+        await hook.rerender({ machine: { ...onlineMachine, connectionGeneration: 2 } });
+        await act(async () => { await Promise.resolve(); });
+
+        // `checking` is not evidence the arm is stale. Clearing here loses the
+        // user's target while the new runtime pair is simply answering.
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);
+        expect(readPersistedArm()).toBeDefined();
+
+        await act(async () => {
+            reinspection.resolve(UNSUPPORTED);
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(hook.getCurrent().armedContinuationLocalId).toBeNull();
+        expect(readPersistedArm()).toBeUndefined();
     });
 
     it('drops the persisted arm with the live one when the rail that could cancel it goes', async () => {

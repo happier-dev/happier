@@ -70,7 +70,74 @@ function assertEasingIsWorkletLike(easing: ReanimatedTimingConfig['easing']): vo
     );
 }
 
-export function createReanimatedModuleMock() {
+type ReanimatedLayoutAnimationMock = Readonly<{
+    presetName: string;
+    /**
+     * The real builders store the chosen animation FUNCTION here; the mock stores a marker, which
+     * is the one field whose shape deliberately differs. Everything else uses Reanimated's own
+     * `…V` field names so an assertion reads the same property the library would.
+     */
+    type?: 'spring';
+    stiffnessV?: number;
+    dampingV?: number;
+    massV?: number;
+    dampingRatioV?: number;
+    easingV?: unknown;
+    durationV?: number;
+    delayV?: number;
+    reduceMotionV?: string;
+}>;
+
+/**
+ * A chainable stand-in for `LinearTransition` / `FadeIn` and friends.
+ *
+ * Each modifier returns a NEW recorder, mirroring the real builders closely enough that a shared
+ * module-scope constant cannot be mutated by a later caller.
+ */
+function createLayoutAnimationBuilderMock(presetName: string) {
+    type Builder = ReanimatedLayoutAnimationMock & {
+        springify: (duration?: number) => Builder;
+        stiffness: (value: number) => Builder;
+        damping: (value: number) => Builder;
+        mass: (value: number) => Builder;
+        dampingRatio: (value: number) => Builder;
+        easing: (value: unknown) => Builder;
+        duration: (value: number) => Builder;
+        delay: (value: number) => Builder;
+        reduceMotion: (value: string) => Builder;
+        build: () => () => Record<string, unknown>;
+    };
+
+    const make = (record: ReanimatedLayoutAnimationMock): Builder => Object.freeze({
+        ...record,
+        springify: (): Builder => make({ ...record, type: 'spring' }),
+        stiffness: (value: number): Builder => make({ ...record, stiffnessV: value }),
+        damping: (value: number): Builder => make({ ...record, dampingV: value }),
+        mass: (value: number): Builder => make({ ...record, massV: value }),
+        dampingRatio: (value: number): Builder => make({ ...record, dampingRatioV: value }),
+        easing: (value: unknown): Builder => make({ ...record, easingV: value }),
+        duration: (value: number): Builder => make({ ...record, durationV: value }),
+        delay: (value: number): Builder => make({ ...record, delayV: value }),
+        reduceMotion: (value: string): Builder => make({ ...record, reduceMotionV: value }),
+        build: () => () => ({ initialValues: {}, animations: {} }),
+    }) as Builder;
+
+    return make({ presetName });
+}
+
+export type ReanimatedModuleMockOptions = Readonly<{
+    /**
+     * Invoke a `withTiming` completion callback synchronously with `finished: true`.
+     *
+     * Off by default: several suites assert the state a component holds WHILE an animation runs,
+     * and settling it in the same tick would erase exactly what they measure. Opt in from a suite
+     * whose behaviour under test is what happens once the animation lands — an exit transition that
+     * navigates on completion, for instance.
+     */
+    settleTimingCallbacks?: boolean;
+}>;
+
+export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions = {}) {
     const Animated = {
         View: 'Animated.View',
         ScrollView: 'Animated.ScrollView',
@@ -144,11 +211,32 @@ export function createReanimatedModuleMock() {
         inOut: (fn?: (t: number) => number) => fn ?? identityEasing,
     } as const;
 
+    // Mirrors the real `ReduceMotion` string enum: production code stamps this value on
+    // motion configs, so a mock without it turns a policy decision into a `TypeError`.
+    const ReduceMotion = {
+        System: 'system',
+        Always: 'always',
+        Never: 'never',
+    } as const;
+
     return {
         __esModule: true,
         default: Animated,
         ...Animated,
         Easing,
+        // Layout-animation builders and the reduced-motion enum are read at module or
+        // render scope by production code, so a mock without them is not a missing
+        // assertion but an import-time crash.
+        FadeIn: createLayoutAnimationBuilderMock('FadeIn'),
+        LinearTransition: createLayoutAnimationBuilderMock('LinearTransition'),
+        ReduceMotion,
+        // Reanimated's real `Extrapolation` is a plain enum of string constants; production code
+        // passes one to `interpolate`, which this mock ignores (it returns the range start).
+        Extrapolation: {
+            CLAMP: 'clamp',
+            EXTEND: 'extend',
+            IDENTITY: 'identity',
+        },
         interpolate,
         interpolateColor,
         cancelAnimation: () => {},
@@ -208,8 +296,13 @@ export function createReanimatedModuleMock() {
         withSequence: <T,>(...values: T[]): T => values[values.length - 1] as T,
         withDelay: <T,>(_delayMs: number, value: T): T => value,
         withSpring: <T,>(value: T): T => value,
-        withTiming: <T,>(value: T, config?: ReanimatedTimingConfig): T => {
+        withTiming: <T,>(
+            value: T,
+            config?: ReanimatedTimingConfig,
+            callback?: (finished?: boolean) => void,
+        ): T => {
             assertEasingIsWorkletLike(config?.easing);
+            if (options.settleTimingCallbacks) callback?.(true);
             return value;
         },
     };

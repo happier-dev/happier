@@ -39,8 +39,8 @@ vi.mock('@/sync/domains/session/sessionSurfaceVisibility', () => ({
     isSessionSurfaceVisible: () => false,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => false,
 }));
 
 vi.mock('../channels/sendExpoLocalNotification', () => ({

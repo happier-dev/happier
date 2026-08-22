@@ -5,7 +5,7 @@ import {
     type BackendTargetRefV2,
 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { resolveCatalogAgentIdForBackendTarget, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useApplySettings } from '@/sync/store/settingsWriters';
@@ -21,7 +21,7 @@ function findEntryByTarget(
 }
 
 function isPluginLikeBackendTarget(target: BackendTargetRefV2 | null | undefined): boolean {
-    return !!(target && target.kind === 'backend' && !target.configuredBackendId && !isAgentId(target.backendId));
+    return !!(target && target.kind === 'backend' && !target.configuredBackendId && !isBundledAgentId(target.backendId));
 }
 
 function parsePreservedPluginTarget(value: unknown): BackendTargetRefV2 | null {
@@ -37,19 +37,6 @@ function shouldPreserveUnresolvedPluginTarget(phase: 'idle' | 'loading' | 'ready
     return phase !== 'ready';
 }
 
-function resolveBuiltInAgentPlaceholder(params: Readonly<{
-    tempAgentType: unknown;
-    lastUsedAgent: unknown;
-}>): AgentId {
-    const tempAgentType = isAgentId(params.tempAgentType)
-        ? params.tempAgentType
-        : null;
-    const lastUsedAgent = isAgentId(params.lastUsedAgent)
-        ? params.lastUsedAgent
-        : null;
-    return tempAgentType ?? lastUsedAgent ?? DEFAULT_AGENT_ID;
-}
-
 export function useNewSessionBackendTargetState(params: Readonly<{
     entries: ReadonlyArray<ResolvedBackendCatalogEntry>;
     lastUsedAgent: unknown;
@@ -62,9 +49,9 @@ export function useNewSessionBackendTargetState(params: Readonly<{
 }>): Readonly<{
     backendTarget: BackendTargetRefV2;
     setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
-    selectedCatalogAgentId: AgentId;
+    selectedCatalogAgentId: AgentId | null;
     selectedRuntimeCarrierAgentId: AgentId | null;
-    selectedUiAgentType: AgentId;
+    selectedUiAgentType: string;
 }> {
     const applySettings = useApplySettings();
     const [hasExplicitUserSelection, setHasExplicitUserSelection] = React.useState(false);
@@ -130,29 +117,21 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         setBackendTarget(initialBackendTarget);
     }, [backendTarget, explicitRoutePluginTarget, initialBackendTarget, matched, params.entries, params.projectionPhase]);
 
-    const selectedCatalogAgentId = React.useMemo(() => {
-        const builtInAgentPlaceholder = resolveBuiltInAgentPlaceholder({
-            tempAgentType: params.tempAgentType,
-            lastUsedAgent: params.lastUsedAgent,
-        });
-        if (matched?.kind === 'configuredBackend') {
-            return matched.catalogAgentId ?? builtInAgentPlaceholder;
+    const selectedCatalogAgentId = React.useMemo<AgentId | null>(() => {
+        if (matched?.catalogAgentId && isBundledAgentId(matched.catalogAgentId)) {
+            return matched.catalogAgentId;
         }
         if (matched?.kind === 'pluginBackend' || isPluginLikeBackendTarget(backendTarget)) {
-            if (matched?.catalogAgentId && isAgentId(matched.catalogAgentId)) {
-                return matched.catalogAgentId;
-            }
-            // Draft persistence and new-session controls still require a built-in `agentType` placeholder,
-            // but plugin backend identity must not collapse to the ACP sentinel.
-            return builtInAgentPlaceholder;
+            return null;
         }
-        const resolvedCatalogAgentId = resolveCatalogAgentIdForBackendTarget(backendTarget);
-        if (resolvedCatalogAgentId) {
-            return resolvedCatalogAgentId;
+        return resolveCatalogAgentIdForBackendTarget(backendTarget);
+    }, [backendTarget, matched?.catalogAgentId, matched?.kind]);
+    const selectedUiAgentType = React.useMemo(() => {
+        if (matched?.agentId.trim()) {
+            return matched.agentId;
         }
-        return DEFAULT_AGENT_ID;
-    }, [backendTarget, matched?.kind, matched?.catalogAgentId, params.lastUsedAgent, params.tempAgentType]);
-    const selectedUiAgentType = selectedCatalogAgentId;
+        return backendTarget.backendId;
+    }, [backendTarget.backendId, matched?.agentId]);
     const selectedRuntimeCarrierAgentId = React.useMemo(() => {
         const shouldKeepExplicitRoutePluginTarget = explicitRoutePluginTarget
             && backendTargetsMatch(explicitRoutePluginTarget, backendTarget);
@@ -164,10 +143,10 @@ export function useNewSessionBackendTargetState(params: Readonly<{
             return null;
         }
         if (matched?.kind === 'pluginBackend') {
-            if (matched.catalogAgentId && isAgentId(matched.catalogAgentId)) {
+            if (matched.catalogAgentId && isBundledAgentId(matched.catalogAgentId)) {
                 return matched.catalogAgentId;
             }
-            return params.projectionPhase === 'loading' ? null : selectedCatalogAgentId;
+            return null;
         }
         if (matched?.kind === 'configuredBackend') {
             return matched.catalogAgentId ?? null;

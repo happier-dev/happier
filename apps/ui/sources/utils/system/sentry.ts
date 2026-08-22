@@ -7,6 +7,7 @@ import type { ComponentType } from 'react';
 import { parseOptionalBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { redactSentryPublicShareTelemetry } from '@/utils/system/sentryPublicShareRedaction';
 
@@ -45,12 +46,6 @@ const STATIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE = process.env.EXPO_PUBLIC_SENTRY
 const STATIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE = process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE;
 const STATIC_SENTRY_ENVIRONMENT = process.env.EXPO_PUBLIC_SENTRY_ENVIRONMENT;
 const STATIC_SENTRY_RELEASE = process.env.EXPO_PUBLIC_SENTRY_RELEASE;
-
-function isTauriRuntime(): boolean {
-    if (typeof window === 'undefined') return false;
-    const w = window as unknown as Record<string, unknown>;
-    return Boolean((w as any).__TAURI__ || (w as any).__TAURI_INTERNALS__);
-}
 
 function parseRuntimeMajorVersion(version: unknown): number | null {
     if (typeof version === 'number') {
@@ -105,7 +100,10 @@ function resolveCrashReportsOptOut(): boolean {
 function resolveSentryEnv() {
     const baseDsn = (STATIC_SENTRY_DSN ?? '').trim();
     const tauriDsn = (STATIC_SENTRY_DSN_TAURI ?? '').trim();
-    const dsn = isTauriRuntime() && tauriDsn ? tauriDsn : baseDsn;
+    // Which desktop shell is hosting the app is decided by the canonical seam owner, never by
+    // sniffing the bridge globals here: the Electron target installs a Tauri-shaped bridge, so a
+    // local sniff would file its crashes under the Tauri project.
+    const dsn = desktopHostKind() === 'tauri' && tauriDsn ? tauriDsn : baseDsn;
     if (!dsn) return null;
 
     const variant = typeof config.variant === 'string' ? config.variant.trim() : '';

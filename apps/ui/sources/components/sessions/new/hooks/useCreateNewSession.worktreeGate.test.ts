@@ -14,7 +14,6 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { renderHook as renderLiveHook, renderScreen } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
-
 const materializeNewSessionCheckoutMock = vi.hoisted(() => vi.fn(async (params?: unknown) => {
     const request = (params ?? {}) as {
         selectedPath?: string;
@@ -38,64 +37,6 @@ const materializeNewSessionCheckoutMock = vi.hoisted(() => vi.fn(async (params?:
     };
 }));
 
-const saveWorkspaceMock = vi.hoisted(() => vi.fn(async (_input?: unknown, _options?: unknown) => ({
-    workspace: {
-        id: 'ws_generated',
-        displayName: 'repo',
-        locationIds: ['loc_generated'],
-        checkoutIds: ['checkout_primary_generated'],
-        defaultLocationId: 'loc_generated',
-        defaultCheckoutId: 'checkout_primary_generated',
-    },
-})));
-
-const saveWorkspaceLocationMock = vi.hoisted(() => vi.fn(async (_input?: unknown, _options?: unknown) => ({
-    workspace: {
-        id: 'ws_generated',
-        displayName: 'repo',
-        locationIds: ['loc_generated'],
-        checkoutIds: ['checkout_primary_generated'],
-        defaultLocationId: 'loc_generated',
-        defaultCheckoutId: 'checkout_primary_generated',
-    },
-    location: {
-        id: 'loc_generated',
-        workspaceId: 'ws_generated',
-        machineId: 'machine-1',
-        path: '/repo',
-        capabilities: {
-            syncEligible: true,
-            scmDetected: true,
-            checkoutProviderKinds: ['git_worktree'],
-        },
-    },
-    primaryCheckout: {
-        id: 'checkout_primary_generated',
-        workspaceId: 'ws_generated',
-        workspaceLocationId: 'loc_generated',
-        kind: 'primary',
-        path: '/repo',
-        displayName: 'main',
-        status: 'ready',
-        syncPolicy: 'inherit',
-    },
-})));
-
-const saveWorkspaceCheckoutMock = vi.hoisted(() => vi.fn(async (_input?: unknown, _options?: unknown) => ({
-    checkout: {
-        id: 'checkout_feature_generated',
-        workspaceId: 'ws_generated',
-        workspaceLocationId: 'loc_generated',
-        kind: 'git_worktree',
-        path: '/tmp/worktree',
-        displayName: 'feature/auth',
-        status: 'ready',
-        syncPolicy: 'inherit',
-    },
-})));
-const deleteWorkspaceCheckoutMock = vi.hoisted(() => vi.fn(async () => ({ success: true })));
-const deleteWorkspaceMock = vi.hoisted(() => vi.fn(async () => ({ success: true })));
-const detachWorkspaceLocationMock = vi.hoisted(() => vi.fn(async () => ({ success: true })));
 const captureExceptionIfEnabledMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const loadSessionDraftsMock = vi.hoisted(() => vi.fn(() => ({})));
@@ -198,16 +139,6 @@ installNewSessionScreenModelCommonModuleMocks({
         });
     },
 });
-
-vi.mock('@/sync/ops/workspaces', () => ({
-    inspectWorkspaceLocationScm: vi.fn(async () => ({ ok: false })),
-    saveWorkspace: saveWorkspaceMock,
-    saveWorkspaceLocation: saveWorkspaceLocationMock,
-    saveWorkspaceCheckout: saveWorkspaceCheckoutMock,
-    deleteWorkspaceCheckout: deleteWorkspaceCheckoutMock,
-    deleteWorkspace: deleteWorkspaceMock,
-    detachWorkspaceLocation: detachWorkspaceLocationMock,
-}));
 
 vi.mock('@/sync/ops', () => ({
     machineSpawnNewSession: machineSpawnNewSessionMock,
@@ -829,9 +760,6 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         expect(materializeNewSessionCheckoutMock).toHaveBeenCalledTimes(1);
-        expect(saveWorkspaceMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceLocationMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceCheckoutMock).not.toHaveBeenCalled();
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
@@ -895,9 +823,6 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(saveWorkspaceMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceLocationMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceCheckoutMock).not.toHaveBeenCalled();
         expect(machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
             directory: '/repo/.dev/worktree/feature/auth/packages/app',
         }));
@@ -958,17 +883,11 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(saveWorkspaceMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceLocationMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceCheckoutMock).not.toHaveBeenCalled();
         expect(machineSpawnNewSessionMock).toHaveBeenCalledTimes(1);
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
         expect(machineBashMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceCheckoutMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceMock).not.toHaveBeenCalled();
-        expect(detachWorkspaceLocationMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
         expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
@@ -1033,10 +952,6 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(saveWorkspaceCheckoutMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceCheckoutMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceMock).not.toHaveBeenCalled();
-        expect(detachWorkspaceLocationMock).not.toHaveBeenCalled();
         expect(machineBashMock).toHaveBeenCalledWith(
             'machine-1',
             { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },
@@ -1104,15 +1019,9 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(saveWorkspaceMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceLocationMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceCheckoutMock).not.toHaveBeenCalled();
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
-        expect(deleteWorkspaceCheckoutMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceMock).not.toHaveBeenCalled();
-        expect(detachWorkspaceLocationMock).not.toHaveBeenCalled();
         expect(machineBashMock).toHaveBeenCalledWith(
             'machine-1',
             { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },
@@ -1173,16 +1082,10 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(saveWorkspaceMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceLocationMock).not.toHaveBeenCalled();
-        expect(saveWorkspaceCheckoutMock).not.toHaveBeenCalled();
         expect(machineSpawnNewSessionMock).toHaveBeenCalledTimes(1);
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
         expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
-        expect(deleteWorkspaceCheckoutMock).not.toHaveBeenCalled();
-        expect(detachWorkspaceLocationMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceMock).not.toHaveBeenCalled();
         expect(machineBashMock).not.toHaveBeenCalled();
     });
 
@@ -1243,10 +1146,6 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(saveWorkspaceCheckoutMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceCheckoutMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceMock).not.toHaveBeenCalled();
-        expect(detachWorkspaceLocationMock).not.toHaveBeenCalled();
         expect(machineBashMock).toHaveBeenCalledWith(
             'machine-1',
             { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },
@@ -1320,77 +1219,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(deleteWorkspaceMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceCheckoutMock).not.toHaveBeenCalled();
         expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', expect.stringContaining('cleanup failed'));
-    });
-
-    it('ignores workspace-location persistence failures during repo-native worktree launches because no location attach is attempted', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
-        const typecheck = useCreateNewSession;
-        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-        saveWorkspaceLocationMock.mockRejectedValueOnce(new Error('attach failed'));
-
-        const params = {
-            launchIntentSignature: 'test-launch-intent',
-            router: { push: vi.fn(), replace: vi.fn() },
-            selectedMachineId: 'machine-1',
-            selectedPath: '/repo',
-            selectedMachine: { id: 'machine-1', metadata: {} },
-            setIsCreating: vi.fn(),
-            setIsResumeSupportChecking: vi.fn(),
-            checkoutCreationDraft: {
-                kind: 'git_worktree' as const,
-                displayName: 'feature/auth',
-                baseRef: 'main',
-            },
-            settings: {
-                ...testSettingsDefaults,
-                experiments: true,
-                featureToggles: { 'sessions.direct': true },
-            },
-            useProfiles: false,
-            selectedProfileId: null,
-            profileMap: new Map(),
-            recentMachinePaths: [],
-            agentType: 'codex' as const,
-            permissionMode: 'default' as const,
-            modelMode: 'auto' as const,
-            promptStore: createNewSessionPromptStore(''),
-            resumeSessionId: '',
-            agentNewSessionOptions: null,
-            machineEnvPresence: {
-                isPreviewEnvSupported: true,
-                isLoading: false,
-                meta: {},
-            } as unknown as Parameters<typeof typecheck>[0]['machineEnvPresence'],
-            secrets: [],
-            secretBindingsByProfileId: {},
-            selectedSecretIdByProfileIdByEnvVarName: {},
-            sessionOnlySecretValueByProfileIdByEnvVarName: {},
-            selectedMachineCapabilities: null,
-            targetServerId: null,
-            allowedTargetServerIds: [],
-        } satisfies Parameters<typeof typecheck>[0];
-
-        const hook = await renderHook(() => useCreateNewSession(params));
-        await act(async () => {
-            await hook.handleCreateSession();
-        });
-
-        expect(machineSpawnNewSessionMock).toHaveBeenCalledTimes(1);
-        expect(saveWorkspaceLocationMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceMock).not.toHaveBeenCalled();
-        expect(detachWorkspaceLocationMock).not.toHaveBeenCalled();
-        expect(machineBashMock).not.toHaveBeenCalled();
-        expect(consoleErrorSpy).not.toHaveBeenCalledWith('Failed to start session', expect.anything());
-        expect(captureExceptionIfEnabledMock).not.toHaveBeenCalledWith(
-            expect.objectContaining({ message: 'attach failed' }),
-            expect.anything(),
-        );
-
-        consoleErrorSpy.mockRestore();
     });
 
     it('rolls back the created worktree when session spawn throws without workspace linkage', async () => {
@@ -1448,8 +1277,6 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(deleteWorkspaceMock).not.toHaveBeenCalled();
-        expect(deleteWorkspaceCheckoutMock).not.toHaveBeenCalled();
         expect(machineBashMock).toHaveBeenCalledWith(
             'machine-1',
             { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },

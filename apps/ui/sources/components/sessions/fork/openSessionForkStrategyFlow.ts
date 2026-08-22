@@ -1,5 +1,6 @@
 import type { SessionForkPoint } from '@happier-dev/protocol';
 
+import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { buildNewSessionSourceContextNavigation } from '@/components/sessions/new/navigation/newSessionSourceContextNavigation';
 import { storage } from '@/sync/domains/state/storage';
 import {
@@ -25,6 +26,8 @@ export type OpenSessionForkStrategyFlowParams = Readonly<{
     forkPoint: SessionForkPoint;
     settings: SessionForkReplaySettingsSource | null | undefined;
     replayEnabled: boolean | null | undefined;
+    /** Exact current external Agent declaration, when this Session has one. */
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
     executionRunsEnabled: boolean;
     /**
      * The caller's already-resolved `sessions.agentSwitching` decision for THIS
@@ -48,16 +51,21 @@ export type OpenSessionForkStrategyFlowParams = Readonly<{
  * Session info screen and a transcript message — routes through here, so no
  * surface can commit a fork before the user has chosen a strategy.
  *
- * Returns the modal id, or `null` when this Session/cutoff offers no fork route
- * at all (the caller's affordance should already be hidden in that case).
+ * Returns the modal id, or `null` when this Session/cutoff offers no route at
+ * all — not merely no *usable* one. A route the user cannot take today is still
+ * a route the modal explains: an Agent without native fork opens the modal with
+ * the Native card disabled and its reason shown, rather than leaving the reader
+ * with an affordance that does nothing or no affordance at all.
  */
 export function openSessionForkStrategyFlow(params: OpenSessionForkStrategyFlowParams): string | null {
     const availability = resolveSessionForkStrategyAvailability({
         session: params.forkSupportSource,
         forkPoint: params.forkPoint,
         replayEnabled: params.replayEnabled,
+        agentSwitchingEnabled: params.agentSwitchingEnabled,
+        currentAgentCapabilities: params.currentAgentCapabilities,
     });
-    if (!availability.native && !availability.replay) return null;
+    if (!availability.native && !availability.replay && !availability.configure) return null;
 
     const replayOptions = resolveSessionForkReplayOptions({
         settings: params.settings,
@@ -79,12 +87,12 @@ export function openSessionForkStrategyFlow(params: OpenSessionForkStrategyFlowP
         },
         navigate: params.navigateToSession,
         // Configure new Session is the one route here that continues this
-        // conversation with another Agent, so it consults the same decision the
-        // in-Session picker does rather than a second interpretation of it. The
-        // same-engine routes above are the pre-existing fork product and stay
-        // available either way, so a closed gate narrows this modal instead of
-        // emptying it — nobody is left mid-flow with nothing to choose.
-        configureNewSession: !params.agentSwitchingEnabled ? null : () => {
+        // conversation with another Agent. The decision is not re-derived here:
+        // `availability.configure` IS the caller's `sessions.agentSwitching`
+        // decision, resolved beside Native and Replay so this flow and the entry
+        // points that decide whether to render an affordance at all can never
+        // disagree about how many routes exist.
+        configureNewSession: !availability.configure ? null : () => {
             // Read the Session at the moment the user chooses Configure, so the
             // seed reflects current configuration rather than menu-open state.
             const session = storage.getState().sessions[params.sessionId] ?? null;

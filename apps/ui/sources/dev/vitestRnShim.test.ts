@@ -13,6 +13,18 @@ describe('vitestRnShim', () => {
         );
     });
 
+    it('names the escaping first-party require when a relative source require fails to load', () => {
+        // `require()` inside a Vite-transformed first-party module is Node's CJS require
+        // (vite-node injects `createRequire(<module href>)`), so it loads the target through
+        // Node's loader instead of the Vitest module graph. Its transitive React Native /
+        // Expo / workspace imports then bypass every Vitest alias and stub. When that fails,
+        // the raw loader error names an unrelated dependency, so the shim must name the
+        // require that actually escaped.
+        expect(() => require('../sync/sync.ts')).toThrow(
+            /\[vitestRnShim\] require\("\.\.\/sync\/sync\.ts"\)/,
+        );
+    });
+
     it('stubs posthog-react-native requires in the Node test runtime', () => {
         const posthogModule = (globalThis as any).require('posthog-react-native') as {
             __isHappierPostHogReactNativeStub?: unknown;

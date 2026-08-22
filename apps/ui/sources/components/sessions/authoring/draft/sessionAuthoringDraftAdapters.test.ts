@@ -279,6 +279,57 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect('initialMessage' in spawn).toBe(false);
     });
 
+    it('carries an externally installed Agent model choice onto the strict spawn input', () => {
+        // C1 parity: an Agent contributed by an external plugin ships no bundled
+        // catalog core, so the authored selection is the only model fact the
+        // spawn owner has. It must reach both the canonical selection seam and
+        // the derived strict configuration, exactly as a bundled Agent's does.
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Review this',
+            displayText: 'Review this',
+            agentId: 'mercury',
+            backendTarget: { kind: 'backend', backendId: 'mercury' },
+            transcriptStorage: 'persisted',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'default',
+            permissionModeUpdatedAt: 123,
+            modelSelection: modelSelection('backend:mercury', 'mercury-pro', 789),
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            windowsTerminalWindowName: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft,
+            creationKey: 'attempt-external-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'com.acme.mercury', localId: 'mercury' },
+            },
+            permissionMode: 'default',
+            configurationUpdatedAtMs: 999,
+        })).toMatchObject({
+            modelSelection: modelSelection('backend:mercury', 'mercury-pro', 789),
+            configuration: {
+                model: { value: 'mercury-pro', updatedAtMs: 789 },
+            },
+        });
+    });
+
     it('maps authored resume and Windows launch intent through the strict V2 nested owners', () => {
         const draft = buildNewSessionAuthoringDraft({
             directory: '/tmp/project',

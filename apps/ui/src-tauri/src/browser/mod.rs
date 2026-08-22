@@ -1,6 +1,11 @@
 mod platform;
 mod types;
 
+pub(crate) use platform::{
+    child_embedding_supported_for, resolve_current_desktop_browser_platform,
+};
+pub(crate) use types::DesktopBrowserPlatform;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};

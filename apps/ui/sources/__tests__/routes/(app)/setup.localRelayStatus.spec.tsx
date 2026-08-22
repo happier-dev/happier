@@ -24,8 +24,8 @@ const expoRouterMock = createExpoRouterMock({
 });
 
 vi.mock('expo-router', () => expoRouterMock.module);
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.value,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.value,
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({

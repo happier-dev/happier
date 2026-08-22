@@ -9,7 +9,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { clearPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { buildDismissedThisComputerSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { PreAuthOnboardingWizardEntry } from '@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry';
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
 import { useMachineSetupStepSatisfied } from '@/components/onboarding/state/useMachineSetupStepSatisfied';
@@ -139,7 +139,7 @@ function Authenticated(props: Readonly<{ shouldSuppressAutoOpenSetupWizard: bool
     const machineSetupStepSatisfied = useMachineSetupStepSatisfied();
     const shouldAutoOpenSetupWizard = shouldSuppressAutoOpenSetupWizard
         ? false
-        : isTauriDesktop()
+        : isDesktopHost()
             ? (!currentMachineIsConfiguredAndHealthy || hasRelayDrift)
             : true;
     const needsSetupWizard =
@@ -247,7 +247,7 @@ function Authenticated(props: Readonly<{ shouldSuppressAutoOpenSetupWizard: bool
                     onClose={handleSetupWizardExit}
                 >
                     <SetupWizardSurface
-                        isDesktopShell={isTauriDesktop()}
+                        isDesktopShell={isDesktopHost()}
                         useOuterScrollContainer={true}
                         onExit={handleSetupWizardExit}
                     />

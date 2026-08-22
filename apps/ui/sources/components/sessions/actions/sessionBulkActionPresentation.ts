@@ -49,6 +49,8 @@ export function listSessionBulkActionDescriptors(params: Readonly<{
     const hasTags = targets.some((target) => (target.tags?.length ?? 0) > 0);
     const hasUnread = targets.some((target) => target.readState === 'unread');
     const hasRead = targets.some((target) => target.readState === 'read');
+    const hasStanding = targets.some((target) => target.standing === true);
+    const hasNonStanding = targets.some((target) => target.standing === false);
     const descriptors: SessionBulkActionDescriptor[] = [];
 
     if (hasStoppable) {
@@ -65,6 +67,12 @@ export function listSessionBulkActionDescriptors(params: Readonly<{
     }
     if (hasRead) {
         descriptors.push(createBulkDescriptor(SESSION_BULK_ACTION_IDS.markUnread));
+    }
+    if (hasNonStanding) {
+        descriptors.push(createBulkDescriptor(SESSION_BULK_ACTION_IDS.setAttentionStanding));
+    }
+    if (hasStanding) {
+        descriptors.push(createBulkDescriptor(SESSION_BULK_ACTION_IDS.clearAttentionStanding));
     }
     if (hasUnpinned) {
         descriptors.push(createBulkDescriptor(SESSION_BULK_ACTION_IDS.pin));

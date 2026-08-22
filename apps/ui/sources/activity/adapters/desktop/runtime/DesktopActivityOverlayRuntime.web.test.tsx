@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => true));
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
 const isDesktopOverlayWindowContextMock = vi.hoisted(() => vi.fn(() => false));
 const sessionsState = vi.hoisted(() => ({
     value: [
@@ -61,8 +61,8 @@ const expoRouterMock = createExpoRouterMock({
     },
 });
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 vi.mock('./isDesktopActivityOverlayWindowContext', () => ({
@@ -124,7 +124,7 @@ vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries', ()
 
 describe('DesktopActivityOverlayRuntime.web', () => {
     beforeEach(() => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         isDesktopOverlayWindowContextMock.mockReturnValue(false);
         syncDesktopActivityOverlayMock.mockImplementation(async () => {});
         listenDesktopActivityOverlayInteractionMock.mockImplementation(async () => () => {});
@@ -160,7 +160,7 @@ describe('DesktopActivityOverlayRuntime.web', () => {
     });
 
     afterEach(() => {
-        isTauriDesktopMock.mockReset();
+        isDesktopHostMock.mockReset();
         isDesktopOverlayWindowContextMock.mockReset();
         syncDesktopActivityOverlayMock.mockReset();
         listenDesktopActivityOverlayInteractionMock.mockReset();
@@ -183,7 +183,7 @@ describe('DesktopActivityOverlayRuntime.web', () => {
     });
 
     it('stays inert when the web bundle is not running inside Tauri', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime.web');
         const screen = await renderScreen(<DesktopActivityOverlayRuntime />);
 

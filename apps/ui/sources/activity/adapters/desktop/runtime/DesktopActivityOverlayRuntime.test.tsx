@@ -6,7 +6,7 @@ import { renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => true));
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
 const isDesktopOverlayWindowContextMock = vi.hoisted(() => vi.fn(() => false));
 const sessionsState = vi.hoisted(() => ({
     value: [
@@ -105,8 +105,8 @@ const expoRouterMock = createExpoRouterMock({
     },
 });
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 vi.mock('./isDesktopActivityOverlayWindowContext', () => ({
@@ -219,7 +219,7 @@ vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries', ()
 describe('DesktopActivityOverlayRuntime', () => {
     beforeEach(() => {
         const now = Date.now();
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         isDesktopOverlayWindowContextMock.mockReturnValue(false);
         syncDesktopActivityOverlayMock.mockImplementation(async () => {});
         listenDesktopActivityOverlayInteractionMock.mockImplementation(async () => () => {});
@@ -294,7 +294,7 @@ describe('DesktopActivityOverlayRuntime', () => {
 
     afterEach(() => {
         delete (globalThis as unknown as Record<string, unknown>)[desktopActivityOverlayQaSyncOverrideKey];
-        isTauriDesktopMock.mockReset();
+        isDesktopHostMock.mockReset();
         isDesktopOverlayWindowContextMock.mockReset();
         sessionsState.value = [];
         sessionListIndexState.value = {
@@ -536,7 +536,7 @@ describe('DesktopActivityOverlayRuntime', () => {
     });
 
     it('does not synchronize when not running on tauri', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
         await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
 

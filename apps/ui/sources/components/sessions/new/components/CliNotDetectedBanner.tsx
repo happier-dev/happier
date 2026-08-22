@@ -17,7 +17,11 @@ export function CliNotDetectedBanner(props: {
     theme: any;
     onDismiss: (scope: CliNotDetectedBannerDismissScope) => void;
 }) {
+    // The banner is entirely about a bundled CLI install recipe. An externally
+    // installed Agent brings its own dependency handling, so there is nothing
+    // truthful to render here rather than a guess.
     const core = getAgentCore(props.agentId);
+    if (!core) return null;
     const cliLabel = t(core.displayNameKey);
     const guideUrl = core.cli.installBanner.guideUrl;
     const openGuide = () => {

@@ -1214,6 +1214,25 @@ const providerAvailabilityTranslations = {
     },
 } as const;
 
+/**
+ * `Locale` is a type parameter rather than the `keyof typeof localTranslations` union, and it has to
+ * stay one.
+ *
+ * Every `someTranslations[locale]` below is an indexed access. With a union `locale` each of them
+ * resolves to a ten-way union of locale objects, and an object literal that spreads several of them
+ * resolves to their *cross product*: the `local` block alone (three such spreads) produced a
+ * 1 000-member union, and `models` and `authoring` produced comparable ones. Those unions then
+ * travel into all ten non-English locale trees, and anything that compares locale trees to each
+ * other has to relate a 1 000-member union to a 1 000-member union. That is what put `apps/ui` on
+ * the checker's complexity budget: `tsc --noEmit` reported `TS2859 Excessive complexity comparing
+ * types` on unrelated provider/model-server namespaces, and one further spread here was enough to
+ * turn it into `TS2589` in an unrelated locale file.
+ *
+ * Narrowing `Locale` per call site collapses every one of those lookups to a single locale object,
+ * so each spread contributes one type instead of ten and the cross product disappears. It is also
+ * strictly more precise: `settingsProvidersTranslations.fr` now carries French leaves instead of a
+ * union of all ten languages.
+ */
 function withProviderSharedFields<T extends {
     readonly authoring: Readonly<Record<string, unknown>> & {
         readonly credentialStyle: Readonly<Record<string, string>>;
@@ -1332,3 +1351,16 @@ export const settingsProvidersTranslations = {
     zhHant: withProviderSharedFields(zhHant, 'zhHant'),
     ja: withProviderSharedFields(ja, 'ja'),
 } as const;
+
+/**
+ * Guard for the narrowing documented on `withProviderSharedFields`. A composed entry keeps the leaf
+ * types of the one locale it was built from, so `fr`'s `local.title` is still exactly the French
+ * literal. Widen `Locale` back to `keyof typeof localTranslations` and that leaf becomes the union of
+ * all ten languages, which no longer satisfies the constraint below and fails the typecheck here —
+ * loudly, at the cause — instead of as a complexity overflow somewhere else in the package.
+ */
+type PerLocaleLeaves<Narrow extends true> = Narrow;
+type ProviderLocaleLeavesStayNarrow = PerLocaleLeaves<
+    typeof settingsProvidersTranslations.fr.local.title extends typeof localTranslations.fr.title ? true : false
+>;
+export type { ProviderLocaleLeavesStayNarrow };

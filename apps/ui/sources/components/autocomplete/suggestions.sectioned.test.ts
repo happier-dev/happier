@@ -189,7 +189,6 @@ function composerReferenceProjection(entries: readonly Readonly<{
                     qualifiedId: `${entry.pluginId}/${entry.localId}`,
                     localId: entry.localId,
                 },
-                stability: 'experimental',
                 progression: { declared: true, normalized: true, merged: true },
                 registration: {
                     requirement: 'required',
@@ -1090,6 +1089,59 @@ describe('sectioned composer suggestions (EU-3)', () => {
                 'file-src/gmail.ts',
                 'vendor-plugin-plugin://gmail@openai-curated',
             ]);
+        });
+
+        it('bounds the cold empty wait at the daemon RPC ceiling and still warms the catalog', async () => {
+            // The other half of the cold contract. "Outlive the deadline" must not
+            // mean "wait forever": if the user stops typing, `signal` never fires and
+            // a stuck transport leaves the picker pending with no completion. The
+            // wait is bounded by the one real boundary underneath it — the default
+            // server-scoped RPC operation timeout both the catalog hydration and the
+            // file index bottom out on. Past it nothing in flight is merely slow.
+            seedSession();
+            storageStateMock.applySessions.mockImplementation((sessions: { id?: string }[]) => {
+                for (const session of sessions) {
+                    if (session.id) storageStateMock.sessions[session.id] = session;
+                }
+            });
+            searchFilesMock.mockImplementation(() => new Promise(() => {}));
+            let releaseCatalog!: (response: unknown) => void;
+            sessionRpcWithServerScopeMock.mockReturnValue(new Promise((resolve) => {
+                releaseCatalog = resolve;
+            }));
+            const {
+                getSuggestions,
+                COMPOSER_SUGGESTION_KIND_DEADLINE_MS,
+                COMPOSER_SUGGESTION_COLD_START_GRACE_MS,
+            } = await importSuggestions();
+            const updates: Array<Readonly<{ rows: number; complete: boolean }>> = [];
+
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            const pending = getSuggestions('s1', '@gma', {
+                onUpdate: (suggestions, status) => {
+                    updates.push({ rows: suggestions.length, complete: status?.complete === true });
+                },
+            });
+            let settled = false;
+            void pending.then(() => { settled = true; });
+
+            await vi.advanceTimersByTimeAsync(COMPOSER_SUGGESTION_KIND_DEADLINE_MS + 1);
+            await Promise.resolve();
+            expect(settled).toBe(false);
+
+            await vi.advanceTimersByTimeAsync(COMPOSER_SUGGESTION_COLD_START_GRACE_MS + 1);
+            await expect(pending).resolves.toEqual([]);
+            // The picker is told the query is over rather than left pending forever.
+            expect(updates.at(-1)).toEqual({ rows: 0, complete: true });
+            expect(logMock).toHaveBeenCalledWith(expect.stringContaining('stopped waiting on'));
+
+            // Walking away from the wait must not cancel the hydration that makes the
+            // next keystroke warm.
+            releaseCatalog({ vendorPlugins: [GMAIL_PLUGIN] });
+            vi.useRealTimers();
+            await vi.waitFor(() => {
+                expect(storageStateMock.sessions.s1?.metadata?.sessionVendorPluginCatalogV1).toBeDefined();
+            });
         });
 
         it('keeps the cold empty query cancellable after the deadline', async () => {

@@ -10,11 +10,10 @@ import {
     useSetting,
 } from '@/sync/domains/state/storage';
 import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
+import { normalizeSessionListWorkingPlacementMode } from '@/sync/domains/session/listing/sessionListAttentionPlacement';
 import {
-    normalizeSessionListAttentionPlacementMode,
-    normalizeSessionListWorkingPlacementMode,
-} from '@/sync/domains/session/listing/sessionListAttentionPlacement';
-import { isSessionListWorkingPlacementReason } from '@/sync/domains/session/listing/sessionListAttentionPlacementTypes';
+    isSessionListWorkingPlacementReason,
+} from '@/sync/domains/session/listing/sessionListAttentionPlacementTypes';
 import { normalizeSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { resolveSelectedSessionIdForList } from '@/sync/domains/session/listing/resolveSelectedSessionIdForList';
 import { normalizeSessionListGroupOrderV1ForIndexSource } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
@@ -32,7 +31,9 @@ import {
     type SessionFolderList,
     type SessionListFocusedFolderV1,
 } from '@/sync/domains/session/folders';
+import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
+import { useSessionAttentionStandingInputs } from './useSessionAttentionStandingInputs';
 import { useFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { useVisibleSessionListSourceState } from './useVisibleSessionListSourceState';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
@@ -154,6 +155,12 @@ function resolveSessionRowFromState(
     };
 }
 
+/**
+ * Keys only. Retention exists so the row the user is READING cannot slide out
+ * of the band under them; the reason that put it there is a live fact about the
+ * session, so placement re-derives it rather than replaying the one that has
+ * since been resolved.
+ */
 function resolveRetainedAttentionSessionKeys(params: Readonly<{
     previousVisibleIndex: ReadonlyArray<SessionListIndexItem> | null | undefined;
     activeSessionId: string | null;
@@ -164,6 +171,11 @@ function resolveRetainedAttentionSessionKeys(params: Readonly<{
     for (const item of params.previousVisibleIndex) {
         if (item.type !== 'session' || item.sessionId !== activeSessionId) continue;
         if (item.groupKind !== 'attention' && !item.attentionPlacementReason) continue;
+        // Standing is the user's own instruction, so removing it must take effect
+        // immediately. Retention exists to stop a row the user is READING from
+        // sliding away under them; retaining a standing row would instead pin it
+        // in the band until they navigate elsewhere.
+        if (item.attentionPlacementReason === 'standing') continue;
         const key = normalizeSessionListKeyParts(item.serverId, item.sessionId).sessionKey;
         return key ? [key] : [];
     }
@@ -195,6 +207,7 @@ function buildVisibleSessionListIndex(params: Readonly<{
     sessionListOrderingModeV1: 'custom' | 'created' | 'updated';
     sessionListSectionModeV1: 'activity' | 'single';
     sessionListAttentionPromotionModeV1: 'off' | 'global' | 'withinGroups';
+    sessionAttentionStandingPolicy: SessionAttentionStandingPolicy;
     sessionListWorkingPlacementModeV1: 'off' | 'global' | 'withinGroups';
     sessionListFolderSortModeV1: 'foldersFirst' | 'mixed';
     activeSessionId: string | null;
@@ -242,6 +255,7 @@ function buildVisibleSessionListIndex(params: Readonly<{
         attentionPlacement: {
             mode: params.sessionListAttentionPromotionModeV1,
             retainSessionKeys: params.retainAttentionSessionKeys,
+            standingPolicy: params.sessionAttentionStandingPolicy,
         },
         workingPlacement: {
             mode: params.sessionListWorkingPlacementModeV1,
@@ -281,9 +295,6 @@ export function useVisibleSessionListViewState(
     const sessionListFolderSortModeV1 = useSetting('sessionListFolderSortModeV1') === 'mixed'
         ? 'mixed'
         : 'foldersFirst';
-    const sessionListAttentionPromotionModeV1 = normalizeSessionListAttentionPlacementMode(
-        useSetting('sessionListAttentionPromotionModeV1'),
-    );
     const sessionListWorkingPlacementModeV1 = normalizeSessionListWorkingPlacementMode(
         useSetting('sessionListWorkingPlacementModeV1'),
     );
@@ -299,6 +310,14 @@ export function useVisibleSessionListViewState(
         serverId: activeOrganizationServerId,
         projection: organizationProjection,
     }), [activeOrganizationServerId, organizationProjection]);
+    // One owner for both halves of the Keep in Needs attention inputs: the band
+    // mode the action depends on, and the account default joined with the
+    // per-session overrides this projection already holds.
+    const attentionStanding = useSessionAttentionStandingInputs(
+        organizationListViewState.attentionStandingOverridesBySessionKey,
+    );
+    const sessionListAttentionPromotionModeV1 = attentionStanding.placementMode;
+    const sessionAttentionStandingPolicy = attentionStanding.policy;
     const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1 as PinnedSessionKeysV1;
     const sessionListGroupOrderV1 = organizationListViewState.sessionListGroupOrderV1;
     const sessionWorkspaceOrderV1 = organizationListViewState.sessionWorkspaceOrderV1;
@@ -390,6 +409,7 @@ export function useVisibleSessionListViewState(
             sessionListSectionModeV1,
             sessionListFolderSortModeV1,
             sessionListAttentionPromotionModeV1,
+            sessionAttentionStandingPolicy,
             sessionListWorkingPlacementModeV1,
             activeSessionId,
             normalizedGroupOrder,
@@ -424,6 +444,7 @@ export function useVisibleSessionListViewState(
         sessionListGroupOrderV1,
         sessionWorkspaceOrderV1,
         sessionListAttentionPromotionModeV1,
+        sessionAttentionStandingPolicy,
         sessionListWorkingPlacementModeV1,
         sessionRowStateByServerId,
         sessionIdsWithOpenApprovals,
@@ -492,6 +513,7 @@ export function useVisibleSessionListViewState(
             sessionListSectionModeV1,
             sessionListFolderSortModeV1,
             sessionListAttentionPromotionModeV1,
+            sessionAttentionStandingPolicy,
             sessionListWorkingPlacementModeV1,
             activeSessionId,
             normalizedGroupOrder,
@@ -528,6 +550,7 @@ export function useVisibleSessionListViewState(
         sessionListGroupOrderV1,
         sessionWorkspaceOrderV1,
         sessionListAttentionPromotionModeV1,
+        sessionAttentionStandingPolicy,
         sessionListWorkingPlacementModeV1,
         sessionListOrderingModeV1,
         sessionListSectionModeV1,

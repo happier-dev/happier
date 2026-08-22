@@ -144,6 +144,7 @@ export function buildSessionOrganizationProjectionFromLegacyTestSettings(
                         : [];
                 }),
         ),
+        attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: Object.fromEntries(
             Object.entries(fixture.sessionListGroupOrderV1 ?? {}).map(([scopeKey, itemKeys]) => [
                 normalizeOrderScopeKey(fixture.serverId, scopeKey),

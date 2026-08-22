@@ -51,8 +51,8 @@ const routerMockState = vi.hoisted(() => ({
     useRouterCalls: 0,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriState.desktop,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriState.desktop,
 }));
 
 vi.mock('@/config', () => ({

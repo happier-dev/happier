@@ -9,7 +9,6 @@ import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/prot
 import { getAgentStaticModels } from '@happier-dev/agents';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Item } from '@/components/ui/lists/Item';
@@ -182,6 +181,13 @@ export function SlimProfileRoutingFields(props: Readonly<{
         props,
         providersEnabled,
     ]);
+    const permissionEntries = React.useMemo(() => {
+        return props.entries.flatMap((entry) => {
+            const agentId = entry.builtInAgentId ?? entry.catalogAgentId ?? entry.agentId;
+            const options = getPermissionModeOptionsForAgentType(agentId);
+            return options.length > 0 ? [{ entry, agentId, options }] : [];
+        });
+    }, [props.entries]);
 
     return <>
         <ItemGroup title={t('profiles.preferredAgent.title')} footer={t('profiles.preferredAgent.footer')}>
@@ -223,10 +229,9 @@ export function SlimProfileRoutingFields(props: Readonly<{
             ) : null}
         </ItemGroup>
 
-        <ItemGroup title={t('profiles.defaultPermissions.title')} footer={t('profiles.defaultPermissions.footer')}>
-            {props.entries.map((entry) => {
+        {permissionEntries.length > 0 ? <ItemGroup title={t('profiles.defaultPermissions.title')} footer={t('profiles.defaultPermissions.footer')}>
+            {permissionEntries.map(({ entry, agentId, options }) => {
                 const targetKey = resolveProfileBackendTargetKeyForEntry(entry);
-                const agentId = entry.builtInAgentId ?? entry.catalogAgentId ?? DEFAULT_AGENT_ID;
                 const selected = props.defaultPermissionModeByTargetKey[targetKey];
                 return <DropdownMenu
                     key={`permission:${targetKey}`}
@@ -246,7 +251,7 @@ export function SlimProfileRoutingFields(props: Readonly<{
                     }}
                     items={[
                         { id: '__account__', title: t('profiles.defaultPermissions.useAccountDefault') },
-                        ...getPermissionModeOptionsForAgentType(agentId).map((option) => ({
+                        ...options.map((option) => ({
                             id: option.value,
                             title: option.label,
                             subtitle: option.description,
@@ -260,7 +265,7 @@ export function SlimProfileRoutingFields(props: Readonly<{
                     }}
                 />;
             })}
-        </ItemGroup>
+        </ItemGroup> : null}
 
         <ItemGroup title={t('profiles.defaultStorage.title')} footer={t('profiles.defaultStorage.footer')}>
             {props.entries.map((entry) => {

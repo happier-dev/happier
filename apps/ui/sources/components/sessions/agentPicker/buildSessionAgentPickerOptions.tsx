@@ -38,8 +38,6 @@ export type SessionAgentPickerOptionBehavior = Pick<
     | 'deferRenderDetailContent'
     | 'deferredDetailContentCacheKey'
     | 'preserveFocusOnExternalSelectionChange'
-    | 'onApply'
-    | 'applyLabel'
     | 'detailTitle'
     | 'detailDescription'
     | 'detailActionLabel'

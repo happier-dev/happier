@@ -39,6 +39,7 @@ Use the smallest relevant test slice while iterating, then run the UI typecheck/
 - `sync/store/**` owns state domains, selectors, normalization, and persistence-facing state.
 - `sync/domains/**` owns domain behavior and must not depend on `sync/store/**`.
 - `sync/ops/**` owns orchestration-facing operations.
+- `sync/domains/plugins/availability/generatedBundledPluginUiArtifacts{,.web,.ios,.android}.ts` are **generated**, not source. Their single producer and owner is `apps/cli/scripts/build-owned/generateBundledPluginEntries.ts`; change the generator, never these files, and regenerate once as the last step of a batch. See `../cli/AGENTS.md` ("Generated bundled-plugin artifacts").
 
 ## Agent and Provider composition
 

@@ -1,6 +1,5 @@
 import React from 'react';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createMcpActionChip } from '@/components/sessions/agentInput/definitions/createMcpActionChip';
 import { NewSessionMcpSelectionContent } from '@/components/sessions/new/components/NewSessionMcpSelectionContent';
@@ -22,7 +21,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
     selectedMachineId: string | null;
     selectedPath: string;
     selectedMachineName?: string | null;
-    agentType: AgentId;
+    agentType: string;
     targetServerId?: string | null;
     mcpSelection: SessionMcpSelectionV1;
     setMcpSelection: React.Dispatch<React.SetStateAction<SessionMcpSelectionV1>>;

@@ -16,7 +16,7 @@ import {
     createInboxStackScreenOptions,
 } from '@/utils/navigation/createSocialStackScreenOptions';
 import { isDesktopOverlayWindowContext } from '@/desktop/window/isDesktopOverlayWindowContext';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -25,6 +25,7 @@ import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/Aut
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useSetting } from '@/sync/domains/state/storage';
 import {
+    isNewSessionFloatingComposerPresentation,
     resolveNewSessionRoutePresentation,
     resolveNewSessionSecretRequirementRoutePresentation,
 } from '@/components/sessions/new/navigation/newSessionPresentation';
@@ -54,6 +55,8 @@ function hasPriorModalStackRoute(navigation: ModalRouteNavigation): boolean {
 }
 
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
+// Module-scope so the memo hands the navigator the same object on every render.
+const NEW_SESSION_TRANSPARENT_CONTENT_STYLE = { backgroundColor: 'transparent' } as const;
 const SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS = {
     animation: 'none',
     headerShown: false,
@@ -69,11 +72,11 @@ const SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS = {
 function AuthenticatedAppRuntimeMountsGate({
     isDesktopOverlayWindow,
     isAuthenticated,
-    isTauriDesktopHost,
+    isDesktopShell,
 }: Readonly<{
     isDesktopOverlayWindow: boolean;
     isAuthenticated: boolean;
-    isTauriDesktopHost: boolean;
+    isDesktopShell: boolean;
 }>): React.ReactElement | null {
     const pathname = usePathname();
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
@@ -86,7 +89,7 @@ function AuthenticatedAppRuntimeMountsGate({
     return (
         <AuthenticatedAppRuntimeMounts
             isAuthenticated={isAuthenticated}
-            isTauriDesktopHost={isTauriDesktopHost}
+            isDesktopShell={isDesktopShell}
         />
     );
 }
@@ -105,8 +108,19 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
-    const isTauriDesktopHost = isTauriDesktop();
+    const isDesktopShell = isDesktopHost();
     const newSessionPresentationMode = useSetting('newSessionPresentationModeV1');
+    // `/new` renders either the bare composer (simple) or the profile wizard, and the two want
+    // different native presentations. A native stack reads `modalPresentationStyle` at present time
+    // and ignores later changes, so the decision has to be made HERE, before the push — it cannot
+    // be made inside the screen. `useEnhancedSessionWizard` is the whole predicate (see
+    // `buildNewSessionScreenVariantModel`).
+    const newSessionVariant = useSetting('useEnhancedSessionWizard') ? 'wizard' : 'simple';
+    const newSessionRendersFloatingComposer = isNewSessionFloatingComposerPresentation({
+        mode: newSessionPresentationMode,
+        variant: newSessionVariant,
+        platformOs: Platform.OS,
+    });
     const deviceType = useDeviceType();
     const stackContentStyle = React.useMemo(
         () => ({
@@ -303,18 +317,45 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 </TouchableOpacity>
             ),
     }), [friendsIdentityReady, preferredLanguage, theme.colors.button.primary.tint]);
-    const newSessionScreenOptions = React.useMemo<StackScreenOptions>(() => ({
-        headerTitle: t('newSession.title'),
-        headerShown: true,
-        headerBackTitle: t('common.cancel'),
-        presentation: resolveNewSessionRoutePresentation({
+    const newSessionScreenOptions = React.useMemo<StackScreenOptions>(() => {
+        const presentation = resolveNewSessionRoutePresentation({
             mode: newSessionPresentationMode,
+            variant: newSessionVariant,
             platformOs: Platform.OS,
-        }),
-        // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
-        headerBackVisible: false,
-        headerLeft: () => null,
-    }), [newSessionPresentationMode, preferredLanguage]);
+        });
+        if (newSessionRendersFloatingComposer) {
+            return {
+                // The composer paints its own backdrop and owns its own close control, so the
+                // navigator contributes no chrome at all.
+                headerShown: false,
+                presentation,
+                // Required on BOTH platforms. The entrance is owned in Reanimated inside the
+                // screen because a native-stack transition moves the WHOLE view — the backdrop
+                // would slide up with the card instead of fading in place. On iOS every value
+                // except `fade`/`flip` leaves UIKit's CoverVertical anyway, and on Android the
+                // default would otherwise animate the screen BELOW, which is visible through a
+                // transparent presentation.
+                animation: 'none',
+                // native-stack already omits its own opaque background for the transparent
+                // presentations, but `createAppStackScreenOptions` supplies `surface.base` for
+                // every screen and is applied after it.
+                contentStyle: NEW_SESSION_TRANSPARENT_CONTENT_STYLE,
+                // `UIModalPresentationOverFullScreen` has no sheet presentation controller, so
+                // there is no interactive pull-to-dismiss to enable.
+                gestureEnabled: false,
+                fullScreenGestureEnabled: false,
+            };
+        }
+        return {
+            headerTitle: t('newSession.title'),
+            headerShown: true,
+            headerBackTitle: t('common.cancel'),
+            presentation,
+            // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
+            headerBackVisible: false,
+            headerLeft: () => null,
+        };
+    }, [newSessionPresentationMode, newSessionRendersFloatingComposer, newSessionVariant, preferredLanguage]);
     const externalSessionBrowseScreenOptions = React.useMemo<StackScreenOptions>(() => ({
         headerTitle: t('externalSessions.browseTitle'),
         headerShown: true,
@@ -349,7 +390,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             <AuthenticatedAppRuntimeMountsGate
                 isDesktopOverlayWindow={isDesktopOverlayWindow}
                 isAuthenticated={isAuthenticated}
-                isTauriDesktopHost={isTauriDesktopHost}
+                isDesktopShell={isDesktopShell}
             />
             <Stack screenOptions={rootStackScreenOptions}>
                 <Stack.Screen
@@ -586,6 +627,12 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 <Stack.Screen
                     name="new/index"
                     options={({ navigation }) => {
+                        // The floating composer has no navigator chrome and no sheet presentation
+                        // controller, so the memo below IS the whole contract: nothing here may
+                        // re-enable a gesture or a header close for it.
+                        if (newSessionRendersFloatingComposer) {
+                            return newSessionScreenOptions;
+                        }
                         const isWebModal = Platform.OS === 'web' && newSessionScreenOptions.presentation === 'modal';
                         const canDismissWithGesture = !isWebModal || hasPriorModalStackRoute(navigation);
                         return {

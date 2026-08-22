@@ -33,10 +33,19 @@ vi.mock('@/agents/registry/compat/customAcp', () => ({
   }),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-  isAgentId: (value: unknown) => value === 'codex' || value === 'opencode' || value === 'claude',
-  getAgentCore: () => ({ model: { supportsSelection: true, allowedModes: [], defaultMode: 'default', supportsFreeform: false, dynamicProbe: 'probe' } }),
-}));
+vi.mock('@/agents/catalog/catalog', () => {
+  const isBundled = (value: unknown) => value === 'codex' || value === 'opencode' || value === 'claude';
+  return {
+    isBundledAgentId: isBundled,
+    // Mirrors the real overloaded reader: a bundled id has a core, any other
+    // installed Agent id reports no bundled fact rather than a substitute.
+    getAgentCore: (id: unknown) => (
+      isBundled(id)
+        ? { model: { supportsSelection: true, allowedModes: [], defaultMode: 'default', supportsFreeform: false, dynamicProbe: 'probe' } }
+        : null
+    ),
+  };
+});
 
 describe('useNewSessionPreflightModelsState', () => {
   it('passes params.cwd through to capabilities.invoke(cli.* probeModels)', async () => {
@@ -67,6 +76,35 @@ describe('useNewSessionPreflightModelsState', () => {
       id: 'cli.opencode',
       method: 'probeModels',
       params: expect.objectContaining({ cwd: '/repo' }),
+    });
+  });
+
+  it('probes a caller-named externally installed Agent under its own id', async () => {
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicModelProbeCacheForTests();
+
+    function Harness() {
+      useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'backend', backendId: 'acme-external-agent' },
+        runtimeCarrierAgentId: 'acme-external-agent' as never,
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+      });
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+    expect(machineCapabilitiesInvokeMock.mock.calls[0]?.[1]).toMatchObject({
+      id: 'cli.acme-external-agent',
+      method: 'probeModels',
     });
   });
 

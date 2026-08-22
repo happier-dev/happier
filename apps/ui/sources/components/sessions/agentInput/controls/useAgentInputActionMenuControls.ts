@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 
 import type { ChipOptionInteraction } from '../chipOptionInteraction';
@@ -32,7 +31,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     actionBarIsCollapsed: boolean;
     hasAnyActions: boolean;
     tint: string;
-    agentId: AgentId;
+    agentId: string;
     profileLabel: string | null;
     profileIcon: IconName;
     envVarsCount?: number;

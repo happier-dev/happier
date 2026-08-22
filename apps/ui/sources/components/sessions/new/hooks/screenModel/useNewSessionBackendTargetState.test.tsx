@@ -3,8 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 
 import { useNewSessionBackendTargetState } from './useNewSessionBackendTargetState';
 import { renderScreen } from '@/dev/testkit';
@@ -79,8 +79,8 @@ describe('useNewSessionBackendTargetState', () => {
 
         expect(observed).not.toBeNull();
         expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:review-bot:configured:review-bot');
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBe(DEFAULT_AGENT_ID);
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedUiAgentType).toBe(DEFAULT_AGENT_ID);
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBeNull();
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedUiAgentType).toBe('review-bot');
     });
 
     it('persists the canonical ACP provider sentinel while keeping the configured ACP backend target', async () => {
@@ -162,10 +162,10 @@ describe('useNewSessionBackendTargetState', () => {
 
         expect(observed).not.toBeNull();
         expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:review-bot:configured:review-bot');
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBe('codex');
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBeNull();
     });
 
-    it('does not collapse plugin backend targets into the custom ACP sentinel for agentType state', async () => {
+    it('keeps an unbacked plugin Agent separate from bundled static policy', async () => {
         const pluginEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
             {
                 backendTarget: { kind: 'backend', backendId: 'codex' },
@@ -184,7 +184,7 @@ describe('useNewSessionBackendTargetState', () => {
                 backendTargetKey: 'backend:acme.review.backend',
                 kind: 'pluginBackend',
                 backendId: 'acme.review.backend',
-                agentId: 'plugin:acme.review',
+                agentId: 'acme.review.backend',
                 catalogAgentId: null,
                 builtInAgentId: null,
                 iconAgentId: null,
@@ -208,8 +208,10 @@ describe('useNewSessionBackendTargetState', () => {
 
         expect(observed).not.toBeNull();
         expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:acme.review.backend');
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBe('codex');
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedUiAgentType).toBe('codex');
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBeNull();
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedRuntimeCarrierAgentId).toBeNull();
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedUiAgentType).toBe('acme.review.backend');
+        expect(getPermissionModeOptionsForAgentType(observed!.selectedUiAgentType)).toEqual([]);
     });
 
     it('preserves an unresolved plugin backend target while daemon projection metadata is still loading', async () => {

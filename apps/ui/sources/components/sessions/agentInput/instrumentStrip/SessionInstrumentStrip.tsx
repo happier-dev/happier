@@ -3,7 +3,6 @@ import { Pressable, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import { INSTRUMENT_DURATIONS, staggerDelayForIndex, useMotionPreferences } from '@/components/instrument';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
@@ -49,7 +48,7 @@ export type SessionInstrumentStripQuota = Readonly<{
 
 export type SessionInstrumentStripProps = Readonly<{
     sessionId?: string;
-    agentId?: AgentId | null;
+    agentId?: string | null;
     agentTargetKey?: string | null;
     metadata?: Metadata | null;
     sessionActive?: boolean;

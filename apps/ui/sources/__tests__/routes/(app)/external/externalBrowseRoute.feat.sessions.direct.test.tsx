@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { t } from '@/text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,6 +22,9 @@ const routeParamsState = vi.hoisted(() => ({
 
 const routerMock = createExpoRouterMock({
     params: () => routeParamsState.value,
+    // A Browse deep link can be the first entry in its stack; the gate's exit has to
+    // work there too, so this mock deliberately reports "nowhere to go back to".
+    router: { canGoBack: () => false },
 });
 
 vi.mock('expo-router', () => routerMock.module);
@@ -72,20 +76,33 @@ describe('External Sessions Browse route feature gate', () => {
     });
 
     it.each([
-        ['disabled', 'disabled'],
-        ['unknown', 'unknown'],
-        ['missing', null],
-    ] as const)('fails closed for a %s External Sessions decision before projection or Browse mounts', async (_label, state) => {
-        featureDecisionState.state = state;
-        const Route = (await import('@/app/(app)/external/browse')).default;
+        ['disabled', 'disabled', 'external-sessions-browse-route-gate-unavailable', 'unavailable'],
+        ['unknown', 'unknown', 'external-sessions-browse-route-gate-unknown', 'error'],
+        ['missing', null, 'external-sessions-browse-route-gate-checking', 'loading'],
+    ] as const)(
+        'fails closed for a %s External Sessions decision with an exitable state instead of a blank route',
+        async (_label, state, expectedTestID, expectedKind) => {
+            featureDecisionState.state = state;
+            const Route = (await import('@/app/(app)/external/browse')).default;
 
-        const screen = await renderScreen(<Route />);
+            const screen = await renderScreen(<Route />);
 
-        expect(screen.tree.toJSON()).toBeNull();
-        expect(featureDecisionSpy).toHaveBeenCalledWith('sessions.direct', undefined);
-        expect(daemonProjectionSpy).not.toHaveBeenCalled();
-        expect(browseScreenRenderSpy).not.toHaveBeenCalled();
-    });
+            const card = screen.tree.findByType('SurfaceStateCard' as never);
+            expect(card.props.testID).toBe(expectedTestID);
+            expect(card.props.kind).toBe(expectedKind);
+            expect(card.props.title).toBeTruthy();
+            expect(card.props.accessibilitySemantics).toBe(
+                expectedKind === 'loading' ? 'status' : 'alert',
+            );
+            const exitAction = card.props.action ?? card.props.secondaryAction;
+            expect(exitAction?.label).toBe(t('common.close'));
+            exitAction.onPress();
+            expect(routerMock.spies.replace).toHaveBeenCalledWith('/');
+            expect(featureDecisionSpy).toHaveBeenCalledWith('sessions.direct', undefined);
+            expect(daemonProjectionSpy).not.toHaveBeenCalled();
+            expect(browseScreenRenderSpy).not.toHaveBeenCalled();
+        },
+    );
 
     it('mounts the canonical Browse screen only when sessions.direct is enabled', async () => {
         const Route = (await import('@/app/(app)/external/browse')).default;
@@ -131,7 +148,10 @@ describe('External Sessions Browse route feature gate', () => {
         featureDecisionState.state = 'unknown';
         featureDecisionSpy.mockClear();
         const disabledScreen = await renderScreen(<LegacyRoute />);
-        expect(disabledScreen.tree.toJSON()).toBeNull();
+        expect(disabledScreen.tree.findAllByType('Redirect' as never)).toHaveLength(0);
+        expect(
+            disabledScreen.tree.findByType('SurfaceStateCard' as never).props.testID,
+        ).toBe('external-sessions-browse-route-gate-unknown');
         expect(featureDecisionSpy).toHaveBeenCalledWith('sessions.direct', undefined);
         expect(browseScreenRenderSpy).not.toHaveBeenCalled();
     });

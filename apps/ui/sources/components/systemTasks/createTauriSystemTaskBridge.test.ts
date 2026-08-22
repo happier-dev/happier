@@ -1,20 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const invokeTauriMock = vi.hoisted(() => vi.fn());
-const listenTauriEventMock = vi.hoisted(() => vi.fn());
+const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
+const listenDesktopHostEventMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/utils/platform/tauri', () => ({
-    invokeTauri: (command: string, args?: Record<string, unknown>) => invokeTauriMock(command, args),
-    listenTauriEvent: (eventName: string, handler: (payload: unknown) => void) => listenTauriEventMock(eventName, handler),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostMock(command, args),
+    listenDesktopHostEvent: (eventName: string, handler: (payload: unknown) => void) => listenDesktopHostEventMock(eventName, handler),
 }));
 
 describe('createTauriSystemTaskBridge', () => {
     it('replays the snapshot before queued live events when subscription races with snapshot loading', async () => {
         const listeners = new Map<string, (payload: unknown) => void>();
-        listenTauriEventMock.mockReset();
-        invokeTauriMock.mockReset();
+        listenDesktopHostEventMock.mockReset();
+        invokeDesktopHostMock.mockReset();
 
-        listenTauriEventMock.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
+        listenDesktopHostEventMock.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
             listeners.set(eventName, handler);
             return () => {
                 listeners.delete(eventName);
@@ -22,7 +22,7 @@ describe('createTauriSystemTaskBridge', () => {
         });
 
         let resolveSnapshot: ((value: { events: unknown[]; result: unknown | null }) => void) | null = null;
-        invokeTauriMock.mockImplementation(async (command: string) => {
+        invokeDesktopHostMock.mockImplementation(async (command: string) => {
             if (command !== 'get_system_task_snapshot') {
                 throw new Error(`Unexpected command: ${command}`);
             }
@@ -92,10 +92,10 @@ describe('createTauriSystemTaskBridge', () => {
 
     it('delivers buffered live events before the final result when snapshot loading races with task completion', async () => {
         const listeners = new Map<string, (payload: unknown) => void>();
-        listenTauriEventMock.mockReset();
-        invokeTauriMock.mockReset();
+        listenDesktopHostEventMock.mockReset();
+        invokeDesktopHostMock.mockReset();
 
-        listenTauriEventMock.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
+        listenDesktopHostEventMock.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
             listeners.set(eventName, handler);
             return () => {
                 listeners.delete(eventName);
@@ -103,7 +103,7 @@ describe('createTauriSystemTaskBridge', () => {
         });
 
         let resolveSnapshot: ((value: { events: unknown[]; result: unknown | null }) => void) | null = null;
-        invokeTauriMock.mockImplementation(async (command: string) => {
+        invokeDesktopHostMock.mockImplementation(async (command: string) => {
             if (command !== 'get_system_task_snapshot') {
                 throw new Error(`Unexpected command: ${command}`);
             }
@@ -176,9 +176,9 @@ describe('createTauriSystemTaskBridge', () => {
     });
 
     it('forwards prompt responses to the Tauri command surface', async () => {
-        listenTauriEventMock.mockReset();
-        invokeTauriMock.mockReset();
-        invokeTauriMock.mockResolvedValue(undefined);
+        listenDesktopHostEventMock.mockReset();
+        invokeDesktopHostMock.mockReset();
+        invokeDesktopHostMock.mockResolvedValue(undefined);
 
         const { createTauriSystemTaskBridge } = await import('./createTauriSystemTaskBridge');
         const bridge = createTauriSystemTaskBridge();
@@ -187,7 +187,7 @@ describe('createTauriSystemTaskBridge', () => {
             trusted: true,
         });
 
-        expect(invokeTauriMock).toHaveBeenCalledWith('respond_system_task_prompt', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('respond_system_task_prompt', {
             taskId: 'task_1',
             answerJson: JSON.stringify({ trusted: true }),
         });

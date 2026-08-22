@@ -17,7 +17,7 @@ import {
     type SessionSpawnSourceContextV1,
 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -288,10 +288,10 @@ function resolveNewSessionDraftAgentId(params: Readonly<{
 }>): string | null {
     if (params.backendTarget) {
         const candidateAgentId = params.backendTarget.configuredBackendId ? null : params.backendTarget.backendId;
-        if (candidateAgentId && isAgentId(candidateAgentId)) return candidateAgentId;
+        if (candidateAgentId && isBundledAgentId(candidateAgentId)) return candidateAgentId;
         return resolveCatalogAgentIdForBackendTarget(readBackendTargetRefV2(params.backendTarget));
     }
-    if (typeof params.agentId === 'string' && isAgentId(params.agentId)) {
+    if (typeof params.agentId === 'string' && isBundledAgentId(params.agentId)) {
         return params.agentId;
     }
     return null;
@@ -623,7 +623,7 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
         checkoutCreationDraft: parseCheckoutCreationDraft(params.template.checkoutCreationDraft),
         prompt: params.template.prompt ?? '',
         displayText: params.template.displayText ?? '',
-        agentId: sanitizedBackendTarget && !sanitizedBackendTarget.configuredBackendId && isAgentId(sanitizedBackendTarget.backendId)
+        agentId: sanitizedBackendTarget && !sanitizedBackendTarget.configuredBackendId && isBundledAgentId(sanitizedBackendTarget.backendId)
             ? normalizeOptionalString(sanitizedBackendTarget.backendId)
             : normalizeOptionalString(params.template.agent),
         backendTarget: sanitizedBackendTarget,
@@ -746,7 +746,7 @@ export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionA
         ...(normalizeOptionalString(draft.prompt) ? { prompt: draft.prompt.trim() } : {}),
         ...(normalizeOptionalString(draft.displayText) ? { displayText: draft.displayText.trim() } : {}),
         ...(normalizedBackendTarget ? { backendTarget: normalizedBackendTarget } : {}),
-        ...(normalizedBackendTarget && !normalizedBackendTarget.configuredBackendId && isAgentId(normalizedBackendTarget.backendId)
+        ...(normalizedBackendTarget && !normalizedBackendTarget.configuredBackendId && isBundledAgentId(normalizedBackendTarget.backendId)
             ? { agent: normalizedBackendTarget.backendId.trim() }
             : normalizeOptionalString(draft.agentId)
                 ? { agent: draft.agentId!.trim() }
@@ -1208,7 +1208,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         codexBackendMode: params.draft.codexBackendMode,
         experimentalCodexAcp: params.draft.experimentalCodexAcp,
     });
-    const normalizedAgentId = isAgentId(params.draft.agentId) ? params.draft.agentId : null;
+    const normalizedAgentId = isBundledAgentId(params.draft.agentId) ? params.draft.agentId : null;
     const backendTarget = params.draft.backendTarget
         ?? (normalizedAgentId
         ? { kind: 'backend', backendId: normalizedAgentId } satisfies BackendTargetRefV2
@@ -1216,7 +1216,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
     const canonicalAgentId = backendTarget
         ? backendTarget.configuredBackendId
             ? normalizedAgentId
-            : (isAgentId(backendTarget.backendId) ? backendTarget.backendId : normalizedAgentId)
+            : (isBundledAgentId(backendTarget.backendId) ? backendTarget.backendId : normalizedAgentId)
         : normalizedAgentId;
     const targetKey = backendTarget ? resolveBackendTargetKeyV2(backendTarget) : null;
     const backendOptionStateByTargetKey = targetKey && (
@@ -1264,12 +1264,12 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
     preferredPersistedAgentId?: unknown;
     updatedAt: number;
 }>): NewSessionDraft {
-    const normalizedAgentId = isAgentId(params.draft.agentId) ? params.draft.agentId : null;
-    const builtInBackendAgentId = params.draft.backendTarget && !params.draft.backendTarget.configuredBackendId && isAgentId(params.draft.backendTarget.backendId)
+    const normalizedAgentId = isBundledAgentId(params.draft.agentId) ? params.draft.agentId : null;
+    const builtInBackendAgentId = params.draft.backendTarget && !params.draft.backendTarget.configuredBackendId && isBundledAgentId(params.draft.backendTarget.backendId)
         ? params.draft.backendTarget.backendId
         : null;
     const canonicalSelectedBuiltInAgentId = params.draft.backendTarget
-        ? (!params.draft.backendTarget.configuredBackendId && isAgentId(params.draft.backendTarget.backendId)
+        ? (!params.draft.backendTarget.configuredBackendId && isBundledAgentId(params.draft.backendTarget.backendId)
             ? params.draft.backendTarget.backendId
             : (normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID))
         : normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID;

@@ -1,6 +1,9 @@
 import { readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
 import { PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
-import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol';
+import {
+    PluginProjectionV2Schema,
+    type PluginProjectionV2,
+} from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/text', async () => {
@@ -95,9 +98,17 @@ function createProjection(agentIds: readonly string[]): PluginProjectionV2 {
 }
 
 function createOpenCodeProjection(): PluginProjectionV2 {
-    const contribution = OPENCODE_PLUGIN_MANIFEST.contributes.agents.find(
+    const contribution = (OPENCODE_PLUGIN_MANIFEST.contributes.agents ?? []).find(
         (candidate) => candidate.id === 'opencode',
-    );
+    ) as (NonNullable<typeof OPENCODE_PLUGIN_MANIFEST.contributes.agents>[number] & Readonly<{
+        surfaces?: Readonly<{
+            externalSession?: Readonly<{
+                sources?: NonNullable<
+                    PluginProjectionV2['agentsById'][string]['externalSessions']
+                >['sources'];
+            }>;
+        }>;
+    }>) | undefined;
     return PluginProjectionV2Schema.parse({
         v: 2,
         generation: 21,
@@ -122,7 +133,7 @@ function createOpenCodeProjection(): PluginProjectionV2 {
                         pageTranscript: true,
                         readAfterTranscript: true,
                     },
-                    sources: contribution?.surfaces.externalSession.sources ?? [],
+                    sources: contribution?.surfaces?.externalSession?.sources ?? [],
                 },
             },
         },
@@ -130,39 +141,45 @@ function createOpenCodeProjection(): PluginProjectionV2 {
 }
 
 describe('resolveExternalSessionBrowseSourceOptions', () => {
-    it('admits background follow only for an explicit projected source declaration', async () => {
+    it('admits background follow for a currently declared source and refuses an undeclared or unparsable one', async () => {
         const { supportsExternalSessionBackgroundFollow } = await externalSessionBrowseModulePromise;
         const projection = createProjection(['codex']);
-        const source = { kind: 'codexHome', home: 'user' } as const;
 
+        // Observation-backed background follow depends on the linked source
+        // still being declared by the current Agent generation. It does NOT
+        // depend on `terminalFollow.userRowClassification`, which gates native
+        // terminal-mode transcript projection and writes no rows here.
         expect(supportsExternalSessionBackgroundFollow({
             providerId: 'codex',
-            source,
+            source: { kind: 'codexHome', home: 'user' },
+            projection,
+        })).toBe(true);
+
+        // A source kind the current projection does not declare stays refused.
+        expect(supportsExternalSessionBackgroundFollow({
+            providerId: 'codex',
+            source: { kind: 'claudeConfig', configDir: '/tmp/claude' } as never,
             projection,
         })).toBe(false);
 
-        const optedInProjection = PluginProjectionV2Schema.parse({
-            ...projection,
-            agentsById: {
-                ...projection.agentsById,
-                codex: {
-                    ...projection.agentsById.codex!,
-                    externalSessions: {
-                        ...projection.agentsById.codex!.externalSessions!,
-                        sources: [{
-                            ...CODEX_SOURCE_DECLARATION,
-                            terminalFollow: { userRowClassification: 'explicitV1' },
-                        }],
-                    },
-                },
-            },
-        });
-
+        // A declared kind whose payload violates the declaration stays refused:
+        // `home: 'connectedService'` requires `connectedServiceId`.
         expect(supportsExternalSessionBackgroundFollow({
             providerId: 'codex',
-            source,
-            projection: optedInProjection,
-        })).toBe(true);
+            source: { kind: 'codexHome', home: 'connectedService' } as never,
+            projection,
+        })).toBe(false);
+
+        // A retired Agent generation stays refused.
+        const staleProjection = PluginProjectionV2Schema.parse({
+            ...projection,
+            generation: projection.generation + 1,
+        });
+        expect(supportsExternalSessionBackgroundFollow({
+            providerId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            projection: staleProjection,
+        })).toBe(false);
     });
 
     it('resolves a non-bundled auxiliary-only Agent from the daemon projection without static Agent catalog membership', async () => {

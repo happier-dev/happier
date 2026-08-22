@@ -82,10 +82,23 @@ const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'Auggie CLI',
     'Tmux',
     'Telegram',
+    'Bitbucket',
+    'React Native',
+    'tmux',
+    'macOS',
+    'Linux',
+    'macOS/Linux',
     'Windows',
     'Windows Terminal',
     'Happier Voice',
+    'OpenAI Realtime',
+    'Grok Voice · BYOK',
+    // HTTP authorization scheme name, used verbatim in every locale.
+    'bearer',
     'Happier Cloud',
+    'GitHub CLI',
+    'Launchpad',
+    'xterm.js WebView',
     // Technical ids that should remain unchanged across locales.
     'Xenova/all-MiniLM-L6-v2',
     // Relay access provider feature names that are intentionally not localized.
@@ -104,6 +117,8 @@ const ALLOW_SAME_KEY_PREFIXES: ReadonlyArray<string> = [
     'profiles.builtInNames.',
     // Desktop overlay settings copy is temporarily shared in English across locale files.
     'settingsDesktop.overlay.',
+    // Built-in theme preset names are product names, not descriptive UI copy.
+    'settingsAppearance.themeProfiles.presets.',
     // Machine transfer exposure labels are technical transport terms.
     'machine.transferExposure.',
 ];
@@ -117,6 +132,11 @@ const ALLOW_SAME_STRING_KEYS = new Set<string>([
     'settings.mcpServersFieldCommandLinePlaceholder',
     'settings.mcpServersImportJsonPlaceholder',
     'settingsNotifications.webhooks.signingSecretPromptPlaceholder',
+    'settingsProviders.authoring.publicHeadersPlaceholder',
+    'settingsPlugins.accountDataErase.promptPlaceholder',
+    'settingsAppearance.themeProfiles.previewCode',
+    'settingsKeyboard.setShortcutPromptPlaceholder',
+    'settingsSession.transcript.messageActions.template.placeholder',
     // Provider/model examples in replay resume settings are identifiers, not localized UI copy.
     'settingsSession.replayResume.summaryRunner.backendPlaceholder',
     'settingsSession.replayResume.summaryRunner.modelPlaceholder',
@@ -164,6 +184,61 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     'settings.relayAccess.statusError': new Set(['es', 'ca']),
     // Portuguese: "Logs" is a commonly used UI term.
     'common.logs': new Set(['pt']),
+    // These locale spellings are genuine cognates or established developer UI terms.
+    'settingsProviders.detail.machineOnline': new Set(['pl', 'it', 'pt']),
+    'settingsProviders.detail.machineOffline': new Set(['pl', 'it', 'pt']),
+    'settingsProviders.compatibility.experimental': new Set(['es', 'pt', 'ca']),
+    'settingsProviders.compatibility.incompatible': new Set(['es', 'ca']),
+    'settingsProviders.models.experimental': new Set(['es', 'pt', 'ca']),
+    'settingsProviders.models.manual': new Set(['es', 'pt', 'ca']),
+    'browserDiagnostics.host.fields.selector': new Set(['es', 'ca']),
+    'settingsProviders.authoring.providerTitle': new Set(['it']),
+    'settingsProviders.authoring.destinationAccount': new Set(['it']),
+    'settingsSession.sessionList.identityDisplayAvatarTitle': new Set(['it', 'ca']),
+    'settingsSession.sessionList.headerIdentityDisplayAvatarTitle': new Set(['it', 'ca']),
+    'externalSessions.settingsPrivacyGroupTitle': new Set(['it']),
+    'automations.list.manual': new Set(['ca']),
+    'automations.detail.runMeta.origin.manual': new Set(['ca']),
+    'settingsProviders.detail.modelsTitle': new Set(['ca']),
+    'settingsAppearance.themeProfiles.editorMode': new Set(['ca']),
+    'settingsAppearance.themeProfiles.groups.chrome': new Set(['fr', 'ca']),
+    'settingsAppearance.themeProfiles.groups.surface': new Set(['fr']),
+    'settingsAppearance.themeProfiles.groups.composer': new Set(['fr']),
+    'settingsAppearance.themeProfiles.groups.message': new Set(['fr']),
+    'settingsAppearance.themeProfiles.groups.diff': new Set(['fr']),
+    'settingsAppearance.themeProfiles.groups.permission': new Set(['fr']),
+    'settingsAppearance.themeProfiles.groups.overlay': new Set(['fr']),
+    'settingsAppearance.themeProfiles.groups.text': new Set(['ca']),
+    'settingsAppearance.themeProfiles.groups.control': new Set(['ca']),
+    'commandPalette.commands.sessionsCategory': new Set(['ca']),
+    'directSessions.browseAgents': new Set(['fr', 'ca']),
+    'externalSessions.browseAgents': new Set(['fr', 'ca']),
+    'agentInput.suggestionGroups.sessions': new Set(['ca']),
+    'localServices.source.recent': new Set(['ca']),
+    'simulatorPreview.toolbar.recentButton': new Set(['ca']),
+    'browserShell.devtools.section.elements': new Set(['ca']),
+    'browserDiagnostics.host.families.elements': new Set(['ca']),
+    'browserDiagnostics.host.fields.protocol': new Set(['ca']),
+    'browserDiagnostics.host.fields.arguments': new Set(['fr', 'ca']),
+    'browserDiagnostics.host.fields.nodeCount': new Set(['ca']),
+    'browserDiagnostics.host.fields.elementCount': new Set(['ca']),
+    'settingsActions.families.session.title': new Set(['ca']),
+    'settingsActions.families.general.title': new Set(['ca']),
+    'settingsSession.sessionCreation.modalModeSimpleTitle': new Set(['fr', 'ca']),
+    'message.runtimeConfigOutcomeKeyModel': new Set(['ca']),
+    'usage.efficiency.costPerMtok': new Set(['ca']),
+    'commandPalette.commands.navigationCategory': new Set(['fr']),
+    'sessionsList.storageDirectTab': new Set(['fr']),
+    'sessionsList.moveSheetDestinationLabel': new Set(['fr']),
+    'sessionsList.moveSheetDestinations': new Set(['fr']),
+    // French: the credential effect "mutation" is the same word in French.
+    'settingsVoice.externalCredentials.recipientApprovalEffect.mutation': new Set(['fr']),
+    // Spanish/Portuguese/Catalan: "experimental" and "Manual" are the same words, as already
+    // ratified for the provider-settings namespace.
+    'settingsVoice.realtimeProviders.authentication.openAiCodex.title': new Set(['es', 'pt', 'ca']),
+    'settingsVoice.realtimeProviders.options.manual': new Set(['es', 'pt', 'ca']),
+    // Catalan: "Model" is the Catalan word too.
+    'settingsVoice.realtimeProviders.fields.model.title': new Set(['ca']),
 };
 
 function isProviderPluginTitleKey(key: string): boolean {

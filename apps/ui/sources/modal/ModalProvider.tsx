@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { ModalConfig, ModalContextValue } from './types';
+import { ModalConfig, ModalContextValue, ModalType } from './types';
 import { Modal } from './ModalManager';
 import { WebAlertModal } from './components/WebAlertModal';
 import { WebPromptModal } from './components/WebPromptModal';
@@ -8,6 +8,9 @@ import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popove
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 const ModalContext = createContext<ModalContextValue | undefined>(undefined);
+// Consumers that only need presentation context must not receive titles,
+// prompts, callbacks, or custom modal props from the modal host state.
+const VisibleModalKindContext = createContext<ModalType | null>(null);
 
 type ModalProviderProps = Readonly<{
     active?: boolean;
@@ -32,6 +35,11 @@ export function useModal() {
 
 export function useOptionalModal() {
     return useContext(ModalContext);
+}
+
+/** Returns only the top visible dialog kind; modal content remains host-private. */
+export function useVisibleModalKind(): ModalType | null {
+    return useContext(VisibleModalKindContext);
 }
 
 export function ModalProvider({ active = true, children }: ModalProviderProps) {
@@ -195,6 +203,8 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     }, []);
 
     const contextValue: ModalContextValue = {
+        // Derived here rather than at each consumer so "a modal owns the keyboard" has one owner.
+        isKeyboardLiftSuppressedByModal: state.modals.length > 0,
         state,
         showModal,
         hideModal,
@@ -205,16 +215,18 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     const topVisibleIndex = state.modals.reduce((topIndex, modal, index) => (
         modal.visible ? index : topIndex
     ), -1);
+    const visibleModalKind = topVisibleIndex >= 0 ? state.modals[topVisibleIndex]?.type ?? null : null;
     const zIndexStep = 10;
     const zIndexBase = 100000;
     const screenOverlayPortalZIndex = zIndexBase - 10000;
 
     return (
         <OverlayPortalProvider>
-            <ModalContext.Provider value={contextValue}>
-                {children}
-                <OverlayPortalHost zIndex={screenOverlayPortalZIndex} />
-                {state.modals.map((modal, index) => {
+            <VisibleModalKindContext.Provider value={visibleModalKind}>
+                <ModalContext.Provider value={contextValue}>
+                    {children}
+                    <OverlayPortalHost zIndex={screenOverlayPortalZIndex} />
+                    {state.modals.map((modal, index) => {
                     const showBackdrop = index === topVisibleIndex;
                     const modalZIndexBase = zIndexBase + index * zIndexStep;
 
@@ -285,8 +297,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                     }
 
                     return null;
-                })}
-            </ModalContext.Provider>
+                    })}
+                </ModalContext.Provider>
+            </VisibleModalKindContext.Provider>
         </OverlayPortalProvider>
     );
 }

@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -12,7 +13,10 @@ import { Typography } from '@/constants/Typography';
 import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import type { SessionForkStrategyAvailability } from '@/sync/domains/sessionFork/forkUiSupport';
+import type {
+    SessionForkNativeUnavailableReason,
+    SessionForkStrategyAvailability,
+} from '@/sync/domains/sessionFork/forkUiSupport';
 import type { SessionForkOperationRoute } from '@/sync/domains/sessionFork/sessionForkStrategy';
 import {
     useSessionForkStrategyFlow,
@@ -105,7 +109,40 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'flex-end',
     },
+    // Tighter than `noticeActions` on purpose: this one is a footnote to the
+    // group directly above it rather than the modal's closing action, so it sits
+    // symmetrically between the two groups instead of hanging off the last one.
+    replaySettingsAction: {
+        marginTop: 4,
+        marginBottom: 4,
+        marginHorizontal: 12,
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+    },
 }));
+
+/**
+ * The one-line explanation a disabled Native card carries.
+ *
+ * An exhaustive switch over the closed reason set the availability owner
+ * resolves — deliberately not a registry, a capability-explanation service or a
+ * per-Agent copy catalog. Adding an Agent adds no copy here; adding a *reason*
+ * is a compiler error until it has one.
+ */
+function resolveNativeUnavailableCopy(
+    reason: SessionForkNativeUnavailableReason | null,
+): string | null {
+    switch (reason) {
+        case 'agent_unsupported':
+            return t('session.forking.strategy.unavailable.nativeAgent');
+        case 'agent_conversation_only':
+            return t('session.forking.strategy.unavailable.nativeFromMessage');
+        case 'provider_bound':
+            return t('session.forking.strategy.unavailable.nativeProviderBound');
+        case null:
+            return null;
+    }
+}
 
 export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
     const { theme } = useUnistyles();
@@ -141,7 +178,28 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
         fireAndForget(flow.submit(route), { tag: 'SessionForkStrategyModal.submit' });
     }, [flow]);
 
-    const bothSameEngineRoutes = props.availability.native && props.availability.replay;
+    const { native: nativeAvailable, replay: replayAvailable } = props.availability;
+    const bothSameEngineRoutes = nativeAvailable && replayAvailable;
+
+    // An unavailable route is shown disabled with the reason in place of its
+    // fidelity line, never omitted: a card that vanishes teaches the reader
+    // nothing, and on an Agent with no native fork and Replay off it used to
+    // take the whole fork affordance down with it.
+    const nativeSubtitle = nativeAvailable
+        ? t('session.forking.strategy.native.subtitle')
+        : resolveNativeUnavailableCopy(props.availability.nativeUnavailableReason)
+            ?? t('session.forking.strategy.native.subtitle');
+    const replaySubtitle = replayAvailable
+        ? t('session.forking.strategy.replay.subtitle')
+        : t('session.forking.strategy.unavailable.replayOff');
+
+    // Replay has exactly one closable cause, and it is the reader's own setting.
+    // Settings owns that toggle, so this leaves for it rather than growing a
+    // second place to flip it.
+    const handleOpenReplaySettings = React.useCallback(() => {
+        onClose();
+        router.push('/(app)/settings/session/resume');
+    }, [onClose]);
 
     const recommendedPill = (
         <View style={styles.recommendedPill}>
@@ -189,36 +247,49 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
             ) : null}
 
             <ItemGroup accessibilityLabel={t('session.forking.strategy.title')}>
-                {props.availability.native ? (
-                    <Item
-                        testID="session-fork-strategy-native"
-                        title={t('session.forking.strategy.native.title')}
-                        subtitle={t('session.forking.strategy.native.subtitle')}
-                        subtitleLines={0}
-                        icon={<Icon name="git-branch" size={20} color={theme.colors.text.secondary} />}
-                        rightElement={bothSameEngineRoutes ? recommendedPill : undefined}
-                        accessibilityLabel={bothSameEngineRoutes
-                            ? `${t('session.forking.strategy.native.title')}. ${t('session.forking.strategy.recommended')}. ${t('session.forking.strategy.native.subtitle')}`
-                            : undefined}
-                        keepChevronWithRightElement
-                        loading={busyRoute === 'native'}
-                        disabled={choicesDisabled && busyRoute !== 'native'}
-                        onPress={() => submit('native')}
-                    />
-                ) : null}
-                {props.availability.replay ? (
-                    <Item
-                        testID="session-fork-strategy-replay"
-                        title={t('session.forking.strategy.replay.title')}
-                        subtitle={t('session.forking.strategy.replay.subtitle')}
-                        subtitleLines={0}
-                        icon={<Icon name="clock-counter-clockwise" size={20} color={theme.colors.text.secondary} />}
-                        loading={busyRoute === 'replay'}
-                        disabled={choicesDisabled && busyRoute !== 'replay'}
-                        onPress={() => submit('replay')}
-                    />
-                ) : null}
+                <Item
+                    testID="session-fork-strategy-native"
+                    title={t('session.forking.strategy.native.title')}
+                    subtitle={nativeSubtitle}
+                    subtitleLines={0}
+                    icon={<Icon name="git-branch" size={20} color={theme.colors.text.secondary} />}
+                    rightElement={bothSameEngineRoutes ? recommendedPill : undefined}
+                    accessibilityLabel={bothSameEngineRoutes
+                        ? `${t('session.forking.strategy.native.title')}. ${t('session.forking.strategy.recommended')}. ${t('session.forking.strategy.native.subtitle')}`
+                        : undefined}
+                    keepChevronWithRightElement
+                    // The chevron is the promise of forward motion, so only a
+                    // route that can actually be taken keeps one.
+                    showChevron={nativeAvailable}
+                    loading={busyRoute === 'native'}
+                    disabled={!nativeAvailable || (choicesDisabled && busyRoute !== 'native')}
+                    onPress={() => submit('native')}
+                />
+                <Item
+                    testID="session-fork-strategy-replay"
+                    title={t('session.forking.strategy.replay.title')}
+                    subtitle={replaySubtitle}
+                    subtitleLines={0}
+                    icon={<Icon name="clock-counter-clockwise" size={20} color={theme.colors.text.secondary} />}
+                    showChevron={replayAvailable}
+                    loading={busyRoute === 'replay'}
+                    disabled={!replayAvailable || (choicesDisabled && busyRoute !== 'replay')}
+                    onPress={() => submit('replay')}
+                />
             </ItemGroup>
+
+            {!replayAvailable ? (
+                <View style={styles.replaySettingsAction}>
+                    <RoundButton
+                        size="small"
+                        display="inverted"
+                        testID="session-fork-strategy-replay-settings"
+                        title={t('session.forking.strategy.unavailable.replaySettingsAction')}
+                        disabled={choicesDisabled}
+                        onPress={handleOpenReplaySettings}
+                    />
+                </View>
+            ) : null}
 
             {onConfigureNewSession ? (
                 <ItemGroup>

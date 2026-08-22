@@ -13,7 +13,7 @@ import { consumeLegacySessionDeepLinkFromWebLocation } from '@/sync/domains/serv
 import { shouldSwitchToServerUrl } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
-import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 
 /**
  * Owns every navigation/auth-driven side effect from the app root layout.
@@ -31,14 +31,14 @@ export function RootLayoutNavigationEffects(): React.ReactElement | null {
     const pathname = usePathname();
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
-    const isTauriDesktopHost = isTauriDesktop();
+    const isDesktopShell = isDesktopHost();
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
 
     React.useEffect(() => {
-        if (!isTauriDesktopHost) return;
-        void invokeTauri('desktop_set_window_mode', { mode: 'main' });
-    }, [isTauriDesktopHost]);
+        if (!isDesktopShell) return;
+        void invokeDesktopHost('desktop_set_window_mode', { mode: 'main' });
+    }, [isDesktopShell]);
 
     const legacySessionDeepLinkHandledRef = React.useRef(false);
     React.useEffect(() => {

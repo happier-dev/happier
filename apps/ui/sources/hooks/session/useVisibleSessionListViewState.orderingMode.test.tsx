@@ -115,6 +115,7 @@ function setSessionOrganizationProjection(params: Readonly<{
                         workspace: folder.workspace,
                     },
                 },
+                displayState: { status: 'available', value: null },
                 archivedAt: null,
                 createdAt: 1,
                 updatedAt: 1,
@@ -123,6 +124,7 @@ function setSessionOrganizationProjection(params: Readonly<{
         folderAssignmentsBySessionId: params.folderAssignmentsBySessionId ?? {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
     };
@@ -350,6 +352,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
                             },
                         },
                     },
+                    displayState: { status: 'available', value: null },
                     archivedAt: null,
                     createdAt: 1,
                     updatedAt: 1,
@@ -360,6 +363,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             orderEntriesByScopeKey: {},
             labelsByLabelKey: {},
         };
@@ -757,6 +761,70 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
             expect.objectContaining({ type: 'session', sessionId: 'approval-session', groupKind: 'active' }),
             expect.objectContaining({ type: 'session', sessionId: 'normal', groupKind: 'active' }),
         ]);
+    });
+
+    it('does not replay a resolved permission reason onto the retained open session', async () => {
+        // The row the user is READING is retained in the band so it cannot slide away
+        // mid-read. Retention must not also resurrect the reason that placed it: once
+        // the user approves the permission, `attentionPlacementReason` is what the row
+        // renders its "permission required" affordance from, so replaying it paints an
+        // approved session as still blocked.
+        viewState.orderingMode = 'custom';
+        viewState.attentionPromotionMode = 'global';
+        viewState.pathname = '/session/approval-session';
+        viewState.openApprovalSessionIds = ['approval-session'];
+        viewState.selection = {
+            enabled: false,
+            presentation: 'grouped',
+            activeServerId: 's1',
+            allowedServerIds: ['s1'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 's1', serverId: 's1' },
+        };
+        viewState.source = [
+            { type: 'header', headerKind: 'active', title: 'Active', serverId: 's1', groupKey: 'server:s1:active' },
+            { type: 'session', sessionId: 'approval-session', serverId: 's1', section: 'active', groupKey: 'server:s1:active', groupKind: 'active' },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                'approval-session': makeSessionRow('approval-session', {
+                    active: true,
+                    presence: 'online',
+                    seq: 3,
+                    lastViewedSessionSeq: 3,
+                    latestTurnStatus: 'completed',
+                    latestTurnStatusObservedAt: 200,
+                    lastTurnCompletedAt: 200,
+                    updatedAt: 200,
+                }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex?.[1]).toEqual(expect.objectContaining({
+            type: 'session',
+            sessionId: 'approval-session',
+            groupKind: 'attention',
+            attentionPlacementReason: 'permission_required',
+        }));
+
+        // The user approves the permission while still on the session.
+        viewState.openApprovalSessionIds = [];
+        await hook.rerender();
+        await flushHookEffects();
+
+        const retainedRow = hook.getCurrent()?.visibleSessionListIndex?.[1];
+        expect(retainedRow).toEqual(expect.objectContaining({
+            type: 'session',
+            sessionId: 'approval-session',
+            groupKind: 'attention',
+        }));
+        expect(retainedRow).not.toEqual(expect.objectContaining({
+            attentionPlacementReason: 'permission_required',
+        }));
     });
 
     it('does not promote a quiet selected session through retention', async () => {

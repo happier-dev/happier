@@ -10,6 +10,7 @@ function eventMessage(
 ): Message {
     return {
         kind: 'agent-event',
+        localId: null,
         id,
         createdAt: 1,
         event,

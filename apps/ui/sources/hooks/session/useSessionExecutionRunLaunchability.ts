@@ -1,7 +1,6 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
 
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
@@ -42,8 +41,11 @@ export function useSessionExecutionRunLaunchability(
         sessionId,
         metadata: ownerMetadata,
     });
+    // A Session whose Agent identity cannot be read must not borrow the default
+    // Agent's resume capabilities; the hook already treats a null id as "no
+    // current declaration" and fails the launcher closed.
     const agentId = React.useMemo(
-        () => resolveAgentIdFromSessionMetadata(ownerMetadata) ?? DEFAULT_AGENT_ID,
+        () => resolveAgentIdFromSessionMetadata(ownerMetadata),
         [ownerMetadata],
     );
     const { resumeCapabilityOptions } = useResumeCapabilityOptions({

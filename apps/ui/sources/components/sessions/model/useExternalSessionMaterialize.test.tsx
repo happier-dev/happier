@@ -25,6 +25,14 @@ vi.mock('@/text', async () => {
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'materialize-idempotency-1',
 }));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeCurrentness: () => ({
+        isCurrent: () => activeAccountIsCurrent,
+        onRetire: () => ({ dispose() {} }),
+    }),
+}));
+
+let activeAccountIsCurrent = true;
 
 type MaterializeHook =
     typeof import('./useExternalSessionMaterialize')['useExternalSessionMaterialize'];
@@ -65,6 +73,7 @@ async function renderHarness(runtime: Runtime, hasWriteAccess = true) {
 
 describe('useExternalSessionMaterialize', () => {
     beforeEach(() => {
+        activeAccountIsCurrent = true;
         materializeStartSpy.mockReset();
         materializeStartSpy.mockResolvedValue({
             ok: true,
@@ -169,6 +178,32 @@ describe('useExternalSessionMaterialize', () => {
             expect.anything(),
             'daemon-private-operation-detail',
         );
+        await harness.unmount();
+    });
+
+    it('never starts materialization after the Account retires during the status read', async () => {
+        const { createDeferred } = await import('@/dev/testkit');
+        const statusRead = createDeferred<NonNullable<Runtime['status']>>();
+        const refreshNow = vi.fn(async () => await statusRead.promise);
+        const harness = await renderHarness({
+            externalSessionLink,
+            status: null,
+            refreshNow,
+            sessionServerId: 'server-owned',
+        });
+
+        let ready = true;
+        await act(async () => {
+            const pending = harness.getCurrent().requestMaterialize();
+            await Promise.resolve();
+            activeAccountIsCurrent = false;
+            statusRead.resolve(onlineStatus);
+            ready = await pending;
+        });
+
+        expect(ready).toBe(false);
+        expect(materializeStartSpy).not.toHaveBeenCalled();
+        expect(modalAlertSpy).not.toHaveBeenCalled();
         await harness.unmount();
     });
 });

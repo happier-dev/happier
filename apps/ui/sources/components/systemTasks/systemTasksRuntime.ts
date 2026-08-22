@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { buildLocalMachineSetupSystemTaskSpec } from './buildLocalMachineSetupSystemTaskSpec';
 import { createSystemTaskBridge } from './createSystemTaskBridge';
@@ -11,7 +11,7 @@ let sharedRunner: SystemTaskRunner | null = null;
 
 export function resolveSystemTaskRunnerMode(params: Readonly<{
     explicitMode: string;
-    isTauri: boolean;
+    isDesktopHost: boolean;
     nodeEnv: string | undefined;
     platformOS: string;
 }>): SystemTaskRunnerMode {
@@ -19,7 +19,7 @@ export function resolveSystemTaskRunnerMode(params: Readonly<{
     if (explicitMode === 'tauri' || explicitMode === 'native' || explicitMode === 'dev' || explicitMode === 'unavailable') {
         return explicitMode;
     }
-    if (params.isTauri) {
+    if (params.isDesktopHost) {
         return 'tauri';
     }
     if (params.platformOS === 'ios' || params.platformOS === 'android') {
@@ -34,7 +34,7 @@ export function resolveSystemTaskRunnerMode(params: Readonly<{
 function resolveRunnerMode(): SystemTaskRunnerMode {
     return resolveSystemTaskRunnerMode({
         explicitMode: String(process.env.EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE ?? ''),
-        isTauri: isTauriDesktop(),
+        isDesktopHost: isDesktopHost(),
         nodeEnv: process.env.NODE_ENV,
         platformOS: String(Platform.OS ?? ''),
     });

@@ -18,7 +18,7 @@ import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks'
 import { readRemoteHosts, type RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDraft, isSshCredentialsDraftReady } from '@/components/ssh/sshCredentialsDraft';
 import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
 import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
@@ -207,7 +207,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     const remoteHostsSecretMaterialEnabled = useFeatureEnabled('remoteHosts.secretMaterial');
     const canDiscoverConfiguredSshHosts = props.runner
         ? props.runner.mode === 'tauri'
-        : isTauriDesktop();
+        : isDesktopHost();
     const configuredHostSuggestions = useConfiguredSshHostSuggestions({
         ...(props.runner ? { runner: props.runner } : {}),
         enabled: canDiscoverConfiguredSshHosts,
@@ -227,7 +227,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     React.useEffect(() => {
         if (saveHostInitializedRef.current) return;
         if (!remoteHostsManagementEnabled) return;
-        if (!isTauriDesktop()) return;
+        if (!isDesktopHost()) return;
         setSaveHost(true);
         saveHostInitializedRef.current = true;
     }, [remoteHostsManagementEnabled]);

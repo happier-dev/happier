@@ -75,21 +75,51 @@ export function useTranscriptNativeMountSettleLifecycle(params: Readonly<{
         const tuning = sync.getSyncTuning();
         const intervalMs = tuning.transcriptMountSettleQuiescentWindowMs;
         const deadlineMs = Date.now() + tuning.transcriptInitialFillBudgetMs + intervalMs;
-        const intervalId = setInterval(() => {
+        // The check FOLLOWS the geometry instead of running on a fixed phase.
+        //
+        // Settle is "no meaningful change for `quiescentWindowMs`", and the scroll-ingress
+        // path already samples on every real geometry observation — so a repeating interval
+        // was a second sampler for one signal, ticking on a phase unrelated to when geometry
+        // last moved. Detection therefore landed at the first tick at or after quiescence
+        // completed, up to a full window late, and the thread was woken throughout the churn
+        // for samples that could not possibly settle yet.
+        //
+        // Two invariants are preserved deliberately:
+        //  - The DEADLINE still bounds every wait, so the reveal gate this feeds can never
+        //    hang on a signal that will not arrive.
+        //  - While a precondition is unmet (`null`), it falls back to the previous cadence,
+        //    because a precondition can be satisfied by something that does not sample.
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const clearPending = () => {
+            if (timeoutId === null) return;
+            clearTimeout(timeoutId);
+            timeoutId = null;
+        };
+        const scheduleNext = () => {
+            const nowMs = Date.now();
+            const settleDelayMs = lifecycleHost.nextMountSettleCheckDelayMs(nowMs);
+            const deadlineDelayMs = Math.max(0, deadlineMs - nowMs);
+            const delayMs = Math.min(settleDelayMs ?? intervalMs, deadlineDelayMs);
+            timeoutId = setTimeout(runCheck, Math.max(1, delayMs));
+        };
+        const runCheck = () => {
+            timeoutId = null;
             const nowMs = Date.now();
             lifecycleHost.sampleMountSettle({ sessionId, nowMs });
             if (lifecycleHost.getMountSettleSnapshot().stableSettle) {
                 setNativeMountSettleStable(true);
                 nativeMountSettleDeadlineReachedRef.current = false;
-                clearInterval(intervalId);
                 return;
             }
-            if (nowMs < deadlineMs) return;
+            if (nowMs < deadlineMs) {
+                scheduleNext();
+                return;
+            }
             nativeMountSettleDeadlineReachedRef.current = true;
             setNativeMountSettleDeadlineReached(true);
-            clearInterval(intervalId);
-        }, intervalMs);
-        return () => clearInterval(intervalId);
+        };
+        scheduleNext();
+        return clearPending;
     }, [
         lifecycleHost,
         nativeMountSettleDeadlineReachedRef,

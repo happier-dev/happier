@@ -3,6 +3,7 @@ import type { ProfileEnabledById } from '@/sync/domains/profiles/profileEnableme
 import { isProfileCompatibleWithAgent, type AIBackendProfile, type ProfileCompatibilitySummary } from '@/sync/domains/profiles/profileCompatibility';
 import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 
 export interface ProfileListBackendEntry {
     backendTargetKey: string;
@@ -13,13 +14,15 @@ export interface ProfileListBackendEntry {
 export interface ProfileListStrings {
     builtInLabel: string;
     customLabel: string;
-    agentLabelById: Readonly<Record<AgentId, string>>;
+    /** Labels for the Agents currently enabled; an open Agent id may be absent. */
+    agentLabelById: Readonly<Partial<Record<AgentId, string>>>;
 }
 
 export function getDefaultProfileListStrings(enabledAgentIds: readonly AgentId[]): ProfileListStrings {
-    const agentLabelById: Record<AgentId, string> = {} as any;
+    const agentLabelById: Partial<Record<AgentId, string>> = {};
     for (const agentId of enabledAgentIds) {
-        agentLabelById[agentId] = t(getAgentCore(agentId).displayNameKey);
+        const core = getAgentCore(agentId);
+        agentLabelById[agentId] = core ? t(core.displayNameKey) : formatAgentLikeIdForDisplay(agentId);
     }
     return {
         builtInLabel: t('profiles.builtIn'),

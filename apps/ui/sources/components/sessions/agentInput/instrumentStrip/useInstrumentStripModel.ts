@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import {
     buildScmStatusSummaryFromSnapshot,
     type ScmStatusSummary,
@@ -58,7 +57,7 @@ type SessionUsageLike = Readonly<{
  */
 export function useInstrumentStripModel(params: Readonly<{
     sessionId: string | null | undefined;
-    agentId: AgentId | null | undefined;
+    agentId: string | null | undefined;
     agentTargetKey?: string | null;
     metadata: Metadata | null | undefined;
     sessionActive?: boolean;

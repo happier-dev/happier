@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => false));
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => false));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 function setWindowLocation(url: string) {
@@ -20,19 +20,19 @@ function setWindowLocation(url: string) {
 
 describe('isDesktopActivityOverlayWindowContext', () => {
     afterEach(() => {
-        isTauriDesktopMock.mockReset();
+        isDesktopHostMock.mockReset();
         delete (globalThis as any).window;
     });
 
     it('returns false when not running in tauri desktop', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { isDesktopActivityOverlayWindowContext } = await import('./isDesktopActivityOverlayWindowContext');
 
         expect(isDesktopActivityOverlayWindowContext()).toBe(false);
     });
 
     it('returns true for tauri overlay window marker query parameter', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         setWindowLocation('http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1');
         const { isDesktopActivityOverlayWindowContext } = await import('./isDesktopActivityOverlayWindowContext');
 
@@ -40,7 +40,7 @@ describe('isDesktopActivityOverlayWindowContext', () => {
     });
 
     it('returns true for the overlay route path even when the marker query parameter is missing', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         setWindowLocation('http://localhost:8081/desktop/activity-overlay');
         const { isDesktopActivityOverlayWindowContext } = await import('./isDesktopActivityOverlayWindowContext');
 
@@ -48,7 +48,7 @@ describe('isDesktopActivityOverlayWindowContext', () => {
     });
 
     it('returns false when marker query parameter appears on a non-overlay route', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         setWindowLocation('http://localhost:8081/settings?desktopOverlayWindow=1');
         const { isDesktopActivityOverlayWindowContext } = await import('./isDesktopActivityOverlayWindowContext');
 

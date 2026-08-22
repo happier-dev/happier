@@ -420,14 +420,14 @@ describe('ReviewCommentsSessionSurface', () => {
                     v: 1,
                     id: 'request-1',
                     accountId: 'account-1',
-                    pluginId: 'file-plugin',
-                    pluginName: 'File Plugin',
-                    capability: 'filesystem.write',
+                    pluginId: 'credential-plugin',
+                    pluginName: 'Credential Plugin',
+                    capability: 'credentials.materialize.raw',
                     targetScope: { kind: 'project', projectId: 'project-1' },
                     subject: { kind: 'general' },
-                    requester: { kind: 'plugin', pluginId: 'file-plugin', sessionId: 'session-1' },
+                    requester: { kind: 'plugin', pluginId: 'credential-plugin', sessionId: 'session-1' },
                     authoritySource: { kind: 'bundled' },
-                    reason: 'Write files.',
+                    reason: 'Materialize raw credentials.',
                     status: 'pending',
                     createdAt: 1,
                     updatedAt: 1,
@@ -438,7 +438,7 @@ describe('ReviewCommentsSessionSurface', () => {
         await flushHookEffects();
 
         expect(screen.findByTestId('review-comments-session-direct-write-request-request-1')).toBeNull();
-        expect(screen.getTextContent()).not.toContain('filesystem.write');
+        expect(screen.getTextContent()).not.toContain('credentials.materialize.raw');
     });
 
     it('wires edit reply transition redact and bulk actions through durable review actions', async () => {

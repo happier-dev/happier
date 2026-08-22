@@ -3,7 +3,7 @@ import * as React from 'react';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import { t } from '@/text';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { applyTauriTrayState } from './applyTauriTrayState';
@@ -42,6 +42,6 @@ function TauriDesktopTrayRuntime(): React.ReactElement | null {
 }
 
 export function DesktopTrayRuntime(): React.ReactElement | null {
-    if (!isTauriDesktop()) return null;
+    if (!isDesktopHost()) return null;
     return <TauriDesktopTrayRuntime />;
 }

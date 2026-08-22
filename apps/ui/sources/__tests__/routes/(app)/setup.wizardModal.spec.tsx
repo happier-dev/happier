@@ -28,8 +28,8 @@ vi.mock('@/modal/components/BaseModal', () => ({
 vi.mock('@/components/onboarding/surfaces/SetupWizardSurface', () => ({
     SetupWizardSurface: (props: Record<string, unknown>) => React.createElement('SetupWizardSurface', props),
 }));
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => false,
 }));
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     clearPendingSetupIntent: vi.fn(),

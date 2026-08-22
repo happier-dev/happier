@@ -1,3 +1,4 @@
+import { shouldRequestTranscriptNavigationRemotePage } from './resolveTranscriptNavigationRemoteBackfill';
 import * as React from 'react';
 import {
     buildTranscriptNavigationLoadedMessages,
@@ -34,9 +35,7 @@ export type SessionTranscriptNavigationEntriesState = Readonly<{
 }>;
 
 /** Enough prior anchors for the rail/panel to feel complete without downloading whole sessions. */
-const TRANSCRIPT_NAVIGATION_REMOTE_HISTORY_USER_TURN_TARGET = 60;
 /** Hard stop so a session whose pages are dominated by agent rows cannot page indefinitely. */
-const TRANSCRIPT_NAVIGATION_REMOTE_HISTORY_MAX_PAGES = 12;
 
 /**
  * The ONE transcript-navigation derivation implementation.
@@ -59,7 +58,14 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
     messageIdsOldestFirst: string[];
     messagesById: Record<string, Message>;
     sessionId: string;
+    /**
+     * Whether a surface can display these entries. Defaults to true so the demand-opened
+     * navigation pane is unchanged; the always-mounted transcript host passes the rail's
+     * own platform rule, because on native the rail never appears.
+     */
+    remoteBackfillEnabled?: boolean;
 }>): SessionTranscriptNavigationEntriesState {
+    const remoteBackfillEnabled = params.remoteBackfillEnabled !== false;
     const {
         activeServerAccountScope,
         forkedTranscriptEnabled,
@@ -139,6 +145,13 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
         () => transcriptNavigationRemoteMessages.reduce((count, message) => (message.role === 'user' ? count + 1 : count), 0),
         [transcriptNavigationRemoteMessages],
     );
+    const loadedUserTurnCount = React.useMemo(
+        () => transcriptNavigationLoadedMessages.reduce(
+            (count, message) => (message.role === 'user' ? count + 1 : count),
+            0,
+        ),
+        [transcriptNavigationLoadedMessages],
+    );
     const requestRemoteHistoryNextPage = transcriptNavigationRemoteHistory.requestNextPage;
     const remoteHistoryHasMore = transcriptNavigationRemoteHistory.hasMore;
     const remoteHistoryPagesLoaded = transcriptNavigationRemoteHistory.pagesLoaded;
@@ -146,13 +159,25 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
     // Bounded continuation: keep pulling older pages until navigation holds enough prior turns,
     // never until the whole session is downloaded. Re-running on `transcriptNavigationLoadedMessages`
     // is also what re-drives a page that could not decrypt yet, once session keys arrive.
+    //
+    // "Holds" counts the loaded window too — see `shouldRequestTranscriptNavigationRemotePage`,
+    // which owns the policy. This used to weigh remote rows alone, so a transcript already
+    // showing plenty of prior turns still downloaded a full target's worth of history behind
+    // it; measured on remote-dev 2026-08-18 this ran to its 12-page ceiling during session open
+    // and decrypted hundreds of messages the transcript never needed.
     React.useEffect(() => {
-        if (!remoteHistoryHasMore) return;
-        if (remoteHistoryPagesLoaded >= TRANSCRIPT_NAVIGATION_REMOTE_HISTORY_MAX_PAGES) return;
-        if (remoteUserRowCount >= TRANSCRIPT_NAVIGATION_REMOTE_HISTORY_USER_TURN_TARGET) return;
+        if (!shouldRequestTranscriptNavigationRemotePage({
+            hasMore: remoteHistoryHasMore,
+            pagesLoaded: remoteHistoryPagesLoaded,
+            loadedUserTurnCount: loadedUserTurnCount,
+            remoteUserTurnCount: remoteUserRowCount,
+            hasVisibleConsumer: remoteBackfillEnabled,
+        })) return;
         requestRemoteHistoryNextPage();
     }, [
+        loadedUserTurnCount,
         remoteHistoryHasMore,
+        remoteBackfillEnabled,
         remoteHistoryPagesLoaded,
         remoteUserRowCount,
         requestRemoteHistoryNextPage,

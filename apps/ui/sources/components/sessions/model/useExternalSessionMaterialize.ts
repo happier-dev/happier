@@ -6,6 +6,7 @@ import {
 import type { UseExternalSessionRuntimeResult } from '@/components/sessions/model/useExternalSessionRuntime';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import {
     machineExternalSessionMaterializeStart,
@@ -78,15 +79,21 @@ export function useExternalSessionMaterialize(
         }
 
         const requestGeneration = generationRef.current;
+        // Materialize is Account-scoped: it converts Account A's linked session on
+        // Account A's machine. If the UI switches Account while the status read is
+        // in flight, Account A's intent must not emit against Account B.
+        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
+        const isRequestCurrent = () => (
+            mountedRef.current
+            && generationRef.current === requestGeneration
+            && accountCurrentness.isCurrent()
+        );
         let requestPromise: Promise<boolean> | null = null;
         requestPromise = (async () => {
             setMaterializeInFlight(true);
             try {
                 const latestStatus = await params.externalSessionRuntime.refreshNow();
-                if (
-                    !mountedRef.current
-                    || generationRef.current !== requestGeneration
-                ) {
+                if (!isRequestCurrent()) {
                     return false;
                 }
                 if (!latestStatus) {
@@ -104,6 +111,9 @@ export function useExternalSessionMaterialize(
                     return false;
                 }
 
+                if (!isRequestCurrent()) {
+                    return false;
+                }
                 idempotencyKeyRef.current ??= randomUUID();
                 const result = await machineExternalSessionMaterializeStart({
                     machineId: link.machineId,
@@ -118,10 +128,7 @@ export function useExternalSessionMaterialize(
                 }, {
                     serverId: params.externalSessionRuntime.sessionServerId,
                 });
-                if (
-                    !mountedRef.current
-                    || generationRef.current !== requestGeneration
-                ) {
+                if (!isRequestCurrent()) {
                     return false;
                 }
                 if (!result.ok) {
@@ -133,10 +140,7 @@ export function useExternalSessionMaterialize(
                 }
                 return true;
             } catch {
-                if (
-                    mountedRef.current
-                    && generationRef.current === requestGeneration
-                ) {
+                if (isRequestCurrent()) {
                     Modal.alert(
                         t('common.error'),
                         t('externalSessions.operationActionErrorUnavailable'),

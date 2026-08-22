@@ -15,7 +15,7 @@ import { isTauriMainWindowActivelyViewed } from '@/desktop/window/isTauriMainWin
 import { storage, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { buildActivityLocalNotificationContent } from '../buildActivityLocalNotificationContent';
@@ -67,7 +67,7 @@ function isSessionActivelyViewedForLocalNotification(sessionId: string): boolean
         return false;
     }
 
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return true;
     }
 
@@ -118,7 +118,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 includeReadyMessageText: deliveryPlan.previewBehavior === 'include_preview',
             });
 
-            if (isTauriDesktop()) {
+            if (isDesktopHost()) {
                 fireAndForget(sendTauriLocalNotification({
                     title: notification.title,
                     body: notification.body,

@@ -17,8 +17,9 @@ const useSessionExecutionRunsSupportedSpy = vi.hoisted(() =>
     vi.fn<(sessionId: string, serverId?: string | null) => boolean>(() => true),
 );
 const resumeCapabilityOptionsSpy = vi.hoisted(() =>
-    vi.fn<(args: unknown) => { resumeCapabilityOptions: unknown[] }>(() => ({ resumeCapabilityOptions: [] })),
+    vi.fn<(args: unknown) => { resumeCapabilityOptions: unknown }>(() => ({ resumeCapabilityOptions: [] })),
 );
+const canLaunchExecutionRunsForSessionSpy = vi.hoisted(() => vi.fn());
 const preferredServerIdState = vi.hoisted(() => ({
     value: 'server-canonical' as string | null,
 }));
@@ -82,9 +83,16 @@ vi.mock('@/components/sessions/model/useSessionExternalSessionRuntime', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/executionRuns/canLaunchExecutionRunsForSession', () => ({
-    canLaunchExecutionRunsForSession: () => true,
-}));
+vi.mock('@/sync/domains/executionRuns/canLaunchExecutionRunsForSession', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/executionRuns/canLaunchExecutionRunsForSession')>();
+    return {
+        ...actual,
+        canLaunchExecutionRunsForSession: (input: Parameters<typeof actual.canLaunchExecutionRunsForSession>[0]) => {
+            canLaunchExecutionRunsForSessionSpy(input);
+            return actual.canLaunchExecutionRunsForSession(input);
+        },
+    };
+});
 
 vi.mock('@/sync/domains/session/external/resolveSessionMachineId', () => ({
     resolveSessionMachineId: () => 'machine-1',
@@ -97,6 +105,7 @@ describe('useSessionExecutionRunLaunchability', () => {
         useExecutionRunsBackendsForSessionSpy.mockReset();
         useSessionExecutionRunsSupportedSpy.mockReset();
         resumeCapabilityOptionsSpy.mockReset();
+        canLaunchExecutionRunsForSessionSpy.mockReset();
         preferredServerIdState.value = 'server-canonical';
         sessionMachineTargetState.value = null;
         sessionState.value = {
@@ -170,6 +179,60 @@ describe('useSessionExecutionRunLaunchability', () => {
         expect(resumeCapabilityOptionsSpy).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-reachable',
             enabled: true,
+        }));
+        await hook.unmount();
+    });
+
+    it('lets an inactive external session launch only after resume support and a live execution-runs tool agree', async () => {
+        sessionState.value = {
+            id: 'session-1',
+            active: false,
+            serverId: 'server-explicit',
+            metadata: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'acme-lifecycle',
+                    agent: { providerSessionId: 'acme-session-1' },
+                },
+            },
+        } as any;
+        resumeCapabilityOptionsSpy.mockReturnValue({
+            resumeCapabilityOptions: {
+                currentAgentCapabilities: {
+                    agentId: 'acme-lifecycle',
+                    identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
+                    generation: 42,
+                    capabilities: {
+                        sessions: {
+                            open: ['resume'],
+                            delivery: ['newTurn'],
+                            cancel: true,
+                        },
+                    },
+                },
+            },
+        });
+        useSessionExecutionRunsSupportedSpy.mockReturnValue(false);
+
+        const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
+        const hook = await renderHook((session: typeof sessionState.value) => (
+            useSessionExecutionRunLaunchability('session-1', session)
+        ), { initialProps: sessionState.value });
+
+        expect(hook.getCurrent().canLaunchExecutionRuns).toBe(false);
+        expect(canLaunchExecutionRunsForSessionSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+            allowWhileInactive: true,
+            executionRunsSupported: false,
+        }));
+
+        useSessionExecutionRunsSupportedSpy.mockReturnValue(true);
+        await hook.rerender(sessionState.value);
+
+        expect(hook.getCurrent().canLaunchExecutionRuns).toBe(true);
+        expect(canLaunchExecutionRunsForSessionSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+            allowWhileInactive: true,
+            executionRunsSupported: true,
         }));
         await hook.unmount();
     });

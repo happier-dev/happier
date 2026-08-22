@@ -126,6 +126,14 @@ export interface ModalState {
 }
 
 export interface ModalContextValue {
+    /**
+     * True while this provider hosts at least one modal.
+     *
+     * A composer scaffold OUTSIDE a modal boundary reads this to stop lifting with the keyboard:
+     * while a modal is open the keyboard belongs to the modal, and a background composer sliding
+     * up behind it reads as two surfaces competing for the same inset.
+     */
+    isKeyboardLiftSuppressedByModal: boolean;
     state: ModalState;
     showModal: (config: Omit<ModalConfig, 'id'>) => string;
     hideModal: (id: string) => void;

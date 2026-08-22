@@ -2,7 +2,7 @@ import { ConnectedServiceBindingsV1Schema, readBackendTargetRefV2, type BackendT
 import { getAgentModelConfig, resolveAgentConfiguredRuntimeKind } from '@happier-dev/agents';
 
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
@@ -70,10 +70,10 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     runtimeCarrierAgentId?: AgentId | null;
 }>): NewSessionCapabilityProbeContext | null {
     const backendTarget = readBackendTargetRefV2(params.backendTarget);
-    const agentId = isAgentId(params.runtimeCarrierAgentId)
+    const agentId = isBundledAgentId(params.runtimeCarrierAgentId)
         ? params.runtimeCarrierAgentId
         : (resolveCatalogAgentIdForBackendTarget(backendTarget)
-            ?? (isAgentId(backendTarget.backendId) ? backendTarget.backendId : null));
+            ?? (isBundledAgentId(backendTarget.backendId) ? backendTarget.backendId : null));
     if (!agentId) {
         return null;
     }
@@ -99,11 +99,11 @@ export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
 }>): NewSessionCapabilityProbeContext | null {
     const shared = resolveNewSessionCapabilityProbeContext(params);
     const backendTarget = readBackendTargetRefV2(params.backendTarget);
-    const agentId = isAgentId(params.runtimeCarrierAgentId)
+    const agentId = isBundledAgentId(params.runtimeCarrierAgentId)
         ? params.runtimeCarrierAgentId
         : (resolveCatalogAgentIdForBackendTarget(backendTarget)
-            ?? (isAgentId(backendTarget.backendId) ? backendTarget.backendId : null));
-    const observation = agentId ? getAgentModelConfig(agentId).nativeCatalogObservation : null;
+            ?? (isBundledAgentId(backendTarget.backendId) ? backendTarget.backendId : null));
+    const observation = (agentId ? getAgentModelConfig(agentId)?.nativeCatalogObservation : null) ?? null;
     const bindings = ConnectedServiceBindingsV1Schema.safeParse(params.connectedServices);
     const selection = observation && bindings.success
         ? bindings.data.bindingsByServiceId[observation.connectedServiceId]

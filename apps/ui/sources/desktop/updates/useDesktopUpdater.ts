@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { shouldShowDesktopUpdateBanner } from './state';
-import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 
 type DesktopUpdaterStatus =
     | 'idle'
@@ -85,7 +85,7 @@ export function useDesktopUpdater(): {
 } {
     // Capture the environment at mount time. In production the desktop/web context is stable, and
     // using a stable flag avoids test flakiness when other suites manipulate `window` concurrently.
-    const isDesktop = React.useMemo(() => isTauriDesktop(), []);
+    const isDesktop = React.useMemo(() => isDesktopHost(), []);
     const updateChecksEnabled = React.useMemo(() => shouldRunDesktopUpdateChecks({
         isDesktop,
         isDevelopmentBundle: isDevelopmentBundle(),
@@ -104,7 +104,7 @@ export function useDesktopUpdater(): {
         setError(null);
         setStatus('checking');
         try {
-            const update = await invokeTauri<UpdateMetadata>('desktop_fetch_update');
+            const update = await invokeDesktopHost<UpdateMetadata>('desktop_fetch_update');
             if (!update) {
                 setAvailableVersion(null);
                 setStatus('upToDate');
@@ -148,7 +148,7 @@ export function useDesktopUpdater(): {
         setError(null);
         setStatus('installing');
         try {
-            const installed = await invokeTauri<boolean>('desktop_install_update');
+            const installed = await invokeDesktopHost<boolean>('desktop_install_update');
             if (!installed) {
                 setAvailableVersion(null);
                 setStatus('upToDate');

@@ -2,7 +2,6 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
-import type { AgentId } from '@/agents/registry/registryCore';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 
@@ -17,7 +16,7 @@ export function resolveToolPermissionTerminalErrorMessage(params: Readonly<{
      * blamed the new Agent's read-only mode for the old Agent's denial.
      * `null`/absent keeps the live-metadata answer.
      */
-    historicalAgentId?: AgentId | null;
+    historicalAgentId?: string | null;
 }>): string | null {
     const permission = params.tool.permission;
     if (!permission) return null;
@@ -28,8 +27,7 @@ export function resolveToolPermissionTerminalErrorMessage(params: Readonly<{
             if (params.metadata?.permissionMode !== 'read-only') return false;
             const agentId = params.historicalAgentId ?? resolveAgentIdFromSessionMetadata(params.metadata);
             if (!agentId) return false;
-            const core = getAgentCore(agentId);
-            return core.permissions?.modeGroup === 'codexLike';
+            return getAgentCore(agentId)?.permissions?.modeGroup === 'codexLike';
         })();
 
         return canBlameReadOnlyMode

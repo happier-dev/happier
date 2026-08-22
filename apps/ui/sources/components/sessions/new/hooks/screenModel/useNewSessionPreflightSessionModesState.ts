@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
@@ -67,7 +67,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         if (backendTarget.configuredBackendId) {
             return params.runtimeCarrierAgentId ?? null;
         }
-        if (!isAgentId(backendTarget.backendId)) {
+        if (!isBundledAgentId(backendTarget.backendId)) {
             return params.runtimeCarrierAgentId ?? null;
         }
         // For built-in backends the backend id is already a canonical agent id.
@@ -116,14 +116,14 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
     const supportsPreflightModeProbe = React.useMemo(() => {
         if (!agentType) return false;
-        const core = getAgentCore(agentType);
-        return core.sessionModes.kind === 'acpAgentModes' || core.sessionModes.kind === 'acpPolicyPresets';
+        const kind = getAgentCore(agentType)?.sessionModes.kind;
+        return kind === 'acpAgentModes' || kind === 'acpPolicyPresets';
     }, [agentType]);
 
     const staticModeOptions = React.useMemo((): readonly SessionModeOption[] => {
         if (!agentType) return [];
         const core = getAgentCore(agentType);
-        if (core.sessionModes.kind !== 'staticAgentModes') return [];
+        if (core?.sessionModes.kind !== 'staticAgentModes') return [];
 
         const raw = core.sessionModes.staticOptions ?? [];
         if (!Array.isArray(raw) || raw.length === 0) return [];

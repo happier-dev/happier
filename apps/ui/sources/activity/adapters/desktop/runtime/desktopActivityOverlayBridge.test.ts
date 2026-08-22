@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const invokeTauriMock = vi.hoisted(() => vi.fn());
-const listenTauriEventMock = vi.hoisted(() => vi.fn());
+const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
+const listenDesktopHostEventMock = vi.hoisted(() => vi.fn());
 
 function expectTauriEventHandler(handler: unknown): asserts handler is (payload: unknown) => void {
     expect(handler).toBeTypeOf('function');
@@ -10,16 +10,16 @@ function expectTauriEventHandler(handler: unknown): asserts handler is (payload:
     }
 }
 
-vi.mock('@/utils/platform/tauri', () => ({
-    invokeTauri: (command: string, args?: Record<string, unknown>) => invokeTauriMock(command, args),
-    listenTauriEvent: (eventName: string, handler: (payload: unknown) => void) => listenTauriEventMock(eventName, handler),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostMock(command, args),
+    listenDesktopHostEvent: (eventName: string, handler: (payload: unknown) => void) => listenDesktopHostEventMock(eventName, handler),
 }));
 
 describe('desktopActivityOverlayBridge', () => {
     afterEach(() => {
         vi.useRealTimers();
-        invokeTauriMock.mockReset();
-        listenTauriEventMock.mockReset();
+        invokeDesktopHostMock.mockReset();
+        listenDesktopHostEventMock.mockReset();
     });
 
     it('syncs overlay state through tauri invoke', async () => {
@@ -79,21 +79,21 @@ describe('desktopActivityOverlayBridge', () => {
             },
         });
 
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_activity_overlay_sync', expect.objectContaining({
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_sync', expect.objectContaining({
             payload: expect.objectContaining({
                 visible: true,
             }),
         }));
     });
 
-    it('subscribes to state updates through listenTauriEvent', async () => {
-        listenTauriEventMock.mockResolvedValue(() => {});
+    it('subscribes to state updates through listenDesktopHostEvent', async () => {
+        listenDesktopHostEventMock.mockResolvedValue(() => {});
         const { listenDesktopActivityOverlayWindowState, DESKTOP_ACTIVITY_OVERLAY_EVENTS } = await import('./desktopActivityOverlayBridge');
         const handler = vi.fn();
 
         await listenDesktopActivityOverlayWindowState(handler);
 
-        expect(listenTauriEventMock).toHaveBeenCalledWith(DESKTOP_ACTIVITY_OVERLAY_EVENTS.state, handler);
+        expect(listenDesktopHostEventMock).toHaveBeenCalledWith(DESKTOP_ACTIVITY_OVERLAY_EVENTS.state, handler);
     });
 
     it('resets the persisted overlay position through tauri invoke', async () => {
@@ -101,7 +101,7 @@ describe('desktopActivityOverlayBridge', () => {
 
         await resetDesktopActivityOverlayPosition();
 
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_activity_overlay_reset_position', undefined);
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_reset_position', undefined);
     });
 
     it('releases drag velocity through the activity overlay command namespace', async () => {
@@ -119,7 +119,7 @@ describe('desktopActivityOverlayBridge', () => {
             sampleWindowMs: 100,
         });
 
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_activity_overlay_release_drag_velocity', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_release_drag_velocity', {
             payload: {
                 pointerId: '9',
                 vx: 640,
@@ -131,7 +131,7 @@ describe('desktopActivityOverlayBridge', () => {
 
     it('schedules native momentum deltas from the activity overlay release velocity plan', async () => {
         vi.useFakeTimers();
-        invokeTauriMock.mockImplementation(async (command) => {
+        invokeDesktopHostMock.mockImplementation(async (command) => {
             if (command === 'desktop_activity_overlay_release_drag_velocity') {
                 return {
                     generation: 42,
@@ -155,7 +155,7 @@ describe('desktopActivityOverlayBridge', () => {
         await vi.advanceTimersByTimeAsync(16);
         await vi.advanceTimersByTimeAsync(16);
 
-        expect(invokeTauriMock.mock.calls).toEqual([
+        expect(invokeDesktopHostMock.mock.calls).toEqual([
             [
                 'desktop_activity_overlay_release_drag_velocity',
                 {
@@ -195,7 +195,7 @@ describe('desktopActivityOverlayBridge', () => {
 
         await setDesktopActivityOverlayInputLocked(true);
 
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_activity_overlay_set_input_locked', { locked: true });
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_set_input_locked', { locked: true });
     });
 
     it('reveals the main window through tauri invoke before route-driven overlay interactions', async () => {
@@ -203,13 +203,13 @@ describe('desktopActivityOverlayBridge', () => {
 
         await showDesktopMainWindow();
 
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_show_main_window', undefined);
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_show_main_window', undefined);
     });
 
     it('resolves an overlay interaction request from the matching result event', async () => {
         const resultHandlerRef: { current?: (payload: unknown) => void } = {};
         const unlisten = vi.fn();
-        listenTauriEventMock.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
+        listenDesktopHostEventMock.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
             if (eventName === 'activityOverlay://interaction-result') {
                 resultHandlerRef.current = handler;
             }
@@ -228,7 +228,7 @@ describe('desktopActivityOverlayBridge', () => {
             },
         });
 
-        await vi.waitFor(() => expect(invokeTauriMock).toHaveBeenCalledWith('desktop_activity_overlay_emit_interaction', {
+        await vi.waitFor(() => expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_emit_interaction', {
             payload: expect.objectContaining({
                 requestId: 'quick-reply-request-1',
             }),

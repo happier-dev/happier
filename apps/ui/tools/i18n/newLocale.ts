@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { applyTranslations, extractLiterals, findRoundTripMismatches, isDoNotTranslate } from './localeLiterals';
-import { addLocaleBlock, findSatelliteReferences } from './satelliteModules';
+import { findSatelliteReferences, replaceLocaleBlock } from './satelliteModules';
 
 /**
  * Author a new locale, or retranslate an existing one, without hand-editing a 13k-line file.
@@ -200,7 +200,7 @@ function runBuild(): void {
             continue;
         }
         const moduleSource = readFileSync(file, 'utf8');
-        const updated = addLocaleBlock(moduleSource, SOURCE_LOCALE, localeConst, moduleTranslation, `${module}.ts`);
+        const updated = replaceLocaleBlock(moduleSource, SOURCE_LOCALE, localeConst, moduleTranslation, `${module}.ts`);
         if (updated === moduleSource) {
             console.log(`${module}: already has '${localeConst}'`);
             continue;

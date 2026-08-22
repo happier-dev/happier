@@ -501,8 +501,8 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.value,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.value,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -727,7 +727,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     return {
         ...actual,
         AGENT_IDS: ['legacy.codex', 'legacy.customAcp', 'legacy.opencode'],
-        isAgentId: (v: any) => v === 'codex' || v === 'customAcp' || v === 'opencode' || v === 'claude' || v === 'antigravity',
+        isBundledAgentId: (v: any) => v === 'codex' || v === 'customAcp' || v === 'opencode' || v === 'claude' || v === 'antigravity',
         getAgentCore: (agentId: string) => {
             const core = createMockAgentCore(agentId);
             return mockAgentModelOverride
@@ -1343,7 +1343,6 @@ describe('PluginAgentSettingsScreen', () => {
                             qualifiedId: 'happier.agent.codex/agents/codex',
                             localId: 'codex',
                         },
-                        stability: 'stable',
                         progression: {
                             declared: true,
                             normalized: true,

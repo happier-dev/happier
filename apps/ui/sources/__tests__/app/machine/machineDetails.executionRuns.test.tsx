@@ -185,7 +185,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex'],
     DEFAULT_AGENT_ID: 'codex',
     getAgentCore: () => ({ cli: { detectKey: 'codex' } }),
-    isAgentId: () => true,
+    isBundledAgentId: () => true,
 }));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: () => null,

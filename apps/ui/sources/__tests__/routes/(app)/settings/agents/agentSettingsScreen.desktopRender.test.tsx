@@ -267,8 +267,8 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     areServerProfileIdentifiersEquivalent: (left: string | null | undefined, right: string | null | undefined) => left === right,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => true,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => true,
 }));
 
 vi.mock('@/voice/session/VoiceSessionRuntime', () => ({

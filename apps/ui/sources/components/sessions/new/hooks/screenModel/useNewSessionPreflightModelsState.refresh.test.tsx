@@ -19,7 +19,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
             dynamicProbe: agentId === 'claude' ? 'static-only' : 'dynamic',
         },
     }),
-    isAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'gemini', 'customAcp'].includes(value),
+    isBundledAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'gemini', 'customAcp'].includes(value),
 }));
 
 type DeferredModelProbeResult = {

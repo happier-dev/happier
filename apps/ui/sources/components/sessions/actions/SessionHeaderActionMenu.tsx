@@ -6,8 +6,9 @@ import { listActionSpecs } from '@happier-dev/protocol';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
-import { storage, useProfile, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { storage, useProfile, useSetting, useSettings, useSessionOrganizationProjection } from '@/sync/domains/state/storage';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -77,6 +78,10 @@ import {
 } from './pluginHeaderActions';
 import type { StorageState } from '@/sync/store/types';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
+import { resolveSessionAttentionStanding } from '@/sync/domains/session/organization/attentionStanding';
+import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
+import { sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
 import {
   SESSION_HEADER_ACTION_TAP_TARGET_PX,
   SESSION_HEADER_ICON_SIZE_PX,
@@ -86,6 +91,7 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { supportsExternalSessionBackgroundFollow } from '@/components/sessions/external/browse/resolveExternalSessionBrowseSourceOptions';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
 function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeof resolveSessionHandoffUiAvailability>, fallbackSubtitle: string | undefined): string | undefined {
   if (handoffAvailability.available) {
@@ -249,6 +255,7 @@ function didSessionHeaderActionMenuPropsChange(
 
 function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const { theme } = useUnistyles();
+  const currentUiContextReader = useOptionalCurrentUiContextReader();
   const router = useRouter();
   const enabledAgentIds = useEnabledAgentIds();
   const settings = useSettings();
@@ -281,7 +288,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
   const reachableMachineId = useSessionReachableMachineTarget(props.sessionId)?.machineId ?? null;
   const ownerMetadata = readSessionOwnerMetadataView(session);
-  const resumeAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata)
+  const declaredAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
+  const resumeAgentId = declaredAgentId
     ?? resolveAgentIdFromFlavor(ownerMetadata?.flavor ?? null);
   const { resumeCapabilityOptions } = useResumeCapabilityOptions({
     agentId: resumeAgentId,
@@ -290,13 +298,37 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     settings,
     enabled: session.active !== true,
   });
+  const organizationProjection = useSessionOrganizationProjection(sessionServerId ?? null);
+  const organizationListViewState = React.useMemo(() => buildSessionOrganizationListViewState({
+    serverId: sessionServerId ?? '',
+    projection: organizationProjection,
+  }), [organizationProjection, sessionServerId]);
+  const attentionStanding = useSessionAttentionStandingInputs(
+    organizationListViewState.attentionStandingOverridesBySessionKey,
+  );
+  const sessionAttentionStandingKey = typeof sessionServerId === 'string' && sessionServerId.trim()
+    ? sessionTagKey(sessionServerId, props.sessionId)
+    : null;
+  const attentionStandingEnabled = attentionStanding.actionEnabled && sessionAttentionStandingKey != null;
+  const isAttentionStandingSession = sessionAttentionStandingKey != null
+    && resolveSessionAttentionStanding(attentionStanding.policy, sessionAttentionStandingKey);
   const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
     session,
     serverId: sessionServerId ?? null,
     currentUserId,
     isConnected: true,
+    attentionStandingEnabled,
+    attentionStanding: isAttentionStandingSession,
     resumeCapabilityOptions,
-  }), [currentUserId, readStateSignature, resumeCapabilityOptions, session, sessionServerId]);
+  }), [
+    attentionStandingEnabled,
+    currentUserId,
+    isAttentionStandingSession,
+    readStateSignature,
+    resumeCapabilityOptions,
+    session,
+    sessionServerId,
+  ]);
   const sourceMachineId = React.useMemo(
     () => resolveSessionHandoffSourceMachineId({
       reachableMachineId,
@@ -338,10 +370,18 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const externalSessionLink = readExternalSessionLink(ownerMetadata);
   const externalSessionFollowPolicy = readExternalSessionFollowPolicy(ownerMetadata);
   const daemonMergedProjection = useDaemonMergedProjectionInputs({
-    machineId: externalSessionLink?.machineId ?? null,
+    machineId: externalSessionLink?.machineId ?? reachableMachineId ?? ownerMetadata?.machineId ?? null,
     serverId: sessionServerId,
-    enabled: externalSessionLink !== null,
+    enabled: externalSessionLink !== null || declaredAgentId !== null,
   });
+  const currentAgentCapabilities = React.useMemo(() => (
+    daemonMergedProjection.phase === 'ready'
+      ? readCurrentProjectedAgentCapabilities({
+        projection: daemonMergedProjection.inputs?.pluginProjectionV2,
+        agentId: declaredAgentId,
+      })
+      : null
+  ), [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase, declaredAgentId]);
   const supportsExternalSessionBackgroundFollowForLink = React.useMemo(() => {
     if (!externalSessionLink || daemonMergedProjection.phase !== 'ready') {
       return false;
@@ -364,6 +404,9 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         scopeIsCurrent: props.pluginUiScopeIsCurrent,
         sessionId: props.sessionId,
         openSurface: props.onOpenPluginSurface,
+        ...(currentUiContextReader
+          ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
+          : {}),
       });
       if (outcome && !outcome.ok) {
         Modal.alert(t('common.error'), t('pluginRuntime.unavailableGeneric'));
@@ -375,13 +418,19 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     props.pluginUiScopeIsCurrent,
     props.pluginUiProjection,
     props.sessionId,
+    currentUiContextReader,
   ]);
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()
       .filter((spec) => spec.surfaces.ui === true)
       .filter((spec) => isActionEnabledInState({ settings } as any, spec.id, { surface: 'ui', placement: 'session_action_menu' } as any))
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
-      .filter((spec) => spec.id !== 'session.fork' || canForkConversation({ session, replayEnabled: sessionReplayEnabled }) === true)
+      .filter((spec) => spec.id !== 'session.fork' || canForkConversation({
+        session,
+        replayEnabled: sessionReplayEnabled,
+        agentSwitchingEnabled,
+        currentAgentCapabilities,
+      }) === true)
       .map((spec) => ({
         id: spec.id,
         title: spec.title,
@@ -436,6 +485,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     return out;
   }, [
     props.extraItems,
+    agentSwitchingEnabled,
+    currentAgentCapabilities,
     session,
     sessionReplayEnabled,
     settings,
@@ -516,6 +567,14 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               enabled: nextPolicy === 'background_follow',
             }, sessionServerId ? { serverId: sessionServerId } : undefined).catch(() => undefined);
             if (!result?.ok) {
+              // The daemon owns live follow eligibility, so a refusal here is a
+              // real outcome the user asked for. Report it the same way the
+              // External Sessions settings surface reports the same operation
+              // instead of silently discarding the tap.
+              await Modal.alert(
+                t('common.error'),
+                t('externalSessions.followUpdateFailed'),
+              );
               return;
             }
             sync.applySessionMetadataLocally(props.sessionId, (metadata) =>
@@ -615,6 +674,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               forkPoint: { type: 'latest' },
               settings,
               replayEnabled: sessionReplayEnabled,
+              currentAgentCapabilities,
               executionRunsEnabled: executionRunsEnabled === true,
               agentSwitchingEnabled,
               navigateToSession: (childSessionId, options) => {

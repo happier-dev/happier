@@ -37,12 +37,6 @@ const resumeSessionSpy = vi.hoisted(() =>
     })),
 );
 const routerPushSpy = vi.hoisted(() => vi.fn());
-const continueSessionWithReplaySpy = vi.hoisted(() =>
-    vi.fn(async (..._args: any[]) => ({
-        type: 'success' as const,
-        sessionId: 's2',
-    })),
-);
 const canResumeSessionWithOptionsSpy = vi.hoisted(() =>
     vi.fn((_metadata: unknown, options: { machineId?: string | null } | null | undefined) => options?.machineId === 'm-target'),
 );
@@ -610,7 +604,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     return createSyncOpsModuleMock({
         importOriginal,
         overrides: {
-            continueSessionWithReplay: (...args: any[]) => continueSessionWithReplaySpy(...args),
             sessionAbort: vi.fn(),
             resumeSession: (...args: any[]) => resumeSessionSpy(...args),
             sessionAttachmentsUploadFile: vi.fn(),
@@ -762,12 +755,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             errorCode: 'DAEMON_RPC_UNAVAILABLE' as const,
             errorMessage: 'Daemon RPC is not available',
         }));
-        continueSessionWithReplaySpy.mockReset();
         routerPushSpy.mockReset();
-        continueSessionWithReplaySpy.mockResolvedValue({
-            type: 'success',
-            sessionId: 's2',
-        });
         ensureAgentInstallablesBackgroundSpy.mockClear();
         modalMockState.current?.spies.alert.mockReset();
         modalMockState.current?.spies.confirm.mockReset();
@@ -1467,9 +1455,6 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
         expect(resumeCapabilityMachineIds).toContain('m-target');
         expect(modalMockState.current?.spies.confirm).toHaveBeenCalledTimes(1);
-        // The legacy Replay creator is no longer a UI product path; creation goes
-        // through the canonical New Session + sourceContext owner.
-        expect(continueSessionWithReplaySpy).not.toHaveBeenCalled();
         expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
             pathname: '/new',
             params: expect.objectContaining({ dataId: expect.any(String) }),

@@ -9,7 +9,28 @@ import type {
 } from '@/components/systemTasks/ProgressChecklist';
 
 export type ExternalSessionOperationObservationContext = 'live' | 'hydrated';
-export type ExternalSessionOperationOriginAvailability = 'online' | 'offline';
+/**
+ * What the client actually knows about the machine that owns an operation.
+ *
+ * `unknown` is not a softer `offline`: a reader without a machine subscription
+ * — a public or friend reader, or an owner whose machine list has not hydrated —
+ * never observes liveness at all. Collapsing that absence into `offline` made the
+ * UI assert a fact about the origin it had never been told. Actions stay closed
+ * for everything that is not `online`; only the wording differs.
+ */
+export type ExternalSessionOperationOriginAvailability = 'online' | 'offline' | 'unknown';
+
+/**
+ * The one classification of observed machine liveness into an origin arm, shared
+ * by the transcript operation rows and the session sharing surface.
+ */
+export function resolveExternalSessionOperationOriginAvailability(input: Readonly<{
+    machineStatusKnown: boolean;
+    machineOnline: boolean;
+}>): ExternalSessionOperationOriginAvailability {
+    if (!input.machineStatusKnown) return 'unknown';
+    return input.machineOnline ? 'online' : 'offline';
+}
 export type ExternalSessionOperationActionKind =
     | 'resume'
     | 'retry'
@@ -28,6 +49,7 @@ export type ExternalSessionOperationTranslationKey =
     | 'externalSessions.operationStatusCompleted'
     | 'externalSessions.operationStatusDiscarded'
     | 'externalSessions.operationStatusNeedsResume'
+    | 'externalSessions.operationStatusOriginUnknown'
     | 'externalSessions.operationStatusNeedsReview'
     | 'externalSessions.operationStatusFailed'
     | 'externalSessions.operationStatusImportIncomplete'
@@ -245,8 +267,10 @@ function resolveSummaryKey(
             ? 'externalSessions.operationStatusSpawnFailedAfterImport'
             : 'externalSessions.operationStatusSpawnFailedAfterTakeover';
     }
-    if (originAvailability === 'offline' && !TERMINAL_STATUSES.has(effectiveStatus)) {
-        return 'externalSessions.operationStatusOriginOffline';
+    if (originAvailability !== 'online' && !TERMINAL_STATUSES.has(effectiveStatus)) {
+        return originAvailability === 'offline'
+            ? 'externalSessions.operationStatusOriginOffline'
+            : 'externalSessions.operationStatusOriginUnknown';
     }
     switch (effectiveStatus) {
         case 'running':

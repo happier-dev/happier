@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { applyTranslations, extractLiterals, findRoundTripMismatches, isDoNotTranslate } from './localeLiterals';
-import { addLocaleBlock, findSatelliteReferences } from './satelliteModules';
+import { addLocaleBlock, findSatelliteReferences, replaceLocaleBlock } from './satelliteModules';
 
 const TRANSLATIONS_DIR = join(__dirname, '../../sources/text/translations');
 
@@ -157,5 +157,56 @@ describe('satellite translation modules', () => {
     it('is a no-op when the locale block already exists', () => {
         const source = ['export const demoTranslations = {', "    es: { a: 'A' },", "    fr: { a: 'A' },", '} as const;', ''].join('\n');
         expect(addLocaleBlock(source, 'es', 'fr', {}, 'demo.ts')).toBe(source);
+    });
+
+    it('replaces an existing English alias when retranslating a shared module', () => {
+        const source = [
+            "const english = { title: 'Plugin webhooks' };",
+            'export const demoTranslations = {',
+            '    en: english,',
+            '    es: english,',
+            '} as const;',
+            '',
+        ].join('\n');
+        const title = extractLiterals(source, 'demo.ts').find((literal) => literal.text === 'Plugin webhooks');
+
+        const output = replaceLocaleBlock(source, 'en', 'es', { [title!.key]: 'Webhooks de plugins' }, 'demo.ts');
+
+        expect(output).toContain("es: { title: 'Webhooks de plugins' },");
+        expect(output).toContain('en: english,');
+    });
+
+    it('replaces a locale-specific shorthand block without leaving a dead duplicate', () => {
+        const source = [
+            "const english = { title: 'Plugin webhooks' };",
+            "const es = { title: 'Webhooks viejos' };",
+            'export const demoTranslations = {',
+            '    en: english,',
+            '    es,',
+            '} as const;',
+            '',
+        ].join('\n');
+        const title = extractLiterals(source, 'demo.ts').find((literal) => literal.text === 'Plugin webhooks');
+
+        const output = replaceLocaleBlock(source, 'en', 'es', { [title!.key]: 'Webhooks de plugins' }, 'demo.ts');
+
+        expect(output).toContain("const es = { title: 'Webhooks de plugins' };");
+        expect(output).toContain('    es,');
+        expect(output).not.toContain('es: {');
+    });
+
+    it('finds bracket-form satellite mounts used by hyphenated locale-safe modules', () => {
+        const source = [
+            'export const en = {',
+            "    settingsPlugins: { ...pluginWebhookAdministrationTranslations['en'] },",
+            '};',
+            '',
+        ].join('\n');
+
+        expect(findSatelliteReferences(source, 'en', 'en.ts')).toContainEqual({
+            module: 'pluginWebhookAdministrationTranslations',
+            kind: 'spread',
+            path: 'settingsPlugins',
+        });
     });
 });

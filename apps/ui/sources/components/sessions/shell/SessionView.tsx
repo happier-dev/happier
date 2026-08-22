@@ -146,6 +146,7 @@ import {
     useSyncError,
     useWorkspaceReviewCommentsDrafts,
 } from '@/sync/domains/state/storage';
+import { readMessageDisplayText } from '@/sync/domains/messages/messageDisplayText';
 import { isRecoveredHistoryTranscriptObservation } from '@/sync/domains/messages/transcriptObservationProvenance';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
@@ -159,14 +160,19 @@ import {
 import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
     getAgentCore,
+    isBundledAgentId,
     resolveAgentIdFromFlavor,
     buildResumeSessionExtrasFromUiState,
 } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import {
-    evaluateAgentSessionCapabilitySupport,
+    readCurrentProjectedAgentCapabilities,
+    supportsAgentLifecycleCapability,
+} from '@/agents/backendCatalog/currentAgentCapabilities';
+import {
     readExternalSessionOperationState,
     resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
@@ -203,9 +209,6 @@ import {
 import { SESSION_DRAFT_VALUE_FIELD_CATALOG } from '@/sync/domains/input/draftValues/sessionDraftValueFieldCatalog';
 import type { SessionDraftValueFieldId } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
-import {
-    supportsSessionModeOverrides,
-} from '@/sync/domains/sessionControl/sessionModeControl';
 import { t, tLoose, type TranslationKey } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { randomUUID } from '@/platform/randomUUID';
@@ -243,6 +246,7 @@ import { readSessionUiTelemetryNowMs } from '@/sync/runtime/performance/sessionU
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
 import {
+    buildPendingMessageComposerEditStructuredInput,
     hydratePendingMessageComposerAttachmentDrafts,
     readPendingMessageComposerSemanticDraftFieldsToRestore,
     type PendingMessageComposerEditState,
@@ -255,8 +259,10 @@ import { buildLiveSessionAuthoringContext } from '@/components/sessions/authorin
 import { resolveSessionComposerStateFromAuthoringContext } from '@/components/sessions/authoring/context/resolveSessionComposerStateFromAuthoringContext';
 import {
     continueSessionWithArmedAgent,
+    isArmedAgentContinuationOutcomeUnsettled,
     reconcileArmedAgentContinuationDisposition,
     type ArmedAgentContinuationCanonicalFacts,
+    type ArmedAgentContinuationInputCustody,
     type ArmedAgentContinuationLabels,
     type ArmedAgentContinuationNotice,
 } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
@@ -293,7 +299,6 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionSwitch } from '@/sync/ops';
 import { shouldRenderChatTimelineForSession, shouldRequestRemoteControl, shouldRequestRemoteControlAfterPendingEnqueue } from '@/sync/domains/session/control/localControlSwitch';
-import { supportsEffectiveLocalControlForSession } from '@/sync/domains/session/control/effectiveRuntimeControlSurface';
 import { readControlSwitchUiTimeoutMsFromEnv } from '@/sync/domains/session/control/controlSwitchUiTimeout';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
@@ -373,6 +378,7 @@ import { resolveSessionGoalActionCapabilityProfile, supportsEditableSessionGoals
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import type { StorageState } from '@/sync/store/types';
 import {
     ConnectedServiceIdSchema,
     ComposerAttachmentPrepareRequestV1Schema,
@@ -385,7 +391,6 @@ import {
     SESSION_RUNNER_RUNTIME_METADATA_KEY,
     type ConnectedServiceQuotaSnapshotV1,
     isHiddenSystemSession,
-    readHappierStructuredInputV1FromMeta,
     readSessionProviderBindingMetadataV1,
     removeSessionPendingQueueHoldV1FromMetadata,
     SessionModelTransitionResultV1Schema,
@@ -438,6 +443,7 @@ import {
     useSessionListRuntimeNowMs,
     useSessionListRuntimeWake,
 } from '@/hooks/session/sessionListRuntimeClock';
+import { usePluginUiClientExecutableRegistrationRevision } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import {
     PluginSurfacePaneLaunchScope,
@@ -525,6 +531,7 @@ import {
 import {
     SPAWN_SESSION_ERROR_CODES,
     readProviderAccountUsageRecordIdsFromMetadata,
+    type ComposerAgentContinuationIntentV1,
     type SessionAgentTransitionResultV1,
 } from '@happier-dev/protocol';
 import { resolveConnectedServiceQuotaProfileRefForSession } from './resolveConnectedServiceQuotaProfileRefForSession';
@@ -537,25 +544,63 @@ const PENDING_MESSAGE_EDIT_DRAIN_HOLD_TTL_MS = 2 * 60 * 1000;
 const PENDING_MESSAGE_EDIT_DRAIN_HOLD_REFRESH_MS = 30 * 1000;
 const EMPTY_SESSION_MODEL_PROJECTION_GROUPS: readonly SessionModelProjectionGroup[] = [];
 
-function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: string | null): boolean {
-    if (!localId) return false;
-
-    const state = storage.getState();
-    const pending = state.sessionPending[sessionId];
-    const hasCanonicalPending = [...(pending?.messages ?? []), ...(pending?.discarded ?? [])].some((message) => (
-        message.source === 'server_pending' && message.localId === localId
-    ));
-    if (hasCanonicalPending) return true;
+/**
+ * Where one submitted localId has got to, canonically — the single reader for
+ * both questions the transition asks about it: whether it was admitted at all,
+ * and whether anything has carried it yet.
+ *
+ * They are answered together because they come from the same two store slices,
+ * and because a queued-input signal that cannot see `delivered` outlives the
+ * message it describes: the armed outcome stays on screen for the life of the
+ * Session, so a Session that answers and later idles out would otherwise be
+ * reported as one whose message never went.
+ */
+function selectCanonicalOutboundHandoffForLocalId(
+    state: StorageState,
+    sessionId: string,
+    localId: string | null,
+): ArmedAgentContinuationInputCustody {
+    if (!localId) return 'absent';
 
     const sessionMessages = state.sessionMessages[sessionId];
     const messagesById = sessionMessages?.messagesById ?? sessionMessages?.messagesMap;
-    if (!messagesById) return false;
-
-    return Object.values(messagesById).some((message) => (
+    // The transcript is checked FIRST: a materialized row is the stronger fact,
+    // and a pending row can briefly survive its own materialization.
+    const isDelivered = messagesById !== undefined && Object.values(messagesById).some((message) => (
         message.kind === 'user-text'
         && message.localId === localId
         && !isRecoveredHistoryTranscriptObservation(message)
     ));
+    if (isDelivered) return 'delivered';
+
+    const pending = state.sessionPending[sessionId];
+    // `discarded` still proves admission, but nothing is waiting on a runtime
+    // for it, so it does not count as queued.
+    const isQueued = (pending?.messages ?? []).some((message) => (
+        message.source === 'server_pending' && message.localId === localId
+    ));
+    if (isQueued) return 'queued';
+    return (pending?.discarded ?? []).some((message) => (
+        message.source === 'server_pending' && message.localId === localId
+    )) ? 'delivered' : 'absent';
+}
+
+/**
+ * The same reader sampled once, for the imperative callers that ask at a single
+ * instant (a failed outbound handoff deciding whether restoring the composer is
+ * safe). A subscriber must use the selector above instead: this answer is stale
+ * the moment the pending row or the transcript row lands.
+ */
+function readCanonicalOutboundHandoffForLocalId(
+    sessionId: string,
+    localId: string | null,
+): ArmedAgentContinuationInputCustody {
+    return selectCanonicalOutboundHandoffForLocalId(storage.getState(), sessionId, localId);
+}
+
+/** The admission half of the reader above, for callers that only ask that. */
+function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: string | null): boolean {
+    return readCanonicalOutboundHandoffForLocalId(sessionId, localId) !== 'absent';
 }
 
 type ComposerSemanticDraftCurrentnessSnapshot = Readonly<{
@@ -568,6 +613,8 @@ type PendingComposerAttachmentPreparationRetry = Readonly<{
     fingerprint: string;
     replacementLocalId: string;
 }>;
+
+const ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID = 'routing.agentContinuationSubmission' as const;
 
 const SESSION_COMPOSER_DRAFT_FIELD_IDS = Object.keys(
     SESSION_DRAFT_VALUE_FIELD_CATALOG,
@@ -1682,6 +1729,7 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
         machineId: headerMachineTarget?.machineId ?? null,
         serverId: currentSessionRouteServerId,
     });
+    const clientExecutableRegistrationRevision = usePluginUiClientExecutableRegistrationRevision();
     const headerAccountLifetime = captureActiveServerAccountScopeLifetime();
     const headerScopedLaunchFacts = React.useMemo(() => Object.freeze({
         serverId: headerPluginProjection.serverId ?? null,
@@ -1773,6 +1821,7 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
         onOpenPluginSurface: handleOpenSessionPluginSurface,
     }), [
         buildCurrentSessionHref,
+        clientExecutableRegistrationRevision,
         currentSessionMachineId,
         handleHeaderExtraItemSelect,
         handleOpenSessionPluginSurface,
@@ -2219,6 +2268,11 @@ function SessionViewLoaded({
         fallbackAgentId: sessionAgentId,
     });
     const agentId = liveComposerState.agentId ?? sessionAgentId;
+    // A dynamic Agent's lifecycle identity is persisted with its runtime, not
+    // inferred from the presentation/catalog projection used for labels.
+    const lifecycleAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata)
+        ?? (agentId && isBundledAgentId(agentId) ? agentId : null);
+    const agentCore = agentId ? getAgentCore(agentId) : null;
     const permissionMode = liveComposerState.permissionMode;
     const sessionModeOptionIds = agentId
         ? resolveSessionViewModeOptionIds(
@@ -2226,16 +2280,19 @@ function SessionViewLoaded({
             (ownerMetadata as any)?.sessionModesV1
                 ?? (ownerMetadata as any)?.acpSessionModesV1
                 ?? null,
-            getAgentCore(agentId)?.sessionModes,
+            agentCore?.sessionModes,
         )
         : [];
     const enabledAgentIds = useEnabledAgentIds();
     const sessionActionDefaultBackend = resolveSessionActionDefaultBackend({
         session: session as any,
         enabledAgentIds,
-        fallbackAgentId: agentId,
+        fallbackAgentId: liveComposerState.agentId && isBundledAgentId(liveComposerState.agentId)
+            ? liveComposerState.agentId
+            : null,
     });
     const agentInputAgentType = agentId ?? sessionActionDefaultBackend?.displayAgentType ?? null;
+    const agentInputCore = agentInputAgentType ? getAgentCore(agentInputAgentType) : null;
     const isVoiceConversationSession = isVoiceConversationSystemSessionMetadata(ownerMetadata);
     const isHiddenSystemSessionSession = isHiddenSystemSession({ metadata: ownerMetadata });
     const modelMode = liveComposerState.modelMode;
@@ -2448,6 +2505,18 @@ function SessionViewLoaded({
         enabled: Boolean(machineId),
         staleMs: 60_000,
     });
+    const currentLifecycleAgentCapabilities = React.useMemo(() => (
+        daemonMergedProjection.phase === 'ready'
+            ? readCurrentProjectedAgentCapabilities({
+                projection: daemonMergedProjection.inputs?.pluginProjectionV2,
+                agentId: lifecycleAgentId,
+            })
+            : null
+    ), [
+        daemonMergedProjection.inputs?.pluginProjectionV2,
+        daemonMergedProjection.phase,
+        lifecycleAgentId,
+    ]);
     // Reference search has no Account data, but it is still daemon work scoped to
     // the active Account. Borrow the incumbent lifetime as a currentness fence.
     const composerReferenceAccountLifetime = captureActiveServerAccountScopeLifetime();
@@ -2605,15 +2674,43 @@ function SessionViewLoaded({
         | Readonly<{ kind: 'refusal'; message: string }>
         | Readonly<{
             kind: 'outcome';
+            /**
+             * The Session this outcome belongs to. A restored one carries its
+             * own, so a screen reused across a route change can never mirror one
+             * Session's unsettled switch onto another's composer.
+             */
+            sessionId: string;
             result: SessionAgentTransitionResultV1;
-            labels: ArmedAgentContinuationLabels;
-            targetAgentId: string | null;
+            /**
+             * The switch that was submitted. Nothing presentational is stored:
+             * the labels the banner reads are derived from this and from the
+             * Session's current Agent, so a restored outcome cannot come back
+             * naming an Agent by a word from an older locale.
+             */
+            intent: ComposerAgentContinuationIntentV1;
             localId: string;
+            /** The exact composer text this submission carried. */
+            submittedText: string;
+            /**
+             * The semantic-draft currentness captured at submit, present only on
+             * the mount that submitted. The revisions behind it are deliberately
+             * process-local, so a restored outcome has none and compare-clears
+             * the draft text alone.
+             */
+            semanticSnapshot: ComposerSemanticDraftCurrentnessSnapshot | null;
             /** Canonical Session/message facts have been read since the call returned. */
             reconciled: boolean;
         }>
         | null
     >(null);
+    /**
+     * The Session whose persisted unsettled switch has been read and judged.
+     *
+     * The record below is a mirror of the live outcome, and a mirror written
+     * before the restore has run would delete the very record it exists to
+     * carry across the remount.
+     */
+    const [armedContinuationRestoredFor, setArmedContinuationRestoredFor] = React.useState<string | null>(null);
     const [resolvedStaleSessionRunnerFingerprint, setResolvedStaleSessionRunnerFingerprint] = React.useState<string | null>(null);
     const [staleSessionRunnerOperationStatus, setStaleSessionRunnerOperationStatus] = React.useState<Readonly<{
         fingerprint: string;
@@ -2635,14 +2732,26 @@ function SessionViewLoaded({
         machinePresence: sessionMachineRecord
             ? (isMachineOnline(sessionMachineRecord) ? 'online' as const : 'offline' as const)
             : 'unknown' as const,
+        // The Session's transcript sequence, which only a written transcript
+        // record advances. Zero is therefore the one state in which a switch
+        // provably carries nothing — and it is read from the Session row the
+        // screen already holds rather than from a transcript page that may not
+        // be loaded.
+        hasConversationToCarry: session.seq > 0,
     }), [hasWriteAccess, providerAgentTargetKey, session, sessionMachineRecord]);
     // `session.continuation.inspect` is answered by the machine hosting the
-    // Session, and only for as long as this realtime connection lasts.
+    // Session, so an answer only holds for as long as BOTH runtimes behind it do:
+    // this realtime connection, and the daemon that answered. A daemon that
+    // restarts leaves the socket untouched, so its own generation — the machine
+    // record's daemon-state version, the same currentness fact CLI detection keys
+    // on — has to be part of the scope or the rail keeps offering targets the
+    // send path already refuses.
     const agentContinuationMachine = React.useMemo(() => ({
         machineId: typeof machineId === 'string' && machineId.length > 0 ? machineId : null,
         serverId: sessionRouteServerId,
         connectionGeneration: socketConnectionGeneration,
-    }), [machineId, sessionRouteServerId, socketConnectionGeneration]);
+        daemonGeneration: sessionMachineRecord?.daemonStateVersion ?? null,
+    }), [machineId, sessionMachineRecord?.daemonStateVersion, sessionRouteServerId, socketConnectionGeneration]);
     // What a target Agent's own model/mode/config detail resolves against. Same
     // machine, server and folder as this Session, so the models offered for the
     // target are the models it would actually run with here.
@@ -2652,7 +2761,9 @@ function SessionViewLoaded({
         machineId: typeof machineId === 'string' && machineId.length > 0 ? machineId : null,
         cwd: ownerMetadata?.path ?? null,
     }), [capabilityServerId, machineId, ownerMetadata?.path, settings]);
-    const currentAgentLabel = agentInputAgentType ? t(getAgentCore(agentInputAgentType).displayNameKey) : '';
+    const currentAgentLabel = agentInputCore
+        ? t(agentInputCore.displayNameKey)
+        : formatAgentLikeIdForDisplay(agentInputAgentType);
     // `sessions.agentSwitching` is server-represented and fails closed. The
     // canonical decision runtime reads the server bit as
     // `readServerEnabledBit(...) === true` and applies the catalog's dependency
@@ -2846,18 +2957,23 @@ function SessionViewLoaded({
     const handleUsageLimitRecoveryResumeNowRef = React.useRef<((opts?: { silent?: boolean }) => Promise<boolean>) | null>(null);
     const usageLimitRecoveryCheckNowAgentId = React.useMemo(() => (
         resolveAgentIdFromFlavor(session.lastRuntimeIssue?.agentId)
-        ?? resolveAgentIdFromSessionMetadata(ownerMetadata)
+        ?? lifecycleAgentId
         ?? null
-    ), [ownerMetadata, session.lastRuntimeIssue?.agentId]);
+    ), [lifecycleAgentId, session.lastRuntimeIssue?.agentId]);
     const usageLimitRecoveryCheckNowSupported = React.useMemo(() => (
-        usageLimitRecoveryCheckNowAgentId
-            ? evaluateAgentSessionCapabilitySupport({
-                agentId: usageLimitRecoveryCheckNowAgentId,
-                capability: 'usageLimitRecovery.checkNow',
-                metadata: ownerMetadata,
-            }) === 'supported'
-            : false
-    ), [ownerMetadata, usageLimitRecoveryCheckNowAgentId]);
+        supportsAgentLifecycleCapability({
+            agentId: usageLimitRecoveryCheckNowAgentId,
+            capability: 'usageLimitRecovery.checkNow',
+            metadata: ownerMetadata,
+            sessionActive: session.active === true,
+            currentAgentCapabilities: currentLifecycleAgentCapabilities,
+        })
+    ), [
+        currentLifecycleAgentCapabilities,
+        ownerMetadata,
+        session.active,
+        usageLimitRecoveryCheckNowAgentId,
+    ]);
     React.useEffect(() => {
         const refreshNow = () => setUsageLimitRecoveryNowMs(nowServerMs());
         refreshNow();
@@ -3724,12 +3840,94 @@ function SessionViewLoaded({
     // status operation of its own, no polling, and no Check-status control handed
     // to the reader — then feeds those facts back through the SAME disposition
     // owner that decided the daemon's answer.
-    // A stored outcome belongs to one Session. If this screen is ever reused
-    // across a route change, carrying it over would attach one Session's failure
-    // to another's composer.
+    // The words the banner uses, derived rather than stored.
+    //
+    // The source is whatever Agent this Session runs now, which is the truthful
+    // subject of every depth that names one: `rejected` and `source_stopped`
+    // both leave the Session on the source, and the depths that do not leave it
+    // there name only the target. The target is resolved from the submitted
+    // intent against the same catalog the rail offered it from, so it survives
+    // the arm being spent — and so a restored outcome names it in the reader's
+    // CURRENT language instead of a word frozen into storage.
+    const armedContinuationOutcomeTargetAgentId = armedContinuationOutcome?.kind === 'outcome'
+        ? armedContinuationOutcome.intent.selection.agentId
+        : null;
+    const armedContinuationOutcomeLabels = React.useMemo<ArmedAgentContinuationLabels>(() => ({
+        sourceAgentLabel: currentAgentLabel,
+        targetAgentLabel: armedContinuationOutcomeTargetAgentId === null
+            ? ''
+            : sessionAgentCatalogEntries.find((entry) => (
+                entry.agentId === armedContinuationOutcomeTargetAgentId
+            ))?.title ?? formatAgentLikeIdForDisplay(armedContinuationOutcomeTargetAgentId),
+    }), [armedContinuationOutcomeTargetAgentId, currentAgentLabel, sessionAgentCatalogEntries]);
+
+    // A stored outcome belongs to one Session, and to one submission whose
+    // effect is still open. Restoring it is not rehydrating it: the same
+    // disposition owner re-decides the persisted answer against canonical facts
+    // first, and an outcome that has nothing left to say is DELETED rather than
+    // put back on screen. A banner pointing at a transition that has since
+    // resolved — or a send block held for one — is worse than none.
+    //
+    // This also owns the route change the reset effect used to: whatever this
+    // Session's record says (including nothing) replaces the previous Session's
+    // outcome outright.
+    const restoredArmedContinuationSessionIdRef = React.useRef<string | null>(null);
     React.useEffect(() => {
-        setArmedContinuationOutcome(null);
-    }, [sessionId]);
+        if (restoredArmedContinuationSessionIdRef.current === sessionId) return;
+        restoredArmedContinuationSessionIdRef.current = sessionId;
+        const submission = readSessionDraftValue(
+            activeServerAccountScope,
+            sessionId,
+            ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
+        );
+        setArmedContinuationRestoredFor(sessionId);
+        if (typeof submission === 'undefined') {
+            setArmedContinuationOutcome(null);
+            return;
+        }
+        // Same rule as the live path: an indeterminate answer usually means the
+        // transport failed, which is exactly when the local view is suspect, so
+        // its facts stay withheld until a reconciliation has refreshed them.
+        const factsAreReadable = submission.result.type !== 'outcome_unknown' || submission.reconciled;
+        const disposition = reconcileArmedAgentContinuationDisposition({
+            result: submission.result,
+            labels: armedContinuationOutcomeLabels,
+            targetAgentId: submission.intent.selection.agentId,
+            facts: factsAreReadable
+                ? {
+                    currentAgentId: agentInputAgentType ?? null,
+                    sessionActive: isSessionActive,
+                    input: readCanonicalOutboundHandoffForLocalId(sessionId, submission.localId),
+                }
+                : null,
+        });
+        if (!isArmedAgentContinuationOutcomeUnsettled(disposition)) {
+            setArmedContinuationOutcome(null);
+            clearSessionDraftValue(
+                activeServerAccountScope,
+                sessionId,
+                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
+            );
+            flushSessionDraftValues(activeServerAccountScope);
+            return;
+        }
+        setArmedContinuationOutcome({
+            kind: 'outcome',
+            sessionId,
+            result: submission.result,
+            intent: submission.intent,
+            localId: submission.localId,
+            submittedText: submission.submittedText,
+            semanticSnapshot: null,
+            reconciled: submission.reconciled,
+        });
+    }, [
+        activeServerAccountScope,
+        agentInputAgentType,
+        armedContinuationOutcomeLabels,
+        isSessionActive,
+        sessionId,
+    ]);
     const armedContinuationAwaitingReconcile = armedContinuationOutcome?.kind === 'outcome'
         && armedContinuationOutcome.result.type === 'outcome_unknown'
         && !armedContinuationOutcome.reconciled;
@@ -3760,6 +3958,31 @@ function SessionViewLoaded({
     // which is exactly when they can have changed. Reading canonical admission
     // imperatively keeps this off a transcript-wide subscription that would
     // re-derive on every streamed row for a banner that changes about twice.
+    // Canonical custody of the submitted localId is SUBSCRIBED here rather than
+    // sampled inside the memo below. Both facts it reads — the pending row and
+    // the transcript row — land AFTER the transition call returns, so a
+    // disposition memoized on the outcome and the liveness flag alone is decided
+    // while custody is still `absent` and is never re-decided when it arrives.
+    // That is how the one arm that ends with the reader's message queued behind
+    // no runtime reached a real Session and said nothing at all.
+    //
+    // Selected down to the tri-state so the store's own equality check keeps a
+    // per-row transcript update off this render path, and short-circuited to
+    // `absent` while no armed outcome exists so a Session with no switch in
+    // flight pays nothing for it.
+    const armedContinuationInputLocalId = armedContinuationOutcome?.kind === 'outcome'
+        ? armedContinuationOutcome.localId
+        : null;
+    const armedContinuationInputCustody = storage(
+        React.useCallback(
+            (state: StorageState) => selectCanonicalOutboundHandoffForLocalId(
+                state,
+                sessionId,
+                armedContinuationInputLocalId,
+            ),
+            [armedContinuationInputLocalId, sessionId],
+        ),
+    );
     const armedContinuationDisposition = React.useMemo(() => {
         if (armedContinuationOutcome === null) return null;
         if (armedContinuationOutcome.kind === 'refusal') return null;
@@ -3774,19 +3997,79 @@ function SessionViewLoaded({
             ? {
                 currentAgentId: agentInputAgentType ?? null,
                 sessionActive: isSessionActive,
-                inputAdmitted: hasCanonicalOutboundHandoffForLocalId(
-                    sessionId,
-                    armedContinuationOutcome.localId,
-                ),
+                input: armedContinuationInputCustody,
             }
             : null;
         return reconcileArmedAgentContinuationDisposition({
             result: armedContinuationOutcome.result,
-            labels: armedContinuationOutcome.labels,
-            targetAgentId: armedContinuationOutcome.targetAgentId,
+            labels: armedContinuationOutcomeLabels,
+            targetAgentId: armedContinuationOutcome.intent.selection.agentId,
             facts,
         });
-    }, [agentInputAgentType, armedContinuationOutcome, isSessionActive, sessionId]);
+    }, [
+        agentInputAgentType,
+        armedContinuationInputCustody,
+        armedContinuationOutcome,
+        armedContinuationOutcomeLabels,
+        isSessionActive,
+    ]);
+    // The persisted half of the same fact, mirrored from the live one.
+    //
+    // The record exists for one reason: `localId` is the daemon's dedupe and
+    // divider correlation key, and a remount that loses it re-mints a fresh one
+    // for the same armed choice — so the still-visible draft becomes a SECOND
+    // logical message for a switch that may already have committed. The banner
+    // that said so and the send block that stood in the way were in the same
+    // lost state, which is why all three travel together or none of them do.
+    //
+    // It is a mirror, not a second decision-maker: the same disposition owner
+    // says whether the outcome still has anything to say, and the record exists
+    // exactly while it does.
+    React.useEffect(() => {
+        if (armedContinuationRestoredFor !== sessionId) return;
+        const outcome = armedContinuationOutcome;
+        const unsettled = outcome !== null
+            && outcome.kind === 'outcome'
+            && outcome.sessionId === sessionId
+            && armedContinuationDisposition !== null
+            && isArmedAgentContinuationOutcomeUnsettled(armedContinuationDisposition);
+        if (!unsettled) {
+            const stored = readSessionDraftValue(
+                activeServerAccountScope,
+                sessionId,
+                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
+            );
+            // An explicit clear is a live choice this store remembers even for an
+            // absent field, so a settled Session must not keep announcing one.
+            if (typeof stored === 'undefined') return;
+            clearSessionDraftValue(
+                activeServerAccountScope,
+                sessionId,
+                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
+            );
+            flushSessionDraftValues(activeServerAccountScope);
+            return;
+        }
+        writeSessionDraftValue(
+            activeServerAccountScope,
+            sessionId,
+            ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
+            {
+                localId: outcome.localId,
+                intent: outcome.intent,
+                result: outcome.result,
+                submittedText: outcome.submittedText,
+                reconciled: outcome.reconciled,
+            },
+        );
+        flushSessionDraftValues(activeServerAccountScope);
+    }, [
+        activeServerAccountScope,
+        armedContinuationDisposition,
+        armedContinuationOutcome,
+        armedContinuationRestoredFor,
+        sessionId,
+    ]);
     // Memoized because it feeds the composer badge list: a fresh object every
     // render would invalidate that memo on every turn commit for a banner that
     // changes about twice in a Session's life.
@@ -3799,15 +4082,16 @@ function SessionViewLoaded({
     const pendingTransitionOutcome = armedContinuationDisposition?.send === 'block'
         ? 'unreconciled'
         : 'settled';
-    const supportsLocalControl = !isHiddenSystemSessionSession && agentId != null
-        ? supportsEffectiveLocalControlForSession({
-            agentId,
+    const supportsLocalControl = !isHiddenSystemSessionSession
+        && supportsAgentLifecycleCapability({
+            agentId: lifecycleAgentId,
+            capability: 'surface.terminal',
             metadata: ownerMetadata,
             accountSettings: settings,
-        })
-        : false;
+            currentAgentCapabilities: currentLifecycleAgentCapabilities,
+        });
     const { resumeCapabilityOptions } = useResumeCapabilityOptions({
-        agentId,
+        agentId: lifecycleAgentId,
         machineId: typeof machineId === 'string' ? machineId : null,
         serverId: capabilityServerId,
         settings,
@@ -4048,6 +4332,73 @@ function SessionViewLoaded({
         clearSessionDraftValuesForSession(activeServerAccountScope, sessionId, { reason: 'composerClear' });
         flushSessionDraftValues(activeServerAccountScope);
     }, [activeServerAccountScope, sessionId]);
+    // Consuming the same disposition once canonical facts move it.
+    //
+    // `draft: 'clear'` is only ever reached from the one depth where this exact
+    // input received canonical admission — and custody of it routinely lands
+    // AFTER the call returned, which is the whole reason reconciliation exists.
+    // Before this, that late answer took the warning down and left the message
+    // sitting in the composer, one tap from being sent twice. The clear runs
+    // through the same outbound-handoff owner as the send path's, compares
+    // against the exact submitted text, and takes the armed row with it because
+    // this depth spends the switch.
+    // Read narrowly: the picker's controls object and the composer-persistence
+    // object are both rebuilt every render, so depending on them would re-run
+    // this effect on every turn commit for a decision that moves about twice.
+    const {
+        armedContinuation: liveArmedContinuation,
+        armedContinuationLocalId: liveArmedContinuationLocalId,
+        clearArmedContinuation,
+    } = inSessionAgentPicker;
+    const { clearTransientInputState } = inputComposerPersistence;
+    const appliedArmedContinuationDraftClearRef = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        const outcome = armedContinuationOutcome;
+        if (outcome === null || outcome.kind !== 'outcome' || outcome.sessionId !== sessionId) return;
+        if (armedContinuationDisposition?.draft !== 'clear') return;
+        if (appliedArmedContinuationDraftClearRef.current === outcome.localId) return;
+        appliedArmedContinuationDraftClearRef.current = outcome.localId;
+        const semanticSnapshot = outcome.semanticSnapshot;
+        clearComposerAfterOutboundHandoff({
+            snapshot: { sessionId, text: outcome.submittedText },
+            clearDraftForSessionIfCurrentValueMatches,
+            clearTransientInputState,
+            // Only the mount that submitted holds the currentness fence these
+            // fields need; a restored outcome clears the text alone rather than
+            // discarding structured input it cannot prove is still the submitted
+            // one.
+            ...(semanticSnapshot
+                ? {
+                    clearSemanticDraftValuesMatchingSnapshot: () => (
+                        clearSemanticDraftValuesAfterOutboundHandoff(semanticSnapshot).length > 0
+                    ),
+                }
+                : {}),
+        });
+        // Draft currentness controls only whether this exact text can be removed.
+        // Canonical custody still spends the submitted transition: otherwise a
+        // rewritten draft would retain its prior localId and could collide with
+        // the message it replaced. A newer arm is distinct even when it happens
+        // to name the same target, so fence the clear on both its intent and id.
+        if (
+            armedContinuationDisposition.arm === 'clear'
+            && liveArmedContinuation !== null
+            && liveArmedContinuationLocalId === outcome.localId
+            && JSON.stringify(liveArmedContinuation) === JSON.stringify(outcome.intent)
+        ) {
+            clearArmedContinuation();
+        }
+    }, [
+        armedContinuationDisposition,
+        armedContinuationOutcome,
+        clearArmedContinuation,
+        clearDraftForSessionIfCurrentValueMatches,
+        clearSemanticDraftValuesAfterOutboundHandoff,
+        clearTransientInputState,
+        liveArmedContinuationLocalId,
+        liveArmedContinuation,
+        sessionId,
+    ]);
     const isPendingMessageEditAccountCurrent = React.useCallback((edit: PendingMessageComposerEditState): boolean => {
         if (edit.accountLifetime) return edit.accountLifetime.isCurrent();
         return edit.accountScope === null && activeServerAccountScope === null;
@@ -4256,9 +4607,15 @@ function SessionViewLoaded({
     }, [clearPendingMessageEditDrainHold]);
     const handleEditPendingMessage = React.useCallback((request: PendingMessageEditRequest) => {
         if (externalSessionOperationShell.blocksNewOperation) return;
+        // The composer reopens what the reader SAW. A queued turn that expanded
+        // review comments, attachments or a template into its transport text
+        // kept the typed sentence in `displayText`, and editing the expansion is
+        // editing something the user never wrote. The mention admission below
+        // reads the same text, so a chip can never outlive its token.
+        const editText = readMessageDisplayText(request);
         const attachmentHydration = hydratePendingMessageComposerAttachmentDrafts(
             readObjectRecord(request.message.rawRecord)?.meta,
-            request.text,
+            editText,
         );
         if (attachmentHydration.status !== 'ready') {
             Modal.alert(
@@ -4278,7 +4635,7 @@ function SessionViewLoaded({
             clearPendingMessageEditDrainHold(previousEdit.holdId);
         }
         const document = {
-            text: request.text,
+            text: editText,
             mentions: hydratedComposerMentions,
             attachments: attachmentHydration.attachments,
             revision: pendingComposerPresentationRevisionRef.current + 1,
@@ -4789,16 +5146,18 @@ function SessionViewLoaded({
                 return false;
             }
 
-            fireAndForget(
-                ensureAgentInstallablesBackground({
-                    agentId,
-                    machineId: base.machineId,
-                    serverId: capabilityServerId,
-                    settings,
-                    resumeSessionId: base.resume ?? null,
-                }),
-                { tag: `SessionView.installables.ensure.${agentId}` },
-            );
+            if (isBundledAgentId(agentId)) {
+                fireAndForget(
+                    ensureAgentInstallablesBackground({
+                        agentId,
+                        machineId: base.machineId,
+                        serverId: capabilityServerId,
+                        settings,
+                        resumeSessionId: base.resume ?? null,
+                    }),
+                    { tag: `SessionView.installables.ensure.${agentId}` },
+                );
+            }
 
             const result = await resumeSession({
                 ...base,
@@ -4842,7 +5201,9 @@ function SessionViewLoaded({
         ?? resolveSessionActionDefaultBackendTitle({
             session,
             sessionActionDefaultBackendEntryTitle: sessionActionDefaultBackendEntry?.title ?? null,
-            fallbackTitle: agentId ? t(getAgentCore(agentId).uiConnectedService.labelKey) : t('status.unknown'),
+            fallbackTitle: agentCore
+                ? t(agentCore.uiConnectedService.labelKey)
+                : formatAgentLikeIdForDisplay(agentId),
         })
         ?? t('status.unknown');
     const machineName = ownerMetadata?.host ?? t('status.unknown');
@@ -4968,11 +5329,46 @@ function SessionViewLoaded({
     }, [activeComposerRef, composerAttachmentAvailabilityEntriesById, sessionComposerRef]);
     const transcriptInteraction = runtimeDisplayState.transcriptInteraction;
 
+    // The armed switch's half of "this input is in the queue and nothing is
+    // running to take it". The disposition owner decides it; the two effects
+    // below only route it, and neither re-decides it.
+    const armedContinuationAwaitingRuntime = armedContinuationDisposition?.awaitingRuntime === true;
+
     React.useEffect(() => {
         if (!pendingQueueResumeFailed) return;
         if (!isSessionActive) return;
+        // A live runtime retracts the ordinary send's signal — but not one the
+        // disposition owner is still asserting. `target_start_failed` is the
+        // daemon's own proof that the target never started, and letting a
+        // client-side liveness read clear it here would both weaken a definite
+        // daemon arm and fight the router below for the same boolean. It yields
+        // to canonical custody instead: `resolveAwaitingRuntime` stops asserting
+        // the moment the message is demonstrably carried.
+        if (armedContinuationAwaitingRuntime) return;
         setPendingQueueResumeFailed(false);
-    }, [isSessionActive, pendingQueueResumeFailed]);
+    }, [armedContinuationAwaitingRuntime, isSessionActive, pendingQueueResumeFailed]);
+
+    // The armed switch's half of the same fact: this input is in the queue and
+    // nothing is running to take it. It is handed to the queued-message owner
+    // directly above rather than restated by a second banner, and it is WATCHED
+    // rather than sampled once at send time — `accepted` only means the spawn
+    // was acknowledged, so the target can die minutes later (the incident that
+    // exposed this had the runtime fail 94 seconds after a switch that reported
+    // success, and the reader was told nothing at all). The disposition owner
+    // decides; this only routes, and the effect above retracts it once canonical
+    // custody shows the message was actually carried.
+    React.useEffect(() => {
+        if (!armedContinuationAwaitingRuntime) return;
+        // `isResumable` is a capability of the recovery this banner offers, not a
+        // second opinion on whether the message is waiting. Liveness deliberately
+        // is NOT re-checked here: the disposition owner already weighed it for the
+        // arms decided from client facts, and for the arm the daemon proved
+        // (`target_start_failed`) re-checking it would let a stale Session view
+        // silence a fact the daemon established — which is exactly how this arm
+        // reached a real reader saying nothing.
+        if (!isResumable) return;
+        setPendingQueueResumeFailed(true);
+    }, [armedContinuationAwaitingRuntime, isResumable]);
 
     const isLocallyAttached = !isHiddenSystemSessionSession && isSessionLocallyAttached(session);
     const cliDetectionAgentIds = agentId ? [agentId] : [];
@@ -5411,7 +5807,7 @@ function SessionViewLoaded({
             agentId,
             machineId: controlMachineTarget?.machineId ?? null,
             serverId: capabilityServerId,
-            agentCore: agentId ? getAgentCore(agentId) : null,
+            agentCore,
             sessionMetadata: ownerMetadata,
             settings: {
                 connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
@@ -5985,7 +6381,7 @@ function SessionViewLoaded({
                 permissionDisabledReason={transcriptInteraction.permissionDisabledReason}
                 permissionMode={permissionMode}
                 onPermissionModeChange={updatePermissionMode}
-                onAcpSessionModeChange={agentId && supportsSessionModeOverrides(agentId) ? updateAcpSessionModeOverride : undefined}
+                onAcpSessionModeChange={sessionModeOptionIds.length > 0 ? updateAcpSessionModeOverride : undefined}
                 onAcpConfigOptionChange={updateAcpConfigOptionOverride}
                 modelMode={modelMode}
                 sessionActive={isSessionActive}
@@ -6061,21 +6457,22 @@ function SessionViewLoaded({
                                             if (prepared.status !== 'ready' || !isStructuredInputCurrent()) {
                                                 return { status: 'rejected' };
                                             }
-                                            const structuredInput = readHappierStructuredInputV1FromMeta(
-                                                buildStructuredInputMetaOverrides({
-                                                    mentions: composerStructuredMentionsFromReferences({
-                                                        references: snapshot.references,
-                                                        existing: [],
-                                                    }),
-                                                    text: snapshot.text,
-                                                    composerAttachments: prepared.attachments,
+                                            const structuredInput = buildPendingMessageComposerEditStructuredInput({
+                                                mentions: composerStructuredMentionsFromReferences({
+                                                    references: snapshot.references,
+                                                    existing: [],
                                                 }),
-                                            ) ?? { v: 1 as const };
+                                                text: snapshot.text,
+                                                attachments: prepared.attachments,
+                                            });
+                                            if (structuredInput.status !== 'ready') {
+                                                return { status: 'rejected' };
+                                            }
                                             await sync.updatePendingMessage(
                                                 sessionId,
                                                 activePendingEdit.pendingId,
                                                 snapshot.text,
-                                                structuredInput,
+                                                structuredInput.structuredInput,
                                                 prepared.replacementLocalId
                                                     ? { replacementLocalId: prepared.replacementLocalId }
                                                     : undefined,
@@ -6554,13 +6951,16 @@ function SessionViewLoaded({
                             // through the disposition owner as canonical facts arrive.
                             setArmedContinuationOutcome({
                                 kind: 'outcome',
+                                sessionId,
                                 result,
-                                labels: {
-                                    sourceAgentLabel: currentAgentLabel,
-                                    targetAgentLabel: armedContinuationTargetLabel,
-                                },
-                                targetAgentId: destination.intent.selection.agentId,
+                                intent: destination.intent,
                                 localId: destination.localId,
+                                // The exact text this submission carried, so a
+                                // custody answer that only arrives later can
+                                // compare-clear an UNCHANGED draft instead of
+                                // leaving the reader a message already sent.
+                                submittedText: submittedComposerText,
+                                semanticSnapshot: semanticDraftSnapshot,
                                 reconciled: false,
                             });
                             // Only canonical admission of this exact localId clears

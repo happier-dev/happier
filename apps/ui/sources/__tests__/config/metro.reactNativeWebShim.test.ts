@@ -170,7 +170,7 @@ describe('metro.config.js (web)', () => {
         const repoRoot = resolve(uiDir, '..', '..');
         const config = loadMetroConfig(uiDir);
         const defaultResolution = { type: 'empty' };
-        const relativeArtifactPath = 'react-native-web/inspector-app-native/entry.mjs';
+        const relativeArtifactPath = 'react-native-web/inspector-app-native/entry.mjs.bundle';
 
         const resolved = config.resolver.resolveRequest(
             {
@@ -203,10 +203,10 @@ describe('metro.config.js (web)', () => {
         ));
 
         expect(requireFromGeneratedConsumer.resolve(
-            '@happier-dev/plugins-inspector/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs',
+            '@happier-dev/plugins-inspector/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs.bundle',
         )).toBe(resolve(
             repoRoot,
-            'packages/plugins/inspector/dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs',
+            'packages/plugins/inspector/dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs.bundle',
         ));
     });
 
@@ -230,7 +230,7 @@ describe('metro.config.js (web)', () => {
         );
 
         expect(config.watchFolders).toContain(resolve(repoRoot, 'packages/plugins/inspector'));
-        expect(isBlocked(join(artifactRoot, 'react-native-web/inspector-app-native/entry.mjs'))).toBe(false);
+        expect(isBlocked(join(artifactRoot, 'react-native-web/inspector-app-native/entry.mjs.bundle'))).toBe(false);
         expect(isBlocked(resolve(repoRoot, 'packages/plugins/inspector/dist/index.js'))).toBe(true);
     });
 

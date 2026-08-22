@@ -69,6 +69,9 @@ export function createSessionItemRowViewModel(
         tags: [],
         secondaryLineMode: 'path',
         workingPlacementRetained: false,
+        attentionStanding: false,
+        isAttentionStanding: false,
+        attentionStandingEnabled: false,
         ...input.overrides,
     };
 }

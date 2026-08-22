@@ -225,7 +225,7 @@ describe('buildChatListItems', () => {
         const messages: Message[] = [
             { kind: 'user-text', id: 'm-user', localId: 'p1', createdAt: 20, text: 'materialized user' },
             buildToolCallMessage({ id: 'm-tool', localId: 'p2', createdAt: 21 }),
-            { kind: 'agent-event', id: 'm-event', createdAt: 22, event: { type: 'message', message: 'event' } },
+            { kind: 'agent-event', localId: null, id: 'm-event', createdAt: 22, event: { type: 'message', message: 'event' } },
         ];
         const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
         const messageIdsOldestFirst = messages.map((m) => m.id);
@@ -267,6 +267,7 @@ describe('buildChatListItems', () => {
         const messages: Message[] = [
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-started',
                 createdAt: 20,
                 event: {
@@ -278,6 +279,7 @@ describe('buildChatListItems', () => {
             },
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-other-started',
                 createdAt: 21,
                 event: {
@@ -288,6 +290,7 @@ describe('buildChatListItems', () => {
             },
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-completed',
                 createdAt: 22,
                 event: {
@@ -316,6 +319,7 @@ describe('buildChatListItems', () => {
         const messages: Message[] = [
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-started',
                 createdAt: 20,
                 event: {
@@ -327,6 +331,7 @@ describe('buildChatListItems', () => {
             },
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-completed',
                 createdAt: 22,
                 event: {
@@ -355,6 +360,7 @@ describe('buildChatListItems', () => {
         const messages: Message[] = [
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-started',
                 createdAt: 20,
                 event: {
@@ -365,6 +371,7 @@ describe('buildChatListItems', () => {
             },
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-completed',
                 createdAt: 22,
                 event: {
@@ -392,6 +399,7 @@ describe('buildChatListItems', () => {
         const messages: Message[] = [
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-started',
                 createdAt: 20,
                 event: {
@@ -403,6 +411,7 @@ describe('buildChatListItems', () => {
             },
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-progress',
                 createdAt: 21,
                 event: {
@@ -627,6 +636,7 @@ describe('buildChatListItemsCached', () => {
         const messages: Message[] = [
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-started',
                 createdAt: 20,
                 event: {
@@ -638,6 +648,7 @@ describe('buildChatListItemsCached', () => {
             },
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-completed',
                 createdAt: 22,
                 event: {
@@ -671,6 +682,7 @@ describe('buildChatListItemsCached', () => {
         const messages: Message[] = [
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-started',
                 createdAt: 20,
                 event: {
@@ -682,6 +694,7 @@ describe('buildChatListItemsCached', () => {
             },
             {
                 kind: 'agent-event',
+                localId: null,
                 id: 'm-compact-completed',
                 createdAt: 22,
                 event: {

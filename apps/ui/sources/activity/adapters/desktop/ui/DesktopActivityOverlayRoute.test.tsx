@@ -14,7 +14,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return style && typeof style === 'object' ? style as Record<string, unknown> : {};
 }
 
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => true));
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
 const isDesktopActivityOverlayWindowContextMock = vi.hoisted(() => vi.fn(() => true));
 const getDesktopActivityOverlayWindowStateMock = vi.hoisted(
     () => vi.fn<() => Promise<DesktopActivityOverlayWindowStatePayload | null>>(),
@@ -109,8 +109,8 @@ vi.mock('@/sync/store/settingsWriters', () => ({
     useApplyLocalSettings: () => applyLocalSettingsMock,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 vi.mock('../runtime/isDesktopActivityOverlayWindowContext', () => ({
@@ -239,7 +239,7 @@ describe('DesktopActivityOverlayRoute', () => {
     });
 
     afterEach(() => {
-        isTauriDesktopMock.mockReset();
+        isDesktopHostMock.mockReset();
         isDesktopActivityOverlayWindowContextMock.mockReset();
         getDesktopActivityOverlayWindowStateMock.mockReset();
         listenDesktopActivityOverlayWindowStateMock.mockReset();

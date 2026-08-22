@@ -7,7 +7,12 @@ describe('resolveExternalSessionOperationRowCapabilities', () => {
         ['public reader', false, true, true, true, false, 'online'],
         ['friend/read-only reader', false, true, true, true, false, 'online'],
         ['offline owner', true, true, true, false, false, 'offline'],
-        ['unknown-machine owner', true, true, false, false, false, 'offline'],
+        // Absent machine status is an absence of knowledge, not a confirmed fact
+        // about the origin: a reader without a machine subscription never observes
+        // liveness, so the row must say "unknown" and still refuse owner actions.
+        ['unknown-machine owner', true, true, false, false, false, 'unknown'],
+        ['reader without a machine subscription', false, true, false, false, false, 'unknown'],
+        ['unknown status that still reports online', true, true, false, true, false, 'unknown'],
         ['online owner', true, true, true, true, true, 'online'],
     ] as const)(
         '%s gets truthful owner-action availability',

@@ -149,7 +149,6 @@ vi.mock('@/sync/sync', async () => {
     };
 });
 vi.mock('@/sync/ops', () => ({
-    continueSessionWithReplay: vi.fn(),
     sessionAbort: vi.fn(),
     resumeSession: vi.fn(),
     sessionAttachmentsUploadFile: vi.fn(),
@@ -236,7 +235,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
     getAgentResumeExperimentsFromSettings: () => null,
     getNewSessionRelevantInstallableDepKeys: () => [],
-    isAgentId: (value: unknown) => value === 'codex',
+    isBundledAgentId: (value: unknown) => value === 'codex',
     resolveAgentIdFromFlavor: () => 'codex',
 }));
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
@@ -355,7 +354,7 @@ vi.mock('@/sync/domains/session/control/sessionLocalControl', () => ({
     isSessionLocallyAttached: () => true,
 }));
 vi.mock('@/sync/domains/session/control/effectiveRuntimeControlSurface', () => ({
-    supportsEffectiveLocalControlForSession: () => true,
+    resolveEffectiveConfiguredRuntimeControlSurface: () => ({ localControl: { supported: true } }),
 }));
 vi.mock('@/sync/domains/models/modelOptions', () => ({
     findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>

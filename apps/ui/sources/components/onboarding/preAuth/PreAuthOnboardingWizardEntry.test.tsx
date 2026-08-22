@@ -211,8 +211,8 @@ vi.mock('@/components/onboarding/state/usePendingSetupIntent', () => ({
 }));
 
 const tauriDesktopState = vi.hoisted(() => ({ value: false }));
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.value,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.value,
 }));
 
 vi.mock('@/utils/platform/desktopWindowBridge', () => ({

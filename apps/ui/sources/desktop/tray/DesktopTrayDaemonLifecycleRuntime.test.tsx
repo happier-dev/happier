@@ -6,20 +6,20 @@ import { renderScreen } from '@/dev/testkit';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import type { IModal } from '@/modal';
 
-const isTauriDesktopState = vi.hoisted(() => ({ value: false }));
-const listenTauriEvent = vi.hoisted(() => vi.fn());
+const isDesktopHostState = vi.hoisted(() => ({ value: false }));
+const listenDesktopHostEvent = vi.hoisted(() => vi.fn());
 const startMock = vi.hoisted(() => vi.fn(async () => 'task_1'));
 const alertMock = vi.hoisted(() => vi.fn());
 const snapshotState = vi.hoisted(() => ({
     result: null as null | { ok: boolean; error?: { message?: string } },
 }));
 
-vi.mock('@/utils/platform/tauri', async () => {
-    const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
+vi.mock('@/utils/platform/desktopHost', async () => {
+    const actual = await vi.importActual<typeof import('@/utils/platform/desktopHost')>('@/utils/platform/desktopHost');
     return {
         ...actual,
-        isTauriDesktop: () => isTauriDesktopState.value,
-        listenTauriEvent,
+        isDesktopHost: () => isDesktopHostState.value,
+        listenDesktopHostEvent,
     };
 });
 
@@ -60,17 +60,17 @@ vi.mock('@/text', async () => {
 
 describe('DesktopTrayDaemonLifecycleRuntime', () => {
     afterEach(() => {
-        isTauriDesktopState.value = false;
-        listenTauriEvent.mockReset();
+        isDesktopHostState.value = false;
+        listenDesktopHostEvent.mockReset();
         startMock.mockReset();
         alertMock.mockReset();
         snapshotState.result = null;
     });
 
     it('starts the daemon lifecycle task when the tray emits a daemon action', async () => {
-        isTauriDesktopState.value = true;
+        isDesktopHostState.value = true;
         let capturedListener: ((payload: { action: 'start' | 'stop' | 'restart' }) => void) | null = null;
-        listenTauriEvent.mockImplementation(async (_event: string, handler: (payload: { action: 'start' | 'stop' | 'restart' }) => void) => {
+        listenDesktopHostEvent.mockImplementation(async (_event: string, handler: (payload: { action: 'start' | 'stop' | 'restart' }) => void) => {
             capturedListener = handler;
             return () => {};
         });
@@ -91,10 +91,10 @@ describe('DesktopTrayDaemonLifecycleRuntime', () => {
     });
 
     it('shows an error alert when a tray lifecycle action fails to start', async () => {
-        isTauriDesktopState.value = true;
+        isDesktopHostState.value = true;
         startMock.mockRejectedValueOnce(new Error('bridge unavailable'));
         let capturedListener: ((payload: { action: 'start' | 'stop' | 'restart' }) => void) | null = null;
-        listenTauriEvent.mockImplementation(async (_event: string, handler: (payload: { action: 'start' | 'stop' | 'restart' }) => void) => {
+        listenDesktopHostEvent.mockImplementation(async (_event: string, handler: (payload: { action: 'start' | 'stop' | 'restart' }) => void) => {
             capturedListener = handler;
             return () => {};
         });

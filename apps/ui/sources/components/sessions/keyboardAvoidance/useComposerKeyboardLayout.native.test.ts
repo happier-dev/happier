@@ -325,6 +325,55 @@ describe('useComposerKeyboardLayout native', () => {
         expect(hook.getCurrent().listBottomInset.value).toBe(360);
     });
 
+    /**
+     * The keyboard can leave and come back WITHOUT the composer ever losing first responder — a
+     * transient system presentation over a focused field (the edit/Paste bubble), an interactive
+     * dismiss that springs back, a hardware-keyboard toggle, or background/foreground. No `onFocus`
+     * fires in any of those, so a gate that only opens on a fresh focus event stays shut and every
+     * keyboard worklet keeps early-returning: `bottomInset` never rises, and the composer — which is
+     * absolutely positioned at `bottom: 0` and lifted only by `translateY: -bottomInset` — stays
+     * parked behind the keyboard until the user blurs and refocuses it.
+     */
+    it('lifts again when the keyboard returns and the composer never lost focus', async () => {
+        nativeHookState.platformOS = 'ios';
+        const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.native');
+        const hook = await renderHook(() => useComposerKeyboardLayout({
+            headerHeight: 100,
+            layoutBottomInset: 80,
+            safeAreaBottom: 0,
+        }));
+
+        act(() => {
+            hook.getCurrent().setComposerMeasuredHeight(140);
+        });
+        act(() => {
+            hook.getCurrent().setComposerInputFocused?.(true);
+        });
+        act(() => {
+            nativeHookState.keyboardHandlers?.onEnd?.({ height: 300, progress: 1 });
+        });
+
+        expect(hook.getCurrent().bottomInset.value).toBe(220);
+
+        // The keyboard settles hidden. The composer is NOT blurred.
+        act(() => {
+            nativeHookState.keyboardListeners.get('keyboardDidHide')?.();
+        });
+
+        expect(hook.getCurrent().bottomInset.value).toBe(0);
+
+        // It comes back on its own. There is no second focus event to re-open the gate.
+        act(() => {
+            nativeHookState.keyboardHandlers?.onStart?.({ height: 300, progress: 1 });
+        });
+        act(() => {
+            nativeHookState.keyboardHandlers?.onEnd?.({ height: 300, progress: 1 });
+        });
+
+        expect(hook.getCurrent().bottomInset.value).toBe(220);
+        expect(hook.getCurrent().keyboardHeightLive.value).toBe(220);
+    });
+
     it('does not let the native keyboard hide fallback defeat retained overlay lift', async () => {
         nativeHookState.platformOS = 'ios';
         const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.native');

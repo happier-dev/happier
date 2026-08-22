@@ -106,7 +106,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
                 peer: {
                     status: 'ready';
                     transport: { protocol: 'v4' };
-                    error: null;
+                    errorCode: null;
                 };
             }>) => useQualifiedConnectedAccountGroups(params),
             {
@@ -116,7 +116,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
                     peer: {
                         status: 'ready',
                         transport: { protocol: 'v4' },
-                        error: null,
+                        errorCode: null,
                     },
                 },
             },
@@ -135,7 +135,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
             peer: {
                 status: 'ready',
                 transport: { protocol: 'v4' },
-                error: null,
+                errorCode: null,
             },
         });
         expect(changed.groups).toEqual([]);
@@ -149,6 +149,49 @@ describe('useQualifiedConnectedAccountGroups', () => {
         }));
     });
 
+    it('never surfaces the raw peer error code as displayed copy', async () => {
+        const { useQualifiedConnectedAccountGroups } = await import(
+            './useQualifiedConnectedAccountGroups'
+        );
+        const hook = await renderHook(() => useQualifiedConnectedAccountGroups({
+            serverId: 'server-a',
+            service: { pluginId: 'acme.accounts', localId: 'a' },
+            peer: {
+                status: 'error',
+                transport: null,
+                errorCode: 'connected_account_daemon_unavailable',
+            },
+        }));
+        await flushHookEffects();
+
+        // The peer arm publishes a machine code; every other arm of this hook
+        // already routes through the bounded presenter, so this one must too.
+        expect(hook.getCurrent()).toEqual(expect.objectContaining({
+            status: 'error',
+            groups: [],
+            error: 'connectedServices.errors.generic',
+        }));
+    });
+
+    it('maps a known peer error code to its own bounded copy', async () => {
+        const { useQualifiedConnectedAccountGroups } = await import(
+            './useQualifiedConnectedAccountGroups'
+        );
+        const hook = await renderHook(() => useQualifiedConnectedAccountGroups({
+            serverId: 'server-a',
+            service: { pluginId: 'acme.accounts', localId: 'a' },
+            peer: {
+                status: 'error',
+                transport: null,
+                errorCode: 'connect_group_not_found',
+            },
+        }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().error)
+            .toBe('connectedServices.errors.groupNotFound');
+    });
+
     it('keeps the loaded pools visible while a refresh is in flight', async () => {
         const service = { pluginId: 'acme.accounts', localId: 'a' };
         // The peer state must keep its identity across renders: the hook's load
@@ -157,7 +200,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
         const peer = {
             status: 'ready' as const,
             transport: { protocol: 'v4' as const },
-            error: null,
+            errorCode: null,
         };
         const groupA = groupFor(service, 'group-a');
         let releaseSecondList!: (groups: unknown[]) => void;
@@ -204,7 +247,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
         const peer = {
             status: 'ready' as const,
             transport: { protocol: 'v4' as const },
-            error: null,
+            errorCode: null,
         };
         const createdGroup = groupFor(service, 'group-created');
         const olderList = createDeferred<unknown[]>();
@@ -248,7 +291,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
         const peer = {
             status: 'ready' as const,
             transport: { protocol: 'v4' as const },
-            error: null,
+            errorCode: null,
         };
         const group = groupFor(service, 'group-a');
         const olderRefresh = createDeferred<unknown[]>();
@@ -300,7 +343,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
         const peer = {
             status: 'ready' as const,
             transport: { protocol: 'v4' as const },
-            error: null,
+            errorCode: null,
         };
         const initial = groupFor(service, 'group-a');
         const newer = {
@@ -365,7 +408,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
         const peer = {
             status: 'ready' as const,
             transport: { protocol: 'v4' as const },
-            error: null,
+            errorCode: null,
         };
         const initial = {
             ...groupFor(service, 'group-a'),
@@ -427,7 +470,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
         const peer = {
             status: 'ready' as const,
             transport: { protocol: 'v4' as const },
-            error: null,
+            errorCode: null,
         };
         const initial = groupFor(service, 'group-a');
         const newer = {

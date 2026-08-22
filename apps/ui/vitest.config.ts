@@ -168,6 +168,10 @@ export default defineConfig({
             // Keyboard controller imports Reanimated internals from its implementation package.
             { find: /^react-native-keyboard-controller(?:\/.*)?$/, replacement: resolve('./sources/dev/reactNativeKeyboardControllerStub.ts') },
             { find: /(?:^|[\\/])node_modules[\\/]react-native-keyboard-controller[\\/].*$/, replacement: resolve('./sources/dev/reactNativeKeyboardControllerStub.ts') },
+            // masked-view publishes Flow-typed JSX in a `.js` file, which Vite's import analysis
+            // cannot parse — importing it anywhere fails the module graph before any assertion runs.
+            { find: /^@react-native-masked-view\/masked-view(?:\/.*)?$/, replacement: resolve('./sources/dev/reactNativeMaskedViewStub.tsx') },
+            { find: /(?:^|[\\/])node_modules[\\/]@react-native-masked-view[\\/]masked-view[\\/].*$/, replacement: resolve('./sources/dev/reactNativeMaskedViewStub.tsx') },
             // Some dependencies import React Native internals (Flow syntax) via subpaths like `react-native/Libraries/...`.
             { find: /^react-native\//, replacement: resolve('./sources/dev/reactNativeInternalStub.ts') },
             // Vitest runs in node; avoid parsing React Native's Flow entrypoint.

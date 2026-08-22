@@ -213,6 +213,30 @@ describe('useNewSessionComposerDocument', () => {
         await hook.unmount();
     });
 
+    it('seeds the persisted Automation edit references so an untouched composer resubmits them', async () => {
+        const sessionMention = {
+            kind: 'happier.session',
+            ref: 'session:sess-42',
+            token: '@Nightly%20review',
+            label: 'Nightly review',
+        } as const;
+        const hook = await renderHook(() => useNewSessionComposerDocument({
+            promptStore: createNewSessionPromptStore('Continue @Nightly%20review now'),
+            persistedAttachments: [],
+            composerAttachmentEntriesById: {},
+            initialStructuredInputReferences: [sessionMention],
+            scopeKey: 'server-a/account-a',
+            canSubmitRef: { current: true },
+            isSubmitting: false,
+        }));
+
+        expect(hook.getCurrent().captureSubmissionSnapshot()?.references).toEqual([
+            { ...sessionMention, start: 9, end: 26 },
+        ]);
+
+        await hook.unmount();
+    });
+
     it('projects the mounted action-bar layout through the New Session Composer snapshot', async () => {
         const hook = await renderHook(() => useNewSessionComposerDocument({
             promptStore: createNewSessionPromptStore('Draft prompt'),

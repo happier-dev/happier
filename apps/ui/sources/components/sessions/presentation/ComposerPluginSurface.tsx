@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 
 import {
     ComposerSurfaceMountBindingV1Schema,
@@ -19,6 +18,7 @@ import {
     type ComposerPresentationTransactionApplier,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { BoundPluginSurfaceMountLifetime } from '@/components/plugins/surfaces/boundPluginSurfaceController';
+import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import {
     PluginSurfaceHost,
     type PluginSurfaceComposerSubscriptionPublisher,
@@ -27,6 +27,7 @@ import {
     readPluginSurfaceComposerMountBinding,
     type PluginSurfaceComposerMountBinding,
 } from '@/components/plugins/surfaces/pluginSurfaceMountBinding';
+import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type ComposerPluginSurfaceMountRequest = Readonly<{
@@ -87,6 +88,15 @@ export type ComposerPluginSurfaceProps = Readonly<{
     machineId: string | null;
     parentLifetime: BoundPluginSurfaceMountLifetime;
     transactionApplier: ComposerPresentationTransactionApplier;
+    /**
+     * The enclosing scope's qualified-destination navigation, when one is
+     * mounted. A Composer surface is a mounted plugin surface like any other,
+     * so it reaches destinations through the same incumbent binding seam every
+     * pane/page placement uses; absent, the controller installs no
+     * `openSurface` and the method refuses as unsupported rather than
+     * resolving after doing nothing.
+     */
+    openSurface?: PluginSurfaceOpenHandler;
 }>;
 
 /**
@@ -157,13 +167,15 @@ export function ComposerPluginSurface(props: ComposerPluginSurfaceProps): React.
         publisherCapable,
     ]);
     React.useEffect(() => () => handlers?.dispose(), [handlers]);
+    const openSurface = props.openSurface;
     const binding = React.useMemo(() => handlers
         ? Object.freeze({
             mountedHostApiHandlers: handlers,
             disposeMountedHostApiHandlers: handlers.dispose,
+            ...(openSurface === undefined ? {} : { openSurface }),
         })
         : undefined,
-    [handlers]);
+    [handlers, openSurface]);
     const setComposerSubscriptionPublisher = React.useCallback((publisher: PluginSurfaceComposerSubscriptionPublisher | undefined): void => {
         publisherRef.current = publisher ?? null;
     }, []);
@@ -190,7 +202,12 @@ export function ComposerPluginSurface(props: ComposerPluginSurfaceProps): React.
             machineId={props.machineId}
             serverId={props.serverId}
             sessionId={sessionId}
-            platform={Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'web'}
+            // The desktop shell runs this same web bundle, so `Platform.OS` alone
+            // cannot separate a browser tab from Tauri/Electron. The canonical
+            // resolver is the one owner of that distinction; classifying the
+            // desktop host as `web` here would route a hosted Composer surface
+            // into the sandboxed iframe instead of the native Artifact path.
+            platform={resolveLocalServicePreviewPlatform()}
             channel="internal"
             projectionInteractionEnabled
         />

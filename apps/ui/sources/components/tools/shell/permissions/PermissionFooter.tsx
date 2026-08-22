@@ -260,6 +260,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const agentId = permission.status === 'pending'
         ? liveAgentId
         : (historicalAgentId ?? liveAgentId);
+    // An installed Agent's footer copy and behavior both come from its own
+    // descriptor, bundled or not; each owner already falls back to a neutral
+    // default for one that ships none, so the footer always renders and a
+    // pending request is always answerable.
     const copy = getPermissionFooterCopy(agentId);
     const permissionFooterBehavior = getAgentBehavior(agentId).permissions?.footer;
     const isCodexDecision = copy.protocol === 'codexDecision';
@@ -533,8 +537,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         });
     };
     
-    const handleDecisionDenyWithoutSessionAbort = async () => {
-        if (permission.status !== 'pending' || loadingButton !== null || loadingForSession || loadingExecPolicy) return;
+    // Shared by both prompt protocols: an Agent whose descriptor declares
+    // `stopHandling: 'denyOnly'` stops the tool call without aborting the run.
+    const handleStopWithoutSessionAbort = async () => {
+        if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession || loadingExecPolicy) return;
         
         await runPermissionAction('stop', (loading) => setLoadingButton(loading ? 'abort' : null), async () => {
             await sessionDeny(sessionId, permission.id, undefined, undefined, 'denied');
@@ -875,7 +881,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                             isCodexAborted && styles.buttonSelected,
                             (isCodexApproved || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive
                         ]}
-                        onPress={shouldHandleStopWithoutSessionAbort ? handleDecisionDenyWithoutSessionAbort : handleStop}
+                        onPress={shouldHandleStopWithoutSessionAbort ? handleStopWithoutSessionAbort : handleStop}
                         disabled={actionsDisabled}
                         activeOpacity={isPending ? 0.7 : 1}
                     >
@@ -1174,7 +1180,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         isStopped && styles.buttonSelected,
                         (isApproved || isDeniedViaNo) && styles.buttonInactive,
                     ]}
-                    onPress={handleStop}
+                    onPress={shouldHandleStopWithoutSessionAbort ? handleStopWithoutSessionAbort : handleStop}
                     disabled={primaryActionsDisabled}
                     activeOpacity={isPending ? 0.7 : 1}
                 >

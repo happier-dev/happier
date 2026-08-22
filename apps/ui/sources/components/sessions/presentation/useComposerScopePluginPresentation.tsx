@@ -29,6 +29,9 @@ import {
     type PluginContributedActionDescriptor,
 } from '@/components/plugins/actions/pluginContributedActionController';
 import {
+    usePluginUiClientExecutableRegistrationRevision,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
+import {
     openPluginContributedAction,
     openPluginContributedActionReference,
 } from '@/components/plugins/actions/openPluginContributedAction';
@@ -59,10 +62,12 @@ import {
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
+    createPluginUiProjectedActionResolver,
     normalizePluginUiProjection,
     type PluginUiComposerAttachmentProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
 export type ComposerScopeProjectionInputs = Pick<
     DaemonMergedProjectionInputs,
@@ -211,6 +216,8 @@ function ComposerScopePluginSurfaceDialog(props: CustomModalInjectedProps & Read
 export function useComposerScopePluginPresentation(
     params: ComposerScopePluginPresentationParams,
 ): ComposerScopePluginPresentation {
+    const clientExecutableRegistrationRevision = usePluginUiClientExecutableRegistrationRevision();
+    const currentUiContextReader = useOptionalCurrentUiContextReader();
     const isScopeCurrentRef = React.useRef(params.isScopeCurrent);
     isScopeCurrentRef.current = params.isScopeCurrent;
     const physicalTargetRef = React.useRef(params.physicalTarget);
@@ -258,6 +265,10 @@ export function useComposerScopePluginPresentation(
         let snapshot!: PluginContributedActionCurrentSnapshot;
         snapshot = {
             pluginProjectionById: inputs.pluginProjectionById,
+            pluginUiProjection: normalizePluginUiProjection(projection),
+            resolveContributedAction: createPluginUiProjectedActionResolver(
+                projection.actionsById,
+            ),
             host: {
                 machineId: params.machineId,
                 serverId: params.serverId ?? null,
@@ -267,6 +278,9 @@ export function useComposerScopePluginPresentation(
                     : {}),
                 signal: scopeAbort.signal,
                 accountLifetime: params.accountLifetime,
+                ...(currentUiContextReader
+                    ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
+                    : {}),
                 isCurrent: () => (
                     actionSnapshotRef.current === snapshot
                     && scopeAbort.signal.aborted === false
@@ -285,6 +299,7 @@ export function useComposerScopePluginPresentation(
         return snapshot;
     }, [
         params.accountLifetime,
+        currentUiContextReader,
         scopeKey,
         params.machineId,
         params.projectionInputs,
@@ -297,7 +312,7 @@ export function useComposerScopePluginPresentation(
     actionSnapshotRef.current = actionSnapshot;
     const actionController = React.useMemo(() => createPluginContributedActionController({
         resolveCurrent: () => actionSnapshotRef.current,
-    }), []);
+    }), [clientExecutableRegistrationRevision]);
     const getCurrentActionSnapshot = React.useCallback(
         () => actionSnapshotRef.current,
         [],
@@ -362,6 +377,12 @@ export function useComposerScopePluginPresentation(
             },
         });
     }, [actionSnapshot, params.accountLifetime, scopeAbort]);
+    // The one qualified-destination owner for the scope this Composer is
+    // mounted in. Both the declarative control host below and every physical
+    // Composer surface reach navigation through it, so a Composer-origin open
+    // and a control-origin open cannot resolve differently.
+    const destinationNavigation = usePluginSurfaceDestinationNavigationBinding();
+    const openDestinationSurface = destinationNavigation?.openSurface;
     const renderComposerSurface = React.useCallback((request: ComposerPluginSurfaceMountRequest): React.ReactNode => {
         const snapshot = actionSnapshotRef.current;
         const projection = params.projectionInputs?.pluginProjectionV2;

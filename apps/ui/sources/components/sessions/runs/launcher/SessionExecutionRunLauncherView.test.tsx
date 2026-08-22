@@ -36,7 +36,15 @@ const launchabilityState = vi.hoisted(() => {
 });
 const resolveSessionTargetServerIdSpy = vi.fn((_sessionId: string, fallbackServerId?: string | null) => fallbackServerId ?? null);
 const routerPushSpy = vi.fn();
-let mockSession = {
+let mockSession: {
+    id: string;
+    active: boolean;
+    metadata: {
+        flavor?: string;
+        agent?: string;
+        machineId: string;
+    };
+} = {
     id: 'session-launcher',
     active: false,
     metadata: {
@@ -305,6 +313,30 @@ describe('SessionExecutionRunLauncherView', () => {
         };
         expect(hookArgs).toMatchObject({
             agentId: null,
+        });
+    });
+
+    it('preserves an external Agent identity from legacy session metadata for resume support', async () => {
+        mockSession = {
+            id: 'session-launcher',
+            active: false,
+            metadata: {
+                agent: 'acme.agent',
+                machineId: 'machine-launcher',
+            },
+        };
+        const { SessionExecutionRunLauncherView } = await import('./SessionExecutionRunLauncherView');
+        await renderScreen(React.createElement(SessionExecutionRunLauncherView, {
+            sessionId: 'session-launcher',
+            presentation: 'panel',
+            initialIntent: 'delegate',
+        }));
+
+        const hookArgs = useResumeCapabilityOptionsSpy.mock.calls.at(-1)?.[0] as {
+            agentId?: unknown;
+        };
+        expect(hookArgs).toMatchObject({
+            agentId: 'acme.agent',
         });
     });
 

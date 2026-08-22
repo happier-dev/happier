@@ -1,4 +1,4 @@
-import type { AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { resolveSessionModelSelectionDisposition } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
@@ -21,15 +21,15 @@ function normalizeContextWindowTokens(raw: unknown): number | null {
     return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : null;
 }
 
-function resolveCatalogContextWindowTokens(agentId: AgentId, modelId: string): number | null {
-    if (!modelId) return null;
+function resolveCatalogContextWindowTokens(agentId: string, modelId: string): number | null {
+    if (!modelId || !isBundledAgentId(agentId)) return null;
     const matchingModel = getAgentStaticModels(agentId)
         .find((model) => normalizeModelId(model.id) === modelId) ?? null;
     return normalizeContextWindowTokens(matchingModel?.contextWindowTokens);
 }
 
 function resolveBehaviorContextWindowTokensForModel(
-    agentId: AgentId,
+    agentId: string,
     model: Readonly<{ id?: unknown; description?: unknown }> | null | undefined,
 ): number | null {
     const modelId = normalizeModelId(model?.id);
@@ -51,7 +51,7 @@ type ContextUsageData = Readonly<{
 }> | null | undefined;
 
 export function resolveContextWindowTokens(params: Readonly<{
-    agentId: AgentId;
+    agentId: string;
     agentTargetKey?: string | null;
     metadata: Metadata | null | undefined;
     sessionActive?: boolean;
@@ -81,7 +81,7 @@ export function resolveContextWindowTokens(params: Readonly<{
 }
 
 function resolveAssumedContextWindowTokens(params: Readonly<{
-    agentId: AgentId;
+    agentId: string;
     agentTargetKey?: string | null;
     metadata: Metadata | null | undefined;
     sessionActive?: boolean;
@@ -148,7 +148,7 @@ function resolveAssumedContextWindowTokens(params: Readonly<{
 }
 
 export function resolveContextWarningWindowTokens(params: Readonly<{
-    agentId: AgentId;
+    agentId: string;
     agentTargetKey?: string | null;
     metadata: Metadata | null | undefined;
     sessionActive?: boolean;

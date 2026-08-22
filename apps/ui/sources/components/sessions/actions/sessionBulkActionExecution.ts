@@ -233,6 +233,39 @@ async function executePinAction(params: Readonly<{
     });
 }
 
+async function executeAttentionStandingAction(params: Readonly<{
+    actionId: typeof SESSION_BULK_ACTION_IDS.setAttentionStanding | typeof SESSION_BULK_ACTION_IDS.clearAttentionStanding;
+    targets: readonly SessionBulkActionTarget[];
+    context: SessionBulkActionExecutionContext;
+}>): Promise<SessionBulkActionExecutionResult> {
+    const setSessionAttentionStanding = requireOperation(
+        params.context.setSessionAttentionStanding,
+        'setSessionAttentionStanding',
+    );
+    const standing = params.actionId === SESSION_BULK_ACTION_IDS.setAttentionStanding;
+
+    return executeNetworkTargets({
+        actionId: params.actionId,
+        targets: params.targets,
+        context: params.context,
+        runTarget: async (target) => {
+            // The selection target leaves `standing` undefined when the action is unreachable for
+            // that session (band off, archived, view-only), so a mixed selection reaches here with
+            // rows the session's own menu refuses to offer. Skip them the way an unavailable read
+            // state is skipped rather than writing a standing the server would reject for an
+            // archived session and silently accept for a view-only one.
+            if (typeof target.standing !== 'boolean') {
+                return createTargetResult(target, 'skipped', {
+                    reasonCode: 'attention_standing_unavailable',
+                    reason: 'Session attention standing is unavailable',
+                });
+            }
+            await setSessionAttentionStanding({ target, standing });
+            return createTargetResult(target, 'succeeded');
+        },
+    });
+}
+
 async function executeTagAction(params: Readonly<{
     action: Extract<SessionBulkActionRequest, { tags: readonly string[] }>;
     targets: readonly SessionBulkActionTarget[];
@@ -520,6 +553,13 @@ export async function executeSessionBulkAction(params: Readonly<{
         case SESSION_BULK_ACTION_IDS.pin:
         case SESSION_BULK_ACTION_IDS.unpin:
             return executePinAction({
+                actionId: params.action.id,
+                targets: params.targets,
+                context: params.context,
+            });
+        case SESSION_BULK_ACTION_IDS.setAttentionStanding:
+        case SESSION_BULK_ACTION_IDS.clearAttentionStanding:
+            return executeAttentionStandingAction({
                 actionId: params.action.id,
                 targets: params.targets,
                 context: params.context,

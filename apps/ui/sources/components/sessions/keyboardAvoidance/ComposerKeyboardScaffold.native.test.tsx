@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -57,6 +58,25 @@ vi.mock('react-native-reanimated', async () => {
         useAnimatedStyle: (factory: () => unknown) => factory(),
     };
 });
+
+type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
+
+function findViewByTestID(screen: RenderedScreen, testID: string) {
+    return screen.tree.root
+        .findAllByType('View' as never)
+        .find((node) => node.props.testID === testID);
+}
+
+function resolveStyleBackgroundColor(style: unknown): string | undefined {
+    const flattened = Array.isArray(style) ? style.flat(Infinity) : [style];
+    let backgroundColor: string | undefined;
+    for (const entry of flattened) {
+        if (entry && typeof entry === 'object' && typeof (entry as { backgroundColor?: unknown }).backgroundColor === 'string') {
+            backgroundColor = (entry as { backgroundColor: string }).backgroundColor;
+        }
+    }
+    return backgroundColor;
+}
 
 describe('ComposerKeyboardScaffold native', () => {
     beforeEach(() => {
@@ -126,6 +146,56 @@ describe('ComposerKeyboardScaffold native', () => {
         }
 
         expect(scaffoldLayout.lastOptions?.availablePanelMaxHeight).toBeUndefined();
+        act(() => {
+            screen.tree.unmount();
+        });
+    });
+
+    it('paints an opaque surface by default so every existing bar and sheet is unchanged', async () => {
+        const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
+        const screen = await renderScreen(
+            <ComposerKeyboardScaffold
+                mode="newSession"
+                testID="scaffold"
+                composerTestID="composer-host"
+                composer={<React.Fragment>composer</React.Fragment>}
+            >
+                <React.Fragment>content</React.Fragment>
+            </ComposerKeyboardScaffold>,
+        );
+
+        expect(resolveStyleBackgroundColor(findViewByTestID(screen, 'scaffold')?.props.style)).toBeTruthy();
+        expect(resolveStyleBackgroundColor(
+            screen.tree.root.findByProps({ testID: 'composer-host' }).props.style,
+        )).toBeTruthy();
+
+        act(() => {
+            screen.tree.unmount();
+        });
+    });
+
+    it('paints nothing when the surface is transparent so the screen behind stays visible', async () => {
+        const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
+        const screen = await renderScreen(
+            <ComposerKeyboardScaffold
+                mode="newSession"
+                surface="transparent"
+                testID="scaffold"
+                composerTestID="composer-host"
+                composer={<React.Fragment>composer</React.Fragment>}
+            >
+                <React.Fragment>content</React.Fragment>
+            </ComposerKeyboardScaffold>,
+        );
+
+        // Both the root and the absolutely-positioned composer wrapper paint `surface.base` in the
+        // opaque case. A transparent presentation needs BOTH gone, or the screen behind is covered
+        // by an opaque strip even though the navigator stopped painting one.
+        expect(resolveStyleBackgroundColor(findViewByTestID(screen, 'scaffold')?.props.style)).toBeUndefined();
+        expect(resolveStyleBackgroundColor(
+            screen.tree.root.findByProps({ testID: 'composer-host' }).props.style,
+        )).toBeUndefined();
+
         act(() => {
             screen.tree.unmount();
         });

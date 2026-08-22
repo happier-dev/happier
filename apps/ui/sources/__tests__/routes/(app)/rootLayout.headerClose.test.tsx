@@ -19,6 +19,7 @@ const platformState = vi.hoisted(() => ({
 }));
 const settingState = vi.hoisted(() => ({
     newSessionPresentationModeV1: 'auto' as 'auto' | 'screen' | 'modal',
+    useEnhancedSessionWizard: false,
 }));
 const deviceTypeState = vi.hoisted(() => ({
     value: 'tablet' as 'phone' | 'tablet',
@@ -159,9 +160,9 @@ vi.mock('@/activity/notifications/runtime/useNotificationResponseRouting', () =>
     useNotificationResponseRouting: vi.fn(),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    invokeTauri: vi.fn(),
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    invokeDesktopHost: vi.fn(),
+    isDesktopHost: () => false,
 }));
 
 vi.mock('@/components/navigation/createAppStackScreenOptions', () => ({
@@ -192,6 +193,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSyncError: () => null,
     useSetting: (key: string) => {
         if (key === 'newSessionPresentationModeV1') return settingState.newSessionPresentationModeV1;
+        if (key === 'useEnhancedSessionWizard') return settingState.useEnhancedSessionWizard;
         return undefined;
     },
 }));
@@ -225,17 +227,43 @@ describe('app stack modal header close buttons', () => {
         stackNavigationMock.getState.mockClear();
         platformState.os = 'ios';
         settingState.newSessionPresentationModeV1 = 'auto';
+        settingState.useEnhancedSessionWizard = false;
         deviceTypeState.value = 'tablet';
         stackNavigationState.index = 0;
         stackNavigationState.routes = [{ key: 'current-route' }];
     });
 
-    it('keeps the native new-session modal dismissal contract unchanged', async () => {
+    it('keeps the native new-session sheet dismissal contract unchanged for the wizard variant', async () => {
+        settingState.useEnhancedSessionWizard = true;
         const { default: RootLayout } = await import('@/app/(app)/_layout');
         const screen = await renderScreen(<RootLayout />);
 
         const options = getStackScreenOptions(screen, 'new/index');
+        expect(options.presentation).toBe('containedModal');
+        expect(options.headerShown).toBe(true);
         expect(options.gestureEnabled).toBe(true);
+        expect(options.headerRight).toBeUndefined();
+    });
+
+    it('presents the simple composer as a chrome-free transparent modal on native', async () => {
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(<RootLayout />);
+
+        const options = getStackScreenOptions(screen, 'new/index');
+        // The composer paints its own backdrop and owns its own close control, so the navigator
+        // contributes no chrome at all.
+        expect(options.presentation).toBe('transparentModal');
+        expect(options.headerShown).toBe(false);
+        // The entrance is owned in Reanimated inside the screen: a native-stack transition moves
+        // the WHOLE view, so the backdrop would slide up with the card instead of fading in place.
+        expect(options.animation).toBe('none');
+        // native-stack omits its own opaque background for transparent presentations, but
+        // `createAppStackScreenOptions` supplies a surface fill for every screen after it.
+        expect(options.contentStyle).toMatchObject({ backgroundColor: 'transparent' });
+        // `UIModalPresentationOverFullScreen` has no sheet presentation controller, so there is no
+        // interactive pull-to-dismiss to enable.
+        expect(options.gestureEnabled).toBe(false);
+        expect(options.fullScreenGestureEnabled).toBe(false);
         expect(options.headerRight).toBeUndefined();
     });
 

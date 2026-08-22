@@ -7,6 +7,7 @@ import {
     DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
     DEFAULT_PEER_MEDIATION_CAPABILITIES,
     DEFAULT_PETS_CAPABILITIES,
+    DEFAULT_SESSION_CAPABILITIES,
     DEFAULT_SHARING_CAPABILITIES,
     type FeaturesResponse as RootLayoutFeatures,
 } from '@happier-dev/protocol';
@@ -313,10 +314,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             },
             misconfig: [],
         },
-        session: {
-            state: {},
-            messages: { role: false },
-        },
+        session: DEFAULT_SESSION_CAPABILITIES,
         liveActivities: {
             remoteUpdates: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
         },

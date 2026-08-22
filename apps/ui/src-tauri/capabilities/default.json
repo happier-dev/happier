@@ -50,6 +50,7 @@
     "allow-desktop-browser-drain-diagnostics",
     "allow-desktop-browser-eval-script",
     "allow-desktop-browser-dispatch-navigation",
+    "allow-desktop-hosted-artifact-get-frame-capability",
     "allow-desktop-hosted-artifact-register",
     "allow-desktop-hosted-artifact-unregister",
     "allow-desktop-hosted-artifact-cache-read",

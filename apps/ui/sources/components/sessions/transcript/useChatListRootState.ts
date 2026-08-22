@@ -39,6 +39,7 @@ import { createSessionActionTarget } from '@/components/sessions/actions/session
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { usePluginTranscriptActivities } from '@/components/sessions/transcript/items/usePluginTranscriptActivities';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import {
@@ -52,6 +53,10 @@ import {
     createPluginContributedActionController,
     type PluginContributedActionCurrentSnapshot,
 } from '@/components/plugins/actions/pluginContributedActionController';
+import {
+    usePluginUiClientExecutableRegistrationRevision,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
 export function resolveLatestCommittedActivityKey(params: Readonly<{
     messageIdsOldestFirst: readonly string[];
@@ -76,6 +81,8 @@ export function resolveExternalSessionOperationMachineSubscriptionTarget(params:
 }
 
 export function useChatListRootState(props: ChatListProps) {
+    const clientExecutableRegistrationRevision = usePluginUiClientExecutableRegistrationRevision();
+    const currentUiContextReader = useOptionalCurrentUiContextReader();
     const {
         fork,
         forkAwareMessageDescriptors,
@@ -298,6 +305,10 @@ export function useChatListRootState(props: ChatListProps) {
         let snapshot!: PluginContributedActionCurrentSnapshot;
         snapshot = {
             pluginProjectionById: inputs.pluginProjectionById,
+            pluginUiProjection: pluginActivityProjection.pluginUiProjection,
+            resolveContributedAction: createPluginUiProjectedActionResolver(
+                inputs.pluginProjectionV2?.actionsById,
+            ),
             host: {
                 machineId: pluginActivityProjection.machineId,
                 serverId: pluginActivityProjection.serverId,
@@ -305,6 +316,9 @@ export function useChatListRootState(props: ChatListProps) {
                 sessionId: props.session.id,
                 signal: pluginMessageActionScope.signal,
                 accountLifetime: pluginActivityLifetime,
+                ...(currentUiContextReader
+                    ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
+                    : {}),
                 isCurrent: () => pluginMessageActionSnapshotRef.current === snapshot,
             },
         };
@@ -312,6 +326,7 @@ export function useChatListRootState(props: ChatListProps) {
     }, [
         interaction.canSendMessages,
         isExactOwner,
+        currentUiContextReader,
         pluginActivityLifetime,
         pluginActivityProjection.interactionEnabled,
         pluginActivityProjection.machineId,
@@ -333,7 +348,7 @@ export function useChatListRootState(props: ChatListProps) {
                 resolveCurrent: () => pluginMessageActionSnapshotRef.current,
             })
             : null
-    ), [pluginMessageActionSnapshot]);
+    ), [clientExecutableRegistrationRevision, pluginMessageActionSnapshot]);
     const isPluginTranscriptActivityActionAvailable = React.useCallback((action: Readonly<{
         pluginId: string;
         localId: string;

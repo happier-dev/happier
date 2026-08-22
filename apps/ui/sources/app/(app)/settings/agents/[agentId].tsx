@@ -50,7 +50,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useProfile } from '@/sync/store/hooks';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import {
     ConnectedServicesProviderStateSharingSettingsV1Schema,
@@ -201,7 +201,7 @@ function resolveLegacyCompatAgentRouteRedirect(params: Readonly<{
 const AGENT_AUTH_TERMINAL_TAB_ID = 'agent-auth-terminal';
 
 function resolveProjectionIconName(projection: ResolvedAgentCatalogEntry): string {
-    return projection.iconAgentId ? getAgentCore(projection.iconAgentId).ui.agentPickerIconName : projection.iconName;
+    return getAgentCore(projection.iconAgentId ?? '')?.ui.agentPickerIconName ?? projection.iconName;
 }
 
 type AgentSettingsCore = NonNullable<ReturnType<typeof getAgentCore>>;
@@ -306,7 +306,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const supportsDesktopControls = isTauriDesktop();
+    const supportsDesktopControls = isDesktopHost();
     const {
         agentId,
         runtimeAgentId,

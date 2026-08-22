@@ -26,9 +26,15 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     getPendingMessageVisualState,
     isPendingMessageProviderDeliveryInFlight,
+    paintsPendingMessageActionRow,
     resolvePendingMessageHeightBearingChrome,
 } from './pendingMessageVisualState';
-import { shouldClipPendingQueueContent } from './pendingQueueContentClipping';
+import {
+    clampsPendingMessageLines,
+    resolvePendingMessageGapPx,
+    resolvePendingQueueMessagePresentation,
+    resolvePendingQueueScrollMaxHeightPx,
+} from './pendingQueueContentClipping';
 import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
 import { usePendingInputInterruptAndRunAction } from './usePendingInputInterruptAndRunAction';
 import {
@@ -156,6 +162,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     pendingMessages: PendingMessage[];
     discardedMessages: DiscardedPendingMessage[];
     onEditPendingMessage?: (request: PendingMessageEditRequest) => void | Promise<void>;
+    /**
+     * The painted height of one queued utterance's message bubble, reported on every layout of the
+     * HEAD's bubble. The transcript carries it to the committed row that replaces this one so the
+     * crossover frame is placed from a measurement instead of a wrap heuristic — see
+     * `TranscriptMeasurementReconciler.recordPaintedUtteranceBubbleHeight`.
+     */
+    onPaintedUtteranceBubbleMeasured?: (measurement: Readonly<{ localId: string; bubbleHeightPx: number }>) => void;
 }>) {
     const { theme } = useUnistyles();
     const session = useSession(props.sessionId);
@@ -174,7 +187,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const capabilities = session?.agentState?.capabilities;
     const pendingCount = props.pendingMessages.length;
     const discardedCount = props.discardedMessages.length;
-    const clipsQueueContent = shouldClipPendingQueueContent({ pendingCount, discardedCount });
     const hasProviderDeliveryInFlight = props.pendingMessages.some(isPendingMessageProviderDeliveryInFlight);
     // A terminal-composer-draft capability is meaningful only while a runtime (TUI) is live;
     // after a stop the sticky capability must not present a ghost draft for the next send.
@@ -584,7 +596,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }) => {
         const { message, index, renderDragHandle } = args;
         const text = getPendingText(message).trim();
-        const isCollapsible = clipsQueueContent && collapseThresholdChars > 0 && text.length >= collapseThresholdChars;
+        // The head is the next message to be processed: it keeps the shape it will cross over in.
+        const messagePresentation = resolvePendingQueueMessagePresentation(index);
+        const isCollapsible = clampsPendingMessageLines(messagePresentation)
+            && collapseThresholdChars > 0
+            && text.length >= collapseThresholdChars;
+        // No trailing gap under the last row in the scroll content: that 8px is separation from the
+        // row BELOW, and carrying it made the crossover a DOWNWARD step (see the owner module).
+        const messageGapPx = resolvePendingMessageGapPx({
+            isLastInScrollContent: index === pendingCount - 1 && discardedCount === 0,
+        });
 	        const isExpanded = expandedMessageIds[message.id] === true || !isCollapsible;
 
 	        const menuKey = `active:${message.id}`;
@@ -604,6 +625,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         });
         const deliveryActionBusy = materializingLocalIds.has(getPendingMaterializingKey(message));
         const hasEffectPossibleDelivery = visualState.deliveryMutationPolicy === 'effect_possible';
+        // Height-bearing, so the size estimate reads this same predicate rather than restating it.
+        const paintsMessageActionRow = paintsPendingMessageActionRow({
+            platformIsWeb: isWeb,
+            canReorderPendingMessages: props.pendingMessages.length > 1 && !hasEffectPossibleDelivery,
+        });
         const isUncertainDelivery = hasEffectPossibleDelivery && visualState.kind === 'blocked';
         const isServerDeliveryInProgress = isPendingMessageProviderDeliveryInFlight(message)
             && visualState.kind === 'delivering';
@@ -770,6 +796,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         testID={`pendingMessages.row:${message.id}`}
                         style={[
                             styles.userMessageWrapper,
+                            { paddingBottom: messageGapPx },
                             isWeb && (hoveredMessageId === message.id || menuOpen) ? styles.userMessageWrapperHovered : null,
                         ]}
                         {...(!isWeb ? { pointerEvents: 'box-none' as const } : null)}
@@ -793,9 +820,24 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             testID={`pendingMessages.message:${message.id}`}
                             accessibilityRole="button"
                             accessibilityLabel={text || t('session.pendingMessages.title')}
+                            onLayout={messagePresentation === 'head' ? (event) => {
+                                // The painted height of THIS utterance's bubble, carried to the
+                                // committed row that replaces it (`recordPaintedUtteranceBubbleHeight`).
+                                // HEAD only. A backlog row is line-clamped (not the height its twin
+                                // will have) and, once expanded, paints a "View less" Pressable
+                                // INSIDE this measured bubble that the committed row never has.
+                                const bubbleHeightPx = event?.nativeEvent?.layout?.height;
+                                const localId = typeof message.localId === 'string' ? message.localId : null;
+                                if (localId === null || typeof bubbleHeightPx !== 'number' || !Number.isFinite(bubbleHeightPx)) return;
+                                props.onPaintedUtteranceBubbleMeasured?.({ localId, bubbleHeightPx });
+                            } : undefined}
                             style={({ pressed }) => ([
                                 styles.userMessageBubble,
-                                { backgroundColor: theme.colors.message.user.background, opacity: pressed ? 0.82 : 0.9 },
+                                // Full opacity, like the committed bubble it becomes: a queued
+                                // utterance that paints dimmer BRIGHTENS one step at the crossover,
+                                // which reads as the message popping rather than settling. The
+                                // delivery state is carried by the status chip, not by the ink.
+                                { backgroundColor: theme.colors.message.user.background, opacity: pressed ? 0.82 : 1 },
                             ])}
                         >
                             {isExpanded ? (
@@ -892,7 +934,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         message={message}
                                     />
                                 ) : null}
-                                {props.pendingMessages.length > 1 && !hasEffectPossibleDelivery ? (
+                                {paintsMessageActionRow && props.pendingMessages.length > 1 && !hasEffectPossibleDelivery ? (
                                     renderDragHandle({
                                         children: (
                                             <ReorderDragHandleAffordance
@@ -1011,7 +1053,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	                                    />
 	                                ) : null}
 	                            </View>
-                        ) : props.pendingMessages.length > 1 && !hasEffectPossibleDelivery ? (
+                        ) : paintsMessageActionRow ? (
                             <View style={styles.messageActionContainer}>
                                 {renderDragHandle({
                                     children: (
@@ -1030,7 +1072,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         );
     }, [
         canSteerNow,
-        clipsQueueContent,
+        discardedCount,
+        pendingCount,
+        props.onPaintedUtteranceBubbleMeasured,
         hoveredMessageId,
         collapseThresholdChars,
         collapsedLines,
@@ -1067,7 +1111,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         toggleMessageExpanded,
     ]);
 
-    const renderDiscardedMessage = React.useCallback((message: DiscardedPendingMessage) => {
+    const renderDiscardedMessage = React.useCallback((message: DiscardedPendingMessage, index: number, all: readonly DiscardedPendingMessage[]) => {
+        const isLastDiscarded = index === all.length - 1;
         const text = getPendingText(message).trim();
         const menuKey = `discarded:${message.id}`;
         const menuOpen = openMenuKey === menuKey;
@@ -1116,7 +1161,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 trigger={({ openMenu, closeMenu }) => (
                     <View
                         testID={`pendingMessages.discarded.row:${message.id}`}
-                        style={[styles.userMessageWrapper, { opacity: 0.85 }]}
+                        style={[
+                            styles.userMessageWrapper,
+                            // Same rule the estimate models: no trailing gap under the last row.
+                            { paddingBottom: resolvePendingMessageGapPx({ isLastInScrollContent: isLastDiscarded }), opacity: 0.85 },
+                        ]}
                         {...(!isWeb ? { pointerEvents: 'box-none' as const } : null)}
                         {...(isWeb
                             ? {
@@ -1253,22 +1302,27 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         measuredScrollContentHeightPx,
         estimatedPendingContentHeightPx,
     );
+    // The block's painted bound for this presentation. One owner, shared with the size estimate.
+    const collapsedMaxHeightPx = resolvePendingQueueScrollMaxHeightPx({
+        pendingCount,
+        discardedCount,
+        queueMaxHeightPx: maxHeightPx,
+        lineHeightPx: transcriptMarkdownTextStyle.lineHeight,
+    });
     const canExpandPendingQueue =
-        clipsQueueContent
-        && pendingCount > 0
-        && effectiveScrollContentHeightPx > maxHeightPx;
+        pendingCount > 0
+        && effectiveScrollContentHeightPx > collapsedMaxHeightPx;
     const isQueueExpanded = canExpandPendingQueue && isPendingQueueExpanded;
-    const maxHeight = clipsQueueContent
-        ? (isQueueExpanded ? expandedMaxHeightPx : maxHeightPx)
-        : undefined;
+    const maxHeight = isQueueExpanded
+        ? Math.max(expandedMaxHeightPx, collapsedMaxHeightPx)
+        : collapsedMaxHeightPx;
     const headerLabel =
         pendingCount > 0
             ? `${t('session.pendingMessages.title')} (${pendingCount})`
             : t('session.pendingMessages.discarded.title');
-    const clampedViewportHeightPx =
-        maxHeight !== undefined && effectiveScrollContentHeightPx > 0
-            ? Math.max(1, Math.min(effectiveScrollContentHeightPx, maxHeight))
-            : undefined;
+    const clampedViewportHeightPx = effectiveScrollContentHeightPx > 0
+        ? Math.max(1, Math.min(effectiveScrollContentHeightPx, maxHeight))
+        : undefined;
 
     return (
         <View testID="pendingMessages.block" style={styles.messageContainer} renderToHardwareTextureAndroid={true}>

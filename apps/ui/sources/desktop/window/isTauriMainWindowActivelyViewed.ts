@@ -1,7 +1,7 @@
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 export function isTauriMainWindowActivelyViewed(): boolean {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return false;
     }
 

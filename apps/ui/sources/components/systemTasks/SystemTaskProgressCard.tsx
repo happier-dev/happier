@@ -5,7 +5,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { isTauriDesktop, invokeTauri } from '@/utils/platform/tauri';
+import { isDesktopHost, invokeDesktopHost } from '@/utils/platform/desktopHost';
 
 import type { SystemTaskRunState } from './types';
 import { resolveSystemTaskStepLabel } from './resolveSystemTaskStepLabel';
@@ -149,11 +149,11 @@ async function openDesktopSystemTaskLogs(): Promise<void> {
     const rootPath = await join(home, '.happier');
 
     try {
-        await invokeTauri('system_tasks_open_log_path', { path: logsPath });
+        await invokeDesktopHost('system_tasks_open_log_path', { path: logsPath });
         return;
     } catch {
         try {
-            await invokeTauri('system_tasks_open_log_path', { path: rootPath });
+            await invokeDesktopHost('system_tasks_open_log_path', { path: rootPath });
             return;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error ?? '');
@@ -184,7 +184,7 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
         }))
     ), [checklistSteps]);
     const promptAction = React.useMemo(() => resolvePromptAction(props.snapshot), [props.snapshot]);
-    const canOpenLogs = showOpenLogs && isTauriDesktop();
+    const canOpenLogs = showOpenLogs && isDesktopHost();
     const handleOpenLogs = React.useCallback(async () => {
         if (!canOpenLogs) {
             return;

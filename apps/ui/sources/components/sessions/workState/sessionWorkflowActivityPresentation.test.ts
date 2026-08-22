@@ -172,6 +172,28 @@ describe('buildWorkflowActivityRows', () => {
             fallback: 'activity',
         });
     });
+
+    it('renders a declared-but-unfillable plan flat instead of as empty phase sections', () => {
+        // Phase TITLES are scraped from the workflow script, but agent -> phase attribution is not
+        // available on the journal path. Drawing the headers anyway put empty phase sections above a
+        // separate `activity` bucket holding every agent in the run — which reads as "these phases
+        // ran and produced nothing". Declaring phases is not the same as explaining where the work
+        // is, and only the second may drive phase-shaped presentation.
+        const snap = snapshot({
+            phases: [
+                { id: 'p1', title: 'Research', order: 1, agentIds: [] },
+                { id: 'p2', title: 'Implementation', order: 2, agentIds: [] },
+            ],
+            agents: [
+                { id: 'a', title: 'A', status: 'active', updatedAt: 1 },
+                { id: 'b', title: 'B', status: 'pending', updatedAt: 1 },
+            ],
+        });
+
+        const rows = buildWorkflowActivityRows(snap);
+        expect(rows.every((r) => r.kind === 'agent')).toBe(true);
+        expect(rows.map((r) => r.rowId)).toEqual(['run1:agent:a', 'run1:agent:b']);
+    });
 });
 
 describe('tone + progress helpers', () => {
@@ -246,6 +268,19 @@ describe('resolveActiveWorkflowPhasePosition', () => {
 
     it('returns null when there are no phases', () => {
         const snap = snapshot({ agents: [{ id: 'a', title: 'A', status: 'active', updatedAt: 1 }] });
+        expect(resolveActiveWorkflowPhasePosition(snap)).toBeNull();
+    });
+
+    it('returns null when the phase plan holds no agents at all', () => {
+        // `Phase 2 of 2` manufactured from a plan nothing was attributed to is a claim the evidence
+        // does not support — and it contradicted the flat list rendered beside it.
+        const snap = snapshot({
+            phases: [
+                { id: 'p1', title: 'Research', order: 1, agentIds: [] },
+                { id: 'p2', title: 'Implement', order: 2, agentIds: [] },
+            ],
+            agents: [{ id: 'a', title: 'A', status: 'active', updatedAt: 1 }],
+        });
         expect(resolveActiveWorkflowPhasePosition(snap)).toBeNull();
     });
 });

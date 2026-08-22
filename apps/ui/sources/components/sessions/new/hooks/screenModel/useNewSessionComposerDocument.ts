@@ -3,6 +3,7 @@ import type {
     ComposerRefV1,
     ComposerSnapshotV1,
     ComposerTransactionResultV1,
+    MentionRefV1,
 } from '@happier-dev/protocol';
 import * as React from 'react';
 
@@ -121,6 +122,13 @@ export function useNewSessionComposerDocument(params: Readonly<{
         phase: DaemonMergedProjectionPhase;
         inputs: ComposerScopeProjectionInputs | null;
     }>;
+    /**
+     * References already persisted with the seeded prompt — today the Automation
+     * edit seed's stored template. They are placed through the same scope adapter
+     * a live transaction uses, so an untouched composer resubmits exactly what it
+     * read and an edited one drops whatever token the user removed.
+     */
+    initialStructuredInputReferences?: readonly MentionRefV1[];
     /** Changes only when the incumbent account-scoped New Session draft changes owner. */
     scopeKey: string | null;
     /** Derived by the New Session authoring owner after this adapter is mounted. */
@@ -152,10 +160,17 @@ export function useNewSessionComposerDocument(params: Readonly<{
     const isSubmittingRef = React.useRef(params.isSubmitting);
     isSubmittingRef.current = params.isSubmitting;
     const suppressPromptNotificationRef = React.useRef(false);
-    const initialStateRef = React.useRef<NewSessionComposerDocumentState>({
+    const initialStateRef = React.useRef<NewSessionComposerDocumentState | null>(null);
+    // Placed once for this mount: the adapter is only meaningful for the first
+    // document, and re-running it on every composer render would be per-keystroke
+    // work for a value that is discarded.
+    initialStateRef.current ??= {
         attachments: params.persistedAttachments,
-        mentions: [],
-    });
+        mentions: composerStructuredMentionsFromReferences({
+            references: params.initialStructuredInputReferences ?? [],
+            existing: [],
+        }),
+    };
     const documentRef = React.useRef<NewSessionComposerDocumentState>(initialStateRef.current);
     const [documentState, setDocumentState] = React.useState<NewSessionComposerDocumentState>(initialStateRef.current);
     const revisionRef = React.useRef(0);

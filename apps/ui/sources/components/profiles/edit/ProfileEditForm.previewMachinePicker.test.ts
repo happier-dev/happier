@@ -73,7 +73,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
     DEFAULT_AGENT_ID: 'claude',
-    isAgentId: (value: unknown): value is 'claude' | 'customAcp' =>
+    isBundledAgentId: (value: unknown): value is 'claude' | 'customAcp' =>
         typeof value === 'string' && ['claude', 'customAcp'].includes(value),
     getAgentCore: () => ({ permissions: { modeGroup: 'default' } }),
 }));

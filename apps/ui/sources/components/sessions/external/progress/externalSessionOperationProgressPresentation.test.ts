@@ -239,6 +239,32 @@ describe('presentExternalSessionOperationProgress', () => {
         ]);
     });
 
+    it('reports an unknown origin as unknown instead of asserting it is offline', () => {
+        const progress = createProgress({
+            status: 'awaiting_user_resume',
+            phase: 'importing',
+            retryTargetPhase: 'importing',
+            checkpoint: {
+                sourcePagesRead: 8,
+                stagedItemCount: 120,
+                importedItemCount: 96,
+                totalItemEstimate: 130,
+                requiredItemFailures: EMPTY_FAILURES,
+            },
+        });
+
+        const presentation = presentExternalSessionOperationProgress(progress, {
+            observationContext: 'hydrated',
+            originAvailability: 'unknown',
+        });
+
+        expect(presentation.summaryKey).toBe('externalSessions.operationStatusOriginUnknown');
+        expect(presentation.actions).toEqual([
+            expect.objectContaining({ kind: 'resume', enabled: false }),
+            expect.objectContaining({ kind: 'cancel', enabled: false }),
+        ]);
+    });
+
     it('offers separately confirmed whole-session discard only for an initial partial fence', () => {
         const initialPartial = createProgress({
             status: 'awaiting_user_resume',

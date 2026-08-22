@@ -1,23 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-const invokeTauriMock = vi.hoisted(() => vi.fn());
-const listenTauriEventMock = vi.hoisted(() => vi.fn());
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => true));
+const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
+const listenDesktopHostEventMock = vi.hoisted(() => vi.fn());
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
-    invokeTauri: (command: string, args?: Record<string, unknown>) => invokeTauriMock(command, args),
-    listenTauriEvent: (eventName: string, handler: (payload: unknown) => void) => listenTauriEventMock(eventName, handler),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
+    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostMock(command, args),
+    listenDesktopHostEvent: (eventName: string, handler: (payload: unknown) => void) => listenDesktopHostEventMock(eventName, handler),
 }));
 
 describe('desktopPetOverlayBridge', () => {
     afterEach(() => {
         vi.useRealTimers();
-        invokeTauriMock.mockReset();
-        listenTauriEventMock.mockReset();
-        isTauriDesktopMock.mockReset();
-        isTauriDesktopMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockReset();
+        listenDesktopHostEventMock.mockReset();
+        isDesktopHostMock.mockReset();
+        isDesktopHostMock.mockReturnValue(true);
     });
 
     it('syncs state using the native pet overlay command payload shape', async () => {
@@ -42,7 +42,7 @@ describe('desktopPetOverlayBridge', () => {
             },
         });
 
-        expect(invokeTauriMock).toHaveBeenCalledWith('sync_desktop_pet_overlay_state', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('sync_desktop_pet_overlay_state', {
             payload: expect.objectContaining({
                 visible: true,
                 window: { width: 192, height: 208 },
@@ -103,7 +103,7 @@ describe('desktopPetOverlayBridge', () => {
         await bridge.emitDesktopPetOverlayInteractionResult({ requestId: 'request-1', ok: true });
         await bridge.showMainWindowFromDesktopPetOverlay({ reason: 'mascot-click' });
 
-        expect(invokeTauriMock.mock.calls.map(([command]) => command)).toEqual([
+        expect(invokeDesktopHostMock.mock.calls.map(([command]) => command)).toEqual([
             'desktop_pet_overlay_read_window_state',
             'desktop_pet_overlay_set_input_locked',
             'desktop_pet_overlay_start_drag_session',
@@ -116,7 +116,7 @@ describe('desktopPetOverlayBridge', () => {
             'emit_desktop_pet_overlay_interaction_result',
             'desktop_pet_overlay_show_main_window',
         ]);
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_pet_overlay_apply_drag_delta', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_pet_overlay_apply_drag_delta', {
             payload: {
                 pointerId: '9',
                 dx: 12,
@@ -124,7 +124,7 @@ describe('desktopPetOverlayBridge', () => {
                 coordinateSpace: 'screen',
             },
         });
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_pet_overlay_release_drag_velocity', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_pet_overlay_release_drag_velocity', {
             payload: {
                 pointerId: '9',
                 vx: 640,
@@ -132,14 +132,14 @@ describe('desktopPetOverlayBridge', () => {
                 sampleWindowMs: 100,
             },
         });
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_pet_overlay_apply_momentum_delta', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_pet_overlay_apply_momentum_delta', {
             payload: {
                 generation: 42,
                 dx: 6,
                 dy: -3,
             },
         });
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_pet_overlay_sync_element_metrics', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_pet_overlay_sync_element_metrics', {
             payload: {
                 isTrayVisible: true,
                 mascot: { x: 240, y: 188, width: 116, height: 124 },
@@ -150,7 +150,7 @@ describe('desktopPetOverlayBridge', () => {
     });
 
     it('ignores element metric sync outside the Tauri desktop shell', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const { syncDesktopPetOverlayElementMetrics } = await import('./desktopPetOverlayBridge');
 
         await syncDesktopPetOverlayElementMetrics({
@@ -160,12 +160,12 @@ describe('desktopPetOverlayBridge', () => {
             controls: { x: 0, y: 0, width: 1, height: 1 },
         });
 
-        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
     });
 
     it('schedules native momentum deltas from the release velocity plan', async () => {
         vi.useFakeTimers();
-        invokeTauriMock.mockImplementation(async (command) => {
+        invokeDesktopHostMock.mockImplementation(async (command) => {
             if (command === 'desktop_pet_overlay_release_drag_velocity') {
                 return {
                     generation: 42,
@@ -189,7 +189,7 @@ describe('desktopPetOverlayBridge', () => {
         await vi.advanceTimersByTimeAsync(16);
         await vi.advanceTimersByTimeAsync(16);
 
-        expect(invokeTauriMock.mock.calls).toEqual([
+        expect(invokeDesktopHostMock.mock.calls).toEqual([
             [
                 'desktop_pet_overlay_release_drag_velocity',
                 {
@@ -227,7 +227,7 @@ describe('desktopPetOverlayBridge', () => {
     it('models native layout as part of the window state payload', async () => {
         const { listenDesktopPetOverlayWindowState } = await import('./desktopPetOverlayBridge');
         const payloads: unknown[] = [];
-        listenTauriEventMock.mockImplementation(async (_eventName, handler) => {
+        listenDesktopHostEventMock.mockImplementation(async (_eventName, handler) => {
             handler({
                 visible: true,
                 inputLocked: false,
@@ -263,7 +263,7 @@ describe('desktopPetOverlayBridge', () => {
     });
 
     it('subscribes only to native-emitted pet overlay event channels', async () => {
-        listenTauriEventMock.mockResolvedValue(() => {});
+        listenDesktopHostEventMock.mockResolvedValue(() => {});
         const bridge = await import('./desktopPetOverlayBridge');
 
         await bridge.listenDesktopPetOverlayWindowState(() => {});
@@ -279,7 +279,7 @@ describe('desktopPetOverlayBridge', () => {
             showMainWindowRequested: 'desktop_pet_overlay_show_main_window_requested',
             nativeMouseChanged: 'desktop_pet_overlay_native_mouse_changed',
         });
-        expect(listenTauriEventMock.mock.calls.map(([eventName]) => eventName)).toEqual([
+        expect(listenDesktopHostEventMock.mock.calls.map(([eventName]) => eventName)).toEqual([
             'desktop_pet_overlay_window_state_changed',
             'desktop_pet_overlay_interaction_result',
             'desktop_pet_overlay_show_main_window_requested',

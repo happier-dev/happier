@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
@@ -96,7 +96,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         if (backendTarget.configuredBackendId) {
             return params.runtimeCarrierAgentId ?? null;
         }
-        if (!isAgentId(backendTarget.backendId)) {
+        if (!isBundledAgentId(backendTarget.backendId)) {
             return params.runtimeCarrierAgentId ?? null;
         }
         // For built-in backends the backend id is already a canonical agent id.
@@ -106,7 +106,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
     const dynamicProbeEnabled = React.useMemo(() => {
         if (!agentType) return false;
-        return getAgentCore(agentType).model.dynamicProbe !== 'static-only';
+        // An Agent with no bundled model config declares probing through its own
+        // contribution; the bundled static-only veto does not apply to it.
+        return getAgentCore(agentType)?.model.dynamicProbe !== 'static-only';
     }, [agentType]);
 
     const probeContextKey = buildNewSessionCapabilityProbeContextKey(params.probeContext);
@@ -179,7 +181,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         }
 
         const core = getAgentCore(agentType);
-        if (core.model.dynamicProbe === 'static-only') {
+        if (core?.model.dynamicProbe === 'static-only') {
             // This provider intentionally does not support dynamic model probing; rely on catalog-only models.
             // Clear any previously cached dynamic list for this scope so we don't render stale/unknown models.
             lastScopeKeyRef.current = probeScopeKey;
@@ -242,7 +244,10 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             const probeAgentType = agentType;
             if (!probeAgentType) return;
             const core = getAgentCore(probeAgentType);
-            if (core.model.supportsSelection !== true || !params.selectedMachineId) {
+            // A bundled Agent that declares no model selection is settled here.
+            // Without a bundled core the machine capability probe itself answers
+            // whether the Agent supports selection, so let it decide.
+            if ((core !== null && core.model.supportsSelection !== true) || !params.selectedMachineId) {
                 if (!cancelled) {
                     setProbePhase('idle');
                 }

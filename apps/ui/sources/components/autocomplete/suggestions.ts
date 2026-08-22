@@ -1,5 +1,6 @@
 import { log } from '@/log';
 import { ensureSessionSuggestionCatalogs } from '@/sync/ops/sessionCatalogs';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
 
 import type {
@@ -51,6 +52,30 @@ export type { ComposerSuggestionCatalogs } from './composerSuggestionCatalogs';
  * sections still render, and the user has typed on anyway.
  */
 export const COMPOSER_SUGGESTION_KIND_DEADLINE_MS = 2_500;
+
+/**
+ * How much longer a COLD query may wait once the deadline has passed and every
+ * section is still empty.
+ *
+ * The extended wait exists so a first late row can still appear, and `signal`
+ * releases it when the user types on. Neither covers the user who stops typing
+ * while a transport is stuck: without a second bound the query never settles
+ * and the picker never learns the query is over.
+ *
+ * The bound is not chosen, it is inherited. Every cold producer here — catalog
+ * hydration and the file index alike — bottoms out on a server-scoped daemon
+ * RPC whose unqualified operation ceiling is
+ * `DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS`. Anything still unsettled past that is
+ * stuck rather than slow, so the total wait for one query is exactly that
+ * ceiling and this grace is the part of it the deadline has not already spent.
+ *
+ * When it fires: the pending kinds are aborted, one diagnostic per kind names
+ * what was dropped, and the query completes with no rows — the same terminal
+ * publication a genuinely empty query makes. Catalog hydration is deliberately
+ * signal-independent, so it keeps running and warms the next keystroke.
+ */
+export const COMPOSER_SUGGESTION_COLD_START_GRACE_MS =
+    DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS - COMPOSER_SUGGESTION_KIND_DEADLINE_MS;
 
 const EMPTY_CATALOGS: ComposerSuggestionCatalogs = Object.freeze({});
 const KIND_DEADLINE_EXPIRED = Symbol('composer-suggestion-kind-deadline-expired');
@@ -192,7 +217,8 @@ function startKindWork(
 /**
  * The deadline is allowed to trim a kind only after another kind has produced
  * rows. When every section is still empty, keep this one-shot query alive for
- * the first late result; the caller can still supersede it through `signal`.
+ * the first late result — bounded by `COMPOSER_SUGGESTION_COLD_START_GRACE_MS`,
+ * and still releasable early through `signal`.
  */
 function waitForColdSuggestionRows(
     pending: readonly PendingColdSuggestionKind[],
@@ -203,15 +229,24 @@ function waitForColdSuggestionRows(
     return new Promise<AutocompleteSuggestion[]>((resolve) => {
         let settled = false;
         let remaining = pending.length;
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
 
         const finish = (suggestions: AutocompleteSuggestion[]) => {
             if (settled) return;
             settled = true;
+            clearTimeout(graceTimer);
             signal?.removeEventListener('abort', onAbort);
             for (const item of pending) item.abort();
             resolve(suggestions);
         };
         const onAbort = () => finish([]);
+        graceTimer = setTimeout(() => {
+            if (settled) return;
+            for (const { definition } of pending) {
+                log.log(`[composer-suggestions] stopped waiting on ${definition.id} after ${COMPOSER_SUGGESTION_KIND_DEADLINE_MS + COMPOSER_SUGGESTION_COLD_START_GRACE_MS}ms`);
+            }
+            finish([]);
+        }, COMPOSER_SUGGESTION_COLD_START_GRACE_MS);
 
         signal?.addEventListener('abort', onAbort);
         for (const { definition, work } of pending) {

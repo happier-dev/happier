@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import expoConstantsStub from './expoConstantsStub';
@@ -37,6 +37,16 @@ function isAllowedAliasRequire(aliasPath: string): boolean {
     return ALIAS_REQUIRE_ALLOWLIST.some((prefix) => aliasPath.startsWith(prefix));
 }
 
+function isPathInsideDirectory(filePath: string, directoryPath: string): boolean {
+    const relativePath = relative(directoryPath, filePath);
+    return relativePath !== '' && !relativePath.startsWith('..') && !isAbsolute(relativePath);
+}
+
+function readParentModuleFilename(parent: unknown): string | null {
+    const filename = (parent as { filename?: unknown } | null | undefined)?.filename;
+    return typeof filename === 'string' && filename.length > 0 ? filename : null;
+}
+
 export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
     const globalState = globalThis as Record<string, unknown>;
     if (globalState[SHIM_INSTALLED_KEY] === true) return;
@@ -59,6 +69,27 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
     const recentLoads: string[] = [];
 
     const resolveAlias = (request: string): string => resolve(sourcesDir, request.slice(2));
+    /**
+     * A relative `require()` whose caller AND target both live in this package's `sources/`.
+     *
+     * Vite-node injects `require: createRequire(<module href>)` into every module it
+     * transforms, so such a require is Node's own CJS loader: it loads a second copy of the
+     * target outside the Vitest module graph, where `vi.mock` does not apply and the
+     * React Native / Expo / workspace aliases configured for the test run do not exist.
+     * Data files (assets, JSON) carry no module-graph semantics and stay allowed.
+     */
+    const resolveFirstPartySourceRequire = (
+        request: string,
+        parent: unknown,
+    ): Readonly<{ target: string; importer: string }> | null => {
+        if (!request.startsWith('./') && !request.startsWith('../')) return null;
+        if (hasAssetExtension(request) || request.toLowerCase().endsWith('.json')) return null;
+        const importer = readParentModuleFilename(parent);
+        if (!importer || !isPathInsideDirectory(importer, sourcesDir)) return null;
+        const target = resolve(dirname(importer), request);
+        if (!isPathInsideDirectory(target, sourcesDir)) return null;
+        return { target, importer };
+    };
     const loadAlias = (request: string): unknown => {
         const aliasPath = request.slice(2);
         if (!isAllowedAliasRequire(aliasPath)) {
@@ -97,6 +128,25 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
                 }
                 if (request.startsWith('@/')) {
                     return loadAlias(request);
+                }
+
+                const firstPartyRequire = resolveFirstPartySourceRequire(request, args[1]);
+                if (firstPartyRequire) {
+                    try {
+                        return originalLoad.apply(this, args as []);
+                    } catch (cause) {
+                        throw new Error(
+                            `[vitestRnShim] require("${request}") from ${firstPartyRequire.importer} `
+                            + `loaded ${firstPartyRequire.target} through Node's loader instead of the `
+                            + 'Vitest module graph, so its React Native / Expo / workspace imports bypass '
+                            + 'this run\'s aliases and stubs. Inject the dependency through the caller seam, '
+                            + 'or mock the module that owns this lazy require, instead of relying on the '
+                            + `bundler-only require. Underlying loader error: ${String(
+                                (cause as { message?: unknown } | null)?.message ?? cause,
+                            )}`,
+                            { cause },
+                        );
+                    }
                 }
             }
 

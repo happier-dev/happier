@@ -17,6 +17,7 @@ import {
 } from '@/sync/domains/plugins/ui/projection';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
 import {
+    resolvePluginUiClientExecutablePlatform,
     resolvePluginUiProjectionPlatform,
     usePluginUiProjectionCurrentness,
     type PluginUiProjectionCurrentness,
@@ -70,9 +71,9 @@ import {
     type ConnectedServiceRegistrySnapshot,
 } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
-    activateProjectedExternalVoiceProviders,
-    withdrawProjectedExternalVoiceProviders,
-} from '@/voice/registry/projectedExternalVoiceProviderActivation';
+    reconcileAppShellProjectedClientExecutables,
+    unloadAppShellProjectedClientExecutables,
+} from './appShellClientExecutableActivation';
 import {
     getBundledConversationRuntimeGenerationRevision,
     subscribeBundledConversationRuntimeGeneration,
@@ -385,6 +386,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     );
     const { interactionEnabled, phase, pluginUiProjection } = projectionUnion;
     const platform = resolvePluginUiProjectionPlatform();
+    const clientExecutablePlatform = resolvePluginUiClientExecutablePlatform();
     // §3.2 keeps the browser projection machine-scoped: it describes ONE
     // machine's browser targets, so it is published only when the union has a
     // single member — never merged into a machine-less bag.
@@ -415,7 +417,6 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     const {
         interactionEnabled: voiceInteractionEnabled,
         machineId: voiceMachineId,
-        platform: voicePlatform,
         pluginUiProjection: voicePluginUiProjection,
         serverId: voiceServerId,
     } = voiceProjectionCurrentness;
@@ -560,79 +561,82 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
             if (refreshTimer) clearInterval(refreshTimer);
         };
     }, [accountLifetime, activeServer.serverId, commitConnectedAccountProjection, hasMachines, onlineMachineIdsKey]);
-    const scheduledProjectionRef = React.useRef<PluginUiProjectionModel>(EMPTY_PLUGIN_UI_PROJECTION);
     const appliedProjectionRef = React.useRef<PluginUiProjectionModel>(EMPTY_PLUGIN_UI_PROJECTION);
-    const previousVoiceRuntimeGenerationRevisionRef = React.useRef(voiceRuntimeGenerationRevision);
     const pluginRuntimeUpdateTailRef = React.useRef<Promise<void>>(Promise.resolve());
+    const appNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
+        placements: pluginUiProjection
+            ? Object.values(pluginUiProjection.surfacePlacementsById)
+            : [],
+        settingsPages: pluginUiProjection
+            ? Object.values(pluginUiProjection.settingsPagesById)
+            : [],
+        targetKind: 'app',
+        accountLifetime,
+    });
+    const appNavigationBindingRef = React.useRef(appNavigationBinding);
+    appNavigationBindingRef.current = appNavigationBinding;
+    const readAppNavigationBinding = React.useCallback(() => appNavigationBindingRef.current, []);
 
     React.useEffect(() => {
-        const previous = scheduledProjectionRef.current;
         const next = pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
-        const projectionChanged = previous !== next;
-        const voiceRuntimeGenerationChanged = (
-            previousVoiceRuntimeGenerationRevisionRef.current !== voiceRuntimeGenerationRevision
-        );
-        if (!voiceInteractionEnabled || !voiceMachineId) {
-            // Preserve the last-known visible projection while withdrawing its
-            // process-global executable authority immediately. Do not queue
-            // this behind activation or plugin-owned teardown.
-            void withdrawProjectedExternalVoiceProviders().catch(() => {
-                // Authority is synchronously fenced before cleanup awaits plugin disposal.
+        let cancelled = false;
+        // This is the one production serial caller. It always reconciles the
+        // complete app Action set, and layers the optional Voice family into
+        // that same transaction rather than allowing Voice currentness to gate
+        // unrelated Action activation.
+        const update = pluginRuntimeUpdateTailRef.current.then(async () => {
+            await settleAppShellPluginRuntimeUpdate({
+                invalidate: async () => {
+                    const applied = appliedProjectionRef.current;
+                    if (applied === next) return;
+                    await applyAppShellProjectionInvalidation(applied, next);
+                    appliedProjectionRef.current = next;
+                },
+                isCancelled: () => cancelled,
+                activate: async () => {
+                    await reconcileAppShellProjectedClientExecutables({
+                        projection: next,
+                        platform: clientExecutablePlatform,
+                        voice: voiceInteractionEnabled && voiceMachineId && voicePluginUiProjection
+                            ? Object.freeze({
+                                projection: voicePluginUiProjection,
+                                machineId: voiceMachineId,
+                                serverId: voiceServerId,
+                            })
+                            : null,
+                        reader: availabilityReader,
+                        accountLifetime,
+                        readNavigationBinding: readAppNavigationBinding,
+                        isCurrent: () => !cancelled,
+                    });
+                },
             });
-        }
-        if (projectionChanged || voiceRuntimeGenerationChanged || voiceInteractionEnabled) {
-            scheduledProjectionRef.current = next;
-            previousVoiceRuntimeGenerationRevisionRef.current = voiceRuntimeGenerationRevision;
-            let cancelled = false;
-            const update = pluginRuntimeUpdateTailRef.current.then(async () => {
-                await settleAppShellPluginRuntimeUpdate({
-                    invalidate: async () => {
-                        const applied = appliedProjectionRef.current;
-                        if (applied === next) return;
-                        await applyAppShellProjectionInvalidation(applied, next);
-                        appliedProjectionRef.current = next;
-                    },
-                    isCancelled: () => cancelled,
-                    activate: async () => {
-                        if (!voiceInteractionEnabled || !voiceMachineId || !voicePluginUiProjection) return;
-                        await activateProjectedExternalVoiceProviders({
-                            projection: voicePluginUiProjection,
-                            machineId: voiceMachineId,
-                            serverId: voiceServerId,
-                            hostPlatform: voicePlatform,
-                            reader: availabilityReader,
-                            accountLifetime,
-                        });
-                    },
-                });
-            });
-            pluginRuntimeUpdateTailRef.current = update;
-            return () => { cancelled = true; };
-        }
-        return undefined;
+        });
+        pluginRuntimeUpdateTailRef.current = update;
+        return () => { cancelled = true; };
     }, [
         pluginUiProjection,
+        clientExecutablePlatform,
         voiceInteractionEnabled,
         voiceMachineId,
-        voicePlatform,
         voicePluginUiProjection,
         voiceRuntimeGenerationRevision,
         voiceServerId,
         availabilityReader,
         accountLifetime,
+        readAppNavigationBinding,
     ]);
 
     React.useEffect(() => () => {
         const previous = appliedProjectionRef.current;
-        scheduledProjectionRef.current = EMPTY_PLUGIN_UI_PROJECTION;
         appliedProjectionRef.current = EMPTY_PLUGIN_UI_PROJECTION;
         void applyAppShellProjectionInvalidation(previous, EMPTY_PLUGIN_UI_PROJECTION).catch(() => {
             // Unmount must remain safe if cache invalidation fails.
         });
         // The executable host is process-global while this update tail belongs
-        // to one component instance. Fence authority synchronously so pending
-        // activation cannot publish during a same-generation remount.
-        void withdrawProjectedExternalVoiceProviders().catch(() => {
+        // to one component instance. Fence every exact-authority leaf so a
+        // pending Action or Voice activation cannot publish on remount.
+        void unloadAppShellProjectedClientExecutables().catch(() => {
             // Authority is synchronously fenced before cleanup awaits plugin disposal.
         });
     }, []);
@@ -648,17 +652,6 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         connectedAccountProjectionRevision,
         connectedAccountProjectionState,
     }), [connectedAccountProjectionRevision, connectedAccountProjectionState, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, projectionUnion.machineId, projectionUnion.serverId]);
-    const appNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
-        placements: pluginUiProjection
-            ? Object.values(pluginUiProjection.surfacePlacementsById)
-            : [],
-        settingsPages: pluginUiProjection
-            ? Object.values(pluginUiProjection.settingsPagesById)
-            : [],
-        targetKind: 'app',
-        accountLifetime,
-    });
-
     return (
         <AppShellPluginUiProjectionValueProvider value={value}>
             {projectionTargets.map((projectionTarget) => (

@@ -85,7 +85,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     isAgentSelectable: (agentId: AgentId) => boolean;
     isCliBannerDismissed: (agentId: AgentId) => boolean;
     dismissCliBanner: (agentId: AgentId, scope: CliNotDetectedBannerDismissScope) => void;
-    agentType: AgentId;
+    agentType: string;
     agentLabel?: string;
     setAgentType: (agent: AgentId) => void;
     agentPickerTitle?: NewSessionWizardAgentProps['agentPickerTitle'];

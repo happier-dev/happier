@@ -21,6 +21,8 @@ declare module 'react-test-renderer' {
         findAll(predicate: (node: ReactTestInstance) => boolean): ReactTestInstance[];
         findByTestId(testID: string): ReactTestInstance | null;
         findAllByTestId(testID: string): ReactTestInstance[];
+        findHostByTestId(testID: string): ReactTestInstance | null;
+        findAllHostsByTestId(testID: string): ReactTestInstance[];
         pressByTestId(testID: string): void;
         pressByTestIdAsync(testID: string): Promise<void>;
         changeTextByTestId(testID: string, value: string): void;
@@ -33,6 +35,18 @@ function nodeMatchesTestId(node: ReactTestInstance, testID: string): boolean {
 
 function findAllByTestId(root: ReactTestInstance, testID: string): ReactTestInstance[] {
     return root.findAll((node) => nodeMatchesTestId(node, testID));
+}
+
+/**
+ * The same query restricted to HOST instances — the nodes that actually painted.
+ *
+ * `findAllByTestId` walks composites too, so a component that forwards `testID` and then renders
+ * `null` still matches. That makes `expect(findAllByTestId(id)).toHaveLength(0)` pass for the wrong
+ * reason, and it makes `findByTestId(...).props.style` read the composite's unresolved `style` PROP
+ * rather than the style the host resolved. Use these when the assertion is about what was rendered.
+ */
+function findAllHostsByTestId(root: ReactTestInstance, testID: string): ReactTestInstance[] {
+    return root.findAll((node) => typeof node.type === 'string' && nodeMatchesTestId(node, testID));
 }
 
 function resolvePreferredTestIdMatch(root: ReactTestInstance, testID: string): ReactTestInstance | null {
@@ -195,6 +209,8 @@ type RenderScreenQueryHelpers = Readonly<{
     find: (predicate: (node: ReactTestInstance) => boolean) => ReactTestInstance;
     findByTestId: (testID: string) => ReactTestInstance | null;
     findAllByTestId: (testID: string) => ReactTestInstance[];
+    findHostByTestId: (testID: string) => ReactTestInstance | null;
+    findAllHostsByTestId: (testID: string) => ReactTestInstance[];
     findAll: (predicate: (node: ReactTestInstance) => boolean) => ReactTestInstance[];
     getTextContent: () => string;
     pressByTestId: (testID: string) => void;
@@ -266,6 +282,8 @@ export async function renderScreen(
         find: (predicate) => getRoot().find(predicate),
         findByTestId: (testID) => resolvePreferredTestIdMatch(getRoot(), testID),
         findAllByTestId: (testID) => findAllByTestId(getRoot(), testID),
+        findHostByTestId: (testID) => findAllHostsByTestId(getRoot(), testID).at(-1) ?? null,
+        findAllHostsByTestId: (testID) => findAllHostsByTestId(getRoot(), testID),
         findAll: (predicate) => getRoot().findAll(predicate),
         getTextContent: () => {
             const parts: string[] = [];
@@ -291,6 +309,8 @@ export async function renderScreen(
         findAll: (predicate: (node: ReactTestInstance) => boolean) => getRoot().findAll(predicate),
         findByTestId: helpers.findByTestId,
         findAllByTestId: helpers.findAllByTestId,
+        findHostByTestId: helpers.findHostByTestId,
+        findAllHostsByTestId: helpers.findAllHostsByTestId,
         pressByTestId: helpers.pressByTestId,
         pressByTestIdAsync: helpers.pressByTestIdAsync,
         changeTextByTestId: helpers.changeTextByTestId,
@@ -304,6 +324,8 @@ export async function renderScreen(
         | 'findAll'
         | 'findByTestId'
         | 'findAllByTestId'
+        | 'findHostByTestId'
+        | 'findAllHostsByTestId'
         | 'pressByTestId'
         | 'pressByTestIdAsync'
         | 'changeTextByTestId'
@@ -320,6 +342,8 @@ export async function renderScreen(
         find: helpers.find,
         findByTestId: helpers.findByTestId,
         findAllByTestId: helpers.findAllByTestId,
+        findHostByTestId: helpers.findHostByTestId,
+        findAllHostsByTestId: helpers.findAllHostsByTestId,
         findAll: helpers.findAll,
         getTextContent: helpers.getTextContent,
         pressByTestId: helpers.pressByTestId,

@@ -3,11 +3,10 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { View } from 'react-native';
 
-import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { getResolvedBackendCatalogEntries, resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
+import { getResolvedBackendCatalogEntries, resolveBackendTargetOperationalAgentId } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { ExternalSessionsBrowseScreen } from '@/components/sessions/external/browse/ExternalSessionsBrowseScreen';
 import { ExternalSessionsBrowseRouteGate } from '@/components/sessions/external/browse/ExternalSessionsBrowseRouteGate';
@@ -53,21 +52,8 @@ function pickFirstNonEmpty(...values: readonly RouteParamValue[]): string | null
     return null;
 }
 
-function resolveExplicitSelectedBuiltInAgentId(
-    routeAgentType: unknown,
-    lastUsedAgent: unknown,
-): AgentId | null {
-    if (isAgentId(routeAgentType)) {
-        return routeAgentType;
-    }
-    if (isAgentId(lastUsedAgent)) {
-        return lastUsedAgent;
-    }
-    return null;
-}
-
 function isPluginLikeBackendTarget(target: BackendTargetRefV2 | null | undefined): boolean {
-    return !!(target && target.kind === 'backend' && !target.configuredBackendId && !isAgentId(target.backendId));
+    return !!(target && target.kind === 'backend' && !target.configuredBackendId && !isBundledAgentId(target.backendId));
 }
 
 function ResumeBrowsePickerScreenContent(props: Readonly<{
@@ -85,7 +71,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
     }, [params.dataId]);
     const agentTypeParam = React.useMemo<AgentId | undefined>(() => {
         const agentTypeCandidate = pickFirstNonEmpty(params.agentType as RouteParamValue, params.providerId);
-        return agentTypeCandidate && isAgentId(agentTypeCandidate) ? agentTypeCandidate : undefined;
+        return agentTypeCandidate && isBundledAgentId(agentTypeCandidate) ? agentTypeCandidate : undefined;
     }, [params.agentType, params.providerId]);
     const effectiveMachineId = React.useMemo(() => {
         const directParam = normalizeNonEmptyParam(params.machineId) ?? '';
@@ -141,28 +127,13 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
     const selectedBackendEntry = React.useMemo(() => {
         return resolvedBackendEntries.find((entry) => entry.backendTargetKey === effectiveBackendTargetKey) ?? null;
     }, [effectiveBackendTargetKey, resolvedBackendEntries]);
-    const explicitSelectedBuiltInAgentId = React.useMemo(() => {
-        return resolveExplicitSelectedBuiltInAgentId(agentTypeParam, settings.lastUsedAgent);
-    }, [agentTypeParam, settings.lastUsedAgent]);
-    const runtimeCarrierAgentId = React.useMemo<AgentId | null>(() => {
-        if (selectedBackendEntry?.catalogAgentId) {
-            return selectedBackendEntry.catalogAgentId;
-        }
-        if (explicitSelectedBuiltInAgentId) {
-            return resolvePersistedAgentIdForBackendTarget({
-                backendTarget: effectiveBackendTarget,
-                persistedAgentId: agentTypeParam ?? settings.lastUsedAgent,
-                selectedBuiltInAgentId: explicitSelectedBuiltInAgentId,
-            });
-        }
-        return resolveCatalogAgentIdForBackendTarget(effectiveBackendTarget);
-    }, [agentTypeParam, effectiveBackendTarget, explicitSelectedBuiltInAgentId, selectedBackendEntry?.catalogAgentId, settings.lastUsedAgent]);
-    const agentType = React.useMemo<AgentId>(() => {
-        return runtimeCarrierAgentId ?? explicitSelectedBuiltInAgentId ?? DEFAULT_AGENT_ID;
-    }, [explicitSelectedBuiltInAgentId, runtimeCarrierAgentId]);
-    const externalSessionBrowseCarrierAgentId = React.useMemo<AgentId | null>(() => {
-        return runtimeCarrierAgentId;
-    }, [runtimeCarrierAgentId]);
+    const operationalAgentId = React.useMemo(() => {
+        return resolveBackendTargetOperationalAgentId({
+            backendTarget: effectiveBackendTarget,
+            selectedEntry: selectedBackendEntry,
+            mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById,
+        });
+    }, [daemonMergedProjectionInputs?.mergedProviderProjectionById, effectiveBackendTarget, selectedBackendEntry]);
     const agentOptionState = React.useMemo(() => {
         const map = readBackendNewSessionOptionStateByTargetKey(tempSessionData);
         return map?.[effectiveBackendTargetKey] ?? null;
@@ -186,21 +157,21 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
         if (daemonMergedProjection.phase !== 'loading') {
             return false;
         }
-        if (isPluginLikeBackendTarget(effectiveBackendTarget) && runtimeCarrierAgentId === null) {
+        if (isPluginLikeBackendTarget(effectiveBackendTarget) && operationalAgentId === null) {
             return true;
         }
-        return selectedBackendEntry == null && runtimeCarrierAgentId === null;
-    }, [daemonMergedProjection.phase, effectiveBackendTarget, params.backendTargetKey, runtimeCarrierAgentId, selectedBackendEntry]);
+        return selectedBackendEntry == null && operationalAgentId === null;
+    }, [daemonMergedProjection.phase, effectiveBackendTarget, operationalAgentId, params.backendTargetKey, selectedBackendEntry]);
 
     const lockScope = React.useMemo(() => {
         if (!effectiveMachineId) return null;
-        if (!externalSessionBrowseCarrierAgentId) return null;
+        if (!operationalAgentId) return null;
         if (!canBrowseExternalSessions({
-            agentId: externalSessionBrowseCarrierAgentId,
+            agentId: operationalAgentId,
             projection: daemonMergedProjectionInputs?.pluginProjectionV2,
         })) return null;
         const source = resolveExternalSessionBrowseLockedSource({
-            providerId: externalSessionBrowseCarrierAgentId,
+            providerId: operationalAgentId,
             agentOptionState,
             profile: accountProfile,
             settings,
@@ -210,10 +181,10 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
         return {
             machineId: effectiveMachineId,
             serverId: effectiveServerId,
-            providerId: externalSessionBrowseCarrierAgentId,
+            providerId: operationalAgentId,
             source,
         };
-    }, [accountProfile, agentOptionState, daemonMergedProjectionInputs?.pluginProjectionV2, externalSessionBrowseCarrierAgentId, effectiveMachineId, effectiveServerId, settings]);
+    }, [accountProfile, agentOptionState, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveMachineId, effectiveServerId, operationalAgentId, settings]);
 
     React.useEffect(() => {
         if (lockScope || awaitingCarrierProjection) return;

@@ -47,12 +47,14 @@ import type { SessionListMoveSheetTarget } from './move-sheet/buildSessionListMo
 import { useSessionListMoveSheet } from './move-sheet/useSessionListMoveSheet';
 import {
     buildServerScopedSessionKey,
+    buildVisibleSessionNavigationEntries,
     moveSessionMruEntryToFront,
     resolveVisibleSessionEdgeNavigation,
     resolveSessionMruNavigation,
     resolveVisibleSessionNavigation,
     type VisibleSessionNavigationEntry,
-} from '@/keyboard/sessions';
+} from '@/sync/domains/session/navigation/sessionNavigationOrder';
+import { useSessionNavigationCursorPublisher } from '@/sync/domains/session/navigation/useSessionNavigationCursorPublisher';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import {
     useSessionSurfaceVisibilitySnapshot,
@@ -108,6 +110,12 @@ import {
     type SessionFoldersV1,
 } from '@/sync/domains/session/folders';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
+import {
+    resolveSessionAttentionStanding,
+    type SessionAttentionStandingPolicy,
+} from '@/sync/domains/session/organization/attentionStanding';
+import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
+import { sessionSetAttentionStandingWithServerScope } from '@/sync/ops/sessionOrganization';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
 import { isSessionListPrimaryHeaderKind } from './sessionListPrimaryHeader';
 import {
@@ -121,6 +129,7 @@ import {
 } from './search/useSessionListMemorySearchAugmentation';
 import { useSessionListHeaderFilterRetention } from './search/useSessionListHeaderFilterRetention';
 import { buildSessionListRetentionKey } from './scroll/sessionListRetentionKey';
+import { useSessionListPaneSourceScopeKey } from './sessionListPaneRetention';
 import {
     SessionListFilteredNoResultsMessage,
     SESSION_LIST_FILTERED_NO_RESULTS_MESSAGE_KEY,
@@ -246,6 +255,8 @@ function buildSessionBulkActionTargetFromSessionItem(params: Readonly<{
     pinnedKeySet: ReadonlySet<string>;
     sessionTags: Record<string, string[]>;
     foldersFeatureEnabled: boolean;
+    attentionStandingEnabled: boolean;
+    attentionStandingPolicy: SessionAttentionStandingPolicy;
 }>): SessionBulkActionTarget | null {
     const selectionKey = buildServerScopedSessionKey(params.item.sessionId, params.item.serverId);
     if (!selectionKey) return null;
@@ -258,6 +269,8 @@ function buildSessionBulkActionTargetFromSessionItem(params: Readonly<{
         serverId,
         currentUserId: params.currentUserId,
         isPinned,
+        attentionStandingEnabled: params.attentionStandingEnabled,
+        attentionStanding: resolveSessionAttentionStanding(params.attentionStandingPolicy, selectionKey),
     });
     const readState = actionTarget.readStateAction.visible
         ? actionTarget.readStateAction.targetState === 'read'
@@ -282,6 +295,11 @@ function buildSessionBulkActionTargetFromSessionItem(params: Readonly<{
         workspace: params.item.workspace ?? null,
         tags: getTagsForSession(params.sessionTags, selectionKey),
         readState,
+        // Left undefined when the action is unreachable for this session (band off, archived,
+        // view-only) so the selection bar offers neither direction rather than inventing one.
+        standing: actionTarget.attentionStandingAction.visible
+            ? actionTarget.attentionStandingAction.targetStanding === false
+            : undefined,
     };
 }
 
@@ -298,6 +316,24 @@ function buildStringRecordSignature(value: Readonly<Record<string, string>> | nu
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, entryValue]) => `${key}\u0001${entryValue}`)
         .join('\u0002');
+}
+
+/**
+ * Content signature for the attention standing policy. The org view state mints a
+ * fresh overrides record on every projection build, so the raw policy object would
+ * invalidate every virtualized row on unrelated organization traffic; the rows are
+ * only allowed to re-render when the standing CONTENT actually changed.
+ */
+function buildAttentionStandingSignature(policy: SessionAttentionStandingPolicy): string {
+    const defaultPart = policy.defaultStanding ? '1' : '0';
+    const overrides = Object.entries(policy.overridesBySessionKey);
+    if (overrides.length === 0) return defaultPart;
+    return [
+        defaultPart,
+        ...overrides
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, standing]) => `${key}\u0001${standing ? '1' : '0'}`),
+    ].join('\u0002');
 }
 
 function buildStringArrayRecordSignature(value: Readonly<Record<string, readonly string[]>> | null | undefined): string {
@@ -457,6 +493,9 @@ export function useSessionListViewStateFromPaneState(
     const pathname = usePathname();
     const effectivePathname = options.pathname ?? pathname;
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(options.surfaceOwnership);
+    // Same scope identity the pane retention keys by, so a published order and the pane
+    // it was captured from can never describe different server/selection scopes.
+    const sessionNavigationSourceScopeKey = useSessionListPaneSourceScopeKey();
     const renderPaneState = sessionListPaneState;
     const retentionKey = React.useMemo(
         () => buildSessionListRetentionKey(storageKind),
@@ -512,6 +551,12 @@ export function useSessionListViewStateFromPaneState(
         serverId: activeOrganizationServerId,
         projection: organizationProjection,
     }), [activeOrganizationServerId, organizationProjection]);
+    // One policy for the whole selection instead of a per-row settings subscription: the selection
+    // bar needs the same stored standing the row's own menu reads, and the overrides record is
+    // already held by the organization view state above.
+    const attentionStanding = useSessionAttentionStandingInputs(
+        organizationListViewState.attentionStandingOverridesBySessionKey,
+    );
     const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1 as string[];
     const sessionListGroupOrderV1 = organizationListViewState.sessionListGroupOrderV1 as Record<string, string[]>;
     const sessionWorkspaceOrderV1 = organizationListViewState.sessionWorkspaceOrderV1 as Record<string, string[]>;
@@ -850,6 +895,8 @@ export function useSessionListViewStateFromPaneState(
         selectedSessionId,
         showServerBadge: shellFlags.showServerBadge,
         showPinnedServerBadge: shellFlags.showPinnedServerBadge,
+        attentionStandingEnabled: attentionStanding.actionEnabled,
+        attentionStandingPolicy: attentionStanding.policy,
         workingIndicatorMode: sessionListWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner',
         identityDisplay: sessionListIdentityDisplay === 'agentLogo' || sessionListIdentityDisplay === 'none'
             ? sessionListIdentityDisplay
@@ -864,31 +911,29 @@ export function useSessionListViewStateFromPaneState(
         workingTextMode: sessionListWorkingStatusAnimatedTextEnabled === false ? 'static' : 'animated',
     });
 
-    const visibleSessionNavigationEntries = React.useMemo<VisibleSessionNavigationEntry[]>(() => (
-        renderModels.listItems
-            .flatMap((item, index) => item.type === 'session'
-                ? [{
-                    index,
-                    sessionId: item.sessionId,
-                    sessionKey: buildServerScopedSessionKey(item.sessionId, item.serverId),
-                    ...(item.serverId ? { serverId: item.serverId } : null),
-                }]
-                : [])
-    ), [renderModels.listItems]);
+    const visibleSessionNavigationEntries = React.useMemo<VisibleSessionNavigationEntry[]>(
+        () => buildVisibleSessionNavigationEntries(renderModels.listItems),
+        [renderModels.listItems],
+    );
+    // Freezing the lateral-navigation order is a side effect of this surface going
+    // data-inactive: on phone that happens on every `/session/*` route, so the last
+    // published order is exactly the one the user was looking at when they opened a
+    // session. The rows published are the ones rendered, so the order the cursor walks
+    // and the order on screen cannot diverge.
+    useSessionNavigationCursorPublisher({
+        active: surfaceOwnership.dataActive,
+        origin: 'session-list',
+        sourceScopeKey: sessionNavigationSourceScopeKey,
+        storageKind,
+        items: renderModels.listItems,
+    });
     const filteredNoResultsMessage: TranslationKey | undefined = hasActiveSessionListHeaderFilters(headerFilters) && visibleSessionNavigationEntries.length === 0
         ? SESSION_LIST_FILTERED_NO_RESULTS_MESSAGE_KEY
         : undefined;
-    const selectionScopeSessionNavigationEntries = React.useMemo<VisibleSessionNavigationEntry[]>(() => (
-        renderModels.selectionScopeListItems
-            .flatMap((item, index) => item.type === 'session'
-                ? [{
-                    index,
-                    sessionId: item.sessionId,
-                    sessionKey: buildServerScopedSessionKey(item.sessionId, item.serverId),
-                    ...(item.serverId ? { serverId: item.serverId } : null),
-                }]
-                : [])
-    ), [renderModels.selectionScopeListItems]);
+    const selectionScopeSessionNavigationEntries = React.useMemo<VisibleSessionNavigationEntry[]>(
+        () => buildVisibleSessionNavigationEntries(renderModels.selectionScopeListItems),
+        [renderModels.selectionScopeListItems],
+    );
     const knownSessionKeys = React.useMemo(() => (
         visibleSessionNavigationEntries.map((entry) => entry.sessionKey)
     ), [visibleSessionNavigationEntries]);
@@ -1230,11 +1275,15 @@ export function useSessionListViewStateFromPaneState(
                 pinnedKeySet: orderingPersistenceState.pinnedKeySet,
                 sessionTags: normalizedShellState.sessionTags,
                 foldersFeatureEnabled: folderActionsEnabled,
+                attentionStandingEnabled: attentionStanding.actionEnabled,
+                attentionStandingPolicy: attentionStanding.policy,
             });
             if (target) targets.set(target.key, target);
         }
         return targets;
     }, [
+        attentionStanding.actionEnabled,
+        attentionStanding.policy,
         currentUserId,
         folderActionsEnabled,
         normalizedShellState.sessionTags,
@@ -1535,6 +1584,16 @@ export function useSessionListViewStateFromPaneState(
         setSessionTagAssignments: async ({ target, tags }) => {
             await setSessionTagAssignmentsForTarget(target, tags);
         },
+        setSessionAttentionStanding: async ({ target, standing }) => {
+            const result = await sessionSetAttentionStandingWithServerScope(
+                target.sessionId,
+                standing,
+                { serverId: target.serverId ?? null },
+            );
+            if (!result.success) {
+                throw new Error(result.message || 'Failed to update session attention standing');
+            }
+        },
         hideInactiveSessions: hideInactiveSessions === true,
         foldersFeatureDecision: { state: folderActionsEnabled ? 'enabled' : 'disabled' },
         stopErrorMessage: t('sessionInfo.failedToStopSession'),
@@ -1781,6 +1840,8 @@ export function useSessionListViewStateFromPaneState(
                 onUnregisterTreeRowBounds={rowInteractions.unregisterTreeRowBounds}
                 currentUserId={currentUserId}
                 allKnownTags={allKnownTags}
+                attentionStandingEnabled={attentionStanding.actionEnabled}
+                attentionStandingPolicy={attentionStanding.policy}
                 tagsEnabled={sessionTagsEnabled === true}
                 activeColorMode={sessionListActiveColorMode === 'attentionOnly' || sessionListActiveColorMode === 'allActive'
                     ? sessionListActiveColorMode
@@ -1812,6 +1873,8 @@ export function useSessionListViewStateFromPaneState(
         );
     }, [
         allKnownTags,
+        attentionStanding.actionEnabled,
+        attentionStanding.policy,
         currentUserId,
         densityViewState.compact,
         densityViewState.compactMinimal,
@@ -1964,6 +2027,10 @@ export function useSessionListViewStateFromPaneState(
     renderSessionItemRef.current = renderSessionItem;
     const allKnownTagsSignature = React.useMemo(() => buildStringListSignature(allKnownTags), [allKnownTags]);
     const rowLabelsSignature = React.useMemo(() => buildRowLabelSignature(rowLabelByTreeRowId), [rowLabelByTreeRowId]);
+    const attentionStandingSignature = React.useMemo(
+        () => buildAttentionStandingSignature(attentionStanding.policy),
+        [attentionStanding.policy],
+    );
     const sessionTagsSignature = React.useMemo(
         () => buildStringArrayRecordSignature(normalizedShellState.sessionTags),
         [normalizedShellState.sessionTags],
@@ -1974,6 +2041,8 @@ export function useSessionListViewStateFromPaneState(
     );
     const virtualizedRowExtraData = React.useMemo(() => ({
         allKnownTagsSignature,
+        attentionStandingEnabled: attentionStanding.actionEnabled,
+        attentionStandingSignature,
         canDragSessionRows: shellFlags.canDragSessionRows,
         compact: Boolean(densityViewState.compact),
         compactMinimal: Boolean(densityViewState.compact && densityViewState.compactMinimal),
@@ -1990,6 +2059,8 @@ export function useSessionListViewStateFromPaneState(
         workspaceLabelsSignature,
     }), [
         allKnownTagsSignature,
+        attentionStanding.actionEnabled,
+        attentionStandingSignature,
         currentUserId,
         densityViewState.compact,
         densityViewState.compactMinimal,

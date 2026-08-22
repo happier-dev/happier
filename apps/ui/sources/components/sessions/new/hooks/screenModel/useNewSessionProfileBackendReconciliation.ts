@@ -37,7 +37,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
     resolveDefaultPermissionMode: (profile: AIBackendProfile | null) => PermissionMode;
     prepareSecretPromptForProfileSelection: (prevProfileId: string | null) => void;
     hasUserTouchedProfileSelectionRef: React.MutableRefObject<boolean>;
-    agentType: AgentId;
+    agentType: string;
     resolveProfileAuthoringIntent?: (profileId: string) => Readonly<{
         preferredAgentTargetKey: string | null;
         modelSelection: SessionModelSelectionV1 | null;

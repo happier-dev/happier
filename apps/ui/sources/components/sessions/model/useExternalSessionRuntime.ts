@@ -6,6 +6,7 @@ import {
 import type { ExternalSessionStatusGetResponse } from '@happier-dev/protocol';
 import { AppState, Platform } from 'react-native';
 
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -287,8 +288,15 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         }
 
         const currentGeneration = generationRef.current;
+        // Status is Account-scoped: it is read from Account A's machine with
+        // Account A's credentials. A switch to Account B mid-read must not
+        // publish or return Account A's runtime state into Account B's scope.
+        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
         let refreshPromise: Promise<ExternalSessionRuntimeStatus | null> | null = null;
         refreshPromise = (async () => {
+            if (!accountCurrentness.isCurrent()) {
+                return null;
+            }
             const statusResult = await machineExternalSessionStatusGet({
                 machineId: externalSessionTarget.machineId,
                 sessionId: normalizedSessionId,
@@ -312,7 +320,10 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
                 return null;
             }
 
-            if (generationRef.current !== currentGeneration) {
+            if (
+                generationRef.current !== currentGeneration
+                || !accountCurrentness.isCurrent()
+            ) {
                 return null;
             }
 
@@ -339,8 +350,13 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         let renewTimeoutId: ReturnType<typeof setTimeout> | null = null;
         let attachInFlight = false;
         let attachPending = false;
+        // Attach/detach are Account-scoped durable operations against Account A's
+        // machine. Once that Account retires, this viewer must stop emitting: the
+        // lease is reclaimed by its TTL rather than released under Account B.
+        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
 
         const detachLease = (leaseId: string) => {
+            if (!accountCurrentness.isCurrent()) return;
             void machineExternalSessionDetach({
                 machineId: externalSessionTarget.machineId,
                 sessionId: normalizedSessionId,
@@ -374,6 +390,7 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
             attachInFlight = true;
             try {
                 do {
+                    if (!accountCurrentness.isCurrent()) return;
                     attachPending = false;
                     const requestedTailCursor = acceptedTailCursorRef.current;
                     lastDemandedTailCursorRef.current = requestedTailCursor;
@@ -427,10 +444,10 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
                     if (acceptedTailCursorRef.current !== requestedTailCursor) {
                         attachPending = true;
                     }
-                } while (attachPending && !cancelled);
+                } while (attachPending && !cancelled && accountCurrentness.isCurrent());
             } finally {
                 attachInFlight = false;
-                if (attachPending && !cancelled) {
+                if (attachPending && !cancelled && accountCurrentness.isCurrent()) {
                     void pumpLeaseEnsure();
                 }
             }

@@ -56,6 +56,12 @@ function createSupportedClaudeProjection(params: Readonly<{
                 enabled: true,
                 source: { kind: 'bundled', locator: 'happier.agent.claude' },
             },
+            'acme.review-bot': {
+                id: 'acme.review-bot',
+                displayName: 'Review Bot',
+                enabled: true,
+                source: { kind: 'local', locator: 'acme.review-bot' },
+            },
         },
         agentsById: {
             ...params.additionalAgentsById,
@@ -351,6 +357,35 @@ describe('ResumePickerScreen browse modal', () => {
                         isBuiltIn: false,
                         catalogAgentId: 'claude',
                         iconAgentId: 'claude',
+                        externalSessions: {
+                            agent: {
+                                pluginId: 'acme.review-bot',
+                                localId: 'review-bot',
+                            },
+                            generation: 1,
+                            operations: {
+                                listCandidates: true,
+                                resolveLinkIdentity: true,
+                                pageTranscript: true,
+                                readAfterTranscript: true,
+                            },
+                            sources: [{
+                                sourceKind: 'reviewBotConfig',
+                                schema: {
+                                    fields: [
+                                        { name: 'kind', kind: 'literal', value: 'reviewBotConfig' },
+                                        { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },
+                                    ],
+                                },
+                                key: {
+                                    segments: [
+                                        { kind: 'literal', value: 'reviewBotConfig' },
+                                        { kind: 'field', field: 'configDir' },
+                                    ],
+                                },
+                                instances: [{ kind: 'default', constants: {} }],
+                            }],
+                        },
                     },
                 },
                 backendsById: {
@@ -371,6 +406,7 @@ describe('ResumePickerScreen browse modal', () => {
         await flushHookEffects({ cycles: 10 });
 
         const props = resumeSelectionContentPropsRef.current;
+        expect(props?.agentType).toBe('plugin:review-bot');
         expect(props?.resumeBrowse).toBeTruthy();
 
         const result = await props?.resumeBrowse?.onBrowse?.();
@@ -379,7 +415,7 @@ describe('ResumePickerScreen browse modal', () => {
             lockScope: expect.objectContaining({
                 machineId: 'machine-plugin-3',
                 serverId: 'server-2',
-                providerId: 'claude',
+                providerId: 'plugin:review-bot',
             }),
         }));
         expect(result).toBe('session-picked');

@@ -30,6 +30,14 @@ const FLOATING_TOP_GAP = 6;
 // capsule rim to a selected tab at the edge: H = 2 + 4 = 6, V = 1 + 3 = 4.
 const PILL_PADDING_VERTICAL = 1;
 const PILL_PADDING_HORIZONTAL = 2;
+// Breathing room between the bar and a sibling capsule. iOS 26 sets its search button off the tab
+// bar by roughly this much, and it matches the widest tab gap so the two capsules read as one
+// system rather than as one control cut in half.
+const ACCESSORY_GAP = 8;
+// Extra breathing room at the row's edges, on top of `FLOATING_SIDE_GUTTER`. Applied to BOTH
+// sides, never just the trailing one: the leading spacer mirrors the accessory to keep the bar
+// centred, so an asymmetric inset would walk the bar off-centre by exactly this much.
+const ACCESSORY_EDGE_INSET = 8;
 
 const styles = StyleSheet.create({
     positioner: {
@@ -42,6 +50,34 @@ const styles = StyleSheet.create({
         paddingHorizontal: PILL_PADDING_HORIZONTAL,
         paddingVertical: PILL_PADDING_VERTICAL,
     },
+    accessoryRow: {
+        flexDirection: 'row',
+        // `stretch` is load-bearing, not cosmetic: the chrome host publishes this row's measured
+        // height into `SessionCockpitChromeRegistry`, and the session list padding, settings
+        // footer, composer reservation and selection action bar all pad by it. The accessory is
+        // sized BY the bar height here, so it can never become the tallest child and silently move
+        // those surfaces.
+        alignItems: 'stretch',
+        alignSelf: 'stretch',
+        paddingHorizontal: ACCESSORY_EDGE_INSET,
+    },
+    // A mirror of the accessory's footprint on the leading edge. Sized the same way it is (square,
+    // stretched to the row height) rather than by a flex weight, so the two edges stay equal at
+    // every tab-bar size WITHOUT measuring anything — which is what keeps the bar centred on the
+    // SCREEN instead of centred in the space the accessory leaves over. Flexible side cells clip
+    // the accessory on a narrow phone, because a full tab row leaves each side less than its width.
+    accessoryLeadingSpacer: {
+        aspectRatio: 1,
+    },
+    accessoryRowBar: {
+        // The bar is the only cell that absorbs a narrow viewport (its tabs already shrink); the
+        // accessory keeps its square footprint so its glyph never squashes.
+        flex: 1,
+        flexShrink: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginHorizontal: ACCESSORY_GAP,
+    },
 });
 
 export type FloatingTabBarSurfaceProps = Readonly<{
@@ -53,26 +89,48 @@ export type FloatingTabBarSurfaceProps = Readonly<{
      * only softens the cast shadow, which reads too strong over the opaque band.
      */
     opaqueBand?: boolean;
+    /**
+     * Optional sibling capsule rendered to the right of the bar — the iOS 26 shape, where the
+     * search button is its own capsule next to the tab bar rather than a tab inside it. Omitted by
+     * default: every other bottom bar renders the bar alone, and the tree stays flat for them.
+     */
+    trailingAccessory?: React.ReactNode;
     testID?: string;
 }>;
 
 export const FloatingTabBarSurface = React.memo(function FloatingTabBarSurface(props: FloatingTabBarSurfaceProps) {
     const bottomPadding = resolveFloatingTabBarBottomPadding(props.bottomInset, Platform.OS === 'ios');
 
+    const bar = (
+        <GlassPanel
+            testID={props.testID}
+            radius={TAB_BAR_RADIUS}
+            maxWidth={layout.maxWidth}
+            softShadow={props.opaqueBand === true}
+            style={styles.pill}
+        >
+            {props.children}
+        </GlassPanel>
+    );
+
     return (
         <View
             pointerEvents="box-none"
             style={[styles.positioner, { paddingBottom: bottomPadding }]}
         >
-            <GlassPanel
-                testID={props.testID}
-                radius={TAB_BAR_RADIUS}
-                maxWidth={layout.maxWidth}
-                softShadow={props.opaqueBand === true}
-                style={styles.pill}
-            >
-                {props.children}
-            </GlassPanel>
+            {props.trailingAccessory == null ? bar : (
+                // Three cells: a content-sized leading spacer, the bar, then the accessory — so the
+                // bar stays centred on the SCREEN while the accessory rides the trailing edge.
+                // Centring the row as a whole pushes the bar left by half the accessory; the bar is
+                // the thing the eye centres on, not the row.
+                <View style={styles.accessoryRow}>
+                    <View pointerEvents="none" style={styles.accessoryLeadingSpacer} />
+                    <View style={styles.accessoryRowBar}>
+                        {bar}
+                    </View>
+                    {props.trailingAccessory}
+                </View>
+            )}
         </View>
     );
 });

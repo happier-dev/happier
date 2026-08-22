@@ -10,7 +10,10 @@ type BackendNewSessionOptionStateByTargetKey = Record<string, Record<string, unk
 type ConnectedServicesParams = Parameters<typeof useNewSessionConnectedServices>[0];
 
 export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
-    agentType: AgentId;
+    /** Explicit bundled behavior backing for connected-services controls. */
+    staticAgentId?: AgentId | null;
+    /** @deprecated Direct callers without a projected backend entry are bundled-only. */
+    agentType?: AgentId;
     targetServerId: string | null;
     selectedBackendTargetKey: string;
     setBackendNewSessionOptionStateByTargetKey: React.Dispatch<React.SetStateAction<BackendNewSessionOptionStateByTargetKey>>;
@@ -24,7 +27,11 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     connectedServicesModelProbeCacheIdentity: NewSessionConnectedServicesResult['connectedServicesModelProbeCacheIdentity'];
     agentNewSessionOptions: Record<string, unknown> | null;
 }> {
-    const agentCore = React.useMemo(() => getAgentCore(params.agentType), [params.agentType]);
+    const staticAgentId = params.staticAgentId ?? params.agentType ?? null;
+    const agentCore = React.useMemo(
+        () => staticAgentId ? getAgentCore(staticAgentId) : null,
+        [staticAgentId],
+    );
 
     const setAgentOptionStateForCurrentAgent = React.useCallback((key: string, value: unknown) => {
         params.setBackendNewSessionOptionStateByTargetKey((prev) => {
@@ -44,13 +51,15 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     });
 
     const agentNewSessionOptions = React.useMemo(() => {
-        const base = buildNewSessionOptionsFromUiState({ agentId: params.agentType, agentOptionState: params.agentOptionState }) ?? {};
+        const base = staticAgentId
+            ? buildNewSessionOptionsFromUiState({ agentId: staticAgentId, agentOptionState: params.agentOptionState }) ?? {}
+            : {};
         const merged: Record<string, unknown> = { ...base };
         if (connectedServicesBindingsPayload) {
             merged.connectedServices = connectedServicesBindingsPayload;
         }
         return Object.keys(merged).length > 0 ? merged : null;
-    }, [params.agentOptionState, params.agentType, connectedServicesBindingsPayload]);
+    }, [params.agentOptionState, staticAgentId, connectedServicesBindingsPayload]);
 
     return {
         setAgentOptionStateForCurrentAgent,

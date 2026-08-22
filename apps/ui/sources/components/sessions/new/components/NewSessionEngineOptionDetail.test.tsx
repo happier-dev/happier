@@ -170,7 +170,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
-    isAgentId: (value: string) => ['claude', 'codex', 'custom-preset'].includes(value),
+    isBundledAgentId: (value: string) => ['claude', 'codex', 'custom-preset'].includes(value),
     getAgentCore: () => ({
         model: {
             supportsFreeform: agentCoreState.supportsFreeform,

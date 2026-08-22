@@ -7,12 +7,12 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { LocalDaemonControlSection } from '@/components/settings/machines/localControl/LocalDaemonControlSection';
 import { t } from '@/text';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { buildMachineSetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 export default function ThisComputerSetupRoute() {
     const router = useRouter();
-    const isDesktop = isTauriDesktop();
+    const isDesktop = isDesktopHost();
     return (
         <ItemList>
             <ItemGroup title={t('common.actions')}>

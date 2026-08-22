@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => false));
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => false));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 function setWindowLocation(url: string) {
@@ -20,7 +20,7 @@ function setWindowLocation(url: string) {
 
 describe('isDesktopOverlayWindowContext', () => {
     afterEach(() => {
-        isTauriDesktopMock.mockReset();
+        isDesktopHostMock.mockReset();
         delete (globalThis as Partial<{ window: unknown }>).window;
     });
 
@@ -28,7 +28,7 @@ describe('isDesktopOverlayWindowContext', () => {
         '/desktop/activity-overlay',
         '/desktop/pet-overlay',
     ])('recognizes the dedicated %s presenter route', async (pathname) => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         setWindowLocation(`http://localhost:8081${pathname}`);
         const { isDesktopOverlayWindowContext } = await import('./isDesktopOverlayWindowContext');
 
@@ -36,7 +36,7 @@ describe('isDesktopOverlayWindowContext', () => {
     });
 
     it('does not classify an ordinary Tauri app route as an overlay', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         setWindowLocation('http://localhost:8081/settings/pets');
         const { isDesktopOverlayWindowContext } = await import('./isDesktopOverlayWindowContext');
 
@@ -44,7 +44,7 @@ describe('isDesktopOverlayWindowContext', () => {
     });
 
     it('does not classify a matching route outside Tauri desktop as an overlay', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         setWindowLocation('http://localhost:8081/desktop/pet-overlay');
         const { isDesktopOverlayWindowContext } = await import('./isDesktopOverlayWindowContext');
 

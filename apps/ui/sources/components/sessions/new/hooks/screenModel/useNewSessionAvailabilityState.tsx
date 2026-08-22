@@ -7,7 +7,7 @@ import {
     getAgentBehavior,
     getAgentResumeExperimentsFromSettings,
     getNewSessionRelevantInstallableDepKeys,
-    isAgentId,
+    isBundledAgentId,
     type AgentId,
 } from '@/agents/catalog/catalog';
 import {
@@ -65,7 +65,10 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     capabilityServerId: string;
     externalSessionsFeatureEnabled: boolean;
     settings: Settings;
-    agentType: AgentId;
+    /** Explicit bundled behavior backing for static New Session controls. */
+    staticAgentId?: AgentId | null;
+    /** @deprecated Direct callers without a projected backend entry are bundled-only. */
+    agentType?: AgentId;
     resumeSessionId: string | null;
     enabledAgentIds: ReadonlyArray<AgentId>;
     backendNewSessionOptionStateByTargetKey: Readonly<BackendNewSessionOptionStateByTargetKey>;
@@ -77,10 +80,11 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     setDismissedCliWarnings: (next: DismissedCliWarnings) => void;
     allProfiles: ReadonlyArray<AIBackendProfile>;
 }>) {
+    const staticAgentId = params.staticAgentId ?? params.agentType ?? null;
     const automaticLoginStatusAgentIds = React.useMemo(() => {
         const out: AgentId[] = [];
         for (const agentId of params.enabledAgentIds) {
-            if (!isAgentId(agentId)) continue;
+            if (!isBundledAgentId(agentId)) continue;
             if (!isAgentAuthProbeSafeForBackgroundChecks(agentId)) continue;
             if (out.includes(agentId)) continue;
             out.push(agentId);
@@ -129,15 +133,15 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     }, [params.settings, selectedMachineCapabilitiesSnapshot]);
 
     const showResumePicker = React.useMemo(() => {
-        return canAgentResume(params.agentType, resumeCapabilityOptionsResolved);
-    }, [params.agentType, resumeCapabilityOptionsResolved]);
+        return staticAgentId !== null && canAgentResume(staticAgentId, resumeCapabilityOptionsResolved);
+    }, [resumeCapabilityOptionsResolved, staticAgentId]);
 
     const wizardInstallableDeps = React.useMemo(() => {
-        if (!params.selectedMachineId) return [];
+        if (!params.selectedMachineId || !staticAgentId) return [];
 
-        const experiments = getAgentResumeExperimentsFromSettings(params.agentType, params.settings);
+        const experiments = getAgentResumeExperimentsFromSettings(staticAgentId, params.settings);
         const relevantKeys = getNewSessionRelevantInstallableDepKeys({
-            agentId: params.agentType,
+            agentId: staticAgentId,
             settings: params.settings,
             experiments,
             resumeSessionId: params.resumeSessionId ?? '',
@@ -152,11 +156,11 @@ export function useNewSessionAvailabilityState(params: Readonly<{
             return { entry, depStatus, detectResult };
         });
     }, [
-        params.agentType,
         params.resumeSessionId,
         params.selectedMachineId,
         params.settings,
         selectedMachineCapabilitiesSnapshot,
+        staticAgentId,
     ]);
 
     const installableDepKeyCountByAgentId = React.useMemo(() => {
@@ -177,7 +181,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const selectableWithoutCliByAgentId = React.useMemo(() => {
         const out: Partial<Record<AgentId, boolean>> = {};
         for (const id of params.enabledAgentIds) {
-            if (!isAgentId(id)) {
+            if (!isBundledAgentId(id)) {
                 out[id as AgentId] = true;
                 continue;
             }
@@ -316,13 +320,16 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     }, [params.selectedMachineId]);
 
     const isCliBannerDismissed = React.useCallback((agentId: AgentId): boolean => {
-        const warningKey = getAgentCore(agentId).cli.detectKey;
+        const warningKey = getAgentCore(agentId)?.cli.detectKey;
+        // No bundled CLI detect key means there is no CLI banner to dismiss.
+        if (!warningKey) return true;
         if (hiddenCliWarningKeys[warningKey] === true) return true;
         return isCliWarningDismissed({ dismissed: params.dismissedCliWarnings, machineId: params.selectedMachineId, warningKey });
     }, [hiddenCliWarningKeys, params.dismissedCliWarnings, params.selectedMachineId]);
 
     const dismissCliBanner = React.useCallback((agentId: AgentId, scope: 'machine' | 'global' | 'temporary') => {
-        const warningKey = getAgentCore(agentId).cli.detectKey;
+        const warningKey = getAgentCore(agentId)?.cli.detectKey;
+        if (!warningKey) return;
         if (scope === 'temporary') {
             writeTemporaryHiddenCliWarningKey(params.selectedMachineId, warningKey);
             setHiddenCliWarningKeys((prev) => ({ ...prev, [warningKey]: true }));

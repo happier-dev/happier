@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveInitialNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import {
@@ -70,7 +70,7 @@ function resolveTargetScopedAuthoringDraft<Draft extends TempAuthoringDraftLike 
 
         const draftAgentId = typeof params.draft.agentId === 'string' ? params.draft.agentId.trim() : '';
         if (!draftAgentId) return params.backendTargetKey ? null : params.draft;
-        if (!isAgentId(draftAgentId)) return null;
+        if (!isBundledAgentId(draftAgentId)) return null;
 
         const legacyBuiltInTargetKey = resolveBackendTargetKeySafe({
             kind: 'backend',
@@ -117,14 +117,14 @@ function readDraftModelSelection(params: Readonly<{
 }
 
 function resolveAuthoringModelState(params: Readonly<{
-    agentType: AgentId;
+    agentType: string;
     agentTargetKey: string;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
     rememberedEngineSelection?: RememberedEngineSelectionV1 | null;
     implicitProfileModelSelection?: SessionModelSelectionV1 | null;
 }>): ResolvedAuthoringModelState {
-    const core = getAgentCore(params.agentType);
+    const core = isBundledAgentId(params.agentType) ? getAgentCore(params.agentType) : null;
     const temp = readDraftModelSelection({
         draft: params.hydratedTempAuthoringDraft,
         agentTargetKey: params.agentTargetKey,
@@ -149,11 +149,11 @@ function resolveAuthoringModelState(params: Readonly<{
     const modelMode = resolveInitialNewSessionModelMode({
         draftModelMode: candidate?.ref.modelId ?? null,
         modelConfig: {
-            defaultMode: core.model.defaultMode,
-            allowedModes: core.model.allowedModes,
-            supportsFreeform: core.model.supportsFreeform,
-            freeformModelIdPrefixes: core.model.freeformModelIdPrefixes,
-            dynamicProbe: core.model.dynamicProbe ?? 'auto',
+            defaultMode: core?.model.defaultMode ?? 'default',
+            allowedModes: core?.model.allowedModes ?? [],
+            supportsFreeform: core?.model.supportsFreeform ?? false,
+            freeformModelIdPrefixes: core?.model.freeformModelIdPrefixes ?? [],
+            dynamicProbe: core?.model.dynamicProbe ?? 'auto',
         },
     });
     return {
@@ -191,7 +191,7 @@ function resolveAuthoringAcpSessionModeId(params: Readonly<{
 }
 
 export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
-    agentType: AgentId;
+    agentType: string;
     backendTargetKey?: string | null;
     allowTargetlessDraftEngineSelection?: boolean;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
@@ -313,7 +313,9 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         setModelState({
             backendTargetKey: currentBackendTargetKey,
             value: {
-                modelMode: parsed?.ref.modelId ?? getAgentCore(params.agentType).model.defaultMode ?? 'default',
+                modelMode: parsed?.ref.modelId ?? (isBundledAgentId(params.agentType)
+                    ? getAgentCore(params.agentType).model.defaultMode ?? 'default'
+                    : 'default'),
                 modelSelection: parsed,
             },
         });

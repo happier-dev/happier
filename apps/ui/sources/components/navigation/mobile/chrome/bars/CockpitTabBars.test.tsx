@@ -26,6 +26,33 @@ const cockpitPinsState = vi.hoisted(() => ({
     value: [] as string[],
     set: vi.fn(),
 }));
+type LateralTarget = { sessionId: string; title: string; position: number; total: number } | null;
+const lateralNavigationState = vi.hoisted(() => ({
+    previous: null as LateralTarget,
+    next: null as LateralTarget,
+    navigate: vi.fn(),
+}));
+
+// What the readout SAYS is proven in its own suite, against real shared values. Here the
+// contract is where it hangs, so it is stood in for by a locatable marker.
+vi.mock('../lateralSwipe/SessionCockpitLateralReadout', () => ({
+    SessionCockpitLateralReadout: (props: Record<string, unknown>) =>
+        React.createElement('View', { ...props, testID: 'session-cockpit-lateral-readout-slot' }),
+}));
+
+// The bar's contract here is PLACEMENT: given navigable neighbours, expose named actions on
+// focusable elements. Resolving those neighbours reaches auth, routing and the session store,
+// and is proven in `useSessionCockpitLateralNavigation`'s own suite.
+vi.mock('../lateralSwipe/useSessionCockpitLateralNavigation', () => ({
+    useSessionCockpitLateralNavigation: () => ({
+        previous: lateralNavigationState.previous,
+        next: lateralNavigationState.next,
+        anchorSessionKey: 'sess_1',
+        availableCount: () => 0,
+        resolveTargets: () => [],
+        navigate: lateralNavigationState.navigate,
+    }),
+}));
 
 installNavigationCommonModuleMocks({
     reactNative: async () => {
@@ -126,6 +153,95 @@ describe('cockpit tab bars', () => {
         badgeSettingsState.openTabs = true;
         cockpitPinsState.value = [];
         cockpitPinsState.set.mockClear();
+        lateralNavigationState.previous = null;
+        lateralNavigationState.next = null;
+        lateralNavigationState.navigate.mockClear();
+    });
+
+    it('offers the lateral step as an accessibility action on every cockpit tab', async () => {
+        // The band's own container is `pointerEvents="box-none"` and is not an accessibility
+        // element, so actions placed there never reach the VoiceOver rotor or the TalkBack
+        // context menu. A tab is the only focusable thing in the band, so the actions ride
+        // the tabs — the same shape `SessionItem` uses for its row actions.
+        lateralNavigationState.previous = { sessionId: 'sess_0', title: 'Previous', position: 1, total: 3 };
+        lateralNavigationState.next = { sessionId: 'sess_2', title: 'Next', position: 3, total: 3 };
+
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        const screen = await renderScreen(
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                activeSurface="chat"
+                terminalTabAvailable={true}
+                openDetailsTabCount={0}
+                onSurfacePress={() => {}}
+            />,
+        );
+
+        const tabs = screen.tree.root.findAll((node) => (
+            typeof node.props?.testID === 'string'
+            && node.props.testID.startsWith('session-cockpit-tab-')
+            && Array.isArray(node.props?.accessibilityActions)
+        ));
+        expect(tabs.length).toBeGreaterThan(0);
+        for (const tab of tabs) {
+            expect((tab.props.accessibilityActions as Array<{ name: string }>).map((action) => action.name))
+                .toEqual(['previousSession', 'nextSession']);
+            // An action is only operable if the element carrying it is also named.
+            expect(typeof tab.props.accessibilityLabel).toBe('string');
+        }
+
+        act(() => {
+            tabs[0]!.props.onAccessibilityAction({ nativeEvent: { actionName: 'nextSession' } });
+        });
+        expect(lateralNavigationState.navigate).toHaveBeenCalledWith('next');
+    });
+
+    it('mounts the lateral readout inside the capsule rather than beside the band', async () => {
+        // The capsule IS the readout for this gesture: the picker column above deliberately
+        // starts one entry out because the nearest session is named here. An unmounted
+        // readout therefore does not just lose a label, it hides the first reachable
+        // session entirely.
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        const screen = await renderScreen(
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                serverId="server_a"
+                activeSurface="chat"
+                terminalTabAvailable={true}
+                openDetailsTabCount={0}
+                onSurfacePress={() => {}}
+            />,
+        );
+
+        const readouts = screen.findAllHostsByTestId('session-cockpit-lateral-readout-slot');
+        expect(readouts).toHaveLength(1);
+        // Scoped like the picker column, so the capsule and the row descending into it can
+        // never resolve to two different sessions on a multi-server order.
+        expect(readouts[0]!.props.sessionId).toBe('sess_1');
+        expect(readouts[0]!.props.serverId).toBe('server_a');
+    });
+
+    it('offers no lateral accessibility action when there is no neighbour to step to', async () => {
+        lateralNavigationState.previous = null;
+        lateralNavigationState.next = null;
+
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        const screen = await renderScreen(
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                activeSurface="chat"
+                terminalTabAvailable={true}
+                openDetailsTabCount={0}
+                onSurfacePress={() => {}}
+            />,
+        );
+
+        const tabsWithActions = screen.tree.root.findAll((node) => (
+            typeof node.props?.testID === 'string'
+            && node.props.testID.startsWith('session-cockpit-tab-')
+            && node.props?.accessibilityActions !== undefined
+        ));
+        expect(tabsWithActions).toHaveLength(0);
     });
 
     function createMobilePluginPlacement() {

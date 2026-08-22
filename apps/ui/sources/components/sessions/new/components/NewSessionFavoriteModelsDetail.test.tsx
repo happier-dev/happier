@@ -107,7 +107,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentIconSource: () => null,
     getAgentIconSvgXml: () => null,
     getAgentIconTintColor: () => null,
-    isAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'customAcp'].includes(value),
+    isBundledAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'customAcp'].includes(value),
 }));
 
 const preflightModelsByTargetKey: Record<string, {

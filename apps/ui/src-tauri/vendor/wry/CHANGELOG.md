@@ -1,5 +1,61 @@
 # Changelog
 
+## \[0.55.1]
+
+- [`3860359`](https://github.com/tauri-apps/wry/commit/3860359e3dc75260fb9865f7a8eae00a9ec4733d) ([#1721](https://github.com/tauri-apps/wry/pull/1721) by [@lucasfernog](https://github.com/tauri-apps/wry/../../lucasfernog)) Tweak ProGuard rules to keep the getId required activity method.
+
+## \[0.55.0]
+
+- [`a535fd9`](https://github.com/tauri-apps/wry/commit/a535fd95025d126dd1d6ad10b101b81ed9ae40fe) ([#1699](https://github.com/tauri-apps/wry/pull/1699) by [@FabianLars](https://github.com/tauri-apps/wry/../../FabianLars)) On Android, fixed panics on custom protocol timeouts. Increased timeout for non-internal requests to 30 seconds.
+- [`781f371`](https://github.com/tauri-apps/wry/commit/781f371893d58c9dc81f2adce84adfad9e390833) ([#1633](https://github.com/tauri-apps/wry/pull/1633) by [@lucasfernog](https://github.com/tauri-apps/wry/../../lucasfernog)) Update to latest tao to support multi-window on Android and iOS.
+- [`848aff7`](https://github.com/tauri-apps/wry/commit/848aff722a72cc30be01c992734000933f74c2d0) ([#1660](https://github.com/tauri-apps/wry/pull/1660) by [@Legend-Master](https://github.com/tauri-apps/wry/../../Legend-Master)) Run `new_window_req_handler` on main thread and remove the `Send + Sync` restriction on it
+- [`92114b2`](https://github.com/tauri-apps/wry/commit/92114b2efb531ec8191734817ebcda952e204210) ([#1634](https://github.com/tauri-apps/wry/pull/1634) by [@lucasfernog](https://github.com/tauri-apps/wry/../../lucasfernog)) Call `onNewIntent` for tao's 0.35 Opened event.
+- [`05440b8`](https://github.com/tauri-apps/wry/commit/05440b80ed79a84faa264a91dbcd952d9e77f78f) ([#1688](https://github.com/tauri-apps/wry/pull/1688) by [@Legend-Master](https://github.com/tauri-apps/wry/../../Legend-Master)) Removed `drag-drop` feature, previously gated `WebViewAttributes::drag_drop_handler` and `WebViewBuilder::with_drag_drop_handler` are now always available
+- [`222c63d`](https://github.com/tauri-apps/wry/commit/222c63d69f03639bbd1f456ae2d9d2f26a2d549c) ([#1698](https://github.com/tauri-apps/wry/pull/1698) by [@FabianLars](https://github.com/tauri-apps/wry/../../FabianLars)) Remove `WebViewAttributes`, `WebView::new` and `WebView::new_as_child` from public API. Use `WebViewBuilder` instead.
+
+## \[0.54.4]
+
+- [`47d9470`](https://github.com/tauri-apps/wry/commit/47d9470e40160af8209da094364141917ec677a7) ([#1693](https://github.com/tauri-apps/wry/pull/1693) by [@Legend-Master](https://github.com/tauri-apps/wry/../../Legend-Master)) Updated dependency dom_query to 0.27.0, this fixed a bug where initialization scripts were escaped incorrectly on Android
+- [`1540788`](https://github.com/tauri-apps/wry/commit/1540788a0161235e1b89c70912725fd2f18cb813) ([#1692](https://github.com/tauri-apps/wry/pull/1692) by [@Sbenazar](https://github.com/tauri-apps/wry/../../Sbenazar)) fix(webkitgtk): normalize background color values to 0.0–1.0
+
+## \[0.54.3]
+
+- [`40a7032`](https://github.com/tauri-apps/wry/commit/40a703214d3e66942edf6f6a96074580798d5046) ([#1677](https://github.com/tauri-apps/wry/pull/1677) by [@russellmcc](https://github.com/tauri-apps/wry/../../russellmcc)) Fix bug where wry would crash when loaded by multiple dylibs in the same process on macOS.
+
+### Dependencies
+
+- [`146e36e`](https://github.com/tauri-apps/wry/commit/146e36e68b5da3c8e4488a67c8661695e76e60eb) ([#1671](https://github.com/tauri-apps/wry/pull/1671) by [@thomaseizinger](https://github.com/tauri-apps/wry/../../thomaseizinger)) Refactors HTML manipulation on Android to use `dom_query` instead of `kuchikiki`.
+
+### enhance
+
+- [`e430558`](https://github.com/tauri-apps/wry/commit/e430558f4be90096a1bf786cdb59c49a0754beec) ([#1649](https://github.com/tauri-apps/wry/pull/1649) by [@aoxiangtianyu-go](https://github.com/tauri-apps/wry/../../aoxiangtianyu-go)) Add an option to control browser-level autofill behavior on Windows.
+
+### bug
+
+- [`a7de137`](https://github.com/tauri-apps/wry/commit/a7de137ecc321bf3c3a3a10c857b5839741b4b5c) ([#1680](https://github.com/tauri-apps/wry/pull/1680) by [@Legend-Master](https://github.com/tauri-apps/wry/../../Legend-Master)) Fix infinite loop on main thread if creating the webview failed or getting cookie failed
+
+## \[0.54.2]
+
+- [`1d1b870`](https://github.com/tauri-apps/wry/commit/1d1b8707665b4638e040dde7a88cd33d77ba2ebc) ([#1662](https://github.com/tauri-apps/wry/pull/1662) by [@JSKitty](https://github.com/tauri-apps/wry/../../JSKitty)) On macOS, implement `background_color` support for WKWebView behind the `transparent` feature. Disables the default white background via the `drawsBackground` KVC key at init and applies `underPageBackgroundColor` on macOS 12+ for both initial creation and runtime `set_background_color` calls.
+- [`e3761e5`](https://github.com/tauri-apps/wry/commit/e3761e5e5ab684ae277dfa7df931ed9ff4c5bc38) ([#1668](https://github.com/tauri-apps/wry/pull/1668) by [@zeta-gundam](https://github.com/tauri-apps/wry/../../zeta-gundam)) Fixed an issue that caused "Symbol not found: \_NSHTTPCookieSameSite..." panics on macOS `10.13` & `10.14`.
+- [`e3761e5`](https://github.com/tauri-apps/wry/commit/e3761e5e5ab684ae277dfa7df931ed9ff4c5bc38) ([#1668](https://github.com/tauri-apps/wry/pull/1668) by [@zeta-gundam](https://github.com/tauri-apps/wry/../../zeta-gundam)) Fixed an issue that caused "\[\<WKWebViewConfiguration 0x6000003f4d00> setValue:forUndefinedKey:]: this class is not key value coding-compliant for the key drawsBackground." panics on macOS `10.13`
+
+## \[0.54.1]
+
+- [`6704b20`](https://github.com/tauri-apps/wry/commit/6704b207ac985e968be0b5c26b898ca152ae47d9) ([#1655](https://github.com/tauri-apps/wry/pull/1655)) Adds a `PartialEq` derive to `Rect`.
+
+## \[0.54.0]
+
+- [`5fdd1a9`](https://github.com/tauri-apps/wry/commit/5fdd1a9840e24ce77ea4a57ce3746c3dbee28c9c) ([#1625](https://github.com/tauri-apps/wry/pull/1625)) Use OnBackPressedCallback instead of the deprecated onKeyDown for back navigation on Android.
+- [`51d06d0`](https://github.com/tauri-apps/wry/commit/51d06d0cecdf69652a0ae636b1b875e427534bc3) ([#1646](https://github.com/tauri-apps/wry/pull/1646)) Remove redundant clones in WebView and download handling. No user facing changes.
+- [`7b77322`](https://github.com/tauri-apps/wry/commit/7b77322f886c440d035674b8efa586671dc0a3db) ([#1647](https://github.com/tauri-apps/wry/pull/1647)) Fix clippy io_other_error. No user facing changes.
+- [`ff8876d`](https://github.com/tauri-apps/wry/commit/ff8876d92b9681b139d6637220cefe3248b7d3fb) ([#1652](https://github.com/tauri-apps/wry/pull/1652)) Improve wkwebview performance. No user-facing changes.
+- [`27ba73f`](https://github.com/tauri-apps/wry/commit/27ba73f07720b80a21b6b876f1229cad8871aa33) Add handler for web content process termination.
+- [`4fcff14`](https://github.com/tauri-apps/wry/commit/4fcff147b5022af3ee006ed077759b1648b32aa6) ([#1547](https://github.com/tauri-apps/wry/pull/1547)) Set `WebsiteDataManagerBuilder::base_cache_directory` with the same path as `base_data_directory`.
+
+  This change allows the cache directory to be changed instead of using the default one [from WebKitGTK](https://webkitgtk.org/reference/webkit2gtk/stable/property.WebsiteDataManager.base-cache-directory.html).
+- [`64d9296`](https://github.com/tauri-apps/wry/commit/64d92960b960a4b2fdf9205b6188f55650ddd62f) ([#1640](https://github.com/tauri-apps/wry/pull/1640)) Update webkit2gtk-rs crates to `2.0.2`.
+
 ## \[0.53.5]
 
 - [#1622](https://github.com/tauri-apps/wry/pull/1626) Fixed an issue that caused docs.rs builds to fail. No user facing changes.

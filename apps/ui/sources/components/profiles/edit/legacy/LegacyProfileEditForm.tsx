@@ -21,7 +21,7 @@ import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { buildBackendTargetRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -143,8 +143,8 @@ export function LegacyProfileEditForm({
         serverId: activeServerId,
     });
 
-    const getPermissionAgentIdForEntry = React.useCallback((entry: ResolvedBackendCatalogEntry): AgentId => {
-        return entry.builtInAgentId ?? entry.catalogAgentId ?? DEFAULT_AGENT_ID;
+    const getPermissionAgentIdForEntry = React.useCallback((entry: ResolvedBackendCatalogEntry): string => {
+        return entry.builtInAgentId ?? entry.catalogAgentId ?? entry.agentId;
     }, []);
 
     const getRuntimeCarrierAgentIdForEntry = React.useCallback((entry: ResolvedBackendCatalogEntry): AgentId | null => {
@@ -157,7 +157,7 @@ export function LegacyProfileEditForm({
 
     const getDisplayAgentIconNameForEntry = React.useCallback((entry: ResolvedBackendCatalogEntry): string => {
         const displayAgentId = getDisplayAgentIdForEntry(entry);
-        return displayAgentId ? getAgentCore(displayAgentId).ui.agentPickerIconName : 'layers-outline';
+        return getAgentCore(displayAgentId ?? '')?.ui.agentPickerIconName ?? 'layers-outline';
     }, [getDisplayAgentIdForEntry]);
 
     const toggleFavoriteMachineId = React.useCallback((machineIdToToggle: string) => {
@@ -305,10 +305,15 @@ export function LegacyProfileEditForm({
         });
     }, [compatibilityByTargetKeyState, resolvedBackendEntries]);
     const compatibleMachineLoginTargets = React.useMemo(() => {
-        return compatibleBackendEntries.map((entry) => ({
-            targetKey: resolveProfileBackendTargetKeyForEntry(entry),
-            machineLoginKey: getAgentCore(getRuntimeCarrierAgentIdForEntry(entry) ?? DEFAULT_AGENT_ID).cli.machineLoginKey,
-        }));
+        return compatibleBackendEntries.flatMap((entry) => {
+            const runtimeCarrierAgentId = getRuntimeCarrierAgentIdForEntry(entry);
+            const machineLoginKey = getAgentCore(runtimeCarrierAgentId ?? '')?.cli.machineLoginKey;
+            if (!machineLoginKey) return [];
+            return [{
+                targetKey: resolveProfileBackendTargetKeyForEntry(entry),
+                machineLoginKey,
+            }];
+        });
     }, [compatibleBackendEntries, getRuntimeCarrierAgentIdForEntry]);
     const machineLoginRequirement = React.useMemo(() => {
         return resolveMachineLoginRequirementForProfileTargets({
@@ -330,10 +335,13 @@ export function LegacyProfileEditForm({
     }, []);
 
     const supportedDirectBackendEntries = React.useMemo(() => {
-        return resolvedBackendEntries.filter((entry) => supportsDirectTranscriptStorageForNewSession({
-            agentId: getRuntimeCarrierAgentIdForEntry(entry) ?? DEFAULT_AGENT_ID,
-            settings: transcriptStorageSettings,
-        }));
+        return resolvedBackendEntries.filter((entry) => {
+            const runtimeCarrierAgentId = getRuntimeCarrierAgentIdForEntry(entry);
+            return runtimeCarrierAgentId !== null && supportsDirectTranscriptStorageForNewSession({
+                agentId: runtimeCarrierAgentId,
+                settings: transcriptStorageSettings,
+            });
+        });
     }, [getRuntimeCarrierAgentIdForEntry, resolvedBackendEntries, transcriptStorageSettings]);
 
     const accountTranscriptStorageDefaults = React.useMemo(() => {
@@ -355,7 +363,7 @@ export function LegacyProfileEditForm({
     }, []);
 
     const accountDefaultPermissionModes = React.useMemo(() => {
-        const out: Partial<Record<AgentId, PermissionMode>> = {};
+        const out: Record<string, PermissionMode> = {};
         for (const agentId of enabledAgentIds) {
             try {
                 const targetKey = buildBackendTargetKeyV2({
@@ -372,7 +380,7 @@ export function LegacyProfileEditForm({
         return out;
     }, [enabledAgentIds, sessionDefaultPermissionModeByTargetKey]);
 
-    const getPermissionIconNameForAgent = React.useCallback((agent: AgentId, mode: PermissionMode) => {
+    const getPermissionIconNameForAgent = React.useCallback((agent: string, mode: PermissionMode) => {
         return getPermissionModeOptionsForAgentType(agent).find((opt) => opt.value === mode)?.icon ?? 'shield-outline';
     }, []);
 

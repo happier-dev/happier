@@ -17,7 +17,7 @@ const platformState = vi.hoisted(() => ({
     os: 'ios' as 'web' | 'ios' | 'android',
 }));
 
-let isTauriDesktopValue = false;
+let isDesktopHostValue = false;
 type BadgeRuntimeSessionFixture = { id: string } & Record<string, unknown>;
 
 let sessionsValue: BadgeRuntimeSessionFixture[] = [];
@@ -150,8 +150,8 @@ vi.mock('@/hooks/inbox/useChangelog', () => ({
     useChangelog: () => ({ hasUnread: changelogUnreadValue }),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopValue,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostValue,
 }));
 
 vi.mock('@/activity/source/useActivityAttentionSource', () => ({
@@ -182,7 +182,7 @@ vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
 describe('ActivityBadgeRuntime', () => {
     afterEach(() => {
         platformState.os = 'ios';
-        isTauriDesktopValue = false;
+        isDesktopHostValue = false;
         setActivitySessions([]);
         friendRequestsValue = [];
         localSettingsValue = {
@@ -314,7 +314,7 @@ describe('ActivityBadgeRuntime', () => {
 
     it('applies tauri badge counts from warm activity source rows before full data readiness', async () => {
         platformState.os = 'web';
-        isTauriDesktopValue = true;
+        isDesktopHostValue = true;
         activityAttentionSourceValue = {
             ...createActivityAttentionSource([]),
             isDataReady: false,
@@ -480,7 +480,7 @@ describe('ActivityBadgeRuntime', () => {
 
     it('shows the tauri dock dot only for non-numeric inbox attention when enabled', async () => {
         platformState.os = 'web';
-        isTauriDesktopValue = true;
+        isDesktopHostValue = true;
         updateAvailableValue = true;
 
         const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');

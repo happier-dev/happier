@@ -4,6 +4,8 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createReviewCommentsActionChip } from '@/components/sessions/agentInput/definitions/createReviewCommentsActionChip';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
+import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol';
+
 import type {
     AgentInputAttachmentsRowItem,
     AgentInputExtraActionChip,
@@ -287,6 +289,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             onAfterCreatedSettled?: HandleCreateSessionOptions['onAfterCreatedSettled'];
             deferAcceptedDraftClearToDocument?: boolean;
             hasComposerAttachments?: boolean;
+            composerReferences?: HandleCreateSessionOptions['composerReferences'];
         }>) => {
             submit({
                 initialMessage: 'skip',
@@ -298,6 +301,9 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                     : {}),
                 ...(input.hasComposerAttachments
                     ? { hasComposerAttachments: true }
+                    : {}),
+                ...(input.composerReferences && input.composerReferences.length > 0
+                    ? { composerReferences: input.composerReferences }
                     : {}),
                 afterCreated: async ({ sessionId, effectiveSpawnServerId, launchAttempt }) => {
                     const attachmentMessageLocalId = launchAttempt.attachmentMessageLocalId;
@@ -405,14 +411,28 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                     ref: composerSnapshot.ref,
                     readCurrentExecutionTarget: () => composerDocument.readCurrentExecutionTarget?.() ?? null,
                     admit: (submittedSnapshot) => new Promise((resolve) => {
+                        const structuredInputMetaOverrides = buildDetachedComposerSnapshotMetaOverrides({
+                            snapshot: submittedSnapshot,
+                            options: options?.structuredInputMetaOverrides,
+                        });
+                        // The canonical envelope this route already builds is
+                        // the only producer of persisted reference identity:
+                        // reading the references back out of it keeps them
+                        // positionless, deduplicated and admitted against the
+                        // exact submitted text, which `snapshot.references`
+                        // (Composer-only, range-carrying) is not.
+                        const admittedStructuredInput = readHappierStructuredInputV1FromMeta(
+                            structuredInputMetaOverrides,
+                        );
                         submitAfterCreated({
                             initialPrompt: submittedSnapshot.text,
-                            structuredInputMetaOverrides: buildDetachedComposerSnapshotMetaOverrides({
-                                snapshot: submittedSnapshot,
-                                options: options?.structuredInputMetaOverrides,
-                            }),
+                            ...(structuredInputMetaOverrides ? { structuredInputMetaOverrides } : {}),
                             deferAcceptedDraftClearToDocument: true,
                             hasComposerAttachments: submittedSnapshot.attachments.length > 0,
+                            // The whole reference set, not a flag: only the one
+                            // refusal owner decides which of them a rendered
+                            // Automation prompt can still carry.
+                            composerReferences: admittedStructuredInput?.mentions ?? [],
                             onAfterCreatedSettled: (settlement) => {
                                 resolve(settlement.status === 'accepted'
                                     ? { status: 'accepted' }

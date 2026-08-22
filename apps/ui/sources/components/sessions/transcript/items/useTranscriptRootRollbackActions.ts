@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { isBundledAgentId, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { useCurrentProjectedAgentCapabilities } from '@/agents/hooks/useCurrentProjectedAgentCapabilities';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import {
     readSessionRollbackRangesV1,
@@ -45,6 +49,21 @@ export function useTranscriptRootRollbackActions(params: Readonly<{
         sessionMetadataSignature,
         stableSessionMetadata,
     } = params;
+    const ownerMetadata = React.useMemo(
+        () => readSessionOwnerMetadataView(session),
+        [session],
+    );
+    const declaredAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
+    const externalAgentId = declaredAgentId !== null && !isBundledAgentId(declaredAgentId)
+        ? declaredAgentId
+        : null;
+    const sessionServerId = usePreferredServerIdForSession(session.id, session.serverId ?? null);
+    const currentAgentCapabilities = useCurrentProjectedAgentCapabilities({
+        agentId: externalAgentId,
+        machineId: ownerMetadata?.machineId ?? null,
+        serverId: sessionServerId,
+        enabled: externalAgentId !== null,
+    });
     const rollbackRanges = React.useMemo(
         () => readSessionRollbackRangesV1((stableSessionMetadata as Record<string, unknown> | null | undefined) ?? null),
         [sessionMetadataSignature, stableSessionMetadata],
@@ -72,6 +91,7 @@ export function useTranscriptRootRollbackActions(params: Readonly<{
             messagesById,
             rollbackRanges,
             turnChangeSets,
+            currentAgentCapabilities,
         }),
         [
             session.accessLevel,
@@ -81,6 +101,7 @@ export function useTranscriptRootRollbackActions(params: Readonly<{
             rollbackActionsInputSignature,
             rollbackRanges,
             turnChangeSets,
+            currentAgentCapabilities,
         ],
     );
 

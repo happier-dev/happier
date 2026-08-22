@@ -24,7 +24,7 @@ import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
 
 function resolveAgentRowIconName(entry: ResolvedAgentCatalogEntry): string {
-    return entry.iconAgentId ? getAgentCore(entry.iconAgentId).ui.agentPickerIconName : entry.iconName;
+    return getAgentCore(entry.iconAgentId ?? '')?.ui.agentPickerIconName ?? entry.iconName;
 }
 
 export default React.memo(function ProviderSettingsIndexScreen() {

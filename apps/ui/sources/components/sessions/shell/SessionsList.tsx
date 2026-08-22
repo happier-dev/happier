@@ -171,6 +171,7 @@ function VisibleSessionsListViewContent(
     const scrollRetention = useSessionListScrollRetention({
         retentionKey,
         scrollToOffset,
+        surfaceActive: surfaceOwnership.dataActive,
     });
     const handleLoadMoreSessions = React.useCallback(() => {
         if (!surfaceDataActiveRef.current) return;

@@ -1,8 +1,8 @@
 import { AppState, Platform } from 'react-native';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 export function isRuntimeActive(): boolean {
-    if (isTauriDesktop()) {
+    if (isDesktopHost()) {
         return true;
     }
 

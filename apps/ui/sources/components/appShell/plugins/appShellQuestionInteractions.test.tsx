@@ -89,6 +89,12 @@ function createModalHarness(showId = 'question-modal') {
     return { modal: modal as any, readConfig: () => config };
 }
 
+function readControlText(control: renderer.ReactTestInstance): string {
+    return control.findAll((node) => typeof node.children[0] === 'string')
+        .map((node) => node.children[0] as string)
+        .join('');
+}
+
 describe('app-shell transient interaction presenter', () => {
     it('uses the Android physical 48dp target for every transient question and confirmation control', async () => {
         const { Platform } = await import('react-native');
@@ -509,6 +515,39 @@ describe('app-shell transient interaction presenter', () => {
             kind: 'questions',
             status: 'unavailable',
         });
+    });
+
+    // The visible negative control settles `declined` — a decision — while only
+    // dismissal settles `userCancelled`. Naming it "Cancel" told the user it did
+    // the second while it did the first.
+    it('names the confirmation negative control as a decline, not a cancel', async () => {
+        const { t } = await import('@/text');
+        let confirmationTree!: renderer.ReactTestRenderer;
+        let questionTree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            confirmationTree = renderer.create(<AppShellConfirmationDialog
+                onClose={vi.fn()}
+                description="Proceed?"
+                confirmLabel="Confirm"
+                onConfirm={vi.fn()}
+                onCancel={vi.fn()}
+            />);
+            questionTree = renderer.create(<AppShellQuestionDialog
+                onClose={vi.fn()}
+                questions={[{ id: 'text', prompt: 'Text', type: 'text', required: false }]}
+                onAnswer={vi.fn()}
+                onCancel={vi.fn()}
+            />);
+        });
+
+        const declineControl = confirmationTree.root.findByProps({ testID: 'app-shell-confirmation-decline' });
+        expect(readControlText(declineControl)).toBe(t('common.decline'));
+        expect(readControlText(declineControl)).not.toBe(t('common.cancel'));
+
+        // The questions dialog genuinely settles `userCancelled`, so it keeps
+        // naming its control a cancel.
+        const questionCancel = questionTree.root.findByProps({ testID: 'app-shell-question-cancel' });
+        expect(readControlText(questionCancel)).toBe(t('common.cancel'));
     });
 
     it('preserves canonical approval, decline, and user-cancel candidates', async () => {

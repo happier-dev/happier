@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { syncDesktopPetOverlayState } from '../bridge/desktopPetOverlayBridge';
@@ -23,7 +23,7 @@ export type DesktopPetOverlaySyncInput = Readonly<{
 
 export function useDesktopPetOverlaySync(input: DesktopPetOverlaySyncInput): void {
     React.useEffect(() => {
-        if (!isTauriDesktop()) {
+        if (!isDesktopHost()) {
             return;
         }
 

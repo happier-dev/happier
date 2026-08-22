@@ -47,6 +47,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [sessionHeaderIdentityDisplay, setSessionHeaderIdentityDisplay] = useSettingMutable('sessionHeaderIdentityDisplay');
     const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
     const [sessionListAttentionPromotionMode, setSessionListAttentionPromotionMode] = useSettingMutable('sessionListAttentionPromotionModeV1');
+    const [sessionListAttentionStandingDefault, setSessionListAttentionStandingDefault] = useSettingMutable('sessionListAttentionStandingDefaultV1');
     const [sessionListWorkingPlacementMode, setSessionListWorkingPlacementMode] = useSettingMutable('sessionListWorkingPlacementModeV1');
     const [sessionListOrderingModeV1, setSessionListOrderingModeV1] = useSettingMutable('sessionListOrderingModeV1');
     const [sessionListFolderSortModeV1, setSessionListFolderSortModeV1] = useSettingMutable('sessionListFolderSortModeV1');
@@ -292,6 +293,10 @@ export default React.memo(function SessionSettingsScreen() {
         },
     ], [preferredLanguage]);
     const normalizedSessionListAttentionPromotionMode = normalizeSessionListAttentionPlacementMode(sessionListAttentionPromotionMode);
+    // Standing only reaches the list through the attention placement lane, so with
+    // "Sessions needing attention" left in normal position this switch would change
+    // nothing. Lock it and name the prerequisite instead of letting it lie.
+    const sessionListAttentionStandingUnavailable = normalizedSessionListAttentionPromotionMode === 'off';
     const handleSessionListAttentionPromotionModeSelect = React.useCallback((itemId: string) => {
         if (itemId !== 'off' && itemId !== 'global' && itemId !== 'withinGroups') return;
         setSessionListAttentionPromotionMode(itemId);
@@ -831,6 +836,27 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListAttentionPromotionModeItems}
                     onSelect={handleSessionListAttentionPromotionModeSelect}
+                />
+                <Item
+                    testID="settings-session-attentionStandingDefault-item"
+                    title={t('settingsSession.sessionList.attentionStandingDefaultTitle')}
+                    subtitle={sessionListAttentionStandingUnavailable
+                        ? t('settingsSession.sessionList.attentionStandingDefaultUnavailableSubtitle')
+                        : sessionListAttentionStandingDefault === true
+                            ? t('settingsSession.sessionList.attentionStandingDefaultEnabledSubtitle')
+                            : t('settingsSession.sessionList.attentionStandingDefaultDisabledSubtitle')}
+                    icon={<Icon name="bell" size={29} color={theme.colors.state.warning.foreground} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-attentionStandingDefault-toggle"
+                            value={sessionListAttentionStandingDefault === true}
+                            onValueChange={(next) => setSessionListAttentionStandingDefault(Boolean(next))}
+                            disabled={sessionListAttentionStandingUnavailable}
+                        />
+                    }
+                    disabled={sessionListAttentionStandingUnavailable}
+                    showChevron={false}
+                    onPress={() => setSessionListAttentionStandingDefault(sessionListAttentionStandingDefault !== true)}
                 />
                 <DropdownMenu
                     open={openSessionListWorkingPlacementModeMenu}

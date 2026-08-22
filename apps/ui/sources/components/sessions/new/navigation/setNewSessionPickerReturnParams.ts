@@ -2,7 +2,7 @@ import {
     buildBackendTargetRouteParams,
     resolveBackendTargetFromRouteParams,
 } from '@/agents/backendCatalog/backendTargetRouteParams';
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 
 type RouteLike = Readonly<{
@@ -138,12 +138,12 @@ function normalizeNewSessionRouteParams(nextParams: RouteParams): RouteParams {
     const resolvedBackendTarget = resolveBackendTargetFromRouteParams(backendTargetRouteParams);
     if (resolvedBackendTarget?.configuredBackendId) {
         delete nextParams.agentType;
-    } else if (resolvedBackendTarget && isAgentId(resolvedBackendTarget.backendId)) {
+    } else if (resolvedBackendTarget && isBundledAgentId(resolvedBackendTarget.backendId)) {
         nextParams.agentType = resolvedBackendTarget.backendId;
     } else if (resolvedBackendTarget) {
         // Plugin backend targets must not revive legacy compat agentType carriers.
         // Keep a real built-in `agentType` only as a UI placeholder; otherwise drop it.
-        if (!isAgentId(nextParams.agentType) || isLegacyCompatAgentType(nextParams.agentType)) {
+        if (!isBundledAgentId(nextParams.agentType) || isLegacyCompatAgentType(nextParams.agentType)) {
             delete nextParams.agentType;
         }
     }

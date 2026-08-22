@@ -26,6 +26,13 @@ import {
     getCheckoutChipQuickActionIds,
 } from './__tests__/checkoutChipSelectors';
 
+// This screen-model graph never renders Markdown. Its AgentInput leaf imports
+// the patched third-party streaming utility, which can be absent before the UI
+// postinstall lane materializes it.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => [],
+}));
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() => vi.fn());
@@ -434,6 +441,7 @@ function getMockStorageState() {
         }),
         profileScope: activeServerAccountScopeState.value,
         createSessionActionDraft: createSessionActionDraftMock,
+        sessions: {},
         workspaceLocations: workspaceGraphState.workspaceLocations,
         workspaceCheckouts: workspaceGraphState.workspaceCheckouts,
         machineListByServerId: machineListByServerIdState.value,
@@ -631,6 +639,12 @@ function installNewSessionScreenModelStorageMock() {
                 () => selector(getMockStorageState()),
             ), {
                 getState: () => getMockStorageState(),
+                subscribe: (listener: () => void) => {
+                    storageSubscriptionState.listeners.add(listener);
+                    return () => {
+                        storageSubscriptionState.listeners.delete(listener);
+                    };
+                },
             }) as unknown as typeof import('@/sync/domains/state/storage').storage,
             useSetting: (key: string) => ({ ...settingsDefaults, ...settingsState } as any)[key],
             useSettingMutable: (key: string) => [
@@ -709,7 +723,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     return {
         ...actual,
         DEFAULT_AGENT_ID: 'codex',
-        isAgentId: (value: unknown) => value === 'codex' || value === 'claude',
+        isBundledAgentId: (value: unknown) => value === 'codex' || value === 'claude',
         resolveAgentIdFromCliDetectKey: () => 'codex',
         getAgentCore: (_agentId: string) => ({
             model: { defaultMode: 'default', allowedModes: ['default', 'gpt-5'], supportsFreeform: true },
@@ -1545,7 +1559,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect((model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label)).toContain('Codex (Projected B)');
     });
 
-    it('keeps a routed plugin backend selected during projection loading and switches create-session carrier when projection metadata arrives', async () => {
+    it('keeps a routed plugin backend identity separate from optional bundled behavior metadata', async () => {
         let resolveProjection:
             | ((value: Readonly<{ supported: true; projection: unknown }> | Readonly<{ supported: false; reason: string }>) => void)
             | null = null;
@@ -1569,10 +1583,12 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            agentType: 'acme.review.backend',
+            staticAgentId: null,
             backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'acme.review.backend' }),
             spawnBackendTarget: expect.objectContaining({ kind: 'backend', backendId: 'acme.review.backend' }),
         }));
-        expect(model?.simpleProps?.agentType).not.toBe('customAcp');
+        expect(model?.simpleProps?.agentType).toBe('acme.review.backend');
 
         await act(async () => {
             resolveProjection?.({
@@ -1607,10 +1623,12 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         await settleNewSessionScreenModel();
 
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
-            agentType: 'claude',
+            agentType: 'acme.review.backend',
+            staticAgentId: 'claude',
             backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'acme.review.backend' }),
             spawnBackendTarget: expect.objectContaining({ kind: 'backend', backendId: 'acme.review.backend' }),
         }));
+        expect(model?.simpleProps?.agentType).toBe('acme.review.backend');
     });
 
     it('clears stale daemon contribution projections when the selected machine becomes unavailable', async () => {
@@ -1934,6 +1952,25 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 },
             },
         }));
+    });
+
+    it('includes the source-context recipe in the launch attempt identity', async () => {
+        searchParamsState.value = { dataId: 'source-context-seed' };
+        const sourceContext = {
+            v: 1,
+            kind: 'session_replay',
+            sourceSessionId: 'session-source',
+            forkPoint: { type: 'seq', upToSeqInclusive: 12 },
+        } as const;
+        tempSessionDataState.value = {
+            sourceContext,
+            sourceContextServerId: 'server-a',
+        };
+
+        await renderNewSessionScreenModel(() => {});
+
+        const signature = JSON.parse(String(useCreateNewSessionArgsRef.current?.launchIntentSignature));
+        expect(signature.sourceContext).toEqual(sourceContext);
     });
 
     it('passes the persisted target server to the server target resolver when the route has no override', async () => {

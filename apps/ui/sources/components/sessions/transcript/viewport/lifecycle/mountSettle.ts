@@ -29,6 +29,16 @@ export type TranscriptMountSettlePinCoordinator = Readonly<{
     recordLayoutCommitObserved(event: Readonly<{ sessionId: string; nowMs: number }>): void;
     observeMetrics(metrics: TranscriptMountSettleMetrics): void;
     sample(event: Readonly<{ sessionId: string; nowMs: number }>): void;
+    /**
+     * How long until quiescence could next be declared, so a caller can wake exactly then
+     * instead of polling on an unrelated phase. `null` means there is nothing to wait for:
+     * either settle already happened, or a precondition (first paint, layout commit,
+     * initial fill) is unmet and waiting alone will not change that.
+     *
+     * Derived from the same `lastMeaningfulChange` the settle decision uses, so the
+     * schedule and the decision cannot drift apart.
+     */
+    nextSettleCheckDelayMs(nowMs: number): number | null;
     reset(event?: Readonly<{ reason?: 'session-change' | 'unmount' }>): void;
 }>;
 
@@ -84,6 +94,16 @@ export function createTranscriptMountSettlePinCoordinator(
         sample(event) {
             ensureSession(event.sessionId);
             updateStableSettle(event.nowMs);
+        },
+        nextSettleCheckDelayMs(nowMs) {
+            if (stableSettle) return null;
+            if (!firstListPaint || !layoutCommitObserved) return null;
+            if (lastMetrics?.initialFillStatus !== 'done') return null;
+            if (lastMetrics.listLayoutHeight <= 0 || lastMetrics.listContentHeight <= 0) return null;
+            if (lastMeaningfulChangeAtMs === null) return null;
+            const elapsed = normalizeNumber(nowMs) - lastMeaningfulChangeAtMs;
+            const remaining = tuning.quiescentWindowMs - elapsed;
+            return remaining > 0 ? remaining : 0;
         },
         reset() {
             resetState(null);

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, View, type View as ViewInstance } from 'react-native';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -19,7 +18,7 @@ const AGENT_CHIP_LOGO_SLOT_STYLE = {
 
 export function createAgentSelectionActionChip(params: Readonly<{
     anchorRef: React.RefObject<ViewInstance | null>;
-    agentId: AgentId;
+    agentId: string;
     tint: string;
     showLabel: boolean;
     label: string;

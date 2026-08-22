@@ -31,9 +31,9 @@ vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    invokeTauri: vi.fn(async () => null),
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    invokeDesktopHost: vi.fn(async () => null),
+    isDesktopHost: () => false,
 }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({

@@ -14,8 +14,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
     const { theme } = useUnistyles();
     const modal = useOptionalModal();
     const isInsideModalBoundary = useIsInsideModalBoundary();
-    const modalKeyboardLiftSuppressed = (modal as Readonly<{ isKeyboardLiftSuppressedByModal?: boolean }> | null | undefined)
-        ?.isKeyboardLiftSuppressedByModal === true;
+    const modalKeyboardLiftSuppressed = modal?.isKeyboardLiftSuppressedByModal === true;
     const keyboardLiftSuppressed = props.keyboardLiftSuppressed === true
         || (!isInsideModalBoundary && modalKeyboardLiftSuppressed);
     const layout = useComposerKeyboardLayout({
@@ -37,6 +36,9 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
     }, [layout, reportComposerChromeHeight]);
 
     const { style: contentPropsStyle, ...contentProps } = props.contentProps ?? {};
+    // A transparent scaffold is presented over the screen behind it, so it paints no ground of its
+    // own and lets the caller supply a `backdrop` instead.
+    const surfaceBackgroundColor = props.surface === 'transparent' ? undefined : theme.colors.surface.base;
 
     return (
         <ComposerKeyboardProvider layout={layout}>
@@ -44,7 +46,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                 accessibilityLabel={props.accessibilityLabel}
                 accessibilityRole={props.accessibilityRole}
                 testID={props.testID}
-                style={[{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base }, props.style]}
+                style={[{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: surfaceBackgroundColor }, props.style]}
             >
                 <View
                     {...contentProps}
@@ -62,7 +64,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                             left: 0,
                             right: 0,
                             bottom: 0,
-                            backgroundColor: theme.colors.surface.base,
+                            backgroundColor: surfaceBackgroundColor,
                         },
                         composerAnimatedStyle,
                     ]}

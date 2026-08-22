@@ -15,6 +15,8 @@ export const SESSION_BULK_ACTION_IDS = {
     tagsRemove: 'ui.session.tags.remove',
     tagsSet: 'ui.session.tags.set',
     moveToFolder: 'ui.session.move-to-folder',
+    setAttentionStanding: 'ui.session.set-attention-standing',
+    clearAttentionStanding: 'ui.session.clear-attention-standing',
 } as const;
 
 export type SessionBulkActionId = typeof SESSION_BULK_ACTION_IDS[keyof typeof SESSION_BULK_ACTION_IDS];
@@ -32,6 +34,8 @@ export type SessionBulkActionRequest =
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.markUnread }>
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.pin }>
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.unpin }>
+    | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.setAttentionStanding }>
+    | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.clearAttentionStanding }>
     | Readonly<{ id: SessionBulkTagActionId; tags: readonly string[] }>
     | Readonly<{
         id: typeof SESSION_BULK_ACTION_IDS.moveToFolder;
@@ -55,6 +59,12 @@ export type SessionBulkActionTarget = Readonly<{
     workspace?: SessionFolderWorkspaceRefV1 | null;
     tags?: readonly string[];
     readState?: SessionBulkReadState;
+    /**
+     * The direction the per-session action would take this row, left undefined when standing is
+     * unreachable for it (no attention band, archived, view-only). A mixed selection therefore
+     * skips those rows instead of writing a standing their own row menu refuses to offer.
+     */
+    standing?: boolean;
 }>;
 
 export type SessionBulkMutationResult = Readonly<{
@@ -84,6 +94,13 @@ export type SessionBulkPinOperation = (
     params: Readonly<{
         target: SessionBulkActionTarget;
         pinned: boolean;
+    }>,
+) => Promise<void>;
+
+export type SessionBulkAttentionStandingOperation = (
+    params: Readonly<{
+        target: SessionBulkActionTarget;
+        standing: boolean;
     }>,
 ) => Promise<void>;
 
@@ -132,6 +149,7 @@ export type SessionBulkActionExecutionContext = Readonly<{
     onProgress?: SessionBulkActionProgressListener;
 
     setSessionPin?: SessionBulkPinOperation;
+    setSessionAttentionStanding?: SessionBulkAttentionStandingOperation;
     setSessionTagAssignments?: SessionBulkTagAssignmentOperation;
 
     hideInactiveSessions?: boolean;

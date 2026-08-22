@@ -5,6 +5,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+  #[error("webview has no committed URL")]
+  WebViewUrlUnavailable,
   #[cfg(gtk)]
   #[error(transparent)]
   GlibError(#[from] gtk::glib::Error),
@@ -55,8 +57,6 @@ pub enum Error {
   UnsupportedWindowHandle,
   #[error(transparent)]
   Utf8Error(#[from] std::str::Utf8Error),
-  #[error("webview has no committed URL")]
-  WebViewUrlUnavailable,
   #[cfg(target_os = "android")]
   #[error(transparent)]
   CrossBeamRecvError(#[from] crossbeam_channel::RecvError),
@@ -76,4 +76,7 @@ pub enum Error {
   #[cfg(any(target_os = "macos", target_os = "ios"))]
   #[error("data store is currently opened")]
   DataStoreInUse,
+  #[cfg(target_os = "android")]
+  #[error("Activity not found")]
+  ActivityNotFound,
 }

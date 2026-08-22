@@ -8,7 +8,7 @@ import { useChangelog } from '@/hooks/inbox/useChangelog';
 import { useUpdates } from '@/hooks/inbox/useUpdates';
 import { storage, useFriendRequests, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { serverFetch } from '@/sync/http/client';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { applyExpoNativeBadgeState } from './channels/applyExpoNativeBadgeState';
@@ -100,8 +100,8 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
     const activeServer = useActiveServerSnapshot();
     const { updateAvailable } = useUpdates();
     const { hasUnread: changelogHasUnread } = useChangelog();
-    const isTauriDesktopHost = isTauriDesktop();
-    const shouldApplyBadgeRuntime = isTauriDesktopHost || Platform.OS !== 'web';
+    const isDesktopShell = isDesktopHost();
+    const shouldApplyBadgeRuntime = isDesktopShell || Platform.OS !== 'web';
     const [serverBadgeSnapshot, setServerBadgeSnapshot] = React.useState<ServerBadgeSnapshot | null>(null);
     const hasNonNumericInboxAttention = updateAvailable || changelogHasUnread;
     const badgeSnapshotParams = React.useMemo<LocalActivityBadgeSnapshotSelectorParams>(() => ({
@@ -179,7 +179,7 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
             count: badgeCount,
             showNonNumericDot,
         };
-        if (isTauriDesktopHost) {
+        if (isDesktopShell) {
             fireAndForget(applyTauriBadgeState(nextBadgeState), {
                 tag: 'ActivityBadgeRuntime.applyTauriBadgeState',
             });
@@ -191,7 +191,7 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
         fireAndForget(applyExpoNativeBadgeState(nextBadgeState), {
             tag: 'ActivityBadgeRuntime.applyExpoNativeBadgeState',
         });
-    }, [badgeCount, isTauriDesktopHost, showNonNumericDot]);
+    }, [badgeCount, isDesktopShell, showNonNumericDot]);
 
     return null;
 }

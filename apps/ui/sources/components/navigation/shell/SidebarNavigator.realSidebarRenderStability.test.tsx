@@ -14,7 +14,7 @@ const hoistedState = vi.hoisted(() => ({
     mockPathname: '/' as string,
     mockSegments: ['(app)'] as string[],
     mockWindowDimensions: { width: 1200, height: 900 },
-    isTauriDesktop: false,
+    isDesktopHost: false,
     startDesktopWindowDragging: vi.fn(),
     getDesktopWindowChromePolicy: vi.fn(async () => ({ strategy: 'none' })),
     getDesktopWindowState: vi.fn(async () => ({ isMaximized: false })),
@@ -160,8 +160,8 @@ vi.mock('@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowConte
     isDesktopActivityOverlayWindowContext: () => false,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => hoistedState.isTauriDesktop,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => hoistedState.isDesktopHost,
 }));
 
 vi.mock('@/utils/platform/desktopWindowBridge', () => ({
@@ -244,7 +244,7 @@ vi.mock('@/components/ui/popover', () => ({
 }));
 
 afterEach(() => {
-    hoistedState.isTauriDesktop = false;
+    hoistedState.isDesktopHost = false;
     hoistedState.startDesktopWindowDragging.mockReset();
     hoistedState.getDesktopWindowChromePolicy.mockReset();
     hoistedState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'none' });
@@ -276,7 +276,7 @@ describe('SidebarNavigator real sidebar render stability', () => {
     });
 
     it('starts Tauri dragging from the main content titlebar strip without blocking interactive targets', async () => {
-        hoistedState.isTauriDesktop = true;
+        hoistedState.isDesktopHost = true;
         const documentListenerSpy = installDocumentEventListenerSpy();
         const { SidebarNavigator } = await import('./SidebarNavigator');
 

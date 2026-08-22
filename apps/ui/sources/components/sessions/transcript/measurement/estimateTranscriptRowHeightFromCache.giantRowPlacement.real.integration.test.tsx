@@ -281,6 +281,7 @@ describe('the installed Legend positions a transcript row from this owner\'s siz
             reconciler,
             signature: item.signature,
         }) ?? estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             getMessageById: (messageId) => messagesById.get(messageId) ?? null,
             item: item.item,
             toolCallsGroupChromeVariant: 'feed_background',
@@ -345,6 +346,7 @@ describe('the installed Legend positions a transcript row from this owner\'s siz
         // What the flat content model would say for this row — the fallback that owned this boundary
         // before the reconciler could serve a real measurement here.
         const contentEstimatePx = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             getMessageById: (messageId) => messagesById.get(messageId) ?? null,
             item: { kind: 'message', id: 'A', messageId: 'msg:A' } as TranscriptRowShellItem,
             toolCallsGroupChromeVariant: 'feed_background',
@@ -403,6 +405,7 @@ describe('the installed Legend positions a transcript row from this owner\'s siz
         const replyText = referenceReplyText();
         messagesById.set('msg:A', agentMessage('msg:A', replyText));
         const contentEstimatePx = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             getMessageById: (messageId) => messagesById.get(messageId) ?? null,
             item: { kind: 'message', id: 'A', messageId: 'msg:A' } as TranscriptRowShellItem,
             toolCallsGroupChromeVariant: 'feed_background',
@@ -446,6 +449,7 @@ describe('the installed Legend positions a transcript row from this owner\'s siz
         // 21,849px row A, whose character count was never recorded.
         messagesById.set('msg:A', agentMessage('msg:A', 'x'.repeat(72 * 910)));
         const giantEstimatePx = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             getMessageById: (messageId) => messagesById.get(messageId) ?? null,
             item: { kind: 'message', id: 'A', messageId: 'msg:A' } as TranscriptRowShellItem,
             toolCallsGroupChromeVariant: 'feed_background',

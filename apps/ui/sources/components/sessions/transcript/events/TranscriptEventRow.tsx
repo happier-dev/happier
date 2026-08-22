@@ -275,6 +275,12 @@ function formatRuntimeConfigOutcomeSessionModeChange(changes: RuntimeConfigOutco
 
 export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: {
     event: AgentEvent;
+    /**
+     * The row's local id. The Agent-transition divider is only a divider when the
+     * reserved localId backs its sidecar, so this is what stops an ordinary event
+     * row from rendering as a trusted Agent boundary.
+     */
+    localId?: string | null;
     sessionId?: string | null;
     emphasis?: TranscriptEventEmphasis;
 }) {
@@ -294,11 +300,14 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     // readers still render its prose. This reader understands the sidecar, and a
     // change of Agent is a boundary in the conversation, not an informational
     // aside — so it leaves the generic arm entirely rather than restyling it.
-    // Recognition goes through the protocol's single divider reader; the shape
-    // check is not repeated here.
-    const agentTransitionDivider = readSessionAgentTransitionDividerV1(props.event);
+    // Recognition goes through the protocol's single divider reader; neither the
+    // sidecar shape nor the reserved-localId check is repeated here.
+    const agentTransitionDivider = readSessionAgentTransitionDividerV1({
+        localId: props.localId ?? null,
+        event: props.event,
+    });
     if (agentTransitionDivider) {
-        return <AgentTransitionDividerRow divider={agentTransitionDivider} />;
+        return <AgentTransitionDividerRow divider={agentTransitionDivider} sessionId={props.sessionId ?? null} />;
     }
 
     if (terminalComposerDraftBlocked && readEventRecord(props.event).type === 'terminal-composer-draft-blocked') {

@@ -149,7 +149,12 @@ function createHeaderTestStorageStore() {
   return store;
 }
 
-function createExplicitTerminalFollowProjection() {
+/**
+ * A codex Agent whose `codexHome` source is declared by the current projection
+ * and carries no terminal-follow classification opt-in. Observation-backed
+ * background follow must not depend on that contract.
+ */
+function createDeclaredCodexSourceProjection() {
   return {
     generation: 1,
     installedPackagesById: {
@@ -164,7 +169,6 @@ function createExplicitTerminalFollowProjection() {
           operations: {},
           sources: [{
             sourceKind: 'codexHome',
-            terminalFollow: { userRowClassification: 'explicitV1' },
             schema: {
               fields: [
                 { name: 'kind', kind: 'literal', value: 'codexHome' },
@@ -375,10 +379,6 @@ vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({
 
 vi.mock('@/components/sessions/fork/openSessionForkStrategyFlow', () => ({
   openSessionForkStrategyFlow: (...args: unknown[]) => openSessionForkStrategyFlowMock(...args),
-}));
-
-vi.mock('@/sync/domains/sessionHandoff/handoffUiSupport', () => ({
-  canHandoffConversation: () => true,
 }));
 
 vi.mock('@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow', () => ({
@@ -897,6 +897,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           title: 'Preview',
           scopes: ['session'],
           surfaces: ['ui'],
+          execution: { target: 'daemon' },
           placementBindings: ['detailsPanel'],
           dangerLevel: 'safe',
           available: true,
@@ -930,7 +931,7 @@ describe('SessionHeaderActionMenu handoff', () => {
                 key: 'title',
                 fallback: 'Preview',
               },
-              command: {
+              action: {
                 kind: 'executeAction',
                 action: { pluginId: 'acme.preview', localId: 'run' },
               },
@@ -1059,6 +1060,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           title: 'Preview',
           scopes: ['session'],
           surfaces: ['ui'],
+          execution: { target: 'daemon' },
           placementBindings: ['detailsPanel'],
           dangerLevel: 'safe',
           available: true,
@@ -1081,7 +1083,7 @@ describe('SessionHeaderActionMenu handoff', () => {
                 key: 'title',
                 fallback: 'Preview',
               },
-              command: {
+              action: {
                 kind: 'executeAction',
                 action: { pluginId: 'acme.preview', localId: 'run' },
               },
@@ -1197,7 +1199,7 @@ describe('SessionHeaderActionMenu handoff', () => {
               contributionKind: 'sessionHeaderAction',
               descriptorId: 'open-preview',
               title: 'Open preview',
-              command: {
+              action: {
                 kind: 'openSurface',
                 destination: { pluginId: 'acme.preview', localId: 'preview' },
               },
@@ -2261,7 +2263,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('surfaces a disable toggle when background follow is already enabled and turns it off on select', async () => {
     daemonMergedProjectionState.current = {
       phase: 'ready',
-      inputs: { pluginProjectionV2: createExplicitTerminalFollowProjection() },
+      inputs: { pluginProjectionV2: createDeclaredCodexSourceProjection() },
     };
     storageState.current.sessions = {
       s1: {

@@ -5,13 +5,27 @@ import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/sta
 import { estimateTranscriptRowHeightFromContent } from './estimateTranscriptRowHeightFromCache';
 import type { TranscriptRowShellItem } from './transcriptRowShellSignature';
 
-/** Measured baseline plus the 20px stable action-row reserve added below pending content. */
-const ONE_SHORT_PENDING_MESSAGE_WITH_ACTION_RESERVE_PX = 68.625 + 20;
-/** `transcriptPendingQueueMaxHeightPx` account default: the block's own painted bound. */
-const PENDING_QUEUE_SCROLL_CAP_PX = 80;
+/**
+ * The height ONE short queued message paints on native: header 14.625 + [ scroll paddingTop 6 +
+ * bubble paddingVertical 16 + one 24px line ], NO inter-row gap (it is the last row in the scroll
+ * content) and NO action row (native paints that branch only for a reorderable queue).
+ *
+ * The gap under the last row is separation from a row that is not there, and carrying it made the
+ * pending→committed crossover a DOWNWARD step; dropping it leaves the committed row 1.375px taller,
+ * so the swap can only move content UP. See `pendingQueueContentClipping`.
+ */
+const ONE_SHORT_PENDING_MESSAGE_NATIVE_PX = 60.625;
+/** The same row on web, which paints the copy/send action row unconditionally. */
+const PENDING_MESSAGE_ACTION_ROW_PX = 20;
+/** `transcriptPendingQueueMaxHeightPx` account default: the compact BACKLOG strip. */
+const PENDING_QUEUE_BACKLOG_STRIP_PX = 80;
+/** `resolvePendingQueueHeadMaxHeightPx(24)` — six painted lines plus the bubble's own padding. */
+const PENDING_QUEUE_HEAD_CAP_PX = 6 + 16 + 6 * 24;
+/** A queue keeps the head fully visible and scrolls the collapsed backlog beneath it. */
+const PENDING_QUEUE_CAP_PX = PENDING_QUEUE_HEAD_CAP_PX + PENDING_QUEUE_BACKLOG_STRIP_PX;
 const PENDING_QUEUE_HEADER_PX = 14.625;
 const PENDING_QUEUE_HEADER_WITH_SUBTITLE_PX = 31;
-const PENDING_QUEUE_ONE_MESSAGE_CHROME_PX = 6 + 44;
+const PENDING_QUEUE_ONE_MESSAGE_CHROME_PX = 6 + 16;
 const TRANSCRIPT_MARKDOWN_LINE_PX = 24;
 /** `ESTIMATE_CHARS_PER_LINE` — the estimator's flat, width-blind wrap. */
 const ESTIMATE_CHARS_PER_LINE = 72;
@@ -40,8 +54,10 @@ function discardedMessage(overrides: Partial<DiscardedPendingMessage> = {}): Dis
 function estimatePendingQueue(
     pendingMessages: PendingMessage[],
     discardedMessages: DiscardedPendingMessage[] = [],
+    platformIsWeb = false,
 ): number | undefined {
     return estimateTranscriptRowHeightFromContent({
+        platformIsWeb,
         toolCallsGroupChromeVariant: 'feed_background',
         getMessageById: () => null,
         item: {
@@ -62,11 +78,11 @@ function estimatePendingQueue(
 describe('pending-queue estimate is chrome-aware', () => {
     it('matches the measured painted height of a single short queued message', () => {
         expect(estimatePendingQueue([pendingMessage({ text: 'ok' })]))
-            .toBeCloseTo(ONE_SHORT_PENDING_MESSAGE_WITH_ACTION_RESERVE_PX, 1);
+            .toBeCloseTo(ONE_SHORT_PENDING_MESSAGE_NATIVE_PX, 1);
     });
 
     it('never exceeds the block header plus its own scroll cap, however long the queue is', () => {
-        const bounded = PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_SCROLL_CAP_PX;
+        const bounded = PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_CAP_PX;
 
         expect(estimatePendingQueue([
             pendingMessage({ id: 'p1', text: 'a'.repeat(300) }),
@@ -79,14 +95,23 @@ describe('pending-queue estimate is chrome-aware', () => {
         ])).toBeCloseTo(bounded, 1);
     });
 
-    it('sizes a single queued utterance from its own content instead of the queue cap', () => {
-        // 600 chars ⇒ ceil(600/72) = 9 rendered lines.
+    it('sizes a single queued utterance from its own content, not the compact backlog strip', () => {
+        // 300 chars ⇒ ceil(300/72) = 5 rendered lines: over the compact strip, under the head cap.
         const natural = PENDING_QUEUE_HEADER_PX
             + PENDING_QUEUE_ONE_MESSAGE_CHROME_PX
-            + Math.ceil(600 / ESTIMATE_CHARS_PER_LINE) * TRANSCRIPT_MARKDOWN_LINE_PX;
+            + Math.ceil(300 / ESTIMATE_CHARS_PER_LINE) * TRANSCRIPT_MARKDOWN_LINE_PX;
 
-        expect(natural).toBeGreaterThan(PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_SCROLL_CAP_PX);
-        expect(estimatePendingQueue([pendingMessage({ text: 'x'.repeat(600) })])).toBeCloseTo(natural, 1);
+        expect(natural).toBeGreaterThan(PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_BACKLOG_STRIP_PX);
+        expect(estimatePendingQueue([pendingMessage({ text: 'x'.repeat(300) })])).toBeCloseTo(natural, 1);
+    });
+
+    /**
+     * ...but it is still BOUNDED. An unbounded lone message painted ~1.1k px for a 2000-char send,
+     * with the "View more" affordance and the header chevron both unreachable for it.
+     */
+    it('bounds a very long lone utterance at the head cap', () => {
+        expect(estimatePendingQueue([pendingMessage({ text: 'x'.repeat(4000) })]))
+            .toBeCloseTo(PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_HEAD_CAP_PX, 1);
     });
 
     it('grows monotonically with the queue up to that bound', () => {
@@ -97,7 +122,7 @@ describe('pending-queue estimate is chrome-aware', () => {
         ]) as number;
 
         expect(two).toBeGreaterThan(one);
-        expect(two).toBeLessThanOrEqual(PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_SCROLL_CAP_PX);
+        expect(two).toBeLessThanOrEqual(PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_CAP_PX);
     });
 
     it('sizes a message from the string the row renders (displayText)', () => {
@@ -111,8 +136,9 @@ describe('pending-queue estimate is chrome-aware', () => {
         const both = estimatePendingQueue([pendingMessage()], [discardedMessage()]) as number;
         const discardedOnly = estimatePendingQueue([], [discardedMessage()]) as number;
 
-        expect(both).toBeCloseTo(PENDING_QUEUE_HEADER_WITH_SUBTITLE_PX + PENDING_QUEUE_SCROLL_CAP_PX, 1);
-        expect(discardedOnly).toBeCloseTo(PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_SCROLL_CAP_PX, 1);
+        expect(both).toBeLessThanOrEqual(PENDING_QUEUE_HEADER_WITH_SUBTITLE_PX + PENDING_QUEUE_CAP_PX);
+        expect(discardedOnly).toBeLessThanOrEqual(PENDING_QUEUE_HEADER_PX + PENDING_QUEUE_CAP_PX);
+        expect(both).toBeGreaterThan(discardedOnly);
     });
 
     /**

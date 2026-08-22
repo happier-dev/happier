@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildVisibleSessionNavigationEntries } from '@/keyboard/sessions';
+import { buildVisibleSessionNavigationEntries } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
 import {
     buildSessionListSelectionKey,
@@ -18,9 +18,9 @@ describe('sessionListSelectionKeys', () => {
     it('reads visible selection keys from session-only navigation entries', () => {
         const visibleEntries = buildVisibleSessionNavigationEntries([
             { type: 'header' },
-            { type: 'session', serverId: 'server-a', session: { id: 'alpha' } },
+            { type: 'session', serverId: 'server-a', sessionId: 'alpha' },
             { type: 'header' },
-            { type: 'session', serverId: 'server-a', session: { id: 'beta' } },
+            { type: 'session', serverId: 'server-a', sessionId: 'beta' },
         ]);
 
         expect(readSessionListSelectionKeysFromVisibleEntries(visibleEntries)).toEqual([

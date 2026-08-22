@@ -4,15 +4,18 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
     SESSION_ACTION_UNPIN_ID,
+    resolveAttentionStandingFromSessionActionId,
     resolveManualReadStateFromSessionActionId,
 } from '@/components/sessions/actions/sessionActionIds';
 import { createSessionActionDropdownItem } from '@/components/sessions/actions/sessionActionPresentation';
@@ -221,6 +224,19 @@ export function useSessionRowActionMenu(params: Readonly<{
         }
     }, [target]);
 
+    const handleAttentionStandingAction = React.useCallback(async (standing: boolean) => {
+        try {
+            await executeSessionAction({
+                actionId: standing
+                    ? SESSION_ACTION_SET_ATTENTION_STANDING_ID
+                    : SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+                target,
+            });
+        } catch (error) {
+            showActionError(error);
+        }
+    }, [target]);
+
     const handleUnarchiveSession = React.useCallback(async () => {
         try {
             await executeSessionAction({
@@ -294,6 +310,12 @@ export function useSessionRowActionMenu(params: Readonly<{
             return;
         }
 
+        const attentionStanding = resolveAttentionStandingFromSessionActionId(itemId);
+        if (attentionStanding !== null) {
+            await handleAttentionStandingAction(attentionStanding);
+            return;
+        }
+
         const actionId = resolveActionIdFromMenuItemId(itemId);
         switch (actionId) {
             case SESSION_ACTION_RENAME_ID:
@@ -314,6 +336,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     }, [
         confirmArchiveSession,
         confirmStopSession,
+        handleAttentionStandingAction,
         handleReadStateAction,
         handleRenameSession,
         handleUnarchiveSession,

@@ -169,12 +169,12 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         const { AuthenticatedAppRuntimeMounts } = await import('./AuthenticatedAppRuntimeMounts');
 
         const screen = await renderScreen(
-            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isTauriDesktopHost={false} />,
+            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isDesktopShell={false} />,
         );
         const renderCountsAfterMount = { ...runtimeRenderCounts };
 
         await screen.update(
-            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isTauriDesktopHost={false} />,
+            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isDesktopShell={false} />,
         );
 
         expect(runtimeRenderCounts).toEqual(renderCountsAfterMount);
@@ -184,14 +184,14 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         const { AuthenticatedAppRuntimeMounts } = await import('./AuthenticatedAppRuntimeMounts');
 
         const screen = await renderScreen(
-            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isTauriDesktopHost={false} />,
+            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isDesktopShell={false} />,
         );
         expect(runtimeRenderCounts.desktopTray).toBe(0);
         expect(runtimeRenderCounts.desktopTrayDaemon).toBe(0);
         expect(runtimeRenderCounts.desktopActivityOverlay).toBe(0);
 
         await screen.update(
-            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isTauriDesktopHost={true} />,
+            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isDesktopShell={true} />,
         );
 
         expect(runtimeRenderCounts.desktopTray).toBe(1);
@@ -229,7 +229,7 @@ describe('AuthenticatedAppRuntimeMounts', () => {
             const { AuthenticatedAppRuntimeMounts } = await import('./AuthenticatedAppRuntimeMounts');
 
             const screen = await renderScreen(
-                <AuthenticatedAppRuntimeMounts isAuthenticated={true} isTauriDesktopHost={true} />,
+                <AuthenticatedAppRuntimeMounts isAuthenticated={true} isDesktopShell={true} />,
             );
 
             expect(reverseCaptureMockState.installBrowserRecordingReverseCapture).toHaveBeenCalledWith(machine.id);
@@ -237,7 +237,7 @@ describe('AuthenticatedAppRuntimeMounts', () => {
             expect(dispose).toBeTypeOf('function');
 
             await screen.update(
-                <AuthenticatedAppRuntimeMounts isAuthenticated={false} isTauriDesktopHost={true} />,
+                <AuthenticatedAppRuntimeMounts isAuthenticated={false} isDesktopShell={true} />,
             );
 
             expect(dispose).toHaveBeenCalledTimes(1);
@@ -285,7 +285,7 @@ describe('AuthenticatedAppRuntimeMounts', () => {
             const { AuthenticatedAppRuntimeMounts } = await import('./AuthenticatedAppRuntimeMounts');
 
             await renderScreen(
-                <AuthenticatedAppRuntimeMounts isAuthenticated={true} isTauriDesktopHost={true} />,
+                <AuthenticatedAppRuntimeMounts isAuthenticated={true} isDesktopShell={true} />,
             );
 
             expect(reverseCaptureMockState.installBrowserRecordingReverseCapture).toHaveBeenCalledTimes(1);
@@ -329,7 +329,7 @@ describe('AuthenticatedAppRuntimeMounts', () => {
             const { AuthenticatedAppRuntimeMounts } = await import('./AuthenticatedAppRuntimeMounts');
 
             await renderScreen(
-                <AuthenticatedAppRuntimeMounts isAuthenticated={true} isTauriDesktopHost={true} />,
+                <AuthenticatedAppRuntimeMounts isAuthenticated={true} isDesktopShell={true} />,
             );
 
             expect(reverseCaptureMockState.installBrowserRecordingReverseCapture).not.toHaveBeenCalled();
@@ -345,7 +345,7 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         const { AuthenticatedAppRuntimeMounts } = await import('./AuthenticatedAppRuntimeMounts');
 
         await renderScreen(
-            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isTauriDesktopHost={false} />,
+            <AuthenticatedAppRuntimeMounts isAuthenticated={true} isDesktopShell={false} />,
         );
 
         expect(runtimeRenderCounts.activitySurfaces).toBe(0);

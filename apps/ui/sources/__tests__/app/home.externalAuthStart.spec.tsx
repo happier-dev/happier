@@ -144,10 +144,10 @@ const serverRuntimeState = vi.hoisted(() => ({
     serverUrl: 'http://api.example.test',
     listeners: new Set<(snapshot: { serverId: string; serverUrl: string; generation: number }) => void>(),
 }));
-const invokeTauriSpy = vi.hoisted(() => vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(async () => undefined));
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.value,
-    invokeTauri: (command: string, args?: Record<string, unknown>) => invokeTauriSpy(command, args),
+const invokeDesktopHostSpy = vi.hoisted(() => vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(async () => undefined));
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.value,
+    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostSpy(command, args),
 }));
 
 vi.mock('react-native', async () => {

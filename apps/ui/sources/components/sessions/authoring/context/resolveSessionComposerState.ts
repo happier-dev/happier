@@ -1,11 +1,11 @@
-import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore } from '@/agents/catalog/catalog';
 import type { ExistingSessionAuthoringSnapshotSession } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { SessionAuthoringSnapshot } from '@/sync/domains/sessionAuthoring/sessionAuthoringSnapshot';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type SessionComposerState = Readonly<{
-    agentId: AgentId | null;
+    agentId: string | null;
     machineName: string | null;
     permissionMode: PermissionMode;
     modelMode: ModelMode;
@@ -16,13 +16,13 @@ export type SessionComposerState = Readonly<{
 export function resolveSessionComposerState(params: Readonly<{
     snapshot: Pick<SessionAuthoringSnapshot, 'agentId' | 'permissionMode' | 'modelId' | 'profileId' | 'directory'>;
     session: ExistingSessionAuthoringSnapshotSession;
-    fallbackAgentId?: AgentId | null;
+    fallbackAgentId?: string | null;
     permissionModeOverride?: PermissionMode | null;
     modelModeOverride?: ModelMode | null;
     profileIdOverride?: string | null;
     currentPathOverride?: string | null;
 }>): SessionComposerState {
-    const agentId = isAgentId(params.snapshot.agentId)
+    const agentId = typeof params.snapshot.agentId === 'string' && params.snapshot.agentId.trim().length > 0
         ? params.snapshot.agentId
         : (params.fallbackAgentId ?? null);
     const metadata = readSessionOwnerMetadataView(params.session);
@@ -32,7 +32,7 @@ export function resolveSessionComposerState(params: Readonly<{
         || null;
     const modelMode = params.modelModeOverride
         ?? params.snapshot.modelId
-        ?? (agentId ? getAgentCore(agentId).model.defaultMode : null)
+        ?? (agentId ? getAgentCore(agentId)?.model.defaultMode : null)
         ?? 'default';
 
     return {

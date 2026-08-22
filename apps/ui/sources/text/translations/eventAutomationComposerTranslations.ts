@@ -51,9 +51,25 @@ const english = {
 } as const;
 
 const ru = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: 'Доступно',
+        payloadFields: 'ПОЛЯ ПОЛЕЗНОЙ НАГРУЗКИ',
+        payloadSample: 'Пример полезной нагрузки',
+        noFilterableFields: 'Это событие не объявляет фильтруемые поля полезной нагрузки.',
+        addFilterClause: 'Добавить условие',
+        filterField: 'Поле фильтра',
+        filterOperator: 'Оператор фильтра',
+        filterEquals: 'Равно',
+        filterOneOf: 'Является одним из',
+        filterValue: 'Значение фильтра',
+        filterValuePlaceholder: '«ценность» или [«ценность»]',
+        storedContentUnavailableTitle: 'Сохраненный контент автоматизации недоступен.',
+        storedContentUnavailableBody: 'Эту автоматизацию событий невозможно сохранить, поскольку ее сохраненное содержимое недоступно.',
+        historyGapRecoveryTitle: 'Исторический пробел требует внимания',
+        historyGapRecoverySubtitle: 'Сбросьте исходную базовую линию, чтобы возобновить наблюдение за новыми событиями.',
+        historyGapRecoveryUnavailable: 'Действие по восстановлению источника недоступно в текущем наблюдателе.',
+        historyGapRecoveryFailureTitle: 'Для восстановления исходного кода требуется еще одна попытка',
+        historyGapRecoveryFailureBody: 'Восстановление не подтвердилось. Источник по-прежнему требует внимания.',
         sourceStatusTitle: 'Источник наблюдения',
         sourceStatusState: {
             uninitialized: 'Не запущено',
@@ -84,12 +100,28 @@ const ru = {
         sourceCatalogStatusNoAdoptedRevision: 'Ревизия ещё не принята',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `Сканирование началось: ${time}`,
     },
-} as const;
+};
 
 const pl = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: 'Dostępne',
+        payloadFields: 'POLA ŁADUNKU',
+        payloadSample: 'Przykładowy ładunek',
+        noFilterableFields: 'To zdarzenie nie deklaruje możliwych do filtrowania pól ładunku.',
+        addFilterClause: 'Dodaj warunek',
+        filterField: 'Pole filtra',
+        filterOperator: 'Operator filtra',
+        filterEquals: 'Równe',
+        filterOneOf: 'Jest jednym z',
+        filterValue: 'Wartość filtra',
+        filterValuePlaceholder: '„wartość” lub [„wartość”]',
+        storedContentUnavailableTitle: 'Przechowywane treści automatyzacji są niedostępne',
+        storedContentUnavailableBody: 'Nie można zapisać tej automatyzacji wydarzenia, ponieważ przechowywana w niej zawartość jest niedostępna.',
+        historyGapRecoveryTitle: 'Luka w historii wymaga uwagi',
+        historyGapRecoverySubtitle: 'Zresetuj linię bazową źródła, aby wznowić obserwację nowych zdarzeń.',
+        historyGapRecoveryUnavailable: 'Akcja odzyskiwania źródła nie jest dostępna w bieżącym obserwatorze.',
+        historyGapRecoveryFailureTitle: 'Odzyskiwanie źródła wymaga kolejnej próby',
+        historyGapRecoveryFailureBody: 'Powrót do zdrowia nie został potwierdzony. Źródło nadal wymaga uwagi.',
         sourceStatusTitle: 'Źródło obserwacji',
         sourceStatusState: {
             uninitialized: 'Nie uruchomiono',
@@ -120,12 +152,28 @@ const pl = {
         sourceCatalogStatusNoAdoptedRevision: 'Żadna wersja nie została jeszcze przyjęta',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `Skanowanie rozpoczęto: ${time}`,
     },
-} as const;
+};
 
 const es = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: 'Disponible',
+        payloadFields: 'CAMPOS DE CARGA ÚTIL',
+        payloadSample: 'Carga útil de muestra',
+        noFilterableFields: 'Este evento no declara campos de carga útil filtrables.',
+        addFilterClause: 'Agregar condición',
+        filterField: 'Campo de filtro',
+        filterOperator: 'Operador de filtro',
+        filterEquals: 'igual',
+        filterOneOf: 'es uno de',
+        filterValue: 'Valor del filtro',
+        filterValuePlaceholder: '"valor" o ["valor"]',
+        storedContentUnavailableTitle: 'El contenido de automatización almacenado no está disponible',
+        storedContentUnavailableBody: 'Esta automatización de eventos no se puede guardar porque su contenido almacenado no está disponible.',
+        historyGapRecoveryTitle: 'La brecha histórica necesita atención',
+        historyGapRecoverySubtitle: 'Restablezca la línea base de origen para continuar observando nuevos eventos.',
+        historyGapRecoveryUnavailable: 'La acción de recuperación de origen no está disponible en su observador actual.',
+        historyGapRecoveryFailureTitle: 'La recuperación de la fuente necesita otro intento',
+        historyGapRecoveryFailureBody: 'La recuperación no fue confirmada. La fuente todavía necesita atención.',
         sourceStatusTitle: 'Fuente de observación',
         sourceStatusState: {
             uninitialized: 'Sin iniciar',
@@ -156,12 +204,28 @@ const es = {
         sourceCatalogStatusNoAdoptedRevision: 'Aún no se adoptó ninguna revisión',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `Análisis iniciado: ${time}`,
     },
-} as const;
+};
 
 const it = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: 'Disponibile',
+        payloadFields: 'CAMPI DI CARICO UTILE',
+        payloadSample: 'Carico utile del campione',
+        noFilterableFields: 'Questo evento non dichiara campi di payload filtrabili.',
+        addFilterClause: 'Aggiungi condizione',
+        filterField: 'Campo filtro',
+        filterOperator: 'Operatore di filtro',
+        filterEquals: 'Uguali',
+        filterOneOf: 'È uno di',
+        filterValue: 'Valore del filtro',
+        filterValuePlaceholder: '"valore" o ["valore"]',
+        storedContentUnavailableTitle: 'Contenuto di automazione archiviato non disponibile',
+        storedContentUnavailableBody: 'Questa automazione dell\'evento non può essere salvata perché il suo contenuto archiviato non è disponibile.',
+        historyGapRecoveryTitle: 'Il divario storico necessita di attenzione',
+        historyGapRecoverySubtitle: 'Reimposta la linea di base di origine per riprendere a osservare nuovi eventi.',
+        historyGapRecoveryUnavailable: 'L\'azione di ripristino dell\'origine non è disponibile sul relativo osservatore corrente.',
+        historyGapRecoveryFailureTitle: 'Il ripristino della fonte richiede un altro tentativo',
+        historyGapRecoveryFailureBody: 'Il recupero non è stato confermato. La fonte necessita ancora di attenzione.',
         sourceStatusTitle: 'Sorgente di osservazione',
         sourceStatusState: {
             uninitialized: 'Non avviata',
@@ -192,12 +256,28 @@ const it = {
         sourceCatalogStatusNoAdoptedRevision: 'Nessuna revisione adottata',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `Scansione avviata: ${time}`,
     },
-} as const;
+};
 
 const pt = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: 'Disponível',
+        payloadFields: 'CAMPOS DE CARGA',
+        payloadSample: 'Exemplo de carga útil',
+        noFilterableFields: 'Este evento não declara campos de carga filtráveis.',
+        addFilterClause: 'Adicionar condição',
+        filterField: 'Campo de filtro',
+        filterOperator: 'Operador de filtro',
+        filterEquals: 'Igual',
+        filterOneOf: 'É um dos',
+        filterValue: 'Valor do filtro',
+        filterValuePlaceholder: '"valor" ou ["valor"]',
+        storedContentUnavailableTitle: 'Conteúdo de automação armazenado indisponível',
+        storedContentUnavailableBody: 'Esta automação de evento não pode ser salva porque seu conteúdo armazenado não está disponível.',
+        historyGapRecoveryTitle: 'A lacuna histórica precisa de atenção',
+        historyGapRecoverySubtitle: 'Redefina a linha de base de origem para retomar a observação de novos eventos.',
+        historyGapRecoveryUnavailable: 'A ação de recuperação de origem não está disponível no inspetor atual.',
+        historyGapRecoveryFailureTitle: 'A recuperação da fonte precisa de outra tentativa',
+        historyGapRecoveryFailureBody: 'A recuperação não foi confirmada. A fonte ainda precisa de atenção.',
         sourceStatusTitle: 'Fonte de observação',
         sourceStatusState: {
             uninitialized: 'Não iniciada',
@@ -228,12 +308,28 @@ const pt = {
         sourceCatalogStatusNoAdoptedRevision: 'Nenhuma revisão adotada ainda',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `Verificação iniciada: ${time}`,
     },
-} as const;
+};
 
 const ca = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: 'Disponible',
+        payloadFields: 'CAMPS DE CÀRREGA ÚTIL',
+        payloadSample: 'Càrrega útil de mostra',
+        noFilterableFields: 'Aquest esdeveniment no declara camps de càrrega útil filtrables.',
+        addFilterClause: 'Afegeix condició',
+        filterField: 'Camp de filtre',
+        filterOperator: 'Operador de filtre',
+        filterEquals: 'Iguals',
+        filterOneOf: 'És un dels',
+        filterValue: 'Valor del filtre',
+        filterValuePlaceholder: '"valor" o ["valor"]',
+        storedContentUnavailableTitle: 'El contingut d\'automatització emmagatzemat no està disponible',
+        storedContentUnavailableBody: 'Aquesta automatització d\'esdeveniments no es pot desar perquè el seu contingut emmagatzemat no està disponible.',
+        historyGapRecoveryTitle: 'La bretxa històrica necessita atenció',
+        historyGapRecoverySubtitle: 'Restableix la línia de base d\'origen per reprendre l\'observació d\'esdeveniments nous.',
+        historyGapRecoveryUnavailable: 'L\'acció de recuperació de la font no està disponible al seu observador actual.',
+        historyGapRecoveryFailureTitle: 'La recuperació de la font necessita un altre intent',
+        historyGapRecoveryFailureBody: 'La recuperació no es va confirmar. La font encara necessita atenció.',
         sourceStatusTitle: 'Font d\'observació',
         sourceStatusState: {
             uninitialized: 'No iniciada',
@@ -264,12 +360,28 @@ const ca = {
         sourceCatalogStatusNoAdoptedRevision: 'Encara no s’ha adoptat cap revisió',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `Escaneig iniciat: ${time}`,
     },
-} as const;
+};
 
 const zhHans = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: '可用',
+        payloadFields: '有效负载字段',
+        payloadSample: '示例有效负载',
+        noFilterableFields: '此事件不声明可过滤的有效负载字段。',
+        addFilterClause: '添加条件',
+        filterField: '过滤字段',
+        filterOperator: '过滤运算符',
+        filterEquals: '等于',
+        filterOneOf: '是其中之一',
+        filterValue: '过滤值',
+        filterValuePlaceholder: '“值”或[“值”]',
+        storedContentUnavailableTitle: '存储的自动化内容不可用',
+        storedContentUnavailableBody: '无法保存此事件自动化，因为其存储的内容不可用。',
+        historyGapRecoveryTitle: '历史差距需引起重视',
+        historyGapRecoverySubtitle: '重置源基线以继续观察新事件。',
+        historyGapRecoveryUnavailable: '源恢复操作在当前观察程序上不可用。',
+        historyGapRecoveryFailureTitle: '源恢复需要再次尝试',
+        historyGapRecoveryFailureBody: '康复情况尚未得到证实。消息来源仍需关注。',
         sourceStatusTitle: '观察来源',
         sourceStatusState: {
             uninitialized: '尚未开始',
@@ -300,12 +412,28 @@ const zhHans = {
         sourceCatalogStatusNoAdoptedRevision: '尚未采用任何版本',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `扫描开始时间：${time}`,
     },
-} as const;
+};
 
 const zhHant = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: '可用',
+        payloadFields: '有效負載字段',
+        payloadSample: '範例有效負載',
+        noFilterableFields: '此事件不聲明可過濾的有效負載欄位。',
+        addFilterClause: '新增條件',
+        filterField: '過濾字段',
+        filterOperator: '過濾運算符',
+        filterEquals: '等於',
+        filterOneOf: '是其中之一',
+        filterValue: '過濾值',
+        filterValuePlaceholder: '“值”或[“值”]',
+        storedContentUnavailableTitle: '儲存的自動化內容不可用',
+        storedContentUnavailableBody: '無法保存此事件自動化，因為其儲存的內容不可用。',
+        historyGapRecoveryTitle: '歷史差距需重視',
+        historyGapRecoverySubtitle: '重置來源基線以繼續觀察新事件。',
+        historyGapRecoveryUnavailable: '來源恢復操作在目前觀察程序上不可用。',
+        historyGapRecoveryFailureTitle: '來源恢復需要再次嘗試',
+        historyGapRecoveryFailureBody: '康復情況尚未得到證實。消息來源仍需關注。',
         sourceStatusTitle: '觀察來源',
         sourceStatusState: {
             uninitialized: '尚未開始',
@@ -336,12 +464,28 @@ const zhHant = {
         sourceCatalogStatusNoAdoptedRevision: '尚未採用任何版本',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `掃描開始時間：${time}`,
     },
-} as const;
+};
 
 const ja = {
-    ...english,
     eventAutomationComposer: {
-        ...english.eventAutomationComposer,
+        available: '利用可能',
+        payloadFields: 'ペイロードフィールド',
+        payloadSample: 'サンプルペイロード',
+        noFilterableFields: 'このイベントは、フィルター可能なペイロード フィールドを宣言しません。',
+        addFilterClause: '条件の追加',
+        filterField: 'フィルターフィールド',
+        filterOperator: 'フィルタ演算子',
+        filterEquals: '等しい',
+        filterOneOf: 'のいずれかです',
+        filterValue: 'フィルター値',
+        filterValuePlaceholder: '"値" または ["値"]',
+        storedContentUnavailableTitle: '保存されたオートメーション コンテンツが利用できない',
+        storedContentUnavailableBody: 'このイベント オートメーションは、保存されているコンテンツが利用できないため保存できません。',
+        historyGapRecoveryTitle: '歴史のギャップに注意が必要',
+        historyGapRecoverySubtitle: '新しいイベントの監視を再開するには、ソース ベースラインをリセットします。',
+        historyGapRecoveryUnavailable: 'ソース回復アクションは、現在のウォッチャーでは使用できません。',
+        historyGapRecoveryFailureTitle: 'ソースの回復にはもう一度試す必要があります',
+        historyGapRecoveryFailureBody: '回復は確認されなかった。ソースにはまだ注意が必要です。',
         sourceStatusTitle: '監視ソース',
         sourceStatusState: {
             uninitialized: '未開始',
@@ -372,10 +516,61 @@ const ja = {
         sourceCatalogStatusNoAdoptedRevision: 'まだリビジョンは適用されていません',
         sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `スキャン開始: ${time}`,
     },
-} as const;
+};
 
 export const eventAutomationComposerTranslations = {
     en: english,
+    de: {
+    eventAutomationComposer: {
+        available: 'Verfügbar',
+        payloadFields: 'PAYLOAD-FELDER',
+        payloadSample: 'Beispiel-Payload',
+        noFilterableFields: 'Dieses Ereignis gibt keine filterbaren Payload-Felder an.',
+        addFilterClause: 'Bedingung hinzufügen',
+        filterField: 'Filterfeld',
+        filterOperator: 'Filteroperator',
+        filterEquals: 'Ist gleich',
+        filterOneOf: 'Ist eines von',
+        filterValue: 'Filterwert',
+        filterValuePlaceholder: '"value" oder ["value"]',
+        storedContentUnavailableTitle: 'Gespeicherter Automations-Inhalt nicht verfügbar',
+        storedContentUnavailableBody: 'Diese Ereignis-Automation lässt sich nicht speichern, weil ihr gespeicherter Inhalt nicht verfügbar ist.',
+        historyGapRecoveryTitle: 'Eine Lücke im Verlauf braucht Aufmerksamkeit',
+        historyGapRecoverySubtitle: 'Setz die Quell-Baseline zurück, um wieder neue Ereignisse zu beobachten.',
+        historyGapRecoveryUnavailable: 'Die Wiederherstellungsaktion für die Quelle gibt es bei ihrem aktuellen Watcher nicht.',
+        historyGapRecoveryFailureTitle: 'Die Quell-Wiederherstellung braucht einen weiteren Versuch',
+        historyGapRecoveryFailureBody: 'Die Wiederherstellung wurde nicht bestätigt. Die Quelle braucht weiter Aufmerksamkeit.',
+        sourceStatusTitle: 'Beobachtungsquelle',
+        sourceStatusState: {
+            uninitialized: 'Nicht gestartet',
+            baselined: 'Baseline bereit',
+            observing: 'Beobachtet',
+            backingOff: 'Wartet auf den nächsten Versuch',
+            attention: 'Braucht Aufmerksamkeit',
+        },
+        sourceStatusCode: {
+            credentialMissing: 'Zugangsdaten erforderlich',
+            credentialRevoked: 'Zugangsdaten widerrufen',
+            rateLimited: 'Rate-limitiert',
+            historyGap: 'Lücke im Verlauf',
+            capacityBlocked: 'Durch Kapazität blockiert',
+            definitionStale: 'Definition geändert',
+            sourceContractIncompatible: 'Die Quelle muss aktualisiert werden',
+            admissionUnavailable: 'Zulassung nicht verfügbar',
+        },
+        sourceStatusNextRetry: ({ time }: { time: string }) => `Nächster Versuch: ${time}`,
+        sourceCatalogStatusTitle: 'Katalog-Abgleich',
+        sourceCatalogStatusState: {
+            current: 'Aktuell',
+            reconciling: 'Wird abgeglichen',
+            reconciliationLate: 'Abgleich verzögert',
+        },
+        sourceCatalogStatusObservedRevision: ({ revision }: { revision: string }) => `Beobachtete Revision: ${revision}`,
+        sourceCatalogStatusAdoptedRevision: ({ revision }: { revision: string }) => `Übernommene Revision: ${revision}`,
+        sourceCatalogStatusNoAdoptedRevision: 'Noch keine Revision übernommen',
+        sourceCatalogStatusScanStarted: ({ time }: { time: string }) => `Scan gestartet: ${time}`,
+    },
+},
     fr: {
     eventAutomationComposer: {
         available: 'Disponible',

@@ -129,8 +129,8 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => platformState.tauri,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => platformState.tauri,
 }));
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({

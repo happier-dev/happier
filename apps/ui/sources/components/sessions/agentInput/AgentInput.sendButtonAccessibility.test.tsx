@@ -37,6 +37,15 @@ const dictationState = vi.hoisted(() => ({
     dismissFailure: vi.fn(),
 }));
 const modalAlertMock = vi.hoisted(() => vi.fn());
+/**
+ * The suite renders against keys, which is what keeps its assertions independent
+ * of copy — but a key carries no Agent name, so every render lands in the
+ * "sentence does not interpolate" branch and the mark can only be trailing. One
+ * test needs a sentence that really names the Agent to exercise the other side.
+ */
+const translateOverride = vi.hoisted(() => ({
+    fn: null as null | ((key: string, params?: Record<string, unknown>) => string),
+}));
 
 // The Agent mark is a rendering boundary that reaches the generated Agent
 // catalog, which this composer harness does not install. Stub it so the send
@@ -78,7 +87,9 @@ installAgentInputCommonModuleMocks({
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
+        return createTextModuleMock({
+            translate: (key, params) => translateOverride.fn?.(key, params) ?? key,
+        });
     },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -284,6 +295,7 @@ function HostFieldAccessory() {
 
 describe('AgentInput (send button accessibility)', () => {
     afterEach(() => {
+        translateOverride.fn = null;
         featureEnabledState.voice = true;
         dictationState.status = 'idle';
         dictationState.failure = null;
@@ -480,7 +492,7 @@ describe('AgentInput (send button accessibility)', () => {
 
     it('draws every armed Agent\u2019s own mark, with no per-Agent exception', async () => {
         // A mixed treatment would silently rank Agents as recognisable or not.
-        // The reader has just seen this exact mark beside the Agent\u2019s name in
+        // The reader has just seen this exact mark beside the Agent’s name in
         // the rail, so it is never met cold.
         const { AgentInput } = await import('./AgentInput');
 
@@ -533,15 +545,15 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
-    it('keeps the circular send while the composer has nothing to send', async () => {
-        // An arm only presents where pressing send would actually take it. On an
-        // empty composer the same button is Dictation or Stop, so the armed shape
-        // and the armed name would both promise something press does not do.
+    it('closes the armed label with the mark instead of spelling the Agent after it', async () => {
+        // "Continue with [mark]", not "[mark] Continue with Claude". The mark
+        // stands where the sentence names the Agent, so the identity is carried
+        // once — by the logo — and the button stays as narrow as the switch is.
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
-                    value=""
+                    value="ship it"
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
@@ -552,8 +564,162 @@ describe('AgentInput (send button accessibility)', () => {
 
         const send = screen.findByTestId('session-composer-send');
         if (!send) throw new Error('session-composer-send not found');
-        expect(send.props.accessibilityLabel).not.toBe('session.agentContinuation.sendLabel');
+        // The spoken sentence still names the Agent in words — a glyph reads as
+        // nothing to a screen reader, and this press commits an Agent switch.
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
+        // English closes with the Agent, so the mark follows the words.
+        const hostType = (node: { type: unknown }) => String(node.type);
+        const drawnOrder = send.findAll(
+            (node) => hostType(node) === 'AgentIcon'
+                || (hostType(node) === 'Text' && typeof node.props?.children === 'string'),
+        );
+        expect(drawnOrder.map(hostType)).toEqual(['Text', 'AgentIcon']);
+
+        await screen.unmount();
+    });
+
+    it('opens the armed label with the mark in a language that opens with the Agent', async () => {
+        // Japanese is "{Agent} で続ける" — the name leads, so the mark that
+        // stands in for it must lead too. Pinned to the trailing slot this reads
+        // as broken grammar, and with only the English case above the placement
+        // logic could be replaced by the constant 'trailing' and stay green.
+        translateOverride.fn = (key, params) => (
+            key === 'session.agentContinuation.sendLabel'
+                ? `${String(params?.agent ?? '')} \u3067\u7d9a\u3051\u308b`
+                : key
+        );
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).toBe('Codex \u3067\u7d9a\u3051\u308b');
+        const hostType = (node: { type: unknown }) => String(node.type);
+        const drawnOrder = send.findAll(
+            (node) => hostType(node) === 'AgentIcon'
+                || (hostType(node) === 'Text' && typeof node.props?.children === 'string'),
+        );
+        expect(drawnOrder.map(hostType)).toEqual(['AgentIcon', 'Text']);
+        // The name is lifted out of the drawn words — the mark carries it.
+        expect(drawnOrder
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
+            .toEqual(['\u3067\u7d9a\u3051\u308b']);
+
+        await screen.unmount();
+    });
+
+    it('names the armed switch on an untouched composer, and leaves the press inert', async () => {
+        // Arming IS the confirmation. The control the reader is about to press
+        // reports which Agent it would continue with from the moment the rail is
+        // used — requiring a keystroke first reinstates a confirm step made of
+        // typing. What an empty composer withholds is the PRESS, not the name: the
+        // same inert send it has always been, now saying what pressing it does.
+        const { AgentInput } = await import('./AgentInput');
+        const onSend = vi.fn();
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={onSend}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
+        expect(send.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['codex']);
+        // Inert, exactly as the empty composer's send has always been — and it
+        // still explains why, the way the circular send does.
+        expect(send.props.disabled).toBe(true);
+        expect(send.props.accessibilityState?.disabled).toBe(true);
+        expect(send.props.accessibilityHint).toBe('session.inputPlaceholder');
+
+        await screen.pressByTestIdAsync('session-composer-send');
+        expect(onSend).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('leaves the empty-composer Stop saying Stop, and stopping when pressed', async () => {
+        // The name follows the arm, but only onto the control the arm would use. A
+        // running turn takes this button for Stop, and "Continue with Codex" on it
+        // would name a switch that press aborts instead of taking.
+        featureEnabledState.voice = false;
+        const { AgentInput } = await import('./AgentInput');
+        const onAbort = vi.fn();
+        const onSend = vi.fn();
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={onSend}
+                    onAbort={onAbort}
+                    showAbortButton={true}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).toBe('agentInput.stopCodingTurn');
         expect(send.findAllByType('AgentIcon' as any).length).toBe(0);
+
+        await screen.pressByTestIdAsync('session-composer-send');
+        expect(onAbort).toHaveBeenCalledTimes(1);
+        expect(onSend).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('names the armed engine on the chip before anything has been typed', async () => {
+        // Selection IS the arming: there is no confirm step, so the chip reports the
+        // choice the moment the rail is used. Requiring a keystroke first reinstates
+        // a confirm step made of typing — the reader picks another Agent, the rail
+        // ticks it, and the composer goes on naming the one that is running.
+        //
+        // The send control answers the same question here — it is still the send,
+        // just an inert one — so it names the same Agent. Only Dictation or Stop
+        // taking the button changes that answer.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    agentType="codex"
+                    onAgentClick={() => {}}
+                    armedContinuationTarget={{ agentId: 'claude', label: 'Claude', modelLabel: 'Sonnet 4.6' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const chip = screen.findByTestId('agent-input-agent-chip');
+        if (!chip) throw new Error('agent-input-agent-chip not found');
+        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['claude']);
+        expect(chip.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
+            .toContain('Sonnet 4.6');
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel)
+            .toBe('session.agentContinuation.sendLabel');
 
         await screen.unmount();
     });

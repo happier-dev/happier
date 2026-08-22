@@ -467,7 +467,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     return createSyncOpsModuleMock({
         importOriginal,
         overrides: {
-            continueSessionWithReplay: vi.fn(),
             sessionAbort: vi.fn(),
             resumeSession: vi.fn(),
             sessionAttachmentsUploadFile: vi.fn(),
@@ -502,7 +501,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
     getAgentResumeExperimentsFromSettings: () => null,
     getNewSessionRelevantInstallableDepKeys: () => [],
-    isAgentId: (value: unknown) => value === 'codex',
+    isBundledAgentId: (value: unknown) => value === 'codex',
     resolveAgentIdFromFlavor: () => 'codex',
 }));
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({

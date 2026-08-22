@@ -123,4 +123,61 @@ describe('useSessionListScrollRetention', () => {
 
         expect(scrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
     });
+
+    it('does not record scroll from an inactive surface as the reader position', async () => {
+        const scrollToOffset = vi.fn();
+        const hook = await renderHook(
+            (props: { surfaceActive: boolean }) => useSessionListScrollRetention({
+                retentionKey: 'persisted-inactive-scroll',
+                scrollToOffset,
+                surfaceActive: props.surfaceActive,
+            }),
+            { initialProps: { surfaceActive: true } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().handleLayout(layoutEvent(416));
+            hook.getCurrent().handleScroll(scrollEvent(280, 416));
+        });
+
+        // MEASURED in remote-dev: deactivating the screen moves the native scroll view and reports it
+        // as an ordinary scroll (`y: 0`, or a parked `-9999055`). Recording it would replace the
+        // reader's place with the platform's, so the surface state is what rejects it.
+        await hook.rerender({ surfaceActive: false });
+        await act(async () => {
+            hook.getCurrent().handleScroll(scrollEvent(0, 416));
+        });
+
+        await hook.rerender({ surfaceActive: true });
+        await act(async () => {
+            hook.getCurrent().handleLayout(layoutEvent(0));
+            hook.getCurrent().handleLayout(layoutEvent(416));
+        });
+
+        expect(scrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
+    });
+
+    it('never repositions the reader once they have started scrolling again', async () => {
+        const scrollToOffset = vi.fn();
+        const hook = await renderHook(() => useSessionListScrollRetention({
+            retentionKey: 'persisted-user-takes-over',
+            scrollToOffset,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleLayout(layoutEvent(416));
+            hook.getCurrent().handleScroll(scrollEvent(280, 416));
+            hook.getCurrent().handleLayout(layoutEvent(0));
+        });
+
+        // Reported in remote-dev: a restore landing mid-gesture yanks the reader back to the old
+        // position, which is worse than the stale position it was trying to fix. A scroll on a live
+        // surface means the reader has taken control.
+        await act(async () => {
+            hook.getCurrent().handleScroll(scrollEvent(40, 416));
+            hook.getCurrent().handleLayout(layoutEvent(416));
+        });
+
+        expect(scrollToOffset).not.toHaveBeenCalled();
+    });
 });

@@ -29,7 +29,7 @@ import { getPendingSetupIntent, clearPendingSetupIntent } from '@/sync/domains/p
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { shouldAutoRedirectToSetupOnFirstLaunch } from '@/utils/platform/firstLaunchSetupRedirectPolicy';
 import { OnboardingWizardSurfacePresentation } from '@/components/onboarding/surfaces/OnboardingWizardSurface';
@@ -200,7 +200,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         auth.isAuthenticated
         && (routeGatePendingSetupIntent?.phase === 'awaiting_auth' || routeGatePendingSetupIntent?.phase === 'post_auth');
     const isLandscape = useIsLandscape();
-    const isDesktopShell = React.useMemo(() => isTauriDesktop(), []);
+    const isDesktopShell = React.useMemo(() => isDesktopHost(), []);
     const authEntryOptions = useAuthEntryOptions();
     const applyBrandHeroSeen = useApplyBrandHeroSeen();
     const autoRedirectAttemptedRef = React.useRef(false);
@@ -208,7 +208,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     const shellChromeHost = resolveAppShellChromeHost({
         isAuthenticated: false,
         isWeb: Platform.OS === 'web',
-        isTauriDesktop: isDesktopShell,
+        isDesktopHost: isDesktopShell,
         isTablet: false,
         isTerminalConnectRoute: false,
     });
@@ -230,7 +230,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         if (firstLaunchSetupRedirectedRef.current) {
             return;
         }
-        if (!shouldAutoRedirectToSetupOnFirstLaunch({ platformOs: Platform.OS, isDesktopTauri: isTauriDesktop() })) {
+        if (!shouldAutoRedirectToSetupOnFirstLaunch({ platformOs: Platform.OS, isDesktopHost: isDesktopHost() })) {
             return;
         }
         const pendingSetupIntent = getPendingSetupIntent();

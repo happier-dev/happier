@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
 import { useRouter } from 'expo-router';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
 import {
     presentFirstKeyCredentialLifecycle,
@@ -21,12 +22,31 @@ import {
     type CompactAppDestination,
     useCompactAppDestinations,
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import {
+    useAppShellPluginUiProjection,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+    createPluginUiProjectedActionResolver,
+    normalizePluginUiProjection,
+} from '@/sync/domains/plugins/ui/projection';
+import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
+import {
+    createPluginContributedActionController,
+    type PluginContributedActionCurrentSnapshot,
+} from '@/components/plugins/actions/pluginContributedActionController';
+import {
+    usePluginUiClientExecutableRegistrationRevision,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
 import { usePluginAppPageCatalogActivationHandler } from '@/components/appShell/plugins/pluginAppPageNavigation';
+import { useSessionMachineControlTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { buildCommandPaletteCommands, type PetCommandControls } from './buildCommandPaletteCommands';
 import { KeyboardShortcutProvider, buildKeyboardShortcutLabels, resolveKeyboardPlatform, type KeyboardShortcutHandlers } from '@/keyboard';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
 function readActiveSessionIdFromSegments(segments: readonly string[]): string | null {
     // expo-router segments look like: ['(app)', 'session', '<id>', ...]
@@ -38,6 +58,125 @@ function readActiveSessionIdFromSegments(segments: readonly string[]): string | 
 
 const EMPTY_KEYBOARD_HANDLERS: KeyboardShortcutHandlers = {};
 const EMPTY_ENABLED_WHEN_DISABLED_COMMAND_IDS: readonly [] = [];
+
+/**
+ * The root palette has an exact machine only when either the current Session
+ * supplies one or the app scope has a single eligible machine. A Session route
+ * never falls back to an unrelated app-scoped machine; doing so would turn a
+ * contextual Action into a second execution target selector.
+ */
+function useCommandPalettePluginActionPresentation(activeSessionId: string | null) {
+    const appShellProjection = useAppShellPluginUiProjection();
+    const currentUiContextReader = useOptionalCurrentUiContextReader();
+    const clientExecutableRegistrationRevision = usePluginUiClientExecutableRegistrationRevision();
+    const sessionMachineTarget = useSessionMachineControlTarget(activeSessionId ?? '');
+    const scope = activeSessionId ? 'session' as const : 'global' as const;
+    const machineId = activeSessionId
+        ? sessionMachineTarget?.machineId ?? null
+        : appShellProjection.machineId;
+    const serverId = activeSessionId
+        ? resolvePreferredServerIdForSessionId(activeSessionId) ?? null
+        : appShellProjection.serverId;
+    const projection = useDaemonMergedProjectionInputs({
+        machineId,
+        serverId,
+        enabled: machineId !== null,
+        staleMs: 60_000,
+    });
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const appShellProjectionRef = React.useRef(appShellProjection);
+    appShellProjectionRef.current = appShellProjection;
+    const snapshotRef = React.useRef<PluginContributedActionCurrentSnapshot | null>(null);
+    // This scope follows authority identity, not catalog metadata. The shared
+    // controller re-resolves metadata/availability at open time, while a
+    // target, Account, or generation transition retires any live form/action.
+    const actionScope = React.useMemo(() => new AbortController(), [
+        activeSessionId,
+        accountLifetime,
+        machineId,
+        projection.inputs?.pluginProjectionV2?.generation,
+        projection.phase,
+        serverId,
+    ]);
+    React.useEffect(() => () => actionScope.abort(), [actionScope]);
+    const snapshot = React.useMemo<PluginContributedActionCurrentSnapshot | null>(() => {
+        const inputs = projection.inputs;
+        const generation = inputs?.pluginProjectionV2?.generation;
+        if (
+            machineId === null
+            || projection.phase !== 'ready'
+            || !inputs
+            || generation === null
+            || generation === undefined
+        ) {
+            return null;
+        }
+        let current!: PluginContributedActionCurrentSnapshot;
+        current = {
+            pluginProjectionById: inputs.pluginProjectionById,
+            pluginUiProjection: normalizePluginUiProjection(inputs.pluginProjectionV2 ?? null),
+            resolveContributedAction: createPluginUiProjectedActionResolver(
+                inputs.pluginProjectionV2?.actionsById,
+            ),
+            host: {
+                machineId,
+                serverId,
+                expectedGeneration: generation,
+                ...(activeSessionId ? { sessionId: activeSessionId } : {}),
+                signal: actionScope.signal,
+                accountLifetime,
+                ...(currentUiContextReader
+                    ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
+                    : {}),
+                isCurrent: () => (
+                    snapshotRef.current === current
+                    && actionScope.signal.aborted === false
+                    && accountLifetime?.isCurrent() !== false
+                ),
+                // The app palette consumes an Action only from its selected
+                // app-scope origin. A Session palette already has its exact
+                // Session machine/currentness owner and must not acquire a
+                // second app-scope selection gate.
+                ...(activeSessionId ? {} : {
+                    isActionCurrent: (identity: Readonly<{ pluginId: string; localId: string }>) => {
+                        const projectedAction = appShellProjectionRef.current.pluginUiProjection?.actionsById[
+                            buildQualifiedPluginContributionKey(identity)
+                        ];
+                        const origin = readPluginUiContributionOrigin(projectedAction);
+                        return origin?.machineId === machineId
+                            && origin.serverId === serverId
+                            && origin.generation !== null
+                            && String(origin.generation) === String(generation)
+                            && origin.interactionEnabled === true
+                            && origin.phase === 'current'
+                            && origin.executionOrigin?.materializationRef.pluginId === identity.pluginId
+                            && origin.executionOrigin.materializationRef.machineId === machineId;
+                    },
+                }),
+            },
+        };
+        return current;
+    }, [
+        accountLifetime,
+        actionScope,
+        activeSessionId,
+        currentUiContextReader,
+        machineId,
+        projection.inputs,
+        projection.phase,
+        serverId,
+    ]);
+    snapshotRef.current = snapshot;
+    const controller = React.useMemo(() => createPluginContributedActionController({
+        resolveCurrent: () => snapshotRef.current,
+    }), [clientExecutableRegistrationRevision]);
+
+    return React.useMemo(() => (
+        snapshot
+            ? { controller, scope, signal: actionScope.signal }
+            : undefined
+    ), [actionScope.signal, controller, scope, snapshot]);
+}
 
 export function CommandPaletteProvider({ children }: { children: React.ReactNode }) {
     if (Platform.OS !== 'web') {
@@ -70,6 +209,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     })));
     const navigateToSession = useNavigateToSession();
     const segments = useSegments();
+    const activeSessionId = useMemo(() => readActiveSessionIdFromSegments(segments), [segments]);
+    const pluginActionPresentation = useCommandPalettePluginActionPresentation(activeSessionId);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const voiceEnabled = useFeatureEnabled('voice');
     const memorySearchEnabled = useFeatureEnabled('memory.search');
@@ -133,7 +274,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         [router],
     );
     const petControls = useMemo<PetCommandControls>(() => {
-        const desktop = isTauriDesktop();
+        const desktop = isDesktopHost();
         const surface = desktop ? 'desktopOverlay' : Platform.OS === 'web' ? 'appShell' : 'none';
         return {
             surface,
@@ -177,8 +318,6 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     }, [applyLocalSettings, applySettings, router]);
 
     const buildCommands = useCallback(() => {
-        const activeSessionId = readActiveSessionIdFromSegments(segments);
-
         return buildCommandPaletteCommands({
             sessionsById: storage.getState().sessions,
             isDev: __DEV__ === true,
@@ -186,6 +325,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             features: { executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled },
             shortcutLabels,
             petControls,
+            ...(pluginActionPresentation ? { pluginActionPresentation } : {}),
             compactAppDestinations,
             onActivateCompactAppDestination: activateCompactAppDestination,
             nav: {
@@ -206,7 +346,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [segments, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, compactAppDestinations, activateCompactAppDestination, shortcutLabels, petControls, router, navigateToSession, logout, actionExecutor]);
+    }, [activeSessionId, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, compactAppDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, navigateToSession, logout, actionExecutor]);
 
     const showCommandPalette = useCallback(() => {
         if (Platform.OS !== 'web' || !commandPaletteEnabled) return;

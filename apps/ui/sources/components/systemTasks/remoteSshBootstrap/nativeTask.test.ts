@@ -18,7 +18,7 @@ function createRemoteBootstrapSpec(overrides: Partial<SystemTaskSpec> = {}): Sys
             },
             relay: {
                 relayUrl: 'https://relay.example.test',
-                webappUrl: 'https://app.example.test',
+                webappUrl: 'http://localhost.:3005',
             },
             channel: 'stable',
             serviceMode: 'none',
@@ -78,6 +78,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             machineId: 'machine-a',
         });
         expect(commands.some((command) => command.includes('server set'))).toBe(true);
+        expect(commands.some((command) => command.includes('http://localhost.:3005'))).toBe(false);
         expect(commands.some((command) => command.includes('auth status'))).toBe(true);
     });
 

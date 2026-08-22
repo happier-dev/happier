@@ -7,3 +7,7 @@ export async function hapticsError(): Promise<void> {
 export async function hapticsLight(): Promise<void> {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
 }
+
+export async function hapticsSelection(): Promise<void> {
+    await Haptics.selectionAsync().catch(() => undefined);
+}

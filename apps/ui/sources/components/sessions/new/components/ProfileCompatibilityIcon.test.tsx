@@ -57,7 +57,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
             profileCompatibilityGlyphScale: 1,
         },
     }),
-    isAgentId: (agentId: string) => ['claude', 'codex', 'opencode', 'auggie'].includes(agentId),
+    isBundledAgentId: (agentId: string) => ['claude', 'codex', 'opencode', 'auggie'].includes(agentId),
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({

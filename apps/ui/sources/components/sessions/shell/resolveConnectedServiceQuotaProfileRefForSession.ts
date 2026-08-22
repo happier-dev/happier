@@ -3,7 +3,7 @@ import {
     type AccountProfile,
 } from '@happier-dev/protocol';
 
-import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -90,7 +90,7 @@ export function resolveConnectedServiceQuotaProfileRefForSession(params: Readonl
     agentId: string;
     accountProfileConnectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
 }>): { serviceId: string; profileId: string } | null {
-    if (!isAgentId(params.agentId)) return null;
+    if (!isBundledAgentId(params.agentId)) return null;
     const supportedServiceIds = getAgentCore(params.agentId).connectedServices?.supportedServiceIds ?? [];
     if (supportedServiceIds.length === 0) return null;
 

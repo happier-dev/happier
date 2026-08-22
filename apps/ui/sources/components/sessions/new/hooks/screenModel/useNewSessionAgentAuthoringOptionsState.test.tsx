@@ -17,6 +17,19 @@ function nativeSelection(agentTargetKey: string, modelId: string, updatedAt: num
 }
 
 describe('useNewSessionAgentAuthoringOptionsState', () => {
+    it('keeps an unbacked external Agent model control neutral', async () => {
+        const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
+            agentType: 'acme.review.backend',
+            backendTargetKey: 'backend:acme.review.backend',
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: null,
+            rememberedEngineSelection: null,
+        }));
+
+        expect(hook.getCurrent().modelMode).toBe('default');
+        expect(hook.getCurrent().modelSelection).toBeNull();
+    });
+
     it('preserves a provider-bound draft selection instead of reconstructing it as native', async () => {
         const modelSelection = SessionModelSelectionV1Schema.parse({
             v: 1,

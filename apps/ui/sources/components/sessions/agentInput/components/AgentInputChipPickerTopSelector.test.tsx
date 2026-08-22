@@ -71,6 +71,7 @@ describe('AgentInputChipPickerTopSelector', () => {
     it('renders a one-tap icon rail using the shared horizontal scroll row', async () => {
         const { AgentInputChipPickerTopSelector } = await import('./AgentInputChipPickerTopSelector');
         const { AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE } = await import('./agentInputChipPickerOptionStyles');
+        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
         capturedDropdownMenuProps = null;
         capturedHorizontalRowProps = null;
         const onFocusOption = vi.fn();
@@ -113,6 +114,8 @@ describe('AgentInputChipPickerTopSelector', () => {
         const claudeStyle = flattenStyle(claudeButton?.props.style({ pressed: false }));
         expect(codexStyle.width).toBe(36);
         expect(codexStyle.height).toBe(36);
+        expect(codexStyle.minWidth).toBe(resolveMinimumInteractiveTargetSize('web'));
+        expect(codexStyle.minHeight).toBe(resolveMinimumInteractiveTargetSize('web'));
         expect(codexStyle.backgroundColor).toEqual(expect.any(String));
         expect(Boolean(codexStyle.boxShadow || codexStyle.elevation)).toBe(true);
         expect(claudeStyle.backgroundColor).toBe('transparent');

@@ -281,8 +281,8 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     getPendingSetupIntent: () => getPendingSetupIntentMock(),
     clearPendingSetupIntent: () => clearPendingSetupIntentMock(),
 }));
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => false,
 }));
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,

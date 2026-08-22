@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const invokeTauri = vi.hoisted(() => vi.fn(async () => {}));
+const invokeDesktopHost = vi.hoisted(() => vi.fn(async () => {}));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    invokeTauri,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    invokeDesktopHost,
 }));
 
 describe('applyTauriTrayState', () => {
     beforeEach(() => {
-        invokeTauri.mockClear();
+        invokeDesktopHost.mockClear();
     });
 
     it('passes the tray state under the state key expected by the native command', async () => {
@@ -22,6 +22,6 @@ describe('applyTauriTrayState', () => {
 
         await applyTauriTrayState(state);
 
-        expect(invokeTauri).toHaveBeenCalledWith('desktop_set_tray_state', { state });
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_set_tray_state', { state });
     });
 });

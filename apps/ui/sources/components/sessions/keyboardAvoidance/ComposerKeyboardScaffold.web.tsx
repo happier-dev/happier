@@ -27,8 +27,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
     const [availablePanelMaxHeight, setAvailablePanelMaxHeight] = React.useState<number | undefined>(undefined);
     const modal = useOptionalModal();
     const isInsideModalBoundary = useIsInsideModalBoundary();
-    const modalKeyboardLiftSuppressed = (modal as Readonly<{ isKeyboardLiftSuppressedByModal?: boolean }> | null | undefined)
-        ?.isKeyboardLiftSuppressedByModal === true;
+    const modalKeyboardLiftSuppressed = modal?.isKeyboardLiftSuppressedByModal === true;
     const keyboardLiftSuppressed = props.keyboardLiftSuppressed === true
         || (!isInsideModalBoundary && modalKeyboardLiftSuppressed);
     const layout = useComposerKeyboardLayout({
@@ -55,6 +54,10 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
     }));
 
     const { style: contentPropsStyle, ...contentProps } = props.contentProps ?? {};
+    // Same contract as the native scaffold: a transparent scaffold paints no ground of its own and
+    // lets the caller supply a `backdrop` sibling instead. The prop is declared on the shared type,
+    // so honouring it on both implementations keeps it from becoming a native-only promise.
+    const surfaceBackgroundColor = props.surface === 'transparent' ? undefined : theme.colors.surface.base;
 
     return (
         <ComposerKeyboardProvider layout={layout}>
@@ -64,12 +67,13 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                 testID={props.testID}
                 onLayout={handleScaffoldLayout}
                 style={[
-                    { flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base },
+                    { flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, backgroundColor: surfaceBackgroundColor },
                     liftPaddingStyle,
                     ...flattenStyleItems(props.style),
                 ]}
             >
-                <View
+                {/* Sibling of the content, never a wrapper — see the native scaffold. */}
+                    <View
                     {...contentProps}
                     testID={props.contentTestID}
                     style={[{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0 }, contentPropsStyle, props.contentStyle]}
@@ -79,7 +83,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                 <View
                     testID={props.composerTestID}
                     onLayout={handleComposerLayout}
-                    style={{ backgroundColor: theme.colors.surface.base }}
+                    style={{ backgroundColor: surfaceBackgroundColor }}
                 >
                     {props.composer}
                 </View>

@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 
-import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import {
@@ -68,7 +68,7 @@ function areEngineSelectionsEqual(
 
 function backendEntrySupportsSessionModeSelection(entry: ResolvedBackendCatalogEntry | null): boolean {
     if (!entry) return true;
-    if (!isAgentId(entry.catalogAgentId)) return true;
+    if (!isBundledAgentId(entry.catalogAgentId)) return true;
     return getAgentCore(entry.catalogAgentId)?.sessionModes?.kind !== 'none';
 }
 

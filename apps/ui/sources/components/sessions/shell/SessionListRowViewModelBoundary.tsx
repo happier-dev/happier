@@ -9,7 +9,10 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 
+import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
+
 import { SessionListSessionItem } from './sessionListSessionItem';
+import { shouldReadLiveRowRenderables } from './sessionListRowRenderableFreeze';
 import {
     buildSessionListRowViewModel,
     type SessionReachableDisplay,
@@ -38,6 +41,8 @@ const EMPTY_ROW_RENDERABLES = new Map<string, SessionListRenderableSession>() as
 export type SessionListRowViewModelBoundaryProps = Readonly<{
     activeColorMode?: 'activityAndAttention' | 'attentionOnly' | 'allActive' | null;
     allKnownTags: string[];
+    attentionStandingEnabled: boolean;
+    attentionStandingPolicy: SessionAttentionStandingPolicy;
     compact: boolean;
     compactMinimal: boolean;
     currentUserId: string | null;
@@ -91,9 +96,17 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         props.item.groupKind === 'attention' ? STAGE_SPOTLIGHT_TARGET_IDS.attentionGroup : null,
     );
     const rowItems = React.useMemo(() => [props.item], [props.item]);
-    const liveRowRenderableByKey = useSessionListRowRenderablesForItems(props.dataActive ? rowItems : null);
     const frozenRowRenderableByKeyRef = React.useRef<ReadonlyMap<string, SessionListRenderableSession>>(EMPTY_ROW_RENDERABLES);
-    if (props.dataActive) {
+    // A row can FIRST render while the surface is inactive - the list keeps rendering behind a
+    // pushed screen - and such a row has no frozen snapshot to fall back to. Presenting its starting
+    // EMPTY map would blank it until the surface returns, so "never frozen anything" reads live
+    // once. See `shouldReadLiveRowRenderables`.
+    const readLiveRowRenderables = shouldReadLiveRowRenderables({
+        dataActive: props.dataActive,
+        hasFrozenRenderables: frozenRowRenderableByKeyRef.current !== EMPTY_ROW_RENDERABLES,
+    });
+    const liveRowRenderableByKey = useSessionListRowRenderablesForItems(readLiveRowRenderables ? rowItems : null);
+    if (readLiveRowRenderables) {
         frozenRowRenderableByKeyRef.current = liveRowRenderableByKey;
     }
     const rowRenderableByKey = props.dataActive
@@ -127,8 +140,12 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         selectedSessionId: props.selectedSessionId,
         showServerBadge: props.showServerBadge,
         showPinnedServerBadge: props.showPinnedServerBadge,
+        attentionStandingEnabled: props.attentionStandingEnabled,
+        attentionStandingPolicy: props.attentionStandingPolicy,
     }), [
         props.activeColorMode,
+        props.attentionStandingEnabled,
+        props.attentionStandingPolicy,
         props.dataIndex,
         props.hasMultipleMachines,
         props.hideInactiveSessions,

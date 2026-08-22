@@ -1,5 +1,3 @@
-import type { AgentId } from '@/agents/catalog/catalog';
-
 import type {
     ExistingSessionAutomationAuthoringContext,
     LiveSessionAuthoringContext,
@@ -13,7 +11,7 @@ export type SessionComposerAuthoringContext =
 export function resolveSessionComposerStateFromAuthoringContext(
     context: SessionComposerAuthoringContext,
     params?: Readonly<{
-        fallbackAgentId?: AgentId | null;
+        fallbackAgentId?: string | null;
     }>,
 ): SessionComposerState {
     if (context.kind === 'automationExistingSession') {

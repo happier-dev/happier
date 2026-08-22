@@ -245,8 +245,8 @@ vi.mock('@/track', () => ({
     tracking: false,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => false,
 }));
 
 const AppPaneProviderWrapper: React.ComponentType<React.PropsWithChildren> = ({ children }) => (

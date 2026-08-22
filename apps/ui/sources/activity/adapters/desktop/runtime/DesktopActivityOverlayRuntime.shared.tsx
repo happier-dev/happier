@@ -19,7 +19,7 @@ import { isUnsafeNotificationServerUrl } from '@/activity/notifications/notifica
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import type { ActionId } from '@happier-dev/protocol';
 import { useLocalSettings } from '@/sync/domains/state/storage';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
@@ -348,7 +348,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
     });
     const lastSyncFingerprintRef = React.useRef<string | null>(null);
 
-    const isDesktop = isTauriDesktop();
+    const isDesktop = isDesktopHost();
     const isOverlayWindow = isDesktopActivityOverlayWindowContext();
     const desktopPolicy = React.useMemo(
         () => resolveDesktopOverlayPolicy((localSettings ?? {}) as Record<string, unknown>),

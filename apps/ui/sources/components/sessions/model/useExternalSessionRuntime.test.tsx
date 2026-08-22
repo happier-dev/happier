@@ -47,6 +47,7 @@ const acceptedTailCursorState = vi.hoisted(() => ({
   listeners: new Set<() => void>(),
 }));
 let activeServerSnapshot = { serverId: 'server-1' };
+let activeAccountIsCurrent = true;
 
 vi.mock('@/sync/ops/machineExternalSessions', () => ({
   machineExternalSessionStatusGet: machineExternalSessionStatusGetSpy,
@@ -59,6 +60,12 @@ vi.mock('@/sync/runtime/orchestration/externalSessions/externalSessionStatusDema
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => activeServerSnapshot,
   subscribeActiveServer: subscribeActiveServerSpy,
+}));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+  captureActiveServerAccountScopeCurrentness: () => ({
+    isCurrent: () => activeAccountIsCurrent,
+    onRetire: () => ({ dispose() {} }),
+  }),
 }));
 vi.mock('./resolveSessionTargetServerId', () => ({
   resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) =>
@@ -209,6 +216,7 @@ describe('useExternalSessionRuntime', () => {
     appStateListeners.clear();
     documentListeners.clear();
     activeServerSnapshot = { serverId: 'server-1' };
+    activeAccountIsCurrent = true;
     machineExternalSessionStatusGetSpy.mockReset();
     machineExternalSessionAttachSpy.mockReset();
     machineExternalSessionDetachSpy.mockReset();
@@ -1145,5 +1153,41 @@ describe('useExternalSessionRuntime', () => {
     expect(machineExternalSessionAttachSpy).not.toHaveBeenCalled();
 
     await harness.unmount();
+  });
+
+  it('never publishes a status read that resolves after the Account retires', async () => {
+    const statusRead = createDeferred<{ ok: true; machineOnline: boolean }>();
+    machineExternalSessionStatusGetSpy.mockReturnValueOnce(statusRead.promise);
+    const harness = await renderHarness();
+
+    let resolved: unknown = 'unset';
+    await act(async () => {
+      const pending = harness.getCurrent().refreshNow();
+      await Promise.resolve();
+      activeAccountIsCurrent = false;
+      statusRead.resolve({ ok: true, machineOnline: true });
+      resolved = await pending;
+    });
+
+    expect(resolved).toBeNull();
+    expect(harness.getCurrent().status).toBeNull();
+    await harness.unmount();
+  });
+
+  it('never attaches or detaches a viewer lease once the Account has retired', async () => {
+    activeAccountIsCurrent = false;
+    const harness = await renderHarness();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(machineExternalSessionAttachSpy).not.toHaveBeenCalled();
+    await expect(harness.getCurrent().refreshNow()).resolves.toBeNull();
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+
+    await harness.unmount();
+
+    expect(machineExternalSessionDetachSpy).not.toHaveBeenCalled();
   });
 });

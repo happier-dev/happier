@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => false));
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => false));
 
-vi.mock('../tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('../desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
     vi.unmock('@tauri-apps/plugin-http');
-    isTauriDesktopMock.mockReset();
-    isTauriDesktopMock.mockReturnValue(false);
+    isDesktopHostMock.mockReset();
+    isDesktopHostMock.mockReturnValue(false);
 });
 
 describe('transferFetch', () => {
@@ -34,7 +34,7 @@ describe('transferFetch', () => {
         vi.doMock('@tauri-apps/plugin-http', () => ({
             fetch: pluginFetch,
         }));
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
 
         const { resolveTauriRuntimeFetch } = await import('./transferFetch');
 
@@ -50,7 +50,7 @@ describe('transferFetch', () => {
         vi.doMock('@tauri-apps/plugin-http', () => ({
             fetch: pluginFetch,
         }));
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
 
         const { resolveTauriRuntimeFetch } = await import('./transferFetch');
 
@@ -65,7 +65,7 @@ describe('transferFetch', () => {
         vi.doMock('@tauri-apps/plugin-http', () => ({
             fetch: pluginFetch,
         }));
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
 
         const { resolveTauriRuntimeFetch } = await import('./transferFetch');
 
@@ -77,7 +77,7 @@ describe('transferFetch', () => {
         vi.doMock('@tauri-apps/plugin-http', () => {
             throw new Error('plugin unavailable');
         });
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
 
         const { resolveTauriRuntimeFetch } = await import('./transferFetch');
 

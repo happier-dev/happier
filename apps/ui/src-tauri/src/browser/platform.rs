@@ -6,11 +6,18 @@ use super::types::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DesktopBrowserRuntimeSupport {
     pub macos_custom_data_store_identifiers: bool,
-    /// Whether Wry child-embedding (`build_as_child`) is verified for the current platform by
-    /// recorded manual QA (open → navigate → resize → z-order → close, no bleed/crash). Seeded from
-    /// the BRW-12 spike evidence in `.project/reviews/browser-desktop-shell-spike/`. macOS rides its
-    /// own WK-data-store gate and ignores this flag; Windows/X11 advertise `available` ONLY when this
+    /// Whether the **desktop browser surface** has recorded manual QA on the current platform
+    /// (open → navigate → resize → z-order → close, no bleed/crash). Seeded from the BRW-12 spike
+    /// evidence in `.project/reviews/browser-desktop-shell-spike/`. macOS rides its own
+    /// WK-data-store gate and ignores this flag; Windows/X11 advertise `available` ONLY when this
     /// is true, so an unverified platform stays honestly fail-closed instead of over-claiming.
+    ///
+    /// This is a product-readiness record for arbitrary navigation, persistent profiles, devtools
+    /// and capture — not the structural embedding fact. That fact has one owner,
+    /// `child_embedding_supported_for`, which every arm below also consults so this surface can
+    /// never advertise a platform whose embedding primitive does not exist. Restricted consumers
+    /// that have none of those browser powers (the hosted-Artifact frame) read the primitive owner
+    /// directly rather than borrowing this surface's QA schedule.
     pub child_embedding_verified: bool,
 }
 
@@ -51,7 +58,10 @@ pub(crate) fn resolve_desktop_browser_strategy_for_runtime(
     runtime_support: DesktopBrowserRuntimeSupport,
 ) -> DesktopBrowserAvailability {
     match platform {
-        DesktopBrowserPlatform::MacOs if runtime_support.macos_custom_data_store_identifiers => {
+        DesktopBrowserPlatform::MacOs
+            if runtime_support.macos_custom_data_store_identifiers
+                && child_embedding_supported_for(platform) =>
+        {
             native_child_view_availability(platform, DesktopBrowserPrimitive::MacOsNsViewWebKit)
         }
         DesktopBrowserPlatform::MacOs => DesktopBrowserAvailability::unavailable(
@@ -59,7 +69,10 @@ pub(crate) fn resolve_desktop_browser_strategy_for_runtime(
             DesktopBrowserPrimitive::MacOsNsViewWebKit,
             DesktopBrowserDisabledReason::NativeChildViewUnimplemented,
         ),
-        DesktopBrowserPlatform::Windows if runtime_support.child_embedding_verified => {
+        DesktopBrowserPlatform::Windows
+            if runtime_support.child_embedding_verified
+                && child_embedding_supported_for(platform) =>
+        {
             native_child_view_availability(platform, DesktopBrowserPrimitive::WindowsHwndWebView2)
         }
         DesktopBrowserPlatform::Windows => DesktopBrowserAvailability::unavailable(
@@ -67,7 +80,10 @@ pub(crate) fn resolve_desktop_browser_strategy_for_runtime(
             DesktopBrowserPrimitive::WindowsHwndWebView2,
             DesktopBrowserDisabledReason::NativeChildViewUnimplemented,
         ),
-        DesktopBrowserPlatform::LinuxX11 if runtime_support.child_embedding_verified => {
+        DesktopBrowserPlatform::LinuxX11
+            if runtime_support.child_embedding_verified
+                && child_embedding_supported_for(platform) =>
+        {
             native_child_view_availability(
                 platform,
                 DesktopBrowserPrimitive::LinuxX11ChildEmbedding,
@@ -115,6 +131,38 @@ fn native_child_view_availability(
 
 fn native_capture_supported(platform: DesktopBrowserPlatform) -> bool {
     matches!(platform, DesktopBrowserPlatform::MacOs)
+}
+
+/// Whether this shell links an implemented Wry child-embedding path (`build_as_child`) for a
+/// platform. This is the single owner of that structural fact, and it answers only "can an
+/// embedded child webview be constructed here" — never "has a product surface been QA'd here".
+///
+/// Derived from the vendored Wry implementation, one named fact per arm:
+/// - macOS — `wkwebview::InnerWebView::new_as_child` adds the `WKWebView` as an `NSView` subview
+///   of the parent window's content view.
+/// - Windows — `webview2::InnerWebView::new_as_child` hosts the WebView2 controller on a child
+///   `HWND` of the parent window.
+/// - Linux/X11 — `webkitgtk::InnerWebView::new_as_child` reparents a native X11 container window
+///   under the parent's `RawWindowHandle::Xlib`, which stacks above the host window's own
+///   rendering.
+/// - Linux/Wayland — that same constructor returns `wry::Error::UnsupportedWindowHandle` for a
+///   `RawWindowHandle::Wayland` parent: Wayland has no X11-style native subwindow. Wry's supported
+///   Wayland route is `WebViewBuilderExtUnix::build_gtk` against an app-owned `gtk::Fixed`, which
+///   is a different host widget topology and is not built here.
+/// - No display / non-desktop targets — there is no host window to embed into.
+///
+/// Product surfaces layer their own gates on top of this owner (the desktop browser additionally
+/// requires `child_embedding_verified_for`), but none of them may report available for a platform
+/// this returns `false` for.
+pub(crate) fn child_embedding_supported_for(platform: DesktopBrowserPlatform) -> bool {
+    match platform {
+        DesktopBrowserPlatform::MacOs
+        | DesktopBrowserPlatform::Windows
+        | DesktopBrowserPlatform::LinuxX11 => true,
+        DesktopBrowserPlatform::LinuxWayland
+        | DesktopBrowserPlatform::LinuxUnknown
+        | DesktopBrowserPlatform::Unsupported => false,
+    }
 }
 
 /// Per-platform child-embedding verification, seeded from recorded manual-QA evidence in

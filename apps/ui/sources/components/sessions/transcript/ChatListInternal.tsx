@@ -11,8 +11,10 @@ import { useSessionCatchingUpNewer, useSessionTailContiguousFloorSeq } from '@/s
 import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useTranscriptMotionConfig } from '@/components/sessions/transcript/motion/useTranscriptMotionConfig';
-import { buildSessionTranscriptAgentAttributionIndex } from '@/components/sessions/transcript/attribution/sessionTranscriptAgentAttribution';
-import { SessionTranscriptAgentAttributionProvider } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
+import {
+    SessionTranscriptAgentAttributionProvider,
+    useSessionTranscriptAgentAttributionIndexForMessages,
+} from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { TranscriptMotionProvider } from '@/components/sessions/transcript/motion/TranscriptMotionProvider';
 import { InitialPresentationReadinessProvider } from '@/components/ui/presentation/InitialPresentationReadinessContext';
 import {
@@ -187,7 +189,11 @@ import type { TranscriptRowLayoutMutation } from '@/components/sessions/transcri
 import {
     createTranscriptMeasurementHost,
 } from '@/components/sessions/transcript/measurement/transcriptMeasurementHost';
-import { estimateTranscriptRowHeightFromCache, estimateTranscriptRowHeightFromContent } from '@/components/sessions/transcript/measurement/estimateTranscriptRowHeightFromCache';
+import {
+    estimateTranscriptRowHeightFromCache,
+    estimateTranscriptRowHeightFromContent,
+    resolveCommittedUtteranceIdentityForEstimate,
+} from '@/components/sessions/transcript/measurement/estimateTranscriptRowHeightFromCache';
 import { resolveToolCallsGroupChromeVariant } from '@/components/sessions/transcript/toolCalls/units/toolCallsGroupChrome';
 import { buildTranscriptItemHeightSignatureKey } from '@/components/sessions/transcript/measurement/transcriptItemHeightCache';
 import { useTranscriptMeasurementHostWiring } from '@/components/sessions/transcript/measurement/useTranscriptMeasurementHostWiring';
@@ -218,10 +224,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     // A Session can change Agent without changing identity, and every tool row
     // below this point needs to know which Agent produced it. Rows look the
     // answer up; they never rebuild the index.
-    const agentAttributionIndex = React.useMemo(
-        () => buildSessionTranscriptAgentAttributionIndex(Object.values(props.messagesById)),
-        [props.messagesById],
-    );
+    const agentAttributionIndex = useSessionTranscriptAgentAttributionIndexForMessages(props.messagesById);
 
     const transcriptMessageSelection = useOptionalTranscriptSelectionState();
     const transcriptContentMaxWidth = useLayoutMaxWidth();
@@ -1137,10 +1140,15 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         estimateTranscriptRowHeightFromCache({
             reconciler: measurementReconciler,
             signature: buildRowShellSignature(item),
+            // A committed user row can inherit the bubble height the pending block just painted for
+            // the same utterance, so the send crossover is placed from a measurement rather than a
+            // wrap heuristic that undershoots by whole lines.
+            committedUtteranceIdentity: resolveCommittedUtteranceIdentityForEstimate(item, getTurnMessageById),
         }) ?? estimateTranscriptRowHeightFromContent({
             getMessageById: getTurnMessageById,
             item,
             toolCallsGroupChromeVariant,
+            platformIsWeb: Platform.OS === 'web',
         })
     ), [buildRowShellSignature, getTurnMessageById, measurementReconciler, toolCallsGroupChromeVariant]);
     const getItemSizeVersion = React.useCallback((item: ChatTranscriptListItem): React.Key => (

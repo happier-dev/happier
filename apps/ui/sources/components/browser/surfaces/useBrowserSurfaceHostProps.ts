@@ -6,7 +6,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import type { BrowserControlState } from '@/sync/domains/browser/control';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { createBrowserViewState } from '@/sync/domains/browser/store';
 import { buildBrowserLaunchpadModel } from '@/sync/domains/browser/targets';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
@@ -109,7 +109,7 @@ function isBrowserPlatform(value: unknown): value is BrowserPlatformV1 {
  * Single platform resolver subsuming the five deleted `resolveBrowserPlatform` copies.
  *
  * Tauri runs the WEB bundle, so `Platform.OS === 'web'` inside the desktop app; the resolver MUST
- * consult `isTauriDesktop()` BEFORE `Platform.OS` or it would misclassify desktop as `web` (B-RC1).
+ * consult `isDesktopHost()` BEFORE `Platform.OS` or it would misclassify desktop as `web` (B-RC1).
  *
  * - An explicit `desktop`/`ios`/`android` override is a genuine cross-platform target and is
  *   returned unchanged (covers the `BrowserDetailsSurface`/`SessionBrowserSurfaceTab`
@@ -120,7 +120,7 @@ function isBrowserPlatform(value: unknown): value is BrowserPlatformV1 {
  *   `'web'`. Honoring that leaked `'web'` made the selector pick the sandboxed `webIframe` engine
  *   instead of the native Wry `desktopWebView`. A `'web'` value is therefore treated as "no genuine
  *   override" and falls through to the Tauri-aware resolution below — a real browser still resolves to
- *   `'web'` because `isTauriDesktop()` is false there.
+ *   `'web'` because `isDesktopHost()` is false there.
  * - Otherwise: `desktop` inside Tauri, the native OS on device, and `web` in a plain browser.
  * - The `fallback` option is vestigial now that Tauri is detected directly (it no longer decides the
  *   desktop verdict); it is kept only for the one `SessionBrowserSurfaceTab` caller that still passes
@@ -136,7 +136,7 @@ export function resolveBrowserSurfacePlatform(
     if (isBrowserPlatform(explicit) && explicit !== 'web') {
         return explicit;
     }
-    if (isTauriDesktop()) {
+    if (isDesktopHost()) {
         return 'desktop';
     }
     if (Platform.OS === 'ios' || Platform.OS === 'android') {

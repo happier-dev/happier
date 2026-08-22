@@ -51,6 +51,15 @@ export function findSatelliteReferences(source: string, localeBlock: string, fil
         ) {
             return expression.expression.text;
         }
+        if (
+            ts.isElementAccessExpression(expression) &&
+            ts.isIdentifier(expression.expression) &&
+            expression.argumentExpression &&
+            ts.isStringLiteral(expression.argumentExpression) &&
+            expression.argumentExpression.text === localeBlock
+        ) {
+            return expression.expression.text;
+        }
         return null;
     };
 
@@ -103,12 +112,13 @@ function unwrap(expression: ts.Expression): ts.Expression {
  * `translations` is keyed the same way `extractLiterals` keys the MODULE's own literals, so the
  * caller can read the reference block, translate it, and hand the result straight back.
  */
-export function addLocaleBlock(
+function writeLocaleBlock(
     source: string,
     referenceLocale: string,
     newLocale: string,
     translations: Readonly<Record<string, string>>,
-    fileName = 'module.ts',
+    fileName: string,
+    replaceExisting: boolean,
 ): string {
     const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
@@ -130,7 +140,13 @@ export function addLocaleBlock(
     const nameOf = (property: ts.ObjectLiteralElementLike): string | null =>
         property.name && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) ? property.name.text : null;
 
-    if (exported.properties.some((property) => nameOf(property) === newLocale)) return source;
+    const normalizeLocaleKey = (value: string): string => value.replace(/-/g, '').toLowerCase();
+
+    const existingEntry = exported.properties.find((property) => {
+        const name = nameOf(property);
+        return name !== null && normalizeLocaleKey(name) === normalizeLocaleKey(newLocale);
+    });
+    if (existingEntry && !replaceExisting) return source;
 
     const entry = exported.properties.find((property) => nameOf(property) === referenceLocale);
     if (!entry) throw new Error(`${fileName}: no '${referenceLocale}' entry to clone`);
@@ -155,6 +171,9 @@ export function addLocaleBlock(
     };
 
     const initializer = ts.isShorthandPropertyAssignment(entry) ? consts.get(entry.name.text) : (entry as ts.PropertyAssignment).initializer;
+    const referenceIdentifierName = initializer && ts.isIdentifier(unwrap(initializer))
+        ? (unwrap(initializer) as ts.Identifier).text
+        : null;
     const objectLiteral = resolveObject(initializer);
     if (!objectLiteral) throw new Error(`${fileName}: could not resolve the '${referenceLocale}' object literal`);
 
@@ -192,9 +211,60 @@ export function addLocaleBlock(
               .join(', ')})`
         : objectText;
 
+    if (existingEntry) {
+        const existingInitializer = ts.isShorthandPropertyAssignment(existingEntry)
+            ? consts.get(existingEntry.name.text)
+            : ts.isPropertyAssignment(existingEntry)
+                ? existingEntry.initializer
+                : undefined;
+        const existingIdentifierName = ts.isShorthandPropertyAssignment(existingEntry)
+            ? existingEntry.name.text
+            : existingInitializer && ts.isIdentifier(unwrap(existingInitializer))
+                ? (unwrap(existingInitializer) as ts.Identifier).text
+                : null;
+        const existingConstInitializer = existingIdentifierName && existingIdentifierName !== referenceIdentifierName
+            ? consts.get(existingIdentifierName)
+            : undefined;
+        if (existingConstInitializer) {
+            return `${source.slice(0, existingConstInitializer.getStart(sourceFile))}${newInitializer}${source.slice(existingConstInitializer.getEnd())}`;
+        }
+        const existingKey = existingEntry.name?.getText(sourceFile);
+        if (!existingKey) throw new Error(`${fileName}: existing '${newLocale}' entry has no key`);
+        const replacement = `${existingKey}: ${newInitializer}`;
+        return `${source.slice(0, existingEntry.getStart(sourceFile))}${replacement}${source.slice(existingEntry.getEnd())}`;
+    }
+
     const insertAt = entry.getEnd() + (source[entry.getEnd()] === ',' ? 1 : 0);
     const lineStart = source.lastIndexOf('\n', entry.getStart(sourceFile)) + 1;
     const indent = source.slice(lineStart, entry.getStart(sourceFile)).match(/^\s*/)?.[0] ?? '    ';
     const key = /^[A-Za-z_$][\w$]*$/.test(newLocale) ? newLocale : `'${newLocale}'`;
     return `${source.slice(0, insertAt)}\n${indent}${key}: ${newInitializer},${source.slice(insertAt)}`;
+}
+
+export function addLocaleBlock(
+    source: string,
+    referenceLocale: string,
+    newLocale: string,
+    translations: Readonly<Record<string, string>>,
+    fileName = 'module.ts',
+): string {
+    return writeLocaleBlock(source, referenceLocale, newLocale, translations, fileName, false);
+}
+
+/**
+ * Replace an already-declared locale from the canonical reference block.
+ *
+ * Existing locale aliases are not evidence of a translation: several modules
+ * deliberately used `ru: english` while copy was awaiting localization. The
+ * retranslation path expands that alias into a complete locale block while
+ * preserving the reference block's functions, interpolation holes and wrapper.
+ */
+export function replaceLocaleBlock(
+    source: string,
+    referenceLocale: string,
+    locale: string,
+    translations: Readonly<Record<string, string>>,
+    fileName = 'module.ts',
+): string {
+    return writeLocaleBlock(source, referenceLocale, locale, translations, fileName, true);
 }

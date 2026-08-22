@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 
-const isTauriDesktopState = vi.hoisted(() => ({ value: false }));
+const isDesktopHostState = vi.hoisted(() => ({ value: false }));
 const connectionHealthState = vi.hoisted(() => ({
     value: {
         kind: 'connecting',
@@ -29,11 +29,11 @@ const applyTauriTrayState = vi.hoisted(() => vi.fn(async () => {}));
 const useConnectionHealthSpy = vi.hoisted(() => vi.fn(() => connectionHealthState.value));
 const useRelayDriftBannerSpy = vi.hoisted(() => vi.fn(() => relayDriftBannerState.value));
 
-vi.mock('@/utils/platform/tauri', async () => {
-    const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
+vi.mock('@/utils/platform/desktopHost', async () => {
+    const actual = await vi.importActual<typeof import('@/utils/platform/desktopHost')>('@/utils/platform/desktopHost');
     return {
         ...actual,
-        isTauriDesktop: () => isTauriDesktopState.value,
+        isDesktopHost: () => isDesktopHostState.value,
     };
 });
 
@@ -56,7 +56,7 @@ vi.mock('./applyTauriTrayState', () => ({
 
 describe('DesktopTrayRuntime', () => {
     afterEach(() => {
-        isTauriDesktopState.value = false;
+        isDesktopHostState.value = false;
         connectionHealthState.value = {
             kind: 'connecting',
             machineCount: 0,
@@ -71,7 +71,7 @@ describe('DesktopTrayRuntime', () => {
     });
 
     it('pushes the canonical connection health state into the desktop tray bridge when running in Tauri', async () => {
-        isTauriDesktopState.value = true;
+        isDesktopHostState.value = true;
         connectionHealthState.value = {
             kind: 'healthy',
             machineCount: 2,
@@ -118,7 +118,7 @@ describe('DesktopTrayRuntime', () => {
     });
 
     it('treats relay drift as attention required even when connection health is healthy', async () => {
-        isTauriDesktopState.value = true;
+        isDesktopHostState.value = true;
         connectionHealthState.value = {
             kind: 'healthy',
             machineCount: 2,

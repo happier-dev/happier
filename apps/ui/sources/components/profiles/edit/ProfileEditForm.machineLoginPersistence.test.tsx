@@ -71,7 +71,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex'],
     DEFAULT_AGENT_ID: 'codex',
-    isAgentId: (value: unknown): value is 'codex' =>
+    isBundledAgentId: (value: unknown): value is 'codex' =>
         typeof value === 'string' && value === 'codex',
     getAgentCore: (agentId: string) => ({
         permissions: { modeGroup: 'codexLike' },

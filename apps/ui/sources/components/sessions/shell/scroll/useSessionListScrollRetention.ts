@@ -68,7 +68,19 @@ function getScrollRetentionEntry(retentionKey: string): SessionListScrollRetenti
 export function useSessionListScrollRetention(params: Readonly<{
     retentionKey: string;
     scrollToOffset: ScrollToOffset;
+    /**
+     * Whether this surface is the live one. Defaults to true.
+     *
+     * Opening a session deactivates the list underneath while it keeps rendering. MEASURED in
+     * remote-dev: the platform then moves the native scroll view and reports it as an ordinary
+     * scroll event - `y: 0` in some runs, `y: -9999055` in others, both with a valid contentSize and
+     * layoutMeasurement. Nothing about the value distinguishes it from the reader scrolling to the
+     * top, so only the surface state can, and recording it overwrites the reader's place with the
+     * platform's.
+     */
+    surfaceActive?: boolean;
 }>) {
+    const surfaceActive = params.surfaceActive !== false;
     const scrollToOffsetRef = React.useRef(params.scrollToOffset);
     scrollToOffsetRef.current = params.scrollToOffset;
     const retentionEntry = React.useMemo(
@@ -86,6 +98,8 @@ export function useSessionListScrollRetention(params: Readonly<{
     }, [retentionEntry]);
 
     const handleScroll = React.useCallback((event: SessionListScrollRetentionScrollEvent) => {
+        // An inactive surface's scroll events are not the reader's intent.
+        if (!surfaceActive) return;
         const offsetY = readFiniteNumber(event.nativeEvent?.contentOffset?.y);
         if (offsetY == null) return;
 
@@ -108,10 +122,11 @@ export function useSessionListScrollRetention(params: Readonly<{
         if (retainedOffsetY == null) return;
 
         retentionEntry.lastVisibleOffsetY = retainedOffsetY;
-        if (retentionEntry.lastVisibleOffsetY === 0) {
-            retentionEntry.restorePending = false;
-        }
-    }, [retentionEntry]);
+        // The reader is scrolling this surface right now, so any pending restore is void. Reported
+        // in remote-dev: a restore landing mid-gesture yanks them back to the old position, which is
+        // worse than the stale position it was trying to fix.
+        retentionEntry.restorePending = false;
+    }, [retentionEntry, surfaceActive]);
 
     const handleLayout = React.useCallback((event: SessionListScrollRetentionLayoutEvent) => {
         const height = event.nativeEvent?.layout?.height;

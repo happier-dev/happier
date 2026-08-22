@@ -1,11 +1,15 @@
 import * as React from 'react';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
+import { useCurrentProjectedAgentCapabilities } from '@/agents/hooks/useCurrentProjectedAgentCapabilities';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { SessionForkSupportSource } from '@/sync/domains/sessionFork/forkUiSupport';
+import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import type { ReducerState } from '@/sync/reducer/reducer';
 import {
@@ -72,6 +76,8 @@ export type TranscriptForkCommon = Pick<TranscriptSessionCommonSettings,
      */
     agentSwitchingEnabled: boolean;
     sessionForkSupportSource: SessionForkSupportSource | null;
+    /** Exact current declaration used by all transcript fork affordances. */
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 }>;
 
 export function deriveTranscriptForkCommonForInteraction(
@@ -129,6 +135,17 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
         sessionId,
         sessionForkSupportSource?.serverId ?? null,
     );
+    const forkOwnerMetadata = React.useMemo(
+        () => sessionForkSupportSource ? readSessionOwnerMetadataView(sessionForkSupportSource) : null,
+        [sessionForkSupportSource],
+    );
+    const forkAgentId = resolveAgentIdFromSessionMetadata(forkOwnerMetadata);
+    const currentAgentCapabilities = useCurrentProjectedAgentCapabilities({
+        agentId: forkAgentId,
+        machineId: forkOwnerMetadata?.machineId ?? null,
+        serverId: forkSpawnServerId,
+        enabled: forkAgentId !== null,
+    });
     const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
         scopeKind: 'spawn',
         serverId: forkSpawnServerId,
@@ -156,6 +173,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
     const fork = React.useMemo<TranscriptForkCommon>(() => ({
         agentSwitchingEnabled,
         executionRunsEnabled,
+        currentAgentCapabilities,
         sessionForkSupportSource,
         sessionReplayEnabled,
         sessionReplayMaxSeedChars,
@@ -164,6 +182,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
     }), [
         agentSwitchingEnabled,
         executionRunsEnabled,
+        currentAgentCapabilities,
         sessionForkSupportSource,
         sessionReplayEnabled,
         sessionReplayMaxSeedChars,

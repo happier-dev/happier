@@ -202,7 +202,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     resume: { vendorResumeIdField: null },
     sessionModes: { kind: 'none' },
   }),
-  isAgentId: (value: unknown) => value === 'codex',
+  isBundledAgentId: (value: unknown) => value === 'codex',
   resolveAgentIdFromFlavor: () => 'codex',
 }));
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -224,7 +224,7 @@ vi.mock('@/agents/registry/registryCore', () => ({
     uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
     permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
   }),
-  isAgentId: (value: unknown) => value === 'codex',
+  isBundledAgentId: (value: unknown) => value === 'codex',
   resolveAgentIdFromFlavor: () => 'codex',
 }));
 vi.mock('@/agents/catalog/agentUniverse', () => ({
@@ -279,7 +279,6 @@ vi.mock('@/sync/sync', async () => {
   };
 });
 vi.mock('@/sync/ops', () => ({
-  continueSessionWithReplay: vi.fn(),
   sessionAbort: vi.fn(),
   resumeSession: vi.fn(),
   sessionAttachmentsUploadFile: vi.fn(),

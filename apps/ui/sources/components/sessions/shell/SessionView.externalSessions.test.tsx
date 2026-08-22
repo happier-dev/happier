@@ -33,8 +33,11 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
   getResolvedBackendCatalogEntries: () => [],
 }));
+const daemonMergedProjectionState = vi.hoisted(() => ({
+  current: { phase: 'idle', inputs: null as any },
+}));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-  useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+  useDaemonMergedProjectionInputs: () => daemonMergedProjectionState.current,
 }));
 
 const machineExternalSessionStatusGetSpy = vi.hoisted(() => vi.fn());
@@ -535,7 +538,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    continueSessionWithReplay: vi.fn(),
     sessionAbort: vi.fn(),
     resumeSession: vi.fn(),
     sessionAttachmentsUploadFile: vi.fn(),
@@ -675,7 +677,9 @@ describe('SessionView (direct sessions)', () => {
     featureEnabledState.voice = false;
     featureEnabledState['execution.runs'] = false;
     featureEnabledState['files.reviewComments'] = false;
+    delete (featureEnabledState as Record<string, boolean>)['sessions.usageLimitRecovery'];
     sessionExecutionRunsSupportedState.current = false;
+    daemonMergedProjectionState.current = { phase: 'idle', inputs: null };
     delete (featureEnabledState as Record<string, boolean>)['connectedServices.quotas'];
     settingsState.current = {};
     settingByKeyState.current = {};
@@ -1644,6 +1648,73 @@ describe('SessionView (direct sessions)', () => {
       sourceSnapshotFetchedAtMs: 1000,
     });
     expect(sessionUsageLimitConsumeResetCreditSpy).not.toHaveBeenCalled();
+  });
+
+  it('uses the current external Agent usage-recovery declaration for check-now', async () => {
+    (featureEnabledState as Record<string, boolean>)['sessions.usageLimitRecovery'] = true;
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      active: true,
+      metadata: {
+        machineId: 'machine-1',
+        host: 'happy-host',
+        path: '/tmp',
+        homeDir: '/tmp',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'acme-lifecycle',
+          agent: { providerSessionId: 'acme-session-1' },
+        },
+      },
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1,
+        agentId: 'acme-lifecycle',
+        usageLimit: {
+          v: 1,
+          resetAtMs: null,
+          retryAfterMs: null,
+          quotaScope: 'account',
+          recoverability: 'wait',
+        },
+      },
+    };
+    daemonMergedProjectionState.current = {
+      phase: 'ready',
+      inputs: {
+        pluginProjectionById: {},
+        pluginProjectionV2: {
+          generation: 42,
+          agentsById: {
+            'acme-lifecycle': {
+              id: 'acme-lifecycle',
+              identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
+              capabilities: {
+                sessions: {
+                  open: ['resume'],
+                  delivery: ['newTurn'],
+                  cancel: true,
+                  usageLimitRecovery: { active: ['checkNow'] },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as any;
+
+    await renderSessionViewAndSettle();
+
+    expect(findWarningActionBannerProps('session-usageLimit-recovery')?.secondaryActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key: 'check_now',
+        testID: 'session-usageLimit-recovery-checkNow',
+      }),
+    ]));
   });
 
   it('applies connected-service reset credits when runtime usage evidence is selected for the same connected profile', async () => {

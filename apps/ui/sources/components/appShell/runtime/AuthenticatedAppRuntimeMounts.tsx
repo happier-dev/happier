@@ -81,7 +81,7 @@ function DesktopBrowserRecordingReverseCaptureRuntimeMount(): React.ReactElement
 
 export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAppRuntimeMounts(props: Readonly<{
     isAuthenticated: boolean;
-    isTauriDesktopHost: boolean;
+    isDesktopShell: boolean;
 }>) {
     return (
         <>
@@ -101,10 +101,10 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
                 <VoiceOrbAppShellMount />
             </CompanionNoDragRegionProvider>
             {props.isAuthenticated ? <ReleaseNotesAutoShowMount /> : null}
-            {props.isAuthenticated && props.isTauriDesktopHost ? (
+            {props.isAuthenticated && props.isDesktopShell ? (
                 <DesktopBrowserRecordingReverseCaptureRuntimeMount />
             ) : null}
-            {props.isTauriDesktopHost ? (
+            {props.isDesktopShell ? (
                 <>
                     <DesktopTrayRuntime />
                     <DesktopTrayDaemonLifecycleRuntime />

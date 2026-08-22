@@ -74,7 +74,7 @@ const ru = {
             diagnostic: 'Диагностика',
         },
     },
-} as const;
+};
 
 const pl = {
     invocationLogs: {
@@ -113,7 +113,7 @@ const pl = {
             diagnostic: 'Diagnostyka',
         },
     },
-} as const;
+};
 
 const es = {
     invocationLogs: {
@@ -152,7 +152,7 @@ const es = {
             diagnostic: 'Diagnóstico',
         },
     },
-} as const;
+};
 
 const it = {
     invocationLogs: {
@@ -191,7 +191,7 @@ const it = {
             diagnostic: 'Diagnostica',
         },
     },
-} as const;
+};
 
 const pt = {
     invocationLogs: {
@@ -230,7 +230,7 @@ const pt = {
             diagnostic: 'Diagnóstico',
         },
     },
-} as const;
+};
 
 const ca = {
     invocationLogs: {
@@ -269,7 +269,7 @@ const ca = {
             diagnostic: 'Diagnòstic',
         },
     },
-} as const;
+};
 
 const zhHans = {
     invocationLogs: {
@@ -308,7 +308,7 @@ const zhHans = {
             diagnostic: '诊断',
         },
     },
-} as const;
+};
 
 const zhHant = {
     invocationLogs: {
@@ -347,7 +347,7 @@ const zhHant = {
             diagnostic: '診斷',
         },
     },
-} as const;
+};
 
 const ja = {
     invocationLogs: {
@@ -386,10 +386,48 @@ const ja = {
             diagnostic: '診断',
         },
     },
-} as const;
+};
 
 export const pluginInvocationLogTranslations = {
     en,
+    de: {
+    invocationLogs: {
+        title: 'Aufruf-Logs',
+        footer: 'Begrenzte, geschwärzte Einträge vom gewählten Plugin-Rechner.',
+        correlationFilter: 'Filter nach Korrelations-ID',
+        correlationFilterAll: 'Alle Aufrufe dieses Plugins',
+        correlationPromptTitle: 'Nach Korrelations-ID filtern',
+        correlationPromptBody: 'Nur Einträge eines einzigen exakten Plugin-Aufrufs zeigen. Leer lassen, um alle Einträge zu zeigen.',
+        correlationPromptPlaceholder: 'Korrelations-ID',
+        refresh: 'Logs aktualisieren',
+        follow: 'Logs verfolgen',
+        stopFollowing: 'Verfolgen beenden',
+        loadMore: 'Nächste Einträge laden',
+        loadingTitle: 'Aufruf-Logs werden geladen',
+        loadingSubtitle: 'Begrenzte, geschwärzte Einträge werden vom gewählten Rechner gelesen.',
+        idleTitle: 'Bereit, Aufruf-Logs zu lesen',
+        idleSubtitle: 'Aktualisiere, um begrenzte, geschwärzte Einträge vom gewählten Rechner zu lesen.',
+        emptyTitle: 'Keine Aufruf-Logs',
+        emptySubtitle: 'Auf diesem gewählten Rechner gibt es keine passenden geschwärzten Einträge.',
+        unavailableTitle: 'Aufruf-Logs nicht verfügbar',
+        unavailableSubtitle: 'Der gewählte Plugin-Rechner ist nicht verfügbar oder nicht mehr aktuell.',
+        readerUnavailableSubtitle: 'Der gewählte Plugin-Rechner kann gerade keine Aufruf-Logs liefern.',
+        selectionRequiredTitle: 'Wähl einen Plugin-Rechner',
+        selectionRequiredSubtitle: 'Wähl oben eine kompatible Plugin-Materialisierung, bevor du ihre Logs liest.',
+        conflictTitle: 'Den gewählten Plugin-Rechner klären',
+        conflictSubtitle: 'Wähl oben eine kompatible Plugin-Materialisierung, bevor du ihre Logs liest.',
+        errorTitle: 'Die Aufruf-Logs ließen sich nicht laden',
+        errorSubtitle: 'Das Lesen der Logs wurde nicht abgeschlossen. Versuch es erneut, sobald der gewählte Rechner verfügbar ist.',
+        noMessage: 'Plugin-Log-Ereignis',
+        level: {
+            debug: 'Debug',
+            info: 'Info',
+            warn: 'Warnung',
+            error: 'Fehler',
+            diagnostic: 'Diagnose',
+        },
+    },
+},
     fr: {
     invocationLogs: {
         title: 'Journaux d’invocation',
@@ -421,7 +459,7 @@ export const pluginInvocationLogTranslations = {
         noMessage: 'Événement de journal du plugin',
         level: {
             debug: 'Débogage',
-            info: 'Info',
+            info: 'Informations',
             warn: 'Avertissement',
             error: 'Erreur',
             diagnostic: 'Diagnostic',

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import type {
+  PluginContributedActionController,
   PluginContributedActionDescriptor,
   PluginContributedActionOpenOutcome,
 } from '@/components/plugins/actions/pluginContributedActionController';
@@ -221,6 +222,10 @@ vi.mock('@/components/ui/feedback/Shaker', () => ({
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
   StatusDot: () => null,
+}));
+
+vi.mock('@/components/plugins/actions/ActionInputFormModal', () => ({
+  ActionInputFormModal: () => null,
 }));
 
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
@@ -462,6 +467,92 @@ describe('AgentInput (history navigation)', () => {
     await vi.waitFor(() => expect(onContributedActionSuggestionSelect).toHaveBeenCalledWith(action));
 
     expect(mocks.onChangeText).not.toHaveBeenCalled();
+    expect(mocks.onSend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['success', { ok: true as const, result: { completed: true } }],
+    ['failure', { ok: false as const, code: 'unavailable' as const, reason: 'known_failure' }],
+    ['outcome unknown', { ok: false as const, code: 'timeout' as const, reason: 'plugin_ui_action_outcome_unknown' }],
+  ] as const)('removes the contributed Action slash token after a settled direct %s even when the composer scope retires before presentation continues', async (_label, outcome) => {
+    const action = {
+      identity: { pluginId: 'acme.alpha', localId: 'review' },
+      qualifiedActionId: 'acme.alpha/review',
+      title: 'Run Alpha review',
+      description: null,
+      icon: null,
+      priority: 0,
+      placement: 'primary' as const,
+      scope: 'session' as const,
+      scopes: ['session'] as const,
+      slash: { tokens: ['/review'] },
+      inputHints: null,
+      kind: 'direct' as const,
+    };
+    const expected = {
+      kind: 'direct' as const,
+      action,
+      outcome,
+    } satisfies PluginContributedActionOpenOutcome;
+    const abortController = new AbortController();
+    const controller = {
+      list: () => [],
+      listSlashCommands: () => [],
+      open: vi.fn(() => new Promise<PluginContributedActionOpenOutcome>((resolve) => {
+        queueMicrotask(() => {
+          resolve(expected);
+          abortController.abort();
+        });
+      })),
+      isReferenceAvailable: () => false,
+      isSessionReferenceAvailable: () => false,
+      invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+      openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+    } satisfies PluginContributedActionController;
+    mocks.suggestions = [{
+      kind: 'slashCommand',
+      key: 'plugin-action:acme.alpha/review',
+      text: '/acme.alpha/review',
+      label: '/acme.alpha/review',
+      pluginContributedAction: action,
+    }];
+    mocks.selectedSuggestionIndex = 0;
+    const { openPluginContributedAction } = await import('@/components/plugins/actions/openPluginContributedAction');
+    const onContributedActionSuggestionSelect = vi.fn((selectedAction: PluginContributedActionDescriptor) => (
+      openPluginContributedAction({
+        controller,
+        action: selectedAction,
+        signal: abortController.signal,
+      })
+    ));
+    const { AgentInput } = await import('./AgentInput');
+    const { Modal } = await import('@/modal');
+    const screen = await renderScreen(
+      <AgentInput
+        value="/review"
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompleteKinds={['slashCommand']}
+        autocompleteSuggestions={async () => []}
+        onContributedActionSuggestionSelect={onContributedActionSuggestionSelect}
+      />,
+    );
+    const input = findMultiTextInput(screen);
+
+    await act(async () => {
+      input.props.onFocus?.();
+      input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(onContributedActionSuggestionSelect).toHaveBeenCalledWith(action));
+    await vi.waitFor(() => expect(mocks.onChangeText).toHaveBeenCalledWith(''));
+
+    expect(abortController.signal.aborted).toBe(true);
+    expect(controller.open).toHaveBeenCalledWith(action);
+    expect(Modal.show).not.toHaveBeenCalled();
+    expect(Modal.alert).not.toHaveBeenCalled();
     expect(mocks.onSend).not.toHaveBeenCalled();
   });
 

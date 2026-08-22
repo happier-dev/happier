@@ -1,6 +1,6 @@
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 
-import { isTauriDesktop } from '../tauri';
+import { isDesktopHost } from '../desktopHost';
 
 let cachedTauriRuntimeFetch: RuntimeFetch | null | undefined;
 
@@ -41,7 +41,7 @@ export function shouldUseTauriRuntimeFetch(input: RequestInfo | URL): boolean {
 }
 
 async function loadTauriRuntimeFetch(): Promise<RuntimeFetch | null> {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return null;
     }
 

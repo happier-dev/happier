@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { View } from 'react-native';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputControlId } from './agentInputControlTypes';
 import type { SessionModeChipPresentation } from './resolveSessionModeChipPresentation';
 import { createAgentSelectionActionChip } from '../definitions/createAgentSelectionActionChip';
@@ -48,7 +47,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     envVarsChipAnchorRef: React.RefObject<View | null>;
     envVarsCount?: number;
     onEnvVarsPress: () => void;
-    agentId: AgentId;
+    agentId: string;
     hasAgentSelection: boolean;
     agentChipAnchorRef: React.RefObject<View | null>;
     agentLabel: string;

@@ -22,6 +22,7 @@ import {
 import { buildTerminalResponseV1, buildTerminalResponseV2 } from '@/auth/terminal/terminalProvisioning';
 import { decodeBase64 } from '@/encryption/base64';
 import { storage } from '@/sync/domains/state/storageStore';
+import { isLoopbackHostname } from '@/sync/domains/server/url/serverUrlClassification';
 import {
     NATIVE_SSH_BOOTSTRAP_TASK_KIND,
     type NativeSshTaskCredentials,
@@ -383,11 +384,7 @@ function isLoopbackUrl(value: unknown): boolean {
         return false;
     }
     try {
-        const hostname = new URL(text).hostname.toLowerCase();
-        return hostname === 'localhost'
-            || hostname === '127.0.0.1'
-            || hostname === '0.0.0.0'
-            || hostname === '::1';
+        return isLoopbackHostname(new URL(text).hostname);
     } catch {
         return false;
     }

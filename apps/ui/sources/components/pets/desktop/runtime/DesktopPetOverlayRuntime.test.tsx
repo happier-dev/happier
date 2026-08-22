@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
-const isTauriDesktopState = vi.hoisted(() => ({ value: true }));
+const isDesktopHostState = vi.hoisted(() => ({ value: true }));
 const syncDesktopPetOverlayState = vi.hoisted(() => vi.fn(async () => {}));
 const idleActivity = {
     state: 'idle',
@@ -12,11 +12,11 @@ const idleActivity = {
     trayItems: [],
 } as const;
 
-vi.mock('@/utils/platform/tauri', async () => {
-    const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
+vi.mock('@/utils/platform/desktopHost', async () => {
+    const actual = await vi.importActual<typeof import('@/utils/platform/desktopHost')>('@/utils/platform/desktopHost');
     return {
         ...actual,
-        isTauriDesktop: () => isTauriDesktopState.value,
+        isDesktopHost: () => isDesktopHostState.value,
     };
 });
 
@@ -26,7 +26,7 @@ vi.mock('../bridge/desktopPetOverlayBridge', () => ({
 
 describe('DesktopPetOverlayRuntime', () => {
     afterEach(() => {
-        isTauriDesktopState.value = true;
+        isDesktopHostState.value = true;
         syncDesktopPetOverlayState.mockClear();
     });
 
@@ -66,7 +66,7 @@ describe('DesktopPetOverlayRuntime', () => {
     });
 
     it('does not sync outside the Tauri desktop shell', async () => {
-        isTauriDesktopState.value = false;
+        isDesktopHostState.value = false;
         const { DesktopPetOverlayRuntime } = await import('./DesktopPetOverlayRuntime');
 
         await renderScreen(

@@ -1113,6 +1113,9 @@ describe('SessionItem activity time', () => {
                     tags: [],
                     secondaryLineMode: 'path',
                     workingPlacementRetained: false,
+                    attentionStanding: false,
+                    isAttentionStanding: false,
+                    attentionStandingEnabled: false,
                 }}
                 serverId="server_a"
                 serverName="Server A"
@@ -1204,6 +1207,7 @@ describe('SessionItem activity time', () => {
                         sessionStatus: mockSessionStatus,
                         secondaryLineMode: 'status',
                         workingPlacementRetained: false,
+                        attentionStanding: false,
                     },
                 })}
                 serverId="server_a"
@@ -1254,6 +1258,7 @@ describe('SessionItem activity time', () => {
                         sessionStatus: mockSessionStatus,
                         secondaryLineMode: 'status',
                         workingPlacementRetained: false,
+                        attentionStanding: false,
                     },
                 })}
                 serverId="server_a"
@@ -1305,6 +1310,7 @@ describe('SessionItem activity time', () => {
                         sessionStatus: mockSessionStatus,
                         secondaryLineMode: 'status',
                         workingPlacementRetained: false,
+                        attentionStanding: false,
                     },
                 })}
                 serverId="server_a"
@@ -1358,6 +1364,7 @@ describe('SessionItem activity time', () => {
                         sessionStatus: mockSessionStatus,
                         secondaryLineMode: 'status',
                         workingPlacementRetained: false,
+                        attentionStanding: false,
                     },
                 })}
                 rowHeight={42}

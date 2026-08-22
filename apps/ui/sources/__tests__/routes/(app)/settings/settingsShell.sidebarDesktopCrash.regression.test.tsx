@@ -44,11 +44,11 @@ vi.mock('expo-router', async () => {
     }).module;
 });
 
-vi.mock('@/utils/platform/tauri', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/platform/tauri')>();
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/platform/desktopHost')>();
     return {
         ...actual,
-        isTauriDesktop: () => true,
+        isDesktopHost: () => true,
     };
 });
 

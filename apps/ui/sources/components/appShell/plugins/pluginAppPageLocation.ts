@@ -1,12 +1,14 @@
 import {
     PluginUiReplacePageLocationRequestV1Schema,
+    type PluginUiHostApiErrorCodeV1,
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import type {
-    PluginSurfaceHostApiMethodHandler,
-    PluginSurfaceHostApiRequestOptions,
+import {
+    createPluginSurfaceHostApiError,
+    type PluginSurfaceHostApiMethodHandler,
+    type PluginSurfaceHostApiRequestOptions,
 } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 
 /**
@@ -76,8 +78,8 @@ export type CreatePluginAppPageLocationOwnerInput = Readonly<{
     isCurrent: () => boolean;
 }>;
 
-function refusal(code: string, reason: string): PluginUiJsonValueV1 {
-    return { code, diagnostics: [reason] };
+function refusal(code: PluginUiHostApiErrorCodeV1, reason: string): PluginUiJsonValueV1 {
+    return createPluginSurfaceHostApiError(code, [reason]);
 }
 
 export function createPluginAppPageLocationOwner(

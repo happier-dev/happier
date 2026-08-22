@@ -19,6 +19,10 @@ import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/
 import { sessionUnarchiveWithServerScope } from '@/sync/ops';
 import { sync } from '@/sync/sync';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useIsFocused } from '@react-navigation/native';
+import { useSessionListPaneSourceScopeKey } from '@/components/sessions/shell/sessionListPaneRetention';
+import { useSessionNavigationCursorPublisher } from '@/sync/domains/session/navigation/useSessionNavigationCursorPublisher';
+import type { SessionListLikeItem } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
 type ArchivedScreenSession = Session | (SessionListRenderableSession & { serverId?: string });
 
@@ -156,6 +160,8 @@ export default function ArchivedSessionsScreen() {
     );
     const { theme } = useUnistyles();
     const navigateToSession = useNavigateToSession();
+    const isFocused = useIsFocused();
+    const sessionNavigationSourceScopeKey = useSessionListPaneSourceScopeKey();
     const allSessions = useAllSessions();
     const sessionListRowStateByServerId = useSessionListRowStateByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
@@ -237,6 +243,25 @@ export default function ArchivedSessionsScreen() {
         }
         return out;
     }, [archivedSessions, hiddenInactiveSessions]);
+
+    // The rows this screen opens, in render order. These are session records rather than
+    // list rows, so the owning server is lifted onto the row shape the ordering owner reads;
+    // an unscoped key would not match the server-scoped session route it has to anchor on.
+    const sessionNavigationItems = React.useMemo<SessionListLikeItem[]>(
+        () => sections.flatMap((section) => section.data.map((session) => ({
+            type: 'session',
+            sessionId: session.id,
+            serverId: session.serverId,
+        }))),
+        [sections],
+    );
+    useSessionNavigationCursorPublisher({
+        active: isFocused,
+        origin: 'archived',
+        sourceScopeKey: sessionNavigationSourceScopeKey,
+        storageKind: 'all',
+        items: sessionNavigationItems,
+    });
 
     const handleUnarchive = React.useCallback((session: ArchivedScreenSession) => {
         Modal.alert(

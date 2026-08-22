@@ -1,4 +1,4 @@
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { installTauriMcpWebviewDriverScripts } from './installTauriMcpWebviewDriverScripts';
 
@@ -9,7 +9,7 @@ export function maybeInstallTauriMcpBridge(options?: Readonly<{
     documentObj?: Document;
     windowObj?: McpBridgeWindowLike;
 }>) {
-    const isDesktopShell = options?.isDesktopShell ?? isTauriDesktop();
+    const isDesktopShell = options?.isDesktopShell ?? isDesktopHost();
     if (!isDesktopShell) {
         return;
     }

@@ -116,6 +116,24 @@ describe('MainAppTabBar', () => {
         vi.resetModules();
     });
 
+    it('renders a trailing accessory beside the tabs without turning it into one', async () => {
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+
+        const screen = await renderScreen(
+            <MainAppTabBar
+                activeTab="sessions"
+                onTabPress={() => {}}
+                trailingAccessory={React.createElement('TrailingAccessory')}
+            />,
+        );
+
+        // A sibling capsule, never an extra tab: it must not appear inside the tablist and must
+        // never be eligible for the active-tab highlight.
+        expect(screen.tree.root.findAllByType('TrailingAccessory' as never)).toHaveLength(1);
+        const tablist = screen.tree.root.find((node) => node.props.accessibilityRole === 'tablist');
+        expect(tablist.findAllByType('TrailingAccessory' as never)).toHaveLength(0);
+    });
+
     it('exposes localized tab semantics and selected state when visual labels are hidden', async () => {
         badgeSettingsState.showLabels = false;
         friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];

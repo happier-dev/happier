@@ -114,6 +114,7 @@ pub fn run() {
                 browser::desktop_browser_drain_diagnostics,
                 browser::desktop_browser_eval_script,
                 browser::desktop_browser_dispatch_navigation,
+                hosted_artifact_desktop::desktop_hosted_artifact_get_frame_capability,
                 hosted_artifact_desktop::desktop_hosted_artifact_register,
                 hosted_artifact_desktop::desktop_hosted_artifact_unregister,
                 hosted_artifact_desktop::desktop_hosted_artifact_cache_read,

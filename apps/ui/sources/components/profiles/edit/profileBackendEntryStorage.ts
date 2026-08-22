@@ -8,7 +8,7 @@ import {
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 
 type ProfileTargetValueRecord<TValue> = Readonly<Record<string, TValue | undefined>> | null | undefined;
 
@@ -39,7 +39,7 @@ export function isProfileCompatibleWithResolvedBackendEntry(
         return profile.compatibility[entry.builtInAgentId] === true;
     }
 
-    if (isAgentId(entry.agentId) && typeof profile.compatibility?.[entry.agentId] === 'boolean') {
+    if (isBundledAgentId(entry.agentId) && typeof profile.compatibility?.[entry.agentId] === 'boolean') {
         return profile.compatibility[entry.agentId] === true;
     }
 

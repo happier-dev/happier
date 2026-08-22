@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -16,11 +16,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 import {
     resolveAgentContinuationSubmitPresentation,
-    resolveArmedComposerContinuation,
+    resolveArmedSubmitContinuation,
 } from './agentContinuationSubmitPresentation';
-
-/** The circular send affordance's box, unchanged. */
-const SUBMIT_CIRCLE_SIZE = 32;
 
 /**
  * The submit control's touch target reaches above and below its box.
@@ -31,7 +28,6 @@ const SUBMIT_CIRCLE_SIZE = 32;
  * lands inside the clip.
  */
 const SUBMIT_HIT_SLOP = { top: 5, bottom: 10, left: 0, right: 0 } as const;
-const SUBMIT_CLIP_EXTRA_HEIGHT = SUBMIT_HIT_SLOP.top + SUBMIT_HIT_SLOP.bottom;
 
 const stylesheet = StyleSheet.create(() => ({
     shapeClip: {
@@ -47,13 +43,10 @@ const stylesheet = StyleSheet.create(() => ({
         paddingTop: SUBMIT_HIT_SLOP.top,
         paddingBottom: SUBMIT_HIT_SLOP.bottom,
     },
-    shapeContent: {
-        flexShrink: 0,
-    },
 }));
 
 /**
- * A box that follows its content's size instead of jumping to it.
+ * A box that travels to its content's size instead of jumping to it.
  *
  * The send control has two shapes — a circular send, and the armed
  * "Continue with {Agent}" button that hugs its logo and label — and swapping
@@ -61,58 +54,47 @@ const stylesheet = StyleSheet.create(() => ({
  * reads as a glitch; this travels, on the app's own standard curve, so the change
  * reads as the control becoming something else.
  *
- * It measures rather than being told: the content lays out at its natural size
- * (`flexShrink: 0` inside a clipped row), reports it, and the wrapper travels to
- * it. One mechanism serves both directions and a label that changes while armed,
- * and it needs no second copy of the button's metrics.
+ * The wrapper is plain content-sized layout, and the travel is a Reanimated
+ * layout transition over it. It is deliberately NOT the obvious shape — measure
+ * the content, then animate a `width`/`height` towards it — because that shape
+ * contains a loop the browser hides:
+ *
+ *   the content is laid out inside the very box being animated, so a single-line
+ *   label can only be as wide as the width the box currently has; each frame
+ *   therefore measured a little wider, re-targeted the animation just ahead of
+ *   where it had reached, and the target chased the value.
+ *
+ * Measured on iOS (iPhone 17 Pro, iOS 26.3, debug bundle) against the equivalent
+ * remote-dev build: ~1.13s of visible steps instead of the intended ~0.27s — the
+ * reported "very saccaded and slow". `flexShrink: 0` does not prevent it, and
+ * neither does taking the content out of flow: `position: 'absolute'` still
+ * measured 162 → 213 and climbing, one report per frame. Web never showed it,
+ * because there a non-shrinking child with single-line text keeps its max-content
+ * width, so the measurement was stable and the same code ran cleanly.
+ *
+ * A layout transition has no measurement to feed back: the wrapper is laid out at
+ * its natural size once and Reanimated interpolates the frame. Measured the same
+ * way afterwards: ~0.13s, monotonic.
  *
  * Under reduced motion the control still becomes the other shape — that is the
- * fact it carries — and only the travel is removed.
+ * fact it carries — and only the travel is removed. `ReduceMotion.Never` keeps
+ * that decision here rather than letting the library read the device setting a
+ * second time and disagree with the app's own preference.
  */
 function AgentInputSubmitShape(props: Readonly<{ children: React.ReactNode }>) {
     const styles = stylesheet;
     const reducedMotion = useReducedMotionPreference();
-    const [contentSize, setContentSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
-    const width = useSharedValue(SUBMIT_CIRCLE_SIZE);
-    const height = useSharedValue(SUBMIT_CIRCLE_SIZE + SUBMIT_CLIP_EXTRA_HEIGHT);
-    const targetWidth = contentSize?.width ?? SUBMIT_CIRCLE_SIZE;
-    // The clip is taller than the control by exactly the reach of its hit area, so
-    // the box it animates to is the content plus that reach.
-    const targetHeight = (contentSize?.height ?? SUBMIT_CIRCLE_SIZE) + SUBMIT_CLIP_EXTRA_HEIGHT;
-
-    React.useEffect(() => {
-        if (reducedMotion) {
-            width.value = targetWidth;
-            height.value = targetHeight;
-            return;
-        }
-        const timing = {
-            duration: reanimatedMotionTokens.durationMs.base,
-            easing: reanimatedMotionTokens.easing.standard,
-        };
-        width.value = withTiming(targetWidth, timing);
-        height.value = withTiming(targetHeight, timing);
-    }, [height, reducedMotion, targetHeight, targetWidth, width]);
-
-    const animatedStyle = useAnimatedStyle(() => ({ width: width.value, height: height.value }));
+    const layout = React.useMemo(() => {
+        if (reducedMotion) return undefined;
+        return LinearTransition
+            .duration(reanimatedMotionTokens.durationMs.base)
+            .easing(reanimatedMotionTokens.easing.standard.factory())
+            .reduceMotion(ReduceMotion.Never);
+    }, [reducedMotion]);
 
     return (
-        <Animated.View style={[styles.shapeClip, animatedStyle]}>
-            <View
-                style={styles.shapeContent}
-                onLayout={(event) => {
-                    const measuredWidth = Math.round(event.nativeEvent.layout.width);
-                    const measuredHeight = Math.round(event.nativeEvent.layout.height);
-                    if (measuredWidth <= 0 || measuredHeight <= 0) return;
-                    setContentSize((current) => (
-                        current?.width === measuredWidth && current?.height === measuredHeight
-                            ? current
-                            : { width: measuredWidth, height: measuredHeight }
-                    ));
-                }}
-            >
-                {props.children}
-            </View>
+        <Animated.View layout={layout} style={styles.shapeClip}>
+            {props.children}
         </Animated.View>
     );
 }
@@ -178,15 +160,15 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         && (dictationActive || (!props.hasSendableContent && !showStopWhenEmpty));
 
     // The armed switch only reaches the button while the button is actually a
-    // send. Dictation, Stop and the empty-composer states are other actions, and
-    // labelling them "Continue with {Agent}" would promise something that press
-    // does not do.
-    // The composer's engine chip reads the SAME decision, so the two cannot say
-    // different things about the armed target.
-    const armedTarget = resolveArmedComposerContinuation({
+    // send. Dictation and Stop are other actions, and labelling either
+    // "Continue with {Agent}" would promise something that press does not do.
+    // An empty composer is NOT one of those: the control is still the send, just
+    // an inert one, so it keeps naming the switch it would take.
+    // The composer's engine chip reads the SAME armed target and only skips this
+    // narrowing, so the two cannot name different Agents.
+    const armedTarget = resolveArmedSubmitContinuation({
         armedContinuationTarget: props.armedContinuationTarget,
-        hasSendableContent: props.hasSendableContent,
-        dictationHoldsSubmit: showDictation,
+        otherActionHoldsSubmit: showDictation || showStopWhenEmpty,
     });
     const armedContinuation = armedTarget
         ? resolveAgentContinuationSubmitPresentation({
@@ -219,27 +201,38 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     ]);
 
     if (armedContinuation) {
+        const mark = armedContinuation.markAgentId ? (
+            // The same mark the Agent rail used to offer this target, at the
+            // registry's own optical size and tinted by the button's token, so
+            // it reads at the weight the reader just saw.
+            <AgentIcon
+                agentId={armedContinuation.markAgentId}
+                size={armedContinuation.markSize}
+                color={theme.colors.button.primary.tint}
+            />
+        ) : undefined;
         return (
             <AgentInputSubmitShape>
                 <RoundButton
                     testID={props.testID}
                     size="small"
-                    // The words, visible and accessible. Pressing this does not only
-                    // send — it continues the Session with another Agent — and a control
-                    // that changes what a Session runs says so on its face rather than
-                    // only in a popover the reader has dismissed.
-                    title={armedContinuation.accessibilityLabel}
+                    // "Continue with [mark]". Pressing this does not only send — it
+                    // continues the Session with another Agent — so the control says
+                    // so on its face rather than only in a popover the reader has
+                    // dismissed. The Agent's identity is carried once, by the mark
+                    // standing where the sentence names it, which keeps the control
+                    // from growing to the width of the longest name in the catalog.
+                    title={armedContinuation.label}
+                    // The full sentence, always in words: this press commits an Agent
+                    // switch, and a glyph reads as nothing to a screen reader.
                     accessibilityLabel={armedContinuation.accessibilityLabel}
-                    leading={armedContinuation.markAgentId ? (
-                        // The same mark the Agent rail used to offer this target, at the
-                        // registry's own optical size and tinted by the button's token, so
-                        // it reads at the weight the reader just saw.
-                        <AgentIcon
-                            agentId={armedContinuation.markAgentId}
-                            size={armedContinuation.markSize}
-                            color={theme.colors.button.primary.tint}
-                        />
-                    ) : undefined}
+                    // Named but not yet pressable. The circular send explains that
+                    // same state with this exact hint, and the armed shape is the
+                    // same control, so it says the same thing rather than leaving a
+                    // screen reader with a disabled button and no reason.
+                    accessibilityHint={props.hasSendableContent ? undefined : t('session.inputPlaceholder')}
+                    leading={armedContinuation.markPlacement === 'leading' ? mark : undefined}
+                    trailing={armedContinuation.markPlacement === 'trailing' ? mark : undefined}
                     loading={props.isSending}
                     disabled={props.disabled}
                     onPress={submitPress}

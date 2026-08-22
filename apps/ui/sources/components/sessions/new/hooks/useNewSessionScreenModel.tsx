@@ -33,7 +33,8 @@ import {
     type AIBackendProfile,
 } from '@/sync/domains/profiles/profileCompatibility';
 import { getProfilePrimaryCli, isProfileEnabled } from '@/sync/domains/profiles/profileUtils';
-import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -679,7 +680,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const {
         backendTarget,
         setBackendTarget,
-        selectedCatalogAgentId: agentType,
+        selectedCatalogAgentId: staticAgentId,
         selectedRuntimeCarrierAgentId,
         selectedUiAgentType,
     } = useNewSessionBackendTargetState({
@@ -699,9 +700,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     });
     const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
         setBackendTarget((prevTarget) => {
-            const prevAgentId = isAgentId(prevTarget.backendId) ? prevTarget.backendId : DEFAULT_AGENT_ID;
-            const nextAgentId = typeof next === 'function' ? next(prevAgentId) : next;
-            return { kind: 'backend', backendId: nextAgentId };
+            if (typeof next !== 'function') {
+                return { kind: 'backend', backendId: next };
+            }
+            if (!isBundledAgentId(prevTarget.backendId)) {
+                return prevTarget;
+            }
+            return { kind: 'backend', backendId: next(prevTarget.backendId) };
         });
     }, [setBackendTarget]);
     const selectedBackendTargetKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTarget), [backendTarget]);
@@ -721,7 +726,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         rememberLastEngineSelections,
         selectedBackendEntry?.backendTarget,
     ]);
-    const agentLabel = selectedBackendEntry?.title ?? t(getAgentCore(selectedUiAgentType as AgentId).displayNameKey);
+    const agentPolicyType = staticAgentId ?? selectedUiAgentType;
+    const agentLabel = selectedBackendEntry?.title ?? formatAgentLikeIdForDisplay(selectedUiAgentType);
 
     React.useEffect(() => {
         if (!useProfiles) return;
@@ -763,7 +769,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         mcpSelection,
         setMcpSelection,
     } = useNewSessionAgentAuthoringOptionsState({
-        agentType,
+        agentType: agentPolicyType,
         backendTargetKey: selectedBackendTargetKey,
         allowTargetlessDraftEngineSelection: routeBackendTarget === null,
         hydratedTempAuthoringDraft,
@@ -933,7 +939,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         capabilityServerId,
         externalSessionsFeatureEnabled,
         settings,
-        agentType,
+        staticAgentId,
         resumeSessionId,
         enabledAgentIds,
         backendNewSessionOptionStateByTargetKey,
@@ -967,7 +973,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         connectedServicesModelProbeCacheIdentity,
         agentNewSessionOptions,
     } = useNewSessionConnectedServicesAgentOptions({
-        agentType,
+        staticAgentId,
         targetServerId,
         selectedBackendTargetKey,
         setBackendNewSessionOptionStateByTargetKey,
@@ -1087,6 +1093,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             phase: daemonMergedProjection.phase,
             inputs: daemonMergedProjection.inputs,
         },
+        // Editing an Event Automation reopens this composer on its stored
+        // prompt. Its stored references are seeded with it so a save the user
+        // made without touching them rewrites what it read instead of silently
+        // dropping the pick; removing the token still drops the reference
+        // through the incumbent admission rule.
+        initialStructuredInputReferences: eventAutomationEditSeed?.mentions,
         scopeKey: draftScope ? serverAccountScopeKeySuffix(draftScope) : null,
         canSubmitRef: newSessionComposerCanSubmitRef,
         isSubmitting: isCreating,
@@ -1214,7 +1226,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         selectedPath,
         selectedMachineName: selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host || null,
-        agentType,
+        agentType: selectedUiAgentType,
         targetServerId,
         mcpSelection,
         setMcpSelection,
@@ -1284,7 +1296,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         newSessionDefaultPersistenceModeV1,
         newSessionDefaultPersistenceModeByTargetKeyV1,
         resolvedBackendTargets: resolvedBackendEntries.map((entry) => entry.backendTarget),
-        agentType,
+        agentType: agentPolicyType,
         backendTarget,
         settings,
         externalSessionsFeatureEnabled,
@@ -1297,7 +1309,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         handlePermissionModeChange,
         resolveDefaultPermissionMode,
     } = useNewSessionPermissionModeState({
-        agentType,
+        agentType: agentPolicyType,
         backendTarget,
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft,
@@ -1336,7 +1348,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         resolveDefaultPermissionMode,
         prepareSecretPromptForProfileSelection,
         hasUserTouchedProfileSelectionRef,
-        agentType,
+        agentType: agentPolicyType,
         resolveProfileAuthoringIntent: resolveSelectedProfileAuthoringIntent,
         setModelSelectionForBackendTarget,
     });
@@ -1394,7 +1406,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         externalSessionsFeatureEnabled,
         resumeSessionId,
         setResumeSessionId,
-        agentType,
+        agentType: selectedUiAgentType,
         agentLabel,
         agentOptionState,
         settings,
@@ -1474,7 +1486,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         handleAgentPickerSelect,
         handleAgentClick,
     } = useNewSessionAgentSelectionModelModeReconciliation({
-        agentType,
+        agentType: agentPolicyType,
         preflightModels,
         preflightModelsTargetKey,
         useProfiles,
@@ -1534,7 +1546,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedPath,
         checkoutCreationDraft,
         promptStore,
-        agentType,
+        staticAgentId,
         backendTarget,
         transcriptStorage,
         useProfiles,
@@ -1599,12 +1611,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         composerDocumentRevision: newSessionComposerDocument.revision,
         eventAutomationRevision: eventAutomationComposer.revision,
         machineId: selectedMachineId,
+        sourceContext: sourceContextState.sourceContext,
         targetServerId: targetServerId ?? null,
     }), [
         effectiveCurrentAuthoringDraft,
         eventAutomationComposer.revision,
         newSessionComposerDocument.revision,
         selectedMachineId,
+        sourceContextState.sourceContext,
         targetServerId,
     ]);
     const previousLaunchIntentSignatureRef = React.useRef(launchIntentSignature);
@@ -1636,7 +1650,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedProfileId,
         profileMap,
         recentMachinePaths,
-        agentType,
+        agentType: selectedUiAgentType,
+        staticAgentId,
         backendTarget,
         spawnBackendTarget,
         executionRunsEnabled,
@@ -1750,7 +1765,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setSessionPrompt,
         handleCreateSession,
         backendTarget,
-        agentType,
+        agentType: selectedUiAgentType,
+        staticAgentId,
         agentOptionState,
         setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip,
@@ -1864,7 +1880,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             isAgentSelectable,
             isCliBannerDismissed,
             dismissCliBanner,
-            agentType: selectedUiAgentType as AgentId,
+            agentType: selectedUiAgentType,
             agentLabel,
             setAgentType,
             agentPickerOptions,
@@ -2000,7 +2016,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agent: {
             agentInputExtraActionChips,
             sourceContextPresentation: sourceContextState.presentation,
-            agentType: selectedUiAgentType as AgentId,
+            agentType: selectedUiAgentType,
             agentLabel,
             handleAgentClick,
             agentPickerOptions,

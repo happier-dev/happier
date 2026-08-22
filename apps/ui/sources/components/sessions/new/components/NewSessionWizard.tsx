@@ -28,7 +28,7 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { SecretSatisfactionResult } from '@/utils/secrets/secretSatisfaction';
 import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
-import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getAgentPickerOptions } from '@/agents/catalog/agentPickerOptions';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { CliNotDetectedBanner, type CliNotDetectedBannerDismissScope } from '@/components/sessions/new/components/CliNotDetectedBanner';
@@ -129,7 +129,7 @@ export interface NewSessionWizardAgentProps {
     isAgentSelectable: (agentId: AgentId) => boolean;
     isCliBannerDismissed: (agentId: AgentId) => boolean;
     dismissCliBanner: (agentId: AgentId, scope: CliNotDetectedBannerDismissScope) => void;
-    agentType: AgentId;
+    agentType: string;
     agentLabel?: string;
     setAgentType: (agent: AgentId) => void;
     agentPickerTitle?: React.ComponentProps<typeof AgentInput>['agentPickerTitle'];
@@ -237,7 +237,7 @@ function isWizardBackendPickerOption(option: NewSessionWizardAgentPickerOption):
 function resolveBuiltInAgentIdFromBackendPickerOptionId(optionId: string): AgentId | null {
     const match = /^backend:([^:]+)(?::configured:.+)?$/.exec(optionId);
     const backendId = match?.[1];
-    return backendId && isAgentId(backendId) ? backendId : null;
+    return backendId && isBundledAgentId(backendId) ? backendId : null;
 }
 
 function countVisibleWizardMachineRows(params: Readonly<{

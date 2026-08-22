@@ -45,6 +45,7 @@ const APP_TAURI_COMMANDS: &[&str] = &[
     "desktop_browser_drain_diagnostics",
     "desktop_browser_eval_script",
     "desktop_browser_dispatch_navigation",
+    "desktop_hosted_artifact_get_frame_capability",
     "desktop_hosted_artifact_register",
     "desktop_hosted_artifact_unregister",
     "desktop_hosted_artifact_cache_read",

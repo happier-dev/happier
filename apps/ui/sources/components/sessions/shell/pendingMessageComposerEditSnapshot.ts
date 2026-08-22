@@ -3,12 +3,15 @@ import {
     HappierStructuredInputV1EnvelopeSchema,
     type ComposerAttachmentDraftV1,
     type ComposerAttachmentInputV1,
+    type HappierStructuredInputV1Envelope,
 } from '@happier-dev/protocol';
 import {
     admitMentionRefsV1ForText,
     hasRawStructuredInputSemanticContentV1,
+    readHappierStructuredInputV1FromMeta,
     type MentionRefV1,
 } from '@happier-dev/protocol/runtime';
+import { buildStructuredInputMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { SESSION_DRAFT_VALUE_FIELD_CATALOG } from '@/sync/domains/input/draftValues/sessionDraftValueFieldCatalog';
@@ -143,6 +146,41 @@ export function hydratePendingMessageComposerAttachmentDrafts(
         status: 'ready',
         attachments,
     };
+}
+
+export type PendingMessageComposerEditStructuredInputBuild =
+    | Readonly<{ status: 'ready'; structuredInput: HappierStructuredInputV1Envelope }>
+    | Readonly<{ status: 'unavailable' }>;
+
+/**
+ * The exit half of the rule `hydratePendingMessageComposerAttachmentDrafts`
+ * already enforces on entry: a Pending row persists admitted, contentless
+ * attachment records only. The canonical envelope reader is a sanitizer — it
+ * drops every record it cannot admit, and a draft that still owns a
+ * transfer-staged claim is exactly such a record. Durable media finalization
+ * belongs to Message admission, which a queued row has not reached, so a save
+ * that would lose the selection is refused rather than silently completed.
+ *
+ * The length comparison is the whole guard: the admitted record schema is
+ * strict, so a record is admitted whole or not at all, and the sanitizer
+ * preserves order for the ones it keeps.
+ */
+export function buildPendingMessageComposerEditStructuredInput(input: Readonly<{
+    text: string;
+    mentions: readonly ComposerStructuredInputMention[];
+    attachments: readonly ComposerAttachmentDraftV1[];
+}>): PendingMessageComposerEditStructuredInputBuild {
+    const structuredInput: HappierStructuredInputV1Envelope = readHappierStructuredInputV1FromMeta(
+        buildStructuredInputMetaOverrides({
+            mentions: input.mentions,
+            text: input.text,
+            composerAttachments: input.attachments,
+        }),
+    ) ?? { v: 1 };
+    if ((structuredInput.composerAttachments ?? []).length !== input.attachments.length) {
+        return { status: 'unavailable' };
+    }
+    return { status: 'ready', structuredInput };
 }
 
 export function isEmptyPendingMessageComposerSemanticDraftSnapshot(

@@ -305,7 +305,21 @@ const storageMock = createStorageModuleStub({
 
 vi.mock('@/sync/domains/state/storage', () => storageMock);
 
+// Stable identity: the host puts these shared values in dependency arrays, so a fresh
+// object per render would re-create the pan gesture on every commit.
+const lateralSwipeStub = {
+    progress: { value: 0 },
+    isActive: { value: false },
+    picker: {
+        direction: { value: null },
+        browseProgress: { value: 0 },
+        rowOffset: { value: 0 },
+        index: { value: 0 },
+    },
+};
+
 vi.mock('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry', () => ({
+    useSessionLateralSwipe: () => lateralSwipeStub,
     useSessionCockpitChromeRegistration: () => React.useSyncExternalStore(
         (listener) => {
             cockpitRegistrationListeners.listeners.add(listener);
@@ -501,6 +515,58 @@ describe('MobileBottomChromeHost', () => {
         expect(tabState.setActiveTab).not.toHaveBeenCalled();
         expect(routerState.navigate).not.toHaveBeenCalled();
         expect(routerState.replace).not.toHaveBeenCalled();
+    });
+
+    it('offers the new-session action beside the tab bar only on the sessions tab', async () => {
+        pathState.pathname = '/';
+        authState.isAuthenticated = true;
+        tabState.activeTab = 'sessions';
+        settingsState.mobileWorkspaceExperienceV1 = 'classic';
+        deviceTypeState.value = 'phone';
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        // Session creation belongs to the sessions surface; settings, inbox, projects and friends
+        // keep the bar as a pure navigation control.
+        expect(screen.tree.findByType('MainAppTabBar' as never).props.trailingAccessory).toBeTruthy();
+
+        pathState.pathname = '/settings';
+        await act(async () => {
+            notifyPathListeners();
+        });
+
+        expect(screen.tree.findByType('MainAppTabBar' as never).props.trailingAccessory).toBeUndefined();
+    });
+
+    it('keeps the bar mounted under an overlay route instead of tearing it down', async () => {
+        pathState.pathname = '/';
+        authState.isAuthenticated = true;
+        tabState.activeTab = 'sessions';
+        settingsState.mobileWorkspaceExperienceV1 = 'classic';
+        deviceTypeState.value = 'phone';
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+        expect(screen.tree.findAllByType('MainAppTabBar' as never)).toHaveLength(1);
+
+        // `/new` is presented OVER the sessions list, not instead of it. Recomputing chrome for the
+        // overlay route resolved "no tab, no session" and removed the bar, so closing the composer
+        // had to rebuild it afterwards — which read as the bar arriving late rather than never
+        // having left. Frozen, it stays mounted behind the composer and needs no re-entry at all.
+        pathState.pathname = '/new';
+        await act(async () => {
+            notifyPathListeners();
+        });
+
+        expect(screen.tree.findAllByType('MainAppTabBar' as never)).toHaveLength(1);
+
+        pathState.pathname = '/';
+        await act(async () => {
+            notifyPathListeners();
+        });
+
+        expect(screen.tree.findAllByType('MainAppTabBar' as never)).toHaveLength(1);
     });
 
     it('renders the main app tab bar on route-owned settings surfaces', async () => {
@@ -1241,6 +1307,16 @@ describe('MobileBottomChromeHost', () => {
         await act(async () => {
             settingsState.mobileWorkspaceExperienceV1 = 'classic';
             notifyStorageListeners();
+        });
+
+        // The outgoing bar dissolves rather than cutting, so it lingers for the fade — inert, and
+        // gone once the exit lands.
+        const outgoing = screen.tree.root.findAllByType('AnimatedView' as never)
+            .find((node) => node.findAllByType('ProjectCockpitTabBar' as never).length > 0);
+        expect(outgoing?.props.pointerEvents).toBe('none');
+
+        act(() => {
+            animatedTimingState.timings.at(-1)?.finish();
         });
 
         expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(0);

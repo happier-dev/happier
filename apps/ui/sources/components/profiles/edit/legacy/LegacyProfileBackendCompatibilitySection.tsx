@@ -46,7 +46,10 @@ export function LegacyProfileBackendCompatibilitySection(props: Readonly<{
                         ? t('profiles.machineLogin.status.loggedIn')
                         : t('profiles.machineLogin.status.notLoggedIn')}
                 </Text>
-                : entry.subtitle ?? (displayAgentId ? t(getAgentCore(displayAgentId).subtitleKey) : null);
+                : entry.subtitle ?? (() => {
+                    const subtitleKey = getAgentCore(displayAgentId ?? '')?.subtitleKey;
+                    return subtitleKey ? t(subtitleKey) : null;
+                })();
             const enabled = props.compatibilityByTargetKey[targetKey] === true;
             return <Item
                 key={entry.backendTargetKey}

@@ -1,6 +1,7 @@
 use super::platform::{
-    child_embedding_verified_for, native_devtools_supported, resolve_desktop_browser_strategy,
-    resolve_desktop_browser_strategy_for_runtime, DesktopBrowserRuntimeSupport,
+    child_embedding_supported_for, child_embedding_verified_for, native_devtools_supported,
+    resolve_desktop_browser_strategy, resolve_desktop_browser_strategy_for_runtime,
+    DesktopBrowserRuntimeSupport,
 };
 use super::types::{
     DesktopBrowserAvailability, DesktopBrowserBoundsPayload, DesktopBrowserBoundsRect,
@@ -637,6 +638,63 @@ fn windows_and_x11_availability_is_gated_behind_verified_child_embedding() {
             },
         );
         assert_native_child_view_available(&verified, platform, primitive, false);
+    }
+}
+
+#[test]
+fn child_embedding_primitive_support_is_derived_from_the_implemented_wry_path() {
+    // Structural fact only: does this shell link a `build_as_child` implementation for the
+    // platform. macOS (NSView subview), Windows (child HWND + WebView2) and Linux/X11 (native
+    // X11 container window) all have one; Wayland does not — the same webkitgtk constructor
+    // returns `UnsupportedWindowHandle` for a non-Xlib parent handle.
+    for platform in [
+        DesktopBrowserPlatform::MacOs,
+        DesktopBrowserPlatform::Windows,
+        DesktopBrowserPlatform::LinuxX11,
+    ] {
+        assert!(
+            child_embedding_supported_for(platform),
+            "{platform:?} links an implemented Wry child-embedding path",
+        );
+    }
+    for platform in [
+        DesktopBrowserPlatform::LinuxWayland,
+        DesktopBrowserPlatform::LinuxUnknown,
+        DesktopBrowserPlatform::Unsupported,
+    ] {
+        assert!(
+            !child_embedding_supported_for(platform),
+            "{platform:?} has no implemented Wry child-embedding path",
+        );
+    }
+}
+
+#[test]
+fn no_desktop_browser_platform_reports_available_without_the_embedding_primitive() {
+    // The browser layers its own recorded-QA gate on top of the primitive owner. Whatever that
+    // gate says, a platform without an implemented child-embedding path must never be advertised.
+    for platform in [
+        DesktopBrowserPlatform::MacOs,
+        DesktopBrowserPlatform::Windows,
+        DesktopBrowserPlatform::LinuxX11,
+        DesktopBrowserPlatform::LinuxWayland,
+        DesktopBrowserPlatform::LinuxUnknown,
+        DesktopBrowserPlatform::Unsupported,
+    ] {
+        for runtime_support in [
+            verified_child_embedding_runtime_support(),
+            DesktopBrowserRuntimeSupport {
+                macos_custom_data_store_identifiers: true,
+                child_embedding_verified: false,
+            },
+        ] {
+            let availability =
+                resolve_desktop_browser_strategy_for_runtime(platform, runtime_support);
+            assert!(
+                !availability.available || child_embedding_supported_for(platform),
+                "{platform:?} advertised a browser without an implemented embedding primitive",
+            );
+        }
     }
 }
 

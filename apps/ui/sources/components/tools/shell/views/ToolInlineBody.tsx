@@ -24,7 +24,7 @@ import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import {
     getAgentCore,
-} from '@/agents/catalog/catalog';
+    } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
@@ -147,7 +147,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     }
 
     const agentId = historicalAgentId ?? resolveAgentIdFromSessionMetadata(props.metadata);
-    const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
+    const hideUnknownToolsByDefault = getAgentCore(agentId ?? '')?.toolRendering.hideUnknownToolsByDefault === true;
     if (!knownTool && hideUnknownToolsByDefault) {
         minimal = true;
     }

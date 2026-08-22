@@ -3,6 +3,7 @@ import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 import { resolveAgentInputChipPickerOptionAccessibilityLabel } from "./AgentInputChipPickerTypes";
 import type {
@@ -23,6 +24,7 @@ export type AgentInputChipPickerTopSelectorProps = Readonly<{
 }>;
 
 const PICKER_OPTION_SIZE = 36;
+const PICKER_OPTION_TOUCH_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 type WebHoverablePressableState = Readonly<{
     pressed: boolean;
@@ -123,6 +125,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     optionButton: {
         width: PICKER_OPTION_SIZE,
         height: PICKER_OPTION_SIZE,
+        minWidth: PICKER_OPTION_TOUCH_TARGET_SIZE,
+        minHeight: PICKER_OPTION_TOUCH_TARGET_SIZE,
         borderRadius: AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
         alignItems: 'center',
         justifyContent: 'center',

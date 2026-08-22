@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const setPendingSetupIntentMock = vi.hoisted(() => vi.fn());
 const getPendingSetupIntentMock = vi.hoisted(() => vi.fn());
-const isTauriDesktopMock = vi.hoisted(() => vi.fn());
+const isDesktopHostMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     setPendingSetupIntent: (value: unknown) => setPendingSetupIntentMock(value),
@@ -10,8 +10,8 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     clearPendingSetupIntent: vi.fn(),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 describe('wizardResume', () => {
@@ -22,14 +22,14 @@ describe('wizardResume', () => {
     it('routes back to the setup wizard only for awaiting-auth desktop resumes', async () => {
         const { resolveWizardAuthReturnToRoute } = await import('./wizardResume');
 
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getPendingSetupIntentMock.mockReturnValue({ branch: 'thisComputer', phase: 'awaiting_auth', relayUrl: 'https://relay.example.test' });
         expect(resolveWizardAuthReturnToRoute()).toBe('/');
 
         getPendingSetupIntentMock.mockReturnValue({ branch: 'thisComputer', phase: 'pre_auth', relayUrl: 'https://relay.example.test' });
         expect(resolveWizardAuthReturnToRoute()).toBe('/');
 
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         getPendingSetupIntentMock.mockReturnValue({ branch: 'thisComputer', phase: 'awaiting_auth', relayUrl: 'https://relay.example.test' });
         expect(resolveWizardAuthReturnToRoute()).toBe('/');
     });

@@ -21,7 +21,14 @@ import type {
 export type QualifiedConnectedAccountPeerTransportState = Readonly<{
     status: 'loading' | 'ready' | 'error';
     transport: QualifiedConnectedAccountUiPeerTransport | null;
-    error: string | null;
+    /**
+     * Machine-readable daemon code, never display copy: the peer arm below is
+     * the only producer of this hook's `error` that did not already run through
+     * `resolveConnectedServiceSettingsErrorMessage`, and it leaked codes such as
+     * `connected_account_daemon_unavailable` into the pool-detail error row.
+     * The field is named for what it carries so a caller cannot pass copy here.
+     */
+    errorCode: string | null;
 }>;
 
 export type QualifiedConnectedAccountGroupsStatus =
@@ -200,6 +207,14 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             : null,
         [credentials, params.serverId, service, source],
     );
+    // ONE presentation boundary for this hook's `error`: the peer arm carries a
+    // raw daemon code and every catch path already resolves through the same
+    // bounded presenter.
+    const peerErrorMessage = params.peer.errorCode === null
+        ? null
+        : resolveConnectedServiceSettingsErrorMessage({
+            code: params.peer.errorCode,
+        });
     const currentBasisRef = React.useRef(basis);
     currentBasisRef.current = basis;
     const stateRef = React.useRef(state);
@@ -270,7 +285,7 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                         : 'unsupported',
                 source: null,
                 groups: [],
-                error: params.peer.error,
+                error: peerErrorMessage,
             });
             return;
         }
@@ -279,7 +294,7 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
         void load(
             stateRef.current.basis === basis ? stateRef.current.groups : [],
         );
-    }, [basis, load, params.peer.error, params.peer.status]);
+    }, [basis, load, peerErrorMessage, params.peer.status]);
 
     const visibleState: State = state.basis === basis
         ? state
@@ -300,7 +315,7 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                         : 'unsupported',
                 source: null,
                 groups: [],
-                error: params.peer.error,
+                error: peerErrorMessage,
             };
 
     const client = React.useMemo(

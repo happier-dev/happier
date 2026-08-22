@@ -23,10 +23,9 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
-import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildLastUsedBackendTargetSettings } from '@/agents/backendCatalog/buildLastUsedBackendTargetSettings';
-import { isAgentId } from '@/agents/catalog/catalog';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues } from '@/agents/catalog/catalog';
 import { transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
@@ -35,6 +34,8 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import { getModelOptionsForAgentType, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import {
     ConnectedServiceBindingsV1Schema,
+    automationRunExecutionTargetDeliversComposerReferencesV1,
+    mentionRefV1SurvivesRenderedTokenAlone,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
     type ExecutionRunDetachedStartRequestV1,
@@ -42,7 +43,7 @@ import {
     type SessionServerStartSpawnDraftV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
-import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, MentionRefV1 } from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
@@ -171,7 +172,13 @@ export type CreatedSessionFollowUpContext = Readonly<{
 }>;
 
 export type NewSessionAfterCreatedSettlement =
-    | Readonly<{ status: 'accepted'; sessionId: string }>
+    /**
+     * `sessionId` is null exactly when the accepted writer created no Session:
+     * every Automation arm persists a definition and navigates to it. Reporting
+     * a fabricated id, or reporting `rejected` for a save that succeeded, would
+     * tell the Composer document owner its submitted snapshot never landed.
+     */
+    | Readonly<{ status: 'accepted'; sessionId: string | null }>
     | Readonly<{ status: 'rejected' }>;
 
 export type HandleCreateSessionOptions = Readonly<{
@@ -196,6 +203,19 @@ export type HandleCreateSessionOptions = Readonly<{
      */
     hasComposerAttachments?: boolean;
     /**
+     * The structured Composer references this detached semantic submission
+     * carries, already reduced to the canonical positionless identity shape by
+     * the one structured-input envelope builder. The strict V3 execution recipe
+     * persists them verbatim, so an Event Automation keeps what the user
+     * picked. The legacy V2 template stores the rendered prompt program alone
+     * and therefore refuses exactly the references that program cannot express;
+     * a reference the token DOES carry — a `@docs/README.md` file mention — is
+     * passed through everywhere, because refusing it would remove a flow that
+     * works today. `mentionRefV1SurvivesRenderedTokenAlone` owns the per-kind
+     * split next to the kinds themselves.
+     */
+    composerReferences?: readonly MentionRefV1[];
+    /**
      * D2: relaunch under the newly-selected connected-service account WITHOUT resume continuity, after
      * the "switch unavailable" dialog offered "start fresh". Drops the vendor resume reference so the
      * new account begins a clean conversation instead of fail-closing again on an unreachable resume.
@@ -207,7 +227,7 @@ type ProviderLaunchErrorScopeParams = Readonly<{
     selectedMachineId: string | null;
     targetServerId?: string | null;
     allowedTargetServerIds?: ReadonlyArray<string>;
-    agentType: AgentId;
+    agentType: string;
     backendTarget?: BackendTargetRefV2;
     spawnBackendTarget?: BackendTargetRefV2Input;
     useProfiles: boolean;
@@ -215,6 +235,16 @@ type ProviderLaunchErrorScopeParams = Readonly<{
     authoringDraft?: SessionAuthoringDraft | null;
     modelMode: ModelMode;
 }>;
+
+function resolveStaticAgentId(params: Readonly<{
+    agentType: string;
+    staticAgentId?: AgentId | null;
+}>): AgentId | null {
+    if (isBundledAgentId(params.staticAgentId)) {
+        return params.staticAgentId;
+    }
+    return isBundledAgentId(params.agentType) ? params.agentType : null;
+}
 
 function resolveNewSessionLaunchTargetServerId(params: Readonly<{
     targetServerId?: string | null;
@@ -289,8 +319,9 @@ export function useCreateNewSession(params: Readonly<{
 
     recentMachinePaths: Array<{ machineId: string; path: string }>;
 
-    agentType: AgentId;
-    /** Canonical policy/catalog owner used by the spawned runtime. */
+    /** Runtime/catalog identity. This can be a projected external Agent id. */
+    agentType: string;
+    /** Explicit bundled behavior backing; absent for unbacked external Agents. */
     staticAgentId?: AgentId | null;
     backendTarget?: BackendTargetRefV2;
     spawnBackendTarget?: BackendTargetRefV2Input;
@@ -423,6 +454,7 @@ export function useCreateNewSession(params: Readonly<{
             return;
         }
         const current = latestParamsRef.current;
+        const staticAgentId = resolveStaticAgentId(current);
         const selectedMachineId = current.selectedMachineId;
         if (current.authoringCommitPending === true) {
             reportAfterCreatedSettlement({ status: 'rejected' });
@@ -509,8 +541,63 @@ export function useCreateNewSession(params: Readonly<{
                 return;
             }
 
+            /**
+             * The one place an Automation writer refuses a Composer submission
+             * whose semantics it cannot persist. Attachments have no Automation
+             * owner at all.
+             *
+             * References are different per writer, and the difference is a real
+             * delivery fact rather than a policy choice. The strict V3 execution
+             * recipe stores `AutomationRunTemplateV1.mentions` — the same
+             * identity-only `MentionRefV1` list an interactive send persists —
+             * and its existing-Session dispatch hands them to the canonical
+             * Session sender, so that writer keeps every reference the user
+             * picked. The new-Session and execution-Run dispatches take a bare
+             * instruction string, and the legacy V2 template envelope stores the
+             * rendered prompt program alone; there a reference whose identity
+             * that program cannot express would become a look-alike token, so
+             * those, and only those, are refused. A `@docs/README.md` file
+             * mention IS such text and stays allowed on every route.
+             *
+             * `automationRunExecutionTargetDeliversComposerReferencesV1` is the
+             * Protocol materializer's own answer, so this refusal cannot drift
+             * from what dispatch actually delivers, and every branch still fails
+             * closed through this one function.
+             */
+            const unpersistableComposerReferenceForRenderedPromptOnly = opts?.composerReferences
+                ?.find((reference) => !mentionRefV1SurvivesRenderedTokenAlone(reference))
+                ?? null;
+            const eventTargetDeliversComposerReferences =
+                automationRunExecutionTargetDeliversComposerReferencesV1(eventTargetKind);
+            const eventTargetComposerReferences = eventTargetDeliversComposerReferences
+                ? opts?.composerReferences ?? []
+                : [];
+            const rejectUnsupportedComposerSemanticsForAutomation = (writer: Readonly<{
+                persistsComposerReferences: boolean;
+            }>): boolean => {
+                const unpersistableComposerReference = writer.persistsComposerReferences
+                    ? null
+                    : unpersistableComposerReferenceForRenderedPromptOnly;
+                if (opts?.hasComposerAttachments !== true && !unpersistableComposerReference) {
+                    return false;
+                }
+                Modal.alert(t('common.error'), unpersistableComposerReference
+                    ? t('automations.unsupportedReference', {
+                        reference: unpersistableComposerReference.token,
+                    })
+                    : t('newSession.failedToStart'));
+                reportAfterCreatedSettlement({ status: 'rejected' });
+                current.setIsCreating(false);
+                return true;
+            };
+
             if (hasEventAutomationSubmission && eventTargetKind !== 'newSession') {
-                if (opts?.hasComposerAttachments === true || !eventAutomationDraft || !current.resolveEventAutomationTarget) {
+                if (rejectUnsupportedComposerSemanticsForAutomation({
+                    persistsComposerReferences: eventTargetDeliversComposerReferences,
+                })) {
+                    return;
+                }
+                if (!eventAutomationDraft || !current.resolveEventAutomationTarget) {
                     Modal.alert(t('common.error'), eventAutomationEdit
                         ? t('automations.edit.updateFailed')
                         : t('newSession.failedToStart'));
@@ -553,6 +640,15 @@ export function useCreateNewSession(params: Readonly<{
                         }
                         : null,
                     prompt: sessionPrompt.trim(),
+                    // The strict recipe writer persists reference identity
+                    // beside the rendered program, so the picked references
+                    // travel with the Automation instead of surviving only
+                    // as look-alike prompt text. Only a target whose dispatch
+                    // delivers them is given them: storing a reference the
+                    // materializer drops would be persisted dead state.
+                    ...(eventTargetComposerReferences.length > 0
+                        ? { mentions: eventTargetComposerReferences }
+                        : {}),
                     targetKind: eventTargetKind,
                     executionTargetServerId: resolvedTargetServerId,
                     buildNewSessionSpawn: () => null,
@@ -589,6 +685,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
                 current.disableDraftPersistence?.();
                 clearNewSessionDraftForLaunchParams(current);
+                reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
                 current.router.replace((eventSubmission.kind === 'updated'
                     ? `/automations/${eventSubmission.automationId}`
                     : '/automations') as any);
@@ -611,10 +708,10 @@ export function useCreateNewSession(params: Readonly<{
                 )),
             ].slice(0, 10);
             const profilesActive = current.useProfiles;
-            const canonicalAgentId = resolveNewSessionCompatAgentType({
+            const compatibilityAgentId = resolveNewSessionCompatAgentType({
                 backendTarget: current.backendTarget ?? null,
                 persistedAgentId: current.settings.lastUsedAgent,
-                selectedBuiltInAgentId: isAgentId(current.agentType) ? current.agentType : DEFAULT_AGENT_ID,
+                selectedBuiltInAgentId: staticAgentId,
             });
             const settingsUpdate: MutableSettingsDelta = {
                 recentMachinePaths: updatedPaths,
@@ -622,7 +719,7 @@ export function useCreateNewSession(params: Readonly<{
             if (current.backendTarget) {
                 Object.assign(settingsUpdate, buildLastUsedBackendTargetSettings({
                     backendTarget: current.backendTarget,
-                    selectedBuiltInAgentId: canonicalAgentId,
+                    selectedBuiltInAgentId: staticAgentId,
                 }));
             }
             if (profilesActive) {
@@ -630,7 +727,10 @@ export function useCreateNewSession(params: Readonly<{
             }
             applySettings(settingsUpdate);
 
-            const backendTarget: BackendTargetRefV2 = current.backendTarget ?? { kind: 'backend', backendId: canonicalAgentId };
+            const backendTarget: BackendTargetRefV2 = current.backendTarget ?? {
+                kind: 'backend',
+                backendId: staticAgentId ?? current.agentType,
+            };
             let environmentVariables = undefined;
             if (profilesActive && current.selectedProfileId) {
                 const selectedProfile = current.profileMap.get(current.selectedProfileId) || getBuiltInProfile(current.selectedProfileId);
@@ -702,15 +802,17 @@ export function useCreateNewSession(params: Readonly<{
                 }
             }
 
-            environmentVariables = buildSpawnEnvironmentVariablesFromUiState({
-                agentId: canonicalAgentId,
-                settings: current.settings,
-                environmentVariables,
-                newSessionOptions: {
-                    ...(current.agentNewSessionOptions ?? {}),
-                    targetServerId: resolvedTargetServerId,
-                },
-            });
+            if (staticAgentId) {
+                environmentVariables = buildSpawnEnvironmentVariablesFromUiState({
+                    agentId: staticAgentId,
+                    settings: current.settings,
+                    environmentVariables,
+                    newSessionOptions: {
+                        ...(current.agentNewSessionOptions ?? {}),
+                        targetServerId: resolvedTargetServerId,
+                    },
+                });
+            }
             const connectedServices = (current.agentNewSessionOptions as any)?.connectedServices;
 
             const terminal = resolveTerminalSpawnOptions({
@@ -720,13 +822,14 @@ export function useCreateNewSession(params: Readonly<{
 
             const machineCapsSnapshot = getMachineCapabilitiesSnapshot(selectedMachineId, resolvedTargetServerId);
             const machineCapsResults = machineCapsSnapshot?.response.results as any;
-            const experiments = getAgentResumeExperimentsFromSettings(canonicalAgentId, current.settings);
-            const preflightIssues = getNewSessionPreflightIssues({
-                agentId: canonicalAgentId,
-                experiments,
-                resumeSessionId: current.resumeSessionId,
-                results: machineCapsResults,
-            });
+            const preflightIssues = staticAgentId
+                ? getNewSessionPreflightIssues({
+                    agentId: staticAgentId,
+                    experiments: getAgentResumeExperimentsFromSettings(staticAgentId, current.settings),
+                    resumeSessionId: current.resumeSessionId,
+                    results: machineCapsResults,
+                })
+                : [];
             const blockingIssue = preflightIssues[0] ?? null;
             if (blockingIssue) {
                 const openMachine = await Modal.confirm(
@@ -751,7 +854,8 @@ export function useCreateNewSession(params: Readonly<{
             const spawnPermissionModeUpdatedAt = nowServerMs();
             const normalizedAcpModeId = typeof current.acpSessionModeId === 'string' ? current.acpSessionModeId.trim() : '';
             const spawnModelId =
-                getAgentCore(canonicalAgentId).model.supportsSelection === true &&
+                staticAgentId !== null &&
+                getAgentCore(staticAgentId)?.model.supportsSelection === true &&
                 typeof current.modelMode === 'string' &&
                 current.modelMode.trim().length > 0 &&
                 current.modelMode !== 'default'
@@ -782,20 +886,22 @@ export function useCreateNewSession(params: Readonly<{
                 ? current.settings.sessionWindowsTerminalWindowName.trim()
                 : '';
             const normalizedSessionPrompt = sessionPrompt.trim();
-            const spawnSessionExtras = buildSpawnSessionExtrasFromUiState({
-                agentId: canonicalAgentId,
-                settings: current.settings,
-                resumeSessionId: current.resumeSessionId,
-                newSessionOptions: current.agentNewSessionOptions,
-                sessionConfigOptionOverrides: current.sessionConfigOptionOverrides,
-                updatedAt: spawnPermissionModeUpdatedAt,
-            });
+            const spawnSessionExtras: ReturnType<typeof buildSpawnSessionExtrasFromUiState> = staticAgentId
+                ? buildSpawnSessionExtrasFromUiState({
+                    agentId: staticAgentId,
+                    settings: current.settings,
+                    resumeSessionId: current.resumeSessionId,
+                    newSessionOptions: current.agentNewSessionOptions,
+                    sessionConfigOptionOverrides: current.sessionConfigOptionOverrides,
+                    updatedAt: spawnPermissionModeUpdatedAt,
+                })
+                : {};
             const authoringDraft = buildNewSessionAuthoringDraftFromResolvedInputs({
                 directory: effectiveSelectedPath,
                 checkoutCreationDraft: current.checkoutCreationDraft ?? null,
                 prompt: normalizedSessionPrompt,
                 displayText: normalizedSessionPrompt,
-                agentId: canonicalAgentId,
+                agentId: compatibilityAgentId,
                 backendTarget,
                 transcriptStorage: current.transcriptStorage ?? null,
                 profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
@@ -821,16 +927,10 @@ export function useCreateNewSession(params: Readonly<{
                 automation: current.authoringDraft?.automation ?? null,
             });
             const activeAutomationDraft = authoringDraft.automation ?? null;
-            const rejectComposerAttachmentsForAutomation = (): boolean => {
-                if (opts?.hasComposerAttachments !== true) return false;
-                Modal.alert(t('common.error'), t('newSession.failedToStart'));
-                reportAfterCreatedSettlement({ status: 'rejected' });
-                current.setIsCreating(false);
-                return true;
-            };
-
             if (eventAutomationDraft || eventAutomationEdit) {
-                if (rejectComposerAttachmentsForAutomation()) {
+                if (rejectUnsupportedComposerSemanticsForAutomation({
+                    persistsComposerReferences: eventTargetDeliversComposerReferences,
+                })) {
                     return;
                 }
                 if (!eventAutomationDraft || !current.resolveEventAutomationTarget || eventTargetKind !== 'newSession') {
@@ -869,6 +969,15 @@ export function useCreateNewSession(params: Readonly<{
                         }
                         : null,
                     prompt: normalizedSessionPrompt,
+                    // The strict recipe writer persists reference identity
+                    // beside the rendered program, so the picked references
+                    // travel with the Automation instead of surviving only
+                    // as look-alike prompt text. Only a target whose dispatch
+                    // delivers them is given them: storing a reference the
+                    // materializer drops would be persisted dead state.
+                    ...(eventTargetComposerReferences.length > 0
+                        ? { mentions: eventTargetComposerReferences }
+                        : {}),
                     targetKind: eventTargetKind,
                     executionTargetServerId: resolvedTargetServerId,
                     buildNewSessionSpawn: (currentSpawn) => {
@@ -924,6 +1033,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
                 current.disableDraftPersistence?.();
                 clearNewSessionDraftForLaunchParams(current);
+                reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
                 current.router.replace((eventSubmission.kind === 'updated'
                     ? `/automations/${eventSubmission.automationId}`
                     : '/automations') as any);
@@ -931,7 +1041,7 @@ export function useCreateNewSession(params: Readonly<{
             }
 
             if (activeAutomationDraft?.enabled === true) {
-                if (rejectComposerAttachmentsForAutomation()) {
+                if (rejectUnsupportedComposerSemanticsForAutomation({ persistsComposerReferences: false })) {
                     return;
                 }
                 const schedule = buildAutomationScheduleFromDraft(activeAutomationDraft);
@@ -976,6 +1086,7 @@ export function useCreateNewSession(params: Readonly<{
                     current.disableDraftPersistence?.();
                     clearNewSessionDraftForLaunchParams(current);
                     await sync.refreshAutomations();
+                    reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
                     current.router.replace(`/automations/${automationEditId}` as any);
                     return;
                 }
@@ -988,6 +1099,7 @@ export function useCreateNewSession(params: Readonly<{
                 current.disableDraftPersistence?.();
                 clearNewSessionDraftForLaunchParams(current);
                 await sync.refreshAutomations();
+                reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
                 current.router.replace('/automations' as any);
                 return;
             }
@@ -1205,13 +1317,15 @@ export function useCreateNewSession(params: Readonly<{
                     }
                     const state = storage.getState();
                     const session = state.sessions[createdSessionId] ?? null;
-                    const agentCore = getAgentCore(canonicalAgentId);
-                    const modelMode = session?.modelMode || current.modelMode || agentCore.model.defaultMode;
+                    const modelMode = session?.modelMode
+                        || current.modelMode
+                        || (staticAgentId ? getAgentCore(staticAgentId)?.model.defaultMode : null)
+                        || 'default';
                     const permissionMode = session?.permissionMode || current.permissionMode || 'default';
                     const rawRecord = buildOutgoingUserTextRecord({
                         text: initialMessageText,
                         displayText: initialMessageText,
-                        agentId: canonicalAgentId,
+                        agentId: current.agentType,
                         permissionMode,
                         modelMode,
                         settings: state.settings,
@@ -1307,7 +1421,7 @@ export function useCreateNewSession(params: Readonly<{
                         await executeSessionComposerResolution({
                             resolved: resolvedInitialMessage,
                             sessionId: createdSessionId,
-                            agentId: canonicalAgentId,
+                            agentId: current.agentType,
                             backendTarget: current.backendTarget ?? null,
                             permissionMode: current.permissionMode,
                             actionExecutor,
@@ -1341,7 +1455,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 storage.getState().updateSessionPermissionMode(createdSessionId, current.permissionMode);
-                if (getAgentCore(canonicalAgentId).model.supportsSelection && current.modelMode && current.modelMode !== 'default') {
+                if (staticAgentId && getAgentCore(staticAgentId)?.model.supportsSelection && current.modelMode && current.modelMode !== 'default') {
                     storage.getState().updateSessionModelMode(createdSessionId, current.modelMode);
                 }
 

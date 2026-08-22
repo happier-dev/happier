@@ -70,6 +70,46 @@ export type TranscriptMeasurementReconciler = Readonly<{
         signature: TranscriptItemHeightValiditySignature;
     }>): void;
 
+    /**
+     * R2c. The painted height of ONE user utterance's message bubble, carried ACROSS the two rows
+     * that paint it.
+     *
+     * A send shows the same utterance twice under two different Legend item keys — inside the
+     * `pending-queue` row, then as the committed `msg:<id>` row that replaces it. The committed key
+     * has never been measured, so without this it is placed from
+     * `estimateTranscriptRowHeightFromContent`'s flat wrap heuristic, which undershoots by whole
+     * painted lines (72 modelled chars per line against ~43 really painted at a 402pt viewport).
+     * The transcript is bottom-pinned, so that deficit moves the whole list DOWN on the crossover
+     * frame and back UP one or more frames later when the row's own onLayout lands — measured on
+     * device at 163px for a 236-char send and 379px for a 569-char one
+     * (`.project/reviews/2026-08-18-send-crossover-native/DEVICE-MEASUREMENT.md`).
+     *
+     * The app already holds the answer: the pending block painted that exact bubble, at that exact
+     * width, milliseconds earlier. This carries THAT measurement — not a prediction — so the
+     * committed row's first commit is placed from a real height.
+     *
+     * It is the BUBBLE, never the row: the two presentations wrap different chrome around the same
+     * bubble (the block adds its header, scroll padding and, on web, an action row; the committed
+     * row adds `userMessageWrapper.paddingBottom`), and only the bubble is common to both. Each
+     * consumer composes its own chrome around this value, so neither can encode the other's.
+     *
+     * Geometry-scoped exactly like a floor (`widthBucket|fontScaleKey`): the same utterance at a
+     * different width is a different painted height. Dropped on session change.
+     */
+    recordPaintedUtteranceBubbleHeight(input: Readonly<{
+        identity: string;
+        bubbleHeightPx: number;
+        widthBucket: string;
+        fontScaleKey: string;
+    }>): void;
+
+    /** The carried bubble height for `identity` at this geometry, or `undefined`. */
+    resolvePaintedUtteranceBubbleHeight(input: Readonly<{
+        identity: string;
+        widthBucket: string;
+        fontScaleKey: string;
+    }>): number | undefined;
+
     /** Lifecycle: drop per-session floors on session change. */
     resetForSession(sessionId: string): void;
 }>;
@@ -155,6 +195,45 @@ function buildFloorKey(signature: TranscriptItemHeightValiditySignature): string
  * ever observes it. Live web capture 2026-07-28 (sibling repo, `cmrdwwsd60bg0tmo6n0k6zq79`) measured
  * the same class of defect as [42, 24, 48]px of blank band under three settled messages.
  */
+/**
+ * Only utterances still crossing over are ever read back, so this bound exists to stop a long-lived
+ * session accumulating one entry per send, not to express a policy about which sends matter.
+ */
+const MAX_PAINTED_UTTERANCE_BUBBLE_HEIGHTS = 32;
+
+function buildPaintedUtteranceKey(identity: string, widthBucket: string, fontScaleKey: string): string {
+    return `${identity.length}:${identity}|${widthBucket}|${fontScaleKey}`;
+}
+
+/**
+ * The floor key is deliberately geometry-scoped (`itemId|widthBucket|fontScaleKey`) and carries no
+ * `structuralKey`, so one entry survives content churn. For a GROWING row that is the whole point.
+ * For a shrink-capable row it is how the tallest historical height outlived its content: the reset
+ * trigger cannot run at all on a fresh mount (`TranscriptRowShell` initialises both signature refs
+ * to the current signature, so there is no previous signature to diff), and a viewport resize plus
+ * return re-selects the same warm key. Serving and carrying over are therefore both gated here —
+ * one predicate, so the producer and the consumer of a floor can never disagree about its scope.
+ *
+ * A floor is only valid for the PROVENANCE it was recorded under:
+ *  - same presentation (`kind`): a `message:thinking` measurement is not a `message:agent` height;
+ *  - same growth classification: a height measured mid-growth is an aggregate of frames the row no
+ *    longer paints, and a settled height is not a bound on a row whose content is still arriving;
+ *  - and, once settled, the same content shape.
+ *
+ * W17 — the growth-classification leg is what makes the stale-peak state unreachable rather than
+ * correctable. A growing row's floor is deliberately carried across `structuralKey` churn (that is
+ * what stops a mid-stream frame from under-reserving), and `recordMeasuredHeight` stores the carried
+ * peak under the shape it was carried INTO. With `structuralKey` as the only gate, the instant the
+ * row settled at that same shape — which for an assistant message is the instant a tool call is
+ * committed after it, since `streaming` is `sessionActive && isLatestCommittedActivity` and the
+ * latest activity key is simply the last message — the peak compared equal and could never be
+ * refused again. Live web capture 2026-07-28 (`cmrdwwsd60bg0tmo6n0k6zq79`): [42, 24, 48]px of blank
+ * band under three settled messages, every one of them at a `msg->toolCalls` boundary, while every
+ * `toolCalls->*` boundary measured 0 — no tool row can hold a growing peak, because
+ * `resolveMessageRowState` pins tool-call messages to 'tool-progress' and every tool-group unit row
+ * to 'stable'. Gating on provenance releases the peak at the transition instead of on a later
+ * corrector, so no consumer ever observes it.
+ */
 function isFloorShapeValid(
     floor: FloorState,
     signature: TranscriptItemHeightValiditySignature,
@@ -218,6 +297,14 @@ export function createTranscriptMeasurementReconciler(
     // the row was measured then structurally reset, so its next real onLayout re-seeds the floor
     // (taking the new, possibly smaller, height) rather than reserving the stale pre-collapse height.
     const floorsByKey = new Map<string, FloorState>();
+
+    /**
+     * Painted bubble heights carried across the pending→committed crossover, keyed by
+     * `identity|widthBucket|fontScaleKey`. Bounded and insertion-ordered: only the utterances
+     * currently in flight can ever be read (a committed row is measured on its first layout and
+     * never consults this again), so the cap is a leak guard, not a policy.
+     */
+    const paintedUtteranceBubbleHeights = new Map<string, number>();
 
     function resolveFloorReservation(
         signature: TranscriptItemHeightValiditySignature,
@@ -303,6 +390,29 @@ export function createTranscriptMeasurementReconciler(
             });
         },
 
+        recordPaintedUtteranceBubbleHeight(input) {
+            const identity = String(input.identity ?? '').trim();
+            if (identity.length === 0 || !isValidHeight(input.bubbleHeightPx)) return;
+            const key = buildPaintedUtteranceKey(identity, input.widthBucket, input.fontScaleKey);
+            // Re-insert so the eviction order tracks recency, not first paint: a queue that keeps
+            // re-measuring one row must not push the utterance a later send is about to commit out.
+            paintedUtteranceBubbleHeights.delete(key);
+            paintedUtteranceBubbleHeights.set(key, Math.trunc(input.bubbleHeightPx));
+            while (paintedUtteranceBubbleHeights.size > MAX_PAINTED_UTTERANCE_BUBBLE_HEIGHTS) {
+                const oldest = paintedUtteranceBubbleHeights.keys().next();
+                if (oldest.done) break;
+                paintedUtteranceBubbleHeights.delete(oldest.value);
+            }
+        },
+
+        resolvePaintedUtteranceBubbleHeight(input) {
+            const identity = String(input.identity ?? '').trim();
+            if (identity.length === 0) return undefined;
+            return paintedUtteranceBubbleHeights.get(
+                buildPaintedUtteranceKey(identity, input.widthBucket, input.fontScaleKey),
+            );
+        },
+
         resetReservationForStructuralChange(input) {
             const floorKey = buildFloorKey(input.signature);
             // Mark reset-pending (null) rather than deleting: a known-but-reset item re-seeds its
@@ -323,6 +433,7 @@ export function createTranscriptMeasurementReconciler(
             // expansion), so a stale entry can never mis-apply, and a re-entered row reserves its real
             // height on warm open. Clearing it here would defeat warm-open reservation.
             floorsByKey.clear();
+            paintedUtteranceBubbleHeights.clear();
         },
     };
 }

@@ -3,10 +3,24 @@ import { vi } from 'vitest';
 
 import type { Command } from './types';
 import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import type {
+  PluginProjectionAction,
+  PluginProjectionEntry,
+} from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import {
+  createPluginContributedActionController,
+  type PluginContributedActionCurrentSnapshot,
+} from '@/components/plugins/actions/pluginContributedActionController';
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
 
 const createSessionActionDraftSpy = vi.fn();
+const pluginActionModalAlert = vi.hoisted(() => vi.fn());
 let mockedState: any = null;
+vi.mock('@/modal', () => ({
+  Modal: {
+    alert: pluginActionModalAlert,
+  },
+}));
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
@@ -29,7 +43,253 @@ function buildSettingsWithExecutionRunsEnabled() {
   };
 }
 
+const PLUGIN_ID = 'acme.commands';
+const MACHINE_ID = 'machine-command-palette';
+const SERVER_ID = 'server-command-palette';
+
+function pluginAction(input: Partial<PluginProjectionAction> & Readonly<{
+  id: string;
+}>): PluginProjectionAction {
+  return {
+    id: input.id,
+    title: input.title ?? input.id,
+    description: input.description ?? null,
+    icon: input.icon ?? null,
+    scopes: input.scopes ?? ['session'],
+    surfaces: input.surfaces ?? ['ui'],
+    placementBindings: input.placementBindings ?? ['commandPalette'],
+    inputSchema: input.inputSchema ?? null,
+    inputHints: input.inputHints ?? null,
+    slash: input.slash ?? null,
+    priority: input.priority ?? null,
+    dangerLevel: input.dangerLevel ?? 'safe',
+    confirmation: input.confirmation ?? null,
+    available: input.available ?? true,
+  };
+}
+
+function pluginEntry(
+  actions: readonly PluginProjectionAction[],
+  generation: number,
+): PluginProjectionEntry {
+  return {
+    pluginId: PLUGIN_ID,
+    immutableGenerationId: `generation-${generation}`,
+    title: 'Acme commands',
+    description: null,
+    version: '1.0.0',
+    enabled: true,
+    generation,
+    generationLabel: String(generation),
+    status: null,
+    provenance: null,
+    diagnostics: [],
+    actions,
+    resources: [],
+    editableSettingsGroups: [],
+  };
+}
+
+function pluginActionSnapshot(input: Readonly<{
+  actions: readonly PluginProjectionAction[];
+  generation?: number;
+  sessionId?: string;
+}>): PluginContributedActionCurrentSnapshot {
+  const generation = input.generation ?? 7;
+  return {
+    pluginProjectionById: {
+      [PLUGIN_ID]: pluginEntry(input.actions, generation),
+    },
+    host: {
+      machineId: MACHINE_ID,
+      serverId: SERVER_ID,
+      expectedGeneration: generation,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      isCurrent: () => true,
+    },
+  };
+}
+
+function buildCommandsWithPluginActions(input: Readonly<{
+  controller: ReturnType<typeof createPluginContributedActionController>;
+  scope: 'global' | 'session';
+}>): Command[] {
+  mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+  return buildCommandPaletteCommands({
+    sessionsById: {},
+    isDev: false,
+    activeSessionId: input.scope === 'session' ? 'session-command-palette' : null,
+    features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+    nav: { push: () => {}, navigateToSession: () => {} },
+    auth: { logout: async () => {} },
+    actions: { execute: async () => ({ ok: true, result: {} }) },
+    alert: async () => {},
+    pluginActionPresentation: {
+      controller: input.controller,
+      scope: input.scope,
+    },
+  });
+}
+
 describe('buildCommandPaletteCommands', () => {
+  it('projects an admitted command-palette Action with its canonical presentation and executor', async () => {
+    const dispatch = vi.fn(async () => ({ ok: true as const, result: { applied: true } }));
+    const controller = createPluginContributedActionController({
+      resolveCurrent: () => pluginActionSnapshot({
+        sessionId: 'session-command-palette',
+        actions: [pluginAction({
+          id: 'sync-notes',
+          title: 'Sync notes',
+          description: 'Synchronize the current notes',
+          icon: 'magic-wand',
+        })],
+      }),
+      dispatch,
+    });
+
+    const command = buildCommandsWithPluginActions({ controller, scope: 'session' })
+      .find((candidate) => candidate.id === 'plugin-action:acme.commands/sync-notes');
+
+    expect(command).toMatchObject({
+      title: 'Sync notes',
+      subtitle: 'Synchronize the current notes · acme.commands/sync-notes',
+      icon: 'magic-wand',
+      category: 'acme.commands',
+    });
+
+    await command?.action();
+
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      action: { pluginId: PLUGIN_ID, localId: 'sync-notes' },
+      contributedAction: {
+        machineId: MACHINE_ID,
+        serverId: SERVER_ID,
+        expectedGeneration: '7',
+        sessionId: 'session-command-palette',
+      },
+    }));
+  });
+
+  it('keeps unavailable Actions absent and projects them once the canonical catalog remediates availability', () => {
+    let current = pluginActionSnapshot({
+      sessionId: 'session-command-palette',
+      actions: [pluginAction({ id: 'repair-notes', title: 'Repair notes', available: false })],
+    });
+    const controller = createPluginContributedActionController({
+      resolveCurrent: () => current,
+    });
+
+    expect(buildCommandsWithPluginActions({ controller, scope: 'session' }))
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'plugin-action:acme.commands/repair-notes' }),
+      ]));
+
+    current = pluginActionSnapshot({
+      sessionId: 'session-command-palette',
+      actions: [pluginAction({ id: 'repair-notes', title: 'Repair notes' })],
+    });
+
+    expect(buildCommandsWithPluginActions({ controller, scope: 'session' }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'plugin-action:acme.commands/repair-notes' }),
+      ]));
+  });
+
+  it('refreshes command-palette presentation and removes an uninstalled Action from the current catalog', () => {
+    let current = pluginActionSnapshot({
+      sessionId: 'session-command-palette',
+      actions: [pluginAction({ id: 'sync-notes', title: 'Sync notes' })],
+    });
+    const controller = createPluginContributedActionController({
+      resolveCurrent: () => current,
+    });
+
+    expect(buildCommandsWithPluginActions({ controller, scope: 'session' }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'plugin-action:acme.commands/sync-notes',
+          title: 'Sync notes',
+        }),
+      ]));
+
+    current = pluginActionSnapshot({
+      sessionId: 'session-command-palette',
+      actions: [pluginAction({ id: 'sync-notes', title: 'Synchronize notes' })],
+    });
+
+    expect(buildCommandsWithPluginActions({ controller, scope: 'session' }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'plugin-action:acme.commands/sync-notes',
+          title: 'Synchronize notes',
+        }),
+      ]));
+
+    current = pluginActionSnapshot({
+      generation: 8,
+      sessionId: 'session-command-palette',
+      actions: [],
+    });
+
+    expect(buildCommandsWithPluginActions({ controller, scope: 'session' }))
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'plugin-action:acme.commands/sync-notes' }),
+      ]));
+  });
+
+  it('uses the host-selected session or global Action scope without choosing a first scope', () => {
+    const controller = createPluginContributedActionController({
+      resolveCurrent: () => pluginActionSnapshot({
+        sessionId: 'session-command-palette',
+        actions: [
+          pluginAction({ id: 'session-action', title: 'Session action', scopes: ['session'] }),
+          pluginAction({ id: 'global-action', title: 'Global action', scopes: ['global'] }),
+        ],
+      }),
+    });
+
+    const sessionCommands = buildCommandsWithPluginActions({ controller, scope: 'session' });
+    const globalCommands = buildCommandsWithPluginActions({ controller, scope: 'global' });
+
+    expect(sessionCommands).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'plugin-action:acme.commands/session-action' }),
+    ]));
+    expect(sessionCommands).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'plugin-action:acme.commands/global-action' }),
+    ]));
+    expect(globalCommands).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'plugin-action:acme.commands/global-action' }),
+    ]));
+    expect(globalCommands).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'plugin-action:acme.commands/session-action' }),
+    ]));
+  });
+
+  it('refuses a palette command after its Action retires with the generation', async () => {
+    pluginActionModalAlert.mockClear();
+    const dispatch = vi.fn(async () => ({ ok: true as const, result: { applied: true } }));
+    let current = pluginActionSnapshot({
+      sessionId: 'session-command-palette',
+      actions: [pluginAction({ id: 'retiring-action', title: 'Retiring action' })],
+    });
+    const controller = createPluginContributedActionController({
+      resolveCurrent: () => current,
+      dispatch,
+    });
+    const command = buildCommandsWithPluginActions({ controller, scope: 'session' })
+      .find((candidate) => candidate.id === 'plugin-action:acme.commands/retiring-action');
+
+    current = pluginActionSnapshot({
+      generation: 8,
+      sessionId: 'session-command-palette',
+      actions: [],
+    });
+    await command?.action();
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(pluginActionModalAlert).toHaveBeenCalledOnce();
+  });
+
   it('delegates every compact catalog destination to its host activation owner without collapsing qualified plugin pages', async () => {
     const pushes: string[] = [];
     const compactActivations: string[] = [];

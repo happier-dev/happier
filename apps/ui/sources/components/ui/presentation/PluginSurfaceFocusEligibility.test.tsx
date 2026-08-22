@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import {
     PluginSurfaceFocusEligibilityProvider,
+    usePluginSurfaceCurrentUiContextEligibility,
     usePluginSurfaceFocusEligibility,
 } from './PluginSurfaceFocusEligibility';
 
@@ -11,11 +12,12 @@ function FocusEligibilityProbe(props: Readonly<{ testID: string }>): React.React
     return React.createElement('PluginSurfaceFocusEligibilityProbe', {
         testID: props.testID,
         eligible: usePluginSurfaceFocusEligibility(),
+        currentUiContextEligible: usePluginSurfaceCurrentUiContextEligibility(),
     });
 }
 
 describe('PluginSurfaceFocusEligibility', () => {
-    it('fails closed without a layout owner and composes every local active fact with its parent', async () => {
+    it('keeps presentation focus independent from current-context eligibility and fails current context closed until a named owner opts in', async () => {
         const screen = await renderScreen(
             <>
                 <FocusEligibilityProbe testID="focus-eligibility-without-owner" />
@@ -28,12 +30,25 @@ describe('PluginSurfaceFocusEligibility', () => {
                         </PluginSurfaceFocusEligibilityProvider>
                     </PluginSurfaceFocusEligibilityProvider>
                 </PluginSurfaceFocusEligibilityProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <FocusEligibilityProbe testID="current-ui-context-explicit-root" />
+                    <PluginSurfaceFocusEligibilityProvider active={false}>
+                        <FocusEligibilityProbe testID="current-ui-context-hidden-child" />
+                    </PluginSurfaceFocusEligibilityProvider>
+                </PluginSurfaceFocusEligibilityProvider>
             </>,
         );
 
         expect(screen.findByTestId('focus-eligibility-without-owner')?.props.eligible).toBe(false);
+        expect(screen.findByTestId('focus-eligibility-without-owner')?.props.currentUiContextEligible).toBe(false);
         expect(screen.findByTestId('focus-eligibility-active-root')?.props.eligible).toBe(true);
+        expect(screen.findByTestId('focus-eligibility-active-root')?.props.currentUiContextEligible).toBe(false);
         expect(screen.findByTestId('focus-eligibility-hidden-child')?.props.eligible).toBe(false);
+        expect(screen.findByTestId('focus-eligibility-hidden-child')?.props.currentUiContextEligible).toBe(false);
         expect(screen.findByTestId('focus-eligibility-reactivated-child')?.props.eligible).toBe(false);
+        expect(screen.findByTestId('focus-eligibility-reactivated-child')?.props.currentUiContextEligible).toBe(false);
+        expect(screen.findByTestId('current-ui-context-explicit-root')?.props.eligible).toBe(true);
+        expect(screen.findByTestId('current-ui-context-explicit-root')?.props.currentUiContextEligible).toBe(true);
+        expect(screen.findByTestId('current-ui-context-hidden-child')?.props.currentUiContextEligible).toBe(false);
     });
 });

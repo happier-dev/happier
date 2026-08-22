@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 
 import { buildAgentInputActionMenuActions } from '../actionMenuActions';
@@ -12,7 +11,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
     actionBarIsCollapsed: boolean;
     hasAnyActions: boolean;
     tint: string;
-    agentId: AgentId;
+    agentId: string;
     profileLabel: string | null;
     profileIcon: IconName;
     envVarsCount?: number;

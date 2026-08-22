@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 
 import { isRunningOnMac } from '@/utils/platform/platform';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 
@@ -16,7 +16,7 @@ export type RestoreIndexEmbeddedProps = Readonly<{
 
 export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(props: RestoreIndexEmbeddedProps) {
     const { width, height } = useWindowDimensions();
-    const isDesktopShell = React.useMemo(() => isTauriDesktop(), []);
+    const isDesktopShell = React.useMemo(() => isDesktopHost(), []);
     const canUseScanner = canUseCurrentDeviceQrScanner();
     const isNativePhone = (Platform.OS === 'ios' || Platform.OS === 'android') && !isRunningOnMac();
     const heuristicViewport = React.useMemo(() => {

@@ -21,7 +21,7 @@ type TempAuthoringDraftLike = Readonly<{
 }> | null | undefined;
 
 export function useNewSessionPermissionModeState(params: Readonly<{
-    agentType: AgentId;
+    agentType: string;
     backendTarget: BackendTargetRefV2;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;

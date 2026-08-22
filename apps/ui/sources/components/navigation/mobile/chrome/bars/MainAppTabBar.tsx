@@ -23,6 +23,12 @@ export type { TabType };
 type MainAppTabBarProps = Readonly<{
     activeTab: TabType;
     onTabPress: (tab: TabType) => void;
+    /**
+     * A sibling capsule rendered beside the pill (see `FloatingTabBarSurface`). Deliberately not a
+     * tab: the bar stays a pure navigation control, and the caller owns which surfaces offer the
+     * action.
+     */
+    trailingAccessory?: React.ReactNode;
 }>;
 
 type WebTabKeyDownEvent = Readonly<{
@@ -119,7 +125,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     }, [props.onTabPress]);
 
     return (
-        <FloatingTabBarSurface bottomInset={insets.bottom}>
+        <FloatingTabBarSurface bottomInset={insets.bottom} trailingAccessory={props.trailingAccessory}>
             <View
                 accessibilityRole="tablist"
                 style={[styles.innerContainer, { gap: metrics.rowGap }]}

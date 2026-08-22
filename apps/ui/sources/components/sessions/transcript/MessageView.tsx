@@ -494,6 +494,7 @@ function RenderBlock(props: {
         >
           <TranscriptEventRow
             event={props.message.event}
+            localId={props.message.localId}
             sessionId={props.sessionId}
             emphasis={props.eventEmphasis}
           />
@@ -686,6 +687,8 @@ function UserTextBlock(props: {
   const {
     sessionForkSupportSource,
     sessionReplayEnabled,
+    agentSwitchingEnabled,
+    currentAgentCapabilities,
   } = props.forkCommon;
   const workspacePath = props.messageDisplayCommon.workspacePath;
 	  const handleMarkdownLinkPress = React.useCallback((url: string) => {
@@ -704,7 +707,13 @@ function UserTextBlock(props: {
     typeof (props.message as any).seq === 'number' && Number.isFinite((props.message as any).seq)
       ? Math.trunc((props.message as any).seq)
       : null;
-  const showForkButton = props.canFork && canForkFromMessage({ session: sessionForkSupportSource, messageSeq: seq, replayEnabled: sessionReplayEnabled });
+  const showForkButton = props.canFork && canForkFromMessage({
+    session: sessionForkSupportSource,
+    messageSeq: seq,
+    replayEnabled: sessionReplayEnabled,
+    agentSwitchingEnabled,
+    currentAgentCapabilities,
+  });
   const forkSemantics = React.useMemo(() => {
     if (seq == null) return null;
     return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
@@ -805,6 +814,7 @@ function UserTextBlock(props: {
                 sessionId={props.sessionId}
                 target={props.rollbackAction.target}
                 restoredDraftText={props.rollbackAction.restoredDraftText}
+                currentAgentCapabilities={props.rollbackAction.currentAgentCapabilities}
                 checkpointCodeRollback={props.rollbackAction.checkpointCodeRollback}
                 testID={`transcript-message-rollback:${props.message.id}`}
                 onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
@@ -969,6 +979,7 @@ function UserTextBlock(props: {
                 sessionId={props.sessionId}
                 target={props.rollbackAction.target}
                 restoredDraftText={props.rollbackAction.restoredDraftText}
+                currentAgentCapabilities={props.rollbackAction.currentAgentCapabilities}
                 checkpointCodeRollback={props.rollbackAction.checkpointCodeRollback}
                 testID={`transcript-message-rollback:${props.message.id}`}
                 onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
@@ -1198,6 +1209,8 @@ function AgentTextBlock(props: {
   const {
     sessionForkSupportSource,
     sessionReplayEnabled,
+    agentSwitchingEnabled,
+    currentAgentCapabilities,
   } = props.forkCommon;
   const workspacePath = props.messageDisplayCommon.workspacePath;
 	  const handleMarkdownLinkPress = React.useCallback((url: string) => {
@@ -1216,7 +1229,13 @@ function AgentTextBlock(props: {
     typeof (props.message as any).seq === 'number' && Number.isFinite((props.message as any).seq)
       ? Math.trunc((props.message as any).seq)
       : null;
-  const showForkButton = props.canFork && canForkFromMessage({ session: sessionForkSupportSource, messageSeq: seq, replayEnabled: sessionReplayEnabled });
+  const showForkButton = props.canFork && canForkFromMessage({
+    session: sessionForkSupportSource,
+    messageSeq: seq,
+    replayEnabled: sessionReplayEnabled,
+    agentSwitchingEnabled,
+    currentAgentCapabilities,
+  });
   const forkSemantics = React.useMemo(() => {
     if (seq == null) return null;
     return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
@@ -1226,9 +1245,10 @@ function AgentTextBlock(props: {
       ? createDefaultActionExecutor({
           resolveServerIdForSessionId: (sessionId) =>
             resolveMessageServerId(sessionId, sessionForkSupportSource?.serverId),
+          currentAgentCapabilities: props.rollbackAction?.currentAgentCapabilities,
         })
       : null,
-    [sessionForkSupportSource?.serverId, usesLongPressRollbackContextMenu],
+    [props.rollbackAction?.currentAgentCapabilities, sessionForkSupportSource?.serverId, usesLongPressRollbackContextMenu],
   );
   const rollbackContextMenuItems = React.useMemo((): ContextMenuItem[] => {
     if (!usesLongPressRollbackContextMenu || !props.rollbackAction) return [];
@@ -1535,6 +1555,7 @@ function AgentTextBlock(props: {
               sessionId={props.sessionId}
               target={props.rollbackAction.target}
               restoredDraftText={props.rollbackAction.restoredDraftText}
+              currentAgentCapabilities={props.rollbackAction.currentAgentCapabilities}
               checkpointCodeRollback={props.rollbackAction.checkpointCodeRollback}
               testID={`transcript-message-rollback:${props.message.id}`}
               onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
@@ -1650,6 +1671,7 @@ function ForkMessageButton(props: {
         sessionReplaySummaryRunnerV1: sessionReplaySummaryRunner,
       },
       replayEnabled: sessionReplayEnabled,
+      currentAgentCapabilities: props.forkCommon.currentAgentCapabilities,
       executionRunsEnabled,
       agentSwitchingEnabled,
       restoredDraftText: restored,
@@ -1674,6 +1696,7 @@ function ForkMessageButton(props: {
     props.restoredDraftText,
     props.sessionId,
     props.upToSeqInclusive,
+    props.forkCommon.currentAgentCapabilities,
     router,
     sessionForkOwnerMetadata?.machineId,
     sessionForkSupportSource,

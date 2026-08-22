@@ -1,4 +1,7 @@
-import type { ExternalSessionOperationOriginAvailability } from './externalSessionOperationProgressPresentation';
+import {
+    resolveExternalSessionOperationOriginAvailability,
+    type ExternalSessionOperationOriginAvailability,
+} from './externalSessionOperationProgressPresentation';
 
 export type ExternalSessionOperationRowCapabilities = Readonly<{
     originAvailability: ExternalSessionOperationOriginAvailability;
@@ -11,8 +14,7 @@ export function resolveExternalSessionOperationRowCapabilities(input: Readonly<{
     machineStatusKnown: boolean;
     machineOnline: boolean;
 }>): ExternalSessionOperationRowCapabilities {
-    const originAvailability =
-        input.machineStatusKnown && input.machineOnline ? 'online' : 'offline';
+    const originAvailability = resolveExternalSessionOperationOriginAvailability(input);
     return {
         originAvailability,
         canInvokeOwnerActions:

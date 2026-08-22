@@ -63,7 +63,7 @@ describe('ReadView', () => {
         expect(normalizedHostText(tree)).not.toContain('…');
     });
 
-    it('renders string results and returns null for malformed completed payloads', async () => {
+    it('renders string results and explains when the provider omitted read details', async () => {
         const stringTree = await renderView(
             makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, 'direct string result'),
         );
@@ -76,5 +76,6 @@ describe('ReadView', () => {
             makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, { content: 123 }),
         );
         expect(findTestInstanceByTypeWithProps(malformedTree, 'CodeView' as any, {})).toBeUndefined();
+        expect(normalizedHostText(malformedTree)).toContain('Details unavailable');
     });
 });

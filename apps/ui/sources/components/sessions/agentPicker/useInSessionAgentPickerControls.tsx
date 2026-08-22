@@ -49,6 +49,17 @@ import {
 type ArmedAgentContinuation = SessionArmedAgentContinuation;
 
 const ARMED_AGENT_CONTINUATION_FIELD_ID = 'routing.agentContinuation' as const;
+const ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID = 'routing.agentContinuationSubmission' as const;
+
+/**
+ * The lifetime of one armed choice, as a key. Formed in one place so the value
+ * a restore adopts an identity under is the same value the render mints under —
+ * two spellings of this would silently re-mint on the very mount the identity
+ * has to survive.
+ */
+function buildArmedContinuationIdentityKey(armScopeKey: string, arm: ArmedAgentContinuation): string {
+    return `${armScopeKey} ${arm.backendTargetKey} ${JSON.stringify(arm.intent)}`;
+}
 
 type UseInSessionAgentPickerControlsParams = Readonly<{
     sessionId: string;
@@ -390,21 +401,29 @@ export function useInSessionAgentPickerControls(
         ? railLatchRef.current.decided === true
         : railOffersRowsNow;
 
+    // UI rail visibility and arm validity deliberately diverge during a fresh
+    // inspection. A changed runtime pair turns every cached answer into
+    // `checking`; that is not proof an existing choice is stale. Preserve an arm
+    // until the replacement inspection settles, then keep it only when the rail
+    // can still offer its cancellation gesture.
+    const armMayRemain = !railDecisionSettled || railOffersRowsNow;
+
     // An armed choice belongs to one Session, one running Agent, one open feature
-    // gate, and one live rail. If any of them changes underneath the composer the
-    // intent is stale and must not silently survive — the submit path reads this
-    // value and nothing else, so an arm that outlives a closing gate is the gate
-    // bypassed.
+    // gate, and one settled rail decision. If any established fact changes
+    // underneath the composer the intent is stale and must not silently survive —
+    // the submit path reads this value and nothing else, so an arm that outlives a
+    // closing gate is the gate bypassed.
     //
-    // The rail belongs in that scope because selection IS arming: there is no
-    // confirm step, so re-selecting the running Agent's row is the only gesture
-    // that cancels, and that row only carries it while the rail is offered. An arm
-    // that outlived the rail would be an arm with no way out — the send control
+    // Once that decision settles, the rail belongs in this scope because selection
+    // IS arming: there is no confirm step, so re-selecting the running Agent's row
+    // is the only gesture that cancels. Pending reinspection is deliberately not a
+    // lost gesture; it only hides the rows until the machine answers. An arm that
+    // outlived a settled no-rail result would have no way out — the send control
     // still promises "Continue with {Agent}", every ordinary send is re-routed
     // into a transition the machine now refuses, and a refusal deliberately KEEPS
     // the arm, so not even sending clears it. Leaving the Session was the only
     // escape.
-    const armScopeKey = `${featureEnabled ? 'on' : 'off'}:${railOffersRows ? 'rail' : 'norail'}:${sessionId}\u0000${source.currentBackendTargetKey ?? ''}`;
+    const armScopeKey = `${featureEnabled ? 'on' : 'off'}:${armMayRemain ? 'rail' : 'norail'}:${sessionId}\u0000${source.currentBackendTargetKey ?? ''}`;
     const armScopeKeyRef = React.useRef(armScopeKey);
     // A render may not write to storage, so the invalidation records the fact and
     // the reconciler below takes the persisted half away with the live one.
@@ -420,6 +439,30 @@ export function useInSessionAgentPickerControls(
     const clearArmedContinuation = React.useCallback(() => {
         persistArmedContinuation(null);
     }, [persistArmedContinuation]);
+
+    // The submission identity for the armed choice, derived from the choice
+    // itself rather than minted at whichever affordance established it.
+    //
+    // It is the transition's dedupe key, divider correlation key and draft
+    // compare-clear key, so its lifetime has to be exactly the lifetime of one
+    // armed choice: stable across re-renders, so retrying the same armed switch
+    // after an unknown outcome re-admits ONE message instead of sending a second
+    // copy, and replaced the moment the reader picks a different Agent, model,
+    // mode or configuration, because that is a different switch.
+    //
+    // It identifies the TRANSITION, not the draft, so an edited draft retried
+    // under the same arm deliberately keeps it: the daemon correlates a repeated
+    // invocation against the divider derived from this value, and the canonical
+    // admission owner — not this identity — is what refuses a reused identity
+    // whose content differs.
+    const armedIdentityKey = armed === null ? null : buildArmedContinuationIdentityKey(armScopeKey, armed);
+    const armedLocalIdRef = React.useRef<Readonly<{ key: string; localId: string }> | null>(null);
+    if (armedIdentityKey === null) {
+        armedLocalIdRef.current = null;
+    } else if (armedLocalIdRef.current?.key !== armedIdentityKey) {
+        armedLocalIdRef.current = { key: armedIdentityKey, localId: randomUUID() };
+    }
+    const armedContinuationLocalId = armedLocalIdRef.current?.localId ?? null;
 
     // Restoring an arm is not rehydrating it. An armed choice is only meaningful
     // in the context it was made in, and persistence must not defeat the scope
@@ -463,6 +506,28 @@ export function useInSessionAgentPickerControls(
             && row.entry.agentId === persisted.intent.selection.agentId
             && persisted.intent.sourceAgentId === currentAgentId;
         if (stillHonourable) {
+            // A restored arm is not automatically a fresh attempt. If this
+            // Session already submitted THIS switch and its effect is still
+            // unestablished, the submission identity is retained with it: the
+            // daemon dedupes a repeat against the divider derived from that
+            // value, so re-minting here is what turned a retry into a second
+            // message and a second divider for a switch that may already have
+            // happened. A reader who re-armed elsewhere gets a fresh identity,
+            // because that is a different switch.
+            const submission = readSessionDraftValue(
+                accountScope,
+                draftSessionId,
+                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
+            );
+            if (
+                typeof submission !== 'undefined'
+                && JSON.stringify(submission.intent) === JSON.stringify(persisted.intent)
+            ) {
+                armedLocalIdRef.current = {
+                    key: buildArmedContinuationIdentityKey(armScopeKey, persisted),
+                    localId: submission.localId,
+                };
+            }
             setArmed(persisted);
             return;
         }
@@ -478,32 +543,6 @@ export function useInSessionAgentPickerControls(
         railDecisionSettled,
         targetRows,
     ]);
-
-    // The submission identity for the armed choice, derived from the choice
-    // itself rather than minted at whichever affordance established it.
-    //
-    // It is the transition's dedupe key, divider correlation key and draft
-    // compare-clear key, so its lifetime has to be exactly the lifetime of one
-    // armed choice: stable across re-renders, so retrying the same armed switch
-    // after an unknown outcome re-admits ONE message instead of sending a second
-    // copy, and replaced the moment the reader picks a different Agent, model,
-    // mode or configuration, because that is a different switch.
-    //
-    // It identifies the TRANSITION, not the draft, so an edited draft retried
-    // under the same arm deliberately keeps it: the daemon correlates a repeated
-    // invocation against the divider derived from this value, and the canonical
-    // admission owner — not this identity — is what refuses a reused identity
-    // whose content differs.
-    const armedIdentityKey = armed === null
-        ? null
-        : `${armScopeKey} ${armed.backendTargetKey} ${JSON.stringify(armed.intent)}`;
-    const armedLocalIdRef = React.useRef<Readonly<{ key: string; localId: string }> | null>(null);
-    if (armedIdentityKey === null) {
-        armedLocalIdRef.current = null;
-    } else if (armedLocalIdRef.current?.key !== armedIdentityKey) {
-        armedLocalIdRef.current = { key: armedIdentityKey, localId: randomUUID() };
-    }
-    const armedContinuationLocalId = armedLocalIdRef.current?.localId ?? null;
 
     const armedTargetKey = armed?.backendTargetKey ?? null;
 
@@ -631,7 +670,12 @@ export function useInSessionAgentPickerControls(
                         capabilityServerId: params.detail.capabilityServerId,
                         cwd: params.detail.cwd,
                         settings: params.detail.settings,
-                        modelSummary: t('session.agentContinuation.detailDescription'),
+                        // The same disclosure, told truthfully for this Session:
+                        // an empty transcript has no conversation to carry, so the
+                        // line keeps only the half that still holds.
+                        modelSummary: params.source.hasConversationToCarry
+                            ? t('session.agentContinuation.detailDescription')
+                            : t('session.agentContinuation.detailDescriptionEmpty'),
                         selection: readTargetSelection(entry.backendTargetKey),
                         onSelectionChange: (next) => {
                             setSelectionByTargetKey((current) => {

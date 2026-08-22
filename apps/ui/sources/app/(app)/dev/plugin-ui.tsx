@@ -245,6 +245,7 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         releaseComposerContent: async () => {
             throw new Error('dev surface has no Composer');
         },
+        publishCurrentUiContext: () => undefined,
         openSurface: async () => undefined,
         replacePageLocation: async () => {
             throw new Error('dev surface has no page location');

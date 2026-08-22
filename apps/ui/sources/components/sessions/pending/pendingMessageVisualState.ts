@@ -115,6 +115,25 @@ export function getPendingDeliveryBlockedReasonPresentation(
     };
 }
 
+/**
+ * Does a pending message row paint the IN-FLOW action row under its bubble?
+ *
+ * `PendingMessagesTranscriptBlock` renders `isWeb ? <copy/send actions> : canReorder ? <drag
+ * handle> : null` — so a pending row on native paints nothing there unless the queue is reorderable,
+ * which is exactly the shape a send creates. This is the single owner of that decision because it is
+ * height-bearing: the size estimate modelled the row unconditionally 20px taller than native paints
+ * it, and Legend accumulates that into a gap under the tail on every send.
+ *
+ * `canReorderPendingMessages` is decided PER ROW here, from that row's own delivery-mutation policy,
+ * because this repo gates the reorder handle per row rather than for the whole block.
+ */
+export function paintsPendingMessageActionRow(params: Readonly<{
+    platformIsWeb: boolean;
+    canReorderPendingMessages: boolean;
+}>): boolean {
+    return params.platformIsWeb || params.canReorderPendingMessages;
+}
+
 export function isPendingMessageProviderDeliveryInFlight(message: PendingMessage): boolean {
     return message.pendingDeliveryStatus === 'server_delivering';
 }

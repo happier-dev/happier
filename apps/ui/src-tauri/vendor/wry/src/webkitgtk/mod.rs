@@ -292,7 +292,10 @@ impl InnerWebView {
       // background color
       if let Some((red, green, blue, alpha)) = attributes.background_color {
         webview.set_background_color(&gtk::gdk::RGBA::new(
-          red as _, green as _, blue as _, alpha as _,
+          red as f64 / 255.0,
+          green as f64 / 255.0,
+          blue as f64 / 255.0,
+          alpha as f64 / 255.0,
         ));
       }
     }
@@ -303,9 +306,9 @@ impl InnerWebView {
     // Webview handlers
     Self::attach_handlers(&webview, web_context, &mut attributes);
 
-    let should_initialize_ipc = attributes.ipc_handler.is_some();
-
     // IPC handler
+    // HAPPIER FORK: handler-less webviews get no IPC bridge (see src/browser/tests.rs).
+    let should_initialize_ipc = attributes.ipc_handler.is_some();
     if attributes.ipc_handler.is_some() {
       Self::attach_ipc_handler(webview.clone(), &mut attributes);
     }
@@ -675,6 +678,15 @@ impl InnerWebView {
     is_inspector_open
   }
 
+
+  pub fn go_back(&self) -> Result<bool> {
+    if !self.webview.can_go_back() {
+      return Ok(false);
+    }
+    self.webview.go_back();
+    Ok(true)
+  }
+
   pub fn id(&self) -> crate::WebViewId<'_> {
     &self.id
   }
@@ -769,7 +781,10 @@ impl InnerWebView {
 
   pub fn set_background_color(&self, (red, green, blue, alpha): RGBA) -> Result<()> {
     self.webview.set_background_color(&gtk::gdk::RGBA::new(
-      red as _, green as _, blue as _, alpha as _,
+      red as f64 / 255.0,
+      green as f64 / 255.0,
+      blue as f64 / 255.0,
+      alpha as f64 / 255.0,
     ));
     Ok(())
   }

@@ -13,7 +13,7 @@ vi.mock('react-native', async () => {
         AppState: (await appStateEmitter).appState,
     });
 });
-vi.mock('@/utils/platform/tauri', () => ({ isTauriDesktop: () => false }));
+vi.mock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false }));
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
     getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
     requestConnectedServiceQuotaSnapshotRefresh: vi.fn(async () => true),

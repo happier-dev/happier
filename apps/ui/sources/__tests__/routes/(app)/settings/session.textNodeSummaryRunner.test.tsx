@@ -80,7 +80,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
     DEFAULT_AGENT_ID: 'claude',
-    isAgentId: (value: unknown) => value === 'claude',
+    isBundledAgentId: (value: unknown) => value === 'claude',
     getAgentCore: () => ({ displayNameKey: 'agents.claude.displayName' }),
 }));
 

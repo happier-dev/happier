@@ -33,6 +33,7 @@ function createPluginHeaderProjection() {
                 title: 'Run preview',
                 scopes: ['session'],
                 surfaces: ['ui'],
+                execution: { target: 'daemon' },
                 placementBindings: ['detailsPanel'],
                 dangerLevel: 'safe',
                 available: true,
@@ -53,7 +54,7 @@ function createPluginHeaderProjection() {
                         descriptorId: 'run',
                         title: 'Run preview',
                         order: 0,
-                        command: {
+                        action: {
                             kind: 'executeAction',
                             action: { pluginId: 'acme.preview', localId: 'run' },
                         },
@@ -65,7 +66,7 @@ function createPluginHeaderProjection() {
                         descriptorId: 'open',
                         title: 'Open preview',
                         order: 5,
-                        command: {
+                        action: {
                             kind: 'openSurface',
                             destination: { pluginId: 'acme.preview', localId: 'preview' },
                         },
@@ -86,6 +87,7 @@ function createManyPluginHeaderProjection(actionCount: number) {
             title: `Action ${index + 1}`,
             scopes: ['session'] as Array<'session'>,
             surfaces: ['ui'] as Array<'ui'>,
+            execution: { target: 'daemon' as const },
             placementBindings: ['detailsPanel'] as Array<'detailsPanel'>,
             dangerLevel: 'safe' as const,
             available: true,
@@ -101,7 +103,7 @@ function createManyPluginHeaderProjection(actionCount: number) {
             descriptorId: localId,
             title: `Action ${index + 1}`,
             order: index,
-            command: {
+            action: {
                 kind: 'executeAction' as const,
                 action: { pluginId: 'acme.preview', localId },
             },
@@ -186,7 +188,7 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
             expect.arrayContaining(Array.from({ length: 12 }, (_value, index) => expect.objectContaining({
                 action: expect.objectContaining({
                     descriptorId: `action-${index + 1}`,
-                    command: expect.objectContaining({ kind: 'executeAction' }),
+                    action: expect.objectContaining({ kind: 'executeAction' }),
                 }),
             }))),
         );

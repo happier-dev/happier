@@ -18,7 +18,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { useLocalSettings, useSettings } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 function shouldShowDesktopPetOverlay(params: Readonly<{
     policy: ReturnType<typeof resolveDesktopPetOverlayPolicy>;
@@ -75,7 +75,7 @@ function useDesktopPetOverlayMainWindowRequests(): void {
 }
 
 export function DesktopPetOverlayRuntimeMount(): React.ReactElement | null {
-    if (Platform.OS !== 'web' || !isTauriDesktop() || isDesktopPetOverlayWindowContext()) {
+    if (Platform.OS !== 'web' || !isDesktopHost() || isDesktopPetOverlayWindowContext()) {
         return null;
     }
 

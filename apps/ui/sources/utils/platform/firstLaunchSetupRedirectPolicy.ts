@@ -1,6 +1,6 @@
 export type FirstLaunchSetupRedirectPolicyInput = Readonly<{
     platformOs: string;
-    isDesktopTauri: boolean;
+    isDesktopHost: boolean;
 }>;
 
 export function shouldAutoRedirectToSetupOnFirstLaunch(input: FirstLaunchSetupRedirectPolicyInput): boolean {
@@ -8,5 +8,5 @@ export function shouldAutoRedirectToSetupOnFirstLaunch(input: FirstLaunchSetupRe
     if (platformOs === 'ios' || platformOs === 'android') {
         return false;
     }
-    return input.isDesktopTauri === true;
+    return input.isDesktopHost === true;
 }

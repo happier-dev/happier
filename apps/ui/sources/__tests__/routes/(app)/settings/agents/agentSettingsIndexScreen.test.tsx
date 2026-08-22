@@ -150,7 +150,7 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['legacy.codex', 'legacy.claude'],
-    isAgentId: (agentId: string) => ['codex', 'claude', 'customAcp', 'kiro'].includes(agentId),
+    isBundledAgentId: (agentId: string) => ['codex', 'claude', 'customAcp', 'kiro'].includes(agentId),
     getAgentCore: (agentId: string) => ({
         displayNameKey: `agent.${agentId}`,
         availability: { experimental: agentId === 'kiro' },
@@ -623,6 +623,8 @@ describe('PluginAgentSettingsIndexScreen', () => {
             enabled: null,
             isBuiltIn: false,
             backendTargetKey: null,
+            descriptor: null,
+            behavior: null,
             authPlugin: null,
         }]);
 

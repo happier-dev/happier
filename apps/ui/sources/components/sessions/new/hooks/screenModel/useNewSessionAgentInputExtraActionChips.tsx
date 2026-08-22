@@ -18,7 +18,10 @@ import { storage } from '@/sync/domains/state/storage';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 
 export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
-    agentId: AgentId;
+    /** Explicit bundled behavior backing for built-in action chips. */
+    staticAgentId?: AgentId | null;
+    /** @deprecated Direct callers without a projected backend entry are bundled-only. */
+    agentId?: AgentId;
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionState: (key: string, next: unknown) => void;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
@@ -42,6 +45,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     onWindowsRemoteSessionLaunchModeChange: (next: WindowsRemoteSessionLaunchMode) => void;
     onActionShortcutPress: (actionId: ActionId) => void;
 }>): ReadonlyArray<AgentInputExtraActionChip> {
+    const staticAgentId = params.staticAgentId ?? params.agentId ?? null;
     const serverPickerActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!params.showServerPickerChip) return null;
         return createServerActionChip({
@@ -83,11 +87,13 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     ]);
 
     return React.useMemo(() => {
-        const baseChips = getNewSessionAgentInputExtraActionChips({
-            agentId: params.agentId,
-            agentOptionState: params.agentOptionState,
-            setAgentOptionState: params.setAgentOptionState,
-        }) ?? [];
+        const baseChips = staticAgentId
+            ? getNewSessionAgentInputExtraActionChips({
+                agentId: staticAgentId,
+                agentOptionState: params.agentOptionState,
+                setAgentOptionState: params.setAgentOptionState,
+            }) ?? []
+            : [];
         const chips: AgentInputExtraActionChip[] = [];
 
         if (params.connectedServicesAuthChip) {
@@ -123,7 +129,6 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
 
         return [...chips, ...baseChips];
     }, [
-        params.agentId,
         params.agentOptionState,
         params.checkoutActionChip,
         params.connectedServicesAuthChip,
@@ -138,5 +143,6 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         automationActionChip,
         serverPickerActionChip,
         storageActionChip,
+        staticAgentId,
     ]);
 }

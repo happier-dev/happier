@@ -2,7 +2,7 @@ import * as React from 'react';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
@@ -70,13 +70,13 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     }, [probeKey]);
 
     const agentType = React.useMemo(() => {
-        if (isAgentId(params.runtimeCarrierAgentId)) {
+        if (isBundledAgentId(params.runtimeCarrierAgentId)) {
             return params.runtimeCarrierAgentId;
         }
         // For built-in backends the backend id is already a canonical agent id.
         // For plugin-contributed backends the provider may still override it.
         return resolveCatalogAgentIdForBackendTarget(backendTargetForProbe)
-            ?? (isAgentId(backendTargetForProbe.backendId) ? backendTargetForProbe.backendId : null);
+            ?? (isBundledAgentId(backendTargetForProbe.backendId) ? backendTargetForProbe.backendId : null);
     }, [backendTargetForProbe, params.runtimeCarrierAgentId]);
     const probeContextKey = buildNewSessionCapabilityProbeContextKey(params.probeContext);
     const probeContextCacheKeySuffixParts = React.useMemo(

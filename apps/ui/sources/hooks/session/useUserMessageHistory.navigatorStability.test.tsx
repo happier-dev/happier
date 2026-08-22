@@ -40,7 +40,7 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
-  isAgentId: (value: unknown) => value === 'codex',
+  isBundledAgentId: (value: unknown) => value === 'codex',
 }));
 
 vi.mock('@/agents/registry/registryUiBehavior', async () => {

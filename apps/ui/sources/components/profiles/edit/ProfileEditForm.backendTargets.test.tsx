@@ -85,7 +85,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         ...actual,
         AGENT_IDS: ['codex'],
         DEFAULT_AGENT_ID: 'codex',
-        isAgentId: (value: unknown): value is typeof actual.DEFAULT_AGENT_ID =>
+        isBundledAgentId: (value: unknown): value is typeof actual.DEFAULT_AGENT_ID =>
             typeof value === 'string' && value === 'codex',
         getAgentCore: (agentId: string) => ({
             permissions: { modeGroup: 'codexLike' },

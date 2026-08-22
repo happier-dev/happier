@@ -5,11 +5,13 @@ import type { OpenSessionForkStrategyModalParams } from './openSessionForkStrate
 /**
  * Source-context continuation — Configure new Session — is this program's
  * capability, not the pre-existing same-engine fork. It therefore consults the
- * same `sessions.agentSwitching` decision the in-Session picker does, at the one
- * point the fork flow branches into it.
+ * same `sessions.agentSwitching` decision the in-Session picker does, resolved
+ * once beside Native and Replay by the availability owner.
  *
  * Native and Replay are deliberately untouched: they are the fork product that
  * predates this feature, and gating them would remove working functionality.
+ * What this flow must never do is refuse to open: a route the user cannot take
+ * is explained by the modal, not by the absence of an affordance.
  */
 
 const openedModals: OpenSessionForkStrategyModalParams[] = [];
@@ -37,7 +39,7 @@ const FORK_SOURCE = {
     serverId: 'server-1',
 } as never;
 
-function openFlow(agentSwitchingEnabled: boolean) {
+function openFlow(agentSwitchingEnabled: boolean, replayEnabled = true) {
     const navigateToNewSession = vi.fn();
     const modalId = openSessionForkStrategyFlow({
         sessionId: SESSION_ID,
@@ -46,7 +48,7 @@ function openFlow(agentSwitchingEnabled: boolean) {
         machineId: 'machine-1',
         forkPoint: { type: 'latest' },
         settings: null,
-        replayEnabled: true,
+        replayEnabled,
         executionRunsEnabled: false,
         agentSwitchingEnabled,
         navigateToSession: vi.fn(),
@@ -75,5 +77,28 @@ describe('openSessionForkStrategyFlow source-context gate', () => {
 
         expect(typeof opened?.configureNewSession).toBe('function');
         expect(opened?.availability.replay).toBe(true);
+    });
+
+    it('still opens for a Claude Session with Replay off, carrying the reason Native is closed', () => {
+        // The shipped narrowing returned null here, so the header item, the info
+        // row and the message button all deleted themselves and the user could
+        // not reach any fork surface at all.
+        const { modalId, opened } = openFlow(true, false);
+
+        expect(modalId).toBe('modal-1');
+        expect(opened?.availability).toEqual({
+            native: false,
+            replay: false,
+            configure: true,
+            nativeUnavailableReason: 'agent_unsupported',
+        });
+        expect(typeof opened?.configureNewSession).toBe('function');
+    });
+
+    it('opens nothing only when no route exists at all', () => {
+        const { modalId, opened } = openFlow(false, false);
+
+        expect(modalId).toBeNull();
+        expect(opened).toBeNull();
     });
 });

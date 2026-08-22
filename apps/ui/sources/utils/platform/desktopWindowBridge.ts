@@ -1,4 +1,4 @@
-import { invokeTauri, isTauriDesktop, listenTauriEvent } from '@/utils/platform/tauri';
+import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 export const DESKTOP_WINDOW_CHROME_POLICY_COMMAND = 'desktop_get_window_chrome_policy';
 export const DESKTOP_WINDOW_STATE_COMMAND = 'desktop_get_window_state';
@@ -59,13 +59,13 @@ function normalizeDesktopWindowState(value: unknown): DesktopWindowState {
 }
 
 async function resolveDesktopWindowChromePolicy(): Promise<DesktopWindowChromePolicy> {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return DISABLED_DESKTOP_WINDOW_CHROME_POLICY;
     }
 
     try {
         return normalizeDesktopWindowChromePolicy(
-            await invokeTauri<DesktopWindowChromePolicy>(DESKTOP_WINDOW_CHROME_POLICY_COMMAND),
+            await invokeDesktopHost<DesktopWindowChromePolicy>(DESKTOP_WINDOW_CHROME_POLICY_COMMAND),
         );
     } catch {
         return DISABLED_DESKTOP_WINDOW_CHROME_POLICY;
@@ -85,7 +85,7 @@ async function invokeDesktopWindowCommand(command: string): Promise<boolean> {
     }
 
     try {
-        return (await invokeTauri<boolean>(command)) === true;
+        return (await invokeDesktopHost<boolean>(command)) === true;
     } catch {
         return false;
     }
@@ -100,7 +100,7 @@ async function getDesktopWindowStateForPolicy(
 
     try {
         return normalizeDesktopWindowState(
-            await invokeTauri<DesktopWindowState>(DESKTOP_WINDOW_STATE_COMMAND),
+            await invokeDesktopHost<DesktopWindowState>(DESKTOP_WINDOW_STATE_COMMAND),
         );
     } catch {
         return DEFAULT_DESKTOP_WINDOW_STATE;
@@ -143,7 +143,7 @@ export async function listenDesktopWindowState(
     }
 
     try {
-        const unlisten = await listenTauriEvent<DesktopWindowState>(
+        const unlisten = await listenDesktopHostEvent<DesktopWindowState>(
             DESKTOP_WINDOW_EVENTS.state,
             (payload) => {
                 handler(normalizeDesktopWindowState(payload));

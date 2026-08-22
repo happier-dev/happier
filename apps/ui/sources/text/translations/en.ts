@@ -1005,6 +1005,8 @@ export const en = {
     },
 
     automations: {
+        unsupportedReference: ({ reference }: { reference: string }) =>
+            `Automations save the message text only, so ${reference} would no longer point to what you picked. Remove it from the message, or mention a file path instead.`,
         openA11y: 'Open automations',
         list: {
             interval: ({ minutes, timezone }: { minutes: number; timezone: string | null }) => `Every ${minutes}m${timezone ? ` (${timezone})` : ''}`,
@@ -1202,6 +1204,19 @@ export const en = {
                     pluginEvent: 'Event',
                     conversation: 'Conversation',
                 },
+                state: {
+                    queued: 'Queued',
+                    claimed: 'Claimed',
+                    running: 'Running',
+                    succeeded: 'Succeeded',
+                    failed: 'Failed',
+                    cancelled: 'Cancelled',
+                    expired: 'Expired',
+                    dispatch_failed: 'Dispatch failed',
+                    skipped: 'Skipped',
+                    missed: 'Missed',
+                    outcome_uncertain: 'Outcome uncertain',
+                },
                 occurred: ({ time }: { time: string }) => `Occurred: ${time}`,
                 invoked: ({ time }: { time: string }) => `Invoked: ${time}`,
                 admitted: ({ time }: { time: string }) => `Admitted: ${time}`,
@@ -1288,6 +1303,7 @@ export const en = {
 	        cancel: 'Cancel',
 	        submit: 'Submit',
 	        close: 'Close',
+	        dismissKeyboard: 'Dismiss keyboard',
 	        open: 'Open',
 	        done: 'Done',
 	        reorder: 'Reorder',
@@ -1443,6 +1459,7 @@ export const en = {
         externalStatusUnknown: 'External status unknown',
         workingRetained: 'working, awaiting updates…',
         readyForReview: 'ready for review',
+        keptInAttention: 'kept in attention',
         canceled: 'Canceled',
         offline: 'offline',
         lastSeen: ({ time }: { time: string }) => `last seen ${time}`,
@@ -4247,9 +4264,9 @@ export const en = {
             editManagedDefaults: 'Edit managed session defaults',
             editManagedDefaultsDescription: 'Change the connected account or group for future sessions. Existing sessions keep their saved selection.',
             purposeTargetTitle: 'Connected-account target',
-            purposeTargetDescription: 'Enter account:<id> or group:<id> for this purpose. Use a logical account or group ID, not an active member or profile.',
+            purposeTargetDescription: 'Choose an available connected account or group for this purpose.',
             invalidPurposeTargetTitle: 'Invalid connected-account target',
-            invalidPurposeTargetDescription: 'Enter account:<id> or group:<id>. Active member, profile, and generation values are not accepted.',
+            invalidPurposeTargetDescription: 'Choose an available connected account or group before saving.',
             useExternal: 'Use an external service',
             useExternalDescription: 'Stop Happier from managing this provider for future sessions and use its external endpoint configuration.',
             useExternalConfirmTitle: 'Use an external service?',
@@ -4485,6 +4502,8 @@ export const en = {
             unauthorizedDescription: 'Replace the Saved Secret with a valid key, then test the connection again.',
             rateLimitedTitle: 'Provider is rate limited',
             rateLimitedDescription: 'Wait a moment, then try the connection again.',
+            probeCapacityTitle: 'Too many provider checks at once',
+            probeCapacityDescription: 'Happier could not start this check on the selected machine yet. Wait a moment, then try again.',
             machineCleanupPendingDescription: 'The machine was removed, but its Provider access settings could not be saved. Check your connection and remove the machine again to retry the cleanup.',
             accessChangedTitle: 'Provider access changed',
             accessChangedDescription: 'Review access for this provider on the selected machine, then try again.',
@@ -5085,6 +5104,10 @@ export const en = {
 	    },
 
     workspaceCockpit: {
+        sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' of ' + total,
+        previousSession: 'Previous session',
+        nextSession: 'Next session',
+        switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Switched to ' + name + ', ' + position + ' of ' + total,
         openCockpit: 'Open cockpit',
         openClassicView: 'Open classic view',
         tabs: 'Tabs',
@@ -6050,8 +6073,36 @@ export const en = {
             detailTitle: ({ agent }: { agent: string }) => `Continue with ${agent}`,
             sendLabel: ({ agent }: { agent: string }) => `Continue with ${agent}`,
             detailDescription: 'Your recent conversation carries over as text; images and files don’t. Nothing is sent until your next message.',
+            detailDescriptionEmpty: 'There’s no conversation to carry over yet. Nothing is sent until your next message.',
             announcement: ({ agent }: { agent: string }) => `${agent} selected for the next message. Nothing has been sent.`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Continued this Session from ${from_} to ${to}`,
+            /** The transcript divider opens a card explaining what crossed the boundary. */
+            handedOver: {
+                open: 'Show the context handed over here',
+                title: 'Context handed over',
+                /**
+                 * The card is a reconstruction, not a stored copy. Saying so is
+                 * not a disclaimer — nothing is kept, so a card that implied it
+                 * was showing the sent bytes would be claiming more than it can.
+                 *
+                 * The second sentence names what the rebuild leaves OUT, and it
+                 * is load-bearing for the same reason. The departing Agent's
+                 * tracked work and its own session log are Agent-scoped current
+                 * state: the switch cleared them and the next Agent republishes
+                 * into the same keys, so the machine omits them rather than
+                 * hand back today's live values as though they had crossed the
+                 * boundary. A silent omission would read as "there was none".
+                 */
+                reconstructed: 'Rebuilt now from this Session’s transcript, not stored at the time — so it can differ from what was sent. What the previous Agent was tracking, and its own log, can’t be rebuilt, so they are left out.',
+                loading: 'Rebuilding…',
+                empty: 'Nothing was carried over. There was no earlier conversation to replay.',
+                unavailableOperation: 'Update or reconnect the CLI on this machine to rebuild this.',
+                notRebuildable: 'Context was carried over here, but this Session’s transcript no longer holds it — so it can’t be rebuilt.',
+                unavailableSource: 'Happier couldn’t read this Session’s transcript, so this can’t be rebuilt.',
+                unreachable: 'Happier couldn’t reach the machine that hosts this Session.',
+                retryAction: 'Try again',
+                jumpAction: 'Go to the last message included',
+            },
             checking: 'Checking availability…',
             unavailable: {
                 unsupportedSession: ({ agent }: { agent: string }) => `This Session can’t continue with ${agent}.`,
@@ -6116,6 +6167,13 @@ export const en = {
                 configure: {
                     title: 'Configure a new session',
                     subtitle: 'Pick a different agent, model, machine or folder, and carry this conversation over.',
+                },
+                unavailable: {
+                    nativeAgent: 'This agent cannot branch its own conversation.',
+                    nativeFromMessage: 'This agent can branch the whole conversation, but not from an earlier message.',
+                    nativeProviderBound: 'A session bound to a provider account cannot be branched by the agent.',
+                    replayOff: 'Session replay is turned off in Settings.',
+                    replaySettingsAction: 'Replay settings',
                 },
                 progress: {
                     creatingNative: 'Creating the native fork…',
@@ -7125,6 +7183,10 @@ export const en = {
         markSessionReadSubtitle: 'Clear unread attention for this session',
         markSessionUnread: 'Mark as unread',
         markSessionUnreadSubtitle: 'Keep this session in your unread list',
+        keepInAttention: 'Keep in Needs attention',
+        keepInAttentionSubtitle: 'Keeps it here even after you read it',
+        removeFromAttention: 'Remove from Needs attention',
+        removeFromAttentionSubtitle: 'Let it move down the list again when read',
         executionRunsSubtitle: 'See Subagents for this session',
         automationsTitle: 'Automations',
         automationsSubtitle: 'Manage scheduled messages for this session',
@@ -9431,6 +9493,10 @@ settingsSession: {
 	              attentionPromotionModeGlobalSubtitle: 'Show one attention section above the rest',
 	              attentionPromotionModeWithinGroupsTitle: 'Move to top of current group',
 	              attentionPromotionModeWithinGroupsSubtitle: 'Keep sessions in their folder or workspace',
+	              attentionStandingDefaultTitle: 'Keep sessions in Needs attention',
+	              attentionStandingDefaultEnabledSubtitle: 'Every session stays until you remove it',
+	              attentionStandingDefaultDisabledSubtitle: 'Keep sessions one at a time',
+	              attentionStandingDefaultUnavailableSubtitle: 'Choose a placement in Sessions needing attention first',
 	              workingPlacementModeTitle: 'Working sessions',
 	              workingPlacementModeSubtitle: 'Choose where sessions that are currently working appear',
 	              workingPlacementModeOffTitle: 'Leave in normal position',
@@ -9984,11 +10050,14 @@ settingsSession: {
                   customTitle: 'Custom',
                   customBackendIdSubtitle: 'Enter a backend id (e.g. claude).',
                   customModelIdSubtitle: 'Enter a model id (e.g. default).',
+                  requiresModelNotice: 'Pick a summary model below. Without one, replay falls back to recent messages only.',
+                  requiresExecutionRunsNotice: 'Summaries need execution runs, which are off for this account. Replay will use recent messages only.',
               },
               recentMessagesTitle: 'Recent messages to include',
               recentMessagesPlaceholder: '16',
               maxSeedCharsTitle: 'Replay seed size limit (chars)',
               maxSeedCharsPlaceholder: '50000',
+              maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Between ${min} and ${max} characters. A number outside this range is saved as the nearest limit.`,
           },
           toolDetailLevel: {
               titleOnlyTitle: 'Title only',
@@ -11203,6 +11272,16 @@ settingsSession: {
             sharePermissionRequestsSubtitle: 'Forward permission prompts to voice',
             shareFilePaths: 'Share local file paths',
             shareFilePathsSubtitle: 'Include local paths in voice context (not recommended)',
+            currentUiContextModeTitle: 'Current UI context',
+            currentUiContextModeSubtitle: 'Choose when Voice can use bounded semantic context from the active Happier app window or browser tab.',
+            currentUiContextMode: {
+                offTitle: 'Off',
+                offSubtitle: 'Voice gets no current-UI context or contextual commands from this client.',
+                onDemandTitle: 'On demand',
+                onDemandSubtitle: 'When you ask, Voice can read bounded semantic context from this app window or browser tab. Contextual commands remain separately gated.',
+                automaticTitle: 'Automatic',
+                automaticSubtitle: 'Voice also receives basic navigation metadata automatically. Detailed context stays on demand, and contextual commands remain separately gated.',
+            },
         },
         diagnostics: {
             title: 'Local speech diagnostics',
@@ -13225,6 +13304,16 @@ settingsSession: {
       developmentTrustSourceRootTitle: "Trust this plugin folder?",
       developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier will install dependencies in, build, and run code from:\n\n${path}\n\nOnly continue if you trust everything in that folder and everything it can pull in. You will review the plugin itself in the next step.`,
       developmentTrustSourceRootConfirm: "Trust folder",
+      pendingChangesTitle: "Waiting for your decision",
+      pendingChangesFooter: "Plugin changes prepared on this machine. An agent can prepare one, but only you can approve it.",
+      pendingChangesReviewHint: "Shows the full review before anything is trusted.",
+      pendingChangeSourceRootSubtitle: ({ path }: { path: string }) => `Plugin folder: ${path}`,
+      pendingChangeInstallSubtitle: ({ pluginId, source }: { pluginId: string; source: string }) => `${pluginId} from ${source}`,
+      pendingChangeApplying: "This change was already decided and is being applied.",
+      pendingChangeExpired: "This change expired before it was decided. Ask for it again.",
+      pendingChangeRejected: "The plugin change was rejected.",
+      pendingChangeConfirmRejectBody: "The prepared change is discarded. Nothing is installed or trusted.",
+      pendingChangeFailed: ({ outcome }: { outcome: string }) => `The plugin change was not applied (${outcome}).`,
       developmentCreateDirectoryTitle: "Plugin directory",
       developmentCreateDirectoryBody: "Enter the new plugin's absolute directory on the selected machine. The directory must not already exist.",
       developmentCreateNameTitle: "Plugin name",
@@ -13278,6 +13367,7 @@ settingsSession: {
       provenanceTitle: "Source and trust",
       diagnosticsTitle: "Plugin diagnostics",
       registryDiagnosticsTitle: "Registry diagnostics",
+      agentUiDiagnosticsTitle: "Agent interface diagnostics",
       contributionsTitle: "Projected contributions",
       trustPolicy: {
         localTrusted: "Locally trusted",

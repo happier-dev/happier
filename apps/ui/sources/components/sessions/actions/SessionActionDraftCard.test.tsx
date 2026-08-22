@@ -88,12 +88,8 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
   AGENT_IDS: ['claude'],
-  getAgentCore: (id: string) => {
-    if (id === 'customAcp') {
-      throw new Error('Unsupported UI agent core: customAcp');
-    }
-    return { displayNameKey: `agent.${id}` };
-  },
+  // Mirrors the real accessor: an Agent with no bundled core answers null.
+  getAgentCore: (id: string) => (id === 'customAcp' ? null : { displayNameKey: `agent.${id}` }),
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -139,7 +135,10 @@ async function buildMockedFieldOptionsResolver() {
   return buildSessionActionFieldOptionsResolver(buildSessionActionFieldOptionLists({
     enabledAgentIds: ['claude'],
     executionRunsBackends: null,
-    resolveAgentLabel: (agentId) => translate(String(getAgentCore(agentId as never).displayNameKey)),
+    resolveAgentLabel: (agentId) => {
+      const displayNameKey = getAgentCore(agentId as never)?.displayNameKey;
+      return displayNameKey ? translate(String(displayNameKey)) : String(agentId);
+    },
   }));
 }
 

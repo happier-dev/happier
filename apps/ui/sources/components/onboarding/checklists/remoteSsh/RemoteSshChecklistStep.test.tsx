@@ -57,8 +57,8 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriState.isDesktop,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriState.isDesktop,
 }));
 
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({

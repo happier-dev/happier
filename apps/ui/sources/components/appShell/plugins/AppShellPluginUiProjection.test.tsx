@@ -8,6 +8,7 @@ import {
     type PluginProjectionV2,
     type VoiceProviderContribution,
 } from '@happier-dev/protocol';
+import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import {
     PluginUiArtifactsManifestV1Schema,
     computePluginUiArtifactFileSetSha256DigestV1,
@@ -43,10 +44,25 @@ import {
 import type {
     PluginAccountAvailabilitySnapshot,
 } from '@/sync/domains/plugins/availability/reader';
+import type {
+    PluginReactNativeArtifactAvailability,
+} from '@/sync/domains/plugins/availability/reactNativeArtifactAvailability';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage as persistentStorage } from '@/sync/domains/state/storageStore';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import {
+    createPluginReactNativeBundleCache,
+    type PluginReactNativeBundleCache,
+} from '@/components/plugins/reactNative/bundleCache';
+import {
+    getPluginUiClientExecutableComposition,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
+import {
+    createPluginUiExecutableModuleHost,
+    type PluginUiExecutableModuleHost,
+} from '@/components/plugins/reactNative/executableModuleHost';
+import type { PluginReactNativeLoaderBackend } from '@/components/plugins/reactNative/loader';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -62,6 +78,7 @@ type SupportedMachineContributionRegistryProjectionDescribeResult = Extract<
 const projectionDescribeSpy = vi.hoisted(() => vi.fn<
     MachineContributionRegistryProjectionModule['machineContributionRegistryProjectionDescribe']
 >());
+const clientArtifactAvailabilitySpy = vi.hoisted(() => vi.fn());
 const pluginRuntimeSpies = vi.hoisted(() => ({
     activate: vi.fn<(input: unknown) => Promise<readonly unknown[]>>(async () => []),
     withdraw: vi.fn<() => Promise<void>>(async () => {}),
@@ -74,9 +91,13 @@ const pluginRuntimeSpies = vi.hoisted(() => ({
     replaceAuthority: vi.fn<(authority: unknown) => Promise<void>>(async () => {}),
 }));
 const pluginExecutableHostState = vi.hoisted(() => ({
-    override: null as null | Readonly<{
-        replaceAuthority(authority: unknown): Promise<void>;
-    }>,
+    override: null as PluginUiExecutableModuleHost | null,
+}));
+const appShellClientExecutableRuntimeState = vi.hoisted(() => ({
+    useRealActivation: false,
+    cache: null as PluginReactNativeBundleCache | null,
+    loaderBackend: null as PluginReactNativeLoaderBackend | null,
+    availability: null as Extract<PluginReactNativeArtifactAvailability, { kind: 'available' }> | null,
 }));
 const storageState = vi.hoisted(() => ({
     machines: [] as Array<Record<string, unknown>>,
@@ -95,6 +116,9 @@ const storageState = vi.hoisted(() => ({
 const serverProfilesState = vi.hoisted(() => ({
     generation: 0,
     profiles: [] as ServerProfile[],
+}));
+const localServicePreviewPlatformState = vi.hoisted(() => ({
+    platform: 'web' as 'web' | 'ios' | 'android' | 'desktop',
 }));
 const projectionRefreshState = vi.hoisted(() => {
     let revision = 0;
@@ -152,10 +176,26 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
     });
 });
 
-vi.mock('@/voice/registry/projectedExternalVoiceProviderActivation', () => ({
-    activateProjectedExternalVoiceProviders: (input: unknown) => pluginRuntimeSpies.activate(input),
-    withdrawProjectedExternalVoiceProviders: () => pluginRuntimeSpies.withdraw(),
-}));
+vi.mock('./appShellClientExecutableActivation', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./appShellClientExecutableActivation')>();
+    return {
+        ...actual,
+        reconcileAppShellProjectedClientExecutables: async (
+            ...args: Parameters<typeof actual.reconcileAppShellProjectedClientExecutables>
+        ) => (
+            appShellClientExecutableRuntimeState.useRealActivation
+                ? await actual.reconcileAppShellProjectedClientExecutables(...args)
+                : await pluginRuntimeSpies.activate(args[0])
+        ),
+        unloadAppShellProjectedClientExecutables: async (
+            ...args: Parameters<typeof actual.unloadAppShellProjectedClientExecutables>
+        ) => (
+            appShellClientExecutableRuntimeState.useRealActivation
+                ? await actual.unloadAppShellProjectedClientExecutables(...args)
+                : await pluginRuntimeSpies.withdraw()
+        ),
+    };
+});
 
 vi.mock('@/components/plugins/reactNative/projectionInvalidation', () => ({
     applyInstalledAppShellPluginUiReactNativeExecutableAuthorityInvalidation: (
@@ -168,14 +208,56 @@ vi.mock('@/components/plugins/reactNative/projectionInvalidation', () => ({
     }),
 }));
 
-vi.mock('@/components/plugins/reactNative/executableModuleHost', () => ({
-    getInstalledPluginUiExecutableModuleHost: () => pluginExecutableHostState.override ?? ({
-        replaceAuthority: pluginRuntimeSpies.replaceAuthority,
-    }),
-}));
+vi.mock('@/components/plugins/reactNative/executableModuleHost', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/plugins/reactNative/executableModuleHost')>();
+    return {
+        ...actual,
+        getInstalledPluginUiExecutableModuleHost: () => (
+            pluginExecutableHostState.override ?? actual.getInstalledPluginUiExecutableModuleHost()
+        ),
+    };
+});
+
+vi.mock('../../plugins/reactNative/bundleCache', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../plugins/reactNative/bundleCache')>();
+    return {
+        ...actual,
+        getInstalledPluginReactNativeBundleCache: () => (
+            appShellClientExecutableRuntimeState.cache ?? actual.getInstalledPluginReactNativeBundleCache()
+        ),
+    };
+});
+
+vi.mock('../../plugins/reactNative/resolveDefaultReactNativeLoaderBackend', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../plugins/reactNative/resolveDefaultReactNativeLoaderBackend')>();
+    return {
+        ...actual,
+        resolveDefaultReactNativeLoaderBackend: () => (
+            appShellClientExecutableRuntimeState.loaderBackend ?? actual.resolveDefaultReactNativeLoaderBackend()
+        ),
+    };
+});
+
+vi.mock('@/sync/domains/plugins/availability/reactNativeArtifactAvailability', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/plugins/availability/reactNativeArtifactAvailability')>();
+    return {
+        ...actual,
+        acquirePluginReactNativeArtifactAvailability: async (
+            ...args: Parameters<typeof actual.acquirePluginReactNativeArtifactAvailability>
+        ) => {
+            clientArtifactAvailabilitySpy(args[0]);
+            return appShellClientExecutableRuntimeState.availability
+                ?? await actual.acquirePluginReactNativeArtifactAvailability(...args);
+        },
+    };
+});
 
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => storageState.activeServer,
+}));
+
+vi.mock('@/sync/domains/local/services/preview/platform', () => ({
+    resolveLocalServicePreviewPlatform: () => localServicePreviewPlatformState.platform,
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -218,13 +300,18 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 const initialPersistentStorageState = persistentStorage.getState();
 
-afterEach(() => {
+afterEach(async () => {
     vi.useRealTimers();
     standardCleanup();
+    const executableHost = pluginExecutableHostState.override;
+    if (executableHost) {
+        await getPluginUiClientExecutableComposition(executableHost).unload();
+    }
     clearPluginAccountAvailabilityProjection();
     retireActiveServerAccountScopeLifetime();
     persistentStorage.setState(initialPersistentStorageState, true);
     projectionDescribeSpy.mockReset();
+    clientArtifactAvailabilitySpy.mockReset();
     pluginRuntimeSpies.activate.mockReset();
     pluginRuntimeSpies.activate.mockResolvedValue([]);
     pluginRuntimeSpies.withdraw.mockReset();
@@ -236,6 +323,10 @@ afterEach(() => {
     pluginRuntimeSpies.replaceAuthority.mockReset();
     pluginRuntimeSpies.replaceAuthority.mockResolvedValue(undefined);
     pluginExecutableHostState.override = null;
+    appShellClientExecutableRuntimeState.useRealActivation = false;
+    appShellClientExecutableRuntimeState.cache = null;
+    appShellClientExecutableRuntimeState.loaderBackend = null;
+    appShellClientExecutableRuntimeState.availability = null;
     storageState.machines = [];
     storageState.voiceExecutionMachine = {
         mode: 'auto',
@@ -247,6 +338,7 @@ afterEach(() => {
     storageState.machineTargets = {};
     serverProfilesState.generation = 0;
     serverProfilesState.profiles = [];
+    localServicePreviewPlatformState.platform = 'web';
     projectionRefreshState.reset();
     installConnectedAccountDescriptorProjection(createConnectedAccountDescriptorProjectionLoadingState('test-cleanup'));
 });
@@ -525,6 +617,42 @@ function accountLifetimeFixture(input: Readonly<{
     } as const;
 }
 
+function createAvailableClientArtifactHandle() {
+    let current = true;
+    const revocationListeners = new Set<() => void>();
+    const dispose = vi.fn(() => {
+        current = false;
+        revocationListeners.clear();
+    });
+    return Object.freeze({
+        availability: Object.freeze({
+            kind: 'available' as const,
+            cacheKey: 'app-shell-client-action-artifact',
+            isCurrent: () => current,
+            onRevoke: (listener: () => void) => {
+                revocationListeners.add(listener);
+                return Object.freeze({ dispose: () => revocationListeners.delete(listener) });
+            },
+            dispose,
+        }),
+        dispose,
+    });
+}
+
+function unselectedAppScopeOrigin(input: Readonly<{
+    machineId: string;
+    pluginId: string;
+}>): PluginMachineExecutionOriginV1 {
+    return Object.freeze({
+        serverIdentityId: APP_SCOPE_FIXTURE.serverIdentityId,
+        materializationRef: Object.freeze({
+            machineId: input.machineId,
+            materializationId: `${input.machineId}:${input.pluginId}:install`,
+            pluginId: input.pluginId,
+        }),
+    });
+}
+
 function pluginUiProjectionWithAppTab(input: Readonly<{
     generation: number;
     pluginId: string;
@@ -577,6 +705,40 @@ function pluginUiProjectionWithAppTab(input: Readonly<{
             },
         },
         diagnostics: [],
+    });
+}
+
+function pluginUiProjectionWithClientAction(input: Readonly<{
+    generation: number;
+    pluginId: string;
+    origin: PluginMachineExecutionOriginV1;
+}>): PluginProjectionV2 {
+    const localId = 'open-client-action';
+    return PluginProjectionV2Schema.parse({
+        ...pluginUiProjectionWithAppTab(input),
+        actionsById: {
+            [`${input.pluginId}/${localId}`]: {
+                id: localId,
+                pluginId: input.pluginId,
+                title: 'Open client action',
+                scopes: ['session'],
+                surfaces: ['ui'],
+                placementBindings: ['detailsPanel'],
+                dangerLevel: 'safe',
+                available: true,
+                execution: {
+                    target: 'client',
+                    client: {
+                        artifactId: 'client-action-runtime',
+                        modulePath: './clientActionRuntime',
+                        exportName: 'activate',
+                    },
+                    platforms: ['web'],
+                },
+                serverIdentityId: input.origin.serverIdentityId,
+                materializationRef: input.origin.materializationRef,
+            },
+        },
     });
 }
 
@@ -706,7 +868,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         await flushHookEffects({ cycles: 8 });
 
         expect(pluginRuntimeSpies.invalidate).toHaveBeenCalledWith(
-            expect.objectContaining({ generation: 5 }),
+            expect.objectContaining({ generation: null }),
             expect.objectContaining({ generation: 7 }),
         );
         expect(pluginRuntimeSpies.invalidate).not.toHaveBeenCalledWith(
@@ -916,12 +1078,14 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(screen.tree.findByType('ProjectionProbe' as never).props.value).toEqual(
             expect.objectContaining({ machineId: null }),
         );
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-b',
-            projection: expect.objectContaining({ generation: 7 }),
+        expect(pluginRuntimeSpies.activate).toHaveBeenLastCalledWith(expect.objectContaining({
+            voice: expect.objectContaining({
+                machineId: 'machine-b',
+                projection: expect.objectContaining({ generation: 7 }),
+            }),
         }));
         expect(pluginRuntimeSpies.activate).not.toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-a',
+            voice: expect.objectContaining({ machineId: 'machine-a' }),
         }));
     });
 
@@ -974,8 +1138,254 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(screen.tree.findByType('ProjectionProbe' as never).props.value).toEqual(
             expect.objectContaining({ machineId: 'machine-a' }),
         );
+        expect(pluginRuntimeSpies.activate).toHaveBeenCalledWith(expect.objectContaining({ voice: null }));
+    });
+
+    it('reconciles selected app client Actions into the generic index while the fixed Voice machine is offline', async () => {
+        storageState.machines = [
+            {
+                id: 'machine-a', active: true, activeAt: Date.now(), createdAt: 2,
+                metadata: { host: 'online-app-action-target' },
+            },
+            {
+                id: 'machine-b', active: false, activeAt: 0, createdAt: 1,
+                metadata: { host: 'offline-fixed-voice-target' },
+            },
+        ];
+        storageState.voiceExecutionMachine = {
+            mode: 'fixed',
+            machineId: 'machine-b',
+            autoMachineId: null,
+        };
+        const pluginId = 'acme.app-shell-action-without-voice';
+        const actionId = 'open-client-action';
+        const actionArtifactId = 'client-action-runtime';
+        const generation = 5;
+        const entryPath = 'react-native/client-action-runtime/index.js';
+        const bytes = new TextEncoder().encode('// synthetic AppShell client Action executable');
+        const entryDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entryPath, bytes }]);
+        const artifactGraph = PluginUiArtifactsManifestV1Schema.parse({
+            version: 1,
+            entries: [{
+                contributionId: actionArtifactId,
+                tier: 'reactNative',
+                platform: 'web',
+                entry: entryPath,
+                files: [{ relativePath: entryPath, digest: entryDigest, byteSize: bytes.byteLength }],
+                digest: artifactDigest,
+                builtWith: { bundler: 'vite', version: '7.0.0' },
+                hostUiApiVersion: '1.0.0',
+                compat: { react: '19.0.0', reactNative: '0.83.4' },
+            }],
+        }).entries[0]!;
+        const cacheIdentity = Object.freeze({
+            pluginId,
+            contributionId: actionId,
+            artifactDigest,
+            hostAppVersion: '2.0.0',
+            hostUiApiVersion: '1.0.0',
+            reactVersion: '19.0.0',
+            reactNativeVersion: '0.83.4',
+            platform: 'web' as const,
+            channel: 'internal',
+            nativeCapabilitiesDigest: `sha256:${'c'.repeat(64)}`,
+            projectionGeneration: generation,
+        });
+        const origin = installSelectedAppScopePluginFixture({
+            machineId: 'machine-a',
+            pluginId,
+            artifacts: [{
+                contributionId: actionArtifactId,
+                tier: 'reactNative',
+                platform: 'web',
+                artifactDigest,
+                compatibility: {
+                    hostUiApiVersion: '1.0.0',
+                    reactVersion: '19.0.0',
+                    reactNativeVersion: '0.83.4',
+                },
+            }],
+        });
+        const baseProjection = pluginUiProjectionWithClientAction({
+            generation,
+            pluginId,
+            origin,
+        });
+        const appProjection = PluginProjectionV2Schema.parse({
+            ...baseProjection,
+            familiesById: {
+                ...baseProjection.familiesById,
+                pluginUi: {
+                    family: 'pluginUi',
+                    entriesById: {
+                        ...baseProjection.familiesById.pluginUi?.entriesById,
+                        [`reactNativeBundle:${pluginId}:${actionId}`]: {
+                            id: `reactNativeBundle:${pluginId}:${actionId}`,
+                            pluginId,
+                            serverIdentityId: origin.serverIdentityId,
+                            materializationRef: origin.materializationRef,
+                            contributionKind: 'reactNativeBundle',
+                            contributionId: actionId,
+                            generatedOwnerKind: 'clientContribution',
+                            artifactGraph,
+                            runtime: {
+                                decision: { state: 'load' },
+                                loadPolicy: { source: 'installedArtifact' },
+                                cacheIdentity,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        const appPluginUiFamily = appProjection.familiesById.pluginUi;
+        const appActionBundle = appPluginUiFamily?.entriesById[`reactNativeBundle:${pluginId}:${actionId}`];
+        if (!appPluginUiFamily || !appActionBundle) {
+            throw new Error('AppShell client Action test fixture is missing its React Native bundle');
+        }
+        const malformedActionProjection = PluginProjectionV2Schema.parse({
+            ...appProjection,
+            familiesById: {
+                ...appProjection.familiesById,
+                pluginUi: {
+                    ...appPluginUiFamily,
+                    entriesById: {
+                        ...appPluginUiFamily.entriesById,
+                        [`reactNativeBundle:${pluginId}:${actionId}`]: {
+                            ...appActionBundle,
+                            generatedOwnerKind: undefined,
+                        },
+                    },
+                },
+            },
+        });
+        const executableHost = createPluginUiExecutableModuleHost();
+        const executableCache = createPluginReactNativeBundleCache();
+        executableCache.putInstalledArtifact({ identity: cacheIdentity, bytes, format: 'plainJs' });
+        const activate = vi.fn((api: PluginClientApi) => {
+            api.actions.register(actionId, async () => null);
+        });
+        const loaderBackend: PluginReactNativeLoaderBackend = Object.freeze({
+            backendId: 'reactNativeWebModule',
+            available: true,
+            loadInstalledBundle: vi.fn(async () => activate),
+        });
+        const malformedProjectionArtifactAvailability = createAvailableClientArtifactHandle();
+        pluginExecutableHostState.override = executableHost;
+        appShellClientExecutableRuntimeState.cache = executableCache;
+        appShellClientExecutableRuntimeState.loaderBackend = loaderBackend;
+        appShellClientExecutableRuntimeState.availability = malformedProjectionArtifactAvailability.availability;
+        appShellClientExecutableRuntimeState.useRealActivation = true;
+        let describedAppProjection = appProjection;
+        projectionDescribeSpy.mockImplementation(async (machineId: string) => ({
+            supported: true,
+            projection: machineId === 'machine-a'
+                ? describedAppProjection
+                : PluginProjectionV2Schema.parse({
+                    v: 2,
+                    generation: 5,
+                    installedPackagesById: {},
+                    agentsById: {},
+                    backendsById: {},
+                    actionsById: {},
+                    toolsById: {},
+                    commandsById: {},
+                    resourcesById: {},
+                    settingsById: {},
+                    familiesById: {},
+                    diagnostics: [],
+                }),
+        }));
+
+        const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
+        const screen = await renderScreen(
+            <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
+        );
+        await flushHookEffects({ cycles: 7 });
+
+        expect(screen.tree.findByType('ProjectionProbe' as never).props.value.pluginUiProjection).toEqual(
+            expect.objectContaining({
+                actionsById: expect.objectContaining({
+                    [`${pluginId}/${actionId}`]: expect.objectContaining({
+                        hostOrigin: expect.objectContaining({ executionOrigin: origin }),
+                    }),
+                }),
+                reactNativeBundlesById: expect.objectContaining({
+                    [`reactNativeBundle:${pluginId}:${actionId}`]: expect.objectContaining({
+                        hostOrigin: expect.objectContaining({ executionOrigin: origin }),
+                    }),
+                }),
+            }),
+        );
+        await vi.waitFor(() => {
+            expect(clientArtifactAvailabilitySpy).toHaveBeenCalledWith(expect.objectContaining({
+                artifactOwnerKind: 'clientContribution',
+                clientContribution: {
+                    family: 'actions',
+                    action: { pluginId, localId: actionId },
+                },
+            }));
+        });
+        await vi.waitFor(() => {
+            expect(activate).toHaveBeenCalledTimes(1);
+        });
+
+        const registration = () => getPluginUiClientExecutableComposition(executableHost).read({
+            family: 'actions',
+            pluginId,
+            localId: actionId,
+            target: {
+                artifactId: actionArtifactId,
+                modulePath: './clientActionRuntime',
+                exportName: 'activate',
+                platform: 'web',
+            },
+            executionOrigin: origin,
+            projectionGeneration: generation,
+        });
+        expect(registration()).not.toBeNull();
         expect(pluginRuntimeSpies.activate).not.toHaveBeenCalled();
-        expect(pluginRuntimeSpies.withdraw).toHaveBeenCalled();
+        const artifactAvailabilityCallCountBeforeMalformed = clientArtifactAvailabilitySpy.mock.calls.length;
+
+        describedAppProjection = malformedActionProjection;
+        await act(async () => {
+            projectionRefreshState.publish();
+        });
+        await flushHookEffects({ cycles: 6 });
+
+        await vi.waitFor(() => {
+            expect(registration()).toBeNull();
+            expect(malformedProjectionArtifactAvailability.dispose).toHaveBeenCalledTimes(1);
+        });
+        expect(activate).toHaveBeenCalledTimes(1);
+        expect(clientArtifactAvailabilitySpy).toHaveBeenCalledTimes(artifactAvailabilityCallCountBeforeMalformed);
+
+        const accountTeardownArtifactAvailability = createAvailableClientArtifactHandle();
+        appShellClientExecutableRuntimeState.availability = accountTeardownArtifactAvailability.availability;
+        describedAppProjection = appProjection;
+        await act(async () => {
+            projectionRefreshState.publish();
+        });
+        await flushHookEffects({ cycles: 6 });
+
+        await vi.waitFor(() => {
+            expect(registration()).not.toBeNull();
+            expect(activate).toHaveBeenCalledTimes(2);
+        });
+
+        await act(async () => {
+            installActiveAccountScope('account-after-client-action');
+        });
+        await screen.update(
+            <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
+        );
+        await flushHookEffects({ cycles: 6 });
+
+        await vi.waitFor(() => {
+            expect(registration()).toBeNull();
+            expect(accountTeardownArtifactAvailability.dispose).toHaveBeenCalledTimes(1);
+        });
     });
 
     it('revokes an in-flight projection activation on unmount before same-generation remount', async () => {
@@ -1013,7 +1423,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
         );
         await flushHookEffects({ cycles: 5 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(2);
+        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(3);
 
         firstActivation.resolve([]);
         await flushHookEffects({ cycles: 4 });
@@ -1021,7 +1431,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             .filter(([, next]) => (next as { generation?: unknown }).generation === null)).toHaveLength(
                 nullInvalidationsBeforeUnmount + 1,
             );
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(2);
+        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(3);
     });
 
     it('reapplies an unchanged projection when the Voice runtime host generation is replaced', async () => {
@@ -1042,14 +1452,15 @@ describe('AppShellPluginUiProjectionProvider', () => {
             <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
         );
         await flushHookEffects({ cycles: 5 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(1);
+        const initialActivationCount = pluginRuntimeSpies.activate.mock.calls.length;
+        expect(initialActivationCount).toBeGreaterThan(0);
 
         let replacementGeneration!: ReturnType<typeof acquireBundledConversationRuntimeGeneration>;
         await act(async () => {
             replacementGeneration = acquireBundledConversationRuntimeGeneration();
         });
         await flushHookEffects({ cycles: 5 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(2);
+        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(initialActivationCount + 1);
 
         await screen.unmount();
         replacementGeneration.revoke();
@@ -1074,7 +1485,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
         );
         const screen = await renderScreen(renderApp());
         await flushHookEffects({ cycles: 5 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(1);
+        const initialActivationCount = pluginRuntimeSpies.activate.mock.calls.length;
+        expect(initialActivationCount).toBeGreaterThan(0);
         const describesAfterInitialLoad = projectionDescribeSpy.mock.calls.length;
         const invalidationsAfterInitialLoad = pluginRuntimeSpies.invalidate.mock.calls.length;
 
@@ -1088,7 +1500,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         // neither re-describe the target nor disturb the active runtime.
         expect(projectionDescribeSpy).toHaveBeenCalledTimes(describesAfterInitialLoad);
         expect(pluginRuntimeSpies.invalidate).toHaveBeenCalledTimes(invalidationsAfterInitialLoad);
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(1);
+        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(initialActivationCount);
     });
 
     it('does not load a projection when the app shell has no active machine scope', async () => {
@@ -1128,13 +1540,16 @@ describe('AppShellPluginUiProjectionProvider', () => {
         );
         const screen = await renderScreen(renderApp());
         await flushHookEffects({ cycles: 5 });
-        pluginRuntimeSpies.withdraw.mockClear();
+        pluginRuntimeSpies.activate.mockClear();
 
         storageState.machines = [];
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 5 });
 
-        expect(pluginRuntimeSpies.withdraw).toHaveBeenCalled();
+        expect(pluginRuntimeSpies.activate).toHaveBeenCalledWith(expect.objectContaining({
+            projection: expect.objectContaining({ generation: null }),
+            voice: null,
+        }));
     });
 
     it('reports scoped projection currentness to the central cache reconciler', async () => {
@@ -1241,7 +1656,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         }));
     });
 
-    it('unwinds executable Voice authority offline and restores it only after fresh re-description', async () => {
+    it('normalizes Tauri Voice preparation to web, then unwinds it offline until fresh re-description', async () => {
         const declaration = requireConversationDeclaration(PluginContributesV2Schema.parse({
             voiceProviders: [{
                 id: 'conversation',
@@ -1355,6 +1770,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             diagnostics: [],
         });
         storageState.endpointConnectivity = { status: 'online', lastConnectedAt: null };
+        localServicePreviewPlatformState.platform = 'desktop';
         storageState.machines = [{
             id: 'machine-1',
             active: true,
@@ -1383,61 +1799,71 @@ describe('AppShellPluginUiProjectionProvider', () => {
         );
         const screen = await renderScreen(renderApp());
         await flushHookEffects({ cycles: 8 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: APP_SCOPE_FIXTURE.serverId,
-            hostPlatform: 'web',
+        expect(pluginRuntimeSpies.activate).toHaveBeenLastCalledWith(expect.objectContaining({
+            platform: 'web',
             reader: expect.objectContaining({ readCurrentArtifact: expect.any(Function) }),
             accountLifetime: expect.objectContaining({ isCurrent: expect.any(Function) }),
-            projection: expect.objectContaining({
-                generation,
-                voiceProvidersById: expect.objectContaining({
-                    [providerId]: expect.objectContaining({
-                        generation,
-                        definition: expect.objectContaining({
-                            id: declaration.id,
-                            kind: 'conversation',
-                            platforms: ['web'],
-                            client: expect.objectContaining({
-                                artifactId: declaration.client.artifactId,
+            // Platform normalization happens ONCE, on the reconciliation payload
+            // itself (`platform: 'web'` above). The voice arm carries only the
+            // direct-machine authority its projection came from, so asserting a
+            // second platform here would police a field the owner no longer has.
+            voice: expect.objectContaining({
+                serverId: APP_SCOPE_FIXTURE.serverId,
+                machineId: expect.any(String),
+                projection: expect.objectContaining({
+                    generation,
+                    voiceProvidersById: expect.objectContaining({
+                        [providerId]: expect.objectContaining({
+                            generation,
+                            definition: expect.objectContaining({
+                                id: declaration.id,
+                                kind: 'conversation',
+                                platforms: ['web'],
+                                client: expect.objectContaining({
+                                    artifactId: declaration.client.artifactId,
+                                }),
                             }),
                         }),
                     }),
-                }),
-                reactNativeBundlesById: expect.objectContaining({
-                    [`reactNativeBundle:${pluginId}:${declaration.id}`]: expect.objectContaining({
-                        serverIdentityId: origin.serverIdentityId,
-                        materializationRef: origin.materializationRef,
-                        artifactGraph: expect.objectContaining({
-                            contributionId: declaration.client.artifactId,
-                            tier: 'reactNative',
-                            platform: 'web',
-                            digest,
-                        }),
-                        runtime: expect.objectContaining({
-                            decision: { state: 'load' },
-                            loadPolicy: { source: 'installedArtifact' },
-                            cacheIdentity: identity,
+                    reactNativeBundlesById: expect.objectContaining({
+                        [`reactNativeBundle:${pluginId}:${declaration.id}`]: expect.objectContaining({
+                            serverIdentityId: origin.serverIdentityId,
+                            materializationRef: origin.materializationRef,
+                            artifactGraph: expect.objectContaining({
+                                contributionId: declaration.client.artifactId,
+                                tier: 'reactNative',
+                                platform: 'web',
+                                digest,
+                            }),
+                            runtime: expect.objectContaining({
+                                decision: { state: 'load' },
+                                loadPolicy: { source: 'installedArtifact' },
+                                cacheIdentity: identity,
+                            }),
                         }),
                     }),
                 }),
             }),
         }));
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(1);
+        const initialActivationCount = pluginRuntimeSpies.activate.mock.calls.length;
+        expect(initialActivationCount).toBeGreaterThan(0);
 
         storageState.endpointConnectivity = { status: 'offline', lastConnectedAt: null };
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 3 });
-        expect(pluginRuntimeSpies.withdraw).toHaveBeenCalled();
+        expect(pluginRuntimeSpies.activate).toHaveBeenLastCalledWith(expect.objectContaining({ voice: null }));
+        const activationCountAfterOffline = pluginRuntimeSpies.activate.mock.calls.length;
 
         reconnectDescription = createDeferred();
         storageState.endpointConnectivity = { status: 'online', lastConnectedAt: null };
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 3 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(1);
+        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(activationCountAfterOffline + 1);
+        expect(pluginRuntimeSpies.activate).toHaveBeenLastCalledWith(expect.objectContaining({ voice: null }));
 
         reconnectDescription.resolve({ supported: true, projection: rawProjection });
         await flushHookEffects({ cycles: 8 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(2);
+        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(activationCountAfterOffline + 2);
     });
 
     it('ignores a pre-disconnect describe result that settles after reconnect starts', async () => {
@@ -1987,7 +2413,19 @@ describe('AppShellPluginUiProjectionProvider', () => {
         projectionDescribeSpy.mockImplementation(async (machineId: string) => ({
             supported: true,
             projection: machineId === 'machine-older'
-                ? pluginUiProjectionWithAppTab({ generation: 7, pluginId: 'acme.inspector' })
+                // The entry carries an exact producer stamp, so it is a
+                // MATERIALIZED contribution awaiting Administration selection.
+                // (An unstamped contribution has no selection to wait for and
+                // is admitted structurally; that arm belongs to the union owner
+                // and must not be what this test accidentally exercises.)
+                ? pluginUiProjectionWithAppTab({
+                    generation: 7,
+                    pluginId: 'acme.inspector',
+                    origin: unselectedAppScopeOrigin({
+                        machineId: 'machine-older',
+                        pluginId: 'acme.inspector',
+                    }),
+                })
                 : {
                     v: 2,
                     generation: 9,
@@ -2054,8 +2492,24 @@ describe('AppShellPluginUiProjectionProvider', () => {
         projectionDescribeSpy.mockImplementation(async (machineId: string) => ({
             supported: true,
             projection: machineId === 'machine-a'
-                ? pluginUiProjectionWithAppTab({ generation: 3, pluginId: 'acme.alpha' })
-                : pluginUiProjectionWithAppTab({ generation: 4, pluginId: 'acme.beta' }),
+                // Both contributions are exactly stamped, so each is selectable
+                // and neither may be elected before Administration selects one.
+                ? pluginUiProjectionWithAppTab({
+                    generation: 3,
+                    pluginId: 'acme.alpha',
+                    origin: unselectedAppScopeOrigin({
+                        machineId: 'machine-a',
+                        pluginId: 'acme.alpha',
+                    }),
+                })
+                : pluginUiProjectionWithAppTab({
+                    generation: 4,
+                    pluginId: 'acme.beta',
+                    origin: unselectedAppScopeOrigin({
+                        machineId: 'machine-b',
+                        pluginId: 'acme.beta',
+                    }),
+                }),
         }));
 
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');

@@ -98,7 +98,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     backendTarget: BackendTargetRefV2;
-    agentType: AgentId;
+    agentType: string;
+    staticAgentId: AgentId | null;
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionStateForCurrentAgent: (key: string, next: unknown) => void;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
@@ -229,7 +230,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     }, [params.agentType, params.backendTarget, params.handleCreateSession, params.promptStore]);
 
     const agentInputExtraActionChips = useNewSessionAgentInputExtraActionChips({
-        agentId: params.agentType,
+        staticAgentId: params.staticAgentId,
         agentOptionState: params.agentOptionState,
         setAgentOptionState: params.setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip: params.connectedServicesAuthChip,

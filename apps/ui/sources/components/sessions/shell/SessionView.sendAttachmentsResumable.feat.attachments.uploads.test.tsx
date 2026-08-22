@@ -15,6 +15,7 @@ import {
     writeSessionDraftValue,
 } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import type { SessionPending } from '@/sync/store/domains/pending';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -65,8 +66,14 @@ const chooseSubmitModeState = vi.hoisted(() => ({
 const reviewCommentDraftsState = vi.hoisted(() => ({
     current: [] as any[],
 }));
+// The canonical pending slice the transition's custody reader walks. Held as one
+// stable object so a test can seed `s1` and the store mock still sees it.
+const canonicalSessionPendingState = vi.hoisted(() => ({} as Record<string, SessionPending>));
 const sessionPendingMessagesState = vi.hoisted(() => ({
     current: [] as any[],
+    // Lets a case model the real ordering: the transition RPC answers first, and
+    // the canonical pending row syncs afterwards, publishing a re-render.
+    listeners: new Set<() => void>(),
 }));
 const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
 
@@ -300,7 +307,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     const actual = await importOriginal<any>();
     return {
         ...actual,
-        continueSessionWithReplay: vi.fn(),
         sessionAbort: vi.fn(),
         resumeSession: (...args: any[]) => resumeSessionSpy(...args),
         sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
@@ -431,6 +437,7 @@ installSessionShellCommonModuleMocks({
         return createStorageModuleStub({
             storage: createStorageStoreMock({
                     sessions: { s1: sessionState.session },
+                    sessionPending: canonicalSessionPendingState,
                     machines: {
                         m1: {
                             id: 'm1',
@@ -462,7 +469,17 @@ installSessionShellCommonModuleMocks({
             useRealtimeStatus: () => ({ status: 'connected' }),
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionPendingMessages: () => ({ messages: sessionPendingMessagesState.current, discarded: [] }),
+            useSessionPendingMessages: () => {
+                const [, forceRender] = React.useState(0);
+                React.useEffect(() => {
+                    const listener = () => forceRender((value) => value + 1);
+                    sessionPendingMessagesState.listeners.add(listener);
+                    return () => {
+                        sessionPendingMessagesState.listeners.delete(listener);
+                    };
+                }, []);
+                return { messages: sessionPendingMessagesState.current, discarded: [] };
+            },
             useSessionSubagentSourceMessages: () => [],
             useSessionReviewCommentsDrafts: () => [],
             useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
@@ -513,7 +530,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
     getAgentResumeExperimentsFromSettings: () => null,
     getNewSessionRelevantInstallableDepKeys: () => [],
-    isAgentId: (value: unknown) => value === 'codex',
+    isBundledAgentId: (value: unknown) => value === 'codex',
     resolveAgentIdFromFlavor: () => 'codex',
 }));
 
@@ -630,6 +647,8 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         deleteWorkspaceReviewCommentDraftSpy.mockClear();
         reviewCommentDraftsState.current = [];
         sessionPendingMessagesState.current = [];
+        sessionPendingMessagesState.listeners.clear();
+        for (const key of Object.keys(canonicalSessionPendingState)) delete canonicalSessionPendingState[key];
         armedContinuationState.intent = null;
         armedContinuationState.localId = null;
         clearArmedContinuationSpy.mockClear();
@@ -638,6 +657,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionState.session.seq = 0;
         resetSessionShellDraftStateForTest();
         clearSessionDraftValuesForSession(TEST_SERVER_ACCOUNT_SCOPE, 's1', { reason: 'composerClear' });
+        // Neither half of the armed composer decision clears on a composer
+        // clear, by design; a Session-delete reason is what takes them both.
+        clearSessionDraftValuesForSession(TEST_SERVER_ACCOUNT_SCOPE, 's1', { reason: 'sessionDelete' });
         pendingFireAndForget.length = 0;
     });
 
@@ -858,6 +880,52 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     },
                 },
             });
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('edits a queued message from what the transcript showed, not the expanded transport text', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-display',
+            localId: 'p-display',
+            text: 'Review these\n\n<review-comments>\nsrc/a.ts:1 fix it\n</review-comments>',
+            displayText: 'Review these',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            expect(chatListPropsSpy).toHaveBeenCalled();
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: 'p-display',
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+
+            const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Review these');
         } finally {
             act(() => {
                 tree?.unmount();
@@ -2164,6 +2232,141 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
+    it('refuses a pending-edit save whose prepared attachment still owns transfer-staged media', async () => {
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-staged-media-composer-attachment',
+            localId: 'p-edit-staged-media-composer-attachment',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'Queued edit text' },
+                meta: { happierStructuredInputV1: { v: 1, composerAttachments: [attachment] } },
+            },
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        setCurrentComposerAttachmentProjection();
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+            pendingFireAndForget.length = 0;
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+            const pendingRef = {
+                kind: 'pendingMessage' as const,
+                sessionId: 's1',
+                localId: queuedMessage.localId!,
+            };
+            const attachmentApplier = createComposerPresentationTransactionApplier({
+                composerAttachmentsById: {
+                    'acme.issues/issue': daemonMergedProjectionState.value.inputs.pluginProjectionV2
+                        .familiesById.composerAttachments.entriesById['acme.issues/issue'],
+                },
+            });
+            await act(async () => {
+                const current = readComposerPresentationSnapshot(pendingRef);
+                if (!current) throw new Error('expected active pending Composer snapshot');
+                expect(attachmentApplier.apply({
+                    ref: pendingRef,
+                    admittedContributor: {
+                        identity: { pluginId: 'acme.issues', localId: 'pending-editor' },
+                        immutableGenerationId: 'issue-generation-a',
+                    },
+                    transaction: {
+                        expectedRevision: current.revision,
+                        operations: [{
+                            kind: 'attachment.update',
+                            instanceId: attachment.instanceId,
+                            update: {
+                                value: { issueId: 43 },
+                                presentation: { label: 'Issue #43' },
+                            },
+                        }],
+                    },
+                }).status).toBe('applied');
+            });
+            // The plugin's own `prepareForSend` is allowed to return a staged-media
+            // claim (ComposerAttachmentPrepareReadyOutcomeV1 carries `content`). A
+            // Pending row can only persist contentless admitted records, so this
+            // save must fail closed instead of silently dropping the media.
+            machinePluginComposerAttachmentPrepareMock.mockResolvedValueOnce({
+                supported: true,
+                result: {
+                    ok: true,
+                    attachment: attachment.attachment,
+                    result: {
+                        attachments: [{
+                            instanceId: attachment.instanceId,
+                            status: 'ready',
+                            value: { issueId: 430 },
+                            presentation: { label: 'Prepared issue #430' },
+                            content: {
+                                kind: 'stagedMedia',
+                                handle: {
+                                    v: 1,
+                                    id: 'stage-1',
+                                    executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+                                    owner: { pluginId: 'acme.issues', localId: 'issue' },
+                                    mediaKind: 'image',
+                                    mimeType: 'image/png',
+                                    name: 'screenshot.png',
+                                    sizeBytes: 1234,
+                                    sha256: 'a'.repeat(64),
+                                },
+                            },
+                        }],
+                    },
+                },
+            });
+
+            const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget).toHaveLength(1);
+            await act(async () => {
+                await pendingFireAndForget[0];
+            });
+            // Nothing is persisted, so nothing is silently lost.
+            expect(updatePendingMessageSpy).not.toHaveBeenCalled();
+            expect(modalAlertSpy).toHaveBeenCalled();
+            // The Pending row and its editor are left exactly as they were.
+            expect(readComposerPresentationSnapshot(pendingRef)?.attachments).toMatchObject([{
+                instanceId: attachment.instanceId,
+                value: { issueId: 43 },
+            }]);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
     it('refuses malformed persisted semantic input without mutating the active composer', async () => {
         const queuedMessage: PendingMessage = {
             id: 'p-edit-with-malformed-semantic-input',
@@ -3231,7 +3434,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 type: 'partially_applied',
                 localId: 'armed-local-id',
                 applied: 'current_view_committed',
-                code: 'target_start_failed',
+                code: 'divider_missing',
             });
             try {
                 expect(modalAlertSpy).not.toHaveBeenCalled();
@@ -3258,7 +3461,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 type: 'partially_applied',
                 localId: 'armed-local-id',
                 applied: 'current_view_committed',
-                code: 'target_start_failed',
+                code: 'divider_missing',
             });
             try {
                 resumeSessionSpy.mockClear();
@@ -3266,6 +3469,157 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     await screen.pressByTestIdAsync('session.agentTransitionOutcome.resume');
                 });
                 expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('hands a switch whose input is already queued to the Session queued-message owner', async () => {
+            // `target_start_failed` is only reachable after the daemon admitted
+            // this exact localId, so telling the reader "your message wasn't
+            // sent. Send it again." is false — and following it duplicates the
+            // message, because the spent arm makes the retry an ordinary send
+            // under a fresh identity. The true state — admitted input, no
+            // runtime — is the one the Session's queued-message banner already
+            // owns, so it is raised instead of a second banner beside it.
+            const screen = await sendArmedAndReadBanner({
+                type: 'partially_applied',
+                localId: 'armed-local-id',
+                applied: 'current_view_committed',
+                code: 'target_start_failed',
+            });
+            try {
+                expect(modalAlertSpy).not.toHaveBeenCalled();
+                expect(screen.getTextContent())
+                    .not.toContain('session.agentContinuation.transition.switched');
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed').length)
+                    .toBeGreaterThan(0);
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        /**
+         * The real ordering, and the one the case below this seeds away: the
+         * daemon answers, and the canonical pending row for that exact localId
+         * reaches this client a beat later. Notifying the pending-message
+         * listeners is that sync arriving — the same re-render the store
+         * publishes in production.
+         */
+        function syncPendingRowForLocalId(localId: string) {
+            canonicalSessionPendingState.s1 = {
+                messages: [{
+                    id: `pending-${localId}`,
+                    localId,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    source: 'server_pending',
+                    text: 'queued message',
+                    rawRecord: { role: 'user', content: { type: 'text', text: 'queued message' } },
+                }],
+                discarded: [],
+                isLoaded: true,
+            } as SessionPending;
+            act(() => {
+                for (const listener of sessionPendingMessagesState.listeners) listener();
+            });
+        }
+
+        it('tells the reader when custody of the queued input only lands after the switch answered', async () => {
+            // The case below seeds the pending row BEFORE the send, so it passes
+            // whether or not custody is watched. A real Session cannot: the row is
+            // written after the RPC returns, and a disposition decided once
+            // against `absent` and never re-decided is exactly how this arm
+            // reached a reader saying nothing at all.
+            const screen = await sendArmedAndReadBanner({ type: 'accepted', localId: 'armed-local-id' });
+            try {
+                expect(modalAlertSpy).not.toHaveBeenCalled();
+                // Nothing yet, correctly: no canonical fact has arrived.
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed')).toHaveLength(0);
+
+                syncPendingRowForLocalId('armed-local-id');
+
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed').length)
+                    .toBeGreaterThan(0);
+                // Never an invitation to send the same input twice: the only action
+                // is the Session's own resume owner, which drains the queue.
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed-retry').length)
+                    .toBeGreaterThan(0);
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('does not let a live Session view silence an activation failure the daemon proved', async () => {
+            // `target_start_failed` is the daemon's own account: the input was
+            // admitted and the target then failed to start. A client-side liveness
+            // read must never weaken a definite daemon arm, so this must be stated
+            // even while this client still believes the Session is running.
+            const restoreActive = sessionState.session.active;
+            const restorePresence = sessionState.session.presence;
+            sessionState.session.active = true;
+            sessionState.session.presence = 'online';
+            const screen = await sendArmedAndReadBanner({
+                type: 'partially_applied',
+                localId: 'armed-local-id',
+                applied: 'current_view_committed',
+                code: 'target_start_failed',
+            });
+            try {
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed').length)
+                    .toBeGreaterThan(0);
+            } finally {
+                sessionState.session.active = restoreActive;
+                sessionState.session.presence = restorePresence;
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('does not go silent when an ACCEPTED switch leaves the message behind a target that never came up', async () => {
+            // The real failure: `accepted` came back, the target runtime died,
+            // and the reader was told NOTHING — new Agent on screen, message
+            // never processed, Session inactive, no banner. `accepted` only ever
+            // meant "spawn acknowledged"; there is no readiness wait behind it.
+            canonicalSessionPendingState.s1 = {
+                messages: [{
+                    id: 'pending-armed-local-id',
+                    localId: 'armed-local-id',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    source: 'server_pending',
+                    text: 'queued message',
+                    rawRecord: { role: 'user', content: { type: 'text', text: 'queued message' } },
+                }],
+                discarded: [],
+                isLoaded: true,
+            };
+            const screen = await sendArmedAndReadBanner({ type: 'accepted', localId: 'armed-local-id' });
+            try {
+                expect(modalAlertSpy).not.toHaveBeenCalled();
+                // Still no second banner of its own — the Session's existing
+                // queued-message owner says it, exactly as for `target_start_failed`.
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed').length)
+                    .toBeGreaterThan(0);
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('stays silent for an ACCEPTED switch whose message a runtime already carried', async () => {
+            // The other half of the same rule. This arm stays live for the whole
+            // Session, so a Session that answered and then idled out must not be
+            // reported as one whose message never went. Nothing is queued here.
+            const screen = await sendArmedAndReadBanner({ type: 'accepted', localId: 'armed-local-id' });
+            try {
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed')).toHaveLength(0);
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;
@@ -3285,6 +3639,215 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 // owners that already publish it — no status operation of its own.
                 expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ forceRefresh: true }));
                 expect(refreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        /**
+         * A text send through the armed destination, so the composer's own draft
+         * — the thing a remount leaves sendable — is what the case observes.
+         */
+        async function sendArmedText(result: unknown, text: string) {
+            armSecondAgent();
+            runSessionAgentTransitionSpy.mockImplementationOnce(async () => result as any);
+            const screen = await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>);
+            pendingFireAndForget.length = 0;
+            if (!screen.tree) throw new Error('SessionView test renderer did not mount');
+            const agentInput = findTestInstanceByTypeWithProps(screen.tree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', text, 'AgentInput');
+            });
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            for (const pending of [...pendingFireAndForget]) await pending;
+            return screen;
+        }
+
+        function readPersistedSubmission() {
+            return readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.agentContinuationSubmission',
+            );
+        }
+
+        // The whole point. An unestablished outcome leaves the draft in the
+        // composer on purpose, and every guard that stops it becoming a SECOND
+        // logical message — the notice, the send block, and the retained
+        // identity — lived in state a remount threw away.
+        it('carries an unestablished switch across a remount instead of leaving the draft sendable', async () => {
+            // Reconciliation reads canonical facts through the owners that
+            // already publish them; holding that read open is the window the
+            // reader can leave the Session in — and the one the composer must
+            // still be held in when they come back.
+            const reconciliationHeldOpen = vi.fn(() => new Promise(() => {}));
+            ensureSessionVisibleSpy.mockImplementation(reconciliationHeldOpen as never);
+            const first = await sendArmedText(
+                { type: 'outcome_unknown', localId: 'armed-local-id' },
+                'switch and send this',
+            );
+            try {
+                expect(first.getTextContent()).toContain('session.agentContinuation.transition.unknown');
+                expect(readSessionShellDraftTextForTest('s1')).toBe('switch and send this');
+                expect(readPersistedSubmission()).toMatchObject({
+                    localId: 'armed-local-id',
+                    submittedText: 'switch and send this',
+                    result: { type: 'outcome_unknown' },
+                    reconciled: false,
+                });
+            } finally {
+                act(() => { first.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+
+            // Navigating away and back is a fresh mount: nothing in memory survives.
+            // The remount re-reads canonical facts exactly as the first mount did;
+            // holding that read open is what keeps the window observable here.
+            runSessionAgentTransitionSpy.mockClear();
+            const second = await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>);
+            try {
+                expect(second.getTextContent()).toContain('session.agentContinuation.transition.unknown');
+                expect(second.findAllByTestId('session.agentTransitionOutcome.banner').length)
+                    .toBeGreaterThan(0);
+                // The record survived with the identity a retry must reuse.
+                expect(readPersistedSubmission()).toMatchObject({ localId: 'armed-local-id' });
+
+                // And the still-visible draft cannot leave as a NEW logical
+                // message while nothing has established whether it already went.
+                const agentInput = findTestInstanceByTypeWithProps(second.tree!, 'AgentInput' as any, {}) as any;
+                await act(async () => {
+                    invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+                });
+                for (const pending of [...pendingFireAndForget]) await pending;
+                expect(sendMessageSpy).not.toHaveBeenCalled();
+                expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+                expect(runSessionAgentTransitionSpy).not.toHaveBeenCalled();
+                // The refusal is visible rather than silent: the banner already
+                // on screen is re-expanded rather than replaced by a restatement.
+                expect(second.findAllByTestId('session.agentTransitionOutcome.banner').length)
+                    .toBeGreaterThan(0);
+            } finally {
+                act(() => { second.tree?.unmount(); });
+                ensureSessionVisibleSpy.mockImplementation(async () => ({ kind: 'available' }) as never);
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        // The narrower half: the answer that resolves an unestablished switch
+        // routinely arrives after the call returned. Taking the notice down
+        // while leaving the message in the composer is the same duplicate one
+        // tap away.
+        it('compare-clears the unchanged submitted draft when custody only lands later', async () => {
+            const screen = await sendArmedText(
+                { type: 'outcome_unknown', localId: 'armed-local-id' },
+                'switch and send this',
+            );
+            try {
+                expect(screen.getTextContent()).toContain('session.agentContinuation.transition.unknown');
+                expect(readSessionShellDraftTextForTest('s1')).toBe('switch and send this');
+
+                syncPendingRowForLocalId('armed-local-id');
+
+                expect(screen.getTextContent()).not.toContain('session.agentContinuation.transition.unknown');
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
+                expect(readSessionShellDraftTextForTest('s1')).toBe('');
+                // The arm goes with the draft: this depth spends the switch.
+                expect(clearArmedContinuationSpy).toHaveBeenCalled();
+                expect(readPersistedSubmission()).toBeUndefined();
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        // A draft the reader has since rewritten is not the submitted one, and
+        // taking it away would destroy work to tidy up a banner.
+        it('leaves an edited draft alone when custody of the submitted one lands', async () => {
+            const screen = await sendArmedText(
+                { type: 'outcome_unknown', localId: 'armed-local-id' },
+                'switch and send this',
+            );
+            try {
+                const agentInput = findTestInstanceByTypeWithProps(screen.tree!, 'AgentInput' as any, {}) as any;
+                await act(async () => {
+                    invokeTestInstanceHandler(agentInput, 'onChangeText', 'a different message', 'AgentInput');
+                });
+
+                syncPendingRowForLocalId('armed-local-id');
+
+                expect(readSessionShellDraftTextForTest('s1')).toBe('a different message');
+                // The rewritten text is a new message, so canonical custody
+                // must spend the original arm/localId without clearing it.
+                expect(clearArmedContinuationSpy).toHaveBeenCalled();
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('does not clear a newer same-target arm when the previous transition reaches custody', async () => {
+            const screen = await sendArmedText(
+                { type: 'outcome_unknown', localId: 'armed-local-id' },
+                'switch and send this',
+            );
+            try {
+                // The reader disarmed and selected the same target again. Its
+                // intent happens to compare equal, but its localId names a new
+                // transition and must not be spent by the old one's custody.
+                armedContinuationState.localId = 'newer-armed-local-id';
+                syncPendingRowForLocalId('armed-local-id');
+
+                expect(clearArmedContinuationSpy).not.toHaveBeenCalled();
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        // Restoration re-validates, exactly as a restored arm does. A record
+        // whose Session has since answered it must not come back as a banner
+        // pointing at a resolved transition, still less as a send block.
+        it('clears a persisted switch the Session has already answered instead of resurrecting it', async () => {
+            canonicalSessionPendingState.s1 = {
+                messages: [{
+                    id: 'pending-armed-local-id',
+                    localId: 'armed-local-id',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    source: 'server_pending',
+                    text: 'switch and send this',
+                    rawRecord: { role: 'user', content: { type: 'text', text: 'switch and send this' } },
+                }],
+                discarded: [],
+                isLoaded: true,
+            } as SessionPending;
+            writeSessionDraftValue(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.agentContinuationSubmission', {
+                localId: 'armed-local-id',
+                intent: {
+                    v: 1,
+                    mode: 'same_session',
+                    sourceAgentId: 'codex',
+                    selection: { v: 1, agentId: 'claude' },
+                },
+                result: { type: 'outcome_unknown', localId: 'armed-local-id' },
+                submittedText: 'switch and send this',
+                reconciled: true,
+            });
+
+            const screen = await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>);
+            try {
+                expect(screen.getTextContent()).not.toContain('session.agentContinuation.transition.unknown');
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
+                expect(readPersistedSubmission()).toBeUndefined();
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;

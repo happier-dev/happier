@@ -10,6 +10,7 @@ const forkSessionMock = vi.hoisted(() => vi.fn());
 const announceAccessibilityMessageMock = vi.hoisted(() => vi.fn());
 const completeSessionForkNavigationMock = vi.hoisted(() => vi.fn());
 const refreshSessionsMock = vi.hoisted(() => vi.fn());
+const routerPushMock = vi.hoisted(() => vi.fn());
 const sessionsRef = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
 vi.mock('react-native', async () => {
@@ -40,6 +41,10 @@ vi.mock('@/sync/domains/sessionFork/completeSessionForkNavigation', () => ({
     completeSessionForkNavigation: completeSessionForkNavigationMock,
 }));
 vi.mock('@/sync/sync', () => ({ sync: { refreshSessions: refreshSessionsMock } }));
+vi.mock('expo-router', async (importOriginal) => {
+    const actual = await importOriginal<Record<string, unknown>>();
+    return { ...actual, router: { ...(actual.router as object), push: routerPushMock } };
+});
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
@@ -58,6 +63,17 @@ const REQUEST = {
     forkPoint: { type: 'seq', upToSeqInclusive: 12 },
 } as const;
 
+/**
+ * The card's own subtitle, read off the row component rather than off a
+ * composed accessibility label: only one of the two trees generates that label,
+ * and the subtitle IS the rendered explanation in both.
+ */
+function readRowSubtitle(screen: { findAllByTestId: (testID: string) => Array<{ props?: Record<string, unknown> }> }, testID: string) {
+    return screen.findAllByTestId(testID)
+        .map((node) => node.props?.subtitle)
+        .find((value) => typeof value === 'string') ?? null;
+}
+
 async function renderModal(overrides?: Partial<React.ComponentProps<typeof SessionForkStrategyModal>>) {
     const onClose = vi.fn();
     const onConfigureNewSession = vi.fn();
@@ -66,7 +82,7 @@ async function renderModal(overrides?: Partial<React.ComponentProps<typeof Sessi
         <SessionForkStrategyModal
             onClose={onClose}
             request={REQUEST as any}
-            availability={{ native: true, replay: true }}
+            availability={{ native: true, replay: true, configure: true, nativeUnavailableReason: null }}
             navigate={navigate}
             onConfigureNewSession={onConfigureNewSession}
             {...(overrides as any)}
@@ -82,6 +98,7 @@ beforeEach(() => {
     completeSessionForkNavigationMock.mockResolvedValue(undefined);
     refreshSessionsMock.mockReset();
     refreshSessionsMock.mockResolvedValue(undefined);
+    routerPushMock.mockReset();
     sessionsRef.current = {};
 });
 
@@ -109,10 +126,77 @@ describe('SessionForkStrategyModal', () => {
         expect(String(quote?.props.children ?? '').length).toBeLessThanOrEqual(120);
     });
 
-    it('hides the native route when this Session and cutoff cannot fork natively', async () => {
-        const { screen } = await renderModal({ availability: { native: false, replay: true } });
-        expect(screen.findByTestId('session-fork-strategy-native')).toBeNull();
-        expect(screen.findByTestId('session-fork-strategy-replay')).toBeTruthy();
+    it('disables the native route with its reason instead of omitting the card', async () => {
+        const { screen } = await renderModal({
+            availability: {
+                native: false,
+                replay: true,
+                configure: true,
+                nativeUnavailableReason: 'agent_unsupported',
+            },
+        });
+        const native = screen.findByTestId('session-fork-strategy-native');
+        // Omitting the card taught the reader nothing about why the route they
+        // came for is missing, and the same omission logic deleted the entry
+        // points themselves.
+        expect(native).toBeTruthy();
+        expect(native?.props.disabled).toBe(true);
+        expect(readRowSubtitle(screen, 'session-fork-strategy-native'))
+            .toBe('session.forking.strategy.unavailable.nativeAgent');
+        expect(screen.findByTestId('session-fork-strategy-replay')?.props.disabled).toBeFalsy();
+        expect(screen.findByTestId('session-fork-strategy-replay-settings')).toBeNull();
+    });
+
+    it('names the exact reason a Codex message cutoff cannot fork natively', async () => {
+        const { screen } = await renderModal({
+            availability: {
+                native: false,
+                replay: true,
+                configure: true,
+                nativeUnavailableReason: 'agent_conversation_only',
+            },
+        });
+        expect(readRowSubtitle(screen, 'session-fork-strategy-native'))
+            .toBe('session.forking.strategy.unavailable.nativeFromMessage');
+    });
+
+    it('keeps both same-engine cards, greyed with reasons, for a Claude Session with Replay off', async () => {
+        // The plan's live-matrix case that had never been run: native fork
+        // unsupported AND `sessionReplayEnabled` off. Every entry point used to
+        // delete itself, so this modal could not be reached at all.
+        const { screen } = await renderModal({
+            availability: {
+                native: false,
+                replay: false,
+                configure: true,
+                nativeUnavailableReason: 'agent_unsupported',
+            },
+        });
+
+        expect(screen.findByTestId('session-fork-strategy-native')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('session-fork-strategy-replay')?.props.disabled).toBe(true);
+        expect(readRowSubtitle(screen, 'session-fork-strategy-replay'))
+            .toBe('session.forking.strategy.unavailable.replayOff');
+        // Configure is the one route left, and it must still be takeable.
+        expect(screen.findByTestId('session-fork-strategy-configure')?.props.disabled).toBeFalsy();
+        expect(forkSessionMock).not.toHaveBeenCalled();
+    });
+
+    it('sends the reader to the setting that is the only thing closing Replay', async () => {
+        const { screen, onClose } = await renderModal({
+            availability: {
+                native: true,
+                replay: false,
+                configure: false,
+                nativeUnavailableReason: null,
+            },
+        });
+        const settings = screen.findByTestId('session-fork-strategy-replay-settings');
+        expect(settings).toBeTruthy();
+
+        await act(async () => { settings?.props.onPress(); });
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/session/resume');
     });
 
     it('shows progress on the chosen route and disables the others, without a fabricated percentage', async () => {

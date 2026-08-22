@@ -3,7 +3,6 @@ import { View, Platform, Pressable, type LayoutChangeEvent } from 'react-native'
 import { useNavigation } from '@react-navigation/native';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import type { AgentId } from '@/agents/registry/registryCore';
 import { useSetting } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
 import { useHeaderHeight } from '@/utils/platform/responsive';
@@ -33,7 +32,7 @@ interface ChatHeaderViewProps {
     onBackPress?: () => void;
     avatarId?: string;
     /** Resolved agent for this session, when there is one. Shown in place of the avatar on request. */
-    agentId?: AgentId | null;
+    agentId?: string | null;
     rightElement?: React.ReactNode;
     backgroundColor?: string;
     tintColor?: string;

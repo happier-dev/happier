@@ -31,6 +31,7 @@ const showExternalSessionTakeoverDialogSpy = vi.hoisted(() =>
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 
 let activeServerId = 'server-1';
+let activeAccountIsCurrent = true;
 const TARGET_DIRECTORY = '/local/selected/workspace';
 const TARGET_HOME_DIRECTORY = '/Users/tester';
 
@@ -54,6 +55,12 @@ vi.mock('@/text', async () => {
 });
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: activeServerId }),
+}));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+  captureActiveServerAccountScopeCurrentness: () => ({
+    isCurrent: () => activeAccountIsCurrent,
+    onRetire: () => ({ dispose() {} }),
+  }),
 }));
 vi.mock('@/sync/ops/machineExternalSessions', () => ({
   machineExternalSessionTakeoverStart: machineExternalSessionTakeoverSpy,
@@ -146,6 +153,7 @@ describe('useExternalSessionTakeover', () => {
 
   beforeEach(() => {
     activeServerId = 'server-1';
+    activeAccountIsCurrent = true;
     machineExternalSessionTakeoverSpy.mockReset();
     machineExternalSessionTakeoverPersistSpy.mockReset();
     machineExternalSessionTakeoverSpy.mockResolvedValue({ ok: true });
@@ -1048,6 +1056,81 @@ describe('useExternalSessionTakeover', () => {
       'common.error',
       'chatFooter.externalSessionStatusUnavailable',
     );
+    await harness.unmount();
+  });
+
+  it('never starts a takeover after the Account retires during the status read', async () => {
+    const statusRead = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const refreshNow = vi.fn(async () => await statusRead.promise);
+    const harness = await renderHarness({
+      externalSessionLink,
+      status: null,
+      refreshNow,
+      sessionServerId: 'server-owned',
+    });
+
+    let ready = true;
+    await act(async () => {
+      const pending = harness.getCurrent().requestTakeover('direct', TARGET_DIRECTORY);
+      await Promise.resolve();
+      activeAccountIsCurrent = false;
+      statusRead.resolve(status);
+      ready = await pending;
+    });
+
+    expect(ready).toBe(false);
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(refreshSessionsSpy).not.toHaveBeenCalled();
+    expect(refreshSessionMessagesSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('never prompts for send takeover after the Account retires during the status read', async () => {
+    const statusRead = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const refreshNow = vi.fn(async () => await statusRead.promise);
+    const harness = await renderHarness({
+      externalSessionLink,
+      status: null,
+      refreshNow,
+      sessionServerId: 'server-owned',
+    });
+
+    let ready = true;
+    await act(async () => {
+      const pending = harness.getCurrent().ensureReadyForSend();
+      await Promise.resolve();
+      activeAccountIsCurrent = false;
+      statusRead.resolve(status);
+      ready = await pending;
+    });
+
+    expect(ready).toBe(false);
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('keeps an accepted takeover accepted when best-effort projection refresh fails', async () => {
+    const refreshNow = vi.fn(async () => status);
+    refreshSessionsSpy.mockRejectedValue(new Error('projection refresh unavailable'));
+    const harness = await renderHarness({
+      externalSessionLink,
+      status,
+      refreshNow,
+      sessionServerId: 'server-runtime',
+    });
+
+    let ready = false;
+    await act(async () => {
+      ready = await harness.getCurrent().requestTakeover('direct', TARGET_DIRECTORY);
+    });
+
+    expect(ready).toBe(true);
+    expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledTimes(1);
+    expect(modalAlertSpy).not.toHaveBeenCalled();
     await harness.unmount();
   });
 });

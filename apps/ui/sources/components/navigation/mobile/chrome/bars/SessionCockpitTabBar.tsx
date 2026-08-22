@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { DEFAULT_AGENT_ID, getAgentCore } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useLocalSettingMutable, useSession, useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/storage';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
@@ -19,6 +20,10 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useSessionLateralSwipe } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+
+import { SessionCockpitLateralReadout } from '../lateralSwipe/SessionCockpitLateralReadout';
+import { useSessionCockpitLateralNavigation } from '../lateralSwipe/useSessionCockpitLateralNavigation';
 import {
     CockpitTabBar,
     CockpitTabBarAction,
@@ -27,6 +32,8 @@ import {
 
 type SessionCockpitTabBarProps = Readonly<{
     sessionId: string;
+    /** Route server scope, so the capsule and the picker anchor on the same entry. */
+    serverId?: string | null;
     activeSurface: SessionMobileSurface;
     terminalTabAvailable: boolean;
     openDetailsTabCount: number;
@@ -42,7 +49,32 @@ type SessionCockpitTabDefinition = Readonly<{
     badge?: CockpitTabBarTabDefinition<SessionMobileSurface>['badge'];
 }>;
 
+const PREVIOUS_SESSION_ACTION = 'previousSession';
+const NEXT_SESSION_ACTION = 'nextSession';
+
 export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps) => {
+    const lateralSwipe = useSessionLateralSwipe();
+    // The band's actions are built HERE rather than in the chrome host because a tab is
+    // the only element in the band a screen reader can focus, and an action only reaches
+    // the rotor through the element that owns it.
+    const lateralNavigation = useSessionCockpitLateralNavigation({
+        sessionId: props.sessionId,
+        ...(props.serverId === undefined ? null : { serverId: props.serverId }),
+    });
+    const bandAccessibilityActions = React.useMemo(() => {
+        const actions: Array<{ name: string; label: string }> = [];
+        if (lateralNavigation.previous) {
+            actions.push({ name: PREVIOUS_SESSION_ACTION, label: t('workspaceCockpit.previousSession') });
+        }
+        if (lateralNavigation.next) {
+            actions.push({ name: NEXT_SESSION_ACTION, label: t('workspaceCockpit.nextSession') });
+        }
+        return actions.length > 0 ? actions : undefined;
+    }, [lateralNavigation.next, lateralNavigation.previous]);
+    const handleBandAccessibilityAction = React.useCallback((actionName: string) => {
+        if (actionName === PREVIOUS_SESSION_ACTION) lateralNavigation.navigate('previous');
+        else if (actionName === NEXT_SESSION_ACTION) lateralNavigation.navigate('next');
+    }, [lateralNavigation]);
     const session = useSession(props.sessionId);
     const scmStatus = useSessionProjectScmStatus(props.sessionId);
     const gitBadgeMode = useSetting('tabBarGitBadgeMode');
@@ -53,6 +85,7 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
         () => (session ? readSessionPresentationAgentId(session) : null) ?? DEFAULT_AGENT_ID,
         [session],
     );
+    const agentCore = getAgentCore(agentId);
     const gitBadge = resolveGitTabBadge(gitBadgeMode, scmStatus);
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
@@ -73,7 +106,7 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
             if (entry.id === 'chat') {
                 return {
                     id: 'chat',
-                    label: t(getAgentCore(agentId).displayNameKey),
+                    label: agentCore ? t(agentCore.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
                     icon: {
                         render: ({ active, size }) => (
                             <AgentIcon
@@ -152,6 +185,18 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
             tabs={tabs}
             tabTestIdPrefix="session-cockpit-tab-"
             onSurfacePress={props.onSurfacePress}
+            bandAccessibilityActions={bandAccessibilityActions}
+            onBandAccessibilityAction={bandAccessibilityActions ? handleBandAccessibilityAction : undefined}
+            swipeReadout={{
+                progress: lateralSwipe.progress,
+                browseProgress: lateralSwipe.picker.browseProgress,
+                node: (
+                    <SessionCockpitLateralReadout
+                        sessionId={props.sessionId}
+                        {...(props.serverId === undefined ? null : { serverId: props.serverId })}
+                    />
+                ),
+            }}
             trailing={menuItems.length > 0 ? (
                 <DropdownMenu
                     open={moreOpen}

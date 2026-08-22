@@ -80,6 +80,31 @@ function resolveKeyboardHeightWithinScaffold(keyboardHeight: number, layoutBotto
     return Math.max(0, keyboardHeight - Math.max(0, layoutBottomInset));
 }
 
+/**
+ * Should this keyboard frame be ignored, and does it re-open the gate?
+ *
+ * `ignoreKeyboardFramesUntilComposerFocus` is set on every settled non-retained hide so that
+ * keyboard activity belonging to some OTHER input cannot re-seat our composer. Opening it only on a
+ * fresh `onFocus` was too narrow: the keyboard can leave and come back while our input keeps first
+ * responder — a transient system presentation over a focused field (the edit/Paste bubble), an
+ * interactive dismiss that springs back, a hardware-keyboard toggle, background/foreground — and
+ * none of those emit `onFocus`. The gate then stays shut, `bottomInset` never rises, and the
+ * composer (absolutely positioned at `bottom: 0`, lifted only by `translateY: -bottomInset`) sits
+ * behind the keyboard until the user blurs and refocuses it. A frame that arrives while our input
+ * still holds focus IS ours, so it re-opens the gate instead of being dropped. Retention is
+ * unaffected: it never latches the gate in the first place.
+ */
+function shouldIgnoreKeyboardFrame(
+    ignoreFramesUntilComposerFocus: { value: boolean },
+    composerInputFocused: { value: boolean },
+): boolean {
+    'worklet';
+    if (!ignoreFramesUntilComposerFocus.value) return false;
+    if (!composerInputFocused.value) return true;
+    ignoreFramesUntilComposerFocus.value = false;
+    return false;
+}
+
 function clampAvailablePanelHeightToMax(height: number, maxHeight: number | undefined): number {
     'worklet';
     if (typeof maxHeight !== 'number' || !Number.isFinite(maxHeight) || maxHeight <= 0) {
@@ -117,6 +142,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
     const isKeyboardLiftSuppressed = useSharedValue(keyboardLiftSuppressed);
     const isKeyboardLiftRetained = useSharedValue(false);
     const ignoreKeyboardFramesUntilComposerFocus = useSharedValue(false);
+    const isComposerInputFocused = useSharedValue(false);
     const keyboardHeightForInset = useSharedValue(0);
     const keyboardHeightAbsolute = useSharedValue(0);
     const keyboardHeightLive = useSharedValue(0);
@@ -432,7 +458,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
     useKeyboardHandler({
         onStart: (event) => {
             'worklet';
-            if (ignoreKeyboardFramesUntilComposerFocus.value) return;
+            if (shouldIgnoreKeyboardFrame(ignoreKeyboardFramesUntilComposerFocus, isComposerInputFocused)) return;
             isInteractiveDismissActive.value = false;
             const nextHeight = Math.max(0, Math.abs(event.height));
             if (nextHeight > 0) {
@@ -484,7 +510,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
         },
         onMove: (event) => {
             'worklet';
-            if (ignoreKeyboardFramesUntilComposerFocus.value) return;
+            if (shouldIgnoreKeyboardFrame(ignoreKeyboardFramesUntilComposerFocus, isComposerInputFocused)) return;
             const eventHeight = Math.max(0, Math.abs(event.height));
             const eventProgress = typeof event.progress === 'number' && Number.isFinite(event.progress)
                 ? Math.max(0, event.progress)
@@ -542,7 +568,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
         },
         onInteractive: (event) => {
             'worklet';
-            if (ignoreKeyboardFramesUntilComposerFocus.value) return;
+            if (shouldIgnoreKeyboardFrame(ignoreKeyboardFramesUntilComposerFocus, isComposerInputFocused)) return;
             const keyboardLiftIsSuppressed = isKeyboardLiftSuppressed.value;
             const interactiveDismissActive = !keyboardLiftIsSuppressed;
             isInteractiveDismissActive.value = interactiveDismissActive;
@@ -589,7 +615,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
         },
         onEnd: (event) => {
             'worklet';
-            if (ignoreKeyboardFramesUntilComposerFocus.value) return;
+            if (shouldIgnoreKeyboardFrame(ignoreKeyboardFramesUntilComposerFocus, isComposerInputFocused)) return;
             isInteractiveDismissActive.value = false;
             const nextHeight = Math.max(0, Math.abs(event.height));
             const shouldScheduleRetainedHideDrop =
@@ -694,10 +720,11 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
 
     const setComposerInputFocused = React.useCallback((focused: boolean) => {
         if (Platform.OS !== 'ios') return;
+        isComposerInputFocused.value = focused;
         if (focused) {
             ignoreKeyboardFramesUntilComposerFocus.value = false;
         }
-    }, [ignoreKeyboardFramesUntilComposerFocus]);
+    }, [ignoreKeyboardFramesUntilComposerFocus, isComposerInputFocused]);
 
     const lastMeasuredComposerHeightRef = React.useRef<number | null>(null);
     const setComposerMeasuredHeight = React.useCallback((height: number) => {

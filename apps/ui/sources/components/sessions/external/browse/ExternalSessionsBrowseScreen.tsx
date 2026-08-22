@@ -20,6 +20,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PopoverScope } from '@/components/ui/popover';
 import { Modal } from '@/modal';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { useAllMachines, useSetting } from '@/sync/domains/state/storage';
 import { machineExternalSessionLinkEnsure } from '@/sync/ops/machineExternalSessions';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -483,9 +484,15 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         linkRequestTokenRef.current = requestToken;
         linkingSessionIdRef.current = candidateKey;
         setLinkingSessionId(candidateKey);
+        // Linking is Account-scoped: the ensure round trip runs against Account A's
+        // machine and returns Account A's session id. If the user switches Account
+        // while it is in flight, neither the error alert nor the session navigation
+        // may land in Account B.
+        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
         const requestIsCurrent = () => (
             linkRequestTokenRef.current === requestToken
             && candidateActionAuthorityRef.current.generation === selectionAuthorityGeneration
+            && accountCurrentness.isCurrent()
         );
         try {
             const linkEnsureExtras = resolveExternalSessionBrowseLinkEnsureRequestExtras({

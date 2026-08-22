@@ -3,6 +3,7 @@ import {
     type ActivityInteractionCommand,
 } from '@/activity/actions/resolveActivityInteractionCommand';
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
+import { isLoopbackHostname } from '@happier-dev/protocol';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -14,7 +15,7 @@ export function isUnsafeNotificationServerUrl(serverUrl: string): boolean {
     try {
         const url = new URL(normalized);
         const host = url.hostname.trim().toLowerCase();
-        return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]';
+        return isLoopbackHostname(host) || host === '0.0.0.0';
     } catch {
         return true;
     }

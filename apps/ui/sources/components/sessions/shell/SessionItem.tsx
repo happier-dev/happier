@@ -30,9 +30,9 @@ import {
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import {
-    DEFAULT_AGENT_ID,
     getAgentCore,
-} from '@/agents/catalog/catalog';
+    } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { Typography } from '@/constants/Typography';
 import { formatPendingCountBadge } from '@/components/sessions/pendingBadge';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -189,6 +189,21 @@ type SessionItemContentProps = Omit<SessionItemBaseProps, 'subtitleOverride'> & 
     hasUnreadMessages: boolean;
     workingIndicatorMode: SessionItemWorkingIndicatorMode;
     workingIndicatorPaused?: boolean;
+    /**
+     * The row is in Needs attention only because the user asked for it. It says
+     * why the row is still there and must not colour the title or the badge the
+     * way an unread session does.
+     */
+    attentionStanding?: boolean;
+    /**
+     * The STORED standing bit, not the placement outcome above. The row action
+     * menu must offer Remove for a session the user kept even while it is
+     * currently placed for a stronger reason, so the action target reads this
+     * and never `attentionStanding`.
+     */
+    isAttentionStanding?: boolean;
+    /** Whether the Keep / Remove action means anything at all (attention band on). */
+    attentionStandingEnabled?: boolean;
     rowAttentionAnimationEnabled: boolean;
     sessionListIdentityDisplay: SessionItemIdentityDisplay;
     sessionListActiveColorMode: SessionItemActiveColorMode;
@@ -781,6 +796,9 @@ const SessionItemContent = React.memo(
         hasUnreadMessages,
         workingIndicatorMode,
         workingIndicatorPaused,
+        attentionStanding,
+        isAttentionStanding,
+        attentionStandingEnabled,
         rowAttentionAnimationEnabled,
         sessionListIdentityDisplay,
         sessionListActiveColorMode,
@@ -798,12 +816,15 @@ const SessionItemContent = React.memo(
                 : resolvedSession.metadata,
             [resolvedSession],
         );
+        // Null means the row's Agent is genuinely unknown. The avatar and logo
+        // both degrade to their neutral mark; painting the default Agent's brand
+        // on someone else's Session is a lie, not a fallback.
         const agentId = React.useMemo(
             () => (
                 'agentState' in resolvedSession
                     ? readSessionPresentationAgentId(resolvedSession)
                     : resolveAgentIdFromSessionMetadata(resolvedSessionMetadata)
-            ) ?? DEFAULT_AGENT_ID,
+            ),
             [resolvedSession, resolvedSessionMetadata],
         );
         const resolvedSelectionKey = selectionKey ?? '';
@@ -850,7 +871,17 @@ const SessionItemContent = React.memo(
             currentUserId: currentUserId ?? null,
             isConnected: sessionStatus.isConnected,
             isPinned: Boolean(pinned),
-        }), [currentUserId, pinned, resolvedSession, serverId, sessionStatus.isConnected]);
+            attentionStandingEnabled: attentionStandingEnabled === true,
+            attentionStanding: isAttentionStanding === true,
+        }), [
+            attentionStandingEnabled,
+            currentUserId,
+            isAttentionStanding,
+            pinned,
+            resolvedSession,
+            serverId,
+            sessionStatus.isConnected,
+        ]);
         const isActiveSession = sessionActionTarget.isActive;
         const isMinimal = Boolean(compact && compactMinimal);
         const canStopSession = sessionActionTarget.canStop;
@@ -876,16 +907,17 @@ const SessionItemContent = React.memo(
                 : (resolvedSession.metadataLayoutVersion ?? 0) === 0
                     ? resolvedSession.metadata
                     : null;
-            const debugAgentId = resolveAgentIdFromSessionMetadata(debugMetadata)
-                ?? DEFAULT_AGENT_ID;
+            const debugAgentId = resolveAgentIdFromSessionMetadata(debugMetadata) ?? '';
             const debugAgentCore = getAgentCore(debugAgentId);
             const providerSessionId = resolveProviderSessionIdForDebug({
                 metadata: debugMetadata,
-                vendorResumeIdField: debugAgentCore.resume.vendorResumeIdField,
+                vendorResumeIdField: debugAgentCore?.resume.vendorResumeIdField,
             });
             return buildSessionDebugInformation({
                 session: debugSession,
-                providerDisplayName: t(debugAgentCore.displayNameKey),
+                providerDisplayName: debugAgentCore
+                    ? t(debugAgentCore.displayNameKey)
+                    : formatAgentLikeIdForDisplay(debugAgentId),
                 providerSessionId,
             });
         }, [resolvedSession]);
@@ -1321,6 +1353,7 @@ const SessionItemContent = React.memo(
             requestedSecondaryLineMode,
             hasPathSubtitle: Boolean(sessionSubtitle),
             workingRetained: presentsRetainedWorking,
+            standing: attentionStanding === true,
             backgroundActive: sessionStatus.state === 'background_active',
         });
         const externalAttentionState: SessionRowAttentionState | null = externalSessionRuntime
@@ -1438,7 +1471,7 @@ const SessionItemContent = React.memo(
                 ? AVATAR_SIZE_COMPACT
                 : AVATAR_SIZE_DEFAULT;
         const agentLogoSize = resolveSessionListAgentLogoSize(avatarSize);
-        const agentLogoId = agentId;
+        const agentLogoId = agentId ?? '';
 
         const normalizedFolderDepth = Math.min(Math.max(Math.trunc(folderDepth ?? 0), 0), 3);
         const identityTitleLoadingStyle = isMinimal
@@ -2042,6 +2075,9 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             hasUnreadMessages={rowViewModel.hasUnreadMessages}
             workingIndicatorMode={rowViewModel.workingIndicatorMode}
             workingIndicatorPaused={rowViewModel.workingPlacementRetained}
+            attentionStanding={rowViewModel.attentionStanding}
+            isAttentionStanding={rowViewModel.isAttentionStanding}
+            attentionStandingEnabled={rowViewModel.attentionStandingEnabled}
             rowAttentionAnimationEnabled={itemProps.rowAttentionAnimationEnabled !== false}
             sessionListIdentityDisplay={normalizeSessionItemIdentityDisplay(rowViewModel.identityDisplay)}
             sessionListActiveColorMode={normalizeSessionItemActiveColorMode(rowViewModel.activeColorMode)}

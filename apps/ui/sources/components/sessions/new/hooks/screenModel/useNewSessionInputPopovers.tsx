@@ -7,7 +7,6 @@ import { NewSessionMachineSelectionContent } from '@/components/sessions/new/com
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import type { AgentId } from '@/agents/catalog/catalog';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
@@ -69,7 +68,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
     externalSessionsFeatureEnabled: boolean;
     resumeSessionId: string;
     setResumeSessionId: React.Dispatch<React.SetStateAction<string>>;
-    agentType: AgentId;
+    agentType: string;
     agentLabel: string;
     agentOptionState: ExternalSessionBrowseLockContext['agentOptionState'];
     settings: ExternalSessionBrowseLockContext['settings'];
@@ -234,7 +233,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
                         onBrowse: async () => {
                             if (!params.selectedMachineId) return null;
                             const source = resolveExternalSessionBrowseLockedSource({
-                                providerId: params.agentType as any,
+                                providerId: params.agentType,
                                 agentOptionState: params.agentOptionState,
                                 profile: accountProfile,
                                 settings: params.settings,

@@ -215,6 +215,22 @@ export function listExternalSessionBrowseProviderIds(params: Readonly<{
         });
 }
 
+/**
+ * Client-side eligibility for observation-backed background follow of a linked
+ * External Session: the Agent must still be projected by the current generation
+ * from an enabled package, and the linked source must be a source that Agent
+ * currently declares and accepts.
+ *
+ * It deliberately does not read `terminalFollow.userRowClassification`. That
+ * cold opt-in gates native terminal-mode transcript projection
+ * (`ES-PEP-03`/`ES-PEP-05`), which authors hosted transcript rows and therefore
+ * needs provider-authored user-row origin classification. Background follow
+ * writes no transcript rows — the canonical lease owner only derives observed
+ * progress — so the amendment leaves observation and the generic private follow
+ * owner unchanged. Live eligibility stays with the canonical daemon owner
+ * (`canAttemptCanonicalExternalSessionLiveFollow`), whose typed
+ * `background_follow_not_supported` result the surfaces already render.
+ */
 export function supportsExternalSessionBackgroundFollow(params: Readonly<{
     providerId: string;
     source: ExternalSessionsSource;
@@ -224,9 +240,7 @@ export function supportsExternalSessionBackgroundFollow(params: Readonly<{
     const declaration = projected?.externalSessions.sources.find(
         (candidate) => candidate.sourceKind === params.source.kind,
     );
-    if (declaration?.terminalFollow?.userRowClassification !== 'explicitV1') {
-        return false;
-    }
+    if (!declaration) return false;
     return parseExternalSessionsSourceForDeclaration(declaration, params.source) !== null;
 }
 

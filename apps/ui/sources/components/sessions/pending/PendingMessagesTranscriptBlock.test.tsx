@@ -10,6 +10,12 @@ import {
     type PendingMessageHeightBearingChrome,
 } from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
+import { resolvePendingQueueHeadMaxHeightPx } from './pendingQueueContentClipping';
+
+/** `transcriptMarkdownTextStyle.lineHeight` in the test theme. */
+const LINE_PX = 24;
+/** The head stays fully visible; the collapsed backlog scrolls in the compact strip beneath it. */
+const QUEUE_CAP_PX = resolvePendingQueueHeadMaxHeightPx(LINE_PX) + 80;
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -166,7 +172,7 @@ vi.mock('@/agents/registry/registryCore', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: agentCatalogMocks.getAgentCore,
-    isAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'pi'].includes(agentId),
+    isBundledAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'pi'].includes(agentId),
     resolveAgentIdFromFlavor: agentCatalogMocks.resolveAgentIdFromFlavor,
     buildWakeResumeExtras: ({ session }: { session?: { metadata?: Record<string, unknown> } | null }) => {
         const connectedServices = session?.metadata?.connectedServices;
@@ -1823,7 +1829,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             return { id, text: longText, displayText: undefined, createdAt, updatedAt: createdAt, localId: id, rawRecord: {} };
         }
 
-        it('does not clip a single long queued utterance', async () => {
+        it('never truncates the head, and bounds it well above the compact backlog strip', async () => {
             settingValues = crossoverSettings;
             const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
             const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -1833,18 +1839,24 @@ describe('PendingMessagesTranscriptBlock', () => {
             }));
 
             const scroll = screen.findByTestId('pendingMessages.scroll');
-            expect(scroll!.props.style?.maxHeight).toBeUndefined();
+            expect(scroll!.props.style?.maxHeight).toBe(resolvePendingQueueHeadMaxHeightPx(LINE_PX));
+            expect(scroll!.props.style?.maxHeight).toBeGreaterThan(80);
             expect(screen.findByType('MarkdownView' as any)).toBeTruthy();
             expect(screen.findByTestId('pendingMessages.viewMore:p1')).toBeNull();
 
+            // Under the head bound nothing is hidden, so the header offers nothing to expand.
             await act(async () => {
-                scroll!.props.onContentSizeChange(0, 400);
+                scroll!.props.onContentSizeChange(0, 120);
             });
-            expect(screen.findByTestId('pendingMessages.scroll')!.props.style?.maxHeight).toBeUndefined();
             expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
         });
 
-        it('still clips when a second queued row shares the block', async () => {
+        /**
+         * A second message collapses the ROWS BEHIND the head, never the head itself: the head is
+         * the next message to be processed, so it keeps the shape it will cross over in and its
+         * bubble keeps reporting the painted height the committed row inherits.
+         */
+        it('collapses the backlog behind the head, and keeps the head itself intact', async () => {
             settingValues = crossoverSettings;
             const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
             const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -1853,15 +1865,94 @@ describe('PendingMessagesTranscriptBlock', () => {
                 discardedMessages: [],
             }));
 
-            expect(screen.findByTestId('pendingMessages.scroll')!.props.style?.maxHeight).toBe(80);
-            expect(screen.findByTestId('pendingMessages.viewMore:p1')!.props.accessibilityRole).toBe('button');
-            expect(screen.findByTestId('pendingMessages.viewMore:p1')!.props.accessibilityState).toEqual({ expanded: false });
-            expect(screen.findByTestId('pendingMessages.viewMore:p2')).toBeTruthy();
+            expect(screen.findByTestId('pendingMessages.scroll')!.props.style?.maxHeight).toBe(QUEUE_CAP_PX);
+            // p1 is the head: never clamped, so it has no "View more". p2 is backlog: clamped.
+            expect(screen.findByTestId('pendingMessages.viewMore:p1')).toBeNull();
+            expect(screen.findByTestId('pendingMessages.viewMore:p2')!.props.accessibilityRole).toBe('button');
+            expect(screen.findByTestId('pendingMessages.viewMore:p2')!.props.accessibilityState).toEqual({ expanded: false });
 
-            await screen.pressByTestIdAsync('pendingMessages.viewMore:p1');
+            await screen.pressByTestIdAsync('pendingMessages.viewMore:p2');
 
-            expect(screen.findByTestId('pendingMessages.viewMore:p1')!.props.accessibilityRole).toBe('button');
-            expect(screen.findByTestId('pendingMessages.viewMore:p1')!.props.accessibilityState).toEqual({ expanded: true });
+            expect(screen.findByTestId('pendingMessages.viewMore:p2')!.props.accessibilityState).toEqual({ expanded: true });
+        });
+    });
+
+    /**
+     * PRODUCER side of the crossover carry. The committed row inherits the bubble height this block
+     * measures, so exactly one row may publish it: the HEAD, which is the message about to cross
+     * over and the only one painted in full.
+     *
+     * A backlog row must NOT publish: it is line-clamped (not the height its twin will have) and,
+     * once expanded, paints a "View less" Pressable INSIDE the measured bubble that the committed
+     * row never has — an overshoot, and Legend accumulates overshoot into a gap under the tail.
+     */
+    describe('publishing the painted bubble height', () => {
+        function longPending(id: string, createdAt: number) {
+            return {
+                id,
+                text: 'x'.repeat(400),
+                displayText: undefined,
+                createdAt,
+                updatedAt: createdAt,
+                localId: `local-${id}`,
+                rawRecord: {},
+            };
+        }
+
+        async function measureBubbles(pendingMessages: ReturnType<typeof longPending>[]) {
+            const measured: { localId: string; bubbleHeightPx: number }[] = [];
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock as any, {
+                sessionId: 's1',
+                pendingMessages,
+                discardedMessages: [],
+                onPaintedUtteranceBubbleMeasured: (m: { localId: string; bubbleHeightPx: number }) => {
+                    measured.push(m);
+                },
+            }));
+            const publishesLayout: string[] = [];
+            for (const message of pendingMessages) {
+                const bubble = screen.findByTestId(`pendingMessages.message:${message.id}`);
+                // A row that must not publish does not merely return early — it attaches no
+                // `onLayout` at all, so there is no path from its layout to the carried height.
+                if (typeof bubble?.props?.onLayout !== 'function') continue;
+                publishesLayout.push(message.id);
+                await act(async () => {
+                    invokeTestInstanceHandler(
+                        bubble,
+                        'onLayout',
+                        { nativeEvent: { layout: { height: 160 } } },
+                        `pendingMessages.message:${message.id}`,
+                    );
+                });
+            }
+            return { measured, publishesLayout, screen };
+        }
+
+        it('publishes the head bubble, and only the head', async () => {
+            settingValues = {
+                transcriptPendingQueueMaxHeightPx: 80,
+                transcriptPendingQueueExpandedMaxHeightPx: 520,
+                transcriptPendingMessageCollapseThresholdChars: 160,
+                transcriptPendingMessageCollapsedLines: 2,
+            };
+            const { measured, publishesLayout } = await measureBubbles([longPending('p1', 0), longPending('p2', 1)]);
+
+            expect(publishesLayout).toEqual(['p1']);
+            expect(measured).toEqual([{ localId: 'local-p1', bubbleHeightPx: 160 }]);
+        });
+
+        it('publishes a lone utterance, which is always the head', async () => {
+            settingValues = {
+                transcriptPendingQueueMaxHeightPx: 80,
+                transcriptPendingQueueExpandedMaxHeightPx: 520,
+                transcriptPendingMessageCollapseThresholdChars: 160,
+                transcriptPendingMessageCollapsedLines: 2,
+            };
+            const { measured, publishesLayout } = await measureBubbles([longPending('p1', 0)]);
+
+            expect(publishesLayout).toEqual(['p1']);
+            expect(measured).toEqual([{ localId: 'local-p1', bubbleHeightPx: 160 }]);
         });
     });
 
@@ -1872,7 +1963,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         ];
     }
 
-    it('uses an 80px default max-height for the pending queue block', async () => {
+    it('bounds a queue at the head cap plus the compact backlog strip', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -1881,7 +1972,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             }));
 
         const scroll = screen.findByType('ScrollView');
-        expect(scroll.props.style?.maxHeight).toBe(80);
+        expect(scroll.props.style?.maxHeight).toBe(QUEUE_CAP_PX);
         expect(scroll.props.style?.marginTop).toBe(0);
         expect(scroll.props.contentContainerStyle).toMatchObject({ paddingTop: 6, paddingBottom: 0 });
     });
@@ -1903,7 +1994,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            scroll!.props.onContentSizeChange(0, 160);
+            scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
 
         const headerToggle = screen.findByTestId('pendingMessages.headerToggle');
@@ -1913,7 +2004,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(headerToggleStyle.paddingHorizontal).toBe(0);
         expect(headerToggleStyle.paddingVertical).toBe(0);
         expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
-        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('does not show a header toggle when pending content fits the compact height', async () => {
@@ -1934,7 +2025,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
 
         expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
-        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('keeps the pending queue viewport above the row estimate when web content measurement underflows', async () => {
@@ -1972,7 +2063,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            scroll!.props.onContentSizeChange(0, 160);
+            scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
 
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
@@ -1995,13 +2086,13 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            scroll!.props.onContentSizeChange(0, 160);
+            scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
 
         expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
-        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('resets expanded pending queue state after all pending rows clear', async () => {
@@ -2023,7 +2114,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            scroll!.props.onContentSizeChange(0, 160);
+            scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(520);
@@ -2041,11 +2132,11 @@ describe('PendingMessagesTranscriptBlock', () => {
         }));
         const nextScroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            nextScroll!.props.onContentSizeChange(0, 160);
+            nextScroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
 
         expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
-        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('shows the queued affordance instead of a loading spinner for accepted pending rows', async () => {

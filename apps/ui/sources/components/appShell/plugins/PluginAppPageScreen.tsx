@@ -249,7 +249,10 @@ export function PluginAppPageScreen(props: Readonly<{
     return (
         <>
             <Stack.Screen options={headerOptions} />
-            <PluginSurfaceFocusEligibilityProvider active={isFocused}>
+            <PluginSurfaceFocusEligibilityProvider
+                active={isFocused}
+                currentUiContextActive={isFocused}
+            >
                 <View testID="plugin-app-page-host" style={{ flex: 1 }}>
                     <PluginSurfacePlacementHost
                         placement={page.placement}

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
@@ -12,9 +12,18 @@ import { resolveSessionModeChipPresentation } from './resolveSessionModeChipPres
 import { formatResumeChipLabel, RESUME_CHIP_ICON_NAME, RESUME_CHIP_ICON_SIZE } from '../layout/ResumeChip';
 import { Icon, type IconName, ICON_SIZE } from '@/components/ui/icons/Icon';
 
+/**
+ * An externally installed Agent has no bundled display-name key; its own id is
+ * the honest label rather than a borrowed one.
+ */
+function resolveAgentDisplayLabel<T extends string | null | undefined>(agentId: T): string | T {
+    const displayNameKey = getAgentCore(agentId ?? '')?.displayNameKey;
+    return displayNameKey ? t(displayNameKey) : agentId;
+}
+
 export function buildCoreCollapsedControlActions(opts: Readonly<{
     tint: string;
-    agentId: AgentId;
+    agentId: string;
     profileLabel: string | null;
     profileIcon: IconName;
     envVarsCount?: number;
@@ -69,7 +78,9 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         }];
     }
 
-    const resolvedEngineLabel = opts.engineLabel ?? opts.agentLabel ?? t(getAgentCore(opts.agentId).displayNameKey);
+    const resolvedEngineLabel = opts.engineLabel
+        ?? opts.agentLabel
+        ?? resolveAgentDisplayLabel(opts.agentId);
     if (resolvedEngineLabel && opts.onAgentClick) {
         controlActionsById.engine = [{
             id: 'agent',
@@ -144,7 +155,8 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     }
 
     if (opts.onResumeClick) {
-        const resumeAgentLabel = opts.agentLabel ?? t(getAgentCore(opts.agentId).displayNameKey);
+        const resumeAgentLabel = opts.agentLabel
+            ?? resolveAgentDisplayLabel(opts.agentId);
         const resumeChipTitle = t('newSession.resume.chipOptional', { agent: resumeAgentLabel });
         controlActionsById.resume = [{
             id: 'resume',

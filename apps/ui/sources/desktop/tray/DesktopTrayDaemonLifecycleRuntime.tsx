@@ -4,7 +4,7 @@ import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/
 import { readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { isTauriDesktop, listenTauriEvent } from '@/utils/platform/tauri';
+import { isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { buildDaemonServiceTaskKind, TRAY_DAEMON_SERVICE_ACTION_EVENT, type TrayDaemonServiceActionPayload } from './trayDaemonLifecycle';
@@ -37,14 +37,14 @@ export function DesktopTrayDaemonLifecycleRuntime(): React.ReactElement | null {
     }, [runner]);
 
     React.useEffect(() => {
-        if (!isTauriDesktop()) {
+        if (!isDesktopHost()) {
             return () => {};
         }
 
         let disposed = false;
         let unlisten: (() => void) | null = null;
 
-        void listenTauriEvent<TrayDaemonServiceActionPayload>(TRAY_DAEMON_SERVICE_ACTION_EVENT, (payload) => {
+        void listenDesktopHostEvent<TrayDaemonServiceActionPayload>(TRAY_DAEMON_SERVICE_ACTION_EVENT, (payload) => {
             if (disposed) {
                 return;
             }

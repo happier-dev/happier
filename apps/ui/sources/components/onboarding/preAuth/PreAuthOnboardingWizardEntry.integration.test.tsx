@@ -153,8 +153,8 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsLandscape: () => false,
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => false,
 }));
 
 vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({

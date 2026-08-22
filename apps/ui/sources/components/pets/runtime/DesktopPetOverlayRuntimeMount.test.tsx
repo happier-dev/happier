@@ -96,8 +96,8 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => platformState.tauri,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => platformState.tauri,
 }));
 
 vi.mock('@/components/pets/desktop/runtime/DesktopPetOverlayRuntime', () => ({

@@ -15,7 +15,6 @@ import { AgentInputSelectionListPopover } from './AgentInputSelectionListPopover
 import { PermissionModePicker, type PermissionModePickerOption } from './PermissionModePicker';
 import type { PermissionModePickerStyles } from './permissionModePickerStyles';
 import type { AgentInputExtraActionChip, AgentInputPopoverAnchor } from '../agentInputContracts';
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputChipPickerOption } from './AgentInputChipPickerTypes';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 
@@ -119,7 +118,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
     permissionChipAnchorRef: React.RefObject<View | null>;
     onPermissionPopoverRequestClose: () => void;
     onPermissionSelect: (mode: PermissionMode) => void;
-    agentId: AgentId;
+    agentId: string;
     permissionModeOptions: readonly PermissionModePickerOption[];
     effectivePermissionMode: PermissionMode;
     effectivePermissionLabel: string;

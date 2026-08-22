@@ -129,15 +129,39 @@ export function groupWorkflowAgentsByPhase(snapshot: SessionWorkflowRunSnapshotV
         });
 }
 
+/**
+ * Do the declared phases explain where the work is?
+ *
+ * A workflow's phase TITLES are scraped from its script, but agent -> phase attribution is not
+ * always available: a computed `label:` expression that the journal path cannot match binds no
+ * agent to any phase. That a plan was declared stays true; what is false is presenting it as a
+ * grouping of work when it groups none.
+ *
+ * So this is the one predicate both readers below share: it separates "phases were declared" from
+ * "phases explain where the work is", and only the second may drive phase-shaped presentation.
+ */
+function hasPhasedAgents(phaseGroups: readonly WorkflowPhaseViewModel[]): boolean {
+    return phaseGroups.some((phase) => phase.agents.length > 0);
+}
+
 export function buildWorkflowActivityRows(snapshot: SessionWorkflowRunSnapshotV1): WorkflowActivityRowViewModel[] {
     const phaseGroups = groupWorkflowAgentsByPhase(snapshot);
-    if (phaseGroups.length === 0) {
-        return snapshot.agents.map((agent) => ({
-            kind: 'agent',
-            rowId: `${snapshot.runId}:agent:${agent.id}`,
-            runId: snapshot.runId,
-            agent: buildAgentRow(snapshot, agent),
-        }));
+    // A plan that attributed nothing is dropped rather than drawn: rendering its headers put empty
+    // phase sections above a separate `activity` bucket that held every agent in the run, which
+    // reads as "these phases ran and produced nothing". The flat list is the whole of what is known.
+    if (phaseGroups.length === 0 || !hasPhasedAgents(phaseGroups)) {
+        // The row id is READ off the agent row rather than minted again: one id per agent, one
+        // place that decides it. The phased branch below already does this, and the two templates
+        // drifting apart is the same failure at a smaller radius.
+        return snapshot.agents.map((agent) => {
+            const row = buildAgentRow(snapshot, agent);
+            return {
+                kind: 'agent',
+                rowId: row.rowId,
+                runId: snapshot.runId,
+                agent: row,
+            };
+        });
     }
 
     const rows: WorkflowActivityRowViewModel[] = [];
@@ -234,7 +258,9 @@ export function computeWorkflowRunRollup(snapshot: SessionWorkflowRunSnapshotV1)
 
 /**
  * Resolve the active phase position for a loaded run: the first phase (in order) that still has a
- * non-complete agent. Returns `null` when there are no phases. `index` is 1-based for display.
+ * non-complete agent. Returns `null` when there are no phases, and equally when the declared phases
+ * hold no agents at all — a counter manufactured from a plan nothing was attributed to contradicts
+ * the flat list rendered beside it. `index` is 1-based for display.
  */
 export function resolveActiveWorkflowPhasePosition(snapshot: SessionWorkflowRunSnapshotV1): Readonly<{
     index: number;
@@ -242,7 +268,7 @@ export function resolveActiveWorkflowPhasePosition(snapshot: SessionWorkflowRunS
     title?: string;
 }> | null {
     const phases = groupWorkflowAgentsByPhase(snapshot);
-    if (phases.length === 0) return null;
+    if (phases.length === 0 || !hasPhasedAgents(phases)) return null;
     const activeIndex = phases.findIndex((phase) => phase.rollup.active > 0 || phase.rollup.blocked > 0 || phase.rollup.pending > 0);
     const resolvedIndex = activeIndex >= 0 ? activeIndex : phases.length - 1;
     const phase = phases[resolvedIndex];

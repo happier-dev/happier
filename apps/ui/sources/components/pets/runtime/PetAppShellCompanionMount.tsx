@@ -30,7 +30,7 @@ import {
 } from '@/components/pets/tray/petCompanionActivityTrayGeometry';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 const APP_SHELL_PET_MARGIN = 24;
 const APP_SHELL_DEFAULT_METRICS = resolvePetCompanionOverlayMetrics(1);
@@ -96,7 +96,7 @@ function useAppShellPetDrag(): {
 
 export function PetAppShellCompanionMount(): React.ReactElement | null {
     const selectedPetPackage = useSelectedPetPackage();
-    if (Platform.OS !== 'web' || isTauriDesktop() || !selectedPetPackage.enabled || !selectedPetPackage.source) {
+    if (Platform.OS !== 'web' || isDesktopHost() || !selectedPetPackage.enabled || !selectedPetPackage.source) {
         return null;
     }
 

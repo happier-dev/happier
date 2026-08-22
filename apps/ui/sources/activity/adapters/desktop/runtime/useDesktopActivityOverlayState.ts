@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { DESKTOP_ACTIVITY_OVERLAY_STATE_RECONCILE_INTERVAL_MS } from '../desktopActivityOverlayTiming';
 import {
@@ -18,7 +18,7 @@ export function useDesktopActivityOverlayState(): DesktopActivityOverlayWindowSt
     const [state, setState] = React.useState<DesktopActivityOverlayWindowStatePayload | null>(null);
 
     React.useEffect(() => {
-        if (!isTauriDesktop() || !isDesktopActivityOverlayWindowContext()) {
+        if (!isDesktopHost() || !isDesktopActivityOverlayWindowContext()) {
             return () => {};
         }
 

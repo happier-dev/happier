@@ -70,7 +70,15 @@ describe('useTrackScreens', () => {
     });
 
     it('redacts dynamic id-like segments in recorded routes', async () => {
-        useSegmentsMock.mockReturnValue(['(app)', 'session', '550e8400-e29b-41d4-a716-446655440000', 'file']);
+        useSegmentsMock.mockReturnValue(['(app)', 'session', '[id]', 'file']);
+
+        await renderScreen(<HookProbe />);
+
+        expect(recordActionMock).toHaveBeenCalledWith('screen.navigate', { route: 'session/:id/file' });
+    });
+
+    it('redacts a named dynamic session file pattern', async () => {
+        useSegmentsMock.mockReturnValue(['(app)', 'session', '[sessionId]', 'file']);
 
         await renderScreen(<HookProbe />);
 

@@ -17,6 +17,9 @@ import {
     type PluginContributedActionCurrentSnapshot,
     type PluginContributedActionDescriptor,
 } from '@/components/plugins/actions/pluginContributedActionController';
+import {
+    usePluginUiClientExecutableRegistrationRevision,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -239,6 +242,7 @@ export function PluginMessageActions(props: Readonly<{
     invertedActionsLayout: boolean;
     messageActionReference?: MessageActionReferenceV1;
 }>): React.ReactElement | null {
+    usePluginUiClientExecutableRegistrationRevision();
     const host = React.useContext(PluginMessageActionHostContext);
     const controller = React.useMemo(() => {
         if (!host || !props.messageActionReference) return null;

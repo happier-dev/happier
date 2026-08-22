@@ -4,7 +4,6 @@ import type {
     PluginReference,
 } from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import {
     PLUGIN_UI_HOST_API_VERSION_V1,
     PluginUiExecuteActionRequestV1Schema,
@@ -12,8 +11,13 @@ import {
 
 import {
     dispatchPluginSurfaceAction,
+    type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceContributedActionTransport,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import {
+    createPluginActionCurrentIntentHandler,
+} from '@/components/plugins/surfaces/pluginSurfaceFeedback';
+import type { PluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import type { machinePluginStructuredMessageActionExecute } from '@/sync/ops/machineContributionRegistryProjection';
 
 export type AppShellPluginUiActionExecute = (
@@ -77,8 +81,10 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
     generation: string;
     machineId: string;
     serverId?: string | null;
-    /** Exact projection-origin binding for this mounted Voice contribution. */
-    executionOrigin?: PluginMachineExecutionOriginV1 | null;
+    /** Current raw V2 Action lookup supplied by the projection owner. */
+    resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
+    /** Reads the AppShell's incumbent destination binding at Action invocation time. */
+    readNavigationBinding?: () => PluginSurfaceDestinationNavigationBinding | null | undefined;
     signal: AbortSignal;
     timeoutMs?: number;
     isCurrent(): boolean;
@@ -89,6 +95,36 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
         contributionId: input.contributionId,
         generation: input.generation,
     });
+    // Projection generations are decimal wire values at this Voice-host seam.
+    // The shared client Action dispatcher accepts only its exact non-negative
+    // numeric generation, so malformed/stale host input cannot manufacture a
+    // client executable binding. Daemon Actions retain their incumbent path.
+    const projectionGeneration = Number(input.generation);
+    const requestCurrentIntent = createPluginActionCurrentIntentHandler({
+        requester: {
+            pluginId: input.pluginId,
+            contributionId: input.contributionId,
+            generationId: input.generation,
+            invocationId: `voice:${input.contributionId}`,
+        },
+        signal: input.signal,
+        isCurrent: input.isCurrent,
+    });
+    const clientActionOpenSurface: PluginSurfaceDestinationNavigationBinding['openSurface'] | undefined = input.readNavigationBinding
+        ? (request) => {
+            const binding = input.readNavigationBinding?.();
+            return binding
+                ? binding.openSurface(request)
+                : { ok: false, code: 'unavailable', reason: 'plugin_surface_open_unavailable' };
+        }
+        : undefined;
+    const clientAction = Number.isSafeInteger(projectionGeneration) && projectionGeneration >= 0
+        ? Object.freeze({
+            projectionGeneration,
+            requestCurrentIntent,
+            ...(clientActionOpenSurface ? { openSurface: clientActionOpenSurface } : {}),
+        })
+        : null;
     const unavailable = (): never => {
         throw invocationError('plugin_ui_method_unavailable', identity);
     };
@@ -99,15 +135,6 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
     ): Promise<JsonValue> => {
         const operation = composeAppShellInvocationSignal(input.signal, options?.signal);
         try {
-            const materialization = input.executionOrigin?.materializationRef;
-            const mountedBinding = materialization
-                && materialization.pluginId === input.pluginId
-                && materialization.machineId === input.machineId
-                ? Object.freeze({
-                    contributionLocalId: input.contributionId,
-                    materializationRef: materialization,
-                })
-                : null;
             const actionRequest = PluginUiExecuteActionRequestV1Schema.safeParse({
                 action,
                 input: actionInput,
@@ -116,11 +143,18 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
                 throw invocationError('plugin_surface_action_reference_invalid', identity);
             }
             const outcome = await dispatchPluginSurfaceAction({
+                // Voice has a caller-local Action namespace but no mounted UI
+                // surface. Supplying a contribution id/binding here would
+                // manufacture the mounted provenance arm, which is invalid on
+                // the truthful `voice` execution surface.
                 callerPluginId: input.pluginId,
-                callerContributionLocalId: input.contributionId,
-                ...(mountedBinding ? { callerBinding: mountedBinding } : {}),
                 action: actionRequest.data.action,
                 input: actionRequest.data.input ?? null,
+                ...(input.resolveContributedAction
+                    ? { resolveContributedAction: input.resolveContributedAction }
+                    : {}),
+                ...(clientAction ? { clientAction } : {}),
+                invocationSurface: 'voice',
                 contributedAction: {
                     machineId: input.machineId,
                     serverId: input.serverId ?? null,
@@ -148,6 +182,7 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
         }),
         context: async () => unavailable(),
         watchContext: unavailable,
+        publishCurrentUiContext: unavailable,
         watchResource: async () => unavailable(),
         activeComposer: async () => unavailable(),
         readComposer: async () => unavailable(),

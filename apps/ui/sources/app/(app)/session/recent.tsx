@@ -13,6 +13,10 @@ import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { Pressable } from 'react-native';
 import { t } from '@/text';
+import { useIsFocused } from '@react-navigation/native';
+import { useSessionListPaneSourceScopeKey } from '@/components/sessions/shell/sessionListPaneRetention';
+import { useSessionNavigationCursorPublisher } from '@/sync/domains/session/navigation/useSessionNavigationCursorPublisher';
+import type { SessionListLikeItem } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
 interface SessionHistoryItem {
     type: 'session' | 'date-header';
@@ -172,9 +176,31 @@ export default function SessionHistory() {
     const allSessions = useAllSessions();
     const navigateToSession = useNavigateToSession();
     
+    const isFocused = useIsFocused();
+    const sessionNavigationSourceScopeKey = useSessionListPaneSourceScopeKey();
+
     const groupedItems = React.useMemo(() => {
         return groupSessionsByDate(allSessions);
     }, [allSessions]);
+
+    // These rows carry the session record rather than a list row, so the owning server is
+    // lifted onto the row shape the ordering owner reads; without it every captured key
+    // would be unscoped and the server-scoped session route would never anchor on one.
+    const sessionNavigationItems = React.useMemo<SessionListLikeItem[]>(
+        () => groupedItems.map((item) => (
+            item.type === 'session' && item.session
+                ? { type: 'session', sessionId: item.session.id, serverId: item.session.serverId }
+                : { type: item.type }
+        )),
+        [groupedItems],
+    );
+    useSessionNavigationCursorPublisher({
+        active: isFocused,
+        origin: 'recent',
+        sourceScopeKey: sessionNavigationSourceScopeKey,
+        storageKind: 'all',
+        items: sessionNavigationItems,
+    });
     
     const renderItem = React.useCallback(({ item, index }: { item: SessionHistoryItem, index: number }) => {
         if (item.type === 'date-header') {

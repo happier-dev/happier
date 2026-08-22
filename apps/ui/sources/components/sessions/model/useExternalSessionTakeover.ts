@@ -9,6 +9,7 @@ import {
 } from '@/sync/ops/machineExternalSessions';
 import { randomUUID } from '@/platform/randomUUID';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -117,10 +118,16 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
     ): Promise<boolean> => {
         const requestGeneration = preflightGenerationRef.current;
         const requestScopeKey = takeoverScopeKey;
+        // Takeover is Account-scoped: the durable start runs against the Account
+        // that owns this machine and session. If the UI switches Account while a
+        // status read, confirmation dialog or projection refresh is in flight,
+        // Account A's intent must not emit against Account B.
+        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
         const isRequestCurrent = () => (
             mountedRef.current
             && preflightGenerationRef.current === requestGeneration
             && currentTakeoverScopeKeyRef.current === requestScopeKey
+            && accountCurrentness.isCurrent()
         );
         if (!isRequestCurrent()) {
             return false;
@@ -229,16 +236,18 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                 return false;
             }
 
-            if (!isRequestCurrent()) {
-                return false;
-            }
+            // The typed `ok` result IS the accepted durable outcome. Projection
+            // refresh below is best-effort read-side catch-up owned by the status
+            // and session readers, which retry on their own cadence; a refresh
+            // failure must never present an accepted takeover as failed and send
+            // the user into a Retry that collides with the live operation.
             await Promise.all([
                 params.externalSessionRuntime.refreshNow(),
                 sync.refreshSessionMessages(normalizedSessionId),
                 sync.refreshSessions(),
-            ]);
+            ]).catch(() => {});
 
-            return isRequestCurrent();
+            return true;
         } catch (error) {
             if (isRequestCurrent()) {
                 Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSwitchControl'));
@@ -254,10 +263,16 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
     const ensureReadyForSend = React.useCallback(async (): Promise<boolean> => {
         const requestGeneration = preflightGenerationRef.current;
         const requestScopeKey = takeoverScopeKey;
+        // Takeover is Account-scoped: the durable start runs against the Account
+        // that owns this machine and session. If the UI switches Account while a
+        // status read, confirmation dialog or projection refresh is in flight,
+        // Account A's intent must not emit against Account B.
+        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
         const isRequestCurrent = () => (
             mountedRef.current
             && preflightGenerationRef.current === requestGeneration
             && currentTakeoverScopeKeyRef.current === requestScopeKey
+            && accountCurrentness.isCurrent()
         );
         const externalSessionLink = params.externalSessionRuntime.externalSessionLink;
         if (!externalSessionLink) {
@@ -327,10 +342,16 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
 
         const requestGeneration = preflightGenerationRef.current;
         const requestScopeKey = takeoverScopeKey;
+        // Takeover is Account-scoped: the durable start runs against the Account
+        // that owns this machine and session. If the UI switches Account while a
+        // status read, confirmation dialog or projection refresh is in flight,
+        // Account A's intent must not emit against Account B.
+        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
         const isRequestCurrent = () => (
             mountedRef.current
             && preflightGenerationRef.current === requestGeneration
             && currentTakeoverScopeKeyRef.current === requestScopeKey
+            && accountCurrentness.isCurrent()
         );
         let preflightPromise: Promise<boolean> | null = null;
         preflightPromise = (async (): Promise<boolean> => {

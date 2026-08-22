@@ -15,5 +15,5 @@ file an issue on GitHub, DON’T mention it on Discord and DON’T create a foru
 
 We will be adding contact information to this page very soon.
 
-At the current time we do not have the financial ability to reward bounties,
+At the current time we do not have the financial ability to reward bounties, 
 but in extreme cases will at our discretion consider a reward.

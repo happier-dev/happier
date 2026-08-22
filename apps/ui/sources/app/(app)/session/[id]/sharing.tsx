@@ -70,7 +70,10 @@ import { readExternalSessionOperationPresentationFromMetadata } from '@/componen
 import { useExternalSessionOperationOwnerHydration } from '@/components/sessions/transcript/items/useExternalSessionOperationOwnerHydration';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
-import { presentExternalSessionOperationProgress } from '@/components/sessions/external/progress/externalSessionOperationProgressPresentation';
+import {
+    presentExternalSessionOperationProgress,
+    resolveExternalSessionOperationOriginAvailability,
+} from '@/components/sessions/external/progress/externalSessionOperationProgressPresentation';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 
 type SharingData = Readonly<{
@@ -275,10 +278,10 @@ function SharingManagementContent({
         operationOwnerHydration.progress
             ? presentExternalSessionOperationProgress(operationOwnerHydration.progress, {
                 observationContext: 'hydrated',
-                originAvailability:
-                    operationMachine !== null && isMachineOnline(operationMachine)
-                        ? 'online'
-                        : 'offline',
+                originAvailability: resolveExternalSessionOperationOriginAvailability({
+                    machineStatusKnown: operationMachine !== null,
+                    machineOnline: operationMachine !== null && isMachineOnline(operationMachine),
+                }),
             })
             : null
     ), [operationMachine, operationOwnerHydration.progress]);

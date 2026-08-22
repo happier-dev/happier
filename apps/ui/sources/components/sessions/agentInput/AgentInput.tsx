@@ -118,7 +118,7 @@ import {
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 // From the registry rather than the catalog facade: this narrows an id the picker
 // supplied, which is the same check the send control's presentation resolver makes.
-import { isAgentId } from '@/agents/registry/registryCore';
+import { isBundledAgentId } from '@/agents/registry/registryCore';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { readUiAiLaunchProfilesForLegacyUi } from '@/sync/domains/profiles/aiLaunchProfileCollection';
@@ -446,7 +446,7 @@ interface AgentInputProps {
         action: PluginContributedActionDescriptor,
     ) => Promise<PluginContributedActionOpenOutcome> | PluginContributedActionOpenOutcome;
     onFileViewerPress?: () => void;
-    agentType?: AgentId;
+    agentType?: string;
     agentLabel?: string | null;
     onAgentClick?: () => void;
     agentPickerTitle?: string;
@@ -791,6 +791,15 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 7,
         paddingVertical: 3,
+    },
+    composerDecorationFeedbackInteractive: {
+        // An interactive decoration keeps the compact chip padding and reaches
+        // the platform touch minimum through layout. A hit-slop floor would
+        // expand each chip past the row gap and into its stacked neighbour.
+        minWidth: FIELD_ACCESSORY_TARGET_SIZE,
+        minHeight: FIELD_ACCESSORY_TARGET_SIZE,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     composerDecorationFeedbackText: {
         fontSize: 12,
@@ -1357,25 +1366,34 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
     }, [hasComposerAttentionRequests]);
 
-    const agentId: AgentId = resolveAgentIdFromSessionMetadata(props.metadata) ?? DEFAULT_AGENT_ID;
+    const resolvedSessionAgentId = resolveAgentIdFromSessionMetadata(props.metadata);
+    // Static composer policy remains owned by the closed built-in catalog. An
+    // external Agent identity is preserved by the surrounding dynamic catalog
+    // and explicit option projections; it must never be coerced to AgentId.
+    const agentId: AgentId = resolvedSessionAgentId && isBundledAgentId(resolvedSessionAgentId)
+        ? resolvedSessionAgentId
+        : DEFAULT_AGENT_ID;
+    const sessionAgentId = resolvedSessionAgentId ?? agentId;
     const lastNonEmptySessionModelOptionsRef = React.useRef<readonly ModelOption[] | null>(null);
     React.useEffect(() => {
         lastNonEmptySessionModelOptionsRef.current = null;
-    }, [agentId, props.sessionId]);
+    }, [props.sessionId, sessionAgentId]);
 
     const sessionModelsState = React.useMemo(() => {
         if (props.modelOptionsOverride) return { hasSessionModelsState: false, availableCount: 0 };
         const raw = readSessionModelsState(props.metadata ?? null);
         const stateAgentId = typeof raw?.agentId === 'string' ? raw.agentId.trim() : '';
-        if (!stateAgentId || stateAgentId !== agentId) return { hasSessionModelsState: false, availableCount: 0 };
+        if (!stateAgentId || stateAgentId !== (resolvedSessionAgentId ?? agentId)) {
+            return { hasSessionModelsState: false, availableCount: 0 };
+        }
         const available = Array.isArray(raw?.availableModels) ? raw.availableModels : [];
         return { hasSessionModelsState: true, availableCount: available.length };
-    }, [agentId, props.metadata, props.modelOptionsOverride]);
+    }, [agentId, props.metadata, props.modelOptionsOverride, resolvedSessionAgentId]);
 
     const baseModelOptions = React.useMemo(() => {
         if (props.modelOptionsOverride) return props.modelOptionsOverride;
-        return getModelOptionsForSession(agentId, props.metadata ?? null);
-    }, [agentId, props.metadata, props.modelOptionsOverride]);
+        return getModelOptionsForSession(sessionAgentId, props.metadata ?? null);
+    }, [props.metadata, props.modelOptionsOverride, sessionAgentId]);
 
     const modelOptions = React.useMemo(() => {
         if (props.modelOptionsOverride) return baseModelOptions;
@@ -2215,8 +2233,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     ) : null;
 
             const permissionModeOptions = React.useMemo(() => {
-                return getPermissionModeOptionsForSession(agentId, props.metadata ?? null);
-            }, [agentId, props.metadata]);
+                return getPermissionModeOptionsForSession(sessionAgentId, props.metadata ?? null);
+            }, [props.metadata, sessionAgentId]);
 
         const permissionModeOrder = React.useMemo(() => {
             return permissionModeOptions.map((o) => o.value);
@@ -2224,20 +2242,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const effectivePermissionPolicy = React.useMemo(() => {
                 return describeEffectivePermissionMode({
-                    agentType: agentId,
+                    agentType: sessionAgentId,
                     selectedMode: props.permissionMode ?? 'default',
                 metadata: props.metadata ?? null,
                 applyTiming: sessionPermissionModeApplyTiming ?? 'immediate',
             });
-    }, [agentId, props.metadata, props.permissionMode, sessionPermissionModeApplyTiming]);
+    }, [props.metadata, props.permissionMode, sessionAgentId, sessionPermissionModeApplyTiming]);
 
     const effectiveModelPolicy = React.useMemo(() => {
         return describeEffectiveModelMode({
-            agentType: agentId,
+            agentType: sessionAgentId,
             selectedModelId: props.modelMode ?? 'default',
             metadata: props.metadata ?? null,
         });
-    }, [agentId, props.metadata, props.modelMode]);
+    }, [props.metadata, props.modelMode, sessionAgentId]);
 
     const selectedModelLabel = React.useMemo(() => {
         const found = findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.selectedModelId);
@@ -2277,8 +2295,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [effectiveModelPolicy.notes, props.sessionActive]);
 
     const canEnterCustomModel = React.useMemo(() => {
-        return supportsFreeformModelSelectionForSession(agentId, props.metadata ?? null);
-    }, [agentId, props.metadata]);
+        return supportsFreeformModelSelectionForSession(sessionAgentId, props.metadata ?? null);
+    }, [props.metadata, sessionAgentId]);
 
     const submitCustomModel = React.useCallback((value: string) => {
         const normalized = value.trim();
@@ -2305,8 +2323,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // When preflight options are provided (e.g. New Session), prefer the override surface so
         // selections can be reflected immediately without relying on session metadata updates.
         if (preflightAcpSessionModeOptions) return null;
-        return computeSessionModePickerControl({ agentId, metadata: props.metadata ?? null });
-    }, [agentId, props.metadata, preflightAcpSessionModeOptions, props.onAcpSessionModeChange]);
+        return computeSessionModePickerControl({ agentId: sessionAgentId, metadata: props.metadata ?? null });
+    }, [props.metadata, preflightAcpSessionModeOptions, props.onAcpSessionModeChange, sessionAgentId]);
 
     const preflightAcpSessionModeEffective = React.useMemo(() => {
         const selected = typeof props.acpSessionModeSelectedIdOverride === 'string'
@@ -2396,14 +2414,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (!props.onAcpConfigOptionChange) return null;
         if (props.acpConfigOptionsOverride) {
             return computeAcpConfigOptionControlsFromOverride({
-                agentId,
+                agentId: sessionAgentId,
                 configOptions: props.acpConfigOptionsOverride,
                 overrides: props.acpConfigOptionOverridesOverride?.overrides ?? null,
             });
         }
-        return computeAcpConfigOptionControls({ agentId, metadata: props.metadata ?? null });
+        return computeAcpConfigOptionControls({ agentId: sessionAgentId, metadata: props.metadata ?? null });
     }, [
-        agentId,
+        sessionAgentId,
         props.acpConfigOptionsOverride,
         props.acpConfigOptionOverridesOverride,
         props.metadata,
@@ -2417,7 +2435,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const selectedModelOptionControls = React.useMemo(() => {
         const baseControls = props.onAcpConfigOptionChange && selectedModelForControls?.modelOptions?.length
             ? [...(computeAcpConfigOptionControlsFromOverride({
-                agentId,
+                agentId: sessionAgentId,
                 configOptions: selectedModelForControls.modelOptions,
                 overrides: props.acpConfigOptionOverridesOverride?.overrides ?? null,
             }) ?? [])]
@@ -2431,7 +2449,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (extendedContextControl) baseControls.push(extendedContextControl);
         return baseControls.length > 0 ? baseControls : null;
     }, [
-        agentId,
+        sessionAgentId,
         effectiveModelPolicy.selectedModelId,
         props.acpConfigOptionOverridesOverride,
         props.onAcpConfigOptionChange,
@@ -2564,7 +2582,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (typeof props.agentLabel === 'string' && props.agentLabel.length > 0) {
             return props.agentLabel;
         }
-        return props.agentType ? t(getAgentCore(props.agentType).displayNameKey) : '';
+        return props.agentType && isBundledAgentId(props.agentType)
+            ? t(getAgentCore(props.agentType).displayNameKey)
+            : '';
     }, [props.agentLabel, props.agentType]);
 
     const currentAgentPickerRow = React.useMemo<AgentInputChipPickerOption | null>(() => (
@@ -2714,12 +2734,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [onAgentPickerVisibilityChange, showAgentPicker]);
 
     const effectivePermissionLabel = React.useMemo(() => {
-        return getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-    }, [agentId, effectivePermissionPolicy.effectiveMode]);
+        return getPermissionModeLabelForAgentType(sessionAgentId, effectivePermissionPolicy.effectiveMode);
+    }, [effectivePermissionPolicy.effectiveMode, sessionAgentId]);
 
     const permissionChipLabel = React.useMemo(() => {
-        return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-    }, [agentId, effectivePermissionPolicy.effectiveMode]);
+        return getPermissionModeBadgeLabelForAgentType(sessionAgentId, effectivePermissionPolicy.effectiveMode);
+    }, [effectivePermissionPolicy.effectiveMode, sessionAgentId]);
 
     const instrumentStripPermission = React.useMemo<SessionInstrumentStripPermission | null>(() => {
         if (!shouldRenderPermissionChip(permissionChipLabel)) return null;
@@ -2773,15 +2793,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     /**
      * The armed Agent switch, as the composer is presenting it right now.
      *
-     * One decision, shared with the send control, so the chip and the button
-     * cannot say different things about the same choice: the picker showing a
-     * checkmark on Sonnet 4.6 while the chip still read GPT 5.6 Sol is the defect
-     * this removes.
+     * One owner, shared with the send control, so the chip and the button cannot
+     * name different Agents: the picker showing a checkmark on Sonnet 4.6 while
+     * the chip still read GPT 5.6 Sol is the defect this removes. The chip reads
+     * the arm itself — selection is the arming, so it changes with the rail rather
+     * than waiting for a keystroke — while the button additionally requires that
+     * pressing it would take the switch.
      */
     const armedComposerTarget = resolveArmedComposerContinuation({
         armedContinuationTarget: props.armedContinuationTarget,
-        hasSendableContent,
-        dictationHoldsSubmit: submitDictationActive,
     });
     const engineChipLabel = React.useMemo(() => {
         // Selection IS the selection. An armed target with a model chosen names
@@ -2801,7 +2821,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
      * what is running — only this one control is about what runs next.
      */
     const engineChipAgentId = (
-        armedComposerTarget && isAgentId(armedComposerTarget.agentId)
+        armedComposerTarget
             ? armedComposerTarget.agentId
             : (props.agentType ?? agentId)
     );
@@ -2857,7 +2877,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 testID={testID}
                                 accessibilityRole="link"
                                 accessibilityLabel={label}
-                                style={styles.composerDecorationFeedback}
+                                style={[
+                                    styles.composerDecorationFeedback,
+                                    styles.composerDecorationFeedbackInteractive,
+                                ]}
                                 onPress={() => {
                                     void openExternalUrl(treatment.url, { platformOS: Platform.OS });
                                 }}
@@ -2879,6 +2902,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.composerInputLock,
         props.value,
         styles.composerDecorationFeedback,
+        styles.composerDecorationFeedbackInteractive,
         styles.composerDecorationFeedbackText,
         styles.composerInputLockFeedback,
         styles.composerInputLockFeedbackText,
@@ -3353,7 +3377,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     permissionChipAnchorRef={permissionChipAnchorRef}
                     onPermissionPopoverRequestClose={closePermissionPopover}
                     onPermissionSelect={handlePermissionSelect}
-                    agentId={agentId}
+                    agentId={sessionAgentId}
                     permissionModeOptions={permissionModeOptions}
                     effectivePermissionMode={effectivePermissionPolicy.effectiveMode}
                     effectivePermissionLabel={effectivePermissionLabel}
@@ -3437,7 +3461,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     (F-UI-11) so token ticks never re-render this memoized composer. */}
                 <SessionInstrumentStrip
                     sessionId={props.sessionId}
-                    agentId={agentId}
+                    agentId={sessionAgentId}
                     agentTargetKey={props.agentTargetKey}
                     metadata={props.metadata ?? null}
                     sessionActive={props.sessionActive}

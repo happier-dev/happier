@@ -6,6 +6,13 @@ import {
 } from './newSessionTranscriptStorage';
 
 describe('supportsDirectTranscriptStorageForNewSession', () => {
+    it('fails closed when an external Agent has no bundled transcript-storage policy', () => {
+        expect(supportsDirectTranscriptStorageForNewSession({
+            agentId: 'acme.agent',
+            settings: {},
+        })).toBe(false);
+    });
+
     it('uses shared agent session-storage support when no UI override is required', () => {
         expect(supportsDirectTranscriptStorageForNewSession({
             agentId: 'kiro',

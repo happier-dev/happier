@@ -83,6 +83,29 @@ describe('ModalProvider', () => {
         vi.useRealTimers();
     });
 
+    it('publishes keyboard-lift suppression while any modal is open', async () => {
+        // The composer scaffolds outside a modal boundary read this to stop lifting with the
+        // keyboard while a modal owns it. It has to be produced HERE — a consumer reading a field
+        // the provider never writes is a branch that can only ever be false in production, no
+        // matter what its own tests inject.
+        const { ModalProvider, useOptionalModal } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const observed: Array<boolean | undefined> = [];
+        function SuppressionProbe() {
+            observed.push(useOptionalModal()?.isKeyboardLiftSuppressedByModal);
+            return React.createElement('SuppressionProbe');
+        }
+        await renderScreen(React.createElement(ModalProvider, {
+            children: React.createElement(SuppressionProbe),
+        }));
+
+        expect(observed.at(-1)).toBe(false);
+
+        showCustomModal(Modal, DummyModalA);
+
+        expect(observed.at(-1)).toBe(true);
+    });
+
     it('keeps earlier custom modals mounted when stacking', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
@@ -180,6 +203,30 @@ describe('ModalProvider', () => {
         });
 
         expect(screen.findAllByType(DummyModalA).length).toBe(0);
+    });
+
+    it('projects only the top visible modal kind and drops it during custom-modal exit', async () => {
+        const { ModalProvider, useVisibleModalKind } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        let visibleKind: ReturnType<typeof useVisibleModalKind> = null;
+
+        function VisibleModalKindProbe() {
+            visibleKind = useVisibleModalKind();
+            return React.createElement('VisibleModalKindProbe');
+        }
+
+        const screen = await renderScreen(
+            React.createElement(ModalProvider, null, React.createElement(VisibleModalKindProbe)),
+        );
+        expect(visibleKind).toBeNull();
+
+        showCustomModal(Modal, DummyModalA);
+        expect(visibleKind).toBe('custom');
+
+        act(() => {
+            screen.findByType(DummyModalA)?.props.onClose();
+        });
+        expect(visibleKind).toBeNull();
     });
 
     it('keeps earlier modal mounted and transfers top backdrop when the top modal finishes closing', async () => {
